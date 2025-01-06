@@ -677,7 +677,7 @@ impl MultiBuffer {
                         let empty_str: Arc<str> = Arc::default();
                         while let Some(BufferEdit {
                             mut range,
-                            new_text,
+                            mut new_text,
                             mut is_insertion,
                             original_indent_column,
                         }) = edits.next()
@@ -685,12 +685,14 @@ impl MultiBuffer {
                             while let Some(BufferEdit {
                                 range: next_range,
                                 is_insertion: next_is_insertion,
+                                new_text: next_new_text,
                                 ..
                             }) = edits.peek()
                             {
                                 if range.end >= next_range.start {
                                     range.end = cmp::max(next_range.end, range.end);
                                     is_insertion |= *next_is_insertion;
+                                    new_text = format!("{new_text}{next_new_text}").into();
                                     edits.next();
                                 } else {
                                     break;
