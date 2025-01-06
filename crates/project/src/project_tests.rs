@@ -414,7 +414,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/the-root",
+        to_path_string("/dir"),
         json!({
             "test.rs": "const A: i32 = 1;",
             "test2.rs": "",
@@ -424,7 +424,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [to_path_string("/dir").as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
 
     let mut fake_rust_servers = language_registry.register_fake_lsp(
@@ -471,7 +471,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     // Open a buffer without an associated language server.
     let (toml_buffer, _handle) = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp("/the-root/Cargo.toml", cx)
+            project.open_local_buffer_with_lsp(to_path_string("/dir/Cargo.toml"), cx)
         })
         .await
         .unwrap();
@@ -479,7 +479,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     // Open a buffer with an associated language server before the language for it has been loaded.
     let (rust_buffer, _handle2) = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp("/the-root/test.rs", cx)
+            project.open_local_buffer_with_lsp(to_path_string("/dir/test.rs"), cx)
         })
         .await
         .unwrap();
@@ -504,7 +504,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::TextDocumentItem {
-            uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
+            uri: lsp::Url::from_file_path(to_path_string("/dir/test.rs")).unwrap(),
             version: 0,
             text: "const A: i32 = 1;".to_string(),
             language_id: "rust".to_string(),
@@ -534,7 +534,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::VersionedTextDocumentIdentifier::new(
-            lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
+            lsp::Url::from_file_path(to_path_string("/dir/test.rs")).unwrap(),
             1
         )
     );
@@ -542,7 +542,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     // Open a third buffer with a different associated language server.
     let (json_buffer, _json_handle) = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp("/the-root/package.json", cx)
+            project.open_local_buffer_with_lsp(to_path_string("/dir/package.json"), cx)
         })
         .await
         .unwrap();
@@ -555,7 +555,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::TextDocumentItem {
-            uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
+            uri: lsp::Url::from_file_path(to_path_string("/dir/package.json")).unwrap(),
             version: 0,
             text: "{\"a\": 1}".to_string(),
             language_id: "json".to_string(),
@@ -579,7 +579,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     // it is also configured based on the existing language server's capabilities.
     let (rust_buffer2, _handle4) = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp("/the-root/test2.rs", cx)
+            project.open_local_buffer_with_lsp(to_path_string("/dir/test2.rs"), cx)
         })
         .await
         .unwrap();
@@ -605,7 +605,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::VersionedTextDocumentIdentifier::new(
-            lsp::Url::from_file_path("/the-root/test2.rs").unwrap(),
+            lsp::Url::from_file_path(to_path_string("/dir/test2.rs")).unwrap(),
             1
         )
     );
@@ -620,20 +620,24 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .receive_notification::<lsp::notification::DidSaveTextDocument>()
             .await
             .text_document,
-        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path("/the-root/Cargo.toml").unwrap())
+        lsp::TextDocumentIdentifier::new(
+            lsp::Url::from_file_path(to_path_string("/dir/Cargo.toml")).unwrap()
+        )
     );
     assert_eq!(
         fake_json_server
             .receive_notification::<lsp::notification::DidSaveTextDocument>()
             .await
             .text_document,
-        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path("/the-root/Cargo.toml").unwrap())
+        lsp::TextDocumentIdentifier::new(
+            lsp::Url::from_file_path(to_path_string("/dir/Cargo.toml")).unwrap()
+        )
     );
 
     // Renames are reported only to servers matching the buffer's language.
     fs.rename(
-        Path::new("/the-root/test2.rs"),
-        Path::new("/the-root/test3.rs"),
+        Path::new(&to_path_string("/dir/test2.rs")),
+        Path::new(&to_path_string("/dir/test3.rs")),
         Default::default(),
     )
     .await
@@ -643,7 +647,9 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .receive_notification::<lsp::notification::DidCloseTextDocument>()
             .await
             .text_document,
-        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path("/the-root/test2.rs").unwrap()),
+        lsp::TextDocumentIdentifier::new(
+            lsp::Url::from_file_path(to_path_string("/dir/test2.rs")).unwrap()
+        ),
     );
     assert_eq!(
         fake_rust_server
@@ -651,7 +657,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::TextDocumentItem {
-            uri: lsp::Url::from_file_path("/the-root/test3.rs").unwrap(),
+            uri: lsp::Url::from_file_path(to_path_string("/dir/test3.rs")).unwrap(),
             version: 0,
             text: rust_buffer2.update(cx, |buffer, _| buffer.text()),
             language_id: "rust".to_string(),
@@ -682,8 +688,8 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     // When the rename changes the extension of the file, the buffer gets closed on the old
     // language server and gets opened on the new one.
     fs.rename(
-        Path::new("/the-root/test3.rs"),
-        Path::new("/the-root/test3.json"),
+        Path::new(&to_path_string("/dir/test3.rs")),
+        Path::new(&to_path_string("/dir/test3.json")),
         Default::default(),
     )
     .await
@@ -693,7 +699,9 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .receive_notification::<lsp::notification::DidCloseTextDocument>()
             .await
             .text_document,
-        lsp::TextDocumentIdentifier::new(lsp::Url::from_file_path("/the-root/test3.rs").unwrap(),),
+        lsp::TextDocumentIdentifier::new(
+            lsp::Url::from_file_path(to_path_string("/dir/test3.rs")).unwrap(),
+        ),
     );
     assert_eq!(
         fake_json_server
@@ -701,7 +709,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::TextDocumentItem {
-            uri: lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
+            uri: lsp::Url::from_file_path(to_path_string("/dir/test3.json")).unwrap(),
             version: 0,
             text: rust_buffer2.update(cx, |buffer, _| buffer.text()),
             language_id: "json".to_string(),
@@ -727,7 +735,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::VersionedTextDocumentIdentifier::new(
-            lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
+            lsp::Url::from_file_path(to_path_string("/dir/test3.json")).unwrap(),
             1
         )
     );
@@ -756,7 +764,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
             .await
             .text_document,
         lsp::TextDocumentItem {
-            uri: lsp::Url::from_file_path("/the-root/test.rs").unwrap(),
+            uri: lsp::Url::from_file_path(to_path_string("/dir/test.rs")).unwrap(),
             version: 0,
             text: rust_buffer.update(cx, |buffer, _| buffer.text()),
             language_id: "rust".to_string(),
@@ -777,13 +785,13 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
         ],
         [
             lsp::TextDocumentItem {
-                uri: lsp::Url::from_file_path("/the-root/package.json").unwrap(),
+                uri: lsp::Url::from_file_path(to_path_string("/dir/package.json")).unwrap(),
                 version: 0,
                 text: json_buffer.update(cx, |buffer, _| buffer.text()),
                 language_id: "json".to_string(),
             },
             lsp::TextDocumentItem {
-                uri: lsp::Url::from_file_path("/the-root/test3.json").unwrap(),
+                uri: lsp::Url::from_file_path(to_path_string("/dir/test3.json")).unwrap(),
                 version: 0,
                 text: rust_buffer2.update(cx, |buffer, _| buffer.text()),
                 language_id: "json".to_string(),
@@ -795,7 +803,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     cx.update(|_| drop(_json_handle));
     let close_message = lsp::DidCloseTextDocumentParams {
         text_document: lsp::TextDocumentIdentifier::new(
-            lsp::Url::from_file_path("/the-root/package.json").unwrap(),
+            lsp::Url::from_file_path(to_path_string("/dir/package.json")).unwrap(),
         ),
     };
     assert_eq!(
