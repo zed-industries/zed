@@ -1393,6 +1393,20 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_shift_y(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "The ˇquick brown\n"
+        })
+        .await;
+        cx.simulate_shared_keystrokes("v i w shift-y").await;
+        cx.shared_clipboard().await.assert_eq(indoc! {
+            "The quick brown\n"
+        });
+    }
+
+    #[gpui::test]
     async fn test_gv(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
 
