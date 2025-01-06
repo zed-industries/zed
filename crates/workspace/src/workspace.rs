@@ -4126,7 +4126,6 @@ impl Workspace {
                     .timer(Duration::from_millis(100))
                     .await;
                 this.update(&mut cx, |this, cx| {
-                    dbg!("serializing worktree");
                     this.serialize_workspace_internal(cx).detach();
                     this._schedule_serialize.take();
                 })

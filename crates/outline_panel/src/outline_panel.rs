@@ -1813,7 +1813,7 @@ impl OutlinePanel {
     }
 
     fn reveal_entry_for_selection(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
-        if self.hidden() || !OutlinePanelSettings::get_global(cx).auto_reveal_entries {
+        if !self.active || !OutlinePanelSettings::get_global(cx).auto_reveal_entries {
             return;
         }
         let project = self.project.clone();
@@ -2439,7 +2439,7 @@ impl OutlinePanel {
         debounce: Option<Duration>,
         cx: &mut ViewContext<Self>,
     ) {
-        if self.hidden() {
+        if !self.active {
             return;
         }
 
@@ -3261,7 +3261,7 @@ impl OutlinePanel {
         debounce: Option<Duration>,
         cx: &mut ViewContext<OutlinePanel>,
     ) {
-        if self.hidden() {
+        if !self.active {
             return;
         }
 
@@ -3807,7 +3807,7 @@ impl OutlinePanel {
     }
 
     fn update_non_fs_items(&mut self, cx: &mut ViewContext<OutlinePanel>) {
-        if self.hidden() {
+        if !self.active {
             return;
         }
 
@@ -3817,7 +3817,7 @@ impl OutlinePanel {
     }
 
     fn update_search_matches(&mut self, cx: &mut ViewContext<OutlinePanel>) {
-        if self.hidden() {
+        if !self.active {
             return;
         }
 
@@ -4544,10 +4544,6 @@ impl OutlinePanel {
             })
             .collect()
     }
-
-    fn hidden(&self) -> bool {
-        !self.active
-    }
 }
 
 fn workspace_active_editor(
@@ -4828,7 +4824,7 @@ fn subscribe_for_editor_events(
 ) -> Subscription {
     let debounce = Some(UPDATE_DEBOUNCE);
     cx.subscribe(editor, move |outline_panel, editor, e: &EditorEvent, cx| {
-        if outline_panel.hidden() {
+        if !outline_panel.active {
             return;
         }
         match e {
