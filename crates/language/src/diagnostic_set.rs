@@ -1,4 +1,5 @@
 use crate::{range_to_lsp, Diagnostic};
+use anyhow::Result;
 use collections::HashMap;
 use lsp::LanguageServerId;
 use std::{
@@ -54,16 +55,16 @@ pub struct Summary {
 impl DiagnosticEntry<PointUtf16> {
     /// Returns a raw LSP diagnostic used to provide diagnostic context to LSP
     /// codeAction request
-    pub fn to_lsp_diagnostic_stub(&self) -> lsp::Diagnostic {
+    pub fn to_lsp_diagnostic_stub(&self) -> Result<lsp::Diagnostic> {
         let code = self
             .diagnostic
             .code
             .clone()
             .map(lsp::NumberOrString::String);
 
-        let range = range_to_lsp(self.range.clone());
+        let range = range_to_lsp(self.range.clone())?;
 
-        lsp::Diagnostic {
+        Ok(lsp::Diagnostic {
             code,
             range,
             severity: Some(self.diagnostic.severity),
@@ -71,7 +72,7 @@ impl DiagnosticEntry<PointUtf16> {
             message: self.diagnostic.message.clone(),
             data: self.diagnostic.data.clone(),
             ..Default::default()
-        }
+        })
     }
 }
 
