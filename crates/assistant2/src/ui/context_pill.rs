@@ -27,7 +27,7 @@ impl ContextPill {
     ) -> Self {
         Self::Added {
             context,
-            dupe_name: dupe_name,
+            dupe_name,
             on_remove,
         }
     }
@@ -98,7 +98,7 @@ impl RenderOnce for ContextPill {
                         element
                     }
                 })
-                .when_some(context.tooltip.clone(),|element, tooltip| {
+                .when_some(context.tooltip.clone(), |element, tooltip| {
                     element.tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
                 })
                 .when_some(on_remove.as_ref(), |element, on_remove| {
