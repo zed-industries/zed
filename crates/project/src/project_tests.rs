@@ -3794,7 +3794,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/the-dir",
+        to_path_string("/dir"),
         json!({
             "a.rs": "
                 fn foo(mut v: Vec<usize>) {
@@ -3808,14 +3808,16 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    let project = Project::test(fs.clone(), ["/the-dir".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [to_path_string("/dir").as_ref()], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
     let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/the-dir/a.rs", cx))
+        .update(cx, |p, cx| {
+            p.open_local_buffer(to_path_string("/dir/a.rs"), cx)
+        })
         .await
         .unwrap();
 
-    let buffer_uri = Url::from_file_path("/the-dir/a.rs").unwrap();
+    let buffer_uri = Url::from_file_path(to_path_string("/dir/a.rs")).unwrap();
     let message = lsp::PublishDiagnosticsParams {
         uri: buffer_uri.clone(),
         diagnostics: vec![
