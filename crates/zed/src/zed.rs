@@ -20,6 +20,7 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt;
+use futures::FutureExt;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem,
@@ -348,7 +349,16 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             workspace.add_panel(assistant_panel, cx)
         })?;
 
-        let git_ui_enabled = git_ui_feature_flag.await;
+        let git_ui_enabled = {
+            let mut git_ui_feature_flag = git_ui_feature_flag.fuse();
+            let mut timeout =
+                FutureExt::fuse(smol::Timer::after(std::time::Duration::from_secs(5)));
+
+            select_biased! {
+                is_git_ui_enabled = git_ui_feature_flag => is_git_ui_enabled,
+                _ = timeout => false,
+            }
+        };
         let git_panel = if git_ui_enabled {
             Some(git_ui::git_panel::GitPanel::load(workspace_handle.clone(), cx.clone()).await?)
         } else {
@@ -363,7 +373,14 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
         let is_assistant2_enabled = if cfg!(test) {
             false
         } else {
-            assistant2_feature_flag.await
+            let mut assistant2_feature_flag = assistant2_feature_flag.fuse();
+            let mut timeout =
+                FutureExt::fuse(smol::Timer::after(std::time::Duration::from_secs(5)));
+
+            select_biased! {
+                is_assistant2_enabled = assistant2_feature_flag => is_assistant2_enabled,
+                _ = timeout => false,
+            }
         };
         let assistant2_panel = if is_assistant2_enabled {
             Some(assistant2::AssistantPanel::load(workspace_handle.clone(), cx.clone()).await?)
