@@ -263,24 +263,7 @@ fn show_hover(
                 delay.await;
             }
 
-            // If there's a diagnostic, assign it on the hover state and notify
-            let mut local_diagnostic = snapshot
-                .buffer_snapshot
-                .diagnostics_in_range(anchor..anchor, false)
-                // Find the entry with the most specific range
-                .min_by_key(|entry| {
-                    let range = entry.range.to_offset(&snapshot.buffer_snapshot);
-                    range.end - range.start
-                });
-
-            // Pull the primary diagnostic out so we can jump to it if the popover is clicked
-            let primary_diagnostic = local_diagnostic.as_ref().and_then(|local_diagnostic| {
-                snapshot
-                    .buffer_snapshot
-                    .diagnostic_group(local_diagnostic.diagnostic.group_id)
-                    .find(|diagnostic| diagnostic.diagnostic.is_primary)
-            });
-            if let Some(invisible) = snapshot
+            let local_diagnostic = if let Some(invisible) = snapshot
                 .buffer_snapshot
                 .chars_at(anchor)
                 .next()
@@ -289,7 +272,7 @@ fn show_hover(
                 let after = snapshot.buffer_snapshot.anchor_after(
                     anchor.to_offset(&snapshot.buffer_snapshot) + invisible.len_utf8(),
                 );
-                local_diagnostic = Some(DiagnosticEntry {
+                Some(DiagnosticEntry {
                     diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::HINT,
                         message: format!("Unicode character U+{:02X}", invisible as u32),
@@ -306,7 +289,7 @@ fn show_hover(
                 let before = snapshot.buffer_snapshot.anchor_before(
                     anchor.to_offset(&snapshot.buffer_snapshot) - invisible.len_utf8(),
                 );
-                local_diagnostic = Some(DiagnosticEntry {
+                Some(DiagnosticEntry {
                     diagnostic: Diagnostic {
                         severity: DiagnosticSeverity::HINT,
                         message: format!("Unicode character U+{:02X}", invisible as u32),
@@ -314,7 +297,16 @@ fn show_hover(
                     },
                     range: before..anchor,
                 })
-            }
+            } else {
+                snapshot
+                    .buffer_snapshot
+                    .diagnostics_in_range(anchor..anchor, false)
+                    // Find the entry with the most specific range
+                    .min_by_key(|entry| {
+                        let range = entry.range.to_offset(&snapshot.buffer_snapshot);
+                        range.end - range.start
+                    })
+            };
 
             let diagnostic_popover = if let Some(local_diagnostic) = local_diagnostic {
                 let text = match local_diagnostic.diagnostic.source {
@@ -383,7 +375,6 @@ fn show_hover(
 
                 Some(DiagnosticPopover {
                     local_diagnostic,
-                    primary_diagnostic,
                     parsed_content,
                     border_color,
                     background_color,
@@ -778,7 +769,6 @@ impl InfoPopover {
 #[derive(Debug, Clone)]
 pub struct DiagnosticPopover {
     local_diagnostic: DiagnosticEntry<Anchor>,
-    primary_diagnostic: Option<DiagnosticEntry<Anchor>>,
     parsed_content: Option<View<Markdown>>,
     border_color: Option<Hsla>,
     background_color: Option<Hsla>,
@@ -832,13 +822,8 @@ impl DiagnosticPopover {
         diagnostic_div.into_any_element()
     }
 
-    pub fn activation_info(&self) -> (usize, Anchor) {
-        let entry = self
-            .primary_diagnostic
-            .as_ref()
-            .unwrap_or(&self.local_diagnostic);
-
-        (entry.diagnostic.group_id, entry.range.start)
+    pub fn group_id(&self) -> usize {
+        self.local_diagnostic.diagnostic.group_id
     }
 }
 
