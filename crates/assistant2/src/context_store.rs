@@ -50,18 +50,19 @@ impl ContextStore {
         self.context.retain(|context| context.id != *id);
     }
 
-    pub fn id_for_file(&self, path: &Path) -> Option<ContextId> {
-        self.context
-            .iter()
-            .find(|probe| match &probe.kind {
-                ContextKind::File(probe_path) => probe_path == path,
-                ContextKind::Directory(_) => {
-                    // TODO az
-                    false
-                }
-                ContextKind::FetchedUrl(_) | ContextKind::Thread(_) => false,
-            })
-            .map(|context| context.id)
+    pub fn id_for_file(&self, path: &Path) -> Option<IncludedFile> {
+        self.context.iter().find_map(|probe| match &probe.kind {
+            ContextKind::File(probe_path) if probe_path == path => {
+                Some(IncludedFile::Direct(probe.id))
+            }
+            ContextKind::Directory(probe_dir) if path.starts_with(probe_dir) => {
+                Some(IncludedFile::InDirectory(probe.name.clone()))
+            }
+            ContextKind::File(_)
+            | ContextKind::Directory(_)
+            | ContextKind::FetchedUrl(_)
+            | ContextKind::Thread(_) => None,
+        })
     }
 
     pub fn id_for_directory(&self, path: &Path) -> Option<ContextId> {
@@ -95,4 +96,9 @@ impl ContextStore {
             })
             .map(|context| context.id)
     }
+}
+
+pub enum IncludedFile {
+    Direct(ContextId),
+    InDirectory(SharedString),
 }

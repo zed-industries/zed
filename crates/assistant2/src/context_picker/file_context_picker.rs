@@ -8,13 +8,13 @@ use fuzzy::PathMatch;
 use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakModel, WeakView};
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
-use ui::{prelude::*, ListItem};
+use ui::{prelude::*, ListItem, Tooltip};
 use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::context::ContextKind;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
-use crate::context_store::ContextStore;
+use crate::context_store::{ContextStore, IncludedFile};
 
 pub struct FileContextPicker {
     picker: View<Picker<FileContextPickerDelegate>>,
@@ -239,14 +239,20 @@ impl PickerDelegate for FileContextPickerDelegate {
 
                         text.push_str("```\n");
 
-                        if let Some(context_id) = context_store.id_for_file(&path) {
-                            context_store.remove_context(&context_id);
-                        } else {
-                            context_store.insert_context(
-                                ContextKind::File(path.to_path_buf()),
-                                path.to_string_lossy().to_string(),
-                                text,
-                            );
+                        match context_store.id_for_file(&path) {
+                            Some(IncludedFile::Direct(context_id)) => {
+                                context_store.remove_context(&context_id);
+                            }
+                            Some(IncludedFile::InDirectory(_)) => {
+                                // Cannot remove whole directory
+                            }
+                            None => {
+                                context_store.insert_context(
+                                    ContextKind::File(path.to_path_buf()),
+                                    path.to_string_lossy().to_string(),
+                                    text,
+                                );
+                            }
                         }
                     })?;
 
@@ -304,12 +310,10 @@ impl PickerDelegate for FileContextPickerDelegate {
             (file_name, Some(directory))
         };
 
-        let added = self.context_store.upgrade().map_or(false, |context_store| {
-            context_store
-                .read(cx)
-                .id_for_file(&path_match.path)
-                .is_some()
-        });
+        let added = self
+            .context_store
+            .upgrade()
+            .and_then(|context_store| context_store.read(cx).id_for_file(&path_match.path));
 
         Some(
             ListItem::new(ix)
@@ -325,8 +329,13 @@ impl PickerDelegate for FileContextPickerDelegate {
                                 .color(Color::Muted)
                         })),
                 )
-                .when(added, |el| {
-                    el.end_slot(Label::new("Added").size(LabelSize::XSmall))
+                .when_some(added, |el, added| match added {
+                    IncludedFile::Direct(_) => {
+                        el.end_slot(Label::new("Added").size(LabelSize::XSmall))
+                    }
+                    IncludedFile::InDirectory(dir_name) => el
+                        .end_slot(Label::new("Included").size(LabelSize::XSmall))
+                        .tooltip(move |cx| Tooltip::text(format!("By {dir_name}"), cx)),
                 }),
         )
     }
