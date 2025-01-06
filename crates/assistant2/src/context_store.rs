@@ -59,7 +59,7 @@ impl ContextStore {
                     // TODO az
                     false
                 }
-                ContextKind::FetchedUrl | ContextKind::Thread(_) => false,
+                ContextKind::FetchedUrl(_) | ContextKind::Thread(_) => false,
             })
             .map(|context| context.id)
     }
@@ -69,7 +69,7 @@ impl ContextStore {
             .iter()
             .find(|probe| match &probe.kind {
                 ContextKind::Directory(probe_path) => probe_path == path,
-                ContextKind::File(_) | ContextKind::FetchedUrl | ContextKind::Thread(_) => false,
+                ContextKind::File(_) | ContextKind::FetchedUrl(_) | ContextKind::Thread(_) => false,
             })
             .map(|context| context.id)
     }
@@ -79,7 +79,19 @@ impl ContextStore {
             .iter()
             .find(|probe| match probe.kind {
                 ContextKind::Thread(ref probe_thread_id) => probe_thread_id == thread_id,
-                ContextKind::File(_) | ContextKind::Directory(_) | ContextKind::FetchedUrl => false,
+                ContextKind::File(_) | ContextKind::Directory(_) | ContextKind::FetchedUrl(_) => {
+                    false
+                }
+            })
+            .map(|context| context.id)
+    }
+
+    pub fn id_for_url(&self, url: &str) -> Option<ContextId> {
+        self.context
+            .iter()
+            .find(|probe| match &probe.kind {
+                ContextKind::FetchedUrl(probe_url) => probe_url == url,
+                ContextKind::File(_) | ContextKind::Directory(_) | ContextKind::Thread(_) => false,
             })
             .map(|context| context.id)
     }

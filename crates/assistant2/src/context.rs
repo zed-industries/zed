@@ -29,7 +29,7 @@ pub struct Context {
 pub enum ContextKind {
     File(PathBuf),
     Directory(PathBuf),
-    FetchedUrl,
+    FetchedUrl(String),
     Thread(ThreadId),
 }
 
@@ -52,7 +52,7 @@ pub fn attach_context_to_message(
                 directory_context.push_str(&context.text);
                 directory_context.push('\n');
             }
-            ContextKind::FetchedUrl => {
+            ContextKind::FetchedUrl(_) => {
                 fetch_context.push_str(&context.name);
                 fetch_context.push('\n');
                 fetch_context.push_str(&context.text);

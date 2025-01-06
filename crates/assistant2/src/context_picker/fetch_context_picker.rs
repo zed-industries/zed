@@ -201,7 +201,14 @@ impl PickerDelegate for FetchContextPickerDelegate {
                 this.delegate
                     .context_store
                     .update(cx, |context_store, _cx| {
-                        context_store.insert_context(ContextKind::FetchedUrl, url, text);
+                        if context_store.id_for_url(&url).is_some() {
+                            return;
+                        }
+                        context_store.insert_context(
+                            ContextKind::FetchedUrl(url.clone()),
+                            url,
+                            text,
+                        );
                     })?;
 
                 match confirm_behavior {
@@ -230,13 +237,22 @@ impl PickerDelegate for FetchContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
+        let added = self.context_store.upgrade().map_or(false, |context_store| {
+            context_store.read(cx).id_for_url(&self.url).is_some()
+        });
+
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .toggle_state(selected)
-                .child(Label::new(self.url.clone())),
+                .child(Label::new(self.url.clone()))
+                .when(added, |child| {
+                    child
+                        .disabled(true)
+                        .end_slot(Label::new("Added").size(LabelSize::XSmall))
+                }),
         )
     }
 }
