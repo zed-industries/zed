@@ -203,58 +203,54 @@ vertex ShadowVertexOutput shadow_vertex(
 }
 
 fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
-                                constant Shadow *shadows
-                                [[buffer(ShadowInputIndex_Shadows)]]) {
-  Shadow shadow = shadows[input.shadow_id];
+                              constant Shadow *shadows
+                              [[buffer(ShadowInputIndex_Shadows)]]) {
+    Shadow shadow = shadows[input.shadow_id];
 
-  float2 origin = float2(shadow.bounds.origin.x, shadow.bounds.origin.y);
-  float2 size = float2(shadow.bounds.size.width, shadow.bounds.size.height);
-  float2 half_size = size / 2.;
-  float2 center = origin + half_size;
-  float2 point = input.position.xy - center;
-  float corner_radius;
-  if (point.x < 0.) {
-    if (point.y < 0.) {
-      corner_radius = shadow.corner_radii.top_left;
+    float2 origin = float2(shadow.bounds.origin.x, shadow.bounds.origin.y);
+    float2 size = float2(shadow.bounds.size.width, shadow.bounds.size.height);
+    float2 half_size = size / 2.;
+    float2 center = origin + half_size;
+    float2 point = input.position.xy - center;
+    float corner_radius;
+    if (point.x < 0.) {
+        if (point.y < 0.) {
+            corner_radius = shadow.corner_radii.top_left;
+        } else {
+            corner_radius = shadow.corner_radii.bottom_left;
+        }
     } else {
-      corner_radius = shadow.corner_radii.bottom_left;
+        if (point.y < 0.) {
+            corner_radius = shadow.corner_radii.top_right;
+        } else {
+            corner_radius = shadow.corner_radii.bottom_right;
+        }
     }
-  } else {
-    if (point.y < 0.) {
-      corner_radius = shadow.corner_radii.top_right;
+
+    float alpha;
+    if (shadow.blur_radius == 0.) {
+        float distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
+        alpha = saturate(0.5 - distance);
     } else {
-      corner_radius = shadow.corner_radii.bottom_right;
+        // The signal is only non-zero in a limited range, so don't waste samples
+        float low = point.y - half_size.y;
+        float high = point.y + half_size.y;
+        float start = clamp(-3. * shadow.blur_radius, low, high);
+        float end = clamp(3. * shadow.blur_radius, low, high);
+
+        // Accumulate samples (we can get away with surprisingly few samples)
+        float step = (end - start) / 4.;
+        float y = start + step * 0.5;
+        alpha = 0.;
+        for (int i = 0; i < 4; i++) {
+            alpha += blur_along_x(point.x, point.y - y, shadow.blur_radius,
+                                corner_radius, half_size) *
+                    gaussian(y, shadow.blur_radius) * step;
+            y += step;
+        }
     }
-  }
 
-  float alpha;
-  if (shadow.blur_radius == 0.) {
-    // For zero blur, just check if the point is inside the shadow shape
-    float2 rounded_edge_to_point = abs(point) - half_size + corner_radius;
-    float distance = length(max(float2(0., 0.), rounded_edge_to_point)) +
-                     min(0., max(rounded_edge_to_point.x, rounded_edge_to_point.y)) -
-                     corner_radius;
-    alpha = distance <= 0. ? 1. : 0.;
-  } else {
-    // The signal is only non-zero in a limited range, so don't waste samples
-    float low = point.y - half_size.y;
-    float high = point.y + half_size.y;
-    float start = clamp(-3. * shadow.blur_radius, low, high);
-    float end = clamp(3. * shadow.blur_radius, low, high);
-
-    // Accumulate samples (we can get away with surprisingly few samples)
-    float step = (end - start) / 4.;
-    float y = start + step * 0.5;
-    alpha = 0.;
-    for (int i = 0; i < 4; i++) {
-      alpha += blur_along_x(point.x, point.y - y, shadow.blur_radius,
-                            corner_radius, half_size) *
-               gaussian(y, shadow.blur_radius) * step;
-      y += step;
-    }
-  }
-
-  return input.color * float4(1., 1., 1., alpha);
+    return input.color * float4(1., 1., 1., alpha);
 }
 
 struct UnderlineVertexOutput {
