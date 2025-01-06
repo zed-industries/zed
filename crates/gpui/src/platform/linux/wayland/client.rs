@@ -588,6 +588,10 @@ impl WaylandClient {
 }
 
 impl LinuxClient for WaylandClient {
+    fn keyboard_layout(&self) -> String {
+        "unknown".to_string()
+    }
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         self.0
             .borrow()
