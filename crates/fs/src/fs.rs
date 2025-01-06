@@ -11,8 +11,7 @@ use git::GitHostingProviderRegistry;
 use ashpd::desktop::trash;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use smol::process::Command;
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-use std::fs::File;
+
 #[cfg(unix)]
 use std::os::fd::AsFd;
 #[cfg(unix)]
@@ -445,7 +444,13 @@ impl Fs for RealFs {
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        let file = File::open(path)?;
+        if let Ok(Some(metadata)) = self.metadata(path).await {
+            if metadata.is_symlink {
+                // TODO: trash_file does not support trashing symlinks yet - https://github.com/bilelmoussaoui/ashpd/issues/255
+                return self.remove_file(path, RemoveOptions::default()).await;
+            }
+        }
+        let file = smol::fs::File::open(path).await?;
         match trash::trash_file(&file.as_fd()).await {
             Ok(_) => Ok(()),
             Err(err) => Err(anyhow::Error::new(err)),
