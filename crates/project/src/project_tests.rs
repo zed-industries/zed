@@ -3597,20 +3597,30 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
+    fn to_path_string(path: &str) -> String {
+        if cfg!(target_os = "windows") {
+            path.replace("/dir", "C:/dir")
+        } else {
+            path.to_string()
+        }
+    }
+
     init_test(cx);
 
     let initial_contents = "aaa\nbbbbb\nc\n";
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/dir",
+        to_path_string("/dir"),
         json!({
             "the-file": initial_contents,
         }),
     )
     .await;
-    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [to_path_string("/dir").as_ref()], cx).await;
     let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/the-file", cx))
+        .update(cx, |p, cx| {
+            p.open_local_buffer(to_path_string("/dir/the-file"), cx)
+        })
         .await
         .unwrap();
 
@@ -3626,7 +3636,7 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
     });
     let new_contents = "AAAA\naaa\nBB\nbbbbb\n";
     fs.save(
-        "/dir/the-file".as_ref(),
+        to_path_string("/dir/the-file").as_ref(),
         &new_contents.into(),
         LineEnding::Unix,
     )
@@ -3661,7 +3671,7 @@ async fn test_buffer_file_changes_on_disk(cx: &mut gpui::TestAppContext) {
 
     // Change the file on disk again, adding blank lines to the beginning.
     fs.save(
-        "/dir/the-file".as_ref(),
+        to_path_string("/dir/the-file").as_ref(),
         &"\n\n\nAAAA\naaa\nBB\nbbbbb\n".into(),
         LineEnding::Unix,
     )
