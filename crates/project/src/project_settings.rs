@@ -85,11 +85,9 @@ pub struct GitSettings {
     ///
     /// Default: tracked_files
     pub git_gutter: Option<GitGutterSetting>,
-    /// Sets a delay (in milliseconds) after which changes are reflected in the Git gutter.
+    /// Sets the debounce threshold (in milliseconds) after which changes are reflected in the git gutter.
     ///
-    /// Delay is restarted with every diff change.
-    ///
-    /// Default: 0
+    /// Default: null
     pub gutter_debounce: Option<u64>,
     /// Whether or not to show git blame data inline in
     /// the currently focused line.
