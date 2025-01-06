@@ -265,7 +265,7 @@
       "ctrl-k t": ["pane::CloseItemsToTheRight", { "close_pinned": false }],
       "ctrl-k u": ["pane::CloseCleanItems", { "close_pinned": false }],
       "ctrl-k w": ["pane::CloseAllItems", { "close_pinned": false }],
-      "ctrl-shift-f": "project_search::ToggleFocus",
+      "ctrl-shift-f": "pane::DeploySearch",
       "ctrl-alt-g": "search::SelectNextMatch",
       "ctrl-alt-shift-g": "search::SelectPrevMatch",
       "ctrl-alt-shift-h": "search::ToggleReplace",
