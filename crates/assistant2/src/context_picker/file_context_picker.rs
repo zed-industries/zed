@@ -207,17 +207,16 @@ impl PickerDelegate for FileContextPickerDelegate {
         let worktree_id = WorktreeId::from_usize(mat.worktree_id);
         let confirm_behavior = self.confirm_behavior;
         cx.spawn(|this, mut cx| async move {
-            let Some((entry_id, open_buffer_task)) = project
+            let Some(open_buffer_task) = project
                 .update(&mut cx, |project, cx| {
                     let project_path = ProjectPath {
                         worktree_id,
                         path: path.clone(),
                     };
 
-                    let entry_id = project.entry_for_path(&project_path, cx)?.id;
                     let task = project.open_buffer(project_path, cx);
 
-                    Some((entry_id, task))
+                    Some(task)
                 })
                 .ok()
                 .flatten()
@@ -240,11 +239,15 @@ impl PickerDelegate for FileContextPickerDelegate {
 
                         text.push_str("```\n");
 
-                        context_store.insert_context(
-                            ContextKind::File(entry_id),
-                            path.to_string_lossy().to_string(),
-                            text,
-                        );
+                        if let Some(context_id) = context_store.id_for_file(&path) {
+                            context_store.remove_context(&context_id);
+                        } else {
+                            context_store.insert_context(
+                                ContextKind::File(path.to_path_buf()),
+                                path.to_string_lossy().to_string(),
+                                text,
+                            );
+                        }
                     })?;
 
                 match confirm_behavior {
@@ -273,7 +276,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let path_match = &self.matches[ix];
 
@@ -301,17 +304,30 @@ impl PickerDelegate for FileContextPickerDelegate {
             (file_name, Some(directory))
         };
 
+        let added = self.context_store.upgrade().map_or(false, |context_store| {
+            context_store
+                .read(cx)
+                .id_for_file(&path_match.path)
+                .is_some()
+        });
+
         Some(
-            ListItem::new(ix).inset(true).toggle_state(selected).child(
-                h_flex()
-                    .gap_2()
-                    .child(Label::new(file_name))
-                    .children(directory.map(|directory| {
-                        Label::new(directory)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                    })),
-            ),
+            ListItem::new(ix)
+                .inset(true)
+                .toggle_state(selected)
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(Label::new(file_name))
+                        .children(directory.map(|directory| {
+                            Label::new(directory)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                        })),
+                )
+                .when(added, |el| {
+                    el.end_slot(Label::new("Added").size(LabelSize::XSmall))
+                }),
         )
     }
 }

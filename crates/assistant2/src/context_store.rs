@@ -1,5 +1,6 @@
+use std::path::Path;
+
 use gpui::SharedString;
-use project::ProjectEntryId;
 
 use crate::{
     context::{Context, ContextId, ContextKind},
@@ -49,11 +50,14 @@ impl ContextStore {
         self.context.retain(|context| context.id != *id);
     }
 
-    pub fn contains_project_entry(&self, entry_id: ProjectEntryId) -> bool {
-        self.context.iter().any(|probe| match probe.kind {
-            ContextKind::File(probe_entry_id) => probe_entry_id == entry_id,
-            ContextKind::Directory | ContextKind::FetchedUrl | ContextKind::Thread(_) => false,
-        })
+    pub fn id_for_file(&self, path: &Path) -> Option<ContextId> {
+        self.context
+            .iter()
+            .find(|probe| match &probe.kind {
+                ContextKind::File(probe_path) => probe_path == path,
+                ContextKind::Directory | ContextKind::FetchedUrl | ContextKind::Thread(_) => false,
+            })
+            .map(|context| context.id)
     }
 
     pub fn id_for_thread(&self, thread_id: &ThreadId) -> Option<ContextId> {

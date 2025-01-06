@@ -1,9 +1,9 @@
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use editor::Editor;
 use gpui::{AppContext, FocusHandle, Model, View, WeakModel, WeakView};
 use language::Buffer;
-use project::ProjectEntryId;
 use ui::{prelude::*, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip};
 use workspace::Workspace;
 
@@ -62,20 +62,20 @@ impl ContextStrip {
     fn suggested_file(&self, cx: &ViewContext<Self>) -> Option<SuggestedContext> {
         let workspace = self.workspace.upgrade()?;
         let active_item = workspace.read(cx).active_item(cx)?;
-        let entry_id = *active_item.project_entry_ids(cx).first()?;
-
-        if self.context_store.read(cx).contains_project_entry(entry_id) {
-            return None;
-        }
 
         let editor = active_item.to_any().downcast::<Editor>().ok()?.read(cx);
         let active_buffer = editor.buffer().read(cx).as_singleton()?;
 
         let file = active_buffer.read(cx).file()?;
-        let title = file.path().to_string_lossy().into_owned().into();
+        let path = file.path();
+        let title = path.to_string_lossy().into_owned().into();
+
+        if self.context_store.read(cx).id_for_file(path).is_some() {
+            return None;
+        }
 
         Some(SuggestedContext::File {
-            entry_id,
+            path: path.to_path_buf(),
             title,
             buffer: active_buffer.downgrade(),
         })
@@ -231,9 +231,9 @@ pub enum SuggestContextKind {
 #[derive(Clone)]
 pub enum SuggestedContext {
     File {
-        entry_id: ProjectEntryId,
         title: SharedString,
         buffer: WeakModel<Buffer>,
+        path: PathBuf,
     },
     Thread {
         id: ThreadId,
@@ -253,17 +253,18 @@ impl SuggestedContext {
     pub fn accept(&self, context_store: &mut ContextStore, cx: &mut AppContext) {
         match self {
             Self::File {
-                entry_id,
                 title,
                 buffer,
+                path,
             } => {
                 let Some(buffer) = buffer.upgrade() else {
                     return;
                 };
-                let text = buffer.read(cx).text();
+                let buffer = buffer.read(cx);
+                let text = buffer.text();
 
                 context_store.insert_context(
-                    ContextKind::File(*entry_id),
+                    ContextKind::File(path.clone()),
                     title.clone(),
                     text.clone(),
                 );

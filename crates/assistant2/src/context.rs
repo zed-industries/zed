@@ -1,6 +1,7 @@
+use std::path::PathBuf;
+
 use gpui::SharedString;
 use language_model::{LanguageModelRequestMessage, MessageContent};
-use project::ProjectEntryId;
 use serde::{Deserialize, Serialize};
 use util::post_inc;
 
@@ -26,7 +27,7 @@ pub struct Context {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ContextKind {
-    File(ProjectEntryId),
+    File(PathBuf),
     Directory,
     FetchedUrl,
     Thread(ThreadId),
