@@ -94,6 +94,9 @@ pub struct AvailableModel {
     pub cache_configuration: Option<LanguageModelCacheConfiguration>,
     /// The default temperature to use for this model.
     pub default_temperature: Option<f32>,
+    /// Any extra beta headers to provide when using the model.
+    #[serde(default)]
+    pub extra_beta_headers: Vec<String>,
 }
 
 struct GlobalRefreshLlmTokenListener(Model<RefreshLlmTokenListener>);
@@ -323,6 +326,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                     }),
                     default_temperature: model.default_temperature,
                     max_output_tokens: model.max_output_tokens,
+                    extra_beta_headers: model.extra_beta_headers.clone(),
                 }),
                 AvailableProvider::OpenAi => CloudModel::OpenAi(open_ai::Model::Custom {
                     name: model.name.clone(),
