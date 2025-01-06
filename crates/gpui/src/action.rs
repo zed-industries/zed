@@ -185,8 +185,7 @@ macro_rules! actions {
             #[doc = "The `"]
             #[doc = stringify!($name)]
             #[doc = "` action, see [`gpui::actions!`]"]
-            #[derive(::std::cmp::PartialEq, ::std::clone::Clone, ::std::default::Default, ::std::fmt::Debug, gpui::private::serde_derive::Deserialize)]
-            #[serde(crate = "gpui::private::serde")]
+            #[derive(::std::clone::Clone,::std::cmp::PartialEq, ::std::default::Default)]
             pub struct $name;
 
             gpui::__impl_action!($namespace, $name, $name,
@@ -211,14 +210,7 @@ macro_rules! action_as {
         #[doc = "The `"]
         #[doc = stringify!($name)]
         #[doc = "` action, see [`gpui::actions!`]"]
-        #[derive(
-            ::std::cmp::PartialEq,
-            ::std::clone::Clone,
-            ::std::default::Default,
-            ::std::fmt::Debug,
-            gpui::private::serde_derive::Deserialize,
-        )]
-        #[serde(crate = "gpui::private::serde")]
+        #[derive(::std::clone::Clone, ::std::cmp::PartialEq, ::std::default::Default)]
         pub struct $name;
 
         gpui::__impl_action!(
