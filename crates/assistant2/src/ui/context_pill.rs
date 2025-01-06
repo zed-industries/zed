@@ -33,10 +33,10 @@ impl RenderOnce for ContextPill {
             px(4.)
         };
         let icon = match self.context.kind {
-            ContextKind::File(_) => IconName::File,
+            ContextKind::File => IconName::File,
             ContextKind::Directory => IconName::Folder,
             ContextKind::FetchedUrl => IconName::Globe,
-            ContextKind::Thread(_) => IconName::MessageCircle,
+            ContextKind::Thread => IconName::MessageCircle,
         };
 
         h_flex()
