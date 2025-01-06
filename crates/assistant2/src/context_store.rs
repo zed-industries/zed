@@ -58,7 +58,12 @@ impl ContextStore {
         let id = self.next_context_id.post_inc();
         self.files.insert(path.to_path_buf(), id);
 
-        let name = path.to_string_lossy().into_owned().into();
+        let full_path: SharedString = path.to_string_lossy().into_owned().into();
+
+        let name = match path.file_name() {
+            Some(name) => name.to_string_lossy().into_owned().into(),
+            None => full_path.clone(),
+        };
 
         let mut text = String::new();
         push_fenced_codeblock(path, buffer.text(), &mut text);
@@ -66,6 +71,7 @@ impl ContextStore {
         self.context.push(Context {
             id,
             name,
+            full_name: Some(full_path),
             kind: ContextKind::File,
             text: text.into(),
         });
@@ -75,11 +81,17 @@ impl ContextStore {
         let id = self.next_context_id.post_inc();
         self.directories.insert(path.to_path_buf(), id);
 
-        let name = path.to_string_lossy().into_owned().into();
+        let full_path: SharedString = path.to_string_lossy().into_owned().into();
+
+        let name = match path.file_name() {
+            Some(name) => name.to_string_lossy().into_owned().into(),
+            None => full_path.clone(),
+        };
 
         self.context.push(Context {
             id,
             name,
+            full_name: Some(full_path),
             kind: ContextKind::Directory,
             text: text.into(),
         });
@@ -92,6 +104,7 @@ impl ContextStore {
         self.context.push(Context {
             id: context_id,
             name: thread.summary().unwrap_or("New thread".into()),
+            full_name: None,
             kind: ContextKind::Thread,
             text: thread.text().into(),
         });
@@ -104,6 +117,7 @@ impl ContextStore {
         self.context.push(Context {
             id: context_id,
             name: url.into(),
+            full_name: None,
             kind: ContextKind::FetchedUrl,
             text: text.into(),
         });

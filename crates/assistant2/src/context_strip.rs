@@ -70,10 +70,13 @@ impl ContextStrip {
             return None;
         }
 
-        let title = path.to_string_lossy().into_owned().into();
+        let name = match path.file_name() {
+            Some(name) => name.to_string_lossy().into_owned().into(),
+            None => path.to_string_lossy().into_owned().into(),
+        };
 
         Some(SuggestedContext::File {
-            title,
+            name,
             buffer: active_buffer.downgrade(),
         })
     }
@@ -99,7 +102,7 @@ impl ContextStrip {
         }
 
         Some(SuggestedContext::Thread {
-            title: active_thread.summary().unwrap_or("Active Thread".into()),
+            name: active_thread.summary().unwrap_or("Active Thread".into()),
             thread: weak_active_thread,
         })
     }
@@ -178,7 +181,7 @@ impl Render for ContextStrip {
             }))
             .when_some(suggested_context, |el, suggested| {
                 el.child(
-                    Button::new("add-suggested-context", suggested.title().clone())
+                    Button::new("add-suggested-context", suggested.name().clone())
                         .on_click({
                             let context_store = self.context_store.clone();
 
@@ -227,31 +230,31 @@ pub enum SuggestContextKind {
 #[derive(Clone)]
 pub enum SuggestedContext {
     File {
-        title: SharedString,
+        name: SharedString,
         buffer: WeakModel<Buffer>,
     },
     Thread {
-        title: SharedString,
+        name: SharedString,
         thread: WeakModel<Thread>,
     },
 }
 
 impl SuggestedContext {
-    pub fn title(&self) -> &SharedString {
+    pub fn name(&self) -> &SharedString {
         match self {
-            Self::File { title, .. } => title,
-            Self::Thread { title, .. } => title,
+            Self::File { name, .. } => name,
+            Self::Thread { name, .. } => name,
         }
     }
 
     pub fn accept(&self, context_store: &mut ContextStore, cx: &mut AppContext) {
         match self {
-            Self::File { buffer, title: _ } => {
+            Self::File { buffer, name: _ } => {
                 if let Some(buffer) = buffer.upgrade() {
                     context_store.insert_file(buffer.read(cx));
                 };
             }
-            Self::Thread { thread, title: _ } => {
+            Self::Thread { thread, name: _ } => {
                 if let Some(thread) = thread.upgrade() {
                     context_store.insert_thread(thread.read(cx));
                 };

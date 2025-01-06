@@ -17,6 +17,7 @@ impl ContextId {
 pub struct Context {
     pub id: ContextId,
     pub name: SharedString,
+    pub full_name: Option<SharedString>,
     pub kind: ContextKind,
     pub text: SharedString,
 }

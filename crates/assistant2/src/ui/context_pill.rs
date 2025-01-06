@@ -1,7 +1,7 @@
 use std::rc::Rc;
 
 use gpui::ClickEvent;
-use ui::{prelude::*, IconButtonShape};
+use ui::{prelude::*, IconButtonShape, Tooltip};
 
 use crate::context::{Context, ContextKind};
 
@@ -32,6 +32,7 @@ impl RenderOnce for ContextPill {
         } else {
             px(4.)
         };
+
         let icon = match self.context.kind {
             ContextKind::File => IconName::File,
             ContextKind::Directory => IconName::Folder,
@@ -42,6 +43,10 @@ impl RenderOnce for ContextPill {
         h_flex()
             .gap_1()
             .pl_1()
+            .id(ElementId::NamedInteger(
+                "context-pill".into(),
+                self.context.id.0,
+            ))
             .pr(padding_right)
             .pb(px(1.))
             .border_1()
@@ -60,6 +65,9 @@ impl RenderOnce for ContextPill {
                             move |event, cx| on_remove(event, cx)
                         }),
                 )
+            })
+            .when_some(self.context.full_name, |parent, full_name| {
+                parent.tooltip(move |cx| Tooltip::text(full_name.clone(), cx))
             })
     }
 }
