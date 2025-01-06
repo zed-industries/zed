@@ -841,72 +841,61 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
 
         h_flex()
             .id(DIAGNOSTIC_HEADER)
+            .block_mouse_down()
+            .h(2. * cx.line_height())
             .w_full()
-            .relative()
-            .child(
-                div()
-                    .top(px(0.))
-                    .absolute()
-                    .w_full()
-                    .h_px()
-                    .bg(color.border_variant),
-            )
+            .px_9()
+            .justify_between()
+            .gap_2()
             .child(
                 h_flex()
-                    .block_mouse_down()
-                    .h(2. * cx.line_height())
-                    .pl_10()
-                    .pr_5()
-                    .w_full()
-                    .justify_between()
                     .gap_2()
+                    .px_1()
+                    .rounded_md()
+                    .bg(color.surface_background.opacity(0.5))
+                    .map(|stack| {
+                        stack.child(
+                            svg()
+                                .size(cx.text_style().font_size)
+                                .flex_none()
+                                .map(|icon| {
+                                    if diagnostic.severity == DiagnosticSeverity::ERROR {
+                                        icon.path(IconName::XCircle.path())
+                                            .text_color(Color::Error.color(cx))
+                                    } else {
+                                        icon.path(IconName::Warning.path())
+                                            .text_color(Color::Warning.color(cx))
+                                    }
+                                }),
+                        )
+                    })
                     .child(
                         h_flex()
-                            .gap_3()
-                            .map(|stack| {
-                                stack.child(svg().size(cx.text_style().font_size).flex_none().map(
-                                    |icon| {
-                                        if diagnostic.severity == DiagnosticSeverity::ERROR {
-                                            icon.path(IconName::XCircle.path())
-                                                .text_color(Color::Error.color(cx))
-                                        } else {
-                                            icon.path(IconName::Warning.path())
-                                                .text_color(Color::Warning.color(cx))
-                                        }
-                                    },
-                                ))
-                            })
+                            .gap_1()
                             .child(
-                                h_flex()
-                                    .gap_1()
-                                    .child(
-                                        StyledText::new(message.clone()).with_highlights(
-                                            &cx.text_style(),
-                                            code_ranges
-                                                .iter()
-                                                .map(|range| (range.clone(), highlight_style)),
-                                        ),
-                                    )
-                                    .when_some(diagnostic.code.as_ref(), |stack, code| {
-                                        stack.child(
-                                            div()
-                                                .child(SharedString::from(format!("({code})")))
-                                                .text_color(cx.theme().colors().text_muted),
-                                        )
-                                    }),
-                            ),
-                    )
-                    .child(h_flex().gap_1().when_some(
-                        diagnostic.source.as_ref(),
-                        |stack, source| {
-                            stack.child(
-                                div()
-                                    .child(SharedString::from(source.clone()))
-                                    .text_color(cx.theme().colors().text_muted),
+                                StyledText::new(message.clone()).with_highlights(
+                                    &cx.text_style(),
+                                    code_ranges
+                                        .iter()
+                                        .map(|range| (range.clone(), highlight_style)),
+                                ),
                             )
-                        },
-                    )),
+                            .when_some(diagnostic.code.as_ref(), |stack, code| {
+                                stack.child(
+                                    div()
+                                        .child(SharedString::from(format!("({code})")))
+                                        .text_color(color.text_muted),
+                                )
+                            }),
+                    ),
             )
+            .when_some(diagnostic.source.as_ref(), |stack, source| {
+                stack.child(
+                    div()
+                        .child(SharedString::from(source.clone()))
+                        .text_color(color.text_muted),
+                )
+            })
             .into_any_element()
     })
 }

@@ -79,7 +79,7 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
         Ok(existing_path) => PathWithPosition::from_path(existing_path),
         Err(_) => {
             let path = PathWithPosition::parse_str(argument_str);
-            let curdir = env::current_dir().context("reteiving current directory")?;
+            let curdir = env::current_dir().context("retrieving current directory")?;
             path.map_path(|path| match fs::canonicalize(&path) {
                 Ok(path) => Ok(path),
                 Err(e) => {

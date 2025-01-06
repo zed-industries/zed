@@ -1580,7 +1580,7 @@ impl LinuxClient for X11Client {
     }
 }
 
-// Adatpted from:
+// Adapted from:
 // https://docs.rs/winit/0.29.11/src/winit/platform_impl/linux/x11/monitor.rs.html#103-111
 pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
     if mode.dot_clock == 0 || mode.htotal == 0 || mode.vtotal == 0 {

@@ -52,7 +52,7 @@ pub struct Summary {
 }
 
 impl DiagnosticEntry<PointUtf16> {
-    /// Returns a raw LSP diagnostic ssed to provide diagnostic context to LSP
+    /// Returns a raw LSP diagnostic used to provide diagnostic context to LSP
     /// codeAction request
     pub fn to_lsp_diagnostic_stub(&self) -> lsp::Diagnostic {
         let code = self

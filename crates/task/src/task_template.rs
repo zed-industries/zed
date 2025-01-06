@@ -143,13 +143,13 @@ impl TaskTemplate {
         let truncated_variables = truncate_variables(&task_variables);
         let cwd = match self.cwd.as_deref() {
             Some(cwd) => {
-                let substitured_cwd = substitute_all_template_variables_in_str(
+                let substituted_cwd = substitute_all_template_variables_in_str(
                     cwd,
                     &task_variables,
                     &variable_names,
                     &mut substituted_variables,
                 )?;
-                Some(PathBuf::from(substitured_cwd))
+                Some(PathBuf::from(substituted_cwd))
             }
             None => None,
         }

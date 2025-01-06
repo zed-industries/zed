@@ -14,7 +14,7 @@ can_code_sign=false
 
 # This must match the team in the provisioning profile.
 IDENTITY="Zed Industries, Inc."
-APPLE_NOTORIZATION_TEAM="MQ55VZLNZQ"
+APPLE_NOTARIZATION_TEAM="MQ55VZLNZQ"
 
 # Function for displaying help info
 help_info() {
@@ -317,7 +317,7 @@ function sign_app_binaries() {
             /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "$(pwd)/${dmg_file_path}" -v
 
             echo "Notarizing DMG with Apple"
-            "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTORIZATION_TEAM" "${dmg_file_path}"
+            "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTARIZATION_TEAM" "${dmg_file_path}"
 
             echo "Removing temporary DMG (used only for notarization)"
             rm "${dmg_file_path}"
@@ -344,7 +344,7 @@ function sign_app_binaries() {
         if [[ $can_code_sign = true ]]; then
             echo "Notarizing DMG with Apple"
             /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "$(pwd)/${dmg_file_path}" -v
-            "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTORIZATION_TEAM" "${dmg_file_path}"
+            "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTARIZATION_TEAM" "${dmg_file_path}"
             "${xcode_bin_dir_path}/stapler" staple "${dmg_file_path}"
         fi
 

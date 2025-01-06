@@ -9148,11 +9148,12 @@ impl Editor {
         // If there is an active Diagnostic Popover jump to its diagnostic instead.
         if direction == Direction::Next {
             if let Some(popover) = self.hover_state.diagnostic_popover.as_ref() {
-                let (group_id, jump_to) = popover.activation_info();
-                if self.activate_diagnostics(group_id, cx) {
+                self.activate_diagnostics(popover.group_id(), cx);
+                if let Some(active_diagnostics) = self.active_diagnostics.as_ref() {
+                    let primary_range_start = active_diagnostics.primary_range.start;
                     self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         let mut new_selection = s.newest_anchor().clone();
-                        new_selection.collapse_to(jump_to, SelectionGoal::None);
+                        new_selection.collapse_to(primary_range_start, SelectionGoal::None);
                         s.select_anchors(vec![new_selection.clone()]);
                     });
                 }
@@ -9224,7 +9225,8 @@ impl Editor {
                 });
 
             if let Some((primary_range, group_id)) = group {
-                if self.activate_diagnostics(group_id, cx) {
+                self.activate_diagnostics(group_id, cx);
+                if self.active_diagnostics.is_some() {
                     self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.select(vec![Selection {
                             id: selection.id,
@@ -10326,7 +10328,7 @@ impl Editor {
         }
     }
 
-    fn activate_diagnostics(&mut self, group_id: usize, cx: &mut ViewContext<Self>) -> bool {
+    fn activate_diagnostics(&mut self, group_id: usize, cx: &mut ViewContext<Self>) {
         self.dismiss_diagnostics(cx);
         let snapshot = self.snapshot(cx);
         self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
@@ -10336,16 +10338,18 @@ impl Editor {
             let mut primary_message = None;
             let mut group_end = Point::zero();
             let diagnostic_group = buffer
-                .diagnostic_group::<MultiBufferPoint>(group_id)
+                .diagnostic_group(group_id)
                 .filter_map(|entry| {
-                    if snapshot.is_line_folded(MultiBufferRow(entry.range.start.row))
-                        && (entry.range.start.row == entry.range.end.row
-                            || snapshot.is_line_folded(MultiBufferRow(entry.range.end.row)))
+                    let start = entry.range.start.to_point(&buffer);
+                    let end = entry.range.end.to_point(&buffer);
+                    if snapshot.is_line_folded(MultiBufferRow(start.row))
+                        && (start.row == end.row
+                            || snapshot.is_line_folded(MultiBufferRow(end.row)))
                     {
                         return None;
                     }
-                    if entry.range.end > group_end {
-                        group_end = entry.range.end;
+                    if end > group_end {
+                        group_end = end;
                     }
                     if entry.diagnostic.is_primary {
                         primary_range = Some(entry.range.clone());
@@ -10356,8 +10360,6 @@ impl Editor {
                 .collect::<Vec<_>>();
             let primary_range = primary_range?;
             let primary_message = primary_message?;
-            let primary_range =
-                buffer.anchor_after(primary_range.start)..buffer.anchor_before(primary_range.end);
 
             let blocks = display_map
                 .insert_blocks(
@@ -10388,7 +10390,6 @@ impl Editor {
                 is_valid: true,
             })
         });
-        self.active_diagnostics.is_some()
     }
 
     fn dismiss_diagnostics(&mut self, cx: &mut ViewContext<Self>) {
@@ -11780,7 +11781,7 @@ impl Editor {
     }
 
     /// Merges all anchor ranges for all context types ever set, picking the last highlight added in case of a row conflict.
-    /// Rerturns a map of display rows that are highlighted and their corresponding highlight color.
+    /// Returns a map of display rows that are highlighted and their corresponding highlight color.
     /// Allows to ignore certain kinds of highlights.
     pub fn highlighted_display_rows(
         &mut self,
@@ -12573,7 +12574,7 @@ impl Editor {
                         .file()
                         .is_none()
                         .then(|| {
-                            // Handle file-less buffers separately: those are not really the project items, so won't have a paroject path or entity id,
+                            // Handle file-less buffers separately: those are not really the project items, so won't have a project path or entity id,
                             // so `workspace.open_project_item` will never find them, always opening a new editor.
                             // Instead, we try to activate the existing editor in the pane first.
                             let (editor, pane_item_index) =
