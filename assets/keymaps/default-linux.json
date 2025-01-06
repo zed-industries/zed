@@ -172,6 +172,7 @@
     "context": "AssistantPanel",
     "bindings": {
       "ctrl-k c": "assistant::CopyCode",
+      "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-g": "search::SelectNextMatch",
       "ctrl-shift-g": "search::SelectPrevMatch",
       "ctrl-shift-m": "assistant::ToggleModelSelector",
@@ -411,7 +412,7 @@
       "ctrl-shift-p": "command_palette::Toggle",
       "f1": "command_palette::Toggle",
       "ctrl-shift-m": "diagnostics::Deploy",
-      "ctrl-shift-e": "pane::RevealInProjectPanel",
+      "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-b": "outline_panel::ToggleFocus",
       "ctrl-?": "assistant::ToggleFocus",
       "ctrl-alt-s": "workspace::SaveAll",
@@ -532,6 +533,7 @@
       "alt-enter": "editor::OpenExcerpts",
       "shift-enter": "editor::ExpandExcerpts",
       "ctrl-k enter": "editor::OpenExcerptsSplit",
+      "ctrl-shift-e": "pane::RevealInProjectPanel",
       "ctrl-f8": "editor::GoToHunk",
       "ctrl-shift-f8": "editor::GoToPrevHunk",
       "ctrl-enter": "assistant::InlineAssist"
@@ -612,7 +614,6 @@
       "ctrl-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-ctrl-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "project_panel::OpenWithSystem",
-      "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrev",
