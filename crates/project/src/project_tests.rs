@@ -3060,17 +3060,19 @@ async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor().clone());
     fs.insert_tree(
-        "/dir",
+        to_path_string("/dir"),
         json!({
             "file1": "the original contents",
         }),
     )
     .await;
 
-    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [to_path_string("/dir").as_ref()], cx).await;
     let worktree = project.read_with(cx, |project, cx| project.worktrees(cx).next().unwrap());
     let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
+        .update(cx, |p, cx| {
+            p.open_local_buffer(to_path_string("/dir/file1"), cx)
+        })
         .await
         .unwrap();
 
@@ -3081,7 +3083,7 @@ async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
     // Change the buffer's file on disk, and then wait for the file change
     // to be detected by the worktree, so that the buffer starts reloading.
     fs.save(
-        "/dir/file1".as_ref(),
+        to_path_string("/dir/file1").as_ref(),
         &"the first contents".into(),
         Default::default(),
     )
@@ -3100,7 +3102,10 @@ async fn test_edit_buffer_while_it_reloads(cx: &mut gpui::TestAppContext) {
     });
 
     cx.executor().run_until_parked();
-    let on_disk_text = fs.load(Path::new("/dir/file1")).await.unwrap();
+    let on_disk_text = fs
+        .load(Path::new(&to_path_string("/dir/file1")))
+        .await
+        .unwrap();
     buffer.read_with(cx, |buffer, _| {
         let buffer_text = buffer.text();
         if buffer_text == on_disk_text {
