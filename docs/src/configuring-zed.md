@@ -1152,7 +1152,7 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 
 ## Diagnostics
 
-- Descrition: Configuration for diagnostics-related features.
+- Description: Configuration for diagnostics-related features.
 - Setting: `diagnostics`
 - Default:
 
