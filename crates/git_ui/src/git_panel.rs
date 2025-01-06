@@ -29,8 +29,7 @@ use std::{
     usize,
 };
 use ui::{
-    prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, ListItem, Scrollbar,
-    ScrollbarState, Tooltip,
+    prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -81,12 +80,6 @@ struct EntryDetails {
     status: Option<GitFileStatus>,
     hunks: Rc<OnceCell<Vec<DiffHunk>>>,
     index: usize,
-}
-
-impl EntryDetails {
-    pub fn is_dir(&self) -> bool {
-        self.kind.is_dir()
-    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -808,7 +801,11 @@ impl GitPanel {
     pub fn render_panel_header(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
 
-        let changes_string = format!("{} changes", self.entry_count());
+        let changes_string = match self.entry_count() {
+            0 => "No changes".to_string(),
+            1 => "1 change".to_string(),
+            n => format!("{} changes", n),
+        };
 
         h_flex()
             .h(px(32.))
