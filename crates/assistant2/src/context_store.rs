@@ -112,22 +112,22 @@ impl ContextStore {
     }
 
     pub fn remove_context(&mut self, id: &ContextId) {
-        let Some(ix) = self.context.iter().position(|c| c.id == *id) else {
+        let Some(ix) = self.context.iter().position(|context| context.id == *id) else {
             return;
         };
 
         match self.context.remove(ix).kind {
             ContextKind::File => {
-                self.files.retain(|_, p_id| p_id != id);
+                self.files.retain(|_, context_id| context_id != id);
             }
             ContextKind::Directory => {
-                self.directories.retain(|_, p_id| p_id != id);
+                self.directories.retain(|_, context_id| context_id != id);
             }
             ContextKind::FetchedUrl => {
-                self.fetched_urls.retain(|_, p_id| p_id != id);
+                self.fetched_urls.retain(|_, context_id| context_id != id);
             }
             ContextKind::Thread => {
-                self.threads.retain(|_, p_id| p_id != id);
+                self.threads.retain(|_, context_id| context_id != id);
             }
         }
     }
@@ -170,23 +170,23 @@ pub enum IncludedFile {
     InDirectory(PathBuf),
 }
 
-pub(crate) fn push_fenced_codeblock(path: &Path, content: String, buf: &mut String) {
-    buf.reserve(content.len() + 64);
+pub(crate) fn push_fenced_codeblock(path: &Path, content: String, buffer: &mut String) {
+    buffer.reserve(content.len() + 64);
 
-    write!(buf, "```").unwrap();
+    write!(buffer, "```").unwrap();
 
     if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
-        write!(buf, "{} ", extension).unwrap();
+        write!(buffer, "{} ", extension).unwrap();
     }
 
-    write!(buf, "{}", path.display()).unwrap();
+    write!(buffer, "{}", path.display()).unwrap();
 
-    buf.push('\n');
-    buf.push_str(&content);
+    buffer.push('\n');
+    buffer.push_str(&content);
 
-    if !buf.ends_with('\n') {
-        buf.push('\n');
+    if !buffer.ends_with('\n') {
+        buffer.push('\n');
     }
 
-    buf.push_str("```\n");
+    buffer.push_str("```\n");
 }
