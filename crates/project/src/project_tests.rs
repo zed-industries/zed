@@ -1599,9 +1599,10 @@ async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
     let progress_token = "the-progress-token";
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree("/dir", json!({ "a.rs": "" })).await;
+    fs.insert_tree(to_path_string("/dir"), json!({ "a.rs": "" }))
+        .await;
 
-    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs, [to_path_string("/dir").as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
@@ -1617,7 +1618,7 @@ async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
 
     let (buffer, _handle) = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp("/dir/a.rs", cx)
+            project.open_local_buffer_with_lsp(to_path_string("/dir/a.rs"), cx)
         })
         .await
         .unwrap();
