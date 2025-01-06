@@ -3058,6 +3058,7 @@ impl Workspace {
         event: &pane::Event,
         cx: &mut ViewContext<Self>,
     ) {
+        let mut serialize_workspace = true;
         match event {
             pane::Event::AddItem { item } => {
                 item.added_to_pane(self, pane, cx);
@@ -3068,10 +3069,14 @@ impl Workspace {
             pane::Event::Split(direction) => {
                 self.split_and_clone(pane, *direction, cx);
             }
-            pane::Event::JoinIntoNext => self.join_pane_into_next(pane, cx),
-            pane::Event::JoinAll => self.join_all_panes(cx),
+            pane::Event::JoinIntoNext => {
+                self.join_pane_into_next(pane, cx);
+            }
+            pane::Event::JoinAll => {
+                self.join_all_panes(cx);
+            }
             pane::Event::Remove { focus_on_pane } => {
-                self.remove_pane(pane, focus_on_pane.clone(), cx)
+                self.remove_pane(pane, focus_on_pane.clone(), cx);
             }
             pane::Event::ActivateItem { local } => {
                 cx.on_next_frame(|_, cx| {
@@ -3089,16 +3094,20 @@ impl Workspace {
                     self.update_active_view_for_followers(cx);
                 }
             }
-            pane::Event::UserSavedItem { item, save_intent } => cx.emit(Event::UserSavedItem {
-                pane: pane.downgrade(),
-                item: item.boxed_clone(),
-                save_intent: *save_intent,
-            }),
+            pane::Event::UserSavedItem { item, save_intent } => {
+                cx.emit(Event::UserSavedItem {
+                    pane: pane.downgrade(),
+                    item: item.boxed_clone(),
+                    save_intent: *save_intent,
+                });
+                serialize_workspace = false;
+            }
             pane::Event::ChangeItemTitle => {
                 if pane == self.active_pane {
                     self.active_item_path_changed(cx);
                 }
                 self.update_window_edited(cx);
+                serialize_workspace = false;
             }
             pane::Event::RemoveItem { .. } => {}
             pane::Event::RemovedItem { item_id } => {
@@ -3137,7 +3146,9 @@ impl Workspace {
             }
         }
 
-        self.serialize_workspace(cx);
+        if serialize_workspace {
+            self.serialize_workspace(cx);
+        }
     }
 
     pub fn unfollow_in_pane(

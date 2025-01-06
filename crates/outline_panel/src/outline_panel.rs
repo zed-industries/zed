@@ -4655,9 +4655,6 @@ impl Panel for OutlinePanel {
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if active {
-            eprintln!("{}", std::backtrace::Backtrace::force_capture());
-        }
         cx.spawn(|outline_panel, mut cx| async move {
             outline_panel
                 .update(&mut cx, |outline_panel, cx| {
