@@ -1128,9 +1128,9 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/root",
+        to_path_string("/dir"),
         json!({
-            "dir": {
+            "this": {
                 ".git": {
                     "HEAD": "ref: refs/heads/main",
                 },
@@ -1143,11 +1143,11 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    let project = Project::test(fs, ["/root/dir".as_ref()], cx).await;
+    let project = Project::test(fs, [to_path_string("/dir/this").as_ref()], cx).await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
     let (worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/root/dir", true, cx)
+            project.find_or_create_worktree(to_path_string("/dir/this"), true, cx)
         })
         .await
         .unwrap();
@@ -1155,7 +1155,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
 
     let (worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/root/other.rs", false, cx)
+            project.find_or_create_worktree(to_path_string("/dir/other.rs"), false, cx)
         })
         .await
         .unwrap();
@@ -1167,7 +1167,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
             .update_diagnostics(
                 server_id,
                 lsp::PublishDiagnosticsParams {
-                    uri: Url::from_file_path("/root/dir/b.rs").unwrap(),
+                    uri: Url::from_file_path(to_path_string("/dir/this/b.rs")).unwrap(),
                     version: None,
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 5)),
@@ -1184,7 +1184,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
             .update_diagnostics(
                 server_id,
                 lsp::PublishDiagnosticsParams {
-                    uri: Url::from_file_path("/root/other.rs").unwrap(),
+                    uri: Url::from_file_path(to_path_string("/dir/other.rs")).unwrap(),
                     version: None,
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 9)),
