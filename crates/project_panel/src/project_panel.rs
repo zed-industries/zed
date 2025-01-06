@@ -311,7 +311,7 @@ impl ProjectPanel {
                     this.update_visible_entries(None, cx);
                     cx.notify();
                 }
-                project::Event::GitRepositoryUpdated
+                project::Event::WorktreeUpdatedGitRepositories(_)
                 | project::Event::WorktreeUpdatedEntries(_, _)
                 | project::Event::WorktreeAdded(_)
                 | project::Event::WorktreeOrderChanged => {
