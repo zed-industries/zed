@@ -83,7 +83,7 @@ impl ContextStore {
         }
     }
 
-    pub fn id_for_file(&self, path: &Path) -> Option<IncludedFile> {
+    pub fn included_file(&self, path: &Path) -> Option<IncludedFile> {
         if let Some(id) = self.files.get(path) {
             return Some(IncludedFile::Direct(*id));
         }
@@ -103,11 +103,11 @@ impl ContextStore {
         None
     }
 
-    pub fn id_for_directory(&self, path: &Path) -> Option<ContextId> {
+    pub fn included_directory(&self, path: &Path) -> Option<ContextId> {
         self.directories.get(path).copied()
     }
 
-    pub fn id_for_thread(&self, thread_id: &ThreadId) -> Option<ContextId> {
+    pub fn included_thread(&self, thread_id: &ThreadId) -> Option<ContextId> {
         self.context
             .iter()
             .find(|probe| match probe.kind {
@@ -119,7 +119,7 @@ impl ContextStore {
             .map(|context| context.id)
     }
 
-    pub fn id_for_url(&self, url: &str) -> Option<ContextId> {
+    pub fn included_url(&self, url: &str) -> Option<ContextId> {
         self.context
             .iter()
             .find(|probe| match &probe.kind {

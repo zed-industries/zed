@@ -239,7 +239,7 @@ impl PickerDelegate for FileContextPickerDelegate {
 
                         text.push_str("```\n");
 
-                        match context_store.id_for_file(&path) {
+                        match context_store.included_file(&path) {
                             Some(IncludedFile::Direct(context_id)) => {
                                 context_store.remove_context(&context_id);
                             }
@@ -313,7 +313,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         let added = self
             .context_store
             .upgrade()
-            .and_then(|context_store| context_store.read(cx).id_for_file(&path_match.path));
+            .and_then(|context_store| context_store.read(cx).included_file(&path_match.path));
 
         Some(
             ListItem::new(ix)

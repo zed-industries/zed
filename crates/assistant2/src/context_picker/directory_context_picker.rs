@@ -247,7 +247,7 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
                 this.delegate
                     .context_store
                     .update(cx, |context_store, _cx| {
-                        if let Some(context_id) = context_store.id_for_directory(&path) {
+                        if let Some(context_id) = context_store.included_directory(&path) {
                             context_store.remove_context(&context_id);
                         } else {
                             context_store.insert_context(
@@ -292,7 +292,7 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         let added = self.context_store.upgrade().map_or(false, |context_store| {
             context_store
                 .read(cx)
-                .id_for_directory(&path_match.path)
+                .included_directory(&path_match.path)
                 .is_some()
         });
 

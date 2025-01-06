@@ -70,7 +70,7 @@ impl ContextStrip {
         let path = file.path();
         let title = path.to_string_lossy().into_owned().into();
 
-        if self.context_store.read(cx).id_for_file(path).is_some() {
+        if self.context_store.read(cx).included_file(path).is_some() {
             return None;
         }
 
@@ -95,7 +95,7 @@ impl ContextStrip {
         if self
             .context_store
             .read(cx)
-            .id_for_thread(active_thread.id())
+            .included_thread(active_thread.id())
             .is_some()
         {
             return None;
