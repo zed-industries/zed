@@ -1,5 +1,3 @@
-use std::fmt::Write as _;
-use std::ops::RangeInclusive;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -12,7 +10,6 @@ use ui::{prelude::*, ListItem, Tooltip};
 use util::ResultExt as _;
 use workspace::Workspace;
 
-use crate::context::ContextKind;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::{ContextStore, IncludedFile};
 
@@ -230,15 +227,6 @@ impl PickerDelegate for FileContextPickerDelegate {
                 this.delegate
                     .context_store
                     .update(cx, |context_store, cx| {
-                        let mut text = String::new();
-                        text.push_str(&codeblock_fence_for_path(Some(&path), None));
-                        text.push_str(&buffer.read(cx).text());
-                        if !text.ends_with('\n') {
-                            text.push('\n');
-                        }
-
-                        text.push_str("```\n");
-
                         match context_store.included_file(&path) {
                             Some(IncludedFile::Direct(context_id)) => {
                                 context_store.remove_context(&context_id);
@@ -247,11 +235,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                                 // Cannot remove whole directory
                             }
                             None => {
-                                context_store.insert_context(
-                                    ContextKind::File(path.to_path_buf()),
-                                    path.to_string_lossy().to_string(),
-                                    text,
-                                );
+                                context_store.insert_file(buffer.read(cx));
                             }
                         }
                     })?;
@@ -337,34 +321,9 @@ impl PickerDelegate for FileContextPickerDelegate {
                         let dir_name = dir_name.to_string_lossy().into_owned();
 
                         el.end_slot(Label::new("Included").size(LabelSize::XSmall))
-                            .tooltip(move |cx| Tooltip::text(format!("By {dir_name}"), cx))
+                            .tooltip(move |cx| Tooltip::text(format!("in {dir_name}"), cx))
                     }
                 }),
         )
     }
-}
-
-pub(crate) fn codeblock_fence_for_path(
-    path: Option<&Path>,
-    row_range: Option<RangeInclusive<u32>>,
-) -> String {
-    let mut text = String::new();
-    write!(text, "```").unwrap();
-
-    if let Some(path) = path {
-        if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
-            write!(text, "{} ", extension).unwrap();
-        }
-
-        write!(text, "{}", path.display()).unwrap();
-    } else {
-        write!(text, "untitled").unwrap();
-    }
-
-    if let Some(row_range) = row_range {
-        write!(text, ":{}-{}", row_range.start() + 1, row_range.end() + 1).unwrap();
-    }
-
-    text.push('\n');
-    text
 }

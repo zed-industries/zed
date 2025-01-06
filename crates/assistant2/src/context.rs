@@ -1,11 +1,7 @@
-use std::path::PathBuf;
-
 use gpui::SharedString;
 use language_model::{LanguageModelRequestMessage, MessageContent};
 use serde::{Deserialize, Serialize};
 use util::post_inc;
-
-use crate::thread::ThreadId;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct ContextId(pub(crate) usize);
@@ -27,10 +23,10 @@ pub struct Context {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ContextKind {
-    File(PathBuf),
-    Directory(PathBuf),
-    FetchedUrl(String),
-    Thread(ThreadId),
+    File,
+    Directory,
+    FetchedUrl,
+    Thread,
 }
 
 pub fn attach_context_to_message(
@@ -44,21 +40,21 @@ pub fn attach_context_to_message(
 
     for context in context.into_iter() {
         match context.kind {
-            ContextKind::File(_) => {
+            ContextKind::File => {
                 file_context.push_str(&context.text);
                 file_context.push('\n');
             }
-            ContextKind::Directory(_) => {
+            ContextKind::Directory => {
                 directory_context.push_str(&context.text);
                 directory_context.push('\n');
             }
-            ContextKind::FetchedUrl(_) => {
+            ContextKind::FetchedUrl => {
                 fetch_context.push_str(&context.name);
                 fetch_context.push('\n');
                 fetch_context.push_str(&context.text);
                 fetch_context.push('\n');
             }
-            ContextKind::Thread(_) => {
+            ContextKind::Thread => {
                 thread_context.push_str(&context.name);
                 thread_context.push('\n');
                 thread_context.push_str(&context.text);

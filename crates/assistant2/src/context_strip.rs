@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::rc::Rc;
 
 use editor::Editor;
@@ -7,10 +6,9 @@ use language::Buffer;
 use ui::{prelude::*, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip};
 use workspace::Workspace;
 
-use crate::context::ContextKind;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
-use crate::thread::{Thread, ThreadId};
+use crate::thread::Thread;
 use crate::thread_store::ThreadStore;
 use crate::ui::ContextPill;
 use crate::{AssistantPanel, ToggleContextPicker};
@@ -66,16 +64,15 @@ impl ContextStrip {
         let editor = active_item.to_any().downcast::<Editor>().ok()?.read(cx);
         let active_buffer = editor.buffer().read(cx).as_singleton()?;
 
-        let file = active_buffer.read(cx).file()?;
-        let path = file.path();
-        let title = path.to_string_lossy().into_owned().into();
+        let path = active_buffer.read(cx).file()?.path();
 
         if self.context_store.read(cx).included_file(path).is_some() {
             return None;
         }
 
+        let title = path.to_string_lossy().into_owned().into();
+
         Some(SuggestedContext::File {
-            path: path.to_path_buf(),
             title,
             buffer: active_buffer.downgrade(),
         })
@@ -102,7 +99,6 @@ impl ContextStrip {
         }
 
         Some(SuggestedContext::Thread {
-            id: active_thread.id().clone(),
             title: active_thread.summary().unwrap_or("Active Thread".into()),
             thread: weak_active_thread,
         })
@@ -233,10 +229,8 @@ pub enum SuggestedContext {
     File {
         title: SharedString,
         buffer: WeakModel<Buffer>,
-        path: PathBuf,
     },
     Thread {
-        id: ThreadId,
         title: SharedString,
         thread: WeakModel<Thread>,
     },
@@ -252,33 +246,15 @@ impl SuggestedContext {
 
     pub fn accept(&self, context_store: &mut ContextStore, cx: &mut AppContext) {
         match self {
-            Self::File {
-                title,
-                buffer,
-                path,
-            } => {
-                let Some(buffer) = buffer.upgrade() else {
-                    return;
+            Self::File { buffer, title: _ } => {
+                if let Some(buffer) = buffer.upgrade() {
+                    context_store.insert_file(buffer.read(cx));
                 };
-                let buffer = buffer.read(cx);
-                let text = buffer.text();
-
-                context_store.insert_context(
-                    ContextKind::File(path.clone()),
-                    title.clone(),
-                    text.clone(),
-                );
             }
-            Self::Thread { id, title, thread } => {
-                let Some(thread) = thread.upgrade() else {
-                    return;
+            Self::Thread { thread, title: _ } => {
+                if let Some(thread) = thread.upgrade() {
+                    context_store.insert_thread(thread.read(cx));
                 };
-
-                context_store.insert_context(
-                    ContextKind::Thread(id.clone()),
-                    title.clone(),
-                    thread.read(cx).text(),
-                );
             }
         }
     }

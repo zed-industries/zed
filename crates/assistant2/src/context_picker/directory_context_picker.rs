@@ -11,10 +11,8 @@ use ui::{prelude::*, ListItem};
 use util::ResultExt as _;
 use workspace::Workspace;
 
-use crate::context::ContextKind;
-use crate::context_picker::file_context_picker::codeblock_fence_for_path;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
-use crate::context_store::ContextStore;
+use crate::context_store::{codeblock_fence_for_path, ContextStore};
 
 pub struct DirectoryContextPicker {
     picker: View<Picker<DirectoryContextPickerDelegate>>,
@@ -250,11 +248,7 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
                         if let Some(context_id) = context_store.included_directory(&path) {
                             context_store.remove_context(&context_id);
                         } else {
-                            context_store.insert_context(
-                                ContextKind::Directory(path.to_path_buf()),
-                                path.to_string_lossy().to_string(),
-                                text,
-                            );
+                            context_store.insert_directory(&path, text);
                         }
                     })?;
 

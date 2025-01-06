@@ -1,8 +1,12 @@
+use std::fmt::Write as _;
+use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
 use collections::HashMap;
 use gpui::SharedString;
+use language::Buffer;
 
+use crate::thread::Thread;
 use crate::{
     context::{Context, ContextId, ContextKind},
     thread::ThreadId,
@@ -13,6 +17,8 @@ pub struct ContextStore {
     next_context_id: ContextId,
     files: HashMap<PathBuf, ContextId>,
     directories: HashMap<PathBuf, ContextId>,
+    threads: HashMap<ThreadId, ContextId>,
+    fetched_urls: HashMap<String, ContextId>,
 }
 
 impl ContextStore {
@@ -22,6 +28,8 @@ impl ContextStore {
             next_context_id: ContextId(0),
             files: HashMap::new(),
             directories: HashMap::new(),
+            threads: HashMap::new(),
+            fetched_urls: HashMap::new(),
         }
     }
 
@@ -41,28 +49,69 @@ impl ContextStore {
         self.directories.clear();
     }
 
-    pub fn insert_context(
-        &mut self,
-        kind: ContextKind,
-        name: impl Into<SharedString>,
-        text: impl Into<SharedString>,
-    ) {
-        let id = self.next_context_id.post_inc();
+    pub fn insert_file(&mut self, buffer: &Buffer) {
+        let Some(file) = buffer.file() else {
+            return;
+        };
 
-        match &kind {
-            ContextKind::File(path) => {
-                self.files.insert(path.clone(), id);
-            }
-            ContextKind::Directory(path) => {
-                self.directories.insert(path.clone(), id);
-            }
-            ContextKind::FetchedUrl(_) | ContextKind::Thread(_) => {}
+        let path = file.path();
+
+        let id = self.next_context_id.post_inc();
+        self.files.insert(path.to_path_buf(), id);
+
+        let name = path.to_string_lossy().into_owned().into();
+
+        let mut text = String::new();
+        text.push_str(&codeblock_fence_for_path(Some(&path), None));
+        text.push_str(&buffer.text());
+        if !text.ends_with('\n') {
+            text.push('\n');
         }
+
+        text.push_str("```\n");
 
         self.context.push(Context {
             id,
-            name: name.into(),
-            kind,
+            name,
+            kind: ContextKind::File,
+            text: text.into(),
+        });
+    }
+
+    pub fn insert_directory(&mut self, path: &Path, text: impl Into<SharedString>) {
+        let id = self.next_context_id.post_inc();
+        self.directories.insert(path.to_path_buf(), id);
+
+        let name = path.to_string_lossy().into_owned().into();
+
+        self.context.push(Context {
+            id,
+            name,
+            kind: ContextKind::Directory,
+            text: text.into(),
+        });
+    }
+
+    pub fn insert_thread(&mut self, thread: &Thread) {
+        let context_id = self.next_context_id.post_inc();
+        self.threads.insert(thread.id().clone(), context_id);
+
+        self.context.push(Context {
+            id: context_id,
+            name: thread.summary().unwrap_or("New thread".into()),
+            kind: ContextKind::Thread,
+            text: thread.text().into(),
+        });
+    }
+
+    pub fn insert_fetched_url(&mut self, url: String, text: impl Into<SharedString>) {
+        let context_id = self.next_context_id.post_inc();
+        self.fetched_urls.insert(url.clone(), context_id);
+
+        self.context.push(Context {
+            id: context_id,
+            name: url.into(),
+            kind: ContextKind::FetchedUrl,
             text: text.into(),
         });
     }
@@ -73,13 +122,18 @@ impl ContextStore {
         };
 
         match self.context.remove(ix).kind {
-            ContextKind::File(path) => {
-                self.files.remove(&path);
+            ContextKind::File => {
+                self.files.retain(|_, p_id| p_id != id);
             }
-            ContextKind::Directory(path) => {
-                self.directories.remove(&path);
+            ContextKind::Directory => {
+                self.directories.retain(|_, p_id| p_id != id);
             }
-            ContextKind::FetchedUrl(_) | ContextKind::Thread(_) => {}
+            ContextKind::FetchedUrl => {
+                self.fetched_urls.retain(|_, p_id| p_id != id);
+            }
+            ContextKind::Thread => {
+                self.directories.retain(|_, p_id| p_id != id);
+            }
         }
     }
 
@@ -108,29 +162,40 @@ impl ContextStore {
     }
 
     pub fn included_thread(&self, thread_id: &ThreadId) -> Option<ContextId> {
-        self.context
-            .iter()
-            .find(|probe| match probe.kind {
-                ContextKind::Thread(ref probe_thread_id) => probe_thread_id == thread_id,
-                ContextKind::File(_) | ContextKind::Directory(_) | ContextKind::FetchedUrl(_) => {
-                    false
-                }
-            })
-            .map(|context| context.id)
+        self.threads.get(thread_id).copied()
     }
 
     pub fn included_url(&self, url: &str) -> Option<ContextId> {
-        self.context
-            .iter()
-            .find(|probe| match &probe.kind {
-                ContextKind::FetchedUrl(probe_url) => probe_url == url,
-                ContextKind::File(_) | ContextKind::Directory(_) | ContextKind::Thread(_) => false,
-            })
-            .map(|context| context.id)
+        self.fetched_urls.get(url).copied()
     }
 }
 
 pub enum IncludedFile {
     Direct(ContextId),
     InDirectory(PathBuf),
+}
+
+pub(crate) fn codeblock_fence_for_path(
+    path: Option<&Path>,
+    row_range: Option<RangeInclusive<u32>>,
+) -> String {
+    let mut text = String::new();
+    write!(text, "```").unwrap();
+
+    if let Some(path) = path {
+        if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
+            write!(text, "{} ", extension).unwrap();
+        }
+
+        write!(text, "{}", path.display()).unwrap();
+    } else {
+        write!(text, "untitled").unwrap();
+    }
+
+    if let Some(row_range) = row_range {
+        write!(text, ":{}-{}", row_range.start() + 1, row_range.end() + 1).unwrap();
+    }
+
+    text.push('\n');
+    text
 }

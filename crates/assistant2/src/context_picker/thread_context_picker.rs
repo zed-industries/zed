@@ -5,7 +5,6 @@ use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, Wea
 use picker::{Picker, PickerDelegate};
 use ui::{prelude::*, ListItem};
 
-use crate::context::ContextKind;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store;
 use crate::thread::ThreadId;
@@ -169,16 +168,10 @@ impl PickerDelegate for ThreadContextPickerDelegate {
 
         self.context_store
             .update(cx, |context_store, cx| {
-                let thread = thread.read(cx);
-
-                if let Some(context_id) = context_store.included_thread(&thread.id()) {
+                if let Some(context_id) = context_store.included_thread(&entry.id) {
                     context_store.remove_context(&context_id);
                 } else {
-                    context_store.insert_context(
-                        ContextKind::Thread(thread.id().clone()),
-                        entry.summary.clone(),
-                        thread.text(),
-                    );
+                    context_store.insert_thread(thread.read(cx));
                 }
             })
             .ok();
