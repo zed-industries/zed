@@ -3485,7 +3485,7 @@ impl MultiBufferSnapshot {
         clip_buffer_position: fn(&text::BufferSnapshot, D, Bias) -> D,
     ) -> D
     where
-        D: TextDimension + Copy + Sub<D, Output = D> + Ord,
+        D: TextDimension + Copy + Sub<D, Output = D> + Ord + std::fmt::Debug,
     {
         let mut cursor = self.cursor();
         cursor.seek(&position);
@@ -3509,8 +3509,8 @@ impl MultiBufferSnapshot {
         convert_buffer_dimension: fn(&text::BufferSnapshot, D1) -> D2,
     ) -> D2
     where
-        D1: TextDimension + Copy + Ord + Sub<D1, Output = D1>,
-        D2: TextDimension + Copy + Ord + Sub<D2, Output = D2>,
+        D1: TextDimension + Copy + Ord + Sub<D1, Output = D1> + std::fmt::Debug,
+        D2: TextDimension + Copy + Ord + Sub<D2, Output = D2> + std::fmt::Debug,
     {
         let mut cursor = self.cursor::<DimensionPair<D1, D2>>();
         cursor.seek(&DimensionPair { key, value: None });
@@ -5118,7 +5118,7 @@ impl MultiBufferSnapshot {
 
 impl<'a, D> MultiBufferCursor<'a, D>
 where
-    D: TextDimension + Ord + Copy + Sub<D, Output = D>,
+    D: TextDimension + Ord + Copy + Sub<D, Output = D> + std::fmt::Debug,
 {
     fn seek(&mut self, position: &D) {
         self.diff_transforms
@@ -5144,7 +5144,7 @@ where
         self.diff_transforms
             .seek_forward(&OutputDimension(*position), Bias::Right, &());
         if self.diff_transforms.item().is_none() && *position == self.diff_transforms.start().0 .0 {
-            self.excerpts.prev(&());
+            self.diff_transforms.prev(&());
         }
 
         let overshoot = *position - self.diff_transforms.start().0 .0;
@@ -5950,10 +5950,10 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Option<ExcerptId> {
     }
 }
 
-#[derive(Clone, PartialOrd, Ord, Eq, PartialEq)]
+#[derive(Clone, PartialOrd, Ord, Eq, PartialEq, Debug)]
 struct ExcerptDimension<T>(T);
 
-#[derive(Clone, PartialOrd, Ord, Eq, PartialEq)]
+#[derive(Clone, PartialOrd, Ord, Eq, PartialEq, Debug)]
 struct OutputDimension<T>(T);
 
 impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for ExcerptOffset {
