@@ -12,7 +12,7 @@ actions!(
     [
         StageAll,
         UnstageAll,
-        DiscardAll,
+        RevertAll,
         CommitStagedChanges,
         CommitAllChanges
     ]

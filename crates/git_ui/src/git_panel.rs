@@ -1,6 +1,6 @@
 use crate::{git_status_icon, settings::GitPanelSettings};
-use crate::{CommitAllChanges, CommitStagedChanges, DiscardAll, StageAll, UnstageAll};
-use anyhow::Result;
+use crate::{CommitAllChanges, CommitStagedChanges, RevertAll, StageAll, UnstageAll};
+use anyhow::{Context as _, Result};
 use db::kvp::KEY_VALUE_STORE;
 use git::{
     diff::DiffHunk,
@@ -405,7 +405,7 @@ impl GitPanel {
         println!("Unstage all triggered");
     }
 
-    fn discard_all(&mut self, _: &DiscardAll, _cx: &mut ViewContext<Self>) {
+    fn discard_all(&mut self, _: &RevertAll, _cx: &mut ViewContext<Self>) {
         // TODO: Implement discard all
         println!("Discard all triggered");
     }
@@ -829,7 +829,7 @@ impl GitPanel {
 
                                 Tooltip::for_action_in(
                                     "Discard all changes",
-                                    &DiscardAll,
+                                    &RevertAll,
                                     &focus_handle,
                                     cx,
                                 )
@@ -839,7 +839,7 @@ impl GitPanel {
                     )
                     .child(if self.all_staged() {
                         self.panel_button("unstage-all", "Unstage All").on_click(
-                            cx.listener(move |_, _, cx| cx.dispatch_action(Box::new(DiscardAll))),
+                            cx.listener(move |_, _, cx| cx.dispatch_action(Box::new(RevertAll))),
                         )
                     } else {
                         self.panel_button("stage-all", "Stage All").on_click(
@@ -1174,9 +1174,7 @@ impl Render for GitPanel {
                     .on_action(
                         cx.listener(|this, &UnstageAll, cx| this.unstage_all(&UnstageAll, cx)),
                     )
-                    .on_action(
-                        cx.listener(|this, &DiscardAll, cx| this.discard_all(&DiscardAll, cx)),
-                    )
+                    .on_action(cx.listener(|this, &RevertAll, cx| this.discard_all(&RevertAll, cx)))
                     .on_action(cx.listener(|this, &CommitStagedChanges, cx| {
                         this.commit_staged_changes(&CommitStagedChanges, cx)
                     }))
