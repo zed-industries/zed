@@ -1,6 +1,6 @@
 mod supported_countries;
 
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, bail, Result};
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, Stream, StreamExt};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use serde::{Deserialize, Serialize};
@@ -15,22 +15,23 @@ pub async fn stream_generate_content(
     api_key: &str,
     request: GenerateContentRequest,
 ) -> Result<BoxStream<'static, Result<GenerateContentResponse>>> {
-
     if request.contents.is_empty() {
-        return Err(anyhow!("Request must contain at least one content item"));
+        bail!("Request must contain at least one content item");
     }
 
-    // Make sure the user's input isn't empty
-    if let Some(user_content) = request.contents.iter().find(|c| c.role == Role::User) {
+    if let Some(user_content) = request
+        .contents
+        .iter()
+        .find(|content| content.role == Role::User)
+    {
         if user_content.parts.is_empty() {
-            return Err(anyhow!("User content must contain at least one part"));
+            bail!("User content must contain at least one part");
         }
     }
 
     let model = request.model.clone();
-    let uri = format!(
-        "{api_url}/v1beta/models/{model}:streamGenerateContent?alt=sse&key={api_key}",
-    );
+    let uri =
+        format!("{api_url}/v1beta/models/{model}:streamGenerateContent?alt=sse&key={api_key}",);
 
     let request_builder = HttpRequest::builder()
         .method(Method::POST)
