@@ -12,7 +12,7 @@ use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
-use crate::context_store::{codeblock_fence_for_path, ContextStore};
+use crate::context_store::{codeblock, ContextStore};
 
 pub struct DirectoryContextPicker {
     picker: View<Picker<DirectoryContextPickerDelegate>>,
@@ -233,13 +233,7 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
                 let mut text = String::new();
 
                 for buffer in buffers {
-                    text.push_str(&codeblock_fence_for_path(Some(&path), None));
-                    text.push_str(&buffer.read(cx).text());
-                    if !text.ends_with('\n') {
-                        text.push('\n');
-                    }
-
-                    text.push_str("```\n");
+                    text.push_str(&codeblock(&path, buffer.read(cx).text()));
                 }
 
                 this.delegate

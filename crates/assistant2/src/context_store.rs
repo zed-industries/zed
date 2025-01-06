@@ -1,5 +1,4 @@
 use std::fmt::Write as _;
-use std::ops::RangeInclusive;
 use std::path::{Path, PathBuf};
 
 use collections::HashMap;
@@ -60,21 +59,13 @@ impl ContextStore {
         self.files.insert(path.to_path_buf(), id);
 
         let name = path.to_string_lossy().into_owned().into();
-
-        let mut text = String::new();
-        text.push_str(&codeblock_fence_for_path(Some(&path), None));
-        text.push_str(&buffer.text());
-        if !text.ends_with('\n') {
-            text.push('\n');
-        }
-
-        text.push_str("```\n");
+        let text = codeblock(path, buffer.text()).into();
 
         self.context.push(Context {
             id,
             name,
             kind: ContextKind::File,
-            text: text.into(),
+            text,
         });
     }
 
@@ -175,27 +166,25 @@ pub enum IncludedFile {
     InDirectory(PathBuf),
 }
 
-pub(crate) fn codeblock_fence_for_path(
-    path: Option<&Path>,
-    row_range: Option<RangeInclusive<u32>>,
-) -> String {
-    let mut text = String::new();
+pub(crate) fn codeblock(path: &Path, content: String) -> String {
+    let mut text = String::with_capacity(content.len() + 64);
+
     write!(text, "```").unwrap();
 
-    if let Some(path) = path {
-        if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
-            write!(text, "{} ", extension).unwrap();
-        }
-
-        write!(text, "{}", path.display()).unwrap();
-    } else {
-        write!(text, "untitled").unwrap();
+    if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
+        write!(text, "{} ", extension).unwrap();
     }
 
-    if let Some(row_range) = row_range {
-        write!(text, ":{}-{}", row_range.start() + 1, row_range.end() + 1).unwrap();
-    }
+    write!(text, "{}", path.display()).unwrap();
 
     text.push('\n');
+    text.push_str(&content);
+
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+
+    text.push_str("```\n");
+
     text
 }
