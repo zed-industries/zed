@@ -4818,11 +4818,19 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
 
 #[gpui::test]
 async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppContext) {
+    fn to_path_string_extra(path: &str, pattern: &str) -> String {
+        if cfg!(target_os = "windows") {
+            path.replace(pattern, &format!("C:{}", pattern))
+        } else {
+            path.to_string()
+        }
+    }
+
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/worktree-a",
+        to_path_string_extra("/worktree-a", "/worktree-a"),
         json!({
             "haystack.rs": r#"// NEEDLE"#,
             "haystack.ts": r#"// NEEDLE"#,
@@ -4830,7 +4838,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
     )
     .await;
     fs.insert_tree(
-        "/worktree-b",
+        to_path_string_extra("/worktree-b", "/worktree-b"),
         json!({
             "haystack.rs": r#"// NEEDLE"#,
             "haystack.ts": r#"// NEEDLE"#,
@@ -4840,7 +4848,10 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
 
     let project = Project::test(
         fs.clone(),
-        ["/worktree-a".as_ref(), "/worktree-b".as_ref()],
+        [
+            to_path_string_extra("/worktree-a", "/worktree-a").as_ref(),
+            to_path_string_extra("/worktree-b", "/worktree-b").as_ref(),
+        ],
         cx,
     )
     .await;
@@ -4862,7 +4873,14 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
         )
         .await
         .unwrap(),
-        HashMap::from_iter([("worktree-a/haystack.rs".to_string(), vec![3..9])]),
+        HashMap::from_iter([(
+            if cfg!(target_os = "windows") {
+                "worktree-a\\haystack.rs".to_string()
+            } else {
+                "worktree-a/haystack.rs".to_string()
+            },
+            vec![3..9]
+        )]),
         "should only return results from included worktree"
     );
     assert_eq!(
@@ -4882,7 +4900,14 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
         )
         .await
         .unwrap(),
-        HashMap::from_iter([("worktree-b/haystack.rs".to_string(), vec![3..9])]),
+        HashMap::from_iter([(
+            if cfg!(target_os = "windows") {
+                "worktree-b\\haystack.rs".to_string()
+            } else {
+                "worktree-b/haystack.rs".to_string()
+            },
+            vec![3..9]
+        )]),
         "should only return results from included worktree"
     );
 
@@ -4904,8 +4929,22 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
         .await
         .unwrap(),
         HashMap::from_iter([
-            ("worktree-a/haystack.ts".to_string(), vec![3..9]),
-            ("worktree-b/haystack.ts".to_string(), vec![3..9])
+            (
+                if cfg!(target_os = "windows") {
+                    "worktree-a\\haystack.ts".to_string()
+                } else {
+                    "worktree-a/haystack.rs".to_string()
+                },
+                vec![3..9]
+            ),
+            (
+                if cfg!(target_os = "windows") {
+                    "worktree-b\\haystack.ts".to_string()
+                } else {
+                    "worktree-b/haystack.rs".to_string()
+                },
+                vec![3..9]
+            )
         ]),
         "should return results from both worktrees"
     );
