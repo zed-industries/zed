@@ -229,6 +229,8 @@ impl Platform for TestPlatform {
 
     fn on_keyboard_layout_change(&self, _: Box<dyn FnMut()>) {}
 
+    fn new_window_for_tab(&self, _: Box<dyn FnMut()>) {}
+
     fn run(&self, _on_finish_launching: Box<dyn FnOnce()>) {
         unimplemented!()
     }

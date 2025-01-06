@@ -144,6 +144,11 @@ unsafe fn build_classes() {
                 on_keyboard_layout_change as extern "C" fn(&mut Object, Sel, id),
             );
 
+            decl.add_method(
+                sel!(newWindowForTab:),
+                new_window_for_tab as extern "C" fn(&mut Object, Sel, id),
+            );
+
             decl.register()
         }
     }
@@ -170,6 +175,7 @@ pub(crate) struct MacPlatformState {
     open_urls: Option<Box<dyn FnMut(Vec<String>)>>,
     finish_launching: Option<Box<dyn FnOnce()>>,
     dock_menu: Option<id>,
+    new_window_for_tab: Option<Box<dyn FnMut()>>,
 }
 
 impl Default for MacPlatform {
@@ -207,6 +213,7 @@ impl MacPlatform {
             finish_launching: None,
             dock_menu: None,
             on_keyboard_layout_change: None,
+            new_window_for_tab: None,
         }))
     }
 
@@ -831,6 +838,10 @@ impl Platform for MacPlatform {
         self.0.lock().on_keyboard_layout_change = Some(callback);
     }
 
+    fn new_window_for_tab(&self, callback: Box<dyn FnMut()>) {
+        self.0.lock().new_window_for_tab = Some(callback);
+    }
+
     fn on_app_menu_action(&self, callback: Box<dyn FnMut(&dyn Action)>) {
         self.0.lock().menu_command = Some(callback);
     }
@@ -1448,6 +1459,18 @@ extern "C" fn handle_dock_menu(this: &mut Object, _: Sel, _: id) -> id {
             id
         } else {
             nil
+        }
+    }
+}
+
+extern "C" fn new_window_for_tab(this: &mut Object, _: Sel, _: id) {
+    unsafe {
+        let platform = get_mac_platform(this);
+        let mut lock = platform.0.lock();
+        if let Some(mut callback) = lock.new_window_for_tab.take() {
+            drop(lock);
+            callback();
+            platform.0.lock().new_window_for_tab.get_or_insert(callback);
         }
     }
 }

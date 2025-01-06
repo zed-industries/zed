@@ -215,6 +215,8 @@ pub(crate) trait Platform: 'static {
     fn on_will_open_app_menu(&self, callback: Box<dyn FnMut()>);
     fn on_validate_app_menu_command(&self, callback: Box<dyn FnMut(&dyn Action) -> bool>);
     fn keyboard_layout(&self) -> Box<dyn PlatformKeyboardLayout>;
+    #[cfg(any(target_os = "macos"))]
+    fn new_window_for_tab(&self, callback: Box<dyn FnMut()>);
 
     fn compositor_name(&self) -> &'static str {
         ""
