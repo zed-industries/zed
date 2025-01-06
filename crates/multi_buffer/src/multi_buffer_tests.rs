@@ -1296,6 +1296,14 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
     );
 
     assert_point_translation(&snapshot);
+
+    assert_eq!(
+        snapshot
+            .diff_hunks_in_range(0..snapshot.len())
+            .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0)
+            .collect::<Vec<_>>(),
+        &[0..1, 2..4, 5..7, 9..10, 12..13, 14..17]
+    );
 }
 
 #[gpui::test(iterations = 100)]
