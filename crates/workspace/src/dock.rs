@@ -170,6 +170,7 @@ impl From<&dyn PanelHandle> for AnyView {
 pub struct Dock {
     position: DockPosition,
     panel_entries: Vec<PanelEntry>,
+    workspace: WeakView<Workspace>,
     is_open: bool,
     active_panel_index: Option<usize>,
     focus_handle: FocusHandle,
@@ -236,6 +237,7 @@ impl Dock {
             });
             Self {
                 position,
+                workspace: workspace.downgrade(),
                 panel_entries: Default::default(),
                 active_panel_index: None,
                 is_open: false,
@@ -357,7 +359,11 @@ impl Dock {
             }
         }
 
-        // TODO kb notify workspace?
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.serialize_workspace(cx);
+            })
+            .ok();
         cx.notify();
     }
 
@@ -608,7 +614,6 @@ impl Dock {
             entry.panel.set_size(size, cx);
             cx.notify();
         }
-        // TODO kb notify workspace
     }
 
     pub fn toggle_action(&self) -> Box<dyn Action> {
@@ -658,9 +663,14 @@ impl Render for Dock {
                     )
                     .on_mouse_up(
                         MouseButton::Left,
-                        cx.listener(|v, e: &MouseUpEvent, cx| {
+                        cx.listener(|dock, e: &MouseUpEvent, cx| {
                             if e.click_count == 2 {
-                                v.resize_active_panel(None, cx);
+                                dock.resize_active_panel(None, cx);
+                                dock.workspace
+                                    .update(cx, |workspace, cx| {
+                                        workspace.serialize_workspace(cx);
+                                    })
+                                    .ok();
                                 cx.stop_propagation();
                             }
                         }),

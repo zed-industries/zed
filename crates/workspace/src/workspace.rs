@@ -1021,15 +1021,6 @@ impl Workspace {
 
                 ThemeSettings::reload_current_theme(cx);
             }),
-            cx.observe(&left_dock, |_, _, _| {
-                dbg!("left dock observed");
-            }),
-            cx.observe(&bottom_dock, |_, _, _| {
-                dbg!("bottom dock observed");
-            }),
-            cx.observe(&right_dock, |_, _, _| {
-                dbg!("right dock observed");
-            }),
             cx.on_release(|this, window, cx| {
                 this.app_state.workspace_store.update(cx, |store, _| {
                     let window = window.downcast::<Self>().unwrap();
