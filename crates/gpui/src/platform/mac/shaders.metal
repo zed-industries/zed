@@ -203,8 +203,7 @@ vertex ShadowVertexOutput shadow_vertex(
 }
 
 fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
-                              constant Shadow *shadows
-                              [[buffer(ShadowInputIndex_Shadows)]]) {
+                                constant Shadow *shadows [[buffer(ShadowInputIndex_Shadows)]]) {
     Shadow shadow = shadows[input.shadow_id];
 
     float2 origin = float2(shadow.bounds.origin.x, shadow.bounds.origin.y);
@@ -212,40 +211,26 @@ fragment float4 shadow_fragment(ShadowFragmentInput input [[stage_in]],
     float2 half_size = size / 2.;
     float2 center = origin + half_size;
     float2 point = input.position.xy - center;
-    float corner_radius;
-    if (point.x < 0.) {
-        if (point.y < 0.) {
-            corner_radius = shadow.corner_radii.top_left;
-        } else {
-            corner_radius = shadow.corner_radii.bottom_left;
-        }
-    } else {
-        if (point.y < 0.) {
-            corner_radius = shadow.corner_radii.top_right;
-        } else {
-            corner_radius = shadow.corner_radii.bottom_right;
-        }
-    }
+
+    float corner_radius = (point.x < 0.)
+                              ? ((point.y < 0.) ? shadow.corner_radii.top_left : shadow.corner_radii.bottom_left)
+                              : ((point.y < 0.) ? shadow.corner_radii.top_right : shadow.corner_radii.bottom_right);
 
     float alpha;
     if (shadow.blur_radius == 0.) {
         float distance = quad_sdf(input.position.xy, shadow.bounds, shadow.corner_radii);
         alpha = saturate(0.5 - distance);
     } else {
-        // The signal is only non-zero in a limited range, so don't waste samples
         float low = point.y - half_size.y;
         float high = point.y + half_size.y;
         float start = clamp(-3. * shadow.blur_radius, low, high);
         float end = clamp(3. * shadow.blur_radius, low, high);
-
-        // Accumulate samples (we can get away with surprisingly few samples)
         float step = (end - start) / 4.;
         float y = start + step * 0.5;
         alpha = 0.;
         for (int i = 0; i < 4; i++) {
-            alpha += blur_along_x(point.x, point.y - y, shadow.blur_radius,
-                                corner_radius, half_size) *
-                    gaussian(y, shadow.blur_radius) * step;
+            alpha += blur_along_x(point.x, point.y - y, shadow.blur_radius, corner_radius, half_size) *
+                     gaussian(y, shadow.blur_radius) * step;
             y += step;
         }
     }
