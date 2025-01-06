@@ -52,14 +52,14 @@ See [Clang-Format Style Options](https://clang.llvm.org/docs/ClangFormatStyleOpt
 
 ## Compile Commands
 
-Clangd requires a `compile_commands.json` file to properly analyze your project. This file contains the compilation database that tells clangd how your project should be built.
+For some projects Clangd requires a `compile_commands.json` file to properly analyze your project. This file contains the compilation database that tells clangd how your project should be built.
 
-### Using CMake
+### CMake Compile Commands
 
-If you are using CMake, you can generate `compile_commands.json` automatically by adding the following line to your `CMakeLists.txt`:
+With CMake, you can generate `compile_commands.json` automatically by adding the following line to your `CMakeLists.txt`:
 
 ```cmake
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 ```
 
-After building your project, CMake will generate the `compile_commands.json` file in the build directory.
+After building your project, CMake will generate the `compile_commands.json` file in the build directory and clangd will automatically pick it up.
