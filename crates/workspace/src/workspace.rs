@@ -1020,17 +1020,14 @@ impl Workspace {
 
                 ThemeSettings::reload_current_theme(cx);
             }),
-            cx.observe(&left_dock, |this, _, cx| {
-                this.serialize_workspace(cx);
-                cx.notify();
+            cx.observe(&left_dock, |_, _, _| {
+                dbg!("left dock observed");
             }),
-            cx.observe(&bottom_dock, |this, _, cx| {
-                this.serialize_workspace(cx);
-                cx.notify();
+            cx.observe(&bottom_dock, |_, _, _| {
+                dbg!("bottom dock observed");
             }),
-            cx.observe(&right_dock, |this, _, cx| {
-                this.serialize_workspace(cx);
-                cx.notify();
+            cx.observe(&right_dock, |_, _, _| {
+                dbg!("right dock observed");
             }),
             cx.on_release(|this, window, cx| {
                 this.app_state.workspace_store.update(cx, |store, _| {
@@ -4125,6 +4122,7 @@ impl Workspace {
                     .timer(Duration::from_millis(100))
                     .await;
                 this.update(&mut cx, |this, cx| {
+                    dbg!("serializing worktree");
                     this.serialize_workspace_internal(cx).detach();
                     this._schedule_serialize.take();
                 })
@@ -4934,7 +4932,8 @@ impl Render for Workspace {
                                                         cx,
                                                     );
                                                 }
-                                            }
+                                            };
+                                            workspace.serialize_workspace(cx);
                                         },
                                     ))
                                 })

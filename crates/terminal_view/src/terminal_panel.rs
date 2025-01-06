@@ -1339,6 +1339,7 @@ impl Panel for TerminalPanel {
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
+        dbg!(("???", active));
         if !active || !self.has_no_terminals(cx) {
             return;
         }

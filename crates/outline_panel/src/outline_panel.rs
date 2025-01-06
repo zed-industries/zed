@@ -1813,10 +1813,11 @@ impl OutlinePanel {
     }
 
     fn reveal_entry_for_selection(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
-        if !self.active || !OutlinePanelSettings::get_global(cx).auto_reveal_entries {
+        if dbg!(self.hidden()) || !OutlinePanelSettings::get_global(cx).auto_reveal_entries {
             return;
         }
         let project = self.project.clone();
+        dbg!("?");
         self.reveal_selection_task = cx.spawn(|outline_panel, mut cx| async move {
             cx.background_executor().timer(UPDATE_DEBOUNCE).await;
             let entry_with_selection = outline_panel.update(&mut cx, |outline_panel, cx| {
@@ -2439,7 +2440,7 @@ impl OutlinePanel {
         debounce: Option<Duration>,
         cx: &mut ViewContext<Self>,
     ) {
-        if !self.active {
+        if self.hidden() {
             return;
         }
 
@@ -3261,7 +3262,7 @@ impl OutlinePanel {
         debounce: Option<Duration>,
         cx: &mut ViewContext<OutlinePanel>,
     ) {
-        if !self.active {
+        if self.hidden() {
             return;
         }
 
@@ -3807,7 +3808,7 @@ impl OutlinePanel {
     }
 
     fn update_non_fs_items(&mut self, cx: &mut ViewContext<OutlinePanel>) {
-        if !self.active {
+        if self.hidden() {
             return;
         }
 
@@ -3817,7 +3818,7 @@ impl OutlinePanel {
     }
 
     fn update_search_matches(&mut self, cx: &mut ViewContext<OutlinePanel>) {
-        if !self.active {
+        if self.hidden() {
             return;
         }
 
@@ -4544,6 +4545,10 @@ impl OutlinePanel {
             })
             .collect()
     }
+
+    fn hidden(&self) -> bool {
+        !self.active
+    }
 }
 
 fn workspace_active_editor(
@@ -4651,11 +4656,14 @@ impl Panel for OutlinePanel {
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
+        if active {
+            eprintln!("{}", std::backtrace::Backtrace::force_capture());
+        }
         cx.spawn(|outline_panel, mut cx| async move {
             outline_panel
                 .update(&mut cx, |outline_panel, cx| {
                     let old_active = outline_panel.active;
-                    outline_panel.active = active;
+                    outline_panel.active = dbg!(active);
                     if active && old_active != active {
                         if let Some((active_item, active_editor)) = outline_panel
                             .workspace
@@ -4814,9 +4822,11 @@ fn subscribe_for_editor_events(
     cx: &mut ViewContext<OutlinePanel>,
 ) -> Subscription {
     let debounce = Some(UPDATE_DEBOUNCE);
-    cx.subscribe(
-        editor,
-        move |outline_panel, editor, e: &EditorEvent, cx| match e {
+    cx.subscribe(editor, move |outline_panel, editor, e: &EditorEvent, cx| {
+        if dbg!(outline_panel.hidden()) {
+            return;
+        }
+        match e {
             EditorEvent::SelectionsChanged { local: true } => {
                 outline_panel.reveal_entry_for_selection(editor, cx);
                 cx.notify();
@@ -4921,8 +4931,8 @@ fn subscribe_for_editor_events(
                 outline_panel.update_non_fs_items(cx);
             }
             _ => {}
-        },
-    )
+        }
+    })
 }
 
 fn empty_icon() -> AnyElement {

@@ -354,6 +354,7 @@ impl Dock {
             }
         }
 
+        // TODO kb notify workspace?
         cx.notify();
     }
 
@@ -484,8 +485,9 @@ impl Dock {
             },
         );
 
-        if !self.restore_state(cx) && panel.read(cx).starts_open(cx) {
-            self.activate_panel(index, cx);
+        self.restore_state(cx);
+        if panel.read(cx).starts_open(cx) {
+            self.activate_panel(dbg!(index), cx);
             self.set_open(true, cx);
         }
 
@@ -547,6 +549,7 @@ impl Dock {
 
             self.active_panel_index = Some(panel_ix);
             if let Some(active_panel) = self.active_panel_entry() {
+                dbg!(panel_ix);
                 active_panel.panel.set_active(true, cx);
             }
 
@@ -603,6 +606,7 @@ impl Dock {
             entry.panel.set_size(size, cx);
             cx.notify();
         }
+        // TODO kb notify workspace
     }
 
     pub fn toggle_action(&self) -> Box<dyn Action> {
