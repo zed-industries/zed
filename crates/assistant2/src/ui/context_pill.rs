@@ -70,7 +70,6 @@ impl RenderOnce for ContextPill {
 
         let base_pill = h_flex()
             .id(self.id())
-            .cursor_pointer()
             .pl_1()
             .pb(px(1.))
             .border_1()
@@ -124,10 +123,15 @@ impl RenderOnce for ContextPill {
                     )
                 }),
             ContextPill::Suggested { name, kind, on_add } => base_pill
+                .cursor_pointer()
                 .pr_1()
-                .border_color(color.border_variant.opacity(0.1))
-                .hover(|style| style.bg(color.element_hover))
-                .child(Label::new(name.clone()).size(LabelSize::Small))
+                .border_color(color.border_variant.opacity(0.5))
+                .hover(|style| style.bg(color.element_hover.opacity(0.5)))
+                .child(
+                    Label::new(name.clone())
+                        .size(LabelSize::Small)
+                        .color(Color::Muted),
+                )
                 .child(
                     Label::new(match kind {
                         ContextKind::File => "Open File",
