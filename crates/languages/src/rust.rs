@@ -821,8 +821,12 @@ mod tests {
 
     #[gpui::test]
     async fn test_process_rust_diagnostics() {
+        #[cfg(not(target_os = "windows"))]
+        let uri = lsp::Url::from_file_path("/a").unwrap();
+        #[cfg(target_os = "windows")]
+        let uri = lsp::Url::from_file_path("C:/a").unwrap();
         let mut params = lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path("/a").unwrap(),
+            uri,
             version: None,
             diagnostics: vec![
                 // no newlines
