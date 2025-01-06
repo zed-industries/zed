@@ -22,7 +22,7 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
 
     let fs = FakeFs::new(cx.background_executor.clone());
     fs.insert_tree(
-        "/the-root",
+        to_path_string("/the-root"),
         json!({
             "test.rs": "",
             "package.json": "",
@@ -30,7 +30,7 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
     )
     .await;
 
-    let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [to_path_string("/the-root").as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(Arc::new(Language::new(
@@ -57,7 +57,7 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
 
     let _rust_buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp("/the-root/test.rs", cx)
+            project.open_local_buffer_with_lsp(to_path_string("/the-root/test.rs"), cx)
         })
         .await
         .unwrap();
@@ -115,4 +115,12 @@ fn init_test(cx: &mut gpui::TestAppContext) {
         Project::init_settings(cx);
         editor::init_settings(cx);
     });
+}
+
+fn to_path_string(path: &str) -> String {
+    if cfg!(target_os = "windows") {
+        path.replace("/the-root", "C:/the-root")
+    } else {
+        path.to_string()
+    }
 }
