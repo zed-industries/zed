@@ -62,6 +62,7 @@ pub enum WorktreeStoreEvent {
     WorktreeReleased(EntityId, WorktreeId),
     WorktreeOrderChanged,
     WorktreeUpdateSent(Model<Worktree>),
+    GitRepositoryUpdated,
 }
 
 impl EventEmitter<WorktreeStoreEvent> for WorktreeStore {}
@@ -322,6 +323,7 @@ impl WorktreeStore {
             let worktree = Worktree::local(path.clone(), visible, fs, next_entry_id, &mut cx).await;
 
             let worktree = worktree?;
+
             this.update(&mut cx, |this, cx| this.add(&worktree, cx))?;
 
             if visible {
@@ -373,6 +375,17 @@ impl WorktreeStore {
             ));
             this.send_project_updates(cx);
         })
+        .detach();
+
+        cx.subscribe(
+            worktree,
+            |_this, _, event: &worktree::Event, cx| match event {
+                worktree::Event::UpdatedGitRepositories(_) => {
+                    cx.emit(WorktreeStoreEvent::GitRepositoryUpdated);
+                }
+                worktree::Event::DeletedEntry(_) | worktree::Event::UpdatedEntries(_) => {}
+            },
+        )
         .detach();
     }
 
@@ -583,11 +596,11 @@ impl WorktreeStore {
     pub fn shared(
         &mut self,
         remote_id: u64,
-        downsteam_client: AnyProtoClient,
+        downstream_client: AnyProtoClient,
         cx: &mut ModelContext<Self>,
     ) {
         self.retain_worktrees = true;
-        self.downstream_client = Some((downsteam_client, remote_id));
+        self.downstream_client = Some((downstream_client, remote_id));
 
         // When shared, retain all worktrees
         for worktree_handle in self.worktrees.iter_mut() {
