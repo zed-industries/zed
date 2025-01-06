@@ -333,9 +333,12 @@ impl PickerDelegate for FileContextPickerDelegate {
                     IncludedFile::Direct(_) => {
                         el.end_slot(Label::new("Added").size(LabelSize::XSmall))
                     }
-                    IncludedFile::InDirectory(dir_name) => el
-                        .end_slot(Label::new("Included").size(LabelSize::XSmall))
-                        .tooltip(move |cx| Tooltip::text(format!("By {dir_name}"), cx)),
+                    IncludedFile::InDirectory(dir_name) => {
+                        let dir_name = dir_name.to_string_lossy().into_owned();
+
+                        el.end_slot(Label::new("Included").size(LabelSize::XSmall))
+                            .tooltip(move |cx| Tooltip::text(format!("By {dir_name}"), cx))
+                    }
                 }),
         )
     }

@@ -1,5 +1,6 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
+use collections::HashMap;
 use gpui::SharedString;
 
 use crate::{
@@ -10,6 +11,8 @@ use crate::{
 pub struct ContextStore {
     context: Vec<Context>,
     next_context_id: ContextId,
+    files: HashMap<PathBuf, ContextId>,
+    directories: HashMap<PathBuf, ContextId>,
 }
 
 impl ContextStore {
@@ -17,6 +20,8 @@ impl ContextStore {
         Self {
             context: Vec::new(),
             next_context_id: ContextId(0),
+            files: HashMap::new(),
+            directories: HashMap::new(),
         }
     }
 
@@ -25,11 +30,15 @@ impl ContextStore {
     }
 
     pub fn drain(&mut self) -> Vec<Context> {
+        self.files.clear();
+        self.directories.clear();
         self.context.drain(..).collect()
     }
 
     pub fn clear(&mut self) {
         self.context.clear();
+        self.files.clear();
+        self.directories.clear();
     }
 
     pub fn insert_context(
@@ -38,8 +47,20 @@ impl ContextStore {
         name: impl Into<SharedString>,
         text: impl Into<SharedString>,
     ) {
+        let id = self.next_context_id.post_inc();
+
+        match &kind {
+            ContextKind::File(path) => {
+                self.files.insert(path.clone(), id);
+            }
+            ContextKind::Directory(path) => {
+                self.directories.insert(path.clone(), id);
+            }
+            ContextKind::FetchedUrl(_) | ContextKind::Thread(_) => {}
+        }
+
         self.context.push(Context {
-            id: self.next_context_id.post_inc(),
+            id,
             name: name.into(),
             kind,
             text: text.into(),
@@ -47,32 +68,43 @@ impl ContextStore {
     }
 
     pub fn remove_context(&mut self, id: &ContextId) {
-        self.context.retain(|context| context.id != *id);
+        let Some(ix) = self.context.iter().position(|c| c.id == *id) else {
+            return;
+        };
+
+        match self.context.remove(ix).kind {
+            ContextKind::File(path) => {
+                self.files.remove(&path);
+            }
+            ContextKind::Directory(path) => {
+                self.directories.remove(&path);
+            }
+            ContextKind::FetchedUrl(_) | ContextKind::Thread(_) => {}
+        }
     }
 
     pub fn id_for_file(&self, path: &Path) -> Option<IncludedFile> {
-        self.context.iter().find_map(|probe| match &probe.kind {
-            ContextKind::File(probe_path) if probe_path == path => {
-                Some(IncludedFile::Direct(probe.id))
+        if let Some(id) = self.files.get(path) {
+            return Some(IncludedFile::Direct(*id));
+        }
+
+        if self.directories.is_empty() {
+            return None;
+        }
+
+        let mut buf = path.to_path_buf();
+
+        while buf.pop() {
+            if let Some(_) = self.directories.get(&buf) {
+                return Some(IncludedFile::InDirectory(buf));
             }
-            ContextKind::Directory(probe_dir) if path.starts_with(probe_dir) => {
-                Some(IncludedFile::InDirectory(probe.name.clone()))
-            }
-            ContextKind::File(_)
-            | ContextKind::Directory(_)
-            | ContextKind::FetchedUrl(_)
-            | ContextKind::Thread(_) => None,
-        })
+        }
+
+        None
     }
 
     pub fn id_for_directory(&self, path: &Path) -> Option<ContextId> {
-        self.context
-            .iter()
-            .find(|probe| match &probe.kind {
-                ContextKind::Directory(probe_path) => probe_path == path,
-                ContextKind::File(_) | ContextKind::FetchedUrl(_) | ContextKind::Thread(_) => false,
-            })
-            .map(|context| context.id)
+        self.directories.get(path).copied()
     }
 
     pub fn id_for_thread(&self, thread_id: &ThreadId) -> Option<ContextId> {
@@ -100,5 +132,5 @@ impl ContextStore {
 
 pub enum IncludedFile {
     Direct(ContextId),
-    InDirectory(SharedString),
+    InDirectory(PathBuf),
 }
