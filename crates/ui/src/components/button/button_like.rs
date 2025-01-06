@@ -6,7 +6,7 @@ use smallvec::SmallVec;
 use crate::{prelude::*, DynamicSpacing, ElevationIndex};
 
 /// A trait for buttons that can be Selected. Enables setting the [`ButtonStyle`] of a button when it is selected.
-pub trait SelectableButton: Selectable {
+pub trait SelectableButton: Toggleable {
     fn selected_style(self, style: ButtonStyle) -> Self;
 }
 
@@ -202,7 +202,12 @@ impl ButtonStyle {
                     icon_color: Color::Default.color(cx),
                 }
             }
-            ButtonStyle::Tinted(tint) => tint.button_like_style(cx),
+            ButtonStyle::Tinted(tint) => {
+                let mut styles = tint.button_like_style(cx);
+                let theme = cx.theme();
+                styles.background = theme.darken(styles.background, 0.05, 0.2);
+                styles
+            }
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_hover,
                 border_color: transparent_black(),
@@ -395,8 +400,8 @@ impl Disableable for ButtonLike {
     }
 }
 
-impl Selectable for ButtonLike {
-    fn selected(mut self, selected: bool) -> Self {
+impl Toggleable for ButtonLike {
+    fn toggle_state(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }

@@ -1,19 +1,25 @@
 use crate::{Event, *};
 use fs::FakeFs;
 use futures::{future, StreamExt};
+use git::diff::assert_hunks;
 use gpui::{AppContext, SemanticVersion, UpdateGlobal};
 use http_client::Url;
 use language::{
     language_settings::{language_settings, AllLanguageSettings, LanguageSettingsContent},
-    tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticSet, FakeLspAdapter,
-    LanguageConfig, LanguageMatcher, LanguageName, LineEnding, OffsetRangeExt, Point, ToPoint,
+    tree_sitter_rust, tree_sitter_typescript, Diagnostic, DiagnosticEntry, DiagnosticSet,
+    DiskState, FakeLspAdapter, LanguageConfig, LanguageMatcher, LanguageName, LineEnding,
+    OffsetRangeExt, Point, ToPoint,
 };
-use lsp::{DiagnosticSeverity, NumberOrString};
+use lsp::{
+    notification::DidRenameFiles, DiagnosticSeverity, DocumentChanges, FileOperationFilter,
+    NumberOrString, TextDocumentEdit, WillRenameFiles,
+};
 use parking_lot::Mutex;
-use pretty_assertions::assert_eq;
+use pretty_assertions::{assert_eq, assert_matches};
 use serde_json::json;
 #[cfg(not(windows))]
 use std::os;
+use std::{str::FromStr, sync::OnceLock};
 
 use std::{mem, num::NonZeroU32, ops::Range, task::Poll};
 use task::{ResolvedTask, TaskContext};
@@ -436,17 +442,17 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     );
 
     // Open a buffer without an associated language server.
-    let toml_buffer = project
+    let (toml_buffer, _handle) = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/the-root/Cargo.toml", cx)
+            project.open_local_buffer_with_lsp("/the-root/Cargo.toml", cx)
         })
         .await
         .unwrap();
 
     // Open a buffer with an associated language server before the language for it has been loaded.
-    let rust_buffer = project
+    let (rust_buffer, _handle2) = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/the-root/test.rs", cx)
+            project.open_local_buffer_with_lsp("/the-root/test.rs", cx)
         })
         .await
         .unwrap();
@@ -507,9 +513,9 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     );
 
     // Open a third buffer with a different associated language server.
-    let json_buffer = project
+    let (json_buffer, _json_handle) = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/the-root/package.json", cx)
+            project.open_local_buffer_with_lsp("/the-root/package.json", cx)
         })
         .await
         .unwrap();
@@ -544,9 +550,9 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
 
     // When opening another buffer whose language server is already running,
     // it is also configured based on the existing language server's capabilities.
-    let rust_buffer2 = project
+    let (rust_buffer2, _handle4) = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/the-root/test2.rs", cx)
+            project.open_local_buffer_with_lsp("/the-root/test2.rs", cx)
         })
         .await
         .unwrap();
@@ -759,7 +765,7 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
     );
 
     // Close notifications are reported only to servers matching the buffer's language.
-    cx.update(|_| drop(json_buffer));
+    cx.update(|_| drop(_json_handle));
     let close_message = lsp::DidCloseTextDocumentParams {
         text_document: lsp::TextDocumentIdentifier::new(
             lsp::Url::from_file_path("/the-root/package.json").unwrap(),
@@ -821,9 +827,9 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     cx.executor().run_until_parked();
 
     // Start the language server by opening a buffer with a compatible file extension.
-    let _buffer = project
+    let _ = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/the-root/src/a.rs", cx)
+            project.open_local_buffer_with_lsp("/the-root/src/a.rs", cx)
         })
         .await
         .unwrap();
@@ -982,6 +988,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs, ["/dir/a.rs".as_ref(), "/dir/b.rs".as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
 
     let buffer_a = project
         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
@@ -992,8 +999,8 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    project.update(cx, |project, cx| {
-        project
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store
             .update_diagnostics(
                 LanguageServerId(0),
                 lsp::PublishDiagnosticsParams {
@@ -1010,7 +1017,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
                 cx,
             )
             .unwrap();
-        project
+        lsp_store
             .update_diagnostics(
                 LanguageServerId(0),
                 lsp::PublishDiagnosticsParams {
@@ -1081,6 +1088,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs, ["/root/dir".as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
     let (worktree, _) = project
         .update(cx, |project, cx| {
             project.find_or_create_worktree("/root/dir", true, cx)
@@ -1098,8 +1106,8 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
     let other_worktree_id = worktree.update(cx, |tree, _| tree.id());
 
     let server_id = LanguageServerId(0);
-    project.update(cx, |project, cx| {
-        project
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store
             .update_diagnostics(
                 server_id,
                 lsp::PublishDiagnosticsParams {
@@ -1116,7 +1124,7 @@ async fn test_omitted_diagnostics(cx: &mut gpui::TestAppContext) {
                 cx,
             )
             .unwrap();
-        project
+        lsp_store
             .update_diagnostics(
                 server_id,
                 lsp::PublishDiagnosticsParams {
@@ -1231,8 +1239,10 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     let worktree_id = project.update(cx, |p, cx| p.worktrees(cx).next().unwrap().read(cx).id());
 
     // Cause worktree to start the fake language server
-    let _buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/b.rs", cx))
+    let _ = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp("/dir/b.rs", cx)
+        })
         .await
         .unwrap();
 
@@ -1251,6 +1261,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     fake_server
         .start_progress(format!("{}/0", progress_token))
         .await;
+    assert_eq!(events.next().await.unwrap(), Event::RefreshInlayHints);
     assert_eq!(
         events.next().await.unwrap(),
         Event::DiskBasedDiagnosticsStarted {
@@ -1357,8 +1368,10 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
 
     let worktree_id = project.update(cx, |p, cx| p.worktrees(cx).next().unwrap().read(cx).id());
 
-    let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp("/dir/a.rs", cx)
+        })
         .await
         .unwrap();
 
@@ -1382,6 +1395,7 @@ async fn test_restarting_server_with_diagnostics_running(cx: &mut gpui::TestAppC
             Some(worktree_id)
         )
     );
+    assert_eq!(events.next().await.unwrap(), Event::RefreshInlayHints);
     fake_server.start_progress(progress_token).await;
     assert_eq!(
         events.next().await.unwrap(),
@@ -1430,8 +1444,10 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
     language_registry.add(rust_lang());
     let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
 
-    let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+    let (buffer, _) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp("/dir/a.rs", cx)
+        })
         .await
         .unwrap();
 
@@ -1509,8 +1525,10 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
     language_registry.add(rust_lang());
     let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
 
-    let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp("/dir/a.rs", cx)
+        })
         .await
         .unwrap();
 
@@ -1557,8 +1575,10 @@ async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
         },
     );
 
-    let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp("/dir/a.rs", cx)
+        })
         .await
         .unwrap();
 
@@ -1626,11 +1646,15 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
     language_registry.add(js_lang());
 
     let _rs_buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp("/dir/a.rs", cx)
+        })
         .await
         .unwrap();
     let _js_buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/b.js", cx))
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp("/dir/b.js", cx)
+        })
         .await
         .unwrap();
 
@@ -1726,6 +1750,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     fs.insert_tree("/dir", json!({ "a.rs": text })).await;
 
     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
 
     language_registry.add(rust_lang());
@@ -1741,6 +1766,10 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
         .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
         .await
         .unwrap();
+
+    let _handle = lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store.register_buffer_with_language_servers(&buffer, cx)
+    });
 
     let mut fake_server = fake_servers.next().await.unwrap();
     let open_notification = fake_server
@@ -2013,9 +2042,9 @@ async fn test_empty_diagnostic_ranges(cx: &mut gpui::TestAppContext) {
     project.update(cx, |project, cx| {
         project.lsp_store.update(cx, |lsp_store, cx| {
             lsp_store
-                .update_buffer_diagnostics(
-                    &buffer,
+                .update_diagnostic_entries(
                     LanguageServerId(0),
+                    PathBuf::from("/dir/a.rs"),
                     None,
                     vec![
                         DiagnosticEntry {
@@ -2073,9 +2102,10 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
         .await;
 
     let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store.clone());
 
-    project.update(cx, |project, cx| {
-        project
+    lsp_store.update(cx, |lsp_store, cx| {
+        lsp_store
             .update_diagnostic_entries(
                 LanguageServerId(0),
                 Path::new("/dir/a.rs").to_owned(),
@@ -2092,7 +2122,7 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
                 cx,
             )
             .unwrap();
-        project
+        lsp_store
             .update_diagnostic_entries(
                 LanguageServerId(1),
                 Path::new("/dir/a.rs").to_owned(),
@@ -2111,7 +2141,7 @@ async fn test_diagnostics_from_multiple_language_servers(cx: &mut gpui::TestAppC
             .unwrap();
 
         assert_eq!(
-            project.diagnostic_summary(false, cx),
+            lsp_store.diagnostic_summary(false, cx),
             DiagnosticSummary {
                 error_count: 2,
                 warning_count: 0,
@@ -2153,8 +2183,10 @@ async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
     language_registry.add(rust_lang());
     let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
 
-    let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp("/dir/a.rs", cx)
+        })
         .await
         .unwrap();
 
@@ -2213,7 +2245,7 @@ async fn test_edits_from_lsp2_with_past_version(cx: &mut gpui::TestAppContext) {
 
     let edits = lsp_store
         .update(cx, |lsp_store, cx| {
-            lsp_store.edits_from_lsp(
+            lsp_store.as_local_mut().unwrap().edits_from_lsp(
                 &buffer,
                 vec![
                     // replace body of first function
@@ -2308,7 +2340,7 @@ async fn test_edits_from_lsp2_with_edits_on_adjacent_lines(cx: &mut gpui::TestAp
     // Rust-analyzer does this when performing a merge-imports code action.
     let edits = lsp_store
         .update(cx, |lsp_store, cx| {
-            lsp_store.edits_from_lsp(
+            lsp_store.as_local_mut().unwrap().edits_from_lsp(
                 &buffer,
                 [
                     // Replace the first use statement without editing the semicolon.
@@ -2417,7 +2449,7 @@ async fn test_invalid_edits_from_lsp2(cx: &mut gpui::TestAppContext) {
     // with ranges sometimes being inverted or pointing to invalid locations.
     let edits = lsp_store
         .update(cx, |lsp_store, cx| {
-            lsp_store.edits_from_lsp(
+            lsp_store.as_local_mut().unwrap().edits_from_lsp(
                 &buffer,
                 [
                     lsp::TextEdit {
@@ -2524,8 +2556,10 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
     language_registry.add(rust_lang());
     let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
 
-    let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/b.rs", cx))
+    let (buffer, _handle) = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp("/dir/b.rs", cx)
+        })
         .await
         .unwrap();
 
@@ -2629,8 +2663,8 @@ async fn test_completions_without_edit_ranges(cx: &mut gpui::TestAppContext) {
         },
     );
 
-    let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
+    let (buffer, _handle) = project
+        .update(cx, |p, cx| p.open_local_buffer_with_lsp("/dir/a.ts", cx))
         .await
         .unwrap();
 
@@ -2721,8 +2755,8 @@ async fn test_completions_with_carriage_returns(cx: &mut gpui::TestAppContext) {
         },
     );
 
-    let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
+    let (buffer, _handle) = project
+        .update(cx, |p, cx| p.open_local_buffer_with_lsp("/dir/a.ts", cx))
         .await
         .unwrap();
 
@@ -2784,15 +2818,17 @@ async fn test_apply_code_actions_with_commands(cx: &mut gpui::TestAppContext) {
         },
     );
 
-    let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
+    let (buffer, _handle) = project
+        .update(cx, |p, cx| p.open_local_buffer_with_lsp("/dir/a.ts", cx))
         .await
         .unwrap();
 
     let fake_server = fake_language_servers.next().await.unwrap();
 
     // Language server returns code actions that contain commands, and not edits.
-    let actions = project.update(cx, |project, cx| project.code_actions(&buffer, 0..0, cx));
+    let actions = project.update(cx, |project, cx| {
+        project.code_actions(&buffer, 0..0, None, cx)
+    });
     fake_server
         .handle_request::<lsp::request::CodeActionRequest, _, _>(|_, _| async move {
             Ok(Some(vec![
@@ -3239,10 +3275,22 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
             Path::new("b/c/file5")
         );
 
-        assert!(!buffer2.read(cx).file().unwrap().is_deleted());
-        assert!(!buffer3.read(cx).file().unwrap().is_deleted());
-        assert!(!buffer4.read(cx).file().unwrap().is_deleted());
-        assert!(buffer5.read(cx).file().unwrap().is_deleted());
+        assert_matches!(
+            buffer2.read(cx).file().unwrap().disk_state(),
+            DiskState::Present { .. }
+        );
+        assert_matches!(
+            buffer3.read(cx).file().unwrap().disk_state(),
+            DiskState::Present { .. }
+        );
+        assert_matches!(
+            buffer4.read(cx).file().unwrap().disk_state(),
+            DiskState::Present { .. }
+        );
+        assert_eq!(
+            buffer5.read(cx).file().unwrap().disk_state(),
+            DiskState::Deleted
+        );
     });
 
     // Update the remote worktree. Check that it becomes consistent with the
@@ -3416,7 +3464,11 @@ async fn test_buffer_is_dirty(cx: &mut gpui::TestAppContext) {
             ]
         );
         events.lock().clear();
-        buffer.did_save(buffer.version(), buffer.file().unwrap().mtime(), cx);
+        buffer.did_save(
+            buffer.version(),
+            buffer.file().unwrap().disk_state().mtime(),
+            cx,
+        );
     });
 
     // after saving, the buffer is not dirty, and emits a saved event.
@@ -3675,6 +3727,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
     .await;
 
     let project = Project::test(fs.clone(), ["/the-dir".as_ref()], cx).await;
+    let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
     let buffer = project
         .update(cx, |p, cx| p.open_local_buffer("/the-dir/a.rs", cx))
         .await
@@ -3768,9 +3821,9 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
         version: None,
     };
 
-    project
-        .update(cx, |p, cx| {
-            p.update_diagnostics(LanguageServerId(0), message, &[], cx)
+    lsp_store
+        .update(cx, |lsp_store, cx| {
+            lsp_store.update_diagnostics(LanguageServerId(0), message, &[], cx)
         })
         .unwrap();
     let buffer = buffer.update(cx, |buffer, _| buffer.snapshot());
@@ -3897,6 +3950,135 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_lsp_rename_notifications(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "one.rs": "const ONE: usize = 1;",
+            "two": {
+                "two.rs": "const TWO: usize = one::ONE + one::ONE;"
+            }
+
+        }),
+    )
+    .await;
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(rust_lang());
+    let watched_paths = lsp::FileOperationRegistrationOptions {
+        filters: vec![
+            FileOperationFilter {
+                scheme: Some("file".to_owned()),
+                pattern: lsp::FileOperationPattern {
+                    glob: "**/*.rs".to_owned(),
+                    matches: Some(lsp::FileOperationPatternKind::File),
+                    options: None,
+                },
+            },
+            FileOperationFilter {
+                scheme: Some("file".to_owned()),
+                pattern: lsp::FileOperationPattern {
+                    glob: "**/**".to_owned(),
+                    matches: Some(lsp::FileOperationPatternKind::Folder),
+                    options: None,
+                },
+            },
+        ],
+    };
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "Rust",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                workspace: Some(lsp::WorkspaceServerCapabilities {
+                    workspace_folders: None,
+                    file_operations: Some(lsp::WorkspaceFileOperationsServerCapabilities {
+                        did_rename: Some(watched_paths.clone()),
+                        will_rename: Some(watched_paths),
+                        ..Default::default()
+                    }),
+                }),
+                ..Default::default()
+            },
+            ..Default::default()
+        },
+    );
+
+    let _ = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp("/dir/one.rs", cx)
+        })
+        .await
+        .unwrap();
+
+    let fake_server = fake_servers.next().await.unwrap();
+    let response = project.update(cx, |project, cx| {
+        let worktree = project.worktrees(cx).next().unwrap();
+        let entry = worktree.read(cx).entry_for_path("one.rs").unwrap();
+        project.rename_entry(entry.id, "three.rs".as_ref(), cx)
+    });
+    let expected_edit = lsp::WorkspaceEdit {
+        changes: None,
+        document_changes: Some(DocumentChanges::Edits({
+            vec![TextDocumentEdit {
+                edits: vec![lsp::Edit::Plain(lsp::TextEdit {
+                    range: lsp::Range {
+                        start: lsp::Position {
+                            line: 0,
+                            character: 1,
+                        },
+                        end: lsp::Position {
+                            line: 0,
+                            character: 3,
+                        },
+                    },
+                    new_text: "This is not a drill".to_owned(),
+                })],
+                text_document: lsp::OptionalVersionedTextDocumentIdentifier {
+                    uri: Url::from_str("file:///dir/two/two.rs").unwrap(),
+                    version: Some(1337),
+                },
+            }]
+        })),
+        change_annotations: None,
+    };
+    let resolved_workspace_edit = Arc::new(OnceLock::new());
+    fake_server
+        .handle_request::<WillRenameFiles, _, _>({
+            let resolved_workspace_edit = resolved_workspace_edit.clone();
+            let expected_edit = expected_edit.clone();
+            move |params, _| {
+                let resolved_workspace_edit = resolved_workspace_edit.clone();
+                let expected_edit = expected_edit.clone();
+                async move {
+                    assert_eq!(params.files.len(), 1);
+                    assert_eq!(params.files[0].old_uri, "file:///dir/one.rs");
+                    assert_eq!(params.files[0].new_uri, "file:///dir/three.rs");
+                    resolved_workspace_edit.set(expected_edit.clone()).unwrap();
+                    Ok(Some(expected_edit))
+                }
+            }
+        })
+        .next()
+        .await
+        .unwrap();
+    let _ = response.await.unwrap();
+    fake_server
+        .handle_notification::<DidRenameFiles, _>(|params, _| {
+            assert_eq!(params.files.len(), 1);
+            assert_eq!(params.files[0].old_uri, "file:///dir/one.rs");
+            assert_eq!(params.files[0].new_uri, "file:///dir/three.rs");
+        })
+        .next()
+        .await
+        .unwrap();
+    assert_eq!(resolved_workspace_edit.get(), Some(&expected_edit));
+}
+
+#[gpui::test]
 async fn test_rename(cx: &mut gpui::TestAppContext) {
     // hi
     init_test(cx);
@@ -3929,9 +4111,9 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
         },
     );
 
-    let buffer = project
+    let (buffer, _handle) = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/dir/one.rs", cx)
+            project.open_local_buffer_with_lsp("/dir/one.rs", cx)
         })
         .await
         .unwrap();
@@ -4794,8 +4976,8 @@ async fn test_multiple_language_server_hovers(cx: &mut gpui::TestAppContext) {
         ),
     ];
 
-    let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/a.tsx", cx))
+    let (buffer, _handle) = project
+        .update(cx, |p, cx| p.open_local_buffer_with_lsp("/dir/a.tsx", cx))
         .await
         .unwrap();
     cx.executor().run_until_parked();
@@ -4903,8 +5085,8 @@ async fn test_hovers_with_empty_parts(cx: &mut gpui::TestAppContext) {
         },
     );
 
-    let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/a.ts", cx))
+    let (buffer, _handle) = project
+        .update(cx, |p, cx| p.open_local_buffer_with_lsp("/dir/a.ts", cx))
         .await
         .unwrap();
     cx.executor().run_until_parked();
@@ -4942,6 +5124,84 @@ async fn test_hovers_with_empty_parts(cx: &mut gpui::TestAppContext) {
             .sorted()
             .collect::<Vec<_>>(),
         "Empty hover parts should be ignored"
+    );
+}
+
+#[gpui::test]
+async fn test_code_actions_only_kinds(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            "a.ts": "a",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    language_registry.add(typescript_lang());
+    let mut fake_language_servers = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                code_action_provider: Some(lsp::CodeActionProviderCapability::Simple(true)),
+                ..lsp::ServerCapabilities::default()
+            },
+            ..FakeLspAdapter::default()
+        },
+    );
+
+    let (buffer, _handle) = project
+        .update(cx, |p, cx| p.open_local_buffer_with_lsp("/dir/a.ts", cx))
+        .await
+        .unwrap();
+    cx.executor().run_until_parked();
+
+    let fake_server = fake_language_servers
+        .next()
+        .await
+        .expect("failed to get the language server");
+
+    let mut request_handled = fake_server.handle_request::<lsp::request::CodeActionRequest, _, _>(
+        move |_, _| async move {
+            Ok(Some(vec![
+                lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
+                    title: "organize imports".to_string(),
+                    kind: Some(CodeActionKind::SOURCE_ORGANIZE_IMPORTS),
+                    ..lsp::CodeAction::default()
+                }),
+                lsp::CodeActionOrCommand::CodeAction(lsp::CodeAction {
+                    title: "fix code".to_string(),
+                    kind: Some(CodeActionKind::SOURCE_FIX_ALL),
+                    ..lsp::CodeAction::default()
+                }),
+            ]))
+        },
+    );
+
+    let code_actions_task = project.update(cx, |project, cx| {
+        project.code_actions(
+            &buffer,
+            0..buffer.read(cx).len(),
+            Some(vec![CodeActionKind::SOURCE_ORGANIZE_IMPORTS]),
+            cx,
+        )
+    });
+
+    let () = request_handled
+        .next()
+        .await
+        .expect("The code action request should have been triggered");
+
+    let code_actions = code_actions_task.await.unwrap();
+    assert_eq!(code_actions.len(), 1);
+    assert_eq!(
+        code_actions[0].lsp_action.kind,
+        Some(CodeActionKind::SOURCE_ORGANIZE_IMPORTS)
     );
 }
 
@@ -5016,8 +5276,8 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
         ),
     ];
 
-    let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/a.tsx", cx))
+    let (buffer, _handle) = project
+        .update(cx, |p, cx| p.open_local_buffer_with_lsp("/dir/a.tsx", cx))
         .await
         .unwrap();
     cx.executor().run_until_parked();
@@ -5076,7 +5336,7 @@ async fn test_multiple_language_server_actions(cx: &mut gpui::TestAppContext) {
     }
 
     let code_actions_task = project.update(cx, |project, cx| {
-        project.code_actions(&buffer, 0..buffer.read(cx).len(), cx)
+        project.code_actions(&buffer, 0..buffer.read(cx).len(), None, cx)
     });
 
     // cx.run_until_parked();
@@ -5297,6 +5557,98 @@ async fn test_reordering_worktrees(cx: &mut gpui::TestAppContext) {
         assert_eq!(first.abs_path().to_str().unwrap(), "/dir/a.rs");
         assert_eq!(second.abs_path().to_str().unwrap(), "/dir/b.rs");
         assert_eq!(third.abs_path().to_str().unwrap(), "/dir/c.rs");
+    });
+}
+
+#[gpui::test]
+async fn test_unstaged_changes_for_buffer(cx: &mut gpui::TestAppContext) {
+    init_test(cx);
+
+    let staged_contents = r#"
+        fn main() {
+            println!("hello world");
+        }
+    "#
+    .unindent();
+    let file_contents = r#"
+        // print goodbye
+        fn main() {
+            println!("goodbye world");
+        }
+    "#
+    .unindent();
+
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/dir",
+        json!({
+            ".git": {},
+           "src": {
+               "main.rs": file_contents,
+           }
+        }),
+    )
+    .await;
+
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[(Path::new("src/main.rs"), staged_contents)],
+    );
+
+    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer("/dir/src/main.rs", cx)
+        })
+        .await
+        .unwrap();
+    let unstaged_changes = project
+        .update(cx, |project, cx| {
+            project.open_unstaged_changes(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+    unstaged_changes.update(cx, |unstaged_changes, cx| {
+        let snapshot = buffer.read(cx).snapshot();
+        assert_hunks(
+            unstaged_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            &snapshot,
+            &unstaged_changes.base_text.as_ref().unwrap().read(cx).text(),
+            &[
+                (0..1, "", "// print goodbye\n"),
+                (
+                    2..3,
+                    "    println!(\"hello world\");\n",
+                    "    println!(\"goodbye world\");\n",
+                ),
+            ],
+        );
+    });
+
+    let staged_contents = r#"
+        // print goodbye
+        fn main() {
+        }
+    "#
+    .unindent();
+
+    fs.set_index_for_repo(
+        Path::new("/dir/.git"),
+        &[(Path::new("src/main.rs"), staged_contents)],
+    );
+
+    cx.run_until_parked();
+    unstaged_changes.update(cx, |unstaged_changes, cx| {
+        let snapshot = buffer.read(cx).snapshot();
+        assert_hunks(
+            unstaged_changes.diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX, &snapshot),
+            &snapshot,
+            &unstaged_changes.base_text.as_ref().unwrap().read(cx).text(),
+            &[(2..3, "", "    println!(\"goodbye world\");\n")],
+        );
     });
 }
 

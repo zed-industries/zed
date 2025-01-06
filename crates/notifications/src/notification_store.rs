@@ -238,11 +238,8 @@ impl NotificationStore {
     ) -> Result<()> {
         this.update(&mut cx, |this, cx| {
             if let Some(notification) = envelope.payload.notification {
-                if let Some(rpc::Notification::ChannelMessageMention {
-                    message_id,
-                    sender_id: _,
-                    channel_id: _,
-                }) = Notification::from_proto(&notification)
+                if let Some(rpc::Notification::ChannelMessageMention { message_id, .. }) =
+                    Notification::from_proto(&notification)
                 {
                     let fetch_message_task = this.channel_store.update(cx, |this, cx| {
                         this.fetch_channel_messages(vec![message_id], cx)

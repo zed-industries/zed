@@ -120,7 +120,7 @@ impl Vim {
         } else {
             Direction::Next
         };
-        let count = self.take_count(cx).unwrap_or(1);
+        let count = Vim::take_count(cx).unwrap_or(1);
         let prior_selections = self.editor_selections(cx);
         pane.update(cx, |pane, cx| {
             if let Some(search_bar) = pane.toolbar().read(cx).item_of_type::<BufferSearchBar>() {
@@ -139,6 +139,11 @@ impl Vim {
                         options |= SearchOptions::REGEX;
                     }
                     search_bar.set_search_options(options, cx);
+                    let prior_mode = if self.temp_mode {
+                        Mode::Insert
+                    } else {
+                        self.mode
+                    };
 
                     self.search = SearchState {
                         direction,
@@ -146,7 +151,7 @@ impl Vim {
                         initial_query: query,
                         prior_selections,
                         prior_operator: self.operator_stack.last().cloned(),
-                        prior_mode: self.mode,
+                        prior_mode,
                     }
                 });
             }
@@ -221,7 +226,7 @@ impl Vim {
 
     pub fn move_to_match_internal(&mut self, direction: Direction, cx: &mut ViewContext<Self>) {
         let Some(pane) = self.pane(cx) else { return };
-        let count = self.take_count(cx).unwrap_or(1);
+        let count = Vim::take_count(cx).unwrap_or(1);
         let prior_selections = self.editor_selections(cx);
 
         let success = pane.update(cx, |pane, cx| {
@@ -259,7 +264,7 @@ impl Vim {
         cx: &mut ViewContext<Self>,
     ) {
         let Some(pane) = self.pane(cx) else { return };
-        let count = self.take_count(cx).unwrap_or(1);
+        let count = Vim::take_count(cx).unwrap_or(1);
         let prior_selections = self.editor_selections(cx);
         let vim = cx.view().clone();
 

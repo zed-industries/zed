@@ -54,7 +54,7 @@ They can also be detected automatically, for example https://zed.dev/blog.
 ## Images
 Images are like links, but with an exclamation mark `!` in front.
 
-```todo!
+```markdown
 ![This is an image](/images/logo.png)
 ```
 
@@ -178,7 +178,7 @@ impl MarkdownExample {
         cx: &mut WindowContext,
     ) -> Self {
         let markdown =
-            cx.new_view(|cx| Markdown::new(text, style, Some(language_registry), cx, None));
+            cx.new_view(|cx| Markdown::new(text, style, Some(language_registry), None, cx));
         Self { markdown }
     }
 }

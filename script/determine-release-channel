@@ -15,7 +15,7 @@ version=$(script/get-crate-version zed)
 channel=$(cat crates/zed/RELEASE_CHANNEL)
 echo "Publishing version: ${version} on release channel ${channel}"
 echo "RELEASE_CHANNEL=${channel}" >> $GITHUB_ENV
-echo "RELEASE_VERSION="${version}" >> $GITHUB_ENV
+echo "RELEASE_VERSION=${version}" >> $GITHUB_ENV
 
 expected_tag_name=""
 case ${channel} in

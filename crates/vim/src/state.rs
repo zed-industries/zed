@@ -26,6 +26,7 @@ pub enum Mode {
     Visual,
     VisualLine,
     VisualBlock,
+    HelixNormal,
 }
 
 impl Display for Mode {
@@ -37,6 +38,7 @@ impl Display for Mode {
             Mode::Visual => write!(f, "VISUAL"),
             Mode::VisualLine => write!(f, "VISUAL LINE"),
             Mode::VisualBlock => write!(f, "VISUAL BLOCK"),
+            Mode::HelixNormal => write!(f, "HELIX NORMAL"),
         }
     }
 }
@@ -46,6 +48,7 @@ impl Mode {
         match self {
             Mode::Normal | Mode::Insert | Mode::Replace => false,
             Mode::Visual | Mode::VisualLine | Mode::VisualBlock => true,
+            Mode::HelixNormal => false,
         }
     }
 }
@@ -72,6 +75,7 @@ pub enum Operator {
     Jump { line: bool },
     Indent,
     Outdent,
+    AutoIndent,
     Rewrap,
     Lowercase,
     Uppercase,
@@ -150,9 +154,15 @@ pub struct VimGlobals {
     pub dot_recording: bool,
     pub dot_replaying: bool,
 
+    /// pre_count is the number before an operator is specified (3 in 3d2d)
+    pub pre_count: Option<usize>,
+    /// post_count is the number after an operator is specified (2 in 3d2d)
+    pub post_count: Option<usize>,
+
     pub stop_recording_after_next_action: bool,
     pub ignore_current_insertion: bool,
     pub recorded_count: Option<usize>,
+    pub recording_actions: Vec<ReplayableAction>,
     pub recorded_actions: Vec<ReplayableAction>,
     pub recorded_selection: RecordedSelection,
 
@@ -339,11 +349,12 @@ impl VimGlobals {
 
     pub fn observe_action(&mut self, action: Box<dyn Action>) {
         if self.dot_recording {
-            self.recorded_actions
+            self.recording_actions
                 .push(ReplayableAction::Action(action.boxed_clone()));
 
             if self.stop_recording_after_next_action {
                 self.dot_recording = false;
+                self.recorded_actions = std::mem::take(&mut self.recording_actions);
                 self.stop_recording_after_next_action = false;
             }
         }
@@ -363,12 +374,13 @@ impl VimGlobals {
             return;
         }
         if self.dot_recording {
-            self.recorded_actions.push(ReplayableAction::Insertion {
+            self.recording_actions.push(ReplayableAction::Insertion {
                 text: text.clone(),
                 utf16_range_to_replace: range_to_replace.clone(),
             });
             if self.stop_recording_after_next_action {
                 self.dot_recording = false;
+                self.recorded_actions = std::mem::take(&mut self.recording_actions);
                 self.stop_recording_after_next_action = false;
             }
         }
@@ -457,6 +469,7 @@ impl Operator {
             Operator::Jump { line: true } => "'",
             Operator::Jump { line: false } => "`",
             Operator::Indent => ">",
+            Operator::AutoIndent => "eq",
             Operator::Rewrap => "gq",
             Operator::Outdent => "<",
             Operator::Uppercase => "gU",
@@ -477,6 +490,7 @@ impl Operator {
             Operator::Literal {
                 prefix: Some(prefix),
             } => format!("^V{prefix}"),
+            Operator::AutoIndent => "=".to_string(),
             _ => self.id().to_string(),
         }
     }
@@ -502,6 +516,7 @@ impl Operator {
             | Operator::Rewrap
             | Operator::Indent
             | Operator::Outdent
+            | Operator::AutoIndent
             | Operator::Lowercase
             | Operator::Uppercase
             | Operator::Object { .. }

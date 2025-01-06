@@ -158,16 +158,6 @@ impl NotebookEditor {
         })
     }
 
-    fn is_dirty(&self, cx: &AppContext) -> bool {
-        self.cell_map.values().any(|cell| {
-            if let Cell::Code(code_cell) = cell {
-                code_cell.read(cx).is_dirty(cx)
-            } else {
-                false
-            }
-        })
-    }
-
     fn clear_outputs(&mut self, cx: &mut ViewContext<Self>) {
         for cell in self.cell_map.values() {
             if let Cell::Code(code_cell) = cell {
@@ -500,7 +490,7 @@ pub struct NotebookItem {
     id: ProjectEntryId,
 }
 
-impl project::Item for NotebookItem {
+impl project::ProjectItem for NotebookItem {
     fn try_open(
         project: &Model<Project>,
         path: &ProjectPath,
@@ -525,7 +515,7 @@ impl project::Item for NotebookItem {
                     Ok(nbformat::Notebook::V4(notebook)) => notebook,
                     // 4.1 - 4.4 are converted to 4.5
                     Ok(nbformat::Notebook::Legacy(legacy_notebook)) => {
-                        // todo!(): Decide if we want to mutate the notebook by including Cell IDs
+                        // TODO: Decide if we want to mutate the notebook by including Cell IDs
                         // and any other conversions
                         let notebook = nbformat::upgrade_legacy_notebook(legacy_notebook)?;
                         notebook
@@ -560,6 +550,10 @@ impl project::Item for NotebookItem {
 
     fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
         Some(self.project_path.clone())
+    }
+
+    fn is_dirty(&self) -> bool {
+        false
     }
 }
 
@@ -656,7 +650,7 @@ impl Item for NotebookEditor {
     fn for_each_project_item(
         &self,
         cx: &AppContext,
-        f: &mut dyn FnMut(gpui::EntityId, &dyn project::Item),
+        f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
         f(self.notebook_item.entity_id(), self.notebook_item.read(cx))
     }
@@ -679,7 +673,7 @@ impl Item for NotebookEditor {
             .into_any_element()
     }
 
-    fn tab_icon(&self, _cx: &ui::WindowContext) -> Option<Icon> {
+    fn tab_icon(&self, _cx: &WindowContext) -> Option<Icon> {
         Some(IconName::Book.into())
     }
 
@@ -734,8 +728,13 @@ impl Item for NotebookEditor {
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
-        // self.is_dirty(cx) TODO
-        false
+        self.cell_map.values().any(|cell| {
+            if let Cell::Code(code_cell) = cell {
+                code_cell.read(cx).is_dirty(cx)
+            } else {
+                false
+            }
+        })
     }
 }
 

@@ -68,13 +68,11 @@ snippet.workspace = true
 snippet_provider.workspace = true
 terminal.workspace = true
 text.workspace = true
+toml.workspace = true
 util.workspace = true
 url.workspace = true
 which.workspace = true
 fancy-regex.workspace = true
-
-[target.'cfg(target_os = "windows")'.dependencies]
-windows.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }

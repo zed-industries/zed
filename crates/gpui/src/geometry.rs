@@ -10,13 +10,13 @@ use std::{
     cmp::{self, PartialOrd},
     fmt,
     hash::Hash,
-    ops::{Add, Div, Mul, MulAssign, Sub},
+    ops::{Add, Div, Mul, MulAssign, Neg, Sub},
 };
 
 use crate::{AppContext, DisplayId};
 
-/// An axis along which a measurement can be made.
-#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+/// Axis in a 2D cartesian space.
+#[derive(Copy, Clone, PartialEq, Eq, Serialize, Deserialize, Debug)]
 pub enum Axis {
     /// The y axis, or up and down
     Vertical,
@@ -46,7 +46,7 @@ pub trait Along {
     fn apply_along(&self, axis: Axis, f: impl FnOnce(Self::Unit) -> Self::Unit) -> Self;
 }
 
-/// Describes a location in a 2D cartesian coordinate space.
+/// Describes a location in a 2D cartesian space.
 ///
 /// It holds two public fields, `x` and `y`, which represent the coordinates in the space.
 /// The type `T` for the coordinates can be any type that implements `Default`, `Clone`, and `Debug`.
@@ -54,11 +54,25 @@ pub trait Along {
 /// # Examples
 ///
 /// ```
-/// # use zed::Point;
+/// # use gpui::Point;
 /// let point = Point { x: 10, y: 20 };
 /// println!("{:?}", point); // Outputs: Point { x: 10, y: 20 }
 /// ```
-#[derive(Refineable, Default, Add, AddAssign, Sub, SubAssign, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(
+    Refineable,
+    Default,
+    Add,
+    AddAssign,
+    Sub,
+    SubAssign,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    Hash,
+)]
 #[refineable(Debug)]
 #[repr(C)]
 pub struct Point<T: Default + Clone + Debug> {
@@ -82,7 +96,7 @@ pub struct Point<T: Default + Clone + Debug> {
 /// # Examples
 ///
 /// ```
-/// # use zed::Point;
+/// # use gpui::Point;
 /// let p = point(10, 20);
 /// assert_eq!(p.x, 10);
 /// assert_eq!(p.y, 20);
@@ -123,7 +137,7 @@ impl<T: Clone + Debug + Default> Point<T> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Point;
+    /// # use gpui::Point;
     /// let p = Point { x: 3, y: 4 };
     /// let p_float = p.map(|coord| coord as f32);
     /// assert_eq!(p_float, Point { x: 3.0, y: 4.0 });
@@ -177,7 +191,7 @@ impl Point<Pixels> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Point, Pixels, ScaledPixels};
+    /// # use gpui::{Point, Pixels, ScaledPixels};
     /// let p = Point { x: Pixels(10.0), y: Pixels(20.0) };
     /// let scaled_p = p.scale(1.5);
     /// assert_eq!(scaled_p, Point { x: ScaledPixels(15.0), y: ScaledPixels(30.0) });
@@ -194,8 +208,7 @@ impl Point<Pixels> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Point;
-    /// # use zed::Pixels;
+    /// # use gpui::{Pixels, Point};
     /// let p = Point { x: Pixels(3.0), y: Pixels(4.0) };
     /// assert_eq!(p.magnitude(), 5.0);
     /// ```
@@ -258,7 +271,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::Point;
+    /// # use gpui::Point;
     /// let p1 = Point { x: 3, y: 7 };
     /// let p2 = Point { x: 5, y: 2 };
     /// let max_point = p1.max(&p2);
@@ -288,7 +301,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::Point;
+    /// # use gpui::Point;
     /// let p1 = Point { x: 3, y: 7 };
     /// let p2 = Point { x: 5, y: 2 };
     /// let min_point = p1.min(&p2);
@@ -324,7 +337,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::Point;
+    /// # use gpui::Point;
     /// let p = Point { x: 10, y: 20 };
     /// let min = Point { x: 0, y: 5 };
     /// let max = Point { x: 15, y: 25 };
@@ -373,7 +386,7 @@ pub struct Size<T: Clone + Default + Debug> {
 /// # Examples
 ///
 /// ```
-/// # use zed::Size;
+/// # use gpui::Size;
 /// let my_size = size(10, 20);
 /// assert_eq!(my_size.width, 10);
 /// assert_eq!(my_size.height, 20);
@@ -402,7 +415,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::Size;
+    /// # use gpui::Size;
     /// let my_size = Size { width: 10, height: 20 };
     /// let my_new_size = my_size.map(|dimension| dimension as f32 * 1.5);
     /// assert_eq!(my_new_size, Size { width: 15.0, height: 30.0 });
@@ -445,7 +458,7 @@ impl Size<Pixels> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Size, Pixels, ScaledPixels};
+    /// # use gpui::{Size, Pixels, ScaledPixels};
     /// let size = Size { width: Pixels(100.0), height: Pixels(50.0) };
     /// let scaled_size = size.scale(2.0);
     /// assert_eq!(scaled_size, Size { width: ScaledPixels(200.0), height: ScaledPixels(100.0) });
@@ -499,7 +512,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::Size;
+    /// # use gpui::Size;
     /// let size1 = Size { width: 30, height: 40 };
     /// let size2 = Size { width: 50, height: 20 };
     /// let max_size = size1.max(&size2);
@@ -519,6 +532,7 @@ where
             },
         }
     }
+
     /// Returns a new `Size` with the minimum width and height from `self` and `other`.
     ///
     /// # Arguments
@@ -528,7 +542,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::Size;
+    /// # use gpui::Size;
     /// let size1 = Size { width: 30, height: 40 };
     /// let size2 = Size { width: 50, height: 20 };
     /// let min_size = size1.min(&size2);
@@ -680,13 +694,13 @@ impl Size<Length> {
 /// Represents a rectangular area in a 2D space with an origin point and a size.
 ///
 /// The `Bounds` struct is generic over a type `T` which represents the type of the coordinate system.
-/// The origin is represented as a `Point<T>` which defines the upper-left corner of the rectangle,
+/// The origin is represented as a `Point<T>` which defines the top left corner of the rectangle,
 /// and the size is represented as a `Size<T>` which defines the width and height of the rectangle.
 ///
 /// # Examples
 ///
 /// ```
-/// # use zed::{Bounds, Point, Size};
+/// # use gpui::{Bounds, Point, Size};
 /// let origin = Point { x: 0, y: 0 };
 /// let size = Size { width: 10, height: 20 };
 /// let bounds = Bounds::new(origin, size);
@@ -694,7 +708,7 @@ impl Size<Length> {
 /// assert_eq!(bounds.origin, origin);
 /// assert_eq!(bounds.size, size);
 /// ```
-#[derive(Refineable, Clone, Default, Debug, Eq, PartialEq, Hash)]
+#[derive(Refineable, Clone, Default, Debug, Eq, PartialEq, Serialize, Deserialize, Hash)]
 #[refineable(Debug)]
 #[repr(C)]
 pub struct Bounds<T: Clone + Default + Debug> {
@@ -702,6 +716,11 @@ pub struct Bounds<T: Clone + Default + Debug> {
     pub origin: Point<T>,
     /// The size of the rectangle.
     pub size: Size<T>,
+}
+
+/// Create a bounds with the given origin and size
+pub fn bounds<T: Clone + Default + Debug>(origin: Point<T>, size: Size<T>) -> Bounds<T> {
+    Bounds { origin, size }
 }
 
 impl Bounds<Pixels> {
@@ -712,13 +731,7 @@ impl Bounds<Pixels> {
             .or_else(|| cx.primary_display());
 
         display
-            .map(|display| {
-                let center = display.bounds().center();
-                Bounds {
-                    origin: point(center.x - size.width / 2., center.y - size.height / 2.),
-                    size,
-                }
-            })
+            .map(|display| Bounds::centered_at(display.bounds().center(), size))
             .unwrap_or_else(|| Bounds {
                 origin: point(px(0.), px(0.)),
                 size,
@@ -742,47 +755,8 @@ impl Bounds<Pixels> {
 
 impl<T> Bounds<T>
 where
-    T: Clone + Debug + Sub<Output = T> + Default,
+    T: Clone + Debug + Default,
 {
-    /// Constructs a `Bounds` from two corner points: the upper-left and lower-right corners.
-    ///
-    /// This function calculates the origin and size of the `Bounds` based on the provided corner points.
-    /// The origin is set to the upper-left corner, and the size is determined by the difference between
-    /// the x and y coordinates of the lower-right and upper-left points.
-    ///
-    /// # Arguments
-    ///
-    /// * `upper_left` - A `Point<T>` representing the upper-left corner of the rectangle.
-    /// * `lower_right` - A `Point<T>` representing the lower-right corner of the rectangle.
-    ///
-    /// # Returns
-    ///
-    /// Returns a `Bounds<T>` that encompasses the area defined by the two corner points.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use zed::{Bounds, Point};
-    /// let upper_left = Point { x: 0, y: 0 };
-    /// let lower_right = Point { x: 10, y: 10 };
-    /// let bounds = Bounds::from_corners(upper_left, lower_right);
-    ///
-    /// assert_eq!(bounds.origin, upper_left);
-    /// assert_eq!(bounds.size.width, 10);
-    /// assert_eq!(bounds.size.height, 10);
-    /// ```
-    pub fn from_corners(upper_left: Point<T>, lower_right: Point<T>) -> Self {
-        let origin = Point {
-            x: upper_left.x.clone(),
-            y: upper_left.y.clone(),
-        };
-        let size = Size {
-            width: lower_right.x - upper_left.x,
-            height: lower_right.y - upper_left.y,
-        };
-        Bounds { origin, size }
-    }
-
     /// Creates a new `Bounds` with the specified origin and size.
     ///
     /// # Arguments
@@ -800,7 +774,87 @@ where
 
 impl<T> Bounds<T>
 where
-    T: Clone + Debug + PartialOrd + Add<T, Output = T> + Sub<Output = T> + Default + Half,
+    T: Clone + Debug + Sub<Output = T> + Default,
+{
+    /// Constructs a `Bounds` from two corner points: the top left and bottom right corners.
+    ///
+    /// This function calculates the origin and size of the `Bounds` based on the provided corner points.
+    /// The origin is set to the top left corner, and the size is determined by the difference between
+    /// the x and y coordinates of the bottom right and top left points.
+    ///
+    /// # Arguments
+    ///
+    /// * `upper_left` - A `Point<T>` representing the top left corner of the rectangle.
+    /// * `bottom_right` - A `Point<T>` representing the bottom right corner of the rectangle.
+    ///
+    /// # Returns
+    ///
+    /// Returns a `Bounds<T>` that encompasses the area defined by the two corner points.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use gpui::{Bounds, Point};
+    /// let upper_left = Point { x: 0, y: 0 };
+    /// let bottom_right = Point { x: 10, y: 10 };
+    /// let bounds = Bounds::from_corners(upper_left, bottom_right);
+    ///
+    /// assert_eq!(bounds.origin, upper_left);
+    /// assert_eq!(bounds.size.width, 10);
+    /// assert_eq!(bounds.size.height, 10);
+    /// ```
+    pub fn from_corners(upper_left: Point<T>, bottom_right: Point<T>) -> Self {
+        let origin = Point {
+            x: upper_left.x.clone(),
+            y: upper_left.y.clone(),
+        };
+        let size = Size {
+            width: bottom_right.x - upper_left.x,
+            height: bottom_right.y - upper_left.y,
+        };
+        Bounds { origin, size }
+    }
+
+    /// Constructs a `Bounds` from a corner point and size. The specified corner will be placed at
+    /// the specified origin.
+    pub fn from_corner_and_size(corner: Corner, origin: Point<T>, size: Size<T>) -> Bounds<T> {
+        let origin = match corner {
+            Corner::TopLeft => origin,
+            Corner::TopRight => Point {
+                x: origin.x - size.width.clone(),
+                y: origin.y,
+            },
+            Corner::BottomLeft => Point {
+                x: origin.x,
+                y: origin.y - size.height.clone(),
+            },
+            Corner::BottomRight => Point {
+                x: origin.x - size.width.clone(),
+                y: origin.y - size.height.clone(),
+            },
+        };
+
+        Bounds { origin, size }
+    }
+}
+
+impl<T> Bounds<T>
+where
+    T: Clone + Debug + Sub<T, Output = T> + Default + Half,
+{
+    /// Creates a new bounds centered at the given point.
+    pub fn centered_at(center: Point<T>, size: Size<T>) -> Self {
+        let origin = Point {
+            x: center.x - size.width.half(),
+            y: center.y - size.height.half(),
+        };
+        Self::new(origin, size)
+    }
+}
+
+impl<T> Bounds<T>
+where
+    T: Clone + Debug + PartialOrd + Add<T, Output = T> + Default,
 {
     /// Checks if this `Bounds` intersects with another `Bounds`.
     ///
@@ -818,7 +872,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let bounds1 = Bounds {
     ///     origin: Point { x: 0, y: 0 },
     ///     size: Size { width: 10, height: 10 },
@@ -836,15 +890,80 @@ where
     /// assert_eq!(bounds1.intersects(&bounds3), false); // Non-overlapping bounds
     /// ```
     pub fn intersects(&self, other: &Bounds<T>) -> bool {
-        let my_lower_right = self.lower_right();
-        let their_lower_right = other.lower_right();
+        let my_lower_right = self.bottom_right();
+        let their_lower_right = other.bottom_right();
 
         self.origin.x < their_lower_right.x
             && my_lower_right.x > other.origin.x
             && self.origin.y < their_lower_right.y
             && my_lower_right.y > other.origin.y
     }
+}
 
+impl<T> Bounds<T>
+where
+    T: Clone + Debug + Add<T, Output = T> + Default + Half,
+{
+    /// Returns the center point of the bounds.
+    ///
+    /// Calculates the center by taking the origin's x and y coordinates and adding half the width and height
+    /// of the bounds, respectively. The center is represented as a `Point<T>` where `T` is the type of the
+    /// coordinate system.
+    ///
+    /// # Returns
+    ///
+    /// A `Point<T>` representing the center of the bounds.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use gpui::{Bounds, Point, Size};
+    /// let bounds = Bounds {
+    ///     origin: Point { x: 0, y: 0 },
+    ///     size: Size { width: 10, height: 20 },
+    /// };
+    /// let center = bounds.center();
+    /// assert_eq!(center, Point { x: 5, y: 10 });
+    /// ```
+    pub fn center(&self) -> Point<T> {
+        Point {
+            x: self.origin.x.clone() + self.size.width.clone().half(),
+            y: self.origin.y.clone() + self.size.height.clone().half(),
+        }
+    }
+}
+
+impl<T> Bounds<T>
+where
+    T: Clone + Debug + Add<T, Output = T> + Default,
+{
+    /// Calculates the half perimeter of a rectangle defined by the bounds.
+    ///
+    /// The half perimeter is calculated as the sum of the width and the height of the rectangle.
+    /// This method is generic over the type `T` which must implement the `Sub` trait to allow
+    /// calculation of the width and height from the bounds' origin and size, as well as the `Add` trait
+    /// to sum the width and height for the half perimeter.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use gpui::{Bounds, Point, Size};
+    /// let bounds = Bounds {
+    ///     origin: Point { x: 0, y: 0 },
+    ///     size: Size { width: 10, height: 20 },
+    /// };
+    /// let half_perimeter = bounds.half_perimeter();
+    /// assert_eq!(half_perimeter, 30);
+    /// ```
+    pub fn half_perimeter(&self) -> T {
+        self.size.width.clone() + self.size.height.clone()
+    }
+}
+
+impl<T> Bounds<T>
+where
+    T: Clone + Debug + Add<T, Output = T> + Sub<Output = T> + Default,
+{
     /// Dilates the bounds by a specified amount in all directions.
     ///
     /// This method expands the bounds by the given `amount`, increasing the size
@@ -860,7 +979,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let mut bounds = Bounds {
     ///     origin: Point { x: 10, y: 10 },
     ///     size: Size { width: 10, height: 10 },
@@ -871,79 +990,36 @@ where
     ///     size: Size { width: 20, height: 20 },
     /// });
     /// ```
-    pub fn dilate(&mut self, amount: T) {
-        self.origin.x = self.origin.x.clone() - amount.clone();
-        self.origin.y = self.origin.y.clone() - amount.clone();
-        let double_amount = amount.clone() + amount;
-        self.size.width = self.size.width.clone() + double_amount.clone();
-        self.size.height = self.size.height.clone() + double_amount;
-    }
-
-    /// inset the bounds by a specified amount
-    /// Note that this may panic if T does not support negative values
-    pub fn inset(&self, amount: T) -> Self {
-        let mut result = self.clone();
-        result.dilate(T::default() - amount);
-        result
-    }
-
-    /// Returns the center point of the bounds.
-    ///
-    /// Calculates the center by taking the origin's x and y coordinates and adding half the width and height
-    /// of the bounds, respectively. The center is represented as a `Point<T>` where `T` is the type of the
-    /// coordinate system.
-    ///
-    /// # Returns
-    ///
-    /// A `Point<T>` representing the center of the bounds.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use zed::{Bounds, Point, Size};
-    /// let bounds = Bounds {
-    ///     origin: Point { x: 0, y: 0 },
-    ///     size: Size { width: 10, height: 20 },
-    /// };
-    /// let center = bounds.center();
-    /// assert_eq!(center, Point { x: 5, y: 10 });
-    /// ```
-    pub fn center(&self) -> Point<T> {
-        Point {
-            x: self.origin.x.clone() + self.size.width.clone().half(),
-            y: self.origin.y.clone() + self.size.height.clone().half(),
+    pub fn dilate(&self, amount: T) -> Bounds<T> {
+        let double_amount = amount.clone() + amount.clone();
+        Bounds {
+            origin: self.origin.clone() - point(amount.clone(), amount),
+            size: self.size.clone() + size(double_amount.clone(), double_amount),
         }
     }
 
-    /// Calculates the half perimeter of a rectangle defined by the bounds.
-    ///
-    /// The half perimeter is calculated as the sum of the width and the height of the rectangle.
-    /// This method is generic over the type `T` which must implement the `Sub` trait to allow
-    /// calculation of the width and height from the bounds' origin and size, as well as the `Add` trait
-    /// to sum the width and height for the half perimeter.
-    ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use zed::{Bounds, Point, Size};
-    /// let bounds = Bounds {
-    ///     origin: Point { x: 0, y: 0 },
-    ///     size: Size { width: 10, height: 20 },
-    /// };
-    /// let half_perimeter = bounds.half_perimeter();
-    /// assert_eq!(half_perimeter, 30);
-    /// ```
-    pub fn half_perimeter(&self) -> T {
-        self.size.width.clone() + self.size.height.clone()
+    /// Extends the bounds different amounts in each direction.
+    pub fn extend(&self, amount: Edges<T>) -> Bounds<T> {
+        Bounds {
+            origin: self.origin.clone() - point(amount.left.clone(), amount.top.clone()),
+            size: self.size.clone()
+                + size(
+                    amount.left.clone() + amount.right.clone(),
+                    amount.top.clone() + amount.bottom.clone(),
+                ),
+        }
     }
+}
 
-    /// centered_at creates a new bounds centered at the given point.
-    pub fn centered_at(center: Point<T>, size: Size<T>) -> Self {
-        let origin = Point {
-            x: center.x - size.width.half(),
-            y: center.y - size.height.half(),
-        };
-        Self::new(origin, size)
+impl<T> Bounds<T>
+where
+    T: Clone + Debug + Add<T, Output = T> + Sub<T, Output = T> + Neg<Output = T> + Default,
+{
+    /// Inset the bounds by a specified amount. Equivalent to `dilate` with the amount negated.
+    ///
+    /// Note that this may panic if T does not support negative values.
+    pub fn inset(&self, amount: T) -> Self {
+        self.dilate(-amount)
     }
 }
 
@@ -965,7 +1041,7 @@ impl<T: Clone + Default + Debug + PartialOrd + Add<T, Output = T> + Sub<Output =
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let bounds1 = Bounds {
     ///     origin: Point { x: 0, y: 0 },
     ///     size: Size { width: 10, height: 10 },
@@ -983,8 +1059,8 @@ impl<T: Clone + Default + Debug + PartialOrd + Add<T, Output = T> + Sub<Output =
     /// ```
     pub fn intersect(&self, other: &Self) -> Self {
         let upper_left = self.origin.max(&other.origin);
-        let lower_right = self.lower_right().min(&other.lower_right());
-        Self::from_corners(upper_left, lower_right)
+        let bottom_right = self.bottom_right().min(&other.bottom_right());
+        Self::from_corners(upper_left, bottom_right)
     }
 
     /// Computes the union of two `Bounds`.
@@ -1004,7 +1080,7 @@ impl<T: Clone + Default + Debug + PartialOrd + Add<T, Output = T> + Sub<Output =
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let bounds1 = Bounds {
     ///     origin: Point { x: 0, y: 0 },
     ///     size: Size { width: 10, height: 10 },
@@ -1022,8 +1098,23 @@ impl<T: Clone + Default + Debug + PartialOrd + Add<T, Output = T> + Sub<Output =
     /// ```
     pub fn union(&self, other: &Self) -> Self {
         let top_left = self.origin.min(&other.origin);
-        let bottom_right = self.lower_right().max(&other.lower_right());
+        let bottom_right = self.bottom_right().max(&other.bottom_right());
         Bounds::from_corners(top_left, bottom_right)
+    }
+}
+
+impl<T> Bounds<T>
+where
+    T: Clone + Debug + Add<T, Output = T> + Sub<T, Output = T> + Default,
+{
+    /// Computes the space available within outer bounds.
+    pub fn space_within(&self, outer: &Self) -> Edges<T> {
+        Edges {
+            top: self.top().clone() - outer.top().clone(),
+            right: outer.right().clone() - self.right().clone(),
+            bottom: outer.bottom().clone() - self.bottom().clone(),
+            left: self.left().clone() - outer.left().clone(),
+        }
     }
 }
 
@@ -1070,6 +1161,34 @@ where
     }
 }
 
+impl<T> Add<Point<T>> for Bounds<T>
+where
+    T: Add<T, Output = T> + Default + Clone + Debug,
+{
+    type Output = Self;
+
+    fn add(self, rhs: Point<T>) -> Self {
+        Self {
+            origin: self.origin + rhs,
+            size: self.size,
+        }
+    }
+}
+
+impl<T> Sub<Point<T>> for Bounds<T>
+where
+    T: Sub<T, Output = T> + Default + Clone + Debug,
+{
+    type Output = Self;
+
+    fn sub(self, rhs: Point<T>) -> Self {
+        Self {
+            origin: self.origin - rhs,
+            size: self.size,
+        }
+    }
+}
+
 impl<T> Bounds<T>
 where
     T: Add<T, Output = T> + Clone + Default + Debug,
@@ -1110,75 +1229,101 @@ where
         self.origin.x.clone() + self.size.width.clone()
     }
 
-    /// Returns the upper-right corner point of the bounds.
+    /// Returns the top right corner point of the bounds.
     ///
     /// # Returns
     ///
-    /// A `Point<T>` representing the upper-right corner of the bounds.
+    /// A `Point<T>` representing the top right corner of the bounds.
     ///
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let bounds = Bounds {
     ///     origin: Point { x: 0, y: 0 },
     ///     size: Size { width: 10, height: 20 },
     /// };
-    /// let upper_right = bounds.upper_right();
-    /// assert_eq!(upper_right, Point { x: 10, y: 0 });
+    /// let top_right = bounds.top_right();
+    /// assert_eq!(top_right, Point { x: 10, y: 0 });
     /// ```
-    pub fn upper_right(&self) -> Point<T> {
+    pub fn top_right(&self) -> Point<T> {
         Point {
             x: self.origin.x.clone() + self.size.width.clone(),
             y: self.origin.y.clone(),
         }
     }
 
-    /// Returns the lower-right corner point of the bounds.
+    /// Returns the bottom right corner point of the bounds.
     ///
     /// # Returns
     ///
-    /// A `Point<T>` representing the lower-right corner of the bounds.
+    /// A `Point<T>` representing the bottom right corner of the bounds.
     ///
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let bounds = Bounds {
     ///     origin: Point { x: 0, y: 0 },
     ///     size: Size { width: 10, height: 20 },
     /// };
-    /// let lower_right = bounds.lower_right();
-    /// assert_eq!(lower_right, Point { x: 10, y: 20 });
+    /// let bottom_right = bounds.bottom_right();
+    /// assert_eq!(bottom_right, Point { x: 10, y: 20 });
     /// ```
-    pub fn lower_right(&self) -> Point<T> {
+    pub fn bottom_right(&self) -> Point<T> {
         Point {
             x: self.origin.x.clone() + self.size.width.clone(),
             y: self.origin.y.clone() + self.size.height.clone(),
         }
     }
 
-    /// Returns the lower-left corner point of the bounds.
+    /// Returns the bottom left corner point of the bounds.
     ///
     /// # Returns
     ///
-    /// A `Point<T>` representing the lower-left corner of the bounds.
+    /// A `Point<T>` representing the bottom left corner of the bounds.
     ///
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let bounds = Bounds {
     ///     origin: Point { x: 0, y: 0 },
     ///     size: Size { width: 10, height: 20 },
     /// };
-    /// let lower_left = bounds.lower_left();
-    /// assert_eq!(lower_left, Point { x: 0, y: 20 });
+    /// let bottom_left = bounds.bottom_left();
+    /// assert_eq!(bottom_left, Point { x: 0, y: 20 });
     /// ```
-    pub fn lower_left(&self) -> Point<T> {
+    pub fn bottom_left(&self) -> Point<T> {
         Point {
             x: self.origin.x.clone(),
             y: self.origin.y.clone() + self.size.height.clone(),
+        }
+    }
+
+    /// Returns the requested corner point of the bounds.
+    ///
+    /// # Returns
+    ///
+    /// A `Point<T>` representing the corner of the bounds requested by the parameter.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Bounds, Corner, Point, Size};
+    /// let bounds = Bounds {
+    ///     origin: Point { x: 0, y: 0 },
+    ///     size: Size { width: 10, height: 20 },
+    /// };
+    /// let bottom_left = bounds.corner(Corner::BottomLeft);
+    /// assert_eq!(bottom_left, Point { x: 0, y: 20 });
+    /// ```
+    pub fn corner(&self, corner: Corner) -> Point<T> {
+        match corner {
+            Corner::TopLeft => self.origin.clone(),
+            Corner::TopRight => self.top_right(),
+            Corner::BottomLeft => self.bottom_left(),
+            Corner::BottomRight => self.bottom_right(),
         }
     }
 }
@@ -1205,7 +1350,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Point, Bounds};
+    /// # use gpui::{Point, Bounds};
     /// let bounds = Bounds {
     ///     origin: Point { x: 0, y: 0 },
     ///     size: Size { width: 10, height: 10 },
@@ -1240,7 +1385,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let bounds = Bounds {
     ///     origin: Point { x: 10.0, y: 10.0 },
     ///     size: Size { width: 10.0, height: 20.0 },
@@ -1267,7 +1412,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let bounds = Bounds {
     ///     origin: Point { x: 10.0, y: 10.0 },
     ///     size: Size { width: 10.0, height: 20.0 },
@@ -1291,7 +1436,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size};
+    /// # use gpui::{Bounds, Point, Size};
     /// let bounds = Bounds {
     ///     origin: Point { x: 10.0, y: 10.0 },
     ///     size: Size { width: 10.0, height: 20.0 },
@@ -1366,7 +1511,7 @@ impl Bounds<Pixels> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Bounds, Point, Size, Pixels};
+    /// # use gpui::{Bounds, Point, Size, Pixels};
     /// let bounds = Bounds {
     ///     origin: Point { x: Pixels(10.0), y: Pixels(20.0) },
     ///     size: Size { width: Pixels(30.0), height: Pixels(40.0) },
@@ -1419,7 +1564,7 @@ impl<T: Clone + Debug + Copy + Default> Copy for Bounds<T> {}
 /// # Examples
 ///
 /// ```
-/// # use zed::Edges;
+/// # use gpui::Edges;
 /// let edges = Edges {
 ///     top: 10.0,
 ///     right: 20.0,
@@ -1495,7 +1640,7 @@ impl<T: Clone + Default + Debug> Edges<T> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Edges;
+    /// # use gpui::Edges;
     /// let uniform_edges = Edges::all(10.0);
     /// assert_eq!(uniform_edges.top, 10.0);
     /// assert_eq!(uniform_edges.right, 10.0);
@@ -1528,7 +1673,7 @@ impl<T: Clone + Default + Debug> Edges<T> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Edges;
+    /// # use gpui::Edges;
     /// let edges = Edges { top: 10, right: 20, bottom: 30, left: 40 };
     /// let edges_float = edges.map(|&value| value as f32 * 1.1);
     /// assert_eq!(edges_float, Edges { top: 11.0, right: 22.0, bottom: 33.0, left: 44.0 });
@@ -1560,7 +1705,7 @@ impl<T: Clone + Default + Debug> Edges<T> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Edges;
+    /// # use gpui::Edges;
     /// let edges = Edges {
     ///     top: 10,
     ///     right: 0,
@@ -1592,7 +1737,7 @@ impl Edges<Length> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Edges;
+    /// # use gpui::Edges;
     /// let auto_edges = Edges::auto();
     /// assert_eq!(auto_edges.top, Length::Auto);
     /// assert_eq!(auto_edges.right, Length::Auto);
@@ -1620,7 +1765,7 @@ impl Edges<Length> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Edges;
+    /// # use gpui::Edges;
     /// let no_edges = Edges::zero();
     /// assert_eq!(no_edges.top, Length::Definite(DefiniteLength::from(Pixels(0.))));
     /// assert_eq!(no_edges.right, Length::Definite(DefiniteLength::from(Pixels(0.))));
@@ -1650,12 +1795,12 @@ impl Edges<DefiniteLength> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Edges;
+    /// # use gpui::{px, Edges};
     /// let no_edges = Edges::zero();
-    /// assert_eq!(no_edges.top, DefiniteLength::from(zed::px(0.)));
-    /// assert_eq!(no_edges.right, DefiniteLength::from(zed::px(0.)));
-    /// assert_eq!(no_edges.bottom, DefiniteLength::from(zed::px(0.)));
-    /// assert_eq!(no_edges.left, DefiniteLength::from(zed::px(0.)));
+    /// assert_eq!(no_edges.top, DefiniteLength::from(px(0.)));
+    /// assert_eq!(no_edges.right, DefiniteLength::from(px(0.)));
+    /// assert_eq!(no_edges.bottom, DefiniteLength::from(px(0.)));
+    /// assert_eq!(no_edges.left, DefiniteLength::from(px(0.)));
     /// ```
     pub fn zero() -> Self {
         Self {
@@ -1683,7 +1828,7 @@ impl Edges<DefiniteLength> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Edges, DefiniteLength, px, AbsoluteLength, Size};
+    /// # use gpui::{Edges, DefiniteLength, px, AbsoluteLength, Size};
     /// let edges = Edges {
     ///     top: DefiniteLength::Absolute(AbsoluteLength::Pixels(px(10.0))),
     ///     right: DefiniteLength::Fraction(0.5),
@@ -1725,7 +1870,7 @@ impl Edges<AbsoluteLength> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::Edges;
+    /// # use gpui::Edges;
     /// let no_edges = Edges::zero();
     /// assert_eq!(no_edges.top, AbsoluteLength::Pixels(Pixels(0.0)));
     /// assert_eq!(no_edges.right, AbsoluteLength::Pixels(Pixels(0.0)));
@@ -1757,7 +1902,7 @@ impl Edges<AbsoluteLength> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Edges, AbsoluteLength, Pixels, px};
+    /// # use gpui::{Edges, AbsoluteLength, Pixels, px};
     /// let edges = Edges {
     ///     top: AbsoluteLength::Pixels(px(10.0)),
     ///     right: AbsoluteLength::Rems(rems(1.0)),
@@ -1798,7 +1943,7 @@ impl Edges<Pixels> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Edges, Pixels};
+    /// # use gpui::{Edges, Pixels};
     /// let edges = Edges {
     ///     top: Pixels(10.0),
     ///     right: Pixels(20.0),
@@ -1848,6 +1993,64 @@ impl From<Pixels> for Edges<Pixels> {
     }
 }
 
+/// Identifies a corner of a 2d box.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Corner {
+    /// The top left corner
+    TopLeft,
+    /// The top right corner
+    TopRight,
+    /// The bottom left corner
+    BottomLeft,
+    /// The bottom right corner
+    BottomRight,
+}
+
+impl Corner {
+    /// Returns the directly opposite corner.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::Corner;
+    /// assert_eq!(Corner::TopLeft.opposite_corner(), Corner::BottomRight);
+    /// ```
+    pub fn opposite_corner(self) -> Self {
+        match self {
+            Corner::TopLeft => Corner::BottomRight,
+            Corner::TopRight => Corner::BottomLeft,
+            Corner::BottomLeft => Corner::TopRight,
+            Corner::BottomRight => Corner::TopLeft,
+        }
+    }
+
+    /// Returns the corner across from this corner, moving along the specified axis.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::Corner;
+    /// let result = Corner::TopLeft.other_side_corner_along(Axis::Horizontal);
+    /// assert_eq!(result, Corner::TopRight);
+    /// ```
+    pub fn other_side_corner_along(self, axis: Axis) -> Self {
+        match axis {
+            Axis::Vertical => match self {
+                Corner::TopLeft => Corner::BottomLeft,
+                Corner::TopRight => Corner::BottomRight,
+                Corner::BottomLeft => Corner::TopLeft,
+                Corner::BottomRight => Corner::TopRight,
+            },
+            Axis::Horizontal => match self {
+                Corner::TopLeft => Corner::TopRight,
+                Corner::TopRight => Corner::TopLeft,
+                Corner::BottomLeft => Corner::BottomRight,
+                Corner::BottomRight => Corner::BottomLeft,
+            },
+        }
+    }
+}
+
 /// Represents the corners of a box in a 2D space, such as border radius.
 ///
 /// Each field represents the size of the corner on one side of the box: `top_left`, `top_right`, `bottom_right`, and `bottom_left`.
@@ -1886,7 +2089,7 @@ where
     /// # Examples
     ///
     /// ```
-    /// # use zed::Corners;
+    /// # use gpui::Corners;
     /// let uniform_corners = Corners::all(5.0);
     /// assert_eq!(uniform_corners.top_left, 5.0);
     /// assert_eq!(uniform_corners.top_right, 5.0);
@@ -1899,6 +2102,33 @@ where
             top_right: value.clone(),
             bottom_right: value.clone(),
             bottom_left: value,
+        }
+    }
+
+    /// Returns the requested corner.
+    ///
+    /// # Returns
+    ///
+    /// A `Point<T>` representing the corner requested by the parameter.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// # use zed::{Corner, Corners};
+    /// let corners = Corners {
+    ///     top_left: 1,
+    ///     top_right: 2,
+    ///     bottom_left: 3,
+    ///     bottom_right: 4
+    /// };
+    /// assert_eq!(corners.corner(Corner::BottomLeft), 3);
+    /// ```
+    pub fn corner(&self, corner: Corner) -> T {
+        match corner {
+            Corner::TopLeft => self.top_left.clone(),
+            Corner::TopRight => self.top_right.clone(),
+            Corner::BottomLeft => self.bottom_left.clone(),
+            Corner::BottomRight => self.bottom_right.clone(),
         }
     }
 }
@@ -1923,7 +2153,7 @@ impl Corners<AbsoluteLength> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Corners, AbsoluteLength, Pixels, Size};
+    /// # use gpui::{Corners, AbsoluteLength, Pixels, Size};
     /// let corners = Corners {
     ///     top_left: AbsoluteLength::Pixels(Pixels(15.0)),
     ///     top_right: AbsoluteLength::Rems(Rems(1.0)),
@@ -1967,7 +2197,7 @@ impl Corners<Pixels> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Corners, Pixels};
+    /// # use gpui::{Corners, Pixels};
     /// let corners = Corners {
     ///     top_left: Pixels(10.0),
     ///     top_right: Pixels(20.0),
@@ -2020,7 +2250,7 @@ impl<T: Clone + Default + Debug> Corners<T> {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{Corners, Pixels};
+    /// # use gpui::{Corners, Pixels};
     /// let corners = Corners {
     ///     top_left: Pixels(10.0),
     ///     top_right: Pixels(20.0),
@@ -2174,7 +2404,7 @@ impl From<Percentage> for Radians {
 /// # Examples
 ///
 /// ```
-/// use zed::Pixels;
+/// use gpui::Pixels;
 ///
 /// // Define a length of 10 pixels
 /// let length = Pixels(10.0);
@@ -2486,7 +2716,7 @@ impl DevicePixels {
     /// # Examples
     ///
     /// ```
-    /// # use zed::DevicePixels;
+    /// # use gpui::DevicePixels;
     /// let pixels = DevicePixels(10); // 10 device pixels
     /// let bytes_per_pixel = 4; // Assume each pixel is represented by 4 bytes (e.g., RGBA)
     /// let total_bytes = pixels.to_bytes(bytes_per_pixel);
@@ -2698,7 +2928,7 @@ impl AbsoluteLength {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{AbsoluteLength, Pixels};
+    /// # use gpui::{AbsoluteLength, Pixels};
     /// let length_in_pixels = AbsoluteLength::Pixels(Pixels(42.0));
     /// let length_in_rems = AbsoluteLength::Rems(Rems(2.0));
     /// let rem_size = Pixels(16.0);
@@ -2751,7 +2981,7 @@ impl DefiniteLength {
     /// # Examples
     ///
     /// ```
-    /// # use zed::{DefiniteLength, AbsoluteLength, Pixels, px, rems};
+    /// # use gpui::{DefiniteLength, AbsoluteLength, Pixels, px, rems};
     /// let length_in_pixels = DefiniteLength::Absolute(AbsoluteLength::Pixels(px(42.0)));
     /// let length_in_rems = DefiniteLength::Absolute(AbsoluteLength::Rems(rems(2.0)));
     /// let length_as_fraction = DefiniteLength::Fraction(0.5);
