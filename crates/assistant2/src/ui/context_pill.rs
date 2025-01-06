@@ -78,6 +78,25 @@ impl RenderOnce for ContextPill {
                 .border_color(color.border.opacity(0.5))
                 .pr(if on_remove.is_some() { px(4.) } else { px(2.) })
                 .child(Label::new(context.name.clone()).size(LabelSize::Small))
+                .when_some(
+                    context
+                        .path
+                        .as_ref()
+                        .and_then(|path| path.parent())
+                        .and_then(|parent| parent.file_name()),
+                    |element, parent_name| {
+                        element.child(
+                            Label::new(parent_name.to_string_lossy().into_owned())
+                                .size(LabelSize::XSmall)
+                                .color(Color::Muted),
+                        )
+                    },
+                )
+                .when_some(context.path.as_ref(), |element, path| {
+                    let path = path.to_string_lossy().into_owned();
+
+                    element.tooltip(move |cx| Tooltip::text(&path, cx))
+                })
                 .when_some(on_remove.as_ref(), |element, on_remove| {
                     element.child(
                         IconButton::new(("remove", context.id.0), IconName::Close)

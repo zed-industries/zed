@@ -58,11 +58,9 @@ impl ContextStore {
         let id = self.next_context_id.post_inc();
         self.files.insert(path.to_path_buf(), id);
 
-        let full_path: SharedString = path.to_string_lossy().into_owned().into();
-
         let name = match path.file_name() {
             Some(name) => name.to_string_lossy().into_owned().into(),
-            None => full_path.clone(),
+            None => path.to_string_lossy().into_owned().into(),
         };
 
         let mut text = String::new();
@@ -71,7 +69,7 @@ impl ContextStore {
         self.context.push(Context {
             id,
             name,
-            full_name: Some(full_path),
+            path: Some(path.to_path_buf()),
             kind: ContextKind::File,
             text: text.into(),
         });
@@ -81,17 +79,15 @@ impl ContextStore {
         let id = self.next_context_id.post_inc();
         self.directories.insert(path.to_path_buf(), id);
 
-        let full_path: SharedString = path.to_string_lossy().into_owned().into();
-
         let name = match path.file_name() {
             Some(name) => name.to_string_lossy().into_owned().into(),
-            None => full_path.clone(),
+            None => path.to_string_lossy().into_owned().into(),
         };
 
         self.context.push(Context {
             id,
             name,
-            full_name: Some(full_path),
+            path: Some(path.to_path_buf()),
             kind: ContextKind::Directory,
             text: text.into(),
         });
@@ -104,7 +100,7 @@ impl ContextStore {
         self.context.push(Context {
             id: context_id,
             name: thread.summary().unwrap_or("New thread".into()),
-            full_name: None,
+            path: None,
             kind: ContextKind::Thread,
             text: thread.text().into(),
         });
@@ -117,7 +113,7 @@ impl ContextStore {
         self.context.push(Context {
             id: context_id,
             name: url.into(),
-            full_name: None,
+            path: None,
             kind: ContextKind::FetchedUrl,
             text: text.into(),
         });

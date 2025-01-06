@@ -1,3 +1,5 @@
+use std::path::PathBuf;
+
 use gpui::SharedString;
 use language_model::{LanguageModelRequestMessage, MessageContent};
 use serde::{Deserialize, Serialize};
@@ -17,7 +19,7 @@ impl ContextId {
 pub struct Context {
     pub id: ContextId,
     pub name: SharedString,
-    pub full_name: Option<SharedString>,
+    pub path: Option<PathBuf>,
     pub kind: ContextKind,
     pub text: SharedString,
 }
