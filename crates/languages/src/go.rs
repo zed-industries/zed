@@ -43,7 +43,7 @@ static GO_ESCAPE_SUBTEST_NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"[.*+?^${}()|\[\]\\]"#).expect("Failed to create GO_ESCAPE_SUBTEST_NAME_REGEX")
 });
 
-const BINARY_DIR: &str = if cfg!(target_os = "windows") {
+const BINARY: &str = if cfg!(target_os = "windows") {
     "gopls.exe"
 } else {
     "gopls"
@@ -170,7 +170,7 @@ impl super::LspAdapter for GoLspAdapter {
             return Err(anyhow!("failed to install gopls with `go install`. Is `go` installed and in the PATH? Check logs for more information."));
         }
 
-        let installed_binary_path = gobin_dir.join(BINARY_DIR);
+        let installed_binary_path = gobin_dir.join(BINARY);
         let version_output = util::command::new_smol_command(&installed_binary_path)
             .arg("version")
             .output()
