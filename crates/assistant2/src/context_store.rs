@@ -123,7 +123,7 @@ impl ContextStore {
                 self.fetched_urls.retain(|_, p_id| p_id != id);
             }
             ContextKind::Thread => {
-                self.directories.retain(|_, p_id| p_id != id);
+                self.threads.retain(|_, p_id| p_id != id);
             }
         }
     }
