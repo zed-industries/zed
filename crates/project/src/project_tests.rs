@@ -1312,7 +1312,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
                 diagnostic: Diagnostic {
                     severity: lsp::DiagnosticSeverity::ERROR,
                     message: "undefined variable 'A'".to_string(),
-                    group_id: 0,
+                    group_id: 1,
                     is_primary: true,
                     ..Default::default()
                 }
@@ -1828,7 +1828,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'BB'".to_string(),
                         is_disk_based: true,
-                        group_id: 1,
+                        group_id: 2,
                         is_primary: true,
                         ..Default::default()
                     },
@@ -1840,7 +1840,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'CCC'".to_string(),
                         is_disk_based: true,
-                        group_id: 2,
+                        group_id: 3,
                         is_primary: true,
                         ..Default::default()
                     }
@@ -1906,7 +1906,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         severity: DiagnosticSeverity::WARNING,
                         message: "unreachable statement".to_string(),
                         is_disk_based: true,
-                        group_id: 4,
+                        group_id: 5,
                         is_primary: true,
                         ..Default::default()
                     }
@@ -1918,7 +1918,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'A'".to_string(),
                         is_disk_based: true,
-                        group_id: 3,
+                        group_id: 4,
                         is_primary: true,
                         ..Default::default()
                     },
@@ -1998,7 +1998,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         severity: DiagnosticSeverity::WARNING,
                         message: "undefined variable 'A'".to_string(),
                         is_disk_based: true,
-                        group_id: 6,
+                        group_id: 7,
                         is_primary: true,
                         ..Default::default()
                     }
@@ -2010,7 +2010,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
                         severity: DiagnosticSeverity::ERROR,
                         message: "undefined variable 'BB'".to_string(),
                         is_disk_based: true,
-                        group_id: 5,
+                        group_id: 6,
                         is_primary: true,
                         ..Default::default()
                     },
@@ -3838,7 +3838,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::WARNING,
                     message: "error 1".to_string(),
-                    group_id: 1,
+                    group_id: 2,
                     is_primary: true,
                     ..Default::default()
                 }
@@ -3848,6 +3848,16 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::HINT,
                     message: "error 1 hint 1".to_string(),
+                    group_id: 2,
+                    is_primary: false,
+                    ..Default::default()
+                }
+            },
+            DiagnosticEntry {
+                range: Point::new(1, 13)..Point::new(1, 15),
+                diagnostic: Diagnostic {
+                    severity: DiagnosticSeverity::HINT,
+                    message: "error 2 hint 1".to_string(),
                     group_id: 1,
                     is_primary: false,
                     ..Default::default()
@@ -3857,18 +3867,8 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 range: Point::new(1, 13)..Point::new(1, 15),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::HINT,
-                    message: "error 2 hint 1".to_string(),
-                    group_id: 0,
-                    is_primary: false,
-                    ..Default::default()
-                }
-            },
-            DiagnosticEntry {
-                range: Point::new(1, 13)..Point::new(1, 15),
-                diagnostic: Diagnostic {
-                    severity: DiagnosticSeverity::HINT,
                     message: "error 2 hint 2".to_string(),
-                    group_id: 0,
+                    group_id: 1,
                     is_primary: false,
                     ..Default::default()
                 }
@@ -3878,43 +3878,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::ERROR,
                     message: "error 2".to_string(),
-                    group_id: 0,
-                    is_primary: true,
-                    ..Default::default()
-                }
-            }
-        ]
-    );
-
-    assert_eq!(
-        buffer.diagnostic_group::<Point>(0).collect::<Vec<_>>(),
-        &[
-            DiagnosticEntry {
-                range: Point::new(1, 13)..Point::new(1, 15),
-                diagnostic: Diagnostic {
-                    severity: DiagnosticSeverity::HINT,
-                    message: "error 2 hint 1".to_string(),
-                    group_id: 0,
-                    is_primary: false,
-                    ..Default::default()
-                }
-            },
-            DiagnosticEntry {
-                range: Point::new(1, 13)..Point::new(1, 15),
-                diagnostic: Diagnostic {
-                    severity: DiagnosticSeverity::HINT,
-                    message: "error 2 hint 2".to_string(),
-                    group_id: 0,
-                    is_primary: false,
-                    ..Default::default()
-                }
-            },
-            DiagnosticEntry {
-                range: Point::new(2, 8)..Point::new(2, 17),
-                diagnostic: Diagnostic {
-                    severity: DiagnosticSeverity::ERROR,
-                    message: "error 2".to_string(),
-                    group_id: 0,
+                    group_id: 1,
                     is_primary: true,
                     ..Default::default()
                 }
@@ -3926,11 +3890,47 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
         buffer.diagnostic_group::<Point>(1).collect::<Vec<_>>(),
         &[
             DiagnosticEntry {
+                range: Point::new(1, 13)..Point::new(1, 15),
+                diagnostic: Diagnostic {
+                    severity: DiagnosticSeverity::HINT,
+                    message: "error 2 hint 1".to_string(),
+                    group_id: 1,
+                    is_primary: false,
+                    ..Default::default()
+                }
+            },
+            DiagnosticEntry {
+                range: Point::new(1, 13)..Point::new(1, 15),
+                diagnostic: Diagnostic {
+                    severity: DiagnosticSeverity::HINT,
+                    message: "error 2 hint 2".to_string(),
+                    group_id: 1,
+                    is_primary: false,
+                    ..Default::default()
+                }
+            },
+            DiagnosticEntry {
+                range: Point::new(2, 8)..Point::new(2, 17),
+                diagnostic: Diagnostic {
+                    severity: DiagnosticSeverity::ERROR,
+                    message: "error 2".to_string(),
+                    group_id: 1,
+                    is_primary: true,
+                    ..Default::default()
+                }
+            }
+        ]
+    );
+
+    assert_eq!(
+        buffer.diagnostic_group::<Point>(2).collect::<Vec<_>>(),
+        &[
+            DiagnosticEntry {
                 range: Point::new(1, 8)..Point::new(1, 9),
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::WARNING,
                     message: "error 1".to_string(),
-                    group_id: 1,
+                    group_id: 2,
                     is_primary: true,
                     ..Default::default()
                 }
@@ -3940,7 +3940,7 @@ async fn test_grouped_diagnostics(cx: &mut gpui::TestAppContext) {
                 diagnostic: Diagnostic {
                     severity: DiagnosticSeverity::HINT,
                     message: "error 1 hint 1".to_string(),
-                    group_id: 1,
+                    group_id: 2,
                     is_primary: false,
                     ..Default::default()
                 }

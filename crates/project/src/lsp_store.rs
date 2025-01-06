@@ -2960,7 +2960,7 @@ impl LspStore {
                 http_client,
                 fs,
                 yarn,
-                next_diagnostic_group_id: Default::default(),
+                next_diagnostic_group_id: 1,
                 diagnostics: Default::default(),
                 _subscription: cx.on_app_quit(|this, cx| {
                     this.as_local_mut().unwrap().shutdown_language_servers(cx)

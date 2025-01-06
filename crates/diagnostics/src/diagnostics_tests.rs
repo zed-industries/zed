@@ -82,7 +82,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                             severity: DiagnosticSeverity::INFORMATION,
                             is_primary: false,
                             is_disk_based: true,
-                            group_id: 1,
+                            group_id: 2,
                             ..Default::default()
                         },
                     },
@@ -95,7 +95,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                             severity: DiagnosticSeverity::INFORMATION,
                             is_primary: false,
                             is_disk_based: true,
-                            group_id: 0,
+                            group_id: 1,
                             ..Default::default()
                         },
                     },
@@ -106,7 +106,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                             severity: DiagnosticSeverity::INFORMATION,
                             is_primary: false,
                             is_disk_based: true,
-                            group_id: 1,
+                            group_id: 2,
                             ..Default::default()
                         },
                     },
@@ -117,7 +117,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                             severity: DiagnosticSeverity::INFORMATION,
                             is_primary: false,
                             is_disk_based: true,
-                            group_id: 0,
+                            group_id: 1,
                             ..Default::default()
                         },
                     },
@@ -128,7 +128,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                             severity: DiagnosticSeverity::ERROR,
                             is_primary: true,
                             is_disk_based: true,
-                            group_id: 0,
+                            group_id: 1,
                             ..Default::default()
                         },
                     },
@@ -139,7 +139,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                             severity: DiagnosticSeverity::ERROR,
                             is_primary: true,
                             is_disk_based: true,
-                            group_id: 1,
+                            group_id: 2,
                             ..Default::default()
                         },
                     },
@@ -241,7 +241,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                         severity: DiagnosticSeverity::ERROR,
                         is_primary: true,
                         is_disk_based: true,
-                        group_id: 0,
+                        group_id: 1,
                         ..Default::default()
                     },
                 }],
@@ -348,7 +348,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                             severity: DiagnosticSeverity::ERROR,
                             is_primary: true,
                             is_disk_based: true,
-                            group_id: 0,
+                            group_id: 1,
                             ..Default::default()
                         },
                     },
@@ -359,7 +359,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
                             severity: DiagnosticSeverity::ERROR,
                             is_primary: true,
                             is_disk_based: true,
-                            group_id: 1,
+                            group_id: 2,
                             ..Default::default()
                         },
                     },
@@ -775,7 +775,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
         assert!(view.focus_handle.is_focused(cx));
     });
 
-    let mut next_group_id = 0;
+    let mut next_group_id = 1;
     let mut next_filename = 0;
     let mut language_server_ids = vec![LanguageServerId(0)];
     let mut updated_language_servers = HashSet::default();
