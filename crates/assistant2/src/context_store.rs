@@ -25,10 +25,10 @@ impl ContextStore {
         Self {
             context: Vec::new(),
             next_context_id: ContextId(0),
-            files: HashMap::new(),
-            directories: HashMap::new(),
-            threads: HashMap::new(),
-            fetched_urls: HashMap::new(),
+            files: HashMap::default(),
+            directories: HashMap::default(),
+            threads: HashMap::default(),
+            fetched_urls: HashMap::default(),
         }
     }
 
