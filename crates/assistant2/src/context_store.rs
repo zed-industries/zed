@@ -37,15 +37,17 @@ impl ContextStore {
     }
 
     pub fn drain(&mut self) -> Vec<Context> {
-        self.files.clear();
-        self.directories.clear();
-        self.context.drain(..).collect()
+        let context = self.context.drain(..).collect();
+        self.clear();
+        context
     }
 
     pub fn clear(&mut self) {
         self.context.clear();
         self.files.clear();
         self.directories.clear();
+        self.threads.clear();
+        self.fetched_urls.clear();
     }
 
     pub fn insert_file(&mut self, buffer: &Buffer) {
