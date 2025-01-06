@@ -3668,7 +3668,7 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/dir",
+        to_path_string("/dir"),
         json!({
             "file1": "a\nb\nc\n",
             "file2": "one\r\ntwo\r\nthree\r\n",
@@ -3676,13 +3676,17 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [to_path_string("/dir").as_ref()], cx).await;
     let buffer1 = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
+        .update(cx, |p, cx| {
+            p.open_local_buffer(to_path_string("/dir/file1"), cx)
+        })
         .await
         .unwrap();
     let buffer2 = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/file2", cx))
+        .update(cx, |p, cx| {
+            p.open_local_buffer(to_path_string("/dir/file2"), cx)
+        })
         .await
         .unwrap();
 
@@ -3698,7 +3702,7 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
     // Change a file's line endings on disk from unix to windows. The buffer's
     // state updates correctly.
     fs.save(
-        "/dir/file1".as_ref(),
+        to_path_string("/dir/file1").as_ref(),
         &"aaa\nb\nc\n".into(),
         LineEnding::Windows,
     )
@@ -3719,7 +3723,9 @@ async fn test_buffer_line_endings(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
     assert_eq!(
-        fs.load("/dir/file2".as_ref()).await.unwrap(),
+        fs.load(to_path_string("/dir/file2").as_ref())
+            .await
+            .unwrap(),
         "one\r\ntwo\r\nthree\r\nfour\r\n",
     );
 }
