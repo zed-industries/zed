@@ -1,6 +1,13 @@
+use std::path::Path;
+use std::sync::Arc;
+
+use chrono::{DateTime, Utc};
+use collections::BTreeMap;
 use gpui::SharedString;
 use language_model::{LanguageModelRequestMessage, MessageContent};
+use project::WorktreeId;
 use serde::{Deserialize, Serialize};
+use text::BufferId;
 use util::post_inc;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
@@ -25,10 +32,24 @@ pub struct Context {
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ContextKind {
-    File,
-    Directory,
+    File {
+        worktree_id: WorktreeId,
+        path: Arc<Path>,
+        version: BufferVersion,
+    },
+    Directory {
+        versions: Vec<(Arc<Path>, BufferVersion)>,
+    },
     FetchedUrl,
-    Thread,
+    Thread {
+        updated_at: DateTime<Utc>,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct BufferVersion {
+    pub buffer_id: BufferId,
+    pub version: clock::Global,
 }
 
 pub fn attach_context_to_message(
@@ -46,7 +67,7 @@ pub fn attach_context_to_message(
                 file_context.push_str(&context.text);
                 file_context.push('\n');
             }
-            ContextKind::Directory => {
+            ContextKind::Directory { .. } => {
                 directory_context.push_str(&context.text);
                 directory_context.push('\n');
             }
@@ -56,7 +77,7 @@ pub fn attach_context_to_message(
                 fetch_context.push_str(&context.text);
                 fetch_context.push('\n');
             }
-            ContextKind::Thread => {
+            ContextKind::Thread { .. } => {
                 thread_context.push_str(&context.name);
                 thread_context.push('\n');
                 thread_context.push_str(&context.text);

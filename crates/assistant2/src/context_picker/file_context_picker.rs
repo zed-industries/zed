@@ -3,9 +3,12 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use fuzzy::PathMatch;
-use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakModel, WeakView};
+use gpui::{
+    AppContext, DismissEvent, FocusHandle, FocusableView, ModelContext, Task, View, WeakModel,
+    WeakView,
+};
 use picker::{Picker, PickerDelegate};
-use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
+use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
 use ui::{prelude::*, ListItem, Tooltip};
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -351,3 +354,27 @@ impl PickerDelegate for FileContextPickerDelegate {
         )
     }
 }
+
+// pub fn open_file_context_buffer(
+//     worktree_id: WorktreeId,
+//     path: &Path,
+//     project: &Project,
+//     cx: &mut ModelContext<Project>,
+// ) -> Result<()> {
+//     let Some(open_buffer_task) = project
+//         .update(&mut cx, |project, cx| {
+//             let project_path = ProjectPath {
+//                 worktree_id,
+//                 path: path.clone(),
+//             };
+
+//             let task = project.open_buffer(project_path, cx);
+
+//             Some(task)
+//         })
+//         .ok()
+//         .flatten()
+//     else {
+//         return anyhow::Ok(());
+//     };
+// }

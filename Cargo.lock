@@ -462,6 +462,7 @@ dependencies = [
  "async-watch",
  "chrono",
  "client",
+ "clock",
  "collections",
  "command_palette_hooks",
  "context_server",

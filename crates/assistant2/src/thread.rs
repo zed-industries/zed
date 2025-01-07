@@ -263,6 +263,8 @@ impl Thread {
             request.messages.push(context_message);
         }
 
+        dbg!(&request);
+
         request
     }
 

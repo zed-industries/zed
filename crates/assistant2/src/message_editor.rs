@@ -1,5 +1,7 @@
+use std::path::Path;
 use std::sync::Arc;
 
+use anyhow::{anyhow, Result};
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
 use gpui::{
@@ -8,6 +10,7 @@ use gpui::{
 };
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::LanguageModelSelector;
+use project::{ProjectPath, WorktreeId};
 use rope::Point;
 use settings::Settings;
 use theme::ThemeSettings;
@@ -18,6 +21,7 @@ use ui::{
 use workspace::Workspace;
 
 use crate::assistant_model_selector::AssistantModelSelector;
+use crate::context::{BufferVersion, Context, ContextKind};
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
@@ -27,6 +31,7 @@ use crate::{Chat, ToggleContextPicker, ToggleModelSelector};
 
 pub struct MessageEditor {
     thread: Model<Thread>,
+    workspace: WeakView<Workspace>,
     editor: View<Editor>,
     context_store: Model<ContextStore>,
     context_strip: View<ContextStrip>,
@@ -93,6 +98,7 @@ impl MessageEditor {
 
         Self {
             thread,
+            workspace,
             editor: editor.clone(),
             context_store,
             context_strip,
@@ -142,29 +148,39 @@ impl MessageEditor {
             editor.clear(cx);
             text
         });
-        let context = self
-            .context_store
-            .update(cx, |this, _cx| this.context().clone());
 
-        self.thread.update(cx, |thread, cx| {
-            thread.insert_user_message(user_message, context, cx);
-            let mut request = thread.to_completion_request(request_kind, cx);
-
-            if self.use_tools {
-                request.tools = thread
-                    .tools()
-                    .tools(cx)
-                    .into_iter()
-                    .map(|tool| LanguageModelRequestTool {
-                        name: tool.name(),
-                        description: tool.description(),
-                        input_schema: tool.input_schema(),
-                    })
-                    .collect();
-            }
-
-            thread.stream_completion(request, model, cx)
+        let context = self.context_store.update(cx, {
+            let workspace = self.workspace.clone();
+            move |this, cx| Self::refresh_context(workspace, this.context(), cx)
         });
+
+        let thread = self.thread.clone();
+        cx.spawn(|this, mut cx| async move {
+            let context = context.await?;
+
+            thread.update(&mut cx, |thread, cx| {
+                thread.insert_user_message(user_message, context.clone(), cx);
+                let mut request = thread.to_completion_request(request_kind, cx);
+
+                if self.use_tools {
+                    request.tools = thread
+                        .tools()
+                        .tools(cx)
+                        .into_iter()
+                        .map(|tool| LanguageModelRequestTool {
+                            name: tool.name(),
+                            description: tool.description(),
+                            input_schema: tool.input_schema(),
+                        })
+                        .collect();
+                }
+
+                thread.stream_completion(request, model, cx)
+            });
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
 
         None
     }
@@ -211,6 +227,89 @@ impl MessageEditor {
     ) {
         let editor_focus_handle = self.editor.focus_handle(cx);
         cx.focus(&editor_focus_handle);
+    }
+
+    async fn refresh_context(
+        workspace: WeakView<Workspace>,
+        context: &[Context],
+        cx: &mut AppContext,
+    ) -> Result<Vec<Context>> {
+        let mut results = Vec::new();
+
+        for context in context {
+            match &context.kind {
+                ContextKind::File {
+                    worktree_id,
+                    path,
+                    version,
+                } => {
+                    if let Some((text, new_buffer_version)) =
+                        Self::text_when_stale(workspace.clone(), *worktree_id, path, version, cx)
+                            .await?
+                    {
+                        results.push(Context {
+                            text,
+                            kind: ContextKind::File {
+                                worktree_id: *worktree_id,
+                                path: path.clone(),
+                                version: new_buffer_version,
+                            },
+                            ..context.clone()
+                        })
+                    } else {
+                        results.push(context.clone());
+                    }
+                }
+                ContextKind::Directory { path_to_version } => {}
+                ContextKind::FetchedUrl => todo!(),
+                ContextKind::Thread { updated_at } => todo!(),
+            };
+        }
+
+        Ok(results)
+    }
+
+    async fn text_when_stale(
+        workspace: WeakView<Workspace>,
+        worktree_id: WorktreeId,
+        path: &Arc<Path>,
+        prior_version: &BufferVersion,
+        cx: &mut AppContext,
+    ) -> Result<Option<(SharedString, BufferVersion)>> {
+        let Some(project) = workspace
+            .upgrade()
+            .map(|workspace| workspace.read(cx).project().clone())
+        else {
+            return Err(anyhow!("no workspace"));
+        };
+
+        let Some(open_buffer_task) = project.update(cx, |project, cx| {
+            let project_path = ProjectPath {
+                worktree_id,
+                path: path.clone(),
+            };
+
+            let task = project.open_buffer(project_path, cx);
+
+            Some(task)
+        }) else {
+            return Err(anyhow!("failed to open buffer"));
+        };
+
+        let buffer = open_buffer_task.await?.read(cx);
+        let is_stale = buffer.remote_id() != prior_version.buffer_id
+            || buffer.version() != prior_version.version;
+        if !is_stale {
+            return Ok(None);
+        }
+
+        Ok(Some((
+            buffer.text().into(),
+            BufferVersion {
+                buffer_id: buffer.remote_id(),
+                version: buffer.version(),
+            },
+        )))
     }
 }
 
