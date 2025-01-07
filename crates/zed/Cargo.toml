@@ -143,8 +143,10 @@ ashpd.workspace = true
 call = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+image_viewer = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
+terminal_view = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
 tree-sitter-rust.workspace = true
 workspace = { workspace = true, features = ["test-support"] }
