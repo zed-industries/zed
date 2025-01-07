@@ -1094,7 +1094,7 @@ impl Vim {
                 };
                 Vim::globals(cx).last_find = Some(find.clone());
                 self.motion(find, cx)
-            },
+            }
             Some(Operator::Sneak { first_char }) => {
                 if let Some(first_char) = first_char {
                     if let Some(second_char) = text.chars().next() {
@@ -1109,7 +1109,7 @@ impl Vim {
                 } else {
                     let first_char = text.chars().next();
                     self.pop_operator(cx);
-                    self.push_operator(Operator::Sneak {first_char}, cx);
+                    self.push_operator(Operator::Sneak { first_char }, cx);
                 }
             }
             Some(Operator::SneakBackward { first_char }) => {
@@ -1128,7 +1128,7 @@ impl Vim {
                     self.pop_operator(cx);
                     self.push_operator(Operator::SneakBackward { first_char }, cx);
                 }
-            },
+            }
             Some(Operator::Replace) => match self.mode {
                 Mode::Normal => self.normal_replace(text, cx),
                 Mode::Visual | Mode::VisualLine | Mode::VisualBlock => {
