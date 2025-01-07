@@ -1434,7 +1434,7 @@ impl SshRemoteConnection {
 
         anyhow::ensure!(
             which::which("nc").is_ok(),
-            "Cannot find nc, which is required to connect over ssh."
+            "Cannot find `nc` command (netcat), which is required to connect over SSH."
         );
 
         // Create an askpass script that communicates back to this process.
