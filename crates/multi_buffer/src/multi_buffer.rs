@@ -4000,6 +4000,8 @@ impl MultiBufferSnapshot {
             }
         }
 
+        dbg!(&excerpt_position, &anchor.diff_base_anchor);
+
         let mut diff_transforms_cursor = self.diff_transforms.cursor::<DiffTransformSummary>(&());
         diff_transforms_cursor.seek(&ExcerptDimension(excerpt_position.clone()), Bias::Left, &());
         let transform_end_position = D::from_text_summary(&diff_transforms_cursor.end(&()).input);

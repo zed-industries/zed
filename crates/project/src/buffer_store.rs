@@ -2300,7 +2300,6 @@ impl BufferChangeSet {
         if let Some(base_text) = self.base_text.clone() {
             self.recalculate_diff_internal(base_text.read(cx).text(), buffer_snapshot, false, cx)
         } else {
-            dbg!("oops");
             oneshot::channel().1
         }
     }
@@ -2332,9 +2331,6 @@ impl BufferChangeSet {
                         Buffer::local_normalized(Rope::from(base_text), LineEnding::default(), cx)
                     }));
                 }
-                dbg!(diff
-                    .hunks_in_row_range(0..u32::MAX, &buffer_snapshot)
-                    .collect::<Vec<_>>());
                 this.diff_to_buffer = diff;
                 this.recalculate_diff_task.take();
                 for tx in this.diff_updated_futures.drain(..) {
@@ -2362,9 +2358,6 @@ impl BufferChangeSet {
                 Buffer::local_normalized(Rope::from(base_text), LineEnding::default(), cx)
             }));
         }
-        dbg!(diff
-            .hunks_in_row_range(0..u32::MAX, &buffer_snapshot)
-            .collect::<Vec<_>>());
         self.diff_to_buffer = diff;
         self.recalculate_diff_task.take();
         cx.notify();

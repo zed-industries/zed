@@ -1414,8 +1414,7 @@ impl ReferenceMultibuffer {
         }
     }
 
-    fn expected_state(&self, cx: &AppContext) -> (Vec<TextSummary>, String, Vec<RowInfo>) {
-        let mut excerpt_starts = Vec::new();
+    fn expected_content(&self, cx: &AppContext) -> (String, Vec<RowInfo>) {
         let mut expected_text = String::new();
         let mut expected_buffer_rows = Vec::new();
         for excerpt in &self.excerpts {
@@ -1427,8 +1426,6 @@ impl ReferenceMultibuffer {
 
             let mut start = buffer_range.start;
             let mut insertion_end_row = 0;
-
-            excerpt_starts.push(TextSummary::from(expected_text.as_str()));
 
             for hunk_anchor in &excerpt.expanded_diff_hunks {
                 let hunk_offset = hunk_anchor.to_offset(buffer);
@@ -1502,7 +1499,7 @@ impl ReferenceMultibuffer {
             });
         }
 
-        (excerpt_starts, expected_text, expected_buffer_rows)
+        (expected_text, expected_buffer_rows)
     }
 
     fn add_change_set(&mut self, change_set: Model<BufferChangeSet>, cx: &mut AppContext) {
@@ -1724,12 +1721,14 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
         let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
         let actual_diff = format_diff(&actual_text, &actual_row_infos);
 
-        let (excerpt_starts, expected_text, expected_row_infos) = reference.expected_state(cx);
+        let (expected_text, expected_row_infos) = reference.expected_content(cx);
         let expected_diff = format_diff(&expected_text, &expected_row_infos);
 
         pretty_assertions::assert_eq!(actual_row_infos, expected_row_infos,);
         pretty_assertions::assert_eq!(actual_diff, expected_diff);
         pretty_assertions::assert_eq!(actual_text, expected_text);
+
+        eprintln!("{}", actual_diff);
 
         log::info!("MultiBuffer text: {:?}", expected_text);
 
@@ -1756,132 +1755,7 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
                 + 1
         );
 
-        let mut excerpt_starts = excerpt_starts.into_iter();
-        for excerpt in &reference.excerpts {
-            let buffer = excerpt.buffer.read(cx);
-            let buffer_id = buffer.remote_id();
-            let buffer_range = excerpt.range.to_offset(buffer);
-            let buffer_start_point = buffer.offset_to_point(buffer_range.start);
-            let buffer_start_point_utf16 =
-                buffer.text_summary_for_range::<PointUtf16, _>(0..buffer_range.start);
-
-            let excerpt_start = excerpt_starts.next().unwrap();
-            let mut offset = excerpt_start.len;
-            let mut buffer_offset = buffer_range.start;
-            let mut point = excerpt_start.lines;
-            let mut buffer_point = buffer_start_point;
-            let mut point_utf16 = excerpt_start.lines_utf16();
-            let mut buffer_point_utf16 = buffer_start_point_utf16;
-            for ch in buffer
-                .snapshot()
-                .chunks(buffer_range.clone(), false)
-                .flat_map(|c| c.text.chars())
-            {
-                for _ in 0..ch.len_utf8() {
-                    let left_offset = snapshot.clip_offset(offset, Bias::Left);
-                    let right_offset = snapshot.clip_offset(offset, Bias::Right);
-                    let buffer_left_offset = buffer.clip_offset(buffer_offset, Bias::Left);
-                    let buffer_right_offset = buffer.clip_offset(buffer_offset, Bias::Right);
-                    assert_eq!(
-                        left_offset,
-                        excerpt_start.len + (buffer_left_offset - buffer_range.start),
-                        "clip_offset({:?}, Left). buffer: {:?}, buffer offset: {:?}",
-                        offset,
-                        buffer_id,
-                        buffer_offset,
-                    );
-                    assert_eq!(
-                        right_offset,
-                        excerpt_start.len + (buffer_right_offset - buffer_range.start),
-                        "clip_offset({:?}, Right). buffer: {:?}, buffer offset: {:?}",
-                        offset,
-                        buffer_id,
-                        buffer_offset,
-                    );
-
-                    let left_point = snapshot.clip_point(point, Bias::Left);
-                    let right_point = snapshot.clip_point(point, Bias::Right);
-                    let buffer_left_point = buffer.clip_point(buffer_point, Bias::Left);
-                    let buffer_right_point = buffer.clip_point(buffer_point, Bias::Right);
-                    assert_eq!(
-                        left_point,
-                        excerpt_start.lines + (buffer_left_point - buffer_start_point),
-                        "clip_point({:?}, Left). buffer: {:?}, buffer point: {:?}",
-                        point,
-                        buffer_id,
-                        buffer_point,
-                    );
-                    assert_eq!(
-                        right_point,
-                        excerpt_start.lines + (buffer_right_point - buffer_start_point),
-                        "clip_point({:?}, Right). buffer: {:?}, buffer point: {:?}",
-                        point,
-                        buffer_id,
-                        buffer_point,
-                    );
-
-                    assert_eq!(
-                        snapshot.point_to_offset(left_point),
-                        left_offset,
-                        "point_to_offset({:?})",
-                        left_point,
-                    );
-                    assert_eq!(
-                        snapshot.offset_to_point(left_offset),
-                        left_point,
-                        "offset_to_point({:?})",
-                        left_offset,
-                    );
-
-                    offset += 1;
-                    buffer_offset += 1;
-                    if ch == '\n' {
-                        point += Point::new(1, 0);
-                        buffer_point += Point::new(1, 0);
-                    } else {
-                        point += Point::new(0, 1);
-                        buffer_point += Point::new(0, 1);
-                    }
-                }
-
-                for _ in 0..ch.len_utf16() {
-                    let left_point_utf16 =
-                        snapshot.clip_point_utf16(Unclipped(point_utf16), Bias::Left);
-                    let right_point_utf16 =
-                        snapshot.clip_point_utf16(Unclipped(point_utf16), Bias::Right);
-                    let buffer_left_point_utf16 =
-                        buffer.clip_point_utf16(Unclipped(buffer_point_utf16), Bias::Left);
-                    let buffer_right_point_utf16 =
-                        buffer.clip_point_utf16(Unclipped(buffer_point_utf16), Bias::Right);
-                    assert_eq!(
-                        left_point_utf16,
-                        excerpt_start.lines_utf16()
-                            + (buffer_left_point_utf16 - buffer_start_point_utf16),
-                        "clip_point_utf16({:?}, Left). buffer: {:?}, buffer point_utf16: {:?}",
-                        point_utf16,
-                        buffer_id,
-                        buffer_point_utf16,
-                    );
-                    assert_eq!(
-                        right_point_utf16,
-                        excerpt_start.lines_utf16()
-                            + (buffer_right_point_utf16 - buffer_start_point_utf16),
-                        "clip_point_utf16({:?}, Right). buffer: {:?}, buffer point_utf16: {:?}",
-                        point_utf16,
-                        buffer_id,
-                        buffer_point_utf16,
-                    );
-
-                    if ch == '\n' {
-                        point_utf16 += PointUtf16::new(1, 0);
-                        buffer_point_utf16 += PointUtf16::new(1, 0);
-                    } else {
-                        point_utf16 += PointUtf16::new(0, 1);
-                        buffer_point_utf16 += PointUtf16::new(0, 1);
-                    }
-                }
-            }
-        }
+        assert_point_translation(&snapshot);
 
         for (row, line) in expected_text.split('\n').enumerate() {
             assert_eq!(
@@ -2651,58 +2525,94 @@ fn assert_consistent_line_numbers(snapshot: &MultiBufferSnapshot) {
 #[track_caller]
 fn assert_point_translation(snapshot: &MultiBufferSnapshot) {
     let text = Rope::from(snapshot.text());
-    let positions = (0..=text.len())
-        .map(|ix| (ix, text.offset_to_point(ix), snapshot.anchor_after(ix)))
-        .collect::<Vec<_>>();
-    for (offset, point, anchor) in positions.iter().cloned() {
+
+    let mut left_anchors = Vec::new();
+    let mut right_anchors = Vec::new();
+    let mut offsets = Vec::new();
+    let mut points = Vec::new();
+    for offset in 0..=text.len() + 1 {
+        let clipped_left = snapshot.clip_offset(offset, Bias::Left);
+        let clipped_right = snapshot.clip_offset(offset, Bias::Right);
         assert_eq!(
-            snapshot.offset_to_point(offset),
-            point,
-            "offset_to_point({offset})"
-        );
-        assert_eq!(
-            snapshot.point_to_offset(point),
-            offset,
-            "point_to_offset({point:?})"
-        );
-        assert_eq!(
-            snapshot.summary_for_anchor::<usize>(&anchor),
-            offset,
-            "summary_for_anchor({anchor:?}). text:\n{text}"
-        );
-        assert_eq!(
-            snapshot.summary_for_anchor::<Point>(&anchor),
-            point,
-            "summary_for_anchor({anchor:?}). text:\n{text}"
-        );
-        assert_eq!(
-            snapshot.clip_offset(offset, Bias::Left),
-            offset,
+            clipped_left,
+            text.clip_offset(offset, Bias::Left),
             "clip_offset({offset:?}, Left)"
         );
         assert_eq!(
-            snapshot.clip_offset(offset, Bias::Right),
-            offset,
+            clipped_right,
+            text.clip_offset(offset, Bias::Right),
             "clip_offset({offset:?}, Right)"
         );
         assert_eq!(
-            snapshot.clip_point(point, Bias::Left),
-            point,
-            "clip_point({point:?}, Left)"
+            snapshot.offset_to_point(clipped_left),
+            text.offset_to_point(clipped_left),
+            "offset_to_point({clipped_left})"
         );
         assert_eq!(
-            snapshot.clip_point(point, Bias::Right),
-            point,
-            "clip_point({point:?}, Right)"
+            snapshot.offset_to_point(clipped_right),
+            text.offset_to_point(clipped_right),
+            "offset_to_point({clipped_right})"
         );
+        let anchor_before = snapshot.anchor_before(clipped_left);
+        assert_eq!(
+            anchor_before.to_offset(snapshot),
+            clipped_left,
+            "anchor_before({clipped_left}).to_offset"
+        );
+        let anchor_after = snapshot.anchor_after(clipped_left);
+        assert_eq!(
+            anchor_after.to_offset(snapshot),
+            clipped_left,
+            "anchor_after({clipped_left}).to_offset"
+        );
+        left_anchors.push(anchor_before);
+        right_anchors.push(anchor_after);
+        offsets.push(clipped_left);
+        points.push(text.offset_to_point(clipped_left));
+    }
+
+    for row in 0..text.max_point().row {
+        for column in 0..text.line_len(row) + 1 {
+            let point = Point { row, column };
+            let clipped_left = snapshot.clip_point(point, Bias::Left);
+            let clipped_right = snapshot.clip_point(point, Bias::Right);
+            assert_eq!(
+                clipped_left,
+                text.clip_point(point, Bias::Left),
+                "clip_point({point:?}, Left)"
+            );
+            assert_eq!(
+                clipped_right,
+                text.clip_point(point, Bias::Right),
+                "clip_point({point:?}, Right)"
+            );
+            assert_eq!(
+                snapshot.point_to_offset(clipped_left),
+                text.point_to_offset(clipped_left),
+                "point_to_offset({clipped_left:?})"
+            );
+            assert_eq!(
+                snapshot.point_to_offset(clipped_right),
+                text.point_to_offset(clipped_right),
+                "point_to_offset({clipped_right:?})"
+            );
+        }
     }
 
     assert_eq!(
-        snapshot.summaries_for_anchors::<usize, _>(positions.iter().map(|p| &p.2)),
-        positions.iter().map(|p| p.0).collect::<Vec<_>>()
+        snapshot.summaries_for_anchors::<usize, _>(&left_anchors),
+        offsets
     );
     assert_eq!(
-        snapshot.summaries_for_anchors::<Point, _>(positions.iter().map(|p| &p.2)),
-        positions.iter().map(|p| p.1).collect::<Vec<_>>()
+        snapshot.summaries_for_anchors::<Point, _>(&left_anchors),
+        points
+    );
+    assert_eq!(
+        snapshot.summaries_for_anchors::<usize, _>(&right_anchors),
+        offsets
+    );
+    assert_eq!(
+        snapshot.summaries_for_anchors::<Point, _>(&right_anchors),
+        points
     );
 }
