@@ -458,10 +458,7 @@ impl Editor {
     ) -> Option<()> {
         let multi_buffer = self.buffer.read(cx);
         let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-        let (excerpt, range) = multi_buffer_snapshot
-            .range_to_buffer_ranges(range)
-            .into_iter()
-            .next()?;
+        let (excerpt, range) = multi_buffer_snapshot.range_to_buffer_ranges(range).next()?;
 
         multi_buffer
             .buffer(excerpt.buffer_id())

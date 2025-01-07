@@ -1235,7 +1235,9 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
             );
 
             let snapshot = multibuffer.read(cx).snapshot(cx);
-            let excerpted_buffer_ranges = snapshot.range_to_buffer_ranges(start_ix..end_ix);
+            let excerpted_buffer_ranges = snapshot
+                .range_to_buffer_ranges(start_ix..end_ix)
+                .collect::<Vec<_>>();
             let excerpted_buffers_text = excerpted_buffer_ranges
                 .iter()
                 .map(|(excerpt, buffer_range)| {
@@ -1488,7 +1490,7 @@ fn test_excerpts_in_ranges_no_ranges(cx: &mut AppContext) {
 
     let snapshot = multibuffer.update(cx, |multibuffer, cx| multibuffer.snapshot(cx));
 
-    let mut excerpts = snapshot.excerpts_in_ranges(iter::from_fn(|| None));
+    let mut excerpts = snapshot.disjoint_ranges_to_buffer_ranges::<usize>(iter::from_fn(|| None));
 
     assert!(excerpts.next().is_none());
 }
@@ -1587,12 +1589,12 @@ fn test_excerpts_in_ranges_range_inside_the_excerpt(cx: &mut AppContext) {
     )];
 
     let excerpts = snapshot
-        .excerpts_in_ranges(vec![range.clone()].into_iter())
-        .map(|(excerpt_id, buffer, actual_range)| {
+        .disjoint_ranges_to_buffer_ranges(vec![range.clone()].into_iter())
+        .map(|(excerpt, actual_range)| {
             (
-                excerpt_id,
-                buffer.remote_id(),
-                map_range_from_excerpt(&snapshot, excerpt_id, buffer, actual_range),
+                excerpt.id(),
+                excerpt.buffer().remote_id(),
+                map_range_from_excerpt(&snapshot, excerpt.id(), excerpt.buffer(), actual_range),
             )
         })
         .collect_vec();
@@ -1652,12 +1654,12 @@ fn test_excerpts_in_ranges_range_crosses_excerpts_boundary(cx: &mut AppContext) 
     ];
 
     let excerpts = snapshot
-        .excerpts_in_ranges(vec![expected_range.clone()].into_iter())
-        .map(|(excerpt_id, buffer, actual_range)| {
+        .disjoint_ranges_to_buffer_ranges(vec![expected_range.clone()].into_iter())
+        .map(|(excerpt, actual_range)| {
             (
-                excerpt_id,
-                buffer.remote_id(),
-                map_range_from_excerpt(&snapshot, excerpt_id, buffer, actual_range),
+                excerpt.id(),
+                excerpt.buffer().remote_id(),
+                map_range_from_excerpt(&snapshot, excerpt.id(), excerpt.buffer(), actual_range),
             )
         })
         .collect_vec();
@@ -1728,12 +1730,12 @@ fn test_excerpts_in_ranges_range_encloses_excerpt(cx: &mut AppContext) {
     ];
 
     let excerpts = snapshot
-        .excerpts_in_ranges(vec![expected_range.clone()].into_iter())
-        .map(|(excerpt_id, buffer, actual_range)| {
+        .disjoint_ranges_to_buffer_ranges(vec![expected_range.clone()].into_iter())
+        .map(|(excerpt, actual_range)| {
             (
-                excerpt_id,
-                buffer.remote_id(),
-                map_range_from_excerpt(&snapshot, excerpt_id, buffer, actual_range),
+                excerpt.id(),
+                excerpt.buffer().remote_id(),
+                map_range_from_excerpt(&snapshot, excerpt.id(), excerpt.buffer(), actual_range),
             )
         })
         .collect_vec();
@@ -1794,12 +1796,12 @@ fn test_excerpts_in_ranges_multiple_ranges(cx: &mut AppContext) {
     });
 
     let excerpts = snapshot
-        .excerpts_in_ranges(ranges)
-        .map(|(excerpt_id, buffer, actual_range)| {
+        .disjoint_ranges_to_buffer_ranges(ranges)
+        .map(|(excerpt, actual_range)| {
             (
-                excerpt_id,
-                buffer.remote_id(),
-                map_range_from_excerpt(&snapshot, excerpt_id, buffer, actual_range),
+                excerpt.id(),
+                excerpt.buffer().remote_id(),
+                map_range_from_excerpt(&snapshot, excerpt.id(), excerpt.buffer(), actual_range),
             )
         })
         .collect_vec();
@@ -1860,12 +1862,12 @@ fn test_excerpts_in_ranges_range_ends_at_excerpt_end(cx: &mut AppContext) {
     ];
 
     let excerpts = snapshot
-        .excerpts_in_ranges(ranges.into_iter())
-        .map(|(excerpt_id, buffer, actual_range)| {
+        .disjoint_ranges_to_buffer_ranges(ranges.into_iter())
+        .map(|(excerpt, actual_range)| {
             (
-                excerpt_id,
-                buffer.remote_id(),
-                map_range_from_excerpt(&snapshot, excerpt_id, buffer, actual_range),
+                excerpt.id(),
+                excerpt.buffer().remote_id(),
+                map_range_from_excerpt(&snapshot, excerpt.id(), excerpt.buffer(), actual_range),
             )
         })
         .collect_vec();
