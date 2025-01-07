@@ -5452,20 +5452,22 @@ impl LineWithInvisibles {
                                         line_end_offset: line.len() + line_chunk.len(),
                                     });
                                 }
-                            } else {
-                                invisibles.extend(
-                                    line_chunk
-                                        .chars()
-                                        .enumerate()
-                                        .filter(|(_, c)| {
-                                            let is_whitespace = c.is_whitespace();
-                                            non_whitespace_added |= !is_whitespace;
-                                            is_whitespace
-                                                && (non_whitespace_added || !is_soft_wrapped)
-                                        })
-                                        .map(|(whitespace_index, _)| Invisible::Whitespace {
-                                            line_offset: line.len() + whitespace_index,
-                                        }),
+                            } else {                                
+                                invisibles.extend(line_chunk.char_indices().filter_map(
+                                    |(index, c)| {
+                                        let is_whitespace = c.is_whitespace();
+                                        non_whitespace_added |= !is_whitespace;
+                                        if is_whitespace
+                                            && (non_whitespace_added || !is_soft_wrapped)
+                                        {
+                                            Some(Invisible::Whitespace {
+                                                line_offset: line.len() + index,
+                                            })
+                                        } else {
+                                            None
+                                        }
+                                    },
+                                ))
                                 )
                             }
                         }
