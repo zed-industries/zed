@@ -68,12 +68,11 @@ impl Watcher for FsWatcher {
             }
         })?;
 
-        #[cfg(target_os = "windows")]
-        let watch_mode = notify::RecursiveMode::Recursive;
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        let watch_mode = notify::RecursiveMode::NonRecursive;
-
-        global(|g| g.inotify.lock().watch(path, watch_mode))??;
+        global(|g| {
+            g.inotify
+                .lock()
+                .watch(path, notify::RecursiveMode::NonRecursive)
+        })??;
 
         Ok(())
     }
