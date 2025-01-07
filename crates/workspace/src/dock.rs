@@ -170,6 +170,7 @@ impl From<&dyn PanelHandle> for AnyView {
 pub struct Dock {
     position: DockPosition,
     panel_entries: Vec<PanelEntry>,
+    workspace: WeakView<Workspace>,
     is_open: bool,
     active_panel_index: Option<usize>,
     focus_handle: FocusHandle,
@@ -236,6 +237,7 @@ impl Dock {
             });
             Self {
                 position,
+                workspace: workspace.downgrade(),
                 panel_entries: Default::default(),
                 active_panel_index: None,
                 is_open: false,
@@ -337,6 +339,9 @@ impl Dock {
             self.is_open = open;
             if let Some(active_panel) = self.active_panel_entry() {
                 active_panel.panel.set_active(open, cx);
+                if !open {
+                    self.active_panel_index = None;
+                }
             }
 
             cx.notify();
@@ -354,6 +359,11 @@ impl Dock {
             }
         }
 
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.serialize_workspace(cx);
+            })
+            .ok();
         cx.notify();
     }
 
@@ -484,7 +494,8 @@ impl Dock {
             },
         );
 
-        if !self.restore_state(cx) && panel.read(cx).starts_open(cx) {
+        self.restore_state(cx);
+        if panel.read(cx).starts_open(cx) {
             self.activate_panel(index, cx);
             self.set_open(true, cx);
         }
@@ -652,9 +663,14 @@ impl Render for Dock {
                     )
                     .on_mouse_up(
                         MouseButton::Left,
-                        cx.listener(|v, e: &MouseUpEvent, cx| {
+                        cx.listener(|dock, e: &MouseUpEvent, cx| {
                             if e.click_count == 2 {
-                                v.resize_active_panel(None, cx);
+                                dock.resize_active_panel(None, cx);
+                                dock.workspace
+                                    .update(cx, |workspace, cx| {
+                                        workspace.serialize_workspace(cx);
+                                    })
+                                    .ok();
                                 cx.stop_propagation();
                             }
                         }),
