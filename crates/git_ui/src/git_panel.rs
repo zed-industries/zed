@@ -1,18 +1,16 @@
-use crate::{git_status_icon, settings::GitPanelSettings};
-use crate::{CommitAllChanges, CommitStagedChanges, DiscardAll, StageAll, UnstageAll};
-use anyhow::Result;
+use crate::{
+    git_status_icon, settings::GitPanelSettings, CommitAllChanges, CommitStagedChanges, GitState,
+    RevertAll, StageAll, UnstageAll,
+};
+use anyhow::{Context as _, Result};
 use db::kvp::KEY_VALUE_STORE;
+use editor::Editor;
 use git::{
     diff::DiffHunk,
     repository::{GitFileStatus, RepoPath},
 };
 use gpui::*;
-use gpui::{
-    actions, prelude::*, uniform_list, Action, AppContext, AsyncWindowContext, ClickEvent,
-    CursorStyle, EventEmitter, FocusHandle, FocusableView, KeyContext,
-    ListHorizontalSizingBehavior, ListSizingBehavior, Model, Modifiers, ModifiersChangedEvent,
-    MouseButton, ScrollStrategy, Stateful, Task, UniformListScrollHandle, View, WeakView,
-};
+use language::Buffer;
 use menu::{SelectNext, SelectPrev};
 use project::{EntryKind, Fs, Project, ProjectEntryId, WorktreeId};
 use serde::{Deserialize, Serialize};
@@ -28,9 +26,9 @@ use std::{
     time::Duration,
     usize,
 };
+use theme::ThemeSettings;
 use ui::{
-    prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, ListItem, Scrollbar,
-    ScrollbarState, Tooltip,
+    prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
@@ -39,7 +37,7 @@ use workspace::{
 };
 use worktree::StatusEntry;
 
-actions!(git_panel, [ToggleFocus]);
+actions!(git_panel, [ToggleFocus, OpenEntryMenu]);
 
 const GIT_PANEL_KEY: &str = "GitPanel";
 
@@ -61,6 +59,13 @@ pub enum Event {
     Focus,
 }
 
+#[derive(Default, Debug, PartialEq, Eq, Clone)]
+pub enum ViewMode {
+    #[default]
+    List,
+    Tree,
+}
+
 pub struct GitStatusEntry {}
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -74,12 +79,6 @@ struct EntryDetails {
     status: Option<GitFileStatus>,
     hunks: Rc<OnceCell<Vec<DiffHunk>>>,
     index: usize,
-}
-
-impl EntryDetails {
-    pub fn is_dir(&self) -> bool {
-        self.kind.is_dir()
-    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -98,10 +97,12 @@ pub struct GitPanel {
     scroll_handle: UniformListScrollHandle,
     scrollbar_state: ScrollbarState,
     selected_item: Option<usize>,
+    view_mode: ViewMode,
     show_scrollbar: bool,
     // TODO Reintroduce expanded directories, once we're deriving directories from paths
     // expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
-
+    git_state: Model<GitState>,
+    commit_editor: View<Editor>,
     // The entries that are currently shown in the panel, aka
     // not hidden by folding or such
     visible_entries: Vec<WorktreeEntries>,
@@ -154,9 +155,12 @@ impl GitPanel {
     }
 
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
+        let git_state = GitState::get_global(cx);
+
         let fs = workspace.app_state().fs.clone();
         // let weak_workspace = workspace.weak_handle();
         let project = workspace.project().clone();
+        let language_registry = workspace.app_state().languages.clone();
 
         let git_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
             let focus_handle = cx.focus_handle();
@@ -192,6 +196,58 @@ impl GitPanel {
             })
             .detach();
 
+            let state = git_state.read(cx);
+            let current_commit_message = state.commit_message.clone();
+
+            let commit_editor = cx.new_view(|cx| {
+                let theme = ThemeSettings::get_global(cx);
+
+                let mut text_style = cx.text_style();
+                let refinement = TextStyleRefinement {
+                    font_family: Some(theme.buffer_font.family.clone()),
+                    font_features: Some(FontFeatures::disable_ligatures()),
+                    font_size: Some(px(12.).into()),
+                    color: Some(cx.theme().colors().editor_foreground),
+                    background_color: Some(gpui::transparent_black()),
+                    ..Default::default()
+                };
+
+                text_style.refine(&refinement);
+
+                let mut commit_editor = Editor::auto_height(10, cx);
+                if let Some(message) = current_commit_message {
+                    commit_editor.set_text(message, cx);
+                } else {
+                    commit_editor.set_text("", cx);
+                }
+                // commit_editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+                commit_editor.set_use_autoclose(false);
+                commit_editor.set_show_gutter(false, cx);
+                commit_editor.set_show_wrap_guides(false, cx);
+                commit_editor.set_show_indent_guides(false, cx);
+                commit_editor.set_text_style_refinement(refinement);
+                commit_editor.set_placeholder_text("Enter commit message", cx);
+                commit_editor
+            });
+
+            let buffer = commit_editor
+                .read(cx)
+                .buffer()
+                .read(cx)
+                .as_singleton()
+                .expect("commit editor must be singleton");
+
+            cx.subscribe(&buffer, Self::on_buffer_event).detach();
+
+            let markdown = language_registry.language_for_name("Markdown");
+            cx.spawn(|_, mut cx| async move {
+                let markdown = markdown.await.context("failed to load Markdown language")?;
+                buffer.update(&mut cx, |buffer, cx| {
+                    buffer.set_language(Some(markdown), cx)
+                })
+            })
+            .detach_and_log_err(cx);
+
             let scroll_handle = UniformListScrollHandle::new();
 
             let mut git_panel = Self {
@@ -206,10 +262,13 @@ impl GitPanel {
                 scrollbar_state: ScrollbarState::new(scroll_handle.clone()).parent_view(cx.view()),
                 scroll_handle,
                 selected_item: None,
+                view_mode: ViewMode::default(),
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
                 // git_diff_editor: Some(diff_display_editor(cx)),
                 // git_diff_editor_updates: Task::ready(()),
+                commit_editor,
+                git_state,
                 reveal_in_editor: Task::ready(()),
                 project,
             };
@@ -403,19 +462,30 @@ impl GitPanel {
         println!("Unstage all triggered");
     }
 
-    fn discard_all(&mut self, _: &DiscardAll, _cx: &mut ViewContext<Self>) {
+    fn discard_all(&mut self, _: &RevertAll, _cx: &mut ViewContext<Self>) {
         // TODO: Implement discard all
         println!("Discard all triggered");
     }
 
+    fn clear_message(&mut self, cx: &mut ViewContext<Self>) {
+        let git_state = self.git_state.clone();
+        git_state.update(cx, |state, _cx| state.clear_message());
+        self.commit_editor
+            .update(cx, |editor, cx| editor.set_text("", cx));
+    }
+
     /// Commit all staged changes
-    fn commit_staged_changes(&mut self, _: &CommitStagedChanges, _cx: &mut ViewContext<Self>) {
+    fn commit_staged_changes(&mut self, _: &CommitStagedChanges, cx: &mut ViewContext<Self>) {
+        self.clear_message(cx);
+
         // TODO: Implement commit all staged
         println!("Commit staged changes triggered");
     }
 
     /// Commit all changes, regardless of whether they are staged or not
-    fn commit_all_changes(&mut self, _: &CommitAllChanges, _cx: &mut ViewContext<Self>) {
+    fn commit_all_changes(&mut self, _: &CommitAllChanges, cx: &mut ViewContext<Self>) {
+        self.clear_message(cx);
+
         // TODO: Implement commit all changes
         println!("Commit all changes triggered");
     }
@@ -771,6 +841,23 @@ impl GitPanel {
 
         cx.notify();
     }
+
+    fn on_buffer_event(
+        &mut self,
+        _buffer: Model<Buffer>,
+        event: &language::BufferEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let language::BufferEvent::Reparsed | language::BufferEvent::Edited = event {
+            let commit_message = self.commit_editor.update(cx, |editor, cx| editor.text(cx));
+
+            self.git_state.update(cx, |state, _cx| {
+                state.commit_message = Some(commit_message.into());
+            });
+
+            cx.notify();
+        }
+    }
 }
 
 impl GitPanel {
@@ -799,7 +886,11 @@ impl GitPanel {
     pub fn render_panel_header(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
 
-        let changes_string = format!("{} changes", self.entry_count());
+        let changes_string = match self.entry_count() {
+            0 => "No changes".to_string(),
+            1 => "1 change".to_string(),
+            n => format!("{} changes", n),
+        };
 
         h_flex()
             .h(px(32.))
@@ -823,7 +914,7 @@ impl GitPanel {
 
                                 Tooltip::for_action_in(
                                     "Discard all changes",
-                                    &DiscardAll,
+                                    &RevertAll,
                                     &focus_handle,
                                     cx,
                                 )
@@ -833,7 +924,7 @@ impl GitPanel {
                     )
                     .child(if self.all_staged() {
                         self.panel_button("unstage-all", "Unstage All").on_click(
-                            cx.listener(move |_, _, cx| cx.dispatch_action(Box::new(DiscardAll))),
+                            cx.listener(move |_, _, cx| cx.dispatch_action(Box::new(RevertAll))),
                         )
                     } else {
                         self.panel_button("stage-all", "Stage All").on_click(
@@ -844,6 +935,9 @@ impl GitPanel {
     }
 
     pub fn render_commit_editor(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        let editor = self.commit_editor.clone();
+        let editor_focus_handle = editor.read(cx).focus_handle(cx).clone();
+
         let focus_handle_1 = self.focus_handle(cx).clone();
         let focus_handle_2 = self.focus_handle(cx).clone();
 
@@ -879,25 +973,26 @@ impl GitPanel {
 
         div().w_full().h(px(140.)).px_2().pt_1().pb_2().child(
             v_flex()
+                .id("commit-editor-container")
+                .relative()
                 .h_full()
                 .py_2p5()
                 .px_3()
                 .bg(cx.theme().colors().editor_background)
-                .font_buffer(cx)
-                .text_ui_sm(cx)
-                .text_color(cx.theme().colors().text_muted)
-                .child("Add a message")
-                .gap_1()
-                .child(div().flex_grow())
-                .child(h_flex().child(div().gap_1().flex_grow()).child(
-                    if self.current_modifiers.alt {
-                        commit_all_button
-                    } else {
-                        commit_staged_button
-                    },
-                ))
-                .cursor(CursorStyle::OperationNotAllowed)
-                .opacity(0.5),
+                .on_click(cx.listener(move |_, _: &ClickEvent, cx| cx.focus(&editor_focus_handle)))
+                .child(self.commit_editor.clone())
+                .child(
+                    h_flex()
+                        .absolute()
+                        .bottom_2p5()
+                        .right_3()
+                        .child(div().gap_1().flex_grow())
+                        .child(if self.current_modifiers.alt {
+                            commit_all_button
+                        } else {
+                            commit_staged_button
+                        }),
+                ),
         )
     }
 
@@ -1008,45 +1103,84 @@ impl GitPanel {
         details: EntryDetails,
         cx: &ViewContext<Self>,
     ) -> impl IntoElement {
+        let view_mode = self.view_mode.clone();
         let checkbox_id = ElementId::Name(format!("checkbox_{}", ix).into());
         let is_staged = ToggleState::Selected;
         let handle = cx.view().downgrade();
 
-        h_flex()
+        // TODO: At this point, an entry should really have a status.
+        // Is this fixed with the new git status stuff?
+        let status = details.status.unwrap_or(GitFileStatus::Untracked);
+
+        let end_slot = h_flex()
+            .invisible()
+            .when(selected, |this| this.visible())
+            .when(!selected, |this| {
+                this.group_hover("git-panel-entry", |this| this.visible())
+            })
+            .gap_1()
+            .items_center()
+            .child(
+                IconButton::new("more", IconName::EllipsisVertical)
+                    .icon_color(Color::Placeholder)
+                    .icon_size(IconSize::Small),
+            );
+
+        let mut entry = h_flex()
             .id(("git-panel-entry", ix))
+            .group("git-panel-entry")
             .h(px(28.))
             .w_full()
-            .pl(px(12. + 12. * details.depth as f32))
             .pr(px(4.))
             .items_center()
             .gap_2()
             .font_buffer(cx)
             .text_ui_sm(cx)
-            .when(!details.is_dir(), |this| {
-                this.child(Checkbox::new(checkbox_id, is_staged))
-            })
-            .when_some(details.status, |this, status| {
-                this.child(git_status_icon(status))
-            })
+            .when(!selected, |this| {
+                this.hover(|this| this.bg(cx.theme().colors().ghost_element_hover))
+            });
+
+        if view_mode == ViewMode::Tree {
+            entry = entry.pl(px(12. + 12. * details.depth as f32))
+        } else {
+            entry = entry.pl(px(12.))
+        }
+
+        if selected {
+            entry = entry.bg(cx.theme().status().info_background);
+        }
+
+        entry = entry
+            .child(Checkbox::new(checkbox_id, is_staged))
+            .child(git_status_icon(status))
             .child(
-                ListItem::new(details.path.0.clone())
-                    .toggle_state(selected)
-                    .child(h_flex().gap_1p5().child(details.display_name.clone()))
-                    .on_click(move |e, cx| {
-                        handle
-                            .update(cx, |git_panel, cx| {
-                                git_panel.selected_item = Some(details.index);
-                                let change_focus = e.down.click_count > 1;
-                                git_panel.reveal_entry_in_git_editor(
-                                    details.hunks.clone(),
-                                    change_focus,
-                                    None,
-                                    cx,
-                                );
-                            })
-                            .ok();
-                    }),
+                h_flex()
+                    .gap_1p5()
+                    .when(status == GitFileStatus::Deleted, |this| {
+                        this.text_color(cx.theme().colors().text_disabled)
+                            .line_through()
+                    })
+                    .child(details.display_name.clone()),
             )
+            .child(div().flex_1())
+            .child(end_slot)
+            // TODO: Only fire this if the entry is not currently revealed, otherwise the ui flashes
+            .on_click(move |e, cx| {
+                handle
+                    .update(cx, |git_panel, cx| {
+                        git_panel.selected_item = Some(details.index);
+                        let change_focus = e.down.click_count > 1;
+                        git_panel.reveal_entry_in_git_editor(
+                            details.hunks.clone(),
+                            change_focus,
+                            None,
+                            cx,
+                        );
+                    })
+                    .ok();
+            });
+
+        entry
     }
 
     fn reveal_entry_in_git_editor(
@@ -1156,9 +1290,7 @@ impl Render for GitPanel {
                     .on_action(
                         cx.listener(|this, &UnstageAll, cx| this.unstage_all(&UnstageAll, cx)),
                     )
-                    .on_action(
-                        cx.listener(|this, &DiscardAll, cx| this.discard_all(&DiscardAll, cx)),
-                    )
+                    .on_action(cx.listener(|this, &RevertAll, cx| this.discard_all(&RevertAll, cx)))
                     .on_action(cx.listener(|this, &CommitStagedChanges, cx| {
                         this.commit_staged_changes(&CommitStagedChanges, cx)
                     }))

@@ -204,7 +204,7 @@ impl_actions!(
         ToggleCodeActions,
         ToggleComments,
         UnfoldAt,
-        FoldAtLevel
+        FoldAtLevel,
     ]
 );
 

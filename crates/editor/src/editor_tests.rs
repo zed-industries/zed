@@ -5962,8 +5962,8 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
         .with_injection_query(
             r#"
             (script_element
-                (raw_text) @content
-                (#set! "language" "javascript"))
+                (raw_text) @injection.content
+                (#set! injection.language "javascript"))
             "#,
         )
         .unwrap(),
@@ -9068,8 +9068,8 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
         .with_injection_query(
             r#"
             (script_element
-                (raw_text) @content
-                (#set! "language" "javascript"))
+                (raw_text) @injection.content
+                (#set! injection.language "javascript"))
             "#,
         )
         .unwrap(),

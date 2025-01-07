@@ -188,7 +188,7 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         };
         let path = mat.path.clone();
 
-        if self
+        let already_included = self
             .context_store
             .update(cx, |context_store, _cx| {
                 if let Some(context_id) = context_store.included_directory(&path) {
@@ -198,8 +198,8 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
                     false
                 }
             })
-            .unwrap_or(true)
-        {
+            .unwrap_or(true);
+        if already_included {
             return;
         }
 
