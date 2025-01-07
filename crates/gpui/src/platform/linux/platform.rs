@@ -1,6 +1,5 @@
 use std::{
     env,
-    panic::AssertUnwindSafe,
     path::{Path, PathBuf},
     process::Command,
     rc::Rc,
@@ -18,7 +17,7 @@ use std::{
 use anyhow::{anyhow, Context as _};
 use async_task::Runnable;
 use calloop::{channel::Channel, LoopSignal};
-use futures::{channel::oneshot, future::FutureExt};
+use futures::channel::oneshot;
 use util::ResultExt as _;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
