@@ -202,7 +202,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         };
         let path = mat.path.clone();
 
-        if self
+        let already_included = self
             .context_store
             .update(cx, |context_store, _cx| {
                 match context_store.included_file(&path) {
@@ -214,8 +214,8 @@ impl PickerDelegate for FileContextPickerDelegate {
                     None => false,
                 }
             })
-            .unwrap_or(true)
-        {
+            .unwrap_or(true);
+        if already_included {
             return;
         }
 
