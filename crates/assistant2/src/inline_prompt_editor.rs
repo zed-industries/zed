@@ -823,7 +823,7 @@ impl PromptEditor<BufferCodegen> {
 
         let context_strip = cx.new_view(|cx| {
             ContextStrip::new(
-                context_store,
+                context_store.clone(),
                 workspace.clone(),
                 thread_store.clone(),
                 prompt_editor.focus_handle(cx),
@@ -970,7 +970,7 @@ impl PromptEditor<TerminalCodegen> {
 
         let context_strip = cx.new_view(|cx| {
             ContextStrip::new(
-                context_store,
+                context_store.clone(),
                 workspace.clone(),
                 thread_store.clone(),
                 prompt_editor.focus_handle(cx),
