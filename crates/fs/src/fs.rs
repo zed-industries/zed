@@ -1,8 +1,8 @@
 #[cfg(target_os = "macos")]
 mod mac_watcher;
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-pub mod linux_watcher;
+#[cfg(not(target_os = "macos"))]
+pub mod fs_watcher;
 
 use anyhow::{anyhow, Result};
 use git::GitHostingProviderRegistry;
@@ -695,7 +695,7 @@ impl Fs for RealFs {
         )
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(not(target_os = "macos"))]
     async fn watch(
         &self,
         path: &Path,
@@ -705,10 +705,11 @@ impl Fs for RealFs {
         Arc<dyn Watcher>,
     ) {
         use parking_lot::Mutex;
+        use util::paths::SanitizedPath;
 
         let (tx, rx) = smol::channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
-        let watcher = Arc::new(linux_watcher::LinuxWatcher::new(tx, pending_paths.clone()));
+        let watcher = Arc::new(fs_watcher::FsWatcher::new(tx, pending_paths.clone()));
 
         if watcher.add(path).is_err() {
             // If the path doesn't exist yet (e.g. settings.json), watch the parent dir to learn when it's created.
@@ -726,7 +727,7 @@ impl Fs for RealFs {
                 if let Some(parent) = path.parent() {
                     target = parent.join(target);
                     if let Ok(canonical) = self.canonicalize(&target).await {
-                        target = canonical;
+                        target = SanitizedPath::from(canonical).as_path().to_path_buf();
                     }
                 }
             }
@@ -750,85 +751,6 @@ impl Fs for RealFs {
                 }
             })),
             watcher,
-        )
-    }
-
-    #[cfg(target_os = "windows")]
-    async fn watch(
-        &self,
-        path: &Path,
-        _latency: Duration,
-    ) -> (
-        Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
-        Arc<dyn Watcher>,
-    ) {
-        use notify::{EventKind, Watcher};
-
-        let (tx, rx) = smol::channel::unbounded();
-
-        let mut file_watcher = notify::recommended_watcher({
-            let tx = tx.clone();
-            move |event: Result<notify::Event, _>| {
-                if let Some(event) = event.log_err() {
-                    let kind = match event.kind {
-                        EventKind::Create(_) => Some(PathEventKind::Created),
-                        EventKind::Modify(_) => Some(PathEventKind::Changed),
-                        EventKind::Remove(_) => Some(PathEventKind::Removed),
-                        _ => None,
-                    };
-
-                    tx.try_send(
-                        event
-                            .paths
-                            .into_iter()
-                            .map(|path| PathEvent { path, kind })
-                            .collect::<Vec<_>>(),
-                    )
-                    .ok();
-                }
-            }
-        })
-        .expect("Could not start file watcher");
-
-        // If the path doesn't exist yet (e.g. settings.json), watch the parent dir to learn when it's created.
-        if file_watcher
-            .watch(path, notify::RecursiveMode::Recursive)
-            .is_err()
-        {
-            if let Some(parent) = path.parent() {
-                if let Err(e) = file_watcher.watch(parent, notify::RecursiveMode::Recursive) {
-                    log::warn!("Failed to watch: {e}");
-                }
-            }
-        }
-
-        // Check if path is a symlink and follow the target parent
-        if let Some(mut target) = self.read_link(&path).await.ok() {
-            // Check if symlink target is relative path, if so make it absolute
-            if target.is_relative() {
-                if let Some(parent) = path.parent() {
-                    target = parent.join(target);
-                    if let Ok(canonical) = self.canonicalize(&target).await {
-                        target = canonical;
-                    }
-                }
-            }
-            file_watcher
-                .watch(&target, notify::RecursiveMode::Recursive)
-                .log_err();
-            if let Some(parent) = target.parent() {
-                file_watcher
-                    .watch(parent, notify::RecursiveMode::Recursive)
-                    .log_err();
-            }
-        }
-
-        (
-            Box::pin(rx.chain(futures::stream::once(async move {
-                drop(file_watcher);
-                vec![]
-            }))),
-            Arc::new(RealWatcher {}),
         )
     }
 

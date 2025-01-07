@@ -5,12 +5,12 @@ use util::ResultExt;
 
 use crate::{PathEvent, PathEventKind, Watcher};
 
-pub struct LinuxWatcher {
+pub struct FsWatcher {
     tx: smol::channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
 }
 
-impl LinuxWatcher {
+impl FsWatcher {
     pub fn new(
         tx: smol::channel::Sender<()>,
         pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
@@ -22,7 +22,7 @@ impl LinuxWatcher {
     }
 }
 
-impl Watcher for LinuxWatcher {
+impl Watcher for FsWatcher {
     fn add(&self, path: &std::path::Path) -> gpui::Result<()> {
         let root_path = path.to_path_buf();
 
@@ -68,11 +68,12 @@ impl Watcher for LinuxWatcher {
             }
         })?;
 
-        global(|g| {
-            g.inotify
-                .lock()
-                .watch(path, notify::RecursiveMode::NonRecursive)
-        })??;
+        #[cfg(target_os = "windows")]
+        let watch_mode = notify::RecursiveMode::Recursive;
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        let watch_mode = notify::RecursiveMode::NonRecursive;
+
+        global(|g| g.inotify.lock().watch(path, watch_mode))??;
 
         Ok(())
     }
@@ -84,11 +85,12 @@ impl Watcher for LinuxWatcher {
 }
 
 pub struct GlobalWatcher {
-    // two mutexes because calling inotify.add triggers an inotify.event, which needs watchers.
     #[cfg(target_os = "linux")]
     pub(super) inotify: Mutex<notify::INotifyWatcher>,
     #[cfg(target_os = "freebsd")]
     pub(super) inotify: Mutex<notify::KqueueWatcher>,
+    #[cfg(target_os = "windows")]
+    pub(super) inotify: Mutex<notify::ReadDirectoryChangesWatcher>,
     pub(super) watchers: Mutex<Vec<Box<dyn Fn(&notify::Event) + Send + Sync>>>,
 }
 
