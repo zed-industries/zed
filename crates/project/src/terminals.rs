@@ -433,6 +433,9 @@ impl Project {
             "windows" => "\r",
             _ => "\n",
         };
+        if smol::block_on(self.fs.load_bytes(path.as_ref())).is_err() {
+            return None;
+        }
         Some(format!(
             "{} {} ; clear{}",
             activate_keyword, quoted, line_ending
