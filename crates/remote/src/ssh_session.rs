@@ -6,6 +6,10 @@ use crate::{
     proxy::ProxyLaunchError,
 };
 use anyhow::{anyhow, Context as _, Result};
+#[cfg(target_os = "windows")]
+use askpass_password::{
+    generate_password_helper_script, AskpassPasswordGuard, AskpassPasswordHelper,
+};
 use async_trait::async_trait;
 use collections::HashMap;
 use futures::{
@@ -20,6 +24,9 @@ use gpui::{
     AppContext, AsyncAppContext, BorrowAppContext, Context, EventEmitter, Global, Model,
     ModelContext, SemanticVersion, Task, WeakModel,
 };
+use ipc::{generate_askpass_script, generate_control_handle_identifier, AskpassHandle};
+#[cfg(target_os = "windows")]
+use ipc::{PipeGuard, PipeStream};
 use itertools::Itertools;
 use parking_lot::Mutex;
 use paths;
@@ -56,7 +63,10 @@ pub struct SshProjectId(pub u64);
 #[derive(Clone)]
 pub struct SshSocket {
     connection_options: SshConnectionOptions,
+    #[cfg(not(target_os = "windows"))]
     socket_path: PathBuf,
+    #[cfg(target_os = "windows")]
+    password_helper: Option<AskpassPasswordGuard>,
 }
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Hash)]
@@ -290,14 +300,26 @@ impl SshSocket {
     }
 
     fn ssh_options<'a>(&self, command: &'a mut process::Command) -> &'a mut process::Command {
+        #[cfg(not(target_os = "windows"))]
+        command
+            .args(["-o", "ControlMaster=no", "-o"])
+            .arg(format!("ControlPath={}", self.socket_path.display()));
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(ref askpass_script) = self.password_helper {
+                command
+                    .env("SSH_ASKPASS_REQUIRE", "force")
+                    .env("SSH_ASKPASS", askpass_script.script())
+                    .args(["-o", "PreferredAuthentications=password"]);
+            }
+        }
         command
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .args(["-o", "ControlMaster=no", "-o"])
-            .arg(format!("ControlPath={}", self.socket_path.display()))
     }
 
+    #[cfg(not(target_os = "windows"))]
     fn ssh_args(&self) -> Vec<String> {
         vec![
             "-o".to_string(),
@@ -306,6 +328,11 @@ impl SshSocket {
             format!("ControlPath={}", self.socket_path.display()),
             self.connection_options.ssh_url(),
         ]
+    }
+
+    #[cfg(target_os = "windows")]
+    fn ssh_args(&self) -> Vec<String> {
+        vec![self.connection_options.ssh_url()]
     }
 }
 
@@ -1362,41 +1389,40 @@ impl RemoteConnection for SshRemoteConnection {
 }
 
 impl SshRemoteConnection {
-    #[cfg(not(unix))]
-    async fn new(
-        _connection_options: SshConnectionOptions,
-        _delegate: Arc<dyn SshClientDelegate>,
-        _cx: &mut AsyncAppContext,
-    ) -> Result<Self> {
-        Err(anyhow!("ssh is not supported on this platform"))
-    }
-
-    #[cfg(unix)]
     async fn new(
         connection_options: SshConnectionOptions,
         delegate: Arc<dyn SshClientDelegate>,
         cx: &mut AsyncAppContext,
     ) -> Result<Self> {
         use futures::AsyncWriteExt as _;
-        use futures::{io::BufReader, AsyncBufReadExt as _};
+        #[cfg(not(target_os = "windows"))]
+        use smol::fs::unix::PermissionsExt as _;
+        #[cfg(not(target_os = "windows"))]
         use smol::net::unix::UnixStream;
-        use smol::{fs::unix::PermissionsExt as _, net::unix::UnixListener};
         use util::ResultExt as _;
 
         delegate.set_status(Some("Connecting"), cx);
 
         let url = connection_options.ssh_url();
         let temp_dir = tempfile::Builder::new()
+            .keep(true)
             .prefix("zed-ssh-session")
             .tempdir()?;
 
         // Create a domain socket listener to handle requests from the askpass program.
-        let askpass_socket = temp_dir.path().join("askpass.sock");
+        let askpass_handle_name = generate_control_handle_identifier(&temp_dir);
         let (askpass_opened_tx, askpass_opened_rx) = oneshot::channel::<()>();
-        let listener =
-            UnixListener::bind(&askpass_socket).context("failed to create askpass socket")?;
+        let listener = AskpassHandle::new(&askpass_handle_name)?;
+        #[cfg(target_os = "windows")]
+        let pipe_guard = PipeGuard::new(&askpass_handle_name)?;
+        #[cfg(target_os = "windows")]
+        let (askpass_password, shaerd_mem_identifier, shared_mem_handle) =
+            AskpassPasswordHelper::new(&askpass_handle_name)?;
 
+        #[cfg(not(target_os = "windows"))]
         let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<UnixStream>();
+        #[cfg(target_os = "windows")]
+        let (askpass_kill_master_tx, askpass_kill_master_rx) = oneshot::channel::<PipeStream>();
         let mut kill_tx = Some(askpass_kill_master_tx);
 
         let askpass_task = cx.spawn({
@@ -1404,24 +1430,30 @@ impl SshRemoteConnection {
             |mut cx| async move {
                 let mut askpass_opened_tx = Some(askpass_opened_tx);
 
-                while let Ok((mut stream, _)) = listener.accept().await {
+                while let Ok(mut stream) = listener.accept().await {
                     if let Some(askpass_opened_tx) = askpass_opened_tx.take() {
                         askpass_opened_tx.send(()).ok();
                     }
-                    let mut buffer = Vec::new();
-                    let mut reader = BufReader::new(&mut stream);
-                    if reader.read_until(b'\0', &mut buffer).await.is_err() {
-                        buffer.clear();
-                    }
-                    let password_prompt = String::from_utf8_lossy(&buffer);
+                    #[cfg(target_os = "windows")]
+                    let Some(password_prompt) = stream.get_password_prompt().await.log_err() else {
+                        break;
+                    };
+                    #[cfg(not(target_os = "windows"))]
+                    let password_prompt = listener.get_password_prompt(&mut stream).await;
                     if let Some(password) = delegate
-                        .ask_password(password_prompt.to_string(), &mut cx)
+                        .ask_password(password_prompt, &mut cx)
                         .await
                         .context("failed to get ssh password")
                         .and_then(|p| p)
                         .log_err()
                     {
+                        #[cfg(not(target_os = "windows"))]
                         stream.write_all(password.as_bytes()).await.log_err();
+                        #[cfg(target_os = "windows")]
+                        {
+                            listener.send_password(&password).log_err();
+                            askpass_password.write_password(&password).log_err();
+                        }
                     } else {
                         if let Some(kill_tx) = kill_tx.take() {
                             kill_tx.send(stream).log_err();
@@ -1432,27 +1464,29 @@ impl SshRemoteConnection {
             }
         });
 
-        anyhow::ensure!(
-            which::which("nc").is_ok(),
-            "Cannot find nc, which is required to connect over ssh."
-        );
-
+        // anyhow::ensure!(
+        //     which::which("nc").is_ok(),
+        //     "Cannot find nc, which is required to connect over ssh."
+        // );
         // Create an askpass script that communicates back to this process.
-        let askpass_script = format!(
-            "{shebang}\n{print_args} | {nc} -U {askpass_socket} 2> /dev/null \n",
-            // on macOS `brew install netcat` provides the GNU netcat implementation
-            // which does not support -U.
-            nc = if cfg!(target_os = "macos") {
-                "/usr/bin/nc"
-            } else {
-                "nc"
-            },
-            askpass_socket = askpass_socket.display(),
-            print_args = "printf '%s\\0' \"$@\"",
-            shebang = "#!/bin/sh",
-        );
-        let askpass_script_path = temp_dir.path().join("askpass.sh");
-        fs::write(&askpass_script_path, askpass_script).await?;
+        // let askpass_script = format!(
+        //     "{shebang}\n{print_args} | {nc} -U {askpass_socket} 2> /dev/null \n",
+        // on macOS `brew install netcat` provides the GNU netcat implementation
+        // which does not support -U.
+        // nc = if cfg!(target_os = "macos") {
+        //     "/usr/bin/nc"
+        // } else {
+        //     "nc"
+        // },
+        //     askpass_socket = askpass_socket.display(),
+        //     print_args = "printf '%s\\0' \"$@\"",
+        //     shebang = "#!/bin/sh",
+        // );
+        // let askpass_script_path = temp_dir.path().join("askpass.sh");
+        // fs::write(&askpass_script_path, askpass_script).await?;
+        let askpass_script_path = generate_askpass_script(&temp_dir, &askpass_handle_name).await?;
+
+        #[cfg(not(target_os = "windows"))]
         fs::set_permissions(&askpass_script_path, std::fs::Permissions::from_mode(0o755)).await?;
 
         // Start the master SSH process, which does not do anything except for establish
@@ -1469,13 +1503,13 @@ impl SshRemoteConnection {
             .args(connection_options.additional_args().unwrap_or(&Vec::new()))
             .args([
                 "-N",
-                "-o",
-                "ControlPersist=no",
-                "-o",
-                "ControlMaster=yes",
-                "-o",
+                //     "-o",
+                //     "ControlPersist=no",
+                //     "-o",
+                //     "ControlMaster=yes",
+                //     "-o",
             ])
-            .arg(format!("ControlPath={}", socket_path.display()))
+            // .arg(format!("ControlPath={}", socket_path.display()))
             .arg(&url)
             .kill_on_drop(true)
             .spawn()?;
@@ -1484,10 +1518,12 @@ impl SshRemoteConnection {
         // has completed.
         let mut stdout = master_process.stdout.take().unwrap();
         let mut output = Vec::new();
-        let connection_timeout = Duration::from_secs(10);
+        let connection_timeout = Duration::from_secs(1000);
 
+        let mut require_password = false;
         let result = select_biased! {
             _ = askpass_opened_rx.fuse() => {
+                require_password = true;
                 select_biased! {
                     stream = askpass_kill_master_rx.fuse() => {
                         master_process.kill().ok();
@@ -1510,6 +1546,8 @@ impl SshRemoteConnection {
                 Err(anyhow!("Exceeded {:?} timeout trying to connect to host", connection_timeout))
             }
         };
+        #[cfg(target_os = "windows")]
+        pipe_guard.finish();
 
         if let Err(e) = result {
             return Err(e.context("Failed to connect to host"));
@@ -1529,9 +1567,19 @@ impl SshRemoteConnection {
             Err(anyhow!(error_message))?;
         }
 
+        #[cfg(target_os = "windows")]
+        let askpass_password_helper = if require_password {
+            let script = generate_password_helper_script(&shaerd_mem_identifier, &temp_dir)?;
+            Some(AskpassPasswordGuard::new(shared_mem_handle, script))
+        } else {
+            None
+        };
         let socket = SshSocket {
             connection_options,
+            #[cfg(not(target_os = "windows"))]
             socket_path,
+            #[cfg(target_os = "windows")]
+            password_helper: askpass_password_helper,
         };
 
         let mut this = Self {
@@ -2357,6 +2405,459 @@ impl ProtoClient for ChannelClient {
 
     fn is_via_collab(&self) -> bool {
         false
+    }
+}
+
+mod ipc {
+    use std::path::{Path, PathBuf};
+
+    use anyhow::{Context, Result};
+    #[cfg(not(target_os = "windows"))]
+    use smol::net::unix::UnixListener;
+    use tempfile::TempDir;
+    use util::ResultExt;
+    #[cfg(target_os = "windows")]
+    use windows::{
+        core::HSTRING,
+        Win32::{
+            Foundation::{CloseHandle, GENERIC_WRITE, HANDLE},
+            Storage::FileSystem::{
+                CreateFileW, ReadFile, WriteFile, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_WRITE,
+                FILE_WRITE_ATTRIBUTES, OPEN_EXISTING,
+            },
+            System::Pipes::DisconnectNamedPipe,
+        },
+    };
+
+    const SSH_SHARED_MEMORY_MAX_SIZE: usize = 1024;
+    const SSH_NAMED_PIPE_MAX_SIZE: usize = 1024;
+
+    #[cfg(target_os = "windows")]
+    #[derive(Debug, Clone, Copy)]
+    pub struct SafeHandle(HANDLE);
+
+    #[cfg(target_os = "windows")]
+    unsafe impl Send for SafeHandle {}
+    #[cfg(target_os = "windows")]
+    unsafe impl Sync for SafeHandle {}
+
+    #[cfg(target_os = "windows")]
+    impl From<HANDLE> for SafeHandle {
+        fn from(handle: HANDLE) -> Self {
+            Self(handle)
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    impl SafeHandle {
+        pub fn to_handle(&self) -> HANDLE {
+            self.0
+        }
+    }
+
+    pub(super) struct AskpassHandle {
+        #[cfg(not(target_os = "windows"))]
+        pub(super) socket: UnixListener,
+        #[cfg(target_os = "windows")]
+        pub(super) pipe: SafeHandle,
+    }
+
+    #[cfg(target_os = "windows")]
+    #[derive(Debug)]
+    pub(super) struct PipeStream(SafeHandle);
+
+    #[cfg(target_os = "windows")]
+    pub(super) struct PipeGuard(String);
+
+    impl AskpassHandle {
+        #[cfg(not(target_os = "windows"))]
+        pub(super) fn new(identifier: &Path) -> Result<Self> {
+            Ok(Self {
+                socket: generate_control_handle(identifier)?,
+            })
+        }
+
+        #[cfg(target_os = "windows")]
+        pub(super) fn new(identifier: &str) -> Result<Self> {
+            Ok(Self {
+                pipe: create_named_pipe(identifier)?,
+            })
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        pub(super) async fn accept(&self) -> Result<smol::net::unix::UnixStream> {
+            Ok(self
+                .socket
+                .accept()
+                .await
+                .context("failed to accept askpass connection")?
+                .0)
+        }
+
+        #[cfg(target_os = "windows")]
+        pub(super) async fn accept(&self) -> Result<PipeStream> {
+            use windows::Win32::System::Pipes::ConnectNamedPipe;
+
+            let handle = self.pipe;
+            smol::unblock(move || {
+                unsafe { ConnectNamedPipe(handle.to_handle(), None)? };
+                Ok(PipeStream::new(handle))
+            })
+            .await
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        pub(super) async fn get_password_prompt(
+            &self,
+            stream: &mut smol::net::unix::UnixStream,
+        ) -> String {
+            use smol::io::{AsyncBufReadExt, BufReader};
+
+            let mut buffer = Vec::new();
+            let mut reader = BufReader::new(stream);
+            if reader.read_until(b'\0', &mut buffer).await.is_err() {
+                buffer.clear();
+            }
+            String::from_utf8_lossy(&buffer).to_string()
+        }
+
+        #[cfg(target_os = "windows")]
+        pub(super) fn send_password(&self, password: &str) -> Result<()> {
+            use windows::Win32::Storage::FileSystem::WriteFile;
+
+            // let raw_handle = self.pipe;
+            // smol::unblock(move || {
+            let bytes = password.as_bytes();
+            unsafe {
+                WriteFile(self.pipe.to_handle(), Some(bytes), None, None)?;
+            }
+            Ok(())
+            // })
+            // .await
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    impl PipeStream {
+        pub(super) fn new(handle: SafeHandle) -> Self {
+            Self(handle)
+        }
+
+        pub(super) async fn get_password_prompt(&mut self) -> Result<String> {
+            let mut buffer = [0u8; SSH_NAMED_PIPE_MAX_SIZE];
+            let mut bytes_read = 0;
+            unsafe {
+                ReadFile(
+                    self.0.to_handle(),
+                    Some(&mut buffer),
+                    Some(&mut bytes_read),
+                    None,
+                )?
+            };
+            let string = String::from_utf8_lossy(&buffer[..bytes_read as usize]).to_string();
+            if string == "quit" {
+                Err(anyhow::anyhow!("quit"))
+            } else {
+                Ok(string)
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    impl Drop for PipeStream {
+        fn drop(&mut self) {
+            unsafe {
+                DisconnectNamedPipe(self.0.to_handle()).log_err();
+            }
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    impl PipeGuard {
+        pub(super) fn new(identifier: &str) -> Result<Self> {
+            Ok(Self(identifier.to_string()))
+        }
+
+        pub(super) fn finish(&self) {
+            unsafe {
+                let client = CreateFileW(
+                    &HSTRING::from(format!("\\\\.\\pipe\\{}-Named-Pipe", self.0)),
+                    GENERIC_WRITE.0 | FILE_WRITE_ATTRIBUTES.0,
+                    FILE_SHARE_WRITE,
+                    None,
+                    OPEN_EXISTING,
+                    FILE_ATTRIBUTE_NORMAL,
+                    None,
+                )
+                .unwrap();
+                let quit = "quit";
+                WriteFile(client, Some(quit.as_bytes()), None, None).unwrap();
+                CloseHandle(client).unwrap();
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub(super) fn generate_control_handle_identifier(temp_dir: &TempDir) -> PathBuf {
+        temp_dir.path().join("askpass.sock")
+    }
+
+    #[cfg(target_os = "windows")]
+    pub(super) fn generate_control_handle_identifier(temp_dir: &TempDir) -> String {
+        temp_dir
+            .path()
+            .join("askpass")
+            .to_string_lossy()
+            .replace('\\', "")
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub(super) fn generate_control_handle(socket: &Path) -> Result<UnixListener> {
+        UnixListener::bind(socket).context("failed to create askpass socket")
+    }
+
+    #[cfg(target_os = "windows")]
+    fn create_named_pipe(identifier: &str) -> Result<SafeHandle> {
+        use windows::{
+            core::{Owned, HSTRING},
+            Win32::{
+                Storage::FileSystem::PIPE_ACCESS_DUPLEX,
+                System::Pipes::{
+                    ConnectNamedPipe, CreateNamedPipeW, PIPE_READMODE_MESSAGE, PIPE_TYPE_MESSAGE,
+                    PIPE_WAIT,
+                },
+            },
+        };
+
+        let identifier = format!("\\\\.\\pipe\\{}-Named-Pipe", identifier);
+        let handle = unsafe {
+            CreateNamedPipeW(
+                &HSTRING::from(identifier),
+                PIPE_ACCESS_DUPLEX,
+                PIPE_TYPE_MESSAGE | PIPE_READMODE_MESSAGE,
+                4,
+                SSH_NAMED_PIPE_MAX_SIZE as u32,
+                SSH_NAMED_PIPE_MAX_SIZE as u32,
+                0,
+                None,
+            )
+        };
+        if handle.is_invalid() {
+            anyhow::bail!("Unable to create named pipe");
+        }
+        Ok(handle.into())
+    }
+
+    // #[cfg(target_os = "windows")]
+    // fn create_shared_memory(identifier: &str) -> Result<Owned<HANDLE>> {
+    //     use windows::{
+    //         core::{Owned, HSTRING},
+    //         Win32::{
+    //             Foundation::INVALID_HANDLE_VALUE,
+    //             System::Memory::{CreateFileMappingW, PAGE_READWRITE},
+    //         },
+    //     };
+
+    //     let identifier = format!("Local\\{}-Shared-Memory", identifier);
+    //     Ok(unsafe {
+    //         Owned::new(
+    //             CreateFileMappingW(
+    //                 INVALID_HANDLE_VALUE,
+    //                 None,
+    //                 PAGE_READWRITE,
+    //                 0,
+    //                 SSH_SHARED_MEMORY_MAX_SIZE as u32,
+    //                 &HSTRING::from(identifier),
+    //             )
+    //             .context("Unable to create shared memory")?,
+    //         )
+    //     })
+    // }
+
+    #[cfg(not(target_os = "windows"))]
+    pub(super) async fn generate_askpass_script(
+        temp_dir: &TempDir,
+        askpass_socket: &Path,
+    ) -> Result<PathBuf> {
+        anyhow::ensure!(
+            which::which("nc").is_ok(),
+            "Cannot find nc, which is required to connect over ssh."
+        );
+        // Create an askpass script that communicates back to this process.
+        let askpass_script = format!(
+            "{shebang}\n{print_args} | {nc} -U {askpass_socket} 2> /dev/null \n",
+            // on macOS `brew install netcat` provides the GNU netcat implementation
+            // which does not support -U.
+            nc = if cfg!(target_os = "macos") {
+                "/usr/bin/nc"
+            } else {
+                "nc"
+            },
+            askpass_socket = askpass_socket.display(),
+            print_args = "printf '%s\\0' \"$@\"",
+            shebang = "#!/bin/sh",
+        );
+        let askpass_script_path = temp_dir.path().join("askpass.sh");
+        smol::fs::write(&askpass_script_path, askpass_script).await?;
+        Ok(askpass_script_path)
+    }
+
+    #[cfg(target_os = "windows")]
+    pub(super) async fn generate_askpass_script(
+        temp_dir: &TempDir,
+        identifier: &str,
+    ) -> Result<PathBuf> {
+        let pipe_identifier = format!("{}-Named-Pipe", identifier);
+        let ps1_content = format!(
+            r#"
+            $argsString = [String]::Join("`0", $args) + "`0"
+            if (-not $argsString) {{
+                $argsString = "empty"
+            }}
+
+            $pipeName = "{}"
+            $pipeClient = New-Object System.IO.Pipes.NamedPipeClientStream(".", $pipeName, [System.IO.Pipes.PipeDirection]::InOut)
+
+            $pipeClient.Connect()
+
+            $reader = New-Object System.IO.StreamReader($pipeClient)
+            $writer = New-Object System.IO.StreamWriter($pipeClient)
+
+            $writer.WriteLine($argsString)
+            $writer.Flush()
+            $response = $reader.ReadLine()
+
+            # $reader.Close()
+            # $writer.Close()
+            $pipeClient.Close()
+            Write-Host $response
+            "#,
+            pipe_identifier
+        );
+        let ps1_path = temp_dir.path().join("askpass.ps1");
+        smol::fs::write(&ps1_path, ps1_content).await?;
+        let cmd_content = format!(
+            r#"
+            @echo off
+            powershell.exe -ExecutionPolicy Bypass -File "{}" %*
+            "#,
+            ps1_path.to_string_lossy()
+        );
+        let cmd_path = temp_dir.path().join("askpass.cmd");
+        smol::fs::write(&cmd_path, cmd_content).await?;
+        Ok(cmd_path)
+    }
+}
+
+#[cfg(target_os = "windows")]
+mod askpass_password {
+    use std::path::PathBuf;
+
+    use tempfile::TempDir;
+    use util::ResultExt;
+    use windows::{
+        core::HSTRING,
+        Win32::{
+            Foundation::{CloseHandle, INVALID_HANDLE_VALUE},
+            Storage::FileSystem::WriteFile,
+            System::Memory::{
+                CreateFileMappingW, MapViewOfFile, UnmapViewOfFile, FILE_MAP_WRITE, PAGE_READWRITE,
+            },
+        },
+    };
+
+    use super::ipc::SafeHandle;
+
+    const APP_SHARED_MEMORY_MAX_SIZE: usize = 512;
+
+    pub(super) struct AskpassPasswordHelper(SafeHandle);
+
+    #[derive(Debug, Clone)]
+    pub(super) struct AskpassPasswordGuard {
+        handle: SafeHandle,
+        script: PathBuf,
+    }
+
+    impl AskpassPasswordHelper {
+        pub(super) fn new(identifier: &str) -> anyhow::Result<(Self, String, SafeHandle)> {
+            let identifier = format!("Local\\{}-Shared-Memory", identifier);
+            let handle = unsafe {
+                CreateFileMappingW(
+                    INVALID_HANDLE_VALUE,
+                    None,
+                    PAGE_READWRITE,
+                    0,
+                    APP_SHARED_MEMORY_MAX_SIZE as u32,
+                    &HSTRING::from(&identifier),
+                )
+            }?;
+            Ok((Self(handle.into()), identifier, handle.into()))
+        }
+
+        pub fn write_password(&self, password: &str) -> anyhow::Result<()> {
+            unsafe {
+                let mem_addr = MapViewOfFile(self.0.to_handle(), FILE_MAP_WRITE, 0, 0, 0);
+                std::ptr::copy_nonoverlapping(
+                    password.as_ptr(),
+                    mem_addr.Value as _,
+                    password.len(),
+                );
+                UnmapViewOfFile(mem_addr)?;
+            }
+            Ok(())
+        }
+    }
+
+    impl AskpassPasswordGuard {
+        pub(super) fn new(handle: SafeHandle, script: PathBuf) -> Self {
+            Self { handle, script }
+        }
+
+        pub(super) fn script(&self) -> &std::path::Path {
+            &self.script
+        }
+    }
+
+    impl Drop for AskpassPasswordGuard {
+        fn drop(&mut self) {
+            unsafe {
+                CloseHandle(self.handle.to_handle()).log_err();
+            }
+        }
+    }
+
+    pub(super) fn generate_password_helper_script(
+        identifier: &str,
+        temp_dir: &TempDir,
+    ) -> anyhow::Result<PathBuf> {
+        let cmd_file = temp_dir.path().join("askpass_password_helper.cmd");
+        let ps1_file = temp_dir.path().join("askpass_password_helper.ps1");
+
+        let cmd_content = format!(
+            r#"
+            @echo off
+            powershell.exe -ExecutionPolicy Bypass -File "{}"
+            "#,
+            ps1_file.to_string_lossy()
+        );
+        let ps1_content = format!(
+            r#"
+            $sharedMemoryName = "{}"
+            $memoryMappedFile = [System.IO.MemoryMappedFiles.MemoryMappedFile]::OpenExisting($sharedMemoryName)
+            $streamAccessor = $memoryMappedFile.CreateViewStream()
+            $reader = New-Object System.IO.BinaryReader($streamAccessor)
+            $data = $reader.ReadBytes({})
+            $message = [System.Text.Encoding]::UTF8.GetString($data).Trim([char]0)
+            $reader.Close()
+            $streamAccessor.Close()
+            $memoryMappedFile.Dispose()
+            Write-Host $message
+            "#,
+            identifier, APP_SHARED_MEMORY_MAX_SIZE
+        );
+        std::fs::write(&cmd_file, cmd_content)?;
+        std::fs::write(&ps1_file, ps1_content)?;
+        Ok(cmd_file)
     }
 }
 
