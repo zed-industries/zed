@@ -9,7 +9,8 @@ use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, Worktree, WorktreeId};
 use ui::{prelude::*, ListItem};
 use util::ResultExt as _;
-use workspace::Workspace;
+use workspace::notifications::NotificationId;
+use workspace::{Toast, Workspace};
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::{push_fenced_codeblock, ContextStore};
@@ -231,27 +232,38 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
                     .collect::<Vec<_>>()
             })?;
 
-            let open_all_buffers_tasks = cx.background_executor().spawn(async move {
-                let mut buffers = Vec::with_capacity(open_buffer_tasks.len());
-
-                for open_buffer_task in open_buffer_tasks {
-                    let buffer = open_buffer_task.await?;
-
-                    buffers.push(buffer);
-                }
-
-                anyhow::Ok(buffers)
-            });
-
-            let buffers = open_all_buffers_tasks.await?;
+            let buffers = futures::future::join_all(open_buffer_tasks).await;
 
             this.update(&mut cx, |this, cx| {
                 let mut text = String::new();
 
+                let mut ok_count = 0;
+
                 for buffer in buffers {
-                    let buffer = buffer.read(cx);
-                    let path = buffer.file().map_or(&path, |file| file.path());
-                    push_fenced_codeblock(&path, buffer.text(), &mut text);
+                    if let Ok(buffer) = buffer {
+                        let buffer = buffer.read(cx);
+                        let path = buffer.file().map_or(&path, |file| file.path());
+                        push_fenced_codeblock(&path, buffer.text(), &mut text);
+                        ok_count += 1;
+                    }
+                }
+
+                if ok_count == 0 {
+                    let Some(workspace) = workspace.upgrade() else {
+                        return anyhow::Ok(());
+                    };
+
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.show_error(
+                            &anyhow::anyhow!(
+                                "Could not read any text files from {}",
+                                path.display()
+                            ),
+                            cx,
+                        );
+                    });
+
+                    return anyhow::Ok(());
                 }
 
                 this.delegate
