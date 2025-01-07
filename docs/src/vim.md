@@ -392,6 +392,20 @@ Subword motion, which allows you to navigate and select individual words in came
 ]
 ```
 
+Similarly subword text objects are available, and can be bound with:
+
+```json
+[
+  {
+    "context": "vim_operator == a || vim_operator == i || vim_operator == cs",
+    "bindings": {
+      "w": "vim::Subword",
+      "shift-w": ["vim::Subword", { "ignorePunctuation": true }],
+    }
+  }
+]
+```
+
 Vim mode comes with shortcuts to surround the selection in normal mode (`ys`), but it doesn't have a shortcut to add surrounds in visual mode. By default, `shift-s` substitutes the selection (erases the text and enters insert mode). To use `shift-s` to add surrounds in visual mode, you can add the following object to your keymap.
 
 ```json
