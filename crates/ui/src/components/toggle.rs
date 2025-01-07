@@ -1,8 +1,8 @@
-use gpui::{div, prelude::*, ElementId, IntoElement, Styled, WindowContext};
+use gpui::{div, hsla, prelude::*, ElementId, Hsla, IntoElement, Styled, WindowContext};
 use std::sync::Arc;
 
-use crate::prelude::*;
 use crate::utils::is_light;
+use crate::{prelude::*, ElevationIndex};
 use crate::{Color, Icon, IconName, ToggleState};
 
 /// Creates a new checkbox
@@ -13,6 +13,19 @@ pub fn checkbox(id: impl Into<ElementId>, toggle_state: ToggleState) -> Checkbox
 /// Creates a new switch
 pub fn switch(id: impl Into<ElementId>, toggle_state: ToggleState) -> Switch {
     Switch::new(id, toggle_state)
+}
+
+#[derive(Debug, Default, Clone, PartialEq, Eq)]
+/// The visual style of a toggle
+pub enum ToggleStyle {
+    /// Toggle has a transparent background
+    #[default]
+    Ghost,
+    /// Toggle has a filled background based on the
+    /// elevation index of the parent container
+    ElevationBased(ElevationIndex),
+    /// A custom style using a color to tint the toggle
+    Custom(Hsla),
 }
 
 /// # Checkbox
@@ -26,6 +39,8 @@ pub struct Checkbox {
     toggle_state: ToggleState,
     disabled: bool,
     on_click: Option<Box<dyn Fn(&ToggleState, &mut WindowContext) + 'static>>,
+    filled: bool,
+    style: ToggleStyle,
 }
 
 impl Checkbox {
@@ -36,6 +51,8 @@ impl Checkbox {
             toggle_state: checked,
             disabled: false,
             on_click: None,
+            filled: false,
+            style: ToggleStyle::default(),
         }
     }
 
@@ -53,12 +70,49 @@ impl Checkbox {
         self.on_click = Some(Box::new(handler));
         self
     }
+
+    /// Sets the `fill` setting of the checkbox, indicating whether it should be filled or not
+    pub fn fill(mut self) -> Self {
+        self.filled = true;
+        self
+    }
+
+    /// Sets the style of the checkbox using the specified [`ToggleStyle`]
+    pub fn style(mut self, style: ToggleStyle) -> Self {
+        self.style = style;
+        self
+    }
+}
+
+impl Checkbox {
+    fn bg_color(&self, cx: &WindowContext) -> Hsla {
+        let style = self.style.clone();
+        match (style, self.filled) {
+            (ToggleStyle::Ghost, false) => cx.theme().colors().ghost_element_background,
+            (ToggleStyle::Ghost, true) => cx.theme().colors().element_background,
+            (ToggleStyle::ElevationBased(_), false) => gpui::transparent_black(),
+            (ToggleStyle::ElevationBased(elevation), true) => elevation.darker_bg(cx),
+            (ToggleStyle::Custom(_), false) => gpui::transparent_black(),
+            (ToggleStyle::Custom(color), true) => color.opacity(0.2),
+        }
+    }
+
+    fn border_color(&self, cx: &WindowContext) -> Hsla {
+        if self.disabled {
+            return cx.theme().colors().border_disabled;
+        }
+
+        match self.style.clone() {
+            ToggleStyle::Ghost => cx.theme().colors().border_variant,
+            ToggleStyle::ElevationBased(elevation) => elevation.on_elevation_bg(cx),
+            ToggleStyle::Custom(color) => color.opacity(0.3),
+        }
+    }
 }
 
 impl RenderOnce for Checkbox {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let group_id = format!("checkbox_group_{:?}", self.id);
-
         let icon = match self.toggle_state {
             ToggleState::Selected => Some(Icon::new(IconName::Check).size(IconSize::Small).color(
                 if self.disabled {
@@ -79,23 +133,8 @@ impl RenderOnce for Checkbox {
             ToggleState::Unselected => None,
         };
 
-        let selected = self.toggle_state == ToggleState::Selected
-            || self.toggle_state == ToggleState::Indeterminate;
-
-        let (bg_color, border_color) = match (self.disabled, selected) {
-            (true, _) => (
-                cx.theme().colors().ghost_element_disabled,
-                cx.theme().colors().border_disabled,
-            ),
-            (false, true) => (
-                cx.theme().colors().element_selected,
-                cx.theme().colors().border,
-            ),
-            (false, false) => (
-                cx.theme().colors().element_background,
-                cx.theme().colors().border,
-            ),
-        };
+        let bg_color = self.bg_color(cx);
+        let border_color = self.border_color(cx);
 
         h_flex()
             .id(self.id)
@@ -342,7 +381,7 @@ impl ComponentPreview for Checkbox {
     fn examples(_: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
         vec![
             example_group_with_title(
-                "Default",
+                "Default (Ghost)",
                 vec![
                     single_example(
                         "Unselected",
@@ -355,6 +394,93 @@ impl ComponentPreview for Checkbox {
                     single_example(
                         "Selected",
                         Checkbox::new("checkbox_selected", ToggleState::Selected),
+                    ),
+                ],
+            ),
+            example_group_with_title(
+                "ElevationBased",
+                vec![
+                    single_example(
+                        "Default/Unselected",
+                        Checkbox::new("checkbox_unfilled_unselected", ToggleState::Unselected)
+                            .style(ToggleStyle::ElevationBased(ElevationIndex::EditorSurface)),
+                    ),
+                    single_example(
+                        "Default/Indeterminate",
+                        Checkbox::new(
+                            "checkbox_unfilled_indeterminate",
+                            ToggleState::Indeterminate,
+                        )
+                        .style(ToggleStyle::ElevationBased(ElevationIndex::EditorSurface)),
+                    ),
+                    single_example(
+                        "Default/Selected",
+                        Checkbox::new("checkbox_unfilled_selected", ToggleState::Selected)
+                            .style(ToggleStyle::ElevationBased(ElevationIndex::EditorSurface)),
+                    ),
+                    single_example(
+                        "Filled/Unselected",
+                        Checkbox::new("checkbox_filled_unselected", ToggleState::Unselected)
+                            .fill()
+                            .style(ToggleStyle::ElevationBased(ElevationIndex::EditorSurface)),
+                    ),
+                    single_example(
+                        "Filled/Indeterminate",
+                        Checkbox::new("checkbox_filled_indeterminate", ToggleState::Indeterminate)
+                            .fill()
+                            .style(ToggleStyle::ElevationBased(ElevationIndex::EditorSurface)),
+                    ),
+                    single_example(
+                        "Filled/Selected",
+                        Checkbox::new("checkbox_filled_selected", ToggleState::Selected)
+                            .fill()
+                            .style(ToggleStyle::ElevationBased(ElevationIndex::EditorSurface)),
+                    ),
+                ],
+            ),
+            example_group_with_title(
+                "Custom Color",
+                vec![
+                    single_example(
+                        "Default/Unselected",
+                        Checkbox::new("checkbox_custom_unselected", ToggleState::Unselected)
+                            .style(ToggleStyle::Custom(hsla(142.0 / 360., 0.68, 0.45, 0.7))),
+                    ),
+                    single_example(
+                        "Default/Indeterminate",
+                        Checkbox::new("checkbox_custom_indeterminate", ToggleState::Indeterminate)
+                            .style(ToggleStyle::Custom(hsla(142.0 / 360., 0.68, 0.45, 0.7))),
+                    ),
+                    single_example(
+                        "Default/Selected",
+                        Checkbox::new("checkbox_custom_selected", ToggleState::Selected)
+                            .style(ToggleStyle::Custom(hsla(142.0 / 360., 0.68, 0.45, 0.7))),
+                    ),
+                    single_example(
+                        "Filled/Unselected",
+                        Checkbox::new("checkbox_custom_filled_unselected", ToggleState::Unselected)
+                            .fill()
+                            .style(ToggleStyle::Custom(hsla(142.0 / 360., 0.68, 0.45, 0.7))),
+                    ),
+                    single_example(
+                        "Filled/Indeterminate",
+                        Checkbox::new(
+                            "checkbox_custom_filled_indeterminate",
+                            ToggleState::Indeterminate,
+                        )
+                        .fill()
+                        .style(ToggleStyle::Custom(hsla(
+                            142.0 / 360.,
+                            0.68,
+                            0.45,
+                            0.7,
+                        ))),
+                    ),
+                    single_example(
+                        "Filled/Selected",
+                        Checkbox::new("checkbox_custom_filled_selected", ToggleState::Selected)
+                            .fill()
+                            .style(ToggleStyle::Custom(hsla(142.0 / 360., 0.68, 0.45, 0.7))),
                     ),
                 ],
             ),
