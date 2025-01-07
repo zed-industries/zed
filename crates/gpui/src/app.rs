@@ -265,6 +265,7 @@ pub struct AppContext {
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
     pub(crate) prompt_builder: Option<PromptBuilder>,
+    pub(crate) refresh_observers: FxHashMap<WindowId, Vec<Subscription>>,
 
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
@@ -317,6 +318,7 @@ impl AppContext {
                 pending_notifications: FxHashSet::default(),
                 pending_global_notifications: FxHashSet::default(),
                 observers: SubscriberSet::new(),
+                refresh_observers: FxHashMap::default(),
                 event_listeners: SubscriberSet::new(),
                 release_listeners: SubscriberSet::new(),
                 keystroke_observers: SubscriberSet::new(),
@@ -438,6 +440,30 @@ impl AppContext {
             on_notify(e, cx);
             true
         })
+    }
+
+    pub(crate) fn observe_for_refreshes(
+        &mut self,
+        window_handle: AnyWindowHandle,
+        entities: &FxHashSet<EntityId>,
+    ) {
+        let mut observers =
+            std::mem::take(self.refresh_observers.entry(window_handle.id).or_default());
+        observers.clear();
+        observers.extend(entities.iter().map(|entity_id| {
+            self.new_observer(
+                *entity_id,
+                Box::new(move |cx| {
+                    window_handle
+                        .update(cx, |_, window, _| {
+                            window.refresh();
+                        })
+                        .ok();
+                    false
+                }),
+            )
+        }));
+        self.refresh_observers.insert(window_handle.id, observers);
     }
 
     pub(crate) fn new_observer(&mut self, key: EntityId, value: Handler) -> Subscription {

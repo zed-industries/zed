@@ -37,7 +37,7 @@ use std::{
     hash::{Hash, Hasher},
     marker::PhantomData,
     mem,
-    ops::Range,
+    ops::{DerefMut, Range},
     rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -4682,6 +4682,7 @@ impl Window {
     /// the contents of the new [Scene], use [present].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut AppContext) {
+        cx.entities.entities_read.borrow_mut().clear();
         self.dirty.set(false);
         self.requested_autoscroll = None;
 
@@ -4745,10 +4746,21 @@ impl Window {
                 .retain(&(), |listener| listener(&event, self, cx));
         }
 
+        self.observe_refreshes(cx);
         self.reset_cursor_style(cx);
         self.refreshing = false;
         self.draw_phase = DrawPhase::None;
         self.needs_present.set(true);
+    }
+
+    fn observe_refreshes(&mut self, cx: &mut AppContext) {
+        let mut entities_ref = cx.entities.entities_read.borrow_mut();
+        let mut entities = mem::take(entities_ref.deref_mut());
+        drop(entities_ref);
+        let handle = self.handle.clone();
+        cx.observe_for_refreshes(handle, &entities);
+        let mut entities_ref = cx.entities.entities_read.borrow_mut();
+        mem::swap(&mut entities, entities_ref.deref_mut());
     }
 
     #[profiling::function]
