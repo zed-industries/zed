@@ -2553,17 +2553,17 @@ fn assert_point_translation(snapshot: &MultiBufferSnapshot) {
             text.offset_to_point(clipped_right),
             "offset_to_point({clipped_right})"
         );
-        let anchor_before = snapshot.anchor_before(clipped_left);
-        assert_eq!(
-            anchor_before.to_offset(snapshot),
-            clipped_left,
-            "anchor_before({clipped_left}).to_offset"
-        );
         let anchor_after = snapshot.anchor_after(clipped_left);
         assert_eq!(
             anchor_after.to_offset(snapshot),
             clipped_left,
             "anchor_after({clipped_left}).to_offset"
+        );
+        let anchor_before = snapshot.anchor_before(clipped_left);
+        assert_eq!(
+            anchor_before.to_offset(snapshot),
+            clipped_left,
+            "anchor_before({clipped_left}).to_offset"
         );
         left_anchors.push(anchor_before);
         right_anchors.push(anchor_after);
@@ -2601,18 +2601,22 @@ fn assert_point_translation(snapshot: &MultiBufferSnapshot) {
 
     assert_eq!(
         snapshot.summaries_for_anchors::<usize, _>(&left_anchors),
-        offsets
+        offsets,
+        "left_anchors <-> offsets"
     );
     assert_eq!(
         snapshot.summaries_for_anchors::<Point, _>(&left_anchors),
-        points
+        points,
+        "left_anchors <-> points"
     );
     assert_eq!(
         snapshot.summaries_for_anchors::<usize, _>(&right_anchors),
-        offsets
+        offsets,
+        "right_anchors <-> offsets"
     );
     assert_eq!(
         snapshot.summaries_for_anchors::<Point, _>(&right_anchors),
-        points
+        points,
+        "right_anchors <-> points"
     );
 }
