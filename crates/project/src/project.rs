@@ -4143,14 +4143,6 @@ impl Project {
         self.lsp_store.read(cx).supplementary_language_servers()
     }
 
-    pub fn language_server_for_id(
-        &self,
-        id: LanguageServerId,
-        cx: &AppContext,
-    ) -> Option<Arc<LanguageServer>> {
-        self.lsp_store.read(cx).language_server_for_id(id)
-    }
-
     pub fn language_servers_for_local_buffer<'a>(
         &'a self,
         buffer: &'a Buffer,
