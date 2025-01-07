@@ -4,9 +4,6 @@
 
 ; Special identifiers
 
-((identifier) @constructor
- (#match? @constructor "^[A-Z]"))
-
 ((identifier) @type
  (#match? @type "^[A-Z]"))
 (type_identifier) @type
