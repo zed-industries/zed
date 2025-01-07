@@ -8,18 +8,18 @@ use crate::{Color, Icon, IconName, ToggleState};
 // TODO: Checkbox, CheckboxWithLabel, Switch, SwitchWithLabel all could be
 // restructured to use a ToggleLike, similar to Button/Buttonlike, Label/Labellike
 
-/// Creates a new checkbox
+/// Creates a new checkbox.
 pub fn checkbox(id: impl Into<ElementId>, toggle_state: ToggleState) -> Checkbox {
     Checkbox::new(id, toggle_state)
 }
 
-/// Creates a new switch
+/// Creates a new switch.
 pub fn switch(id: impl Into<ElementId>, toggle_state: ToggleState) -> Switch {
     Switch::new(id, toggle_state)
 }
 
+/// The visual style of a toggle.
 #[derive(Debug, Default, Clone, PartialEq, Eq)]
-/// The visual style of a toggle
 pub enum ToggleStyle {
     /// Toggle has a transparent background
     #[default]
@@ -47,7 +47,7 @@ pub struct Checkbox {
 }
 
 impl Checkbox {
-    /// Creates a new [`Checkbox`]
+    /// Creates a new [`Checkbox`].
     pub fn new(id: impl Into<ElementId>, checked: ToggleState) -> Self {
         Self {
             id: id.into(),
@@ -59,13 +59,13 @@ impl Checkbox {
         }
     }
 
-    /// Sets the disabled state of the [`Checkbox`]
+    /// Sets the disabled state of the [`Checkbox`].
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 
-    /// Binds a handler to the [`Checkbox`] that will be called when clicked
+    /// Binds a handler to the [`Checkbox`] that will be called when clicked.
     pub fn on_click(
         mut self,
         handler: impl Fn(&ToggleState, &mut WindowContext) + 'static,
@@ -74,19 +74,19 @@ impl Checkbox {
         self
     }
 
-    /// Sets the `fill` setting of the checkbox, indicating whether it should be filled or not
+    /// Sets the `fill` setting of the checkbox, indicating whether it should be filled.
     pub fn fill(mut self) -> Self {
         self.filled = true;
         self
     }
 
-    /// Sets the style of the checkbox using the specified [`ToggleStyle`]
+    /// Sets the style of the checkbox using the specified [`ToggleStyle`].
     pub fn style(mut self, style: ToggleStyle) -> Self {
         self.style = style;
         self
     }
 
-    /// Match the style of the checkbox to the current elevation using [`ToggleStyle::ElevationBased`]
+    /// Match the style of the checkbox to the current elevation using [`ToggleStyle::ElevationBased`].
     pub fn elevation(mut self, elevation: ElevationIndex) -> Self {
         self.style = ToggleStyle::ElevationBased(elevation);
         self
@@ -191,7 +191,7 @@ pub struct CheckboxWithLabel {
 }
 
 impl CheckboxWithLabel {
-    /// Creates a checkbox with an attached label
+    /// Creates a checkbox with an attached label.
     pub fn new(
         id: impl Into<ElementId>,
         label: Label,
@@ -208,19 +208,19 @@ impl CheckboxWithLabel {
         }
     }
 
-    /// Sets the style of the checkbox using the specified [`ToggleStyle`]
+    /// Sets the style of the checkbox using the specified [`ToggleStyle`].
     pub fn style(mut self, style: ToggleStyle) -> Self {
         self.style = style;
         self
     }
 
-    /// Match the style of the checkbox to the current elevation using [`ToggleStyle::ElevationBased`]
+    /// Match the style of the checkbox to the current elevation using [`ToggleStyle::ElevationBased`].
     pub fn elevation(mut self, elevation: ElevationIndex) -> Self {
         self.style = ToggleStyle::ElevationBased(elevation);
         self
     }
 
-    /// Sets the `fill` setting of the checkbox, indicating whether it should be filled or not
+    /// Sets the `fill` setting of the checkbox, indicating whether it should be filled.
     pub fn fill(mut self) -> Self {
         self.filled = true;
         self
@@ -265,7 +265,7 @@ pub struct Switch {
 }
 
 impl Switch {
-    /// Creates a new [`Switch`]
+    /// Creates a new [`Switch`].
     pub fn new(id: impl Into<ElementId>, state: ToggleState) -> Self {
         Self {
             id: id.into(),
@@ -275,13 +275,13 @@ impl Switch {
         }
     }
 
-    /// Sets the disabled state of the [`Switch`]
+    /// Sets the disabled state of the [`Switch`].
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 
-    /// Binds a handler to the [`Switch`] that will be called when clicked
+    /// Binds a handler to the [`Switch`] that will be called when clicked.
     pub fn on_click(
         mut self,
         handler: impl Fn(&ToggleState, &mut WindowContext) + 'static,
@@ -362,8 +362,8 @@ impl RenderOnce for Switch {
     }
 }
 
-#[derive(IntoElement)]
 /// A [`Switch`] that has a [`Label`].
+#[derive(IntoElement)]
 pub struct SwitchWithLabel {
     id: ElementId,
     label: Label,
@@ -372,7 +372,7 @@ pub struct SwitchWithLabel {
 }
 
 impl SwitchWithLabel {
-    /// Creates a switch with an attached label
+    /// Creates a switch with an attached label.
     pub fn new(
         id: impl Into<ElementId>,
         label: Label,
