@@ -204,7 +204,7 @@ Here's an example from an `injections.scm` file for Markdown:
 (fenced_code_block
   (info_string
     (language) @injection.language)
-  (code_fence_content) @injection.ontent)
+  (code_fence_content) @injection.content)
 
 ((inline) @content
  (#set! injection.language "markdown-inline"))
