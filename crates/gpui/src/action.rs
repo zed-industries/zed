@@ -62,6 +62,14 @@ pub trait Action: 'static + Send {
     fn build(value: serde_json::Value) -> Result<Box<dyn Action>>
     where
         Self: Sized;
+
+    /// A list of alternate, deprecated names for this action.
+    fn deprecated_aliases() -> &'static [&'static str]
+    where
+        Self: Sized,
+    {
+        &[]
+    }
 }
 
 impl std::fmt::Debug for dyn Action {
@@ -85,6 +93,7 @@ pub(crate) struct ActionRegistry {
     builders_by_name: HashMap<SharedString, ActionBuilder>,
     names_by_type_id: HashMap<TypeId, SharedString>,
     all_names: Vec<SharedString>, // So we can return a static slice.
+    deprecations: Vec<(SharedString, SharedString)>,
 }
 
 impl Default for ActionRegistry {
@@ -93,6 +102,7 @@ impl Default for ActionRegistry {
             builders_by_name: Default::default(),
             names_by_type_id: Default::default(),
             all_names: Default::default(),
+            deprecations: Default::default(),
         };
 
         this.load_actions();
@@ -111,6 +121,7 @@ pub type MacroActionBuilder = fn() -> ActionData;
 #[doc(hidden)]
 pub struct ActionData {
     pub name: &'static str,
+    pub aliases: &'static [&'static str],
     pub type_id: TypeId,
     pub build: ActionBuilder,
 }
@@ -134,6 +145,7 @@ impl ActionRegistry {
     pub(crate) fn load_action<A: Action>(&mut self) {
         self.insert_action(ActionData {
             name: A::debug_name(),
+            aliases: A::deprecated_aliases(),
             type_id: TypeId::of::<A>(),
             build: A::build,
         });
@@ -142,6 +154,10 @@ impl ActionRegistry {
     fn insert_action(&mut self, action: ActionData) {
         let name: SharedString = action.name.into();
         self.builders_by_name.insert(name.clone(), action.build);
+        for &alias in action.aliases {
+            self.builders_by_name.insert(alias.into(), action.build);
+            self.deprecations.push((alias.into(), name.clone()));
+        }
         self.names_by_type_id.insert(action.type_id, name.clone());
         self.all_names.push(name);
     }
@@ -173,6 +189,10 @@ impl ActionRegistry {
 
     pub fn all_action_names(&self) -> &[SharedString] {
         self.all_names.as_slice()
+    }
+
+    pub fn action_deprecations(&self) -> &[(SharedString, SharedString)] {
+        self.deprecations.as_slice()
     }
 }
 
@@ -206,7 +226,7 @@ macro_rules! actions {
 /// `impl_action_as!`
 #[macro_export]
 macro_rules! action_as {
-    ($namespace:path, $name:ident as $visual_name:tt) => {
+    ($namespace:path, $name:ident as $visual_name:ident) => {
         #[doc = "The `"]
         #[doc = stringify!($name)]
         #[doc = "` action, see [`gpui::actions!`]"]
@@ -221,6 +241,43 @@ macro_rules! action_as {
                 _: gpui::private::serde_json::Value,
             ) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
                 Ok(Box::new(Self))
+            }
+        );
+
+        gpui::register_action!($name);
+    };
+}
+
+/// Defines a unit struct that can be used as an action, with some deprecated aliases.
+#[macro_export]
+macro_rules! action_aliases {
+    ($namespace:path, $name:ident, [$($alias:ident),* $(,)?]) => {
+        #[doc = "The `"]
+        #[doc = stringify!($name)]
+        #[doc = "` action, see [`gpui::actions!`]"]
+        #[derive(
+            ::std::cmp::PartialEq,
+            ::std::clone::Clone,
+            ::std::default::Default,
+            ::std::fmt::Debug,
+            gpui::private::serde_derive::Deserialize,
+        )]
+        #[serde(crate = "gpui::private::serde")]
+        pub struct $name;
+
+        gpui::__impl_action!(
+            $namespace,
+            $name,
+            $name,
+            fn build(
+                _: gpui::private::serde_json::Value,
+            ) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
+                Ok(Box::new(Self))
+            },
+            fn deprecated_aliases() -> &'static [&'static str] {
+                &[
+                    $(concat!(stringify!($namespace), "::", stringify!($alias))),*
+                ]
             }
         );
 
@@ -269,7 +326,7 @@ macro_rules! impl_action_as {
 #[doc(hidden)]
 #[macro_export]
 macro_rules! __impl_action {
-    ($namespace:path, $name:ident, $visual_name:tt, $build:item) => {
+    ($namespace:path, $name:ident, $visual_name:tt, $($items:item),*) => {
         impl gpui::Action for $name {
             fn name(&self) -> &'static str
             {
@@ -291,8 +348,6 @@ macro_rules! __impl_action {
                 )
             }
 
-            $build
-
             fn partial_eq(&self, action: &dyn gpui::Action) -> bool {
                 action
                     .as_any()
@@ -307,6 +362,8 @@ macro_rules! __impl_action {
             fn as_any(&self) -> &dyn ::std::any::Any {
                 self
             }
+
+            $($items)*
         }
     };
 }
