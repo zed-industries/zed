@@ -1323,7 +1323,19 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
         match rng.gen_range(0..100) {
             0..=14 if !buffers.is_empty() => {
                 let buffer = buffers.choose(&mut rng).unwrap();
-                buffer.update(cx, |buf, cx| buf.randomly_edit(&mut rng, 5, cx));
+                buffer.update(cx, |buf, cx| {
+                    let edit_count = rng.gen_range(1..5);
+                    buf.randomly_edit(&mut rng, edit_count, cx)
+                });
+                multibuffer.update(cx, |multibuffer, cx| {
+                    let snapshot = buffer.read(cx).snapshot();
+                    let _ = multibuffer
+                        .diff_base_for(snapshot.remote_id())
+                        .unwrap()
+                        .update(cx, |change_set, cx| {
+                            change_set.recalculate_diff(snapshot.text, cx)
+                        });
+                });
             }
             15..=19 if !expected_excerpts.is_empty() => {
                 multibuffer.update(cx, |multibuffer, cx| {
@@ -1428,10 +1440,21 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
             _ => {
                 let buffer_handle = if buffers.is_empty() || rng.gen_bool(0.4) {
                     let base_text = util::RandomCharIter::new(&mut rng)
-                        .take(25)
+                        .take(256)
                         .collect::<String>();
 
-                    buffers.push(cx.new_model(|cx| Buffer::local(base_text, cx)));
+                    let buffer = cx.new_model(|cx| Buffer::local(base_text.clone(), cx));
+                    let change_set = cx.new_model(|cx| {
+                        BufferChangeSet::new_with_base_text(
+                            base_text,
+                            buffer.read(cx).snapshot().text,
+                            cx,
+                        )
+                    });
+                    multibuffer.update(cx, |multibuffer, cx| {
+                        multibuffer.add_change_set(change_set, cx)
+                    });
+                    buffers.push(buffer);
                     buffers.last().unwrap()
                 } else {
                     buffers.choose(&mut rng).unwrap()
