@@ -5,6 +5,9 @@ use crate::utils::is_light;
 use crate::{prelude::*, ElevationIndex};
 use crate::{Color, Icon, IconName, ToggleState};
 
+// TODO: Checkbox, CheckboxWithLabel, Switch, SwitchWithLabel all could be
+// restructured to use a ToggleLike, similar to Button/Buttonlike, Label/Labellike
+
 /// Creates a new checkbox
 pub fn checkbox(id: impl Into<ElementId>, toggle_state: ToggleState) -> Checkbox {
     Checkbox::new(id, toggle_state)
@@ -80,6 +83,12 @@ impl Checkbox {
     /// Sets the style of the checkbox using the specified [`ToggleStyle`]
     pub fn style(mut self, style: ToggleStyle) -> Self {
         self.style = style;
+        self
+    }
+
+    /// Match the style of the checkbox to the current elevation using [`ToggleStyle::ElevationBased`]
+    pub fn elevation(mut self, elevation: ElevationIndex) -> Self {
+        self.style = ToggleStyle::ElevationBased(elevation);
         self
     }
 }
@@ -177,6 +186,8 @@ pub struct CheckboxWithLabel {
     label: Label,
     checked: ToggleState,
     on_click: Arc<dyn Fn(&ToggleState, &mut WindowContext) + 'static>,
+    filled: bool,
+    style: ToggleStyle,
 }
 
 impl CheckboxWithLabel {
@@ -192,7 +203,27 @@ impl CheckboxWithLabel {
             label,
             checked,
             on_click: Arc::new(on_click),
+            filled: false,
+            style: ToggleStyle::default(),
         }
+    }
+
+    /// Sets the style of the checkbox using the specified [`ToggleStyle`]
+    pub fn style(mut self, style: ToggleStyle) -> Self {
+        self.style = style;
+        self
+    }
+
+    /// Match the style of the checkbox to the current elevation using [`ToggleStyle::ElevationBased`]
+    pub fn elevation(mut self, elevation: ElevationIndex) -> Self {
+        self.style = ToggleStyle::ElevationBased(elevation);
+        self
+    }
+
+    /// Sets the `fill` setting of the checkbox, indicating whether it should be filled or not
+    pub fn fill(mut self) -> Self {
+        self.filled = true;
+        self
     }
 }
 
@@ -200,12 +231,17 @@ impl RenderOnce for CheckboxWithLabel {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         h_flex()
             .gap(DynamicSpacing::Base08.rems(cx))
-            .child(Checkbox::new(self.id.clone(), self.checked).on_click({
-                let on_click = self.on_click.clone();
-                move |checked, cx| {
-                    (on_click)(checked, cx);
-                }
-            }))
+            .child(
+                Checkbox::new(self.id.clone(), self.checked)
+                    .style(self.style)
+                    .when(self.filled, Checkbox::fill)
+                    .on_click({
+                        let on_click = self.on_click.clone();
+                        move |checked, cx| {
+                            (on_click)(checked, cx);
+                        }
+                    }),
+            )
             .child(
                 div()
                     .id(SharedString::from(format!("{}-label", self.id)))
