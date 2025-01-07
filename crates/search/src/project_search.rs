@@ -1596,7 +1596,8 @@ impl Render for ProjectSearchBar {
                 .min_w_32()
                 .w(input_width)
                 .h_8()
-                .px_2()
+                .pl_2()
+                .pr_1()
                 .py_1()
                 .border_1()
                 .border_color(search.border_color_for(InputPanel::Query, cx))
@@ -1610,7 +1611,7 @@ impl Render for ProjectSearchBar {
             .child(self.render_text_input(&search.query_editor, cx))
             .child(
                 h_flex()
-                    .gap_0p5()
+                    .gap_1()
                     .child(SearchOptions::CASE_SENSITIVE.as_button(
                         self.is_option_enabled(SearchOptions::CASE_SENSITIVE, cx),
                         focus_handle.clone(),
