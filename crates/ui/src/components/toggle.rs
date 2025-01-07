@@ -1,5 +1,3 @@
-#![allow(missing_docs)]
-
 use gpui::{div, prelude::*, ElementId, IntoElement, Styled, WindowContext};
 use std::sync::Arc;
 
@@ -31,6 +29,7 @@ pub struct Checkbox {
 }
 
 impl Checkbox {
+    /// Creates a new [`Checkbox`]
     pub fn new(id: impl Into<ElementId>, checked: ToggleState) -> Self {
         Self {
             id: id.into(),
@@ -40,11 +39,13 @@ impl Checkbox {
         }
     }
 
+    /// Sets the disabled state of the [`Checkbox`]
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 
+    /// Binds a handler to the [`Checkbox`] that will be called when clicked
     pub fn on_click(
         mut self,
         handler: impl Fn(&ToggleState, &mut WindowContext) + 'static,
@@ -140,6 +141,7 @@ pub struct CheckboxWithLabel {
 }
 
 impl CheckboxWithLabel {
+    /// Creates a checkbox with an attached label
     pub fn new(
         id: impl Into<ElementId>,
         label: Label,
@@ -188,6 +190,7 @@ pub struct Switch {
 }
 
 impl Switch {
+    /// Creates a new [`Switch`]
     pub fn new(id: impl Into<ElementId>, state: ToggleState) -> Self {
         Self {
             id: id.into(),
@@ -197,11 +200,13 @@ impl Switch {
         }
     }
 
+    /// Sets the disabled state of the [`Switch`]
     pub fn disabled(mut self, disabled: bool) -> Self {
         self.disabled = disabled;
         self
     }
 
+    /// Binds a handler to the [`Switch`] that will be called when clicked
     pub fn on_click(
         mut self,
         handler: impl Fn(&ToggleState, &mut WindowContext) + 'static,
@@ -282,8 +287,8 @@ impl RenderOnce for Switch {
     }
 }
 
-/// A [`Switch`] that has a [`Label`].
 #[derive(IntoElement)]
+/// A [`Switch`] that has a [`Label`].
 pub struct SwitchWithLabel {
     id: ElementId,
     label: Label,
@@ -292,6 +297,7 @@ pub struct SwitchWithLabel {
 }
 
 impl SwitchWithLabel {
+    /// Creates a switch with an attached label
     pub fn new(
         id: impl Into<ElementId>,
         label: Label,
