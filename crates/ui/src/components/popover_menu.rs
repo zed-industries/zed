@@ -254,13 +254,14 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                 let mut menu_layout_id = None;
 
                 let menu_element = element_state.menu.borrow_mut().as_mut().map(|menu| {
+                    let offset = self.resolved_offset(cx);
                     let mut anchored = anchored()
                         .snap_to_window_with_margin(px(8.))
-                        .anchor(self.anchor);
+                        .anchor(self.anchor)
+                        .offset(offset);
                     if let Some(child_bounds) = element_state.child_bounds {
-                        anchored = anchored.position(
-                            child_bounds.corner(self.resolved_attach()) + self.resolved_offset(cx),
-                        );
+                        anchored =
+                            anchored.position(child_bounds.corner(self.resolved_attach()) + offset);
                     }
                     let mut element = deferred(anchored.child(div().occlude().child(menu.clone())))
                         .with_priority(1)
