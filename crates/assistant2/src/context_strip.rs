@@ -1,7 +1,10 @@
 use std::rc::Rc;
 
 use editor::Editor;
-use gpui::{AppContext, FocusHandle, Model, View, WeakModel, WeakView};
+use gpui::{
+    AppContext, DismissEvent, EventEmitter, FocusHandle, Model, Subscription, View, WeakModel,
+    WeakView,
+};
 use language::Buffer;
 use ui::{prelude::*, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip};
 use workspace::Workspace;
@@ -21,6 +24,7 @@ pub struct ContextStrip {
     focus_handle: FocusHandle,
     suggest_context_kind: SuggestContextKind,
     workspace: WeakView<Workspace>,
+    _context_picker_subscription: Subscription,
 }
 
 impl ContextStrip {
@@ -33,21 +37,27 @@ impl ContextStrip {
         suggest_context_kind: SuggestContextKind,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let context_picker = cx.new_view(|cx| {
+            ContextPicker::new(
+                workspace.clone(),
+                thread_store.clone(),
+                context_store.downgrade(),
+                ConfirmBehavior::KeepOpen,
+                cx,
+            )
+        });
+
+        let context_picker_subscription =
+            cx.subscribe(&context_picker, Self::handle_context_picker_event);
+
         Self {
             context_store: context_store.clone(),
-            context_picker: cx.new_view(|cx| {
-                ContextPicker::new(
-                    workspace.clone(),
-                    thread_store.clone(),
-                    context_store.downgrade(),
-                    ConfirmBehavior::KeepOpen,
-                    cx,
-                )
-            }),
+            context_picker,
             context_picker_menu_handle,
             focus_handle,
             suggest_context_kind,
             workspace,
+            _context_picker_subscription: context_picker_subscription,
         }
     }
 
@@ -106,6 +116,15 @@ impl ContextStrip {
             name: active_thread.summary().unwrap_or("New Thread".into()),
             thread: weak_active_thread,
         })
+    }
+
+    fn handle_context_picker_event(
+        &mut self,
+        _picker: View<ContextPicker>,
+        _event: &DismissEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        cx.emit(ContextStripEvent::PickerDismissed);
     }
 }
 
@@ -220,6 +239,12 @@ impl Render for ContextStrip {
             })
     }
 }
+
+pub enum ContextStripEvent {
+    PickerDismissed,
+}
+
+impl EventEmitter<ContextStripEvent> for ContextStrip {}
 
 pub enum SuggestContextKind {
     File,
