@@ -6,7 +6,7 @@ pub mod serde;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test;
 
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::Result;
 use futures::Future;
 use itertools::Either;
 use regex::Regex;
@@ -22,6 +22,9 @@ use std::{
     time::Instant,
 };
 use unicase::UniCase;
+
+#[cfg(unix)]
+use anyhow::{anyhow, Context as _};
 
 pub use take_until::*;
 
@@ -195,6 +198,7 @@ pub fn load_shell_from_passwd() -> Result<()> {
     Ok(())
 }
 
+#[cfg(unix)]
 pub fn load_login_shell_environment() -> Result<()> {
     let marker = "ZED_LOGIN_SHELL_START";
     let shell = env::var("SHELL").context(
