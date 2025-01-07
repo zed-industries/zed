@@ -69,7 +69,7 @@ impl EntityMap {
     pub fn new() -> Self {
         Self {
             entities: SecondaryMap::new(),
-            entities_read: RefCell::new(HashSet::default()),
+            entities_read: RefCell::new(FxHashSet::default()),
             ref_counts: Arc::new(RwLock::new(EntityRefCounts {
                 counts: SlotMap::with_key(),
                 dropped_entity_ids: Vec::new(),
