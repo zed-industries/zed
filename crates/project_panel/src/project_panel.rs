@@ -1946,7 +1946,7 @@ impl ProjectPanel {
     fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
         let abs_file_paths = {
             let project = self.project.read(cx);
-            self.marked_entries()
+            self.effective_entries()
                 .into_iter()
                 .filter_map(|entry| {
                     let entry_path = project.path_for_entry(entry.entry_id, cx)?.path;
@@ -1970,7 +1970,7 @@ impl ProjectPanel {
     fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
         let file_paths = {
             let project = self.project.read(cx);
-            self.marked_entries()
+            self.effective_entries()
                 .into_iter()
                 .filter_map(|entry| {
                     Some(
@@ -2154,7 +2154,7 @@ impl ProjectPanel {
     }
 
     fn disjoint_entries(&self, cx: &AppContext) -> BTreeSet<SelectedEntry> {
-        let marked_entries = self.marked_entries();
+        let marked_entries = self.effective_entries();
         let mut sanitized_entries = BTreeSet::new();
         if marked_entries.is_empty() {
             return sanitized_entries;
@@ -2201,25 +2201,35 @@ impl ProjectPanel {
         sanitized_entries
     }
 
-    // Returns the union of the currently selected entry and all marked entries.
-    fn marked_entries(&self) -> BTreeSet<SelectedEntry> {
-        let mut entries = self
-            .marked_entries
+    fn effective_entries(&self) -> BTreeSet<SelectedEntry> {
+        if let Some(selection) = self.selection {
+            let selection = SelectedEntry {
+                entry_id: self.resolve_entry(selection.entry_id),
+                worktree_id: selection.worktree_id,
+            };
+
+            // Default to using just the selected item when nothing is marked.
+            if self.marked_entries.is_empty() {
+                return BTreeSet::from([selection]);
+            }
+
+            // Allow operating on the selected item even when something else is marked,
+            // making it easier to perform one-off actions without clearing a mark.
+            if self.marked_entries.len() == 1 && !self.marked_entries.contains(&selection) {
+                return BTreeSet::from([selection]);
+            }
+        }
+
+        // Return only marked entries since we've already handled special cases where
+        // only selection should take precedence. At this point, marked entries may or
+        // may not include the current selection, which is intentional.
+        self.marked_entries
             .iter()
             .map(|entry| SelectedEntry {
                 entry_id: self.resolve_entry(entry.entry_id),
                 worktree_id: entry.worktree_id,
             })
-            .collect::<BTreeSet<_>>();
-
-        if let Some(selection) = self.selection {
-            entries.insert(SelectedEntry {
-                entry_id: self.resolve_entry(selection.entry_id),
-                worktree_id: selection.worktree_id,
-            });
-        }
-
-        entries
+            .collect::<BTreeSet<_>>()
     }
 
     /// Finds the currently selected subentry for a given leaf entry id. If a given entry
@@ -3262,16 +3272,18 @@ impl ProjectPanel {
             marked_selections: selections,
         };
 
-        let default_color = if is_marked || is_active {
+        let default_color = if is_marked {
             item_colors.marked_active
         } else {
             item_colors.default
         };
 
-        let bg_hover_color = if self.mouse_down || is_marked || is_active {
+        let bg_hover_color = if self.mouse_down || is_marked {
             item_colors.marked_active
-        } else {
+        } else if !is_active {
             item_colors.hover
+        } else {
+            item_colors.default
         };
 
         let border_color =
@@ -3414,8 +3426,11 @@ impl ProjectPanel {
                 } else if event.down.modifiers.secondary() {
                     if event.down.click_count > 1 {
                         this.split_entry(entry_id, cx);
-                    } else if !this.marked_entries.insert(selection) {
-                        this.marked_entries.remove(&selection);
+                    } else {
+                        this.selection = Some(selection);
+                        if !this.marked_entries.insert(selection) {
+                            this.marked_entries.remove(&selection);
+                        }
                     }
                 } else if kind.is_dir() {
                     this.marked_entries.clear();
@@ -7847,6 +7862,106 @@ mod tests {
             visible_entries_as_strings(&panel, 0..20, cx),
             &["v root1", "    v dir2", "v root2  <== selected"],
             "Second parent root should be selected after deleting"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_selection_vs_marked_entries_priority(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "dir1": {
+                    "file1.txt": "",
+                    "file2.txt": "",
+                    "file3.txt": "",
+                },
+                "dir2": {
+                    "file4.txt": "",
+                    "file5.txt": "",
+                },
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        toggle_expand_dir(&panel, "root/dir1", cx);
+        toggle_expand_dir(&panel, "root/dir2", cx);
+
+        cx.simulate_modifiers_change(gpui::Modifiers {
+            control: true,
+            ..Default::default()
+        });
+
+        select_path_with_mark(&panel, "root/dir1/file2.txt", cx);
+        select_path(&panel, "root/dir1/file1.txt", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v root",
+                "    v dir1",
+                "          file1.txt  <== selected",
+                "          file2.txt  <== marked",
+                "          file3.txt",
+                "    v dir2",
+                "          file4.txt",
+                "          file5.txt",
+            ],
+            "Initial state with one marked entry and different selection"
+        );
+
+        // Delete should operate on the selected entry (file1.txt)
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v root",
+                "    v dir1",
+                "          file2.txt  <== selected  <== marked",
+                "          file3.txt",
+                "    v dir2",
+                "          file4.txt",
+                "          file5.txt",
+            ],
+            "Should delete selected file, not marked file"
+        );
+
+        select_path_with_mark(&panel, "root/dir1/file3.txt", cx);
+        select_path_with_mark(&panel, "root/dir2/file4.txt", cx);
+        select_path(&panel, "root/dir2/file5.txt", cx);
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v root",
+                "    v dir1",
+                "          file2.txt  <== marked",
+                "          file3.txt  <== marked",
+                "    v dir2",
+                "          file4.txt  <== marked",
+                "          file5.txt  <== selected",
+            ],
+            "Initial state with multiple marked entries and different selection"
+        );
+
+        // Delete should operate on all marked entries, ignoring the selection
+        submit_deletion(&panel, cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..15, cx),
+            &[
+                "v root",
+                "    v dir1",
+                "    v dir2",
+                "          file5.txt  <== selected",
+            ],
+            "Should delete all marked files, leaving only the selected file"
         );
     }
 
