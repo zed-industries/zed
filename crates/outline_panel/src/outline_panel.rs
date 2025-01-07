@@ -4656,18 +4656,27 @@ impl Panel for OutlinePanel {
                 .update(&mut cx, |outline_panel, cx| {
                     let old_active = outline_panel.active;
                     outline_panel.active = active;
-                    if active && old_active != active {
-                        if let Some((active_item, active_editor)) = outline_panel
-                            .workspace
-                            .upgrade()
-                            .and_then(|workspace| workspace_active_editor(workspace.read(cx), cx))
-                        {
-                            if outline_panel.should_replace_active_item(active_item.as_ref()) {
-                                outline_panel.replace_active_editor(active_item, active_editor, cx);
-                            } else {
-                                outline_panel.update_fs_entries(active_editor, None, cx)
+                    if old_active != active {
+                        if active {
+                            if let Some((active_item, active_editor)) =
+                                outline_panel.workspace.upgrade().and_then(|workspace| {
+                                    workspace_active_editor(workspace.read(cx), cx)
+                                })
+                            {
+                                if outline_panel.should_replace_active_item(active_item.as_ref()) {
+                                    outline_panel.replace_active_editor(
+                                        active_item,
+                                        active_editor,
+                                        cx,
+                                    );
+                                } else {
+                                    outline_panel.update_fs_entries(active_editor, None, cx)
+                                }
+                                return;
                             }
-                        } else if !outline_panel.pinned {
+                        }
+
+                        if !outline_panel.pinned {
                             outline_panel.clear_previous(cx);
                         }
                     }
@@ -4814,9 +4823,11 @@ fn subscribe_for_editor_events(
     cx: &mut ViewContext<OutlinePanel>,
 ) -> Subscription {
     let debounce = Some(UPDATE_DEBOUNCE);
-    cx.subscribe(
-        editor,
-        move |outline_panel, editor, e: &EditorEvent, cx| match e {
+    cx.subscribe(editor, move |outline_panel, editor, e: &EditorEvent, cx| {
+        if !outline_panel.active {
+            return;
+        }
+        match e {
             EditorEvent::SelectionsChanged { local: true } => {
                 outline_panel.reveal_entry_for_selection(editor, cx);
                 cx.notify();
@@ -4921,8 +4932,8 @@ fn subscribe_for_editor_events(
                 outline_panel.update_non_fs_items(cx);
             }
             _ => {}
-        },
-    )
+        }
+    })
 }
 
 fn empty_icon() -> AnyElement {
