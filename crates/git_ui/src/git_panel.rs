@@ -1108,7 +1108,7 @@ impl GitPanel {
         let is_staged = ToggleState::Selected;
         let handle = cx.view().downgrade();
 
-        // TOOD: At this point, an entry should really have a status.
+        // TODO: At this point, an entry should really have a status.
         // Is this fixed with the new git status stuff?
         let status = details.status.unwrap_or(GitFileStatus::Untracked);
 
