@@ -86,21 +86,26 @@ impl RenderOnce for ContextPill {
                 .bg(color.element_background)
                 .border_color(color.border.opacity(0.5))
                 .pr(if on_remove.is_some() { px(2.) } else { px(4.) })
-                .child(Label::new(context.name.clone()).size(LabelSize::Small))
-                .when_some(context.parent.as_ref(), |element, parent_name| {
-                    if *dupe_name {
-                        element.child(
-                            Label::new(parent_name.clone())
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted),
-                        )
-                    } else {
-                        element
-                    }
-                })
-                .when_some(context.tooltip.clone(), |element, tooltip| {
-                    element.tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
-                })
+                .child(
+                    h_flex()
+                        .id("context-data")
+                        .gap_1()
+                        .child(Label::new(context.name.clone()).size(LabelSize::Small))
+                        .when_some(context.parent.as_ref(), |element, parent_name| {
+                            if *dupe_name {
+                                element.child(
+                                    Label::new(parent_name.clone())
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                            } else {
+                                element
+                            }
+                        })
+                        .when_some(context.tooltip.clone(), |element, tooltip| {
+                            element.tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
+                        }),
+                )
                 .when_some(on_remove.as_ref(), |element, on_remove| {
                     element.child(
                         IconButton::new(("remove", context.id.0), IconName::Close)

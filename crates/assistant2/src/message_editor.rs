@@ -277,7 +277,7 @@ impl Render for MessageEditor {
                             .justify_between()
                             .child(SwitchWithLabel::new(
                                 "use-tools",
-                                Label::new("Tools"),
+                                Label::new("Tools").size(LabelSize::Small),
                                 self.use_tools.into(),
                                 cx.listener(|this, selection, _cx| {
                                     this.use_tools = match selection {
@@ -293,7 +293,7 @@ impl Render for MessageEditor {
                                     ButtonLike::new("chat")
                                         .style(ButtonStyle::Filled)
                                         .layer(ElevationIndex::ModalSurface)
-                                        .child(Label::new("Submit"))
+                                        .child(Label::new("Submit").size(LabelSize::Small))
                                         .children(
                                             KeyBinding::for_action_in(&Chat, &focus_handle, cx)
                                                 .map(|binding| binding.into_any_element()),
