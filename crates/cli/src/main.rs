@@ -164,17 +164,24 @@ fn main() -> Result<()> {
         None
     };
 
-    let mut env = Some(std::env::vars().collect::<HashMap<_, _>>());
+    let env = {
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        {
+            // On Linux, the desktop entry uses `cli` to spawn `zed`.
+            // We need to handle env vars correctly since std::env::vars() may not contain
+            // project-specific vars (e.g. those set by direnv).
+            // By setting env to None here, the LSP will use worktree env vars instead,
+            // which is what we want.
+            if !std::io::stdout().is_terminal() {
+                None
+            } else {
+                Some(std::env::vars().collect::<HashMap<_, _>>())
+            }
+        }
 
-    // On Linux, the desktop entry uses `cli` to spawn `zed`.
-    // We need to handle env vars correctly since std::env::vars() may not contain
-    // project-specific vars (e.g. those set by direnv).
-    // By setting env to None here, the LSP will use worktree env vars instead,
-    // which is what we want.
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-    if !std::io::stdout().is_terminal() {
-        env = None;
-    }
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        Some(std::env::vars().collect::<HashMap<_, _>>())
+    };
 
     let exit_status = Arc::new(Mutex::new(None));
     let mut paths = vec![];
