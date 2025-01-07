@@ -25,10 +25,10 @@ use crate::{
 use ::serde::Deserialize;
 use case::CaseTarget;
 use collections::BTreeSet;
-use editor::scroll::Autoscroll;
 use editor::Anchor;
 use editor::Bias;
 use editor::Editor;
+use editor::{actions::JoinLinesCustom, scroll::Autoscroll};
 use editor::{display_map::ToDisplayPoint, movement};
 use gpui::{actions, impl_actions, ViewContext};
 use language::{Point, SelectionGoal};
@@ -131,8 +131,8 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         vim.update_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {
                 for _ in 0..times {
-                    editor.join_lines(
-                        &editor::actions::JoinLines {
+                    editor.join_lines_custom(
+                        &JoinLinesCustom {
                             remove_indent: options.remove_indent,
                             separator: options.separator.clone(),
                         },

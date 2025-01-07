@@ -5842,7 +5842,7 @@ impl Editor {
         });
     }
 
-    pub fn join_lines(&mut self, options: &JoinLines, cx: &mut ViewContext<Self>) {
+    pub fn join_lines_custom(&mut self, options: &JoinLinesCustom, cx: &mut ViewContext<Self>) {
         if self.read_only(cx) {
             return;
         }
@@ -5905,6 +5905,10 @@ impl Editor {
                 s.select_anchor_ranges(cursor_positions)
             });
         });
+    }
+
+    pub fn join_lines(&mut self, _: &JoinLines, cx: &mut ViewContext<Self>) {
+        self.join_lines_custom(&JoinLinesCustom::default(), cx);
     }
 
     pub fn sort_lines_case_sensitive(
