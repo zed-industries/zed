@@ -5553,15 +5553,22 @@ pub fn open_paths(
         }
 
         if let Some(existing) = existing {
-            Ok((
-                existing,
-                existing
-                    .update(&mut cx, |workspace, cx| {
-                        cx.activate_window();
-                        workspace.open_paths(abs_paths, open_visible, None, cx)
-                    })?
-                    .await,
-            ))
+            let open_task = existing
+                .update(&mut cx, |workspace, cx| {
+                    cx.activate_window();
+                    workspace.open_paths(abs_paths, open_visible, None, cx)
+                })?
+                .await;
+
+            _ = existing.update(&mut cx, |workspace, cx| {
+                for item in open_task.iter().flatten() {
+                    if let Err(e) = item {
+                        workspace.show_error(&e, cx);
+                    }
+                }
+            });
+
+            Ok((existing, open_task))
         } else {
             cx.update(move |cx| {
                 Workspace::new_local(
