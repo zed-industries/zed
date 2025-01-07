@@ -9109,15 +9109,18 @@ impl Editor {
         };
 
         self.buffer.update(cx, |buffer, cx| {
-            buffer.expand_excerpts(
-                selections
-                    .iter()
-                    .map(|selection| selection.head().excerpt_id)
-                    .dedup(),
-                lines,
-                direction,
-                cx,
-            )
+            let snapshot = buffer.snapshot(cx);
+            let mut excerpt_ids = selections
+                .iter()
+                .flat_map(|selection| {
+                    snapshot
+                        .excerpts_for_range(selection.range())
+                        .map(|excerpt| excerpt.id())
+                })
+                .collect::<Vec<_>>();
+            excerpt_ids.sort();
+            excerpt_ids.dedup();
+            buffer.expand_excerpts(excerpt_ids, lines, direction, cx)
         })
     }
 
