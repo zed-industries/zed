@@ -575,8 +575,16 @@ impl Fs for RealFs {
         }
     }
 
+    #[cfg(not(target_os = "windows"))]
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
         Ok(smol::fs::canonicalize(path).await?)
+    }
+
+    #[cfg(target_os = "windows")]
+    async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
+        use util::paths::SanitizedPath;
+        let path = smol::fs::canonicalize(path).await?;
+        Ok(SanitizedPath::from(&path).as_path().to_path_buf())
     }
 
     async fn is_file(&self, path: &Path) -> bool {
@@ -768,6 +776,7 @@ impl Fs for RealFs {
         Arc<dyn Watcher>,
     ) {
         use notify::{EventKind, Watcher};
+        use util::paths::SanitizedPath;
 
         let (tx, rx) = smol::channel::unbounded();
 
@@ -786,7 +795,10 @@ impl Fs for RealFs {
                         event
                             .paths
                             .into_iter()
-                            .map(|path| PathEvent { path, kind })
+                            .map(|path| PathEvent {
+                                path: SanitizedPath::from(&path).as_path().to_path_buf(),
+                                kind,
+                            })
                             .collect::<Vec<_>>(),
                     )
                     .ok();
