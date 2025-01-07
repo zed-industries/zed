@@ -6,7 +6,7 @@ use crate::context_strip::{ContextStrip, SuggestContextKind};
 use crate::terminal_codegen::TerminalCodegen;
 use crate::thread_store::ThreadStore;
 use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist};
-use crate::{ToggleContextPicker, ToggleModelSelector};
+use crate::{ToggleContextPicker, RemoveAllContext, ToggleModelSelector};
 use client::ErrorExt;
 use collections::VecDeque;
 use editor::{
@@ -37,6 +37,7 @@ use workspace::Workspace;
 pub struct PromptEditor<T> {
     pub editor: View<Editor>,
     mode: PromptEditorMode,
+    context_store: Model<ContextStore>,
     context_strip: View<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: View<AssistantModelSelector>,
@@ -108,6 +109,7 @@ impl<T: 'static> Render for PromptEditor<T> {
                     .on_action(cx.listener(Self::cancel))
                     .on_action(cx.listener(Self::move_up))
                     .on_action(cx.listener(Self::move_down))
+                    .on_action(cx.listener(Self::remove_all_context))
                     .capture_action(cx.listener(Self::cycle_prev))
                     .capture_action(cx.listener(Self::cycle_next))
                     .child(
@@ -336,6 +338,11 @@ impl<T: 'static> PromptEditor<T> {
 
     fn toggle_model_selector(&mut self, _: &ToggleModelSelector, cx: &mut ViewContext<Self>) {
         self.model_selector_menu_handle.toggle(cx);
+    }
+
+    pub fn remove_all_context(&mut self, _: &RemoveAllContext, cx: &mut ViewContext<Self>) {
+        self.context_store.update(cx, |store, _cx| store.clear());
+        cx.notify();
     }
 
     fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
@@ -807,7 +814,7 @@ impl PromptEditor<BufferCodegen> {
             editor: prompt_editor.clone(),
             context_strip: cx.new_view(|cx| {
                 ContextStrip::new(
-                    context_store,
+                    context_store.clone(),
                     workspace.clone(),
                     thread_store.clone(),
                     prompt_editor.focus_handle(cx),
@@ -816,6 +823,7 @@ impl PromptEditor<BufferCodegen> {
                     cx,
                 )
             }),
+            context_store,
             context_picker_menu_handle,
             model_selector: cx.new_view(|cx| {
                 AssistantModelSelector::new(fs, model_selector_menu_handle.clone(), cx)
@@ -947,7 +955,7 @@ impl PromptEditor<TerminalCodegen> {
             editor: prompt_editor.clone(),
             context_strip: cx.new_view(|cx| {
                 ContextStrip::new(
-                    context_store,
+                    context_store.clone(),
                     workspace.clone(),
                     thread_store.clone(),
                     prompt_editor.focus_handle(cx),
@@ -956,6 +964,7 @@ impl PromptEditor<TerminalCodegen> {
                     cx,
                 )
             }),
+            context_store,
             context_picker_menu_handle,
             model_selector: cx.new_view(|cx| {
                 AssistantModelSelector::new(fs, model_selector_menu_handle.clone(), cx)
