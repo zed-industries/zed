@@ -76,7 +76,6 @@ impl MessageEditor {
             ),
         ];
 
-
         Self {
             thread,
             editor: editor.clone(),
