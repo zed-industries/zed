@@ -322,14 +322,30 @@ impl PickerDelegate for FileContextPickerDelegate {
                         })),
                 )
                 .when_some(added, |el, added| match added {
-                    IncludedFile::Direct(_) => {
-                        el.end_slot(Label::new("Added").size(LabelSize::XSmall))
-                    }
+                    IncludedFile::Direct(_) => el.end_slot(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Check)
+                                    .size(IconSize::Small)
+                                    .color(Color::Success),
+                            )
+                            .child(Label::new("Added").size(LabelSize::Small)),
+                    ),
                     IncludedFile::InDirectory(dir_name) => {
                         let dir_name = dir_name.to_string_lossy().into_owned();
 
-                        el.end_slot(Label::new("Included").size(LabelSize::XSmall))
-                            .tooltip(move |cx| Tooltip::text(format!("in {dir_name}"), cx))
+                        el.end_slot(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Icon::new(IconName::Check)
+                                        .size(IconSize::Small)
+                                        .color(Color::Success),
+                                )
+                                .child(Label::new("Included").size(LabelSize::Small)),
+                        )
+                        .tooltip(move |cx| Tooltip::text(format!("in {dir_name}"), cx))
                     }
                 }),
         )
