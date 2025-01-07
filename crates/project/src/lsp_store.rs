@@ -2551,35 +2551,38 @@ impl LocalLspStore {
                     let path_to_watch = match &watcher.glob_pattern {
                         lsp::GlobPattern::String(s) => {
                             let watcher_path = SanitizedPath::from(s);
-                            match watcher_path.as_path().strip_prefix(worktree_root_path) {
+                            match watcher_path.as_path().strip_prefix(&worktree_root_path) {
                                 Ok(relative) => {
-                                    let pattern = relative
-                                        .strip_prefix(std::path::MAIN_SEPARATOR)
-                                        .unwrap_or(relative)
-                                        .to_owned();
-                                    let literal_prefix = glob_literal_prefix(&pattern);
+                                    let pattern = relative.to_string_lossy().to_string();
+                                    let literal_prefix = glob_literal_prefix(relative).into();
 
-                                    let literal_prefix = Arc::from(PathBuf::from(
-                                        literal_prefix
-                                            .strip_prefix(std::path::MAIN_SEPARATOR)
-                                            .unwrap_or(literal_prefix),
-                                    ));
+                                    // let literal_prefix = Arc::from(PathBuf::from(
+                                    //     literal_prefix
+                                    //         .strip_prefix(std::path::MAIN_SEPARATOR)
+                                    //         .unwrap_or(literal_prefix),
+                                    // ));
                                     PathToWatch::Worktree {
                                         literal_prefix,
                                         pattern,
                                     }
                                 }
                                 Err(_) => {
-                                    let path = glob_literal_prefix(s);
-                                    let glob = &s[path.len()..];
-                                    let pattern = glob
-                                        .strip_prefix(std::path::MAIN_SEPARATOR)
-                                        .unwrap_or(glob)
-                                        .to_owned();
-                                    let path = if Path::new(path).components().next().is_none() {
-                                        Arc::from(Path::new(worktree_root_path))
+                                    let path = glob_literal_prefix(watcher_path.as_path());
+                                    // let glob = &s[path.len()..];
+                                    // let pattern = glob
+                                    //     .strip_prefix(std::path::MAIN_SEPARATOR)
+                                    //     .unwrap_or(glob)
+                                    //     .to_owned();
+                                    let pattern = watcher_path
+                                        .as_path()
+                                        .strip_prefix(&path)
+                                        .unwrap_or(path.as_path())
+                                        .to_string_lossy()
+                                        .to_string();
+                                    let path = if path.components().next().is_none() {
+                                        worktree_root_path.clone()
                                     } else {
-                                        PathBuf::from(path).into()
+                                        path.into()
                                     };
 
                                     PathToWatch::Absolute { path, pattern }
@@ -2595,10 +2598,11 @@ impl LocalLspStore {
                                 return false;
                             };
 
-                            match base_uri.strip_prefix(worktree_root_path) {
+                            match base_uri.strip_prefix(&worktree_root_path) {
                                 Ok(relative) => {
                                     let mut literal_prefix = relative.to_owned();
-                                    literal_prefix.push(glob_literal_prefix(&rp.pattern));
+                                    literal_prefix
+                                        .push(glob_literal_prefix(Path::new(&rp.pattern)));
 
                                     PathToWatch::Worktree {
                                         literal_prefix: literal_prefix.into(),
@@ -2606,15 +2610,23 @@ impl LocalLspStore {
                                     }
                                 }
                                 Err(_) => {
-                                    let path = glob_literal_prefix(&rp.pattern);
-                                    let glob = &rp.pattern[path.len()..];
-                                    let pattern = glob
-                                        .strip_prefix(std::path::MAIN_SEPARATOR)
-                                        .unwrap_or(glob)
-                                        .to_owned();
+                                    let path = glob_literal_prefix(Path::new(&rp.pattern));
+                                    // let glob = &rp.pattern[path.len()..];
+                                    // let pattern = glob
+                                    //     .strip_prefix(std::path::MAIN_SEPARATOR)
+                                    //     .unwrap_or(glob)
+                                    //     .to_owned();
+                                    let pattern = Path::new(&rp.pattern)
+                                        .strip_prefix(&path)
+                                        .unwrap_or(path.as_path())
+                                        .to_string_lossy()
+                                        .to_string();
                                     base_uri.push(path);
 
                                     let path = if base_uri.components().next().is_none() {
+                                        // TODO:
+                                        // why just return the root path?
+                                        // how should we handle this on Windows?
                                         Arc::from(Path::new("/"))
                                     } else {
                                         base_uri.into()
@@ -8732,9 +8744,9 @@ fn test_glob_literal_prefix() {
 
     #[cfg(target_os = "windows")]
     {
-        assert_eq!(glob_literal_prefix(Path::new("**/*.js")), Path::new(""));
+        assert_eq!(glob_literal_prefix(Path::new("**\\*.js")), Path::new(""));
         assert_eq!(
-            glob_literal_prefix(Path::new("node_modules/**/*.js")),
+            glob_literal_prefix(Path::new("node_modules\\**/*.js")),
             Path::new("node_modules")
         );
         assert_eq!(
@@ -8742,7 +8754,7 @@ fn test_glob_literal_prefix() {
             Path::new("foo")
         );
         assert_eq!(
-            glob_literal_prefix(Path::new("foo/bar/baz.js")),
+            glob_literal_prefix(Path::new("foo\\bar\\baz.js")),
             Path::new("foo/bar/baz.js")
         );
     }
