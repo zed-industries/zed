@@ -1134,7 +1134,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                     let end = PointUtf16::new(end_row, end_column);
                                     let range = if start > end { end..start } else { start..end };
                                     highlights.push(lsp::DocumentHighlight {
-                                        range: range_to_lsp(range.clone()),
+                                        range: range_to_lsp(range.clone()).unwrap(),
                                         kind: Some(lsp::DocumentHighlightKind::READ),
                                     });
                                 }

@@ -97,7 +97,7 @@ pub struct ThemeColors {
     pub icon: Hsla,
     /// Fill Color. Used for the muted or deemphasized fill color of an icon.
     ///
-    /// This might be used to show an icon in an inactive pane, or to demphasize a series of icons to give them less visual weight.
+    /// This might be used to show an icon in an inactive pane, or to deemphasize a series of icons to give them less visual weight.
     pub icon_muted: Hsla,
     /// Fill Color. Used for the disabled fill color of an icon.
     ///

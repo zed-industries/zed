@@ -39,10 +39,13 @@ jobs:
             # When we're running in a merge queue, never assume that the changes
             # are docs-only, as there could be other PRs in the group that
             # contain non-docs changes.
+            echo "Running in the merge queue"
             echo "docs_only=false" >> $GITHUB_OUTPUT
           elif git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.sha }} | grep -qvE '^docs/'; then
+            echo "Detected non-docs changes"
             echo "docs_only=false" >> $GITHUB_OUTPUT
           else
+            echo "Docs-only change"
             echo "docs_only=true" >> $GITHUB_OUTPUT
           fi
 
