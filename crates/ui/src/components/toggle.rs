@@ -381,7 +381,7 @@ impl ComponentPreview for Checkbox {
     fn examples(_: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
         vec![
             example_group_with_title(
-                "Default (Ghost)",
+                "Default",
                 vec![
                     single_example(
                         "Unselected",
@@ -398,15 +398,32 @@ impl ComponentPreview for Checkbox {
                 ],
             ),
             example_group_with_title(
+                "Default (Filled)",
+                vec![
+                    single_example(
+                        "Unselected",
+                        Checkbox::new("checkbox_unselected", ToggleState::Unselected).fill(),
+                    ),
+                    single_example(
+                        "Indeterminate",
+                        Checkbox::new("checkbox_indeterminate", ToggleState::Indeterminate).fill(),
+                    ),
+                    single_example(
+                        "Selected",
+                        Checkbox::new("checkbox_selected", ToggleState::Selected).fill(),
+                    ),
+                ],
+            ),
+            example_group_with_title(
                 "ElevationBased",
                 vec![
                     single_example(
-                        "Default/Unselected",
+                        "Unselected",
                         Checkbox::new("checkbox_unfilled_unselected", ToggleState::Unselected)
                             .style(ToggleStyle::ElevationBased(ElevationIndex::EditorSurface)),
                     ),
                     single_example(
-                        "Default/Indeterminate",
+                        "Indeterminate",
                         Checkbox::new(
                             "checkbox_unfilled_indeterminate",
                             ToggleState::Indeterminate,
@@ -414,24 +431,29 @@ impl ComponentPreview for Checkbox {
                         .style(ToggleStyle::ElevationBased(ElevationIndex::EditorSurface)),
                     ),
                     single_example(
-                        "Default/Selected",
+                        "Selected",
                         Checkbox::new("checkbox_unfilled_selected", ToggleState::Selected)
                             .style(ToggleStyle::ElevationBased(ElevationIndex::EditorSurface)),
                     ),
+                ],
+            ),
+            example_group_with_title(
+                "ElevationBased (Filled)",
+                vec![
                     single_example(
-                        "Filled/Unselected",
+                        "Unselected",
                         Checkbox::new("checkbox_filled_unselected", ToggleState::Unselected)
                             .fill()
                             .style(ToggleStyle::ElevationBased(ElevationIndex::EditorSurface)),
                     ),
                     single_example(
-                        "Filled/Indeterminate",
+                        "Indeterminate",
                         Checkbox::new("checkbox_filled_indeterminate", ToggleState::Indeterminate)
                             .fill()
                             .style(ToggleStyle::ElevationBased(ElevationIndex::EditorSurface)),
                     ),
                     single_example(
-                        "Filled/Selected",
+                        "Selected",
                         Checkbox::new("checkbox_filled_selected", ToggleState::Selected)
                             .fill()
                             .style(ToggleStyle::ElevationBased(ElevationIndex::EditorSurface)),
@@ -442,28 +464,33 @@ impl ComponentPreview for Checkbox {
                 "Custom Color",
                 vec![
                     single_example(
-                        "Default/Unselected",
+                        "Unselected",
                         Checkbox::new("checkbox_custom_unselected", ToggleState::Unselected)
                             .style(ToggleStyle::Custom(hsla(142.0 / 360., 0.68, 0.45, 0.7))),
                     ),
                     single_example(
-                        "Default/Indeterminate",
+                        "Indeterminate",
                         Checkbox::new("checkbox_custom_indeterminate", ToggleState::Indeterminate)
                             .style(ToggleStyle::Custom(hsla(142.0 / 360., 0.68, 0.45, 0.7))),
                     ),
                     single_example(
-                        "Default/Selected",
+                        "Selected",
                         Checkbox::new("checkbox_custom_selected", ToggleState::Selected)
                             .style(ToggleStyle::Custom(hsla(142.0 / 360., 0.68, 0.45, 0.7))),
                     ),
+                ],
+            ),
+            example_group_with_title(
+                "Custom Color (Filled)",
+                vec![
                     single_example(
-                        "Filled/Unselected",
+                        "Unselected",
                         Checkbox::new("checkbox_custom_filled_unselected", ToggleState::Unselected)
                             .fill()
                             .style(ToggleStyle::Custom(hsla(142.0 / 360., 0.68, 0.45, 0.7))),
                     ),
                     single_example(
-                        "Filled/Indeterminate",
+                        "Indeterminate",
                         Checkbox::new(
                             "checkbox_custom_filled_indeterminate",
                             ToggleState::Indeterminate,
@@ -477,7 +504,7 @@ impl ComponentPreview for Checkbox {
                         ))),
                     ),
                     single_example(
-                        "Filled/Selected",
+                        "Selected",
                         Checkbox::new("checkbox_custom_filled_selected", ToggleState::Selected)
                             .fill()
                             .style(ToggleStyle::Custom(hsla(142.0 / 360., 0.68, 0.45, 0.7))),
@@ -503,6 +530,35 @@ impl ComponentPreview for Checkbox {
                     single_example(
                         "Selected",
                         Checkbox::new("checkbox_disabled_selected", ToggleState::Selected)
+                            .disabled(true),
+                    ),
+                ],
+            ),
+            example_group_with_title(
+                "Disabled (Filled)",
+                vec![
+                    single_example(
+                        "Unselected",
+                        Checkbox::new(
+                            "checkbox_disabled_filled_unselected",
+                            ToggleState::Unselected,
+                        )
+                        .fill()
+                        .disabled(true),
+                    ),
+                    single_example(
+                        "Indeterminate",
+                        Checkbox::new(
+                            "checkbox_disabled_filled_indeterminate",
+                            ToggleState::Indeterminate,
+                        )
+                        .fill()
+                        .disabled(true),
+                    ),
+                    single_example(
+                        "Selected",
+                        Checkbox::new("checkbox_disabled_filled_selected", ToggleState::Selected)
+                            .fill()
                             .disabled(true),
                     ),
                 ],
