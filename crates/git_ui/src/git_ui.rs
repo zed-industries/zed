@@ -1,6 +1,8 @@
 use ::settings::Settings;
-use git::repository::GitFileStatus;
+use collections::HashSet;
+use git::repository::{GitFileStatus, RepoPath};
 use gpui::{actions, AppContext, Context, Global, Hsla, Model};
+use project::WorktreeId;
 use settings::GitPanelSettings;
 use ui::{Color, Icon, IconName, IntoElement, SharedString};
 
@@ -31,25 +33,74 @@ impl Global for GlobalGitState {}
 
 pub struct GitState {
     commit_message: Option<SharedString>,
+    current_worktree: Option<WorktreeId>,
+    staged_entries: HashSet<(WorktreeId, RepoPath)>,
 }
 
 impl GitState {
     pub fn new() -> Self {
         GitState {
             commit_message: None,
+            current_worktree: None,
+            staged_entries: HashSet::default(),
         }
-    }
-
-    pub fn set_message(&mut self, message: Option<SharedString>) {
-        self.commit_message = message;
-    }
-
-    pub fn clear_message(&mut self) {
-        self.commit_message = None;
     }
 
     pub fn get_global(cx: &mut AppContext) -> Model<GitState> {
         cx.global::<GlobalGitState>().0.clone()
+    }
+
+    pub fn current_worktree(&mut self, worktree_id: Option<WorktreeId>) {
+        self.current_worktree = worktree_id;
+    }
+
+    pub fn commit_message(&mut self, message: Option<SharedString>) {
+        self.commit_message = message;
+    }
+
+    pub fn clear_commit_message(&mut self) {
+        self.commit_message = None;
+    }
+
+    pub fn stage_entry(&mut self, repo_path: RepoPath) {
+        if let Some(worktree_id) = self.current_worktree {
+            self.staged_entries.insert((worktree_id, repo_path));
+        }
+    }
+
+    pub fn unstage_entry(&mut self, repo_path: RepoPath) {
+        if let Some(worktree_id) = self.current_worktree {
+            self.staged_entries.remove(&(worktree_id, repo_path));
+        }
+    }
+
+    pub fn stage_entries(&mut self, entries: Vec<RepoPath>) {
+        if let Some(worktree_id) = self.current_worktree {
+            self.staged_entries
+                .extend(entries.into_iter().map(|path| (worktree_id, path)));
+        }
+    }
+
+    pub fn unstage_all_entries(&mut self) {
+        if let Some(worktree_id) = self.current_worktree {
+            self.staged_entries.retain(|(id, _)| id != &worktree_id);
+        }
+    }
+
+    pub fn toggle_staged_entry(&mut self, repo_path: RepoPath) {
+        if self.is_staged(repo_path.clone()) {
+            self.unstage_entry(repo_path);
+        } else {
+            self.stage_entry(repo_path);
+        }
+    }
+
+    pub fn is_staged(&self, repo_path: RepoPath) -> bool {
+        if let Some(current_worktree) = self.current_worktree {
+            self.staged_entries.contains(&(current_worktree, repo_path))
+        } else {
+            false
+        }
     }
 }
 
