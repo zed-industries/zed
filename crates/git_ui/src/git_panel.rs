@@ -1,18 +1,16 @@
-use crate::{git_status_icon, settings::GitPanelSettings};
-use crate::{CommitAllChanges, CommitStagedChanges, GitState, RevertAll, StageAll, UnstageAll};
+use crate::{
+    git_status_icon, settings::GitPanelSettings, CommitAllChanges, CommitStagedChanges, GitState,
+    RevertAll, StageAll, UnstageAll,
+};
 use anyhow::{Context as _, Result};
 use db::kvp::KEY_VALUE_STORE;
+use editor::Editor;
 use git::{
     diff::DiffHunk,
     repository::{GitFileStatus, RepoPath},
 };
 use gpui::*;
-use gpui::{
-    actions, prelude::*, uniform_list, Action, AppContext, AsyncWindowContext, ClickEvent,
-    EventEmitter, FocusHandle, FocusableView, KeyContext, ListHorizontalSizingBehavior,
-    ListSizingBehavior, Model, Modifiers, ModifiersChangedEvent, MouseButton, ScrollStrategy,
-    Stateful, Task, UniformListScrollHandle, View, WeakView,
-};
+use language::Buffer;
 use menu::{SelectNext, SelectPrev};
 use project::{EntryKind, Fs, Project, ProjectEntryId, WorktreeId};
 use serde::{Deserialize, Serialize};
