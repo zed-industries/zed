@@ -99,6 +99,7 @@ pub struct GitPanel {
     selected_item: Option<usize>,
     view_mode: ViewMode,
     show_scrollbar: bool,
+    pending_update: Task<()>,
     // TODO Reintroduce expanded directories, once we're deriving directories from paths
     // expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     git_state: Model<GitState>,
@@ -171,26 +172,19 @@ impl GitPanel {
             .detach();
             cx.subscribe(&project, |this, _, event, cx| match event {
                 project::Event::WorktreeRemoved(_id) => {
-                    // this.expanded_dir_ids.remove(id);
-                    this.update_visible_entries(None, None, cx);
-                    cx.notify();
+                    this.schedule_update(None, None, cx);
                 }
                 project::Event::WorktreeOrderChanged => {
-                    this.update_visible_entries(None, None, cx);
-                    cx.notify();
+                    this.schedule_update(None, None, cx);
                 }
                 project::Event::WorktreeUpdatedEntries(id, _)
                 | project::Event::WorktreeAdded(id)
                 | project::Event::WorktreeUpdatedGitRepositories(id) => {
-                    this.update_visible_entries(Some(*id), None, cx);
-                    cx.notify();
+                    this.schedule_update(Some(*id), None, cx);
                 }
                 project::Event::Closed => {
-                    // this.git_diff_editor_updates = Task::ready(());
                     this.reveal_in_editor = Task::ready(());
-                    // this.expanded_dir_ids.clear();
                     this.visible_entries.clear();
-                    // this.git_diff_editor = None;
                 }
                 _ => {}
             })
@@ -265,6 +259,7 @@ impl GitPanel {
                 view_mode: ViewMode::default(),
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
+                pending_update: Task::ready(()),
                 // git_diff_editor: Some(diff_display_editor(cx)),
                 // git_diff_editor_updates: Task::ready(()),
                 commit_editor,
@@ -457,9 +452,11 @@ impl GitPanel {
         println!("Stage all triggered");
     }
 
-    fn unstage_all(&mut self, _: &UnstageAll, _cx: &mut ViewContext<Self>) {
-        // TODO: Implement unstage all
-        println!("Unstage all triggered");
+    fn unstage_all(&mut self, _: &UnstageAll, cx: &mut ViewContext<Self>) {
+        let state = self.git_state.clone();
+        state.update(cx, |state, _| {
+            state.unstage_all_entries();
+        });
     }
 
     fn discard_all(&mut self, _: &RevertAll, _cx: &mut ViewContext<Self>) {
@@ -469,7 +466,7 @@ impl GitPanel {
 
     fn clear_message(&mut self, cx: &mut ViewContext<Self>) {
         let git_state = self.git_state.clone();
-        git_state.update(cx, |state, _cx| state.clear_message());
+        git_state.update(cx, |state, _cx| state.clear_commit_message());
         self.commit_editor
             .update(cx, |editor, cx| editor.set_text("", cx));
     }
@@ -587,260 +584,358 @@ impl GitPanel {
         }
     }
 
-    // TODO: Update expanded directory state
-    // TODO: Updates happen in the main loop, could be long for large workspaces
+    fn schedule_update(
+        &mut self,
+        worktree: Option<WorktreeId>,
+        new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let handle = cx.view().downgrade();
+
+        self.pending_update = cx.spawn(|_, mut cx| async move {
+            cx.background_executor().timer(UPDATE_DEBOUNCE).await;
+
+            if let Some(handle) = handle.upgrade() {
+                handle
+                    .update(&mut cx, |panel, cx| {
+                        panel.update_visible_entries(worktree, new_selected_entry, cx);
+                    })
+                    .ok();
+            }
+        });
+    }
+
     #[track_caller]
     fn update_visible_entries(
         &mut self,
-        for_worktree: Option<WorktreeId>,
+        worktree: Option<WorktreeId>,
         _new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
         cx: &mut ViewContext<Self>,
     ) {
         let project = self.project.read(cx);
-        let mut old_entries_removed = false;
-        let mut after_update = Vec::new();
-        self.visible_entries
-            .retain(|worktree_entries| match for_worktree {
-                Some(for_worktree) => {
-                    if worktree_entries.worktree_id == for_worktree {
-                        old_entries_removed = true;
-                        false
-                    } else if old_entries_removed {
-                        after_update.push(worktree_entries.clone());
-                        false
-                    } else {
-                        true
-                    }
+
+        if let Some(worktree_id) = worktree {
+            // Remove the matching worktree entry if it exists
+            let existing_index = self
+                .visible_entries
+                .iter()
+                .position(|e| e.worktree_id == worktree_id);
+            if let Some(index) = existing_index {
+                self.visible_entries.remove(index);
+            }
+
+            // Add updated entries for the specified worktree
+            if let Some(worktree) = project.worktree_for_id(worktree_id, cx) {
+                let snapshot = worktree.read(cx).snapshot();
+                let mut visible_worktree_entries = Vec::new();
+
+                // TODO: Support more than one repo
+                // Only use the first repository for now
+                let repositories = snapshot.repositories().take(1);
+                for repository in repositories {
+                    visible_worktree_entries.extend(repository.status());
                 }
-                None => false,
-            });
-        for worktree in project.visible_worktrees(cx) {
-            let snapshot = worktree.read(cx).snapshot();
-            let worktree_id = snapshot.id();
 
-            if for_worktree.is_some() && for_worktree != Some(worktree_id) {
-                continue;
+                if !visible_worktree_entries.is_empty() {
+                    self.visible_entries.push(WorktreeEntries {
+                        worktree_id,
+                        visible_entries: visible_worktree_entries
+                            .into_iter()
+                            .map(|entry| GitPanelEntry {
+                                entry,
+                                hunks: Rc::default(),
+                            })
+                            .collect(),
+                        paths: Rc::default(),
+                    });
+                }
             }
+        } else {
+            // Clear and rebuild all entries
+            self.visible_entries.clear();
+            for worktree in project.visible_worktrees(cx) {
+                let snapshot = worktree.read(cx).snapshot();
+                let worktree_id = snapshot.id();
+                let mut visible_worktree_entries = Vec::new();
 
-            let mut visible_worktree_entries = Vec::new();
-            // Only use the first repository for now
-            let repositories = snapshot.repositories().take(1);
-            // let mut work_directory = None;
-            for repository in repositories {
-                visible_worktree_entries.extend(repository.status());
-                // work_directory = Some(worktree::WorkDirectory::clone(repository));
-            }
+                let repositories = snapshot.repositories().take(1);
+                for repository in repositories {
+                    visible_worktree_entries.extend(repository.status());
+                }
 
-            // TODO use the GitTraversal
-            // let mut visible_worktree_entries = snapshot
-            //     .entries(false, 0)
-            //     .filter(|entry| !entry.is_external)
-            //     .filter(|entry| entry.git_status.is_some())
-            //     .cloned()
-            //     .collect::<Vec<_>>();
-            // snapshot.propagate_git_statuses(&mut visible_worktree_entries);
-            // project::sort_worktree_entries(&mut visible_worktree_entries);
-
-            if !visible_worktree_entries.is_empty() {
-                self.visible_entries.push(WorktreeEntries {
-                    worktree_id,
-                    // work_directory: work_directory.unwrap(),
-                    visible_entries: visible_worktree_entries
-                        .into_iter()
-                        .map(|entry| GitPanelEntry {
-                            entry,
-                            hunks: Rc::default(),
-                        })
-                        .collect(),
-                    paths: Rc::default(),
-                });
+                if !visible_worktree_entries.is_empty() {
+                    self.visible_entries.push(WorktreeEntries {
+                        worktree_id,
+                        visible_entries: visible_worktree_entries
+                            .into_iter()
+                            .map(|entry| GitPanelEntry {
+                                entry,
+                                hunks: Rc::default(),
+                            })
+                            .collect(),
+                        paths: Rc::default(),
+                    });
+                }
             }
         }
-        self.visible_entries.extend(after_update);
-
-        // TODO re-implement this
-        // if let Some((worktree_id, entry_id)) = new_selected_entry {
-        //     self.selected_item = self.visible_entries.iter().enumerate().find_map(
-        //         |(worktree_index, worktree_entries)| {
-        //             if worktree_entries.worktree_id == worktree_id {
-        //                 worktree_entries
-        //                     .visible_entries
-        //                     .iter()
-        //                     .position(|entry| entry.id == entry_id)
-        //                     .map(|entry_index| {
-        //                         worktree_index * worktree_entries.visible_entries.len()
-        //                             + entry_index
-        //                     })
-        //             } else {
-        //                 None
-        //             }
-        //         },
-        //     );
-        // }
-
-        // let project = self.project.downgrade();
-        // self.git_diff_editor_updates = cx.spawn(|git_panel, mut cx| async move {
-        //     cx.background_executor()
-        //         .timer(UPDATE_DEBOUNCE)
-        //         .await;
-        //     let Some(project_buffers) = git_panel
-        //         .update(&mut cx, |git_panel, cx| {
-        //             futures::future::join_all(git_panel.visible_entries.iter_mut().flat_map(
-        //                 |worktree_entries| {
-        //                     worktree_entries
-        //                         .visible_entries
-        //                         .iter()
-        //                         .filter_map(|entry| {
-        //                             let git_status = entry.status;
-        //                             let entry_hunks = entry.hunks.clone();
-        //                             let (entry_path, unstaged_changes_task) =
-        //                                 project.update(cx, |project, cx| {
-        //                                     let entry_path = ProjectPath {
-        //                                         worktree_id: worktree_entries.worktree_id,
-        //                                         path: worktree_entries.work_directory.unrelativize(&entry.repo_path)?,
-        //                                     };
-        //                                     let open_task =
-        //                                         project.open_path(entry_path.clone(), cx);
-        //                                     let unstaged_changes_task =
-        //                                         cx.spawn(|project, mut cx| async move {
-        //                                             let (_, opened_model) = open_task
-        //                                                 .await
-        //                                                 .context("opening buffer")?;
-        //                                             let buffer = opened_model
-        //                                                 .downcast::<Buffer>()
-        //                                                 .map_err(|_| {
-        //                                                     anyhow::anyhow!(
-        //                                                         "accessing buffer for entry"
-        //                                                     )
-        //                                                 })?;
-        //                                             // TODO added files have noop changes and those are not expanded properly in the multi buffer
-        //                                             let unstaged_changes = project
-        //                                                 .update(&mut cx, |project, cx| {
-        //                                                     project.open_unstaged_changes(
-        //                                                         buffer.clone(),
-        //                                                         cx,
-        //                                                     )
-        //                                                 })?
-        //                                                 .await
-        //                                                 .context("opening unstaged changes")?;
-
-        //                                             let hunks = cx.update(|cx| {
-        //                                                 entry_hunks
-        //                                                     .get_or_init(|| {
-        //                                                         match git_status {
-        //                                                             GitFileStatus::Added => {
-        //                                                                 let buffer_snapshot = buffer.read(cx).snapshot();
-        //                                                                 let entire_buffer_range =
-        //                                                                     buffer_snapshot.anchor_after(0)
-        //                                                                         ..buffer_snapshot
-        //                                                                             .anchor_before(
-        //                                                                                 buffer_snapshot.len(),
-        //                                                                             );
-        //                                                                 let entire_buffer_point_range =
-        //                                                                     entire_buffer_range
-        //                                                                         .clone()
-        //                                                                         .to_point(&buffer_snapshot);
-
-        //                                                                 vec![DiffHunk {
-        //                                                                     row_range: entire_buffer_point_range
-        //                                                                         .start
-        //                                                                         .row
-        //                                                                         ..entire_buffer_point_range
-        //                                                                             .end
-        //                                                                             .row,
-        //                                                                     buffer_range: entire_buffer_range,
-        //                                                                     diff_base_byte_range: 0..0,
-        //                                                                 }]
-        //                                                             }
-        //                                                             GitFileStatus::Modified => {
-        //                                                                     let buffer_snapshot =
-        //                                                                         buffer.read(cx).snapshot();
-        //                                                                     unstaged_changes.read(cx)
-        //                                                                         .diff_to_buffer
-        //                                                                         .hunks_in_row_range(
-        //                                                                             0..BufferRow::MAX,
-        //                                                                             &buffer_snapshot,
-        //                                                                         )
-        //                                                                         .collect()
-        //                                                             }
-        //                                                             // TODO support these
-        //                                                             GitFileStatus::Conflict | GitFileStatus::Deleted | GitFileStatus::Untracked => Vec::new(),
-        //                                                         }
-        //                                                     }).clone()
-        //                                             })?;
-
-        //                                             anyhow::Ok((buffer, unstaged_changes, hunks))
-        //                                         });
-        //                                     Some((entry_path, unstaged_changes_task))
-        //                                 }).ok()??;
-        //                             Some((entry_path, unstaged_changes_task))
-        //                         })
-        //                         .map(|(entry_path, open_task)| async move {
-        //                             (entry_path, open_task.await)
-        //                         })
-        //                         .collect::<Vec<_>>()
-        //                 },
-        //             ))
-        //         })
-        //         .ok()
-        //     else {
-        //         return;
-        //     };
-
-        //     let project_buffers = project_buffers.await;
-        //     if project_buffers.is_empty() {
-        //         return;
-        //     }
-        //     let mut change_sets = Vec::with_capacity(project_buffers.len());
-        //     if let Some(buffer_update_task) = git_panel
-        //         .update(&mut cx, |git_panel, cx| {
-        //             let editor = git_panel.git_diff_editor.clone()?;
-        //             let multi_buffer = editor.read(cx).buffer().clone();
-        //             let mut buffers_with_ranges = Vec::with_capacity(project_buffers.len());
-        //             for (buffer_path, open_result) in project_buffers {
-        //                 if let Some((buffer, unstaged_changes, diff_hunks)) = open_result
-        //                     .with_context(|| format!("opening buffer {buffer_path:?}"))
-        //                     .log_err()
-        //                 {
-        //                     change_sets.push(unstaged_changes);
-        //                     buffers_with_ranges.push((
-        //                         buffer,
-        //                         diff_hunks
-        //                             .into_iter()
-        //                             .map(|hunk| hunk.buffer_range)
-        //                             .collect(),
-        //                     ));
-        //                 }
-        //             }
-
-        //             Some(multi_buffer.update(cx, |multi_buffer, cx| {
-        //                 multi_buffer.clear(cx);
-        //                 multi_buffer.push_multiple_excerpts_with_context_lines(
-        //                     buffers_with_ranges,
-        //                     DEFAULT_MULTIBUFFER_CONTEXT,
-        //                     cx,
-        //                 )
-        //             }))
-        //         })
-        //         .ok().flatten()
-        //     {
-        //         buffer_update_task.await;
-        //         git_panel
-        //             .update(&mut cx, |git_panel, cx| {
-        //                 if let Some(diff_editor) = git_panel.git_diff_editor.as_ref() {
-        //                     diff_editor.update(cx, |editor, cx| {
-        //                         for change_set in change_sets {
-        //                             editor.add_change_set(change_set, cx);
-        //                         }
-        //                     });
-        //                 }
-        //             })
-        //             .ok();
-        //     }
-        // });
 
         cx.notify();
     }
+
+    // // TODO: Update expanded directory state
+    // // TODO: Updates happen in the main loop, could be long for large workspaces
+    // #[track_caller]
+    // fn update_visible_entries(
+    //     &mut self,
+    //     for_worktree: Option<WorktreeId>,
+    //     _new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
+    //     cx: &mut ViewContext<Self>,
+    // ) {
+    //     let project = self.project.read(cx);
+    //     let mut old_entries_removed = false;
+    //     let mut after_update = Vec::new();
+    //     self.visible_entries
+    //         .retain(|worktree_entries| match for_worktree {
+    //             Some(for_worktree) => {
+    //                 if worktree_entries.worktree_id == for_worktree {
+    //                     old_entries_removed = true;
+    //                     false
+    //                 } else if old_entries_removed {
+    //                     after_update.push(worktree_entries.clone());
+    //                     false
+    //                 } else {
+    //                     true
+    //                 }
+    //             }
+    //             None => false,
+    //         });
+    //     for worktree in project.visible_worktrees(cx) {
+    //         let snapshot = worktree.read(cx).snapshot();
+    //         let worktree_id = snapshot.id();
+
+    //         if for_worktree.is_some() && for_worktree != Some(worktree_id) {
+    //             continue;
+    //         }
+
+    //         let mut visible_worktree_entries = Vec::new();
+    //         // Only use the first repository for now
+    //         let repositories = snapshot.repositories().take(1);
+    //         // let mut work_directory = None;
+    //         for repository in repositories {
+    //             visible_worktree_entries.extend(repository.status());
+    //             // work_directory = Some(worktree::WorkDirectory::clone(repository));
+    //         }
+
+    //         // TODO use the GitTraversal
+    //         // let mut visible_worktree_entries = snapshot
+    //         //     .entries(false, 0)
+    //         //     .filter(|entry| !entry.is_external)
+    //         //     .filter(|entry| entry.git_status.is_some())
+    //         //     .cloned()
+    //         //     .collect::<Vec<_>>();
+    //         // snapshot.propagate_git_statuses(&mut visible_worktree_entries);
+    //         // project::sort_worktree_entries(&mut visible_worktree_entries);
+
+    //         if !visible_worktree_entries.is_empty() {
+    //             self.visible_entries.push(WorktreeEntries {
+    //                 worktree_id,
+    //                 // work_directory: work_directory.unwrap(),
+    //                 visible_entries: visible_worktree_entries
+    //                     .into_iter()
+    //                     .map(|entry| GitPanelEntry {
+    //                         entry,
+    //                         hunks: Rc::default(),
+    //                     })
+    //                     .collect(),
+    //                 paths: Rc::default(),
+    //             });
+    //         }
+    //     }
+    //     self.visible_entries.extend(after_update);
+
+    //     // TODO re-implement this
+    //     // if let Some((worktree_id, entry_id)) = new_selected_entry {
+    //     //     self.selected_item = self.visible_entries.iter().enumerate().find_map(
+    //     //         |(worktree_index, worktree_entries)| {
+    //     //             if worktree_entries.worktree_id == worktree_id {
+    //     //                 worktree_entries
+    //     //                     .visible_entries
+    //     //                     .iter()
+    //     //                     .position(|entry| entry.id == entry_id)
+    //     //                     .map(|entry_index| {
+    //     //                         worktree_index * worktree_entries.visible_entries.len()
+    //     //                             + entry_index
+    //     //                     })
+    //     //             } else {
+    //     //                 None
+    //     //             }
+    //     //         },
+    //     //     );
+    //     // }
+
+    //     // let project = self.project.downgrade();
+    //     // self.git_diff_editor_updates = cx.spawn(|git_panel, mut cx| async move {
+    //     //     cx.background_executor()
+    //     //         .timer(UPDATE_DEBOUNCE)
+    //     //         .await;
+    //     //     let Some(project_buffers) = git_panel
+    //     //         .update(&mut cx, |git_panel, cx| {
+    //     //             futures::future::join_all(git_panel.visible_entries.iter_mut().flat_map(
+    //     //                 |worktree_entries| {
+    //     //                     worktree_entries
+    //     //                         .visible_entries
+    //     //                         .iter()
+    //     //                         .filter_map(|entry| {
+    //     //                             let git_status = entry.status;
+    //     //                             let entry_hunks = entry.hunks.clone();
+    //     //                             let (entry_path, unstaged_changes_task) =
+    //     //                                 project.update(cx, |project, cx| {
+    //     //                                     let entry_path = ProjectPath {
+    //     //                                         worktree_id: worktree_entries.worktree_id,
+    //     //                                         path: worktree_entries.work_directory.unrelativize(&entry.repo_path)?,
+    //     //                                     };
+    //     //                                     let open_task =
+    //     //                                         project.open_path(entry_path.clone(), cx);
+    //     //                                     let unstaged_changes_task =
+    //     //                                         cx.spawn(|project, mut cx| async move {
+    //     //                                             let (_, opened_model) = open_task
+    //     //                                                 .await
+    //     //                                                 .context("opening buffer")?;
+    //     //                                             let buffer = opened_model
+    //     //                                                 .downcast::<Buffer>()
+    //     //                                                 .map_err(|_| {
+    //     //                                                     anyhow::anyhow!(
+    //     //                                                         "accessing buffer for entry"
+    //     //                                                     )
+    //     //                                                 })?;
+    //     //                                             // TODO added files have noop changes and those are not expanded properly in the multi buffer
+    //     //                                             let unstaged_changes = project
+    //     //                                                 .update(&mut cx, |project, cx| {
+    //     //                                                     project.open_unstaged_changes(
+    //     //                                                         buffer.clone(),
+    //     //                                                         cx,
+    //     //                                                     )
+    //     //                                                 })?
+    //     //                                                 .await
+    //     //                                                 .context("opening unstaged changes")?;
+
+    //     //                                             let hunks = cx.update(|cx| {
+    //     //                                                 entry_hunks
+    //     //                                                     .get_or_init(|| {
+    //     //                                                         match git_status {
+    //     //                                                             GitFileStatus::Added => {
+    //     //                                                                 let buffer_snapshot = buffer.read(cx).snapshot();
+    //     //                                                                 let entire_buffer_range =
+    //     //                                                                     buffer_snapshot.anchor_after(0)
+    //     //                                                                         ..buffer_snapshot
+    //     //                                                                             .anchor_before(
+    //     //                                                                                 buffer_snapshot.len(),
+    //     //                                                                             );
+    //     //                                                                 let entire_buffer_point_range =
+    //     //                                                                     entire_buffer_range
+    //     //                                                                         .clone()
+    //     //                                                                         .to_point(&buffer_snapshot);
+
+    //     //                                                                 vec![DiffHunk {
+    //     //                                                                     row_range: entire_buffer_point_range
+    //     //                                                                         .start
+    //     //                                                                         .row
+    //     //                                                                         ..entire_buffer_point_range
+    //     //                                                                             .end
+    //     //                                                                             .row,
+    //     //                                                                     buffer_range: entire_buffer_range,
+    //     //                                                                     diff_base_byte_range: 0..0,
+    //     //                                                                 }]
+    //     //                                                             }
+    //     //                                                             GitFileStatus::Modified => {
+    //     //                                                                     let buffer_snapshot =
+    //     //                                                                         buffer.read(cx).snapshot();
+    //     //                                                                     unstaged_changes.read(cx)
+    //     //                                                                         .diff_to_buffer
+    //     //                                                                         .hunks_in_row_range(
+    //     //                                                                             0..BufferRow::MAX,
+    //     //                                                                             &buffer_snapshot,
+    //     //                                                                         )
+    //     //                                                                         .collect()
+    //     //                                                             }
+    //     //                                                             // TODO support these
+    //     //                                                             GitFileStatus::Conflict | GitFileStatus::Deleted | GitFileStatus::Untracked => Vec::new(),
+    //     //                                                         }
+    //     //                                                     }).clone()
+    //     //                                             })?;
+
+    //     //                                             anyhow::Ok((buffer, unstaged_changes, hunks))
+    //     //                                         });
+    //     //                                     Some((entry_path, unstaged_changes_task))
+    //     //                                 }).ok()??;
+    //     //                             Some((entry_path, unstaged_changes_task))
+    //     //                         })
+    //     //                         .map(|(entry_path, open_task)| async move {
+    //     //                             (entry_path, open_task.await)
+    //     //                         })
+    //     //                         .collect::<Vec<_>>()
+    //     //                 },
+    //     //             ))
+    //     //         })
+    //     //         .ok()
+    //     //     else {
+    //     //         return;
+    //     //     };
+
+    //     //     let project_buffers = project_buffers.await;
+    //     //     if project_buffers.is_empty() {
+    //     //         return;
+    //     //     }
+    //     //     let mut change_sets = Vec::with_capacity(project_buffers.len());
+    //     //     if let Some(buffer_update_task) = git_panel
+    //     //         .update(&mut cx, |git_panel, cx| {
+    //     //             let editor = git_panel.git_diff_editor.clone()?;
+    //     //             let multi_buffer = editor.read(cx).buffer().clone();
+    //     //             let mut buffers_with_ranges = Vec::with_capacity(project_buffers.len());
+    //     //             for (buffer_path, open_result) in project_buffers {
+    //     //                 if let Some((buffer, unstaged_changes, diff_hunks)) = open_result
+    //     //                     .with_context(|| format!("opening buffer {buffer_path:?}"))
+    //     //                     .log_err()
+    //     //                 {
+    //     //                     change_sets.push(unstaged_changes);
+    //     //                     buffers_with_ranges.push((
+    //     //                         buffer,
+    //     //                         diff_hunks
+    //     //                             .into_iter()
+    //     //                             .map(|hunk| hunk.buffer_range)
+    //     //                             .collect(),
+    //     //                     ));
+    //     //                 }
+    //     //             }
+
+    //     //             Some(multi_buffer.update(cx, |multi_buffer, cx| {
+    //     //                 multi_buffer.clear(cx);
+    //     //                 multi_buffer.push_multiple_excerpts_with_context_lines(
+    //     //                     buffers_with_ranges,
+    //     //                     DEFAULT_MULTIBUFFER_CONTEXT,
+    //     //                     cx,
+    //     //                 )
+    //     //             }))
+    //     //         })
+    //     //         .ok().flatten()
+    //     //     {
+    //     //         buffer_update_task.await;
+    //     //         git_panel
+    //     //             .update(&mut cx, |git_panel, cx| {
+    //     //                 if let Some(diff_editor) = git_panel.git_diff_editor.as_ref() {
+    //     //                     diff_editor.update(cx, |editor, cx| {
+    //     //                         for change_set in change_sets {
+    //     //                             editor.add_change_set(change_set, cx);
+    //     //                         }
+    //     //                     });
+    //     //                 }
+    //     //             })
+    //     //             .ok();
+    //     //     }
+    //     // });
+
+    //     cx.notify();
+    // }
 
     fn on_buffer_event(
         &mut self,
