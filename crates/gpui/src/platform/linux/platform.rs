@@ -46,6 +46,7 @@ const FILE_PICKER_PORTAL_MISSING: &str =
 pub trait LinuxClient {
     fn compositor_name(&self) -> &'static str;
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R;
+    fn keyboard_layout(&self) -> String;
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
     #[allow(unused)]
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
@@ -76,6 +77,7 @@ pub(crate) struct PlatformHandlers {
     pub(crate) app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
     pub(crate) will_open_app_menu: Option<Box<dyn FnMut()>>,
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
+    pub(crate) keyboard_layout_change: Option<Box<dyn FnMut()>>,
 }
 
 pub(crate) struct LinuxCommon {
@@ -133,11 +135,11 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn keyboard_layout(&self) -> String {
-        "unknown".into()
+        self.keyboard_layout()
     }
 
-    fn on_keyboard_layout_change(&self, _callback: Box<dyn FnMut()>) {
-        // todo(linux)
+    fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
+        self.with_common(|common| common.callbacks.keyboard_layout_change = Some(callback));
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {

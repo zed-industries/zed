@@ -37,7 +37,7 @@ use x11rb::{
 };
 use xim::{x11rb::X11rbClient, AttributeName, Client, InputStyle};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
-use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask};
+use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask, STATE_LAYOUT_EFFECTIVE};
 
 use super::{
     button_or_scroll_from_event_detail, get_valuator_axis_index, modifiers_from_state,
@@ -840,6 +840,8 @@ impl X11Client {
             }
             Event::XkbStateNotify(event) => {
                 let mut state = self.0.borrow_mut();
+                let old_layout = state.xkb.serialize_layout(STATE_LAYOUT_EFFECTIVE);
+                let new_layout = u32::from(event.group);
                 state.xkb.update_mask(
                     event.base_mods.into(),
                     event.latched_mods.into(),
@@ -853,6 +855,17 @@ impl X11Client {
                     latched_layout: event.latched_group as u32,
                     locked_layout: event.locked_group.into(),
                 };
+
+                if new_layout != old_layout {
+                    if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take()
+                    {
+                        drop(state);
+                        callback();
+                        state = self.0.borrow_mut();
+                        state.common.callbacks.keyboard_layout_change = Some(callback);
+                    }
+                }
+
                 let modifiers = Modifiers::from_xkb(&state.xkb);
                 if state.modifiers == modifiers {
                     drop(state);
@@ -1263,6 +1276,16 @@ impl LinuxClient for X11Client {
 
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R {
         f(&mut self.0.borrow_mut().common)
+    }
+
+    fn keyboard_layout(&self) -> String {
+        let state = self.0.borrow();
+        let layout_idx = state.xkb.serialize_layout(STATE_LAYOUT_EFFECTIVE);
+        state
+            .xkb
+            .get_keymap()
+            .layout_get_name(layout_idx)
+            .to_string()
     }
 
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
