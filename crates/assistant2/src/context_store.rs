@@ -36,12 +36,6 @@ impl ContextStore {
         &self.context
     }
 
-    pub fn drain(&mut self) -> Vec<Context> {
-        let context = self.context.drain(..).collect();
-        self.clear();
-        context
-    }
-
     pub fn clear(&mut self) {
         self.context.clear();
         self.files.clear();
