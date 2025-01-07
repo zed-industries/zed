@@ -781,9 +781,9 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppContext) {
-    fn to_path_string(path: &str) -> String {
+    fn add_root_for_windows(path: &str) -> String {
         if cfg!(windows) {
-            path.replace("/the-root", "C:/the-root")
+            format!("C:{}", path)
         } else {
             path.to_string()
         }
@@ -793,7 +793,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        to_path_string("/the-root"),
+        add_root_for_windows("/the-root"),
         json!({
             ".gitignore": "target\n",
             "src": {
@@ -821,7 +821,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     )
     .await;
 
-    let project = Project::test(fs.clone(), [to_path_string("/the-root").as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [add_root_for_windows("/the-root").as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
     let mut fake_servers = language_registry.register_fake_lsp(
@@ -837,7 +837,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     // Start the language server by opening a buffer with a compatible file extension.
     let _ = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp(to_path_string("/the-root/src/a.rs"), cx)
+            project.open_local_buffer_with_lsp(add_root_for_windows("/the-root/src/a.rs"), cx)
         })
         .await
         .unwrap();
@@ -877,19 +877,19 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
                     lsp::DidChangeWatchedFilesRegistrationOptions {
                         watchers: vec![
                             lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(to_path_string(
+                                glob_pattern: lsp::GlobPattern::String(add_root_for_windows(
                                     "/the-root/Cargo.toml",
                                 )),
                                 kind: None,
                             },
                             lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(to_path_string(
+                                glob_pattern: lsp::GlobPattern::String(add_root_for_windows(
                                     "/the-root/src/*.{rs,c}",
                                 )),
                                 kind: None,
                             },
                             lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(to_path_string(
+                                glob_pattern: lsp::GlobPattern::String(add_root_for_windows(
                                     "/the-root/target/y/**/*.rs",
                                 )),
                                 kind: None,
@@ -945,31 +945,31 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     // Perform some file system mutations, two of which match the watched patterns,
     // and one of which does not.
     fs.create_file(
-        to_path_string("/the-root/src/c.rs").as_ref(),
+        add_root_for_windows("/the-root/src/c.rs").as_ref(),
         Default::default(),
     )
     .await
     .unwrap();
     fs.create_file(
-        to_path_string("/the-root/src/d.txt").as_ref(),
+        add_root_for_windows("/the-root/src/d.txt").as_ref(),
         Default::default(),
     )
     .await
     .unwrap();
     fs.remove_file(
-        to_path_string("/the-root/src/b.rs").as_ref(),
+        add_root_for_windows("/the-root/src/b.rs").as_ref(),
         Default::default(),
     )
     .await
     .unwrap();
     fs.create_file(
-        to_path_string("/the-root/target/x/out/x2.rs").as_ref(),
+        add_root_for_windows("/the-root/target/x/out/x2.rs").as_ref(),
         Default::default(),
     )
     .await
     .unwrap();
     fs.create_file(
-        to_path_string("/the-root/target/y/out/y2.rs").as_ref(),
+        add_root_for_windows("/the-root/target/y/out/y2.rs").as_ref(),
         Default::default(),
     )
     .await
@@ -981,15 +981,15 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
         &*file_changes.lock(),
         &[
             lsp::FileEvent {
-                uri: lsp::Url::from_file_path(to_path_string("/the-root/src/b.rs")).unwrap(),
+                uri: lsp::Url::from_file_path(add_root_for_windows("/the-root/src/b.rs")).unwrap(),
                 typ: lsp::FileChangeType::DELETED,
             },
             lsp::FileEvent {
-                uri: lsp::Url::from_file_path(to_path_string("/the-root/src/c.rs")).unwrap(),
+                uri: lsp::Url::from_file_path(add_root_for_windows("/the-root/src/c.rs")).unwrap(),
                 typ: lsp::FileChangeType::CREATED,
             },
             lsp::FileEvent {
-                uri: lsp::Url::from_file_path(to_path_string("/the-root/target/y/out/y2.rs"))
+                uri: lsp::Url::from_file_path(add_root_for_windows("/the-root/target/y/out/y2.rs"))
                     .unwrap(),
                 typ: lsp::FileChangeType::CREATED,
             },
