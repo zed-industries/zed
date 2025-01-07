@@ -39,7 +39,7 @@ use workspace::{
 };
 use worktree::StatusEntry;
 
-actions!(git_panel, [ToggleFocus]);
+actions!(git_panel, [ToggleFocus, OpenEntryMenu]);
 
 const GIT_PANEL_KEY: &str = "GitPanel";
 
@@ -1110,8 +1110,27 @@ impl GitPanel {
         let is_staged = ToggleState::Selected;
         let handle = cx.view().downgrade();
 
+        // TOOD: At this point, an entry should really have a status.
+        // Is this fixed with the new git status stuff?
+        let status = details.status.unwrap_or(GitFileStatus::Untracked);
+
+        let end_slot = h_flex()
+            .invisible()
+            .when(selected, |this| this.visible())
+            .when(!selected, |this| {
+                this.group_hover("git-panel-entry", |this| this.visible())
+            })
+            .gap_1()
+            .items_center()
+            .child(
+                IconButton::new("more", IconName::EllipsisVertical)
+                    .icon_color(Color::Placeholder)
+                    .icon_size(IconSize::Small),
+            );
+
         let mut entry = h_flex()
             .id(("git-panel-entry", ix))
+            .group("git-panel-entry")
             .h(px(28.))
             .w_full()
             .pr(px(4.))
@@ -1135,10 +1154,18 @@ impl GitPanel {
 
         entry = entry
             .child(Checkbox::new(checkbox_id, is_staged))
-            .when_some(details.status, |this, status| {
-                this.child(git_status_icon(status))
-            })
-            .child(h_flex().gap_1p5().child(details.display_name.clone()))
+            .child(git_status_icon(status))
+            .child(
+                h_flex()
+                    .gap_1p5()
+                    .when(status == GitFileStatus::Deleted, |this| {
+                        this.text_color(cx.theme().colors().text_disabled)
+                            .line_through()
+                    })
+                    .child(details.display_name.clone()),
+            )
+            .child(div().flex_1())
+            .child(end_slot)
             // TODO: Only fire this if the entry is not currently revealed, otherwise the ui flashes
             .on_click(move |e, cx| {
                 handle

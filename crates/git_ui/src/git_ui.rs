@@ -82,6 +82,8 @@ pub fn git_status_icon(status: GitFileStatus) -> impl IntoElement {
             Icon::new(IconName::SquareDot).color(Color::Custom(MODIFIED_COLOR))
         }
         GitFileStatus::Conflict => Icon::new(IconName::Warning).color(Color::Custom(REMOVED_COLOR)),
-        GitFileStatus::Deleted => Icon::new(IconName::Warning).color(Color::Custom(REMOVED_COLOR)),
+        GitFileStatus::Deleted => {
+            Icon::new(IconName::SquareMinus).color(Color::Custom(REMOVED_COLOR))
+        }
     }
 }
