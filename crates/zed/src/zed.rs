@@ -319,6 +319,7 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
         );
         let assistant_panel =
             assistant::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
+        let sidecar_panel = sidecar::AssistantPanel::load(workspace_handle.clone(), cx.clone());
 
         let (
             project_panel,
@@ -328,6 +329,7 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             chat_panel,
             notification_panel,
             assistant_panel,
+            sidecar_panel,
         ) = futures::try_join!(
             project_panel,
             outline_panel,
@@ -336,6 +338,7 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             chat_panel,
             notification_panel,
             assistant_panel,
+            sidecar_panel,
         )?;
 
         workspace_handle.update(&mut cx, |workspace, cx| {
@@ -345,7 +348,8 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             workspace.add_panel(channels_panel, cx);
             workspace.add_panel(chat_panel, cx);
             workspace.add_panel(notification_panel, cx);
-            workspace.add_panel(assistant_panel, cx)
+            workspace.add_panel(assistant_panel, cx);
+            workspace.add_panel(sidecar_panel, cx);
         })?;
 
         let git_ui_enabled = git_ui_feature_flag.await;
