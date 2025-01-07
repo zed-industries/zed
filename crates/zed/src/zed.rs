@@ -210,6 +210,12 @@ pub fn initialize_workspace(
     .detach();
 
     feature_gate_zed_pro_actions(cx);
+    if cx.can_select_mixed_files_and_dirs() {
+        // On these platforms workspace::OpenFiles is redundant with workspace::Open.
+        CommandPaletteFilter::update_global(cx, |filter, _cx| {
+            filter.hide_action_types(&[TypeId::of::<workspace::OpenFiles>()]);
+        });
+    }
 }
 
 fn feature_gate_zed_pro_actions(cx: &mut AppContext) {
