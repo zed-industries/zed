@@ -362,11 +362,10 @@ impl Element for Img {
                                     }
                                 } else {
                                     let parent_view_id = window.parent_view_id();
-                                    let task = cx.spawn(|mut cx| async move {
+                                    let task = window.spawn(cx, |mut cx| async move {
                                         cx.background_executor().timer(LOADING_DELAY).await;
-                                        cx.update(|cx| {
-                                            todo!();
-                                            // window.notify(parent_view_id);
+                                        cx.update(move |window, cx| {
+                                            window.notify(parent_view_id, cx);
                                         })
                                         .ok();
                                     });

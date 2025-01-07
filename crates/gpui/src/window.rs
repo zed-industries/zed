@@ -5226,8 +5226,7 @@ impl Window {
                         task.await;
 
                         cx.on_next_frame(move |window, cx| {
-                            todo!();
-                            // cx.notify(parent_id);
+                            window.notify(parent_id, cx);
                         });
                     }
                 })
