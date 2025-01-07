@@ -166,8 +166,11 @@ fn main() -> Result<()> {
 
     let mut env = Some(std::env::vars().collect::<HashMap<_, _>>());
 
-    // On Linux, desktop entry uses `cli` to spawn `zed`, so we need to load env vars from the shell
-    // since it doesn't inherit env vars from the terminal.
+    // On Linux, the desktop entry uses `cli` to spawn `zed`.
+    // We need to handle env vars correctly since std::env::vars() may not contain
+    // project-specific vars (e.g. those set by direnv).
+    // By setting env to None here, the LSP will use worktree env vars instead,
+    // which is what we want.
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     if !std::io::stdout().is_terminal() {
         env = None;
