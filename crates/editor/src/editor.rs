@@ -5842,7 +5842,7 @@ impl Editor {
         });
     }
 
-    pub fn join_lines_custom(&mut self, options: &JoinLinesCustom, cx: &mut ViewContext<Self>) {
+    pub fn join_lines_impl(&mut self, insert_whitespace: bool, cx: &mut ViewContext<Self>) {
         if self.read_only(cx) {
             return;
         }
@@ -5882,18 +5882,14 @@ impl Editor {
                     let end_of_line = Point::new(row.0, snapshot.line_len(row));
                     let next_line_row = row.next_row();
                     let indent = snapshot.indent_size_for_line(next_line_row);
-                    let indent_len = if options.remove_indent.unwrap_or(true) {
-                        indent.len
-                    } else {
-                        0
-                    };
-                    let start_of_next_line = Point::new(next_line_row.0, indent_len);
+                    let start_of_next_line = Point::new(next_line_row.0, indent.len);
 
-                    let replace = if snapshot.line_len(next_line_row) > indent_len {
-                        options.separator.as_deref().unwrap_or(" ")
-                    } else {
-                        ""
-                    };
+                    let replace =
+                        if snapshot.line_len(next_line_row) > indent.len && insert_whitespace {
+                            " "
+                        } else {
+                            ""
+                        };
 
                     this.buffer.update(cx, |buffer, cx| {
                         buffer.edit([(end_of_line..start_of_next_line, replace)], None, cx)
@@ -5908,7 +5904,7 @@ impl Editor {
     }
 
     pub fn join_lines(&mut self, _: &JoinLines, cx: &mut ViewContext<Self>) {
-        self.join_lines_custom(&JoinLinesCustom::default(), cx);
+        self.join_lines_impl(true, cx);
     }
 
     pub fn sort_lines_case_sensitive(

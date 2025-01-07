@@ -174,15 +174,6 @@ pub enum UuidVersion {
     V7,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
-#[serde(rename_all = "camelCase")]
-pub struct JoinLinesCustom {
-    #[serde(default)]
-    pub remove_indent: Option<bool>,
-    #[serde(default)]
-    pub separator: Option<String>,
-}
-
 impl_actions!(
     editor,
     [
@@ -214,7 +205,6 @@ impl_actions!(
         ToggleComments,
         UnfoldAt,
         FoldAtLevel,
-        JoinLinesCustom,
     ]
 );
 
