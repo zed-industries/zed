@@ -4445,10 +4445,7 @@ impl Window {
     /// If called from within a view, it will notify that view on the next frame. Otherwise, it will refresh the entire window.
     pub fn request_animation_frame(&self) {
         let parent_id = self.parent_view_id();
-        self.on_next_frame(move |window, cx| {
-            todo!();
-            // cx.notify(parent_id)
-        });
+        self.on_next_frame(move |window, cx| window.notify(parent_id, cx));
     }
 
     /// Spawn the future returned by the given closure on the application thread pool.
