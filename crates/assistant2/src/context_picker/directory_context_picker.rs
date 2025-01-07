@@ -9,8 +9,7 @@ use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, Worktree, WorktreeId};
 use ui::{prelude::*, ListItem};
 use util::ResultExt as _;
-use workspace::notifications::NotificationId;
-use workspace::{Toast, Workspace};
+use workspace::Workspace;
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::{push_fenced_codeblock, ContextStore};
@@ -239,13 +238,11 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
 
                 let mut ok_count = 0;
 
-                for buffer in buffers {
-                    if let Ok(buffer) = buffer {
-                        let buffer = buffer.read(cx);
-                        let path = buffer.file().map_or(&path, |file| file.path());
-                        push_fenced_codeblock(&path, buffer.text(), &mut text);
-                        ok_count += 1;
-                    }
+                for buffer in buffers.into_iter().flatten() {
+                    let buffer = buffer.read(cx);
+                    let path = buffer.file().map_or(&path, |file| file.path());
+                    push_fenced_codeblock(&path, buffer.text(), &mut text);
+                    ok_count += 1;
                 }
 
                 if ok_count == 0 {
