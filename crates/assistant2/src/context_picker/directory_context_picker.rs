@@ -304,7 +304,16 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
                 .toggle_state(selected)
                 .child(h_flex().gap_2().child(Label::new(directory_name)))
                 .when(added, |el| {
-                    el.end_slot(Label::new("Added").size(LabelSize::XSmall))
+                    el.end_slot(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Check)
+                                    .size(IconSize::Small)
+                                    .color(Color::Success),
+                            )
+                            .child(Label::new("Added").size(LabelSize::Small)),
+                    )
                 }),
         )
     }

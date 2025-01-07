@@ -514,13 +514,15 @@ fn text_object(
 
     let excerpt = snapshot.excerpt_containing(offset..offset)?;
     let buffer = excerpt.buffer();
+    let offset = excerpt.map_offset_to_buffer(offset);
 
     let mut matches: Vec<Range<usize>> = buffer
         .text_object_ranges(offset..offset, TreeSitterOptions::default())
         .filter_map(|(r, m)| if m == target { Some(r) } else { None })
         .collect();
     matches.sort_by_key(|r| (r.end - r.start));
-    if let Some(range) = matches.first() {
+    if let Some(buffer_range) = matches.first() {
+        let range = excerpt.map_range_from_buffer(buffer_range.clone());
         return Some(range.start.to_display_point(map)..range.end.to_display_point(map));
     }
 
@@ -537,12 +539,14 @@ fn text_object(
         .filter_map(|(r, m)| if m == target { Some(r) } else { None })
         .collect();
     matches.sort_by_key(|r| r.start);
-    if let Some(range) = matches.first() {
-        if !range.is_empty() {
+    if let Some(buffer_range) = matches.first() {
+        if !buffer_range.is_empty() {
+            let range = excerpt.map_range_from_buffer(buffer_range.clone());
             return Some(range.start.to_display_point(map)..range.end.to_display_point(map));
         }
     }
-    return Some(around_range.start.to_display_point(map)..around_range.end.to_display_point(map));
+    let buffer_range = excerpt.map_range_from_buffer(around_range.clone());
+    return Some(buffer_range.start.to_display_point(map)..buffer_range.end.to_display_point(map));
 }
 
 fn argument(

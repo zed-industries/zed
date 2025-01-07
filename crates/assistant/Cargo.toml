@@ -103,6 +103,7 @@ pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
 rand.workspace = true
 serde_json_lenient.workspace = true
+terminal_view = { workspace = true, features = ["test-support"] }
 text = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
 unindent.workspace = true

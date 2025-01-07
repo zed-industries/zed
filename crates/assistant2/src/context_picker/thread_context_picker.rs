@@ -209,7 +209,16 @@ impl PickerDelegate for ThreadContextPickerDelegate {
                 .toggle_state(selected)
                 .child(Label::new(thread.summary.clone()))
                 .when(added, |el| {
-                    el.end_slot(Label::new("Added").size(LabelSize::XSmall))
+                    el.end_slot(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Check)
+                                    .size(IconSize::Small)
+                                    .color(Color::Success),
+                            )
+                            .child(Label::new("Added").size(LabelSize::Small)),
+                    )
                 }),
         )
     }
