@@ -197,36 +197,6 @@ impl ProjectTree {
                 }),
             }
         }
-        // for ancestor in path.ancestors().skip(1) {
-        //     worktree_roots.update(cx, |this, _| {
-        //         let adapter_roots = this.roots.entry(ancestor.into()).or_default();
-        //         for (ix, adapter) in adapters.iter().enumerate() {
-        //             match adapter_roots.entry(adapter.name.clone()) {
-        //                 TreeEntry::Vacant(vacant_entry) => {
-        //                     let root = adapter.find_closest_project_root(worktree_id, path.clone());
-        //                     vacant_entry.insert(root.is_some());
-        //                     if let Some(root) = root {
-        //                         roots.insert(
-        //                             AdapterWrapper(adapter.clone()),
-        //                             (worktree_id, root).into(),
-        //                         );
-        //                     }
-        //                 }
-        //                 TreeEntry::Occupied(occupied_entry) => {
-        //                     let is_root = *occupied_entry.get();
-        //                     if is_root {
-        //                         roots.insert(
-        //                             AdapterWrapper(adapter.clone()),
-        //                             (worktree_id, ancestor).into(),
-        //                         );
-        //                     }
-
-        //                     continue;
-        //                 }
-        //             }
-        //         }
-        //     });
-        // }
 
         roots
             .into_iter()
@@ -244,6 +214,11 @@ impl ProjectTree {
                 self.root_points.remove(&worktree_id);
             }
             _ => {}
+        }
+    }
+    fn remove(&mut self, key: &(WorktreeId, LanguageServerName), cx: &mut AppContext) {
+        if let Some(roots) = self.root_points.get(&key.0) {
+            roots.update(cx, |this, cx| this.roots.remove_label(&key.1));
         }
     }
 }

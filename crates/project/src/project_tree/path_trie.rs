@@ -101,6 +101,10 @@ impl<Label: Ord> RootPathTrie<Label> {
             current.children.remove(final_entry_name);
         }
     }
+    /// Remove all labels from this trie.
+    pub(super) fn remove_label(&mut self, label: &Label) {
+        todo!();
+    }
 }
 
 /// [TriePath] is a [Path] preprocessed for amortizing the cost of doing multiple lookups in distinct [RootPathTrie]s.

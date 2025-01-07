@@ -107,4 +107,21 @@ impl LanguageServerTree {
                 .clone()
         })
     }
+
+    /// Get all language servers for a given project path that have already been initialized.
+    pub(crate) fn get_initialized<'a>(
+        &'a mut self,
+        path: ProjectPath,
+        language: LanguageName,
+        cx: &mut AppContext,
+    ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
+        self.get(path, language, cx)
+            .filter(|node| node.server_id().is_some())
+    }
+
+    pub(crate) fn remove(&mut self, key: (WorktreeId, LanguageServerName), cx: &mut AppContext) {
+        self.project_tree.update(cx, |this, cx| {
+            if let Some(worktree_servers) = this.root_points.get(&key.0) {}
+        });
+    }
 }
