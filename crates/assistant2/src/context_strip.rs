@@ -1,21 +1,26 @@
 use std::rc::Rc;
 
-use gpui::{FocusHandle, Model, View, WeakModel, WeakView};
-use ui::{prelude::*, PopoverMenu, PopoverMenuHandle, Tooltip};
+use editor::Editor;
+use gpui::{AppContext, FocusHandle, Model, View, WeakModel, WeakView};
+use language::Buffer;
+use ui::{prelude::*, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip};
 use workspace::Workspace;
 
+use crate::context::ContextKind;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
+use crate::thread::Thread;
 use crate::thread_store::ThreadStore;
 use crate::ui::ContextPill;
-use crate::ToggleContextPicker;
-use settings::Settings;
+use crate::{AssistantPanel, ToggleContextPicker};
 
 pub struct ContextStrip {
     context_store: Model<ContextStore>,
     context_picker: View<ContextPicker>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     focus_handle: FocusHandle,
+    suggest_context_kind: SuggestContextKind,
+    workspace: WeakView<Workspace>,
 }
 
 impl ContextStrip {
@@ -25,6 +30,7 @@ impl ContextStrip {
         thread_store: Option<WeakModel<ThreadStore>>,
         focus_handle: FocusHandle,
         context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
+        suggest_context_kind: SuggestContextKind,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         Self {
@@ -40,15 +46,79 @@ impl ContextStrip {
             }),
             context_picker_menu_handle,
             focus_handle,
+            suggest_context_kind,
+            workspace,
         }
+    }
+
+    fn suggested_context(&self, cx: &ViewContext<Self>) -> Option<SuggestedContext> {
+        match self.suggest_context_kind {
+            SuggestContextKind::File => self.suggested_file(cx),
+            SuggestContextKind::Thread => self.suggested_thread(cx),
+        }
+    }
+
+    fn suggested_file(&self, cx: &ViewContext<Self>) -> Option<SuggestedContext> {
+        let workspace = self.workspace.upgrade()?;
+        let active_item = workspace.read(cx).active_item(cx)?;
+
+        let editor = active_item.to_any().downcast::<Editor>().ok()?.read(cx);
+        let active_buffer = editor.buffer().read(cx).as_singleton()?;
+
+        let path = active_buffer.read(cx).file()?.path();
+
+        if self.context_store.read(cx).included_file(path).is_some() {
+            return None;
+        }
+
+        let name = match path.file_name() {
+            Some(name) => name.to_string_lossy().into_owned().into(),
+            None => path.to_string_lossy().into_owned().into(),
+        };
+
+        Some(SuggestedContext::File {
+            name,
+            buffer: active_buffer.downgrade(),
+        })
+    }
+
+    fn suggested_thread(&self, cx: &ViewContext<Self>) -> Option<SuggestedContext> {
+        let workspace = self.workspace.upgrade()?;
+        let active_thread = workspace
+            .read(cx)
+            .panel::<AssistantPanel>(cx)?
+            .read(cx)
+            .active_thread(cx);
+        let weak_active_thread = active_thread.downgrade();
+
+        let active_thread = active_thread.read(cx);
+
+        if self
+            .context_store
+            .read(cx)
+            .included_thread(active_thread.id())
+            .is_some()
+        {
+            return None;
+        }
+
+        Some(SuggestedContext::Thread {
+            name: active_thread.summary().unwrap_or("New Thread".into()),
+            thread: weak_active_thread,
+        })
     }
 }
 
 impl Render for ContextStrip {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let context = self.context_store.read(cx).context().clone();
+        let context_store = self.context_store.read(cx);
+        let context = context_store.context().clone();
         let context_picker = self.context_picker.clone();
         let focus_handle = self.focus_handle.clone();
+
+        let suggested_context = self.suggested_context(cx);
+
+        let dupe_names = context_store.duplicated_names();
 
         h_flex()
             .flex_wrap()
@@ -60,13 +130,17 @@ impl Render for ContextStrip {
                         IconButton::new("add-context", IconName::Plus)
                             .icon_size(IconSize::Small)
                             .style(ui::ButtonStyle::Filled)
-                            .tooltip(move |cx| {
-                                Tooltip::for_action_in(
-                                    "Add Context",
-                                    &ToggleContextPicker,
-                                    &focus_handle,
-                                    cx,
-                                )
+                            .tooltip({
+                                let focus_handle = focus_handle.clone();
+
+                                move |cx| {
+                                    Tooltip::for_action_in(
+                                        "Add Context",
+                                        &ToggleContextPicker,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
                             }),
                     )
                     .attach(gpui::Corner::TopLeft)
@@ -77,41 +151,57 @@ impl Render for ContextStrip {
                     })
                     .with_handle(self.context_picker_menu_handle.clone()),
             )
-            .when(context.is_empty(), {
+            .when(context.is_empty() && suggested_context.is_none(), {
                 |parent| {
                     parent.child(
                         h_flex()
-                            .id("no-content-info")
                             .ml_1p5()
                             .gap_2()
-                            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                            .text_size(TextSize::Small.rems(cx))
-                            .text_color(cx.theme().colors().text_muted)
-                            .child("Add Context")
-                            .children(
-                                ui::KeyBinding::for_action_in(
-                                    &ToggleContextPicker,
-                                    &self.focus_handle,
-                                    cx,
-                                )
-                                .map(|binding| binding.into_any_element()),
+                            .child(
+                                Label::new("Add Context")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
                             )
-                            .opacity(0.5),
+                            .opacity(0.5)
+                            .children(
+                                KeyBinding::for_action_in(&ToggleContextPicker, &focus_handle, cx)
+                                    .map(|binding| binding.into_any_element()),
+                            ),
                     )
                 }
             })
             .children(context.iter().map(|context| {
-                ContextPill::new(context.clone()).on_remove({
-                    let context = context.clone();
-                    let context_store = self.context_store.clone();
-                    Rc::new(cx.listener(move |_this, _event, cx| {
-                        context_store.update(cx, |this, _cx| {
-                            this.remove_context(&context.id);
-                        });
-                        cx.notify();
-                    }))
-                })
+                ContextPill::new_added(
+                    context.clone(),
+                    dupe_names.contains(&context.name),
+                    Some({
+                        let context = context.clone();
+                        let context_store = self.context_store.clone();
+                        Rc::new(cx.listener(move |_this, _event, cx| {
+                            context_store.update(cx, |this, _cx| {
+                                this.remove_context(&context.id);
+                            });
+                            cx.notify();
+                        }))
+                    }),
+                )
             }))
+            .when_some(suggested_context, |el, suggested| {
+                el.child(ContextPill::new_suggested(
+                    suggested.name().clone(),
+                    suggested.kind(),
+                    {
+                        let context_store = self.context_store.clone();
+                        Rc::new(cx.listener(move |_this, _event, cx| {
+                            context_store.update(cx, |context_store, cx| {
+                                suggested.accept(context_store, cx);
+                            });
+
+                            cx.notify();
+                        }))
+                    },
+                ))
+            })
             .when(!context.is_empty(), {
                 move |parent| {
                     parent.child(
@@ -128,5 +218,53 @@ impl Render for ContextStrip {
                     )
                 }
             })
+    }
+}
+
+pub enum SuggestContextKind {
+    File,
+    Thread,
+}
+
+#[derive(Clone)]
+pub enum SuggestedContext {
+    File {
+        name: SharedString,
+        buffer: WeakModel<Buffer>,
+    },
+    Thread {
+        name: SharedString,
+        thread: WeakModel<Thread>,
+    },
+}
+
+impl SuggestedContext {
+    pub fn name(&self) -> &SharedString {
+        match self {
+            Self::File { name, .. } => name,
+            Self::Thread { name, .. } => name,
+        }
+    }
+
+    pub fn accept(&self, context_store: &mut ContextStore, cx: &mut AppContext) {
+        match self {
+            Self::File { buffer, name: _ } => {
+                if let Some(buffer) = buffer.upgrade() {
+                    context_store.insert_file(buffer.read(cx));
+                };
+            }
+            Self::Thread { thread, name: _ } => {
+                if let Some(thread) = thread.upgrade() {
+                    context_store.insert_thread(thread.read(cx));
+                };
+            }
+        }
+    }
+
+    pub fn kind(&self) -> ContextKind {
+        match self {
+            Self::File { .. } => ContextKind::File,
+            Self::Thread { .. } => ContextKind::Thread,
+        }
     }
 }

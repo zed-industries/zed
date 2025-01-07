@@ -1768,7 +1768,7 @@ message Entry {
     bool is_ignored = 7;
     bool is_external = 8;
     reserved 6;
-    optional GitStatus git_status = 9;
+    reserved 9;
     bool is_fifo = 10;
     optional uint64 size = 11;
     optional string canonical_path = 12;
@@ -1777,6 +1777,8 @@ message Entry {
 message RepositoryEntry {
     uint64 work_directory_id = 1;
     optional string branch = 2;
+    repeated StatusEntry updated_statuses = 3;
+    repeated string removed_statuses = 4;
 }
 
 message StatusEntry {
@@ -1788,6 +1790,7 @@ enum GitStatus {
     Added = 0;
     Modified = 1;
     Conflict = 2;
+    Deleted = 3;
 }
 
 message BufferState {

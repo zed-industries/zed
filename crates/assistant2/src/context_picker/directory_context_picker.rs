@@ -1,21 +1,18 @@
-// TODO: Remove this when we finish the implementation.
-#![allow(unused)]
-
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use anyhow::anyhow;
 use fuzzy::PathMatch;
 use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakModel, WeakView};
 use picker::{Picker, PickerDelegate};
-use project::{PathMatchCandidateSet, WorktreeId};
+use project::{PathMatchCandidateSet, ProjectPath, Worktree, WorktreeId};
 use ui::{prelude::*, ListItem};
 use util::ResultExt as _;
 use workspace::Workspace;
 
-use crate::context::ContextKind;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
-use crate::context_store::ContextStore;
+use crate::context_store::{push_fenced_codeblock, ContextStore};
 
 pub struct DirectoryContextPicker {
     picker: View<Picker<DirectoryContextPickerDelegate>>,
@@ -190,22 +187,77 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
             return;
         };
         let path = mat.path.clone();
+
+        if self
+            .context_store
+            .update(cx, |context_store, _cx| {
+                if let Some(context_id) = context_store.included_directory(&path) {
+                    context_store.remove_context(&context_id);
+                    true
+                } else {
+                    false
+                }
+            })
+            .unwrap_or(true)
+        {
+            return;
+        }
+
         let worktree_id = WorktreeId::from_usize(mat.worktree_id);
         let confirm_behavior = self.confirm_behavior;
         cx.spawn(|this, mut cx| async move {
+            let worktree = project.update(&mut cx, |project, cx| {
+                project
+                    .worktree_for_id(worktree_id, cx)
+                    .ok_or_else(|| anyhow!("no worktree found for {worktree_id:?}"))
+            })??;
+
+            let files = worktree.update(&mut cx, |worktree, _cx| {
+                collect_files_in_path(worktree, &path)
+            })?;
+
+            let open_buffer_tasks = project.update(&mut cx, |project, cx| {
+                files
+                    .into_iter()
+                    .map(|file_path| {
+                        project.open_buffer(
+                            ProjectPath {
+                                worktree_id,
+                                path: file_path.clone(),
+                            },
+                            cx,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })?;
+
+            let open_all_buffers_tasks = cx.background_executor().spawn(async move {
+                let mut buffers = Vec::with_capacity(open_buffer_tasks.len());
+
+                for open_buffer_task in open_buffer_tasks {
+                    let buffer = open_buffer_task.await?;
+
+                    buffers.push(buffer);
+                }
+
+                anyhow::Ok(buffers)
+            });
+
+            let buffers = open_all_buffers_tasks.await?;
+
             this.update(&mut cx, |this, cx| {
                 let mut text = String::new();
 
-                // TODO: Add the files from the selected directory.
+                for buffer in buffers {
+                    let buffer = buffer.read(cx);
+                    let path = buffer.file().map_or(&path, |file| file.path());
+                    push_fenced_codeblock(&path, buffer.text(), &mut text);
+                }
 
                 this.delegate
                     .context_store
-                    .update(cx, |context_store, cx| {
-                        context_store.insert_context(
-                            ContextKind::Directory,
-                            path.to_string_lossy().to_string(),
-                            text,
-                        );
+                    .update(cx, |context_store, _cx| {
+                        context_store.insert_directory(&path, text);
                     })?;
 
                 match confirm_behavior {
@@ -234,16 +286,40 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let path_match = &self.matches[ix];
         let directory_name = path_match.path.to_string_lossy().to_string();
+
+        let added = self.context_store.upgrade().map_or(false, |context_store| {
+            context_store
+                .read(cx)
+                .included_directory(&path_match.path)
+                .is_some()
+        });
 
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .toggle_state(selected)
-                .child(h_flex().gap_2().child(Label::new(directory_name))),
+                .child(h_flex().gap_2().child(Label::new(directory_name)))
+                .when(added, |el| {
+                    el.end_slot(Label::new("Added").size(LabelSize::XSmall))
+                }),
         )
     }
+}
+
+fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {
+    let mut files = Vec::new();
+
+    for entry in worktree.child_entries(path) {
+        if entry.is_dir() {
+            files.extend(collect_files_in_path(worktree, &entry.path));
+        } else if entry.is_file() {
+            files.push(entry.path.clone());
+        }
+    }
+
+    files
 }

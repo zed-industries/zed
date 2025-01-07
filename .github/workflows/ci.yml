@@ -35,9 +35,17 @@ jobs:
       - name: Check for non-docs changes
         id: check_changes
         run: |
-          if git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.sha }} | grep -qvE '^docs/'; then
+          if [ "${{ github.event_name }}" == "merge_group" ]; then
+            # When we're running in a merge queue, never assume that the changes
+            # are docs-only, as there could be other PRs in the group that
+            # contain non-docs changes.
+            echo "Running in the merge queue"
+            echo "docs_only=false" >> $GITHUB_OUTPUT
+          elif git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.sha }} | grep -qvE '^docs/'; then
+            echo "Detected non-docs changes"
             echo "docs_only=false" >> $GITHUB_OUTPUT
           else
+            echo "Docs-only change"
             echo "docs_only=true" >> $GITHUB_OUTPUT
           fi
 
@@ -175,7 +183,7 @@ jobs:
 
       - name: Cache dependencies
         if: needs.check_docs_only.outputs.docs_only == 'false'
-        uses: swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaab # v2
+        uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-provider: "buildjet"
@@ -216,7 +224,7 @@ jobs:
 
       - name: Cache dependencies
         if: needs.check_docs_only.outputs.docs_only == 'false'
-        uses: swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaab # v2
+        uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-provider: "buildjet"
@@ -247,7 +255,7 @@ jobs:
 
       - name: Cache dependencies
         if: needs.check_docs_only.outputs.docs_only == 'false'
-        uses: swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaab # v2
+        uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-provider: "github"

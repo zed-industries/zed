@@ -87,9 +87,8 @@ pub use language::Location;
 #[cfg(any(test, feature = "test-support"))]
 pub use prettier::FORMAT_SUFFIX as TEST_PRETTIER_FORMAT_SUFFIX;
 pub use worktree::{
-    Entry, EntryKind, File, LocalWorktree, PathChange, ProjectEntryId, RepositoryEntry,
-    UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings,
-    FS_WATCH_LATENCY,
+    Entry, EntryKind, File, LocalWorktree, PathChange, ProjectEntryId, UpdatedEntriesSet,
+    UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings, FS_WATCH_LATENCY,
 };
 
 const SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
@@ -3487,7 +3486,18 @@ impl LspStore {
         };
         let file = File::from_dyn(buffer.file()).and_then(File::as_local);
         if let (Some(file), Some(language_server)) = (file, language_server) {
-            let lsp_params = request.to_lsp(&file.abs_path(cx), buffer, &language_server, cx);
+            let lsp_params = match request.to_lsp(&file.abs_path(cx), buffer, &language_server, cx)
+            {
+                Ok(lsp_params) => lsp_params,
+                Err(err) => {
+                    log::error!(
+                        "Preparing LSP request to {} failed: {}",
+                        language_server.name(),
+                        err
+                    );
+                    return Task::ready(Err(err));
+                }
+            };
             let status = request.status();
             return cx.spawn(move |this, cx| async move {
                 if !request.check_capabilities(language_server.adapter_server_capabilities()) {
@@ -3536,11 +3546,7 @@ impl LspStore {
                 let result = lsp_request.await;
 
                 let response = result.map_err(|err| {
-                    log::warn!(
-                        "Generic lsp request to {} failed: {}",
-                        language_server.name(),
-                        err
-                    );
+                    log::warn!("LSP request to {} failed: {}", language_server.name(), err);
                     err
                 })?;
 

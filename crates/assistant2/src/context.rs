@@ -17,11 +17,13 @@ impl ContextId {
 pub struct Context {
     pub id: ContextId,
     pub name: SharedString,
+    pub parent: Option<SharedString>,
+    pub tooltip: Option<SharedString>,
     pub kind: ContextKind,
     pub text: SharedString,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum ContextKind {
     File,
     Directory,
@@ -40,7 +42,7 @@ pub fn attach_context_to_message(
 
     for context in context.into_iter() {
         match context.kind {
-            ContextKind::File => {
+            ContextKind::File { .. } => {
                 file_context.push_str(&context.text);
                 file_context.push('\n');
             }

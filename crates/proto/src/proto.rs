@@ -680,7 +680,7 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
         if !repository_map.is_empty() {
             for entry in &updated_entries {
                 if let Some(repo) = repository_map.remove(&entry.id) {
-                    updated_repositories.push(repo)
+                    updated_repositories.push(repo);
                 }
             }
         }

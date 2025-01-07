@@ -6,7 +6,7 @@ use crate::{
     },
     editor_settings::{
         CurrentLineHighlight, DoubleClickInMultibuffer, MultiCursorModifier, ScrollBeyondLastLine,
-        ShowScrollbar,
+        ScrollbarDiagnostics, ShowScrollbar,
     },
     git::blame::{CommitDetails, GitBlame},
     hover_popover::{
@@ -45,7 +45,7 @@ use language::{
         IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings,
         ShowWhitespaceSetting,
     },
-    ChunkRendererContext,
+    ChunkRendererContext, DiagnosticEntry,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
@@ -342,7 +342,7 @@ impl EditorElement {
                 .detach_and_log_err(cx);
         });
         register_action(view, cx, Editor::open_url);
-        register_action(view, cx, Editor::open_file);
+        register_action(view, cx, Editor::open_selected_filename);
         register_action(view, cx, Editor::fold);
         register_action(view, cx, Editor::fold_at_level);
         register_action(view, cx, Editor::fold_all);
@@ -599,8 +599,15 @@ impl EditorElement {
                 .row;
             if let Some((_, Some(hitbox))) = line_numbers.get(&MultiBufferRow(multi_buffer_row)) {
                 if hitbox.contains(&event.position) {
+                    let scroll_position_row =
+                        position_map.scroll_pixel_position.y / position_map.line_height;
+                    let line_offset_from_top = display_row - scroll_position_row as u32;
+
                     editor.open_excerpts_common(
-                        Some(JumpData::MultiBufferRow(MultiBufferRow(multi_buffer_row))),
+                        Some(JumpData::MultiBufferRow {
+                            row: MultiBufferRow(multi_buffer_row),
+                            line_offset_from_top,
+                        }),
                         modifiers.alt,
                         cx,
                     );
@@ -1228,7 +1235,7 @@ impl EditorElement {
                     (is_singleton && scrollbar_settings.selected_symbol && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
                     ||
                     // Diagnostics
-                    (is_singleton && scrollbar_settings.diagnostics && snapshot.buffer_snapshot.has_diagnostics())
+                    (is_singleton && scrollbar_settings.diagnostics != ScrollbarDiagnostics::None && snapshot.buffer_snapshot.has_diagnostics())
                     ||
                     // Cursors out of sight
                     non_visible_cursors
@@ -2959,7 +2966,12 @@ impl EditorElement {
         selected_buffer_ids: &Vec<BufferId>,
         cx: &mut WindowContext,
     ) -> AnyElement {
-        let jump_data = header_jump_data(snapshot, DisplayRow(0), FILE_HEADER_HEIGHT, excerpt);
+        let jump_data = header_jump_data(
+            snapshot,
+            DisplayRow(scroll_position as u32),
+            FILE_HEADER_HEIGHT + MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+            excerpt,
+        );
 
         let editor_bg_color = cx.theme().colors().editor_background;
 
@@ -4726,13 +4738,39 @@ impl EditorElement {
                                 }
                             }
 
-                            if scrollbar_settings.diagnostics {
+                            if scrollbar_settings.diagnostics != ScrollbarDiagnostics::None {
                                 let diagnostics = snapshot
                                     .buffer_snapshot
-                                    .diagnostics_in_range::<_, Point>(
-                                        Point::zero()..max_point,
-                                        false,
-                                    )
+                                    .diagnostics_in_range(Point::zero()..max_point, false)
+                                    .map(|DiagnosticEntry { diagnostic, range }| DiagnosticEntry {
+                                        diagnostic,
+                                        range: range.to_point(&snapshot.buffer_snapshot),
+                                    })
+                                    // Don't show diagnostics the user doesn't care about
+                                    .filter(|diagnostic| {
+                                        match (
+                                            scrollbar_settings.diagnostics,
+                                            diagnostic.diagnostic.severity,
+                                        ) {
+                                            (ScrollbarDiagnostics::All, _) => true,
+                                            (
+                                                ScrollbarDiagnostics::Error,
+                                                DiagnosticSeverity::ERROR,
+                                            ) => true,
+                                            (
+                                                ScrollbarDiagnostics::Warning,
+                                                DiagnosticSeverity::ERROR
+                                                | DiagnosticSeverity::WARNING,
+                                            ) => true,
+                                            (
+                                                ScrollbarDiagnostics::Information,
+                                                DiagnosticSeverity::ERROR
+                                                | DiagnosticSeverity::WARNING
+                                                | DiagnosticSeverity::INFORMATION,
+                                            ) => true,
+                                            (_, _) => false,
+                                        }
+                                    })
                                     // We want to sort by severity, in order to paint the most severe diagnostics last.
                                     .sorted_by_key(|diagnostic| {
                                         std::cmp::Reverse(diagnostic.diagnostic.severity)
@@ -5096,13 +5134,12 @@ fn header_jump_data(
     let offset_from_excerpt_start = if jump_anchor == excerpt_start {
         0
     } else {
-        let excerpt_start_row = language::ToPoint::to_point(&jump_anchor, buffer).row;
+        let excerpt_start_row = language::ToPoint::to_point(&excerpt_start, buffer).row;
         jump_position.row - excerpt_start_row
     };
 
-    let line_offset_from_top = block_row_start.0
-        + height
-        + offset_from_excerpt_start.saturating_sub(
+    let line_offset_from_top = (block_row_start.0 + height + offset_from_excerpt_start)
+        .saturating_sub(
             snapshot
                 .scroll_anchor
                 .scroll_position(&snapshot.display_snapshot)

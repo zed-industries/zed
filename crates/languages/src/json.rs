@@ -76,6 +76,7 @@ impl JsonLspAdapter {
 
     fn get_workspace_config(language_names: Vec<String>, cx: &mut AppContext) -> Value {
         let action_names = cx.all_action_names();
+        let deprecations = cx.action_deprecations();
 
         let font_names = &cx.text_system().all_font_names();
         let settings_schema = cx.global::<SettingsStore>().json_schema(
@@ -116,7 +117,7 @@ impl JsonLspAdapter {
                     },
                     {
                         "fileMatch": [schema_file_match(paths::keymap_file())],
-                        "schema": KeymapFile::generate_json_schema(action_names),
+                        "schema": KeymapFile::generate_json_schema(action_names, deprecations),
                     },
                     {
                         "fileMatch": [

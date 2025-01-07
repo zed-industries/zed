@@ -164,6 +164,27 @@ impl Thread {
         id
     }
 
+    /// Returns the representation of this [`Thread`] in a textual form.
+    ///
+    /// This is the representation we use when attaching a thread as context to another thread.
+    pub fn text(&self) -> String {
+        let mut text = String::new();
+
+        for message in &self.messages {
+            text.push_str(match message.role {
+                language_model::Role::User => "User:",
+                language_model::Role::Assistant => "Assistant:",
+                language_model::Role::System => "System:",
+            });
+            text.push('\n');
+
+            text.push_str(&message.text);
+            text.push('\n');
+        }
+
+        text
+    }
+
     pub fn to_completion_request(
         &self,
         _request_kind: RequestKind,

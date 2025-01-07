@@ -534,7 +534,7 @@ List of `string` values
   "git_diff": true,
   "search_results": true,
   "selected_symbol": true,
-  "diagnostics": true,
+  "diagnostics": "all",
   "axes": {
     "horizontal": true,
     "vertical": true,
@@ -624,13 +624,51 @@ List of `string` values
 
 ### Diagnostics
 
-- Description: Whether to show diagnostic indicators in the scrollbar.
+- Description: Which diagnostic indicators to show in the scrollbar.
 - Setting: `diagnostics`
-- Default: `true`
+- Default: `all`
 
 **Options**
 
-`boolean` values
+1. Show all diagnostics:
+
+```json
+{
+  "diagnostics": "all"
+}
+```
+
+2. Do not show any diagnostics:
+
+```json
+{
+  "diagnostics": "none"
+}
+```
+
+3. Show only errors:
+
+```json
+{
+  "diagnostics": "error"
+}
+```
+
+4. Show only errors and warnings:
+
+```json
+{
+  "diagnostics": "warning"
+}
+```
+
+5. Show only errors, warnings, and information:
+
+```json
+{
+  "diagnostics": "information"
+}
+```
 
 ### Axes
 

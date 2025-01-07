@@ -118,7 +118,7 @@ impl InlineAssistant {
             };
             let enabled = AssistantSettings::get_global(cx).enabled;
             terminal_panel.update(cx, |terminal_panel, cx| {
-                terminal_panel.asssistant_enabled(enabled, cx)
+                terminal_panel.set_assistant_enabled(enabled, cx)
             });
         })
         .detach();
@@ -871,10 +871,11 @@ impl InlineAssistant {
             if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
                 let language_name = assist.editor.upgrade().and_then(|editor| {
                     let multibuffer = editor.read(cx).buffer().read(cx);
-                    let ranges = multibuffer.range_to_buffer_ranges(assist.range.clone(), cx);
+                    let snapshot = multibuffer.snapshot(cx);
+                    let ranges = snapshot.range_to_buffer_ranges(assist.range.clone());
                     ranges
                         .first()
-                        .and_then(|(buffer, _, _)| buffer.read(cx).language())
+                        .and_then(|(excerpt, _)| excerpt.buffer().language())
                         .map(|language| language.name())
                 });
                 report_assistant_event(
