@@ -62,7 +62,6 @@ pub enum WorktreeStoreEvent {
     WorktreeReleased(EntityId, WorktreeId),
     WorktreeOrderChanged,
     WorktreeUpdateSent(Model<Worktree>),
-    GitRepositoryUpdated,
 }
 
 impl EventEmitter<WorktreeStoreEvent> for WorktreeStore {}
@@ -375,17 +374,6 @@ impl WorktreeStore {
             ));
             this.send_project_updates(cx);
         })
-        .detach();
-
-        cx.subscribe(
-            worktree,
-            |_this, _, event: &worktree::Event, cx| match event {
-                worktree::Event::UpdatedGitRepositories(_) => {
-                    cx.emit(WorktreeStoreEvent::GitRepositoryUpdated);
-                }
-                worktree::Event::DeletedEntry(_) | worktree::Event::UpdatedEntries(_) => {}
-            },
-        )
         .detach();
     }
 

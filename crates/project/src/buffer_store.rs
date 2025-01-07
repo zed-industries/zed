@@ -404,7 +404,7 @@ impl LocalBufferStore {
         cx: &AppContext,
     ) -> Task<Result<Option<String>>> {
         let Some(file) = buffer.read(cx).file() else {
-            return Task::ready(Err(anyhow!("buffer has no file")));
+            return Task::ready(Ok(None));
         };
         let worktree_id = file.worktree_id(cx);
         let path = file.path().clone();

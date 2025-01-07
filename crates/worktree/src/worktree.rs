@@ -4737,6 +4737,7 @@ impl BackgroundScanner {
         Ok(())
     }
 
+    /// All list arguments should be sorted before calling this function
     async fn reload_entries_for_paths(
         &self,
         root_abs_path: Arc<Path>,
@@ -4793,11 +4794,16 @@ impl BackgroundScanner {
         // Group all relative paths by their git repository.
         let mut paths_by_git_repo = HashMap::default();
         for relative_path in relative_paths.iter() {
-            if let Some(local_repo) = state.snapshot.local_repo_for_path(relative_path) {
+            let repository_data = state
+                .snapshot
+                .local_repo_for_path(relative_path)
+                .zip(state.snapshot.repository_for_path(relative_path));
+            if let Some((local_repo, entry)) = repository_data {
                 if let Ok(repo_path) = local_repo.relativize(relative_path) {
                     paths_by_git_repo
                         .entry(local_repo.work_directory.clone())
                         .or_insert_with(|| RepoPaths {
+                            entry: entry.clone(),
                             repo: local_repo.repo_ptr.clone(),
                             repo_paths: Default::default(),
                         })
@@ -4809,37 +4815,52 @@ impl BackgroundScanner {
         for (work_directory, mut paths) in paths_by_git_repo {
             if let Ok(status) = paths.repo.status(&paths.repo_paths) {
                 let mut changed_path_statuses = Vec::new();
+                let statuses = paths.entry.statuses_by_path.clone();
+                let mut cursor = statuses.cursor::<PathProgress>(&());
+
                 for (repo_path, status) in &*status.entries {
                     paths.remove_repo_path(repo_path);
+                    if cursor.seek_forward(&PathTarget::Path(&repo_path), Bias::Left, &()) {
+                        if cursor.item().unwrap().status == *status {
+                            continue;
+                        }
+                    }
 
                     changed_path_statuses.push(Edit::Insert(StatusEntry {
                         repo_path: repo_path.clone(),
                         status: *status,
                     }));
                 }
+
+                let mut cursor = statuses.cursor::<PathProgress>(&());
                 for path in paths.repo_paths {
-                    changed_path_statuses.push(Edit::Remove(PathKey(path.0)));
+                    if cursor.seek_forward(&PathTarget::Path(&path), Bias::Left, &()) {
+                        changed_path_statuses.push(Edit::Remove(PathKey(path.0)));
+                    }
                 }
 
-                let work_directory_id = state.snapshot.repositories.update(
-                    &work_directory.path_key(),
-                    &(),
-                    move |repository_entry| {
-                        repository_entry
-                            .statuses_by_path
-                            .edit(changed_path_statuses, &());
-                        repository_entry.work_directory_id
-                    },
-                );
+                if !changed_path_statuses.is_empty() {
+                    let work_directory_id = state.snapshot.repositories.update(
+                        &work_directory.path_key(),
+                        &(),
+                        move |repository_entry| {
+                            repository_entry
+                                .statuses_by_path
+                                .edit(changed_path_statuses, &());
 
-                if let Some(work_directory_id) = work_directory_id {
-                    let scan_id = state.snapshot.scan_id;
-                    state.snapshot.git_repositories.update(
-                        &work_directory_id,
-                        |local_repository_entry| {
-                            local_repository_entry.status_scan_id = scan_id;
+                            repository_entry.work_directory_id
                         },
                     );
+
+                    if let Some(work_directory_id) = work_directory_id {
+                        let scan_id = state.snapshot.scan_id;
+                        state.snapshot.git_repositories.update(
+                            &work_directory_id,
+                            |local_repository_entry| {
+                                local_repository_entry.status_scan_id = scan_id;
+                            },
+                        );
+                    }
                 }
             }
         }
@@ -5435,6 +5456,7 @@ fn char_bag_for_path(root_char_bag: CharBag, path: &Path) -> CharBag {
 #[derive(Debug)]
 struct RepoPaths {
     repo: Arc<dyn GitRepository>,
+    entry: RepositoryEntry,
     // sorted
     repo_paths: Vec<RepoPath>,
 }
