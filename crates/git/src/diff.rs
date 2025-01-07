@@ -74,7 +74,7 @@ impl BufferDiff {
         }
     }
 
-    pub async fn build(diff_base: &str, buffer: &text::BufferSnapshot) -> Self {
+    pub fn build(diff_base: &str, buffer: &text::BufferSnapshot) -> Self {
         let mut tree = SumTree::new(buffer);
 
         let buffer_text = buffer.as_rope().to_string();
@@ -186,8 +186,8 @@ impl BufferDiff {
         self.tree = SumTree::new(buffer);
     }
 
-    pub async fn update(&mut self, diff_base: &Rope, buffer: &text::BufferSnapshot) {
-        *self = Self::build(&diff_base.to_string(), buffer).await;
+    pub fn update(&mut self, diff_base: &Rope, buffer: &text::BufferSnapshot) {
+        *self = Self::build(&diff_base.to_string(), buffer);
     }
 
     #[cfg(test)]
@@ -346,7 +346,7 @@ mod tests {
 
         let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
         let mut diff = BufferDiff::new(&buffer);
-        smol::block_on(diff.update(&diff_base_rope, &buffer));
+        diff.update(&diff_base_rope, &buffer);
         assert_hunks(
             diff.hunks(&buffer),
             &buffer,
@@ -355,7 +355,7 @@ mod tests {
         );
 
         buffer.edit([(0..0, "point five\n")]);
-        smol::block_on(diff.update(&diff_base_rope, &buffer));
+        diff.update(&diff_base_rope, &buffer);
         assert_hunks(
             diff.hunks(&buffer),
             &buffer,
@@ -407,7 +407,7 @@ mod tests {
 
         let buffer = Buffer::new(0, BufferId::new(1).unwrap(), buffer_text);
         let mut diff = BufferDiff::new(&buffer);
-        smol::block_on(diff.update(&diff_base_rope, &buffer));
+        diff.update(&diff_base_rope, &buffer);
         assert_eq!(diff.hunks(&buffer).count(), 8);
 
         assert_hunks(

@@ -2300,6 +2300,7 @@ impl BufferChangeSet {
         if let Some(base_text) = self.base_text.clone() {
             self.recalculate_diff_internal(base_text.read(cx).text(), buffer_snapshot, false, cx)
         } else {
+            dbg!("oops");
             oneshot::channel().1
         }
     }
@@ -2316,9 +2317,12 @@ impl BufferChangeSet {
         self.recalculate_diff_task = Some(cx.spawn(|this, mut cx| async move {
             let (base_text, diff) = cx
                 .background_executor()
-                .spawn(async move {
-                    let diff = BufferDiff::build(&base_text, &buffer_snapshot).await;
-                    (base_text, diff)
+                .spawn({
+                    let buffer_snapshot = buffer_snapshot.clone();
+                    async move {
+                        let diff = BufferDiff::build(&base_text, &buffer_snapshot);
+                        (base_text, diff)
+                    }
                 })
                 .await;
             this.update(&mut cx, |this, cx| {
@@ -2328,6 +2332,9 @@ impl BufferChangeSet {
                         Buffer::local_normalized(Rope::from(base_text), LineEnding::default(), cx)
                     }));
                 }
+                dbg!(diff
+                    .hunks_in_row_range(0..u32::MAX, &buffer_snapshot)
+                    .collect::<Vec<_>>());
                 this.diff_to_buffer = diff;
                 this.recalculate_diff_task.take();
                 for tx in this.diff_updated_futures.drain(..) {
@@ -2338,6 +2345,29 @@ impl BufferChangeSet {
             Ok(())
         }));
         rx
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn recalculate_diff_sync(
+        &mut self,
+        base_text: String,
+        buffer_snapshot: text::BufferSnapshot,
+        base_text_changed: bool,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let diff = BufferDiff::build(&base_text, &buffer_snapshot);
+        if base_text_changed {
+            self.base_text_version += 1;
+            self.base_text = Some(cx.new_model(|cx| {
+                Buffer::local_normalized(Rope::from(base_text), LineEnding::default(), cx)
+            }));
+        }
+        dbg!(diff
+            .hunks_in_row_range(0..u32::MAX, &buffer_snapshot)
+            .collect::<Vec<_>>());
+        self.diff_to_buffer = diff;
+        self.recalculate_diff_task.take();
+        cx.notify();
     }
 }
 
