@@ -5,7 +5,6 @@ use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, Wea
 use picker::{Picker, PickerDelegate};
 use ui::{prelude::*, ListItem};
 
-use crate::context::ContextKind;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store;
 use crate::thread::ThreadId;
@@ -169,11 +168,11 @@ impl PickerDelegate for ThreadContextPickerDelegate {
 
         self.context_store
             .update(cx, |context_store, cx| {
-                context_store.insert_context(
-                    ContextKind::Thread(thread.read(cx).id().clone()),
-                    entry.summary.clone(),
-                    thread.read(cx).text(),
-                );
+                if let Some(context_id) = context_store.included_thread(&entry.id) {
+                    context_store.remove_context(&context_id);
+                } else {
+                    context_store.insert_thread(thread.read(cx));
+                }
             })
             .ok();
 
@@ -196,15 +195,22 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let thread = &self.matches[ix];
+
+        let added = self.context_store.upgrade().map_or(false, |ctx_store| {
+            ctx_store.read(cx).included_thread(&thread.id).is_some()
+        });
 
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .toggle_state(selected)
-                .child(Label::new(thread.summary.clone())),
+                .child(Label::new(thread.summary.clone()))
+                .when(added, |el| {
+                    el.end_slot(Label::new("Added").size(LabelSize::XSmall))
+                }),
         )
     }
 }

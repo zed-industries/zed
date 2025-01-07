@@ -245,7 +245,6 @@ pub enum Event {
     ActivateProjectPanel,
     WorktreeAdded(WorktreeId),
     WorktreeOrderChanged,
-    GitRepositoryUpdated,
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
     WorktreeUpdatedGitRepositories(WorktreeId),
@@ -2308,7 +2307,6 @@ impl Project {
             }
             WorktreeStoreEvent::WorktreeOrderChanged => cx.emit(Event::WorktreeOrderChanged),
             WorktreeStoreEvent::WorktreeUpdateSent(_) => {}
-            WorktreeStoreEvent::GitRepositoryUpdated => cx.emit(Event::GitRepositoryUpdated),
         }
     }
 

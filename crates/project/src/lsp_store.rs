@@ -3155,7 +3155,6 @@ impl LspStore {
             WorktreeStoreEvent::WorktreeUpdateSent(worktree) => {
                 worktree.update(cx, |worktree, _cx| self.send_diagnostic_summaries(worktree));
             }
-            WorktreeStoreEvent::GitRepositoryUpdated => {}
         }
     }
 
@@ -3544,8 +3543,21 @@ impl LspStore {
 
         let buffer = buffer_handle.read(cx);
         let file = File::from_dyn(buffer.file()).and_then(File::as_local);
+
         if let Some(file) = file {
-            let lsp_params = request.to_lsp(&file.abs_path(cx), buffer, &language_server, cx);
+            let lsp_params = match request.to_lsp(&file.abs_path(cx), buffer, &language_server, cx)
+            {
+                Ok(lsp_params) => lsp_params,
+                Err(err) => {
+                    log::error!(
+                        "Preparing LSP request to {} failed: {}",
+                        language_server.name(),
+                        err
+                    );
+                    return Task::ready(Err(err));
+                }
+            };
+
             let status = request.status();
             return cx.spawn(move |this, cx| async move {
                 if !request.check_capabilities(language_server.adapter_server_capabilities()) {
@@ -3594,11 +3606,7 @@ impl LspStore {
                 let result = lsp_request.await;
 
                 let response = result.map_err(|err| {
-                    log::warn!(
-                        "Generic lsp request to {} failed: {}",
-                        language_server.name(),
-                        err
-                    );
+                    log::warn!("LSP request to {} failed: {}", language_server.name(), err);
                     err
                 })?;
 

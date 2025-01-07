@@ -253,7 +253,9 @@ impl SshSocket {
     // :WARNING: ssh unquotes arguments when executing on the remote :WARNING:
     // e.g. $ ssh host sh -c 'ls -l' is equivalent to $ ssh host sh -c ls -l
     // and passes -l as an argument to sh, not to ls.
-    // You need to do it like this: $ ssh host "sh -c 'ls -l /tmp'"
+    // Furthermore, some setups (e.g. Coder) will change directory when SSH'ing
+    // into a machine. You must use `cd` to get back to $HOME.
+    // You need to do it like this: $ ssh host "cd; sh -c 'ls -l /tmp'"
     fn ssh_command(&self, program: &str, args: &[&str]) -> process::Command {
         let mut command = util::command::new_smol_command("ssh");
         let to_run = iter::once(&program)
@@ -267,6 +269,7 @@ impl SshSocket {
                 shlex::try_quote(token).unwrap()
             })
             .join(" ");
+        let to_run = format!("cd; {to_run}");
         log::debug!("ssh {} {:?}", self.connection_options.ssh_url(), to_run);
         self.ssh_options(&mut command)
             .arg(self.connection_options.ssh_url())
