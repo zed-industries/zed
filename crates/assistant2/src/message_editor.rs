@@ -20,7 +20,7 @@ use workspace::Workspace;
 use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
-use crate::context_strip::{ContextStrip, SuggestContextKind};
+use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
 use crate::{Chat, ToggleContextPicker, ToggleModelSelector};
@@ -59,6 +59,7 @@ impl MessageEditor {
 
             editor
         });
+
         let inline_context_picker = cx.new_view(|cx| {
             ContextPicker::new(
                 workspace.clone(),
@@ -68,29 +69,33 @@ impl MessageEditor {
                 cx,
             )
         });
+
+        let context_strip = cx.new_view(|cx| {
+            ContextStrip::new(
+                context_store.clone(),
+                workspace.clone(),
+                Some(thread_store.clone()),
+                editor.focus_handle(cx),
+                context_picker_menu_handle.clone(),
+                SuggestContextKind::File,
+                cx,
+            )
+        });
+
         let subscriptions = vec![
             cx.subscribe(&editor, Self::handle_editor_event),
             cx.subscribe(
                 &inline_context_picker,
                 Self::handle_inline_context_picker_event,
             ),
+            cx.subscribe(&context_strip, Self::handle_context_strip_event),
         ];
 
         Self {
             thread,
             editor: editor.clone(),
-            context_store: context_store.clone(),
-            context_strip: cx.new_view(|cx| {
-                ContextStrip::new(
-                    context_store,
-                    workspace.clone(),
-                    Some(thread_store.clone()),
-                    editor.focus_handle(cx),
-                    context_picker_menu_handle.clone(),
-                    SuggestContextKind::File,
-                    cx,
-                )
-            }),
+            context_store,
+            context_strip,
             context_picker_menu_handle,
             inline_context_picker,
             inline_context_picker_menu_handle,
@@ -190,6 +195,16 @@ impl MessageEditor {
         &mut self,
         _inline_context_picker: View<ContextPicker>,
         _event: &DismissEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let editor_focus_handle = self.editor.focus_handle(cx);
+        cx.focus(&editor_focus_handle);
+    }
+
+    fn handle_context_strip_event(
+        &mut self,
+        _context_strip: View<ContextStrip>,
+        ContextStripEvent::PickerDismissed: &ContextStripEvent,
         cx: &mut ViewContext<Self>,
     ) {
         let editor_focus_handle = self.editor.focus_handle(cx);

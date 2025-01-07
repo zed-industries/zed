@@ -2,7 +2,7 @@ use crate::assistant_model_selector::AssistantModelSelector;
 use crate::buffer_codegen::BufferCodegen;
 use crate::context_picker::ContextPicker;
 use crate::context_store::ContextStore;
-use crate::context_strip::{ContextStrip, SuggestContextKind};
+use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::terminal_codegen::TerminalCodegen;
 use crate::thread_store::ThreadStore;
 use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist};
@@ -47,6 +47,7 @@ pub struct PromptEditor<T> {
     pending_prompt: String,
     _codegen_subscription: Subscription,
     editor_subscriptions: Vec<Subscription>,
+    _context_strip_subscription: Subscription,
     show_rate_limit_notice: bool,
     _phantom: std::marker::PhantomData<T>,
 }
@@ -726,6 +727,16 @@ impl<T: 'static> PromptEditor<T> {
             })
             .into_any_element()
     }
+
+    fn handle_context_strip_event(
+        &mut self,
+        _context_strip: View<ContextStrip>,
+        ContextStripEvent::PickerDismissed: &ContextStripEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let editor_focus_handle = self.editor.focus_handle(cx);
+        cx.focus(&editor_focus_handle);
+    }
 }
 
 pub enum PromptEditorMode {
@@ -803,19 +814,24 @@ impl PromptEditor<BufferCodegen> {
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
+        let context_strip = cx.new_view(|cx| {
+            ContextStrip::new(
+                context_store,
+                workspace.clone(),
+                thread_store.clone(),
+                prompt_editor.focus_handle(cx),
+                context_picker_menu_handle.clone(),
+                SuggestContextKind::Thread,
+                cx,
+            )
+        });
+
+        let context_strip_subscription =
+            cx.subscribe(&context_strip, Self::handle_context_strip_event);
+
         let mut this: PromptEditor<BufferCodegen> = PromptEditor {
             editor: prompt_editor.clone(),
-            context_strip: cx.new_view(|cx| {
-                ContextStrip::new(
-                    context_store,
-                    workspace.clone(),
-                    thread_store.clone(),
-                    prompt_editor.focus_handle(cx),
-                    context_picker_menu_handle.clone(),
-                    SuggestContextKind::Thread,
-                    cx,
-                )
-            }),
+            context_strip,
             context_picker_menu_handle,
             model_selector: cx.new_view(|cx| {
                 AssistantModelSelector::new(fs, model_selector_menu_handle.clone(), cx)
@@ -827,6 +843,7 @@ impl PromptEditor<BufferCodegen> {
             pending_prompt: String::new(),
             _codegen_subscription: codegen_subscription,
             editor_subscriptions: Vec::new(),
+            _context_strip_subscription: context_strip_subscription,
             show_rate_limit_notice: false,
             mode,
             _phantom: Default::default(),
@@ -943,19 +960,24 @@ impl PromptEditor<TerminalCodegen> {
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
+        let context_strip = cx.new_view(|cx| {
+            ContextStrip::new(
+                context_store,
+                workspace.clone(),
+                thread_store.clone(),
+                prompt_editor.focus_handle(cx),
+                context_picker_menu_handle.clone(),
+                SuggestContextKind::Thread,
+                cx,
+            )
+        });
+
+        let context_strip_subscription =
+            cx.subscribe(&context_strip, Self::handle_context_strip_event);
+
         let mut this = Self {
             editor: prompt_editor.clone(),
-            context_strip: cx.new_view(|cx| {
-                ContextStrip::new(
-                    context_store,
-                    workspace.clone(),
-                    thread_store.clone(),
-                    prompt_editor.focus_handle(cx),
-                    context_picker_menu_handle.clone(),
-                    SuggestContextKind::Thread,
-                    cx,
-                )
-            }),
+            context_strip,
             context_picker_menu_handle,
             model_selector: cx.new_view(|cx| {
                 AssistantModelSelector::new(fs, model_selector_menu_handle.clone(), cx)
@@ -967,6 +989,7 @@ impl PromptEditor<TerminalCodegen> {
             pending_prompt: String::new(),
             _codegen_subscription: codegen_subscription,
             editor_subscriptions: Vec::new(),
+            _context_strip_subscription: context_strip_subscription,
             mode,
             show_rate_limit_notice: false,
             _phantom: Default::default(),
