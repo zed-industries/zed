@@ -142,7 +142,9 @@ impl MessageEditor {
             editor.clear(cx);
             text
         });
-        let context = self.context_store.update(cx, |this, _cx| this.drain());
+        let context = self
+            .context_store
+            .update(cx, |this, _cx| this.context().clone());
 
         self.thread.update(cx, |thread, cx| {
             thread.insert_user_message(user_message, context, cx);
