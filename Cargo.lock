@@ -8408,8 +8408,7 @@ checksum = "1261fe7e33c73b354eab43b1273a57c8f967d0391e80353e51f764ac02cf6775"
 [[package]]
 name = "oo7"
 version = "0.3.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8fc6ce4692fbfd044ce22ca07dcab1a30fa12432ca2aa5b1294eca50d3332a24"
+source = "git+https://github.com/zed-industries/oo7?branch=avoid-crypto-panic#9d5d5fcd7e4e0add9b420ffb58f67661b0b37568"
 dependencies = [
  "aes",
  "async-fs 2.1.2",

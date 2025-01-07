@@ -148,7 +148,7 @@ pathfinder_geometry = "0.5"
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 # Always used
 flume = "0.11"
-oo7 = "0.3.0"
+oo7 = { git = "https://github.com/zed-industries/oo7", branch = "avoid-crypto-panic" }
 
 # Used in both windowing options
 ashpd = { workspace = true, optional = true }
