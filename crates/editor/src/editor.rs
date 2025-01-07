@@ -109,7 +109,7 @@ pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
 use similar::{ChangeTag, TextDiff};
-use std::iter::Peekable;
+use std::iter::{self, Peekable};
 use task::{ResolvedTask, TaskTemplate, TaskVariables};
 
 use hover_links::{find_file, HoverLink, HoveredLinkState, InlayHighlight};
@@ -3550,8 +3550,7 @@ impl Editor {
         );
         let multi_buffer_visible_range = multi_buffer_visible_start..multi_buffer_visible_end;
         multi_buffer_snapshot
-            .range_to_buffer_ranges(multi_buffer_visible_range)
-            .into_iter()
+            .disjoint_ranges_to_buffer_ranges(iter::once(multi_buffer_visible_range))
             .filter(|(_, excerpt_visible_range)| !excerpt_visible_range.is_empty())
             .filter_map(|(excerpt, excerpt_visible_range)| {
                 let buffer_file = project::File::from_dyn(excerpt.buffer().file())?;
@@ -10498,13 +10497,13 @@ impl Editor {
         } else {
             let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
             let mut toggled_buffers = HashSet::default();
-            for (_, buffer_snapshot, _) in multi_buffer_snapshot.excerpts_in_ranges(
+            for (excerpt, _) in multi_buffer_snapshot.disjoint_ranges_to_buffer_ranges(
                 self.selections
                     .disjoint_anchors()
                     .into_iter()
                     .map(|selection| selection.range()),
             ) {
-                let buffer_id = buffer_snapshot.remote_id();
+                let buffer_id = excerpt.buffer().remote_id();
                 if toggled_buffers.insert(buffer_id) {
                     if self.buffer_folded(buffer_id, cx) {
                         self.unfold_buffer(buffer_id, cx);
@@ -10584,13 +10583,13 @@ impl Editor {
         } else {
             let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
             let mut folded_buffers = HashSet::default();
-            for (_, buffer_snapshot, _) in multi_buffer_snapshot.excerpts_in_ranges(
+            for (excerpt, _) in multi_buffer_snapshot.disjoint_ranges_to_buffer_ranges(
                 self.selections
                     .disjoint_anchors()
                     .into_iter()
                     .map(|selection| selection.range()),
             ) {
-                let buffer_id = buffer_snapshot.remote_id();
+                let buffer_id = excerpt.buffer().remote_id();
                 if folded_buffers.insert(buffer_id) {
                     self.fold_buffer(buffer_id, cx);
                 }
@@ -10750,13 +10749,13 @@ impl Editor {
         } else {
             let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
             let mut unfolded_buffers = HashSet::default();
-            for (_, buffer_snapshot, _) in multi_buffer_snapshot.excerpts_in_ranges(
+            for (excerpt, _) in multi_buffer_snapshot.disjoint_ranges_to_buffer_ranges(
                 self.selections
                     .disjoint_anchors()
                     .into_iter()
                     .map(|selection| selection.range()),
             ) {
-                let buffer_id = buffer_snapshot.remote_id();
+                let buffer_id = excerpt.buffer().remote_id();
                 if unfolded_buffers.insert(buffer_id) {
                     self.unfold_buffer(buffer_id, cx);
                 }
@@ -11500,36 +11499,36 @@ impl Editor {
     }
 
     fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<url::Url>> {
-        let buffer_and_selection = maybe!({
-            let selection = self.selections.newest::<Point>(cx);
+        let buffer_and_selection_rows = maybe!({
+            let multi_buffer = self.buffer().read(cx);
+            let multi_buffer_snapshot = multi_buffer.snapshot(cx);
+            let selection = self.selections.newest_anchor();
             let selection_range = selection.range();
 
-            let (buffer, selection) = if let Some(buffer) = self.buffer().read(cx).as_singleton() {
-                (buffer, selection_range.start.row..selection_range.end.row)
+            let (buffer, selection_rows) = if let Some(buffer) = multi_buffer.as_singleton() {
+                (
+                    buffer,
+                    selection_range.start.to_point(&multi_buffer_snapshot).row
+                        ..selection_range.end.to_point(&multi_buffer_snapshot).row,
+                )
             } else {
-                let multi_buffer = self.buffer().read(cx);
-                let multi_buffer_snapshot = multi_buffer.snapshot(cx);
-                let buffer_ranges = multi_buffer_snapshot.range_to_buffer_ranges(selection_range);
-
-                let (excerpt, range) = if selection.reversed {
-                    buffer_ranges.first()
-                } else {
-                    buffer_ranges.last()
-                }?;
-
+                let selection_head = selection.head();
+                let excerpt =
+                    multi_buffer_snapshot.excerpt_containing(selection_head..selection_head)?;
+                let range =
+                    excerpt.map_range_to_buffer(selection_range.to_offset(&multi_buffer_snapshot));
                 let snapshot = excerpt.buffer();
-                let selection = text::ToPoint::to_point(&range.start, &snapshot).row
-                    ..text::ToPoint::to_point(&range.end, &snapshot).row;
                 (
                     multi_buffer.buffer(excerpt.buffer_id()).unwrap().clone(),
-                    selection,
+                    text::ToPoint::to_point(&range.start, &snapshot).row
+                        ..text::ToPoint::to_point(&range.end, &snapshot).row,
                 )
             };
 
-            Some((buffer, selection))
+            Some((buffer, selection_rows))
         });
 
-        let Some((buffer, selection)) = buffer_and_selection else {
+        let Some((buffer, selection_rows)) = buffer_and_selection_rows else {
             return Task::ready(Err(anyhow!("failed to determine buffer and selection")));
         };
 
@@ -11538,7 +11537,7 @@ impl Editor {
         };
 
         project.update(cx, |project, cx| {
-            project.get_permalink_to_line(&buffer, selection, cx)
+            project.get_permalink_to_line(&buffer, selection_rows, cx)
         })
     }
 

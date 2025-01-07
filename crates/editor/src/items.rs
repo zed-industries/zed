@@ -1468,10 +1468,11 @@ impl SearchableItem for Editor {
                     search_within_ranges
                 };
 
-                for (excerpt_id, search_buffer, search_range) in
-                    buffer.excerpts_in_ranges(search_within_ranges)
+                for (excerpt, search_range) in
+                    buffer.disjoint_ranges_to_buffer_ranges(search_within_ranges)
                 {
                     if !search_range.is_empty() {
+                        let search_buffer = excerpt.buffer();
                         ranges.extend(
                             query
                                 .search(search_buffer, Some(search_range.clone()))
@@ -1482,8 +1483,8 @@ impl SearchableItem for Editor {
                                         .anchor_after(search_range.start + match_range.start);
                                     let end = search_buffer
                                         .anchor_before(search_range.start + match_range.end);
-                                    buffer.anchor_in_excerpt(excerpt_id, start).unwrap()
-                                        ..buffer.anchor_in_excerpt(excerpt_id, end).unwrap()
+                                    buffer.anchor_in_excerpt(excerpt.id(), start).unwrap()
+                                        ..buffer.anchor_in_excerpt(excerpt.id(), end).unwrap()
                                 }),
                         );
                     }

@@ -294,19 +294,20 @@ impl InlineAssistant {
         let newest_selection = newest_selection.unwrap();
 
         let mut codegen_ranges = Vec::new();
-        for (excerpt_id, buffer, buffer_range) in
-            snapshot.excerpts_in_ranges(selections.iter().map(|selection| {
+        for (excerpt, buffer_range) in
+            snapshot.disjoint_ranges_to_buffer_ranges(selections.iter().map(|selection| {
                 snapshot.anchor_before(selection.start)..snapshot.anchor_after(selection.end)
             }))
         {
+            let buffer = excerpt.buffer();
             let start = Anchor {
                 buffer_id: Some(buffer.remote_id()),
-                excerpt_id,
+                excerpt_id: excerpt.id(),
                 text_anchor: buffer.anchor_before(buffer_range.start),
             };
             let end = Anchor {
                 buffer_id: Some(buffer.remote_id()),
-                excerpt_id,
+                excerpt_id: excerpt.id(),
                 text_anchor: buffer.anchor_after(buffer_range.end),
             };
             codegen_ranges.push(start..end);
@@ -872,9 +873,9 @@ impl InlineAssistant {
                 let language_name = assist.editor.upgrade().and_then(|editor| {
                     let multibuffer = editor.read(cx).buffer().read(cx);
                     let snapshot = multibuffer.snapshot(cx);
-                    let ranges = snapshot.range_to_buffer_ranges(assist.range.clone());
+                    let mut ranges = snapshot.range_to_buffer_ranges(assist.range.clone());
                     ranges
-                        .first()
+                        .next()
                         .and_then(|(excerpt, _)| excerpt.buffer().language())
                         .map(|language| language.name())
                 });

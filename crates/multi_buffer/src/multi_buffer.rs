@@ -3894,7 +3894,7 @@ impl MultiBufferSnapshot {
     where
         T: 'a + ToOffset,
     {
-        let mut ranges = self.range_to_buffer_ranges(range);
+        let mut ranges = self.range_to_buffer_ranges(range).collect::<Vec<_>>();
         if reversed {
             ranges.reverse();
         }
@@ -4157,80 +4157,60 @@ impl MultiBufferSnapshot {
         })
     }
 
-    pub fn range_to_buffer_ranges<T: ToOffset>(
-        &self,
-        range: Range<T>,
-    ) -> Vec<(MultiBufferExcerpt<'_>, Range<usize>)> {
-        let start = range.start.to_offset(self);
-        let end = range.end.to_offset(self);
-
-        let mut result = Vec::new();
-        let mut cursor = self.excerpts.cursor::<(usize, Point)>(&());
-        cursor.seek(&start, Bias::Right, &());
-        if cursor.item().is_none() {
-            cursor.prev(&());
-        }
-
-        while let Some(excerpt) = cursor.item() {
-            if cursor.start().0 > end {
-                break;
-            }
-
-            let mut end_before_newline = cursor.end(&()).0;
-            if excerpt.has_trailing_newline {
-                end_before_newline -= 1;
-            }
-            let excerpt_start = excerpt.range.context.start.to_offset(&excerpt.buffer);
-            let start = excerpt_start + (cmp::max(start, cursor.start().0) - cursor.start().0);
-            let end = excerpt_start + (cmp::min(end, end_before_newline) - cursor.start().0);
-            result.push((
-                MultiBufferExcerpt::new(&excerpt, *cursor.start()),
-                start..end,
-            ));
-            cursor.next(&());
-        }
-
-        result
-    }
-
-    /// Returns excerpts overlapping the given ranges. If range spans multiple excerpts returns one range for each excerpt
+    /// Returns excerpts overlapping the given range. If range spans multiple excerpts returns one
+    /// range for each excerpt.
     ///
     /// The ranges are specified in the coordinate space of the multibuffer, not the individual excerpted buffers.
     /// Each returned excerpt's range is in the coordinate space of its source buffer.
-    pub fn excerpts_in_ranges(
+    pub fn range_to_buffer_ranges<T: ToOffset>(
         &self,
-        ranges: impl IntoIterator<Item = Range<Anchor>>,
-    ) -> impl Iterator<Item = (ExcerptId, &BufferSnapshot, Range<usize>)> {
-        let mut ranges = ranges.into_iter().map(|range| range.to_offset(self));
+        range: Range<T>,
+    ) -> impl Iterator<Item = (MultiBufferExcerpt<'_>, Range<usize>)> {
+        self.disjoint_ranges_to_buffer_ranges(iter::once(range))
+    }
+
+    /// Returns excerpts overlapping the given ranges, which must be disjoint and sorted by start position.
+    /// If range spans multiple excerpts returns one range for each excerpt
+    ///
+    /// The ranges are specified in the coordinate space of the multibuffer, not the individual excerpted buffers.
+    /// Each returned excerpt's range is in the coordinate space of its source buffer.
+    pub fn disjoint_ranges_to_buffer_ranges<T: ToOffset>(
+        &self,
+        ranges: impl IntoIterator<Item = Range<T>>,
+    ) -> impl Iterator<Item = (MultiBufferExcerpt<'_>, Range<usize>)> {
+        let mut ranges = ranges.into_iter();
         let mut cursor = self.excerpts.cursor::<(usize, Point)>(&());
         cursor.next(&());
         let mut current_range = ranges.next();
         iter::from_fn(move || {
-            let range = current_range.clone()?;
-            if range.start >= cursor.end(&()).0 {
-                cursor.seek_forward(&range.start, Bias::Right, &());
-                if range.start == self.len() {
+            let range = current_range.as_ref()?;
+            let start = range.start.to_offset(self);
+            let end = range.end.to_offset(self);
+            if start >= cursor.end(&()).0 {
+                cursor.seek_forward(&start, Bias::Right, &());
+                if start == self.len() {
                     cursor.prev(&());
                 }
             }
 
             let excerpt = cursor.item()?;
-            let range_start_in_excerpt = cmp::max(range.start, cursor.start().0);
+            let range_start_in_excerpt = cmp::max(start, cursor.start().0);
             let range_end_in_excerpt = if excerpt.has_trailing_newline {
-                cmp::min(range.end, cursor.end(&()).0 - 1)
+                cmp::min(end, cursor.end(&()).0 - 1)
             } else {
-                cmp::min(range.end, cursor.end(&()).0)
+                cmp::min(end, cursor.end(&()).0)
             };
-            let buffer_range = MultiBufferExcerpt::new(excerpt, *cursor.start())
+            let multi_buffer_excerpt = MultiBufferExcerpt::new(excerpt, *cursor.start());
+            let buffer_range = multi_buffer_excerpt
                 .map_range_to_buffer(range_start_in_excerpt..range_end_in_excerpt);
 
-            if range.end > cursor.end(&()).0 {
+            if end > cursor.end(&()).0 {
                 cursor.next(&());
             } else {
                 current_range = ranges.next();
             }
 
-            Some((excerpt.id, &excerpt.buffer, buffer_range))
+            Some((multi_buffer_excerpt, buffer_range))
         })
     }
 

@@ -257,9 +257,10 @@ impl CodegenAlternative {
     ) -> Self {
         let snapshot = buffer.read(cx).snapshot(cx);
 
+        // TODO: Could be more efficient by using a reverse iterator.
         let (old_excerpt, _) = snapshot
             .range_to_buffer_ranges(range.clone())
-            .pop()
+            .last()
             .unwrap();
         let old_buffer = cx.new_model(|cx| {
             let text = old_excerpt.buffer().as_rope().clone();
@@ -475,9 +476,9 @@ impl CodegenAlternative {
         let language_name = {
             let multibuffer = self.buffer.read(cx);
             let snapshot = multibuffer.snapshot(cx);
-            let ranges = snapshot.range_to_buffer_ranges(self.range.clone());
+            let mut ranges = snapshot.range_to_buffer_ranges(self.range.clone());
             ranges
-                .first()
+                .next()
                 .and_then(|(excerpt, _)| excerpt.buffer().language())
                 .map(|language| language.name())
         };
