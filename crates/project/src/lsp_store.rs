@@ -2556,11 +2556,6 @@ impl LocalLspStore {
                                     let pattern = relative.to_string_lossy().to_string();
                                     let literal_prefix = glob_literal_prefix(relative).into();
 
-                                    // let literal_prefix = Arc::from(PathBuf::from(
-                                    //     literal_prefix
-                                    //         .strip_prefix(std::path::MAIN_SEPARATOR)
-                                    //         .unwrap_or(literal_prefix),
-                                    // ));
                                     PathToWatch::Worktree {
                                         literal_prefix,
                                         pattern,
@@ -2568,11 +2563,6 @@ impl LocalLspStore {
                                 }
                                 Err(_) => {
                                     let path = glob_literal_prefix(watcher_path.as_path());
-                                    // let glob = &s[path.len()..];
-                                    // let pattern = glob
-                                    //     .strip_prefix(std::path::MAIN_SEPARATOR)
-                                    //     .unwrap_or(glob)
-                                    //     .to_owned();
                                     let pattern = watcher_path
                                         .as_path()
                                         .strip_prefix(&path)
@@ -2611,11 +2601,6 @@ impl LocalLspStore {
                                 }
                                 Err(_) => {
                                     let path = glob_literal_prefix(Path::new(&rp.pattern));
-                                    // let glob = &rp.pattern[path.len()..];
-                                    // let pattern = glob
-                                    //     .strip_prefix(std::path::MAIN_SEPARATOR)
-                                    //     .unwrap_or(glob)
-                                    //     .to_owned();
                                     let pattern = Path::new(&rp.pattern)
                                         .strip_prefix(&path)
                                         .unwrap_or(path.as_path())
