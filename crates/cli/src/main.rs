@@ -19,10 +19,7 @@ use tempfile::NamedTempFile;
 use util::paths::PathWithPosition;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-use {
-    std::io::IsTerminal,
-    util::{load_login_shell_environment, load_shell_from_passwd, ResultExt},
-};
+use std::io::IsTerminal;
 
 struct Detect;
 
