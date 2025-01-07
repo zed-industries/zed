@@ -3278,7 +3278,7 @@ pub fn markdown_lang() -> Language {
         r#"
             (fenced_code_block
                 (info_string
-                    (language) @language)
+                    (language) @injection.language)
                 (code_fence_content) @injection.content)
 
                 ((inline) @injection.content
