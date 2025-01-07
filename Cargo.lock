@@ -5187,6 +5187,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
+ "theme",
  "ui",
  "util",
  "windows 0.58.0",
