@@ -6,6 +6,7 @@ use language::Buffer;
 use ui::{prelude::*, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip};
 use workspace::Workspace;
 
+use crate::context::ContextKind;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 use crate::thread::Thread;
@@ -70,10 +71,13 @@ impl ContextStrip {
             return None;
         }
 
-        let title = path.to_string_lossy().into_owned().into();
+        let name = match path.file_name() {
+            Some(name) => name.to_string_lossy().into_owned().into(),
+            None => path.to_string_lossy().into_owned().into(),
+        };
 
         Some(SuggestedContext::File {
-            title,
+            name,
             buffer: active_buffer.downgrade(),
         })
     }
@@ -99,7 +103,7 @@ impl ContextStrip {
         }
 
         Some(SuggestedContext::Thread {
-            title: active_thread.summary().unwrap_or("Active Thread".into()),
+            name: active_thread.summary().unwrap_or("New Thread".into()),
             thread: weak_active_thread,
         })
     }
@@ -113,6 +117,8 @@ impl Render for ContextStrip {
         let focus_handle = self.focus_handle.clone();
 
         let suggested_context = self.suggested_context(cx);
+
+        let dupe_names = context_store.duplicated_names();
 
         h_flex()
             .flex_wrap()
@@ -165,40 +171,36 @@ impl Render for ContextStrip {
                 }
             })
             .children(context.iter().map(|context| {
-                ContextPill::new(context.clone()).on_remove({
-                    let context = context.clone();
-                    let context_store = self.context_store.clone();
-                    Rc::new(cx.listener(move |_this, _event, cx| {
-                        context_store.update(cx, |this, _cx| {
-                            this.remove_context(&context.id);
-                        });
-                        cx.notify();
-                    }))
-                })
+                ContextPill::new_added(
+                    context.clone(),
+                    dupe_names.contains(&context.name),
+                    Some({
+                        let context = context.clone();
+                        let context_store = self.context_store.clone();
+                        Rc::new(cx.listener(move |_this, _event, cx| {
+                            context_store.update(cx, |this, _cx| {
+                                this.remove_context(&context.id);
+                            });
+                            cx.notify();
+                        }))
+                    }),
+                )
             }))
             .when_some(suggested_context, |el, suggested| {
-                el.child(
-                    Button::new("add-suggested-context", suggested.title().clone())
-                        .on_click({
-                            let context_store = self.context_store.clone();
+                el.child(ContextPill::new_suggested(
+                    suggested.name().clone(),
+                    suggested.kind(),
+                    {
+                        let context_store = self.context_store.clone();
+                        Rc::new(cx.listener(move |_this, _event, cx| {
+                            context_store.update(cx, |context_store, cx| {
+                                suggested.accept(context_store, cx);
+                            });
 
-                            cx.listener(move |_this, _event, cx| {
-                                context_store.update(cx, |context_store, cx| {
-                                    suggested.accept(context_store, cx);
-                                });
-                                cx.notify();
-                            })
-                        })
-                        .icon(IconName::Plus)
-                        .icon_position(IconPosition::Start)
-                        .icon_size(IconSize::XSmall)
-                        .icon_color(Color::Muted)
-                        .label_size(LabelSize::Small)
-                        .style(ButtonStyle::Filled)
-                        .tooltip(|cx| {
-                            Tooltip::with_meta("Suggested Context", None, "Click to add it", cx)
-                        }),
-                )
+                            cx.notify();
+                        }))
+                    },
+                ))
             })
             .when(!context.is_empty(), {
                 move |parent| {
@@ -227,35 +229,42 @@ pub enum SuggestContextKind {
 #[derive(Clone)]
 pub enum SuggestedContext {
     File {
-        title: SharedString,
+        name: SharedString,
         buffer: WeakModel<Buffer>,
     },
     Thread {
-        title: SharedString,
+        name: SharedString,
         thread: WeakModel<Thread>,
     },
 }
 
 impl SuggestedContext {
-    pub fn title(&self) -> &SharedString {
+    pub fn name(&self) -> &SharedString {
         match self {
-            Self::File { title, .. } => title,
-            Self::Thread { title, .. } => title,
+            Self::File { name, .. } => name,
+            Self::Thread { name, .. } => name,
         }
     }
 
     pub fn accept(&self, context_store: &mut ContextStore, cx: &mut AppContext) {
         match self {
-            Self::File { buffer, title: _ } => {
+            Self::File { buffer, name: _ } => {
                 if let Some(buffer) = buffer.upgrade() {
                     context_store.insert_file(buffer.read(cx));
                 };
             }
-            Self::Thread { thread, title: _ } => {
+            Self::Thread { thread, name: _ } => {
                 if let Some(thread) = thread.upgrade() {
                     context_store.insert_thread(thread.read(cx));
                 };
             }
+        }
+    }
+
+    pub fn kind(&self) -> ContextKind {
+        match self {
+            Self::File { .. } => ContextKind::File,
+            Self::Thread { .. } => ContextKind::Thread,
         }
     }
 }
