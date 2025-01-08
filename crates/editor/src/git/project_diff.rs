@@ -933,7 +933,7 @@ impl Item for ProjectDiffEditor {
             .update(cx, |editor, cx| editor.navigate(data, cx))
     }
 
-    fn tab_tooltip_text(&self, _: &AppContext) -> Option<SharedString> {
+    fn tab_tooltip_content(&self, _: &AppContext) -> Option<workspace::item::TabTooltipContent> {
         Some("Project Diff".into())
     }
 

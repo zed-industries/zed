@@ -4235,7 +4235,7 @@ impl Item for ContextEditor {
         }
     }
 
-    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
+    fn tab_tooltip_content(&self, cx: &AppContext) -> Option<workspace::item::TabTooltipContent> {
         Some(self.title(cx).to_string().into())
     }
 

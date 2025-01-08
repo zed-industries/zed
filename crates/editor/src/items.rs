@@ -27,7 +27,7 @@ use project::{
 };
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
-use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
+use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams, TabTooltipContent};
 
 use project::lsp_store::FormatTarget;
 use std::{
@@ -571,7 +571,7 @@ impl Item for Editor {
         }
     }
 
-    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
+    fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent> {
         let file_path = self
             .buffer()
             .read(cx)

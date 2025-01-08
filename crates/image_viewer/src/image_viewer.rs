@@ -88,7 +88,7 @@ impl Item for ImageView {
         true
     }
 
-    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
+    fn tab_tooltip_content(&self, cx: &AppContext) -> Option<workspace::item::TabTooltipContent> {
         let abs_path = self.image_item.read(cx).file.as_local()?.abs_path(cx);
         let file_path = abs_path.compact().to_string_lossy().to_string();
         Some(file_path.into())

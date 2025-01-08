@@ -1,5 +1,5 @@
 use crate::{
-    item::{Item, ItemEvent},
+    item::{Item, ItemEvent, TabTooltipContent},
     ItemNavHistory, WorkspaceId,
 };
 use anyhow::Result;
@@ -83,7 +83,7 @@ impl Render for SharedScreen {
 impl Item for SharedScreen {
     type Event = Event;
 
-    fn tab_tooltip_text(&self, _: &AppContext) -> Option<SharedString> {
+    fn tab_tooltip_content(&self, _: &AppContext) -> Option<TabTooltipContent> {
         Some(format!("{}'s screen", self.user.github_login).into())
     }
 

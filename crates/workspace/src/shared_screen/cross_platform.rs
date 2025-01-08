@@ -66,8 +66,8 @@ impl Render for SharedScreen {
 impl Item for SharedScreen {
     type Event = Event;
 
-    fn tab_tooltip_text(&self, _: &AppContext) -> Option<SharedString> {
-        Some(format!("{}'s screen", self.user.github_login).into())
+    fn tab_tooltip_content(&self, _: &AppContext) -> TabTooltipContent {
+        format!("{}'s screen", self.user.github_login).into()
     }
 
     fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
