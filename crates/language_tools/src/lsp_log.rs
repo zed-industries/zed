@@ -1219,7 +1219,7 @@ impl Render for LspLogToolbarItemView {
                 )
             })
             .collect();
-        let log_toolbar_view = cx.view().clone();
+        let log_toolbar_view = cx.model().clone();
         let lsp_menu = PopoverMenu::new("LspLogView")
             .anchor(Corner::TopLeft)
             .trigger(Button::new(

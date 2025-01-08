@@ -992,7 +992,7 @@ pub fn new_terminal_pane(
     cx: &mut ModelContext<TerminalPanel>,
 ) -> Model<Pane> {
     let is_local = project.read(cx).is_local();
-    let terminal_panel = cx.view().clone();
+    let terminal_panel = cx.model().clone();
     let pane = window.new_view(cx, |window, cx| {
         let mut pane = Pane::new(
             workspace.clone(),
@@ -1012,7 +1012,7 @@ pub fn new_terminal_pane(
         let split_closure_terminal_panel = terminal_panel.downgrade();
         pane.set_can_split(Some(Arc::new(move |pane, dragged_item, _window, cx| {
             if let Some(tab) = dragged_item.downcast_ref::<DraggedTab>() {
-                let is_current_pane = tab.pane == cx.view();
+                let is_current_pane = tab.pane == cx.model();
                 let Some(can_drag_away) = split_closure_terminal_panel
                     .update(cx, |terminal_panel, _| {
                         let current_panes = terminal_panel.center.panes();
@@ -1052,7 +1052,7 @@ pub fn new_terminal_pane(
                 return ControlFlow::Break(());
             };
             if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>() {
-                let this_pane = cx.view().clone();
+                let this_pane = cx.model().clone();
                 let item = if tab.pane == this_pane {
                     pane.item_for_index(tab.ix)
                 } else {

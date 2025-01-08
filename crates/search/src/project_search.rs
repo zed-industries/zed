@@ -835,7 +835,7 @@ impl ProjectSearchView {
             return;
         };
 
-        let weak_workspace = cx.view().downgrade();
+        let weak_workspace = cx.model().downgrade();
 
         let model = cx.new_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
         let search = window.new_view(cx, |window, cx| {
@@ -896,7 +896,7 @@ impl ProjectSearchView {
                     model.search(new_query, cx);
                     model
                 });
-                let weak_workspace = cx.view().downgrade();
+                let weak_workspace = cx.model().downgrade();
                 workspace.add_item_to_active_pane(
                     Box::new(window.new_view(cx, |window, cx| {
                         ProjectSearchView::new(weak_workspace, model, window, cx, None)
@@ -954,7 +954,7 @@ impl ProjectSearchView {
 
             let settings = settings.cloned();
 
-            let weak_workspace = cx.view().downgrade();
+            let weak_workspace = cx.model().downgrade();
 
             let model = cx.new_model(|cx| ProjectSearch::new(workspace.project().clone(), cx));
             let view = window.new_view(cx, |window, cx| {

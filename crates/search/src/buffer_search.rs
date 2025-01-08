@@ -515,7 +515,7 @@ impl ToolbarItemView for BufferSearchBar {
         if let Some(searchable_item_handle) =
             item.and_then(|item| item.to_searchable_item_handle(cx))
         {
-            let this = cx.view().downgrade();
+            let this = cx.model().downgrade();
 
             self.active_searchable_item_subscription =
                 Some(searchable_item_handle.subscribe_to_search_events(

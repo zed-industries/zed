@@ -88,7 +88,7 @@ pub fn init(cx: &mut AppContext) {
 
                 let project_path = buffer.and_then(|buffer| buffer.read(cx).project_path(cx));
 
-                let editor_handle = cx.view().downgrade();
+                let editor_handle = cx.model().downgrade();
 
                 if let Some(language) = language {
                     if language.name() == "Python".into() {

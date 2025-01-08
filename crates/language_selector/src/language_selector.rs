@@ -63,7 +63,7 @@ impl LanguageSelector {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let delegate = LanguageSelectorDelegate::new(
-            cx.view().downgrade(),
+            cx.model().downgrade(),
             buffer,
             project,
             language_registry,

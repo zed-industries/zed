@@ -442,7 +442,7 @@ impl Render for ContextMenu {
                                         disabled,
                                     } => {
                                         let handler = handler.clone();
-                                        let menu = cx.view().downgrade();
+                                        let menu = cx.model().downgrade();
                                         let color = if *disabled {
                                             Color::Muted
                                         } else {
@@ -533,7 +533,7 @@ impl Render for ContextMenu {
                                         selectable,
                                     } => {
                                         let handler = handler.clone();
-                                        let menu = cx.view().downgrade();
+                                        let menu = cx.model().downgrade();
                                         let selectable = *selectable;
                                         ListItem::new(ix)
                                             .inset(true)

@@ -391,7 +391,7 @@ impl AssistantPanel {
 
                     let project_paths = if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>()
                     {
-                        if tab.pane == cx.view() {
+                        if tab.pane == cx.model() {
                             return None;
                         }
                         let item = tab.pane.read(cx).item_for_index(tab.ix);
@@ -467,7 +467,7 @@ impl AssistantPanel {
                         pane.active_item()
                             .map_or(false, |item| item.downcast::<ContextHistory>().is_some()),
                     );
-                let _pane = cx.view().clone();
+                let _pane = cx.model().clone();
                 let right_children = h_flex()
                     .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
@@ -747,7 +747,7 @@ impl AssistantPanel {
             .log_err()
             .flatten();
 
-        let assistant_panel = cx.view().downgrade();
+        let assistant_panel = cx.model().downgrade();
         let editor = window.new_view(cx, |window, cx| {
             let mut editor = ContextEditor::for_context(
                 context,
@@ -854,7 +854,7 @@ impl AssistantPanel {
                     InlineAssistant::update_global(cx, |assistant, cx| {
                         assistant.assist(
                             &active_editor,
-                            Some(cx.view().downgrade()),
+                            Some(cx.model().downgrade()),
                             include_context.then_some(&assistant_panel),
                             initial_prompt,
                             window,
@@ -866,7 +866,7 @@ impl AssistantPanel {
                     TerminalInlineAssistant::update_global(cx, |assistant, cx| {
                         assistant.assist(
                             &active_terminal,
-                            Some(cx.view().downgrade()),
+                            Some(cx.model().downgrade()),
                             Some(&assistant_panel),
                             initial_prompt,
                             window,
@@ -1041,7 +1041,7 @@ impl AssistantPanel {
 
                     let fs = this.fs.clone();
                     let project = this.project.clone();
-                    let weak_assistant_panel = cx.view().downgrade();
+                    let weak_assistant_panel = cx.model().downgrade();
 
                     let editor = cx.new_model(|cx| {
                         ContextEditor::for_context(
@@ -1072,7 +1072,7 @@ impl AssistantPanel {
                 .log_err()
                 .flatten();
 
-            let assistant_panel = cx.view().downgrade();
+            let assistant_panel = cx.model().downgrade();
             let editor = window.new_view(cx, |window, cx| {
                 let mut editor = ContextEditor::for_context(
                     context,
@@ -1259,7 +1259,7 @@ impl AssistantPanel {
                 pane.activate_item(history_item_ix, true, true, window, cx);
             });
         } else {
-            let assistant_panel = cx.view().downgrade();
+            let assistant_panel = cx.model().downgrade();
             let history = window.new_view(cx, |window, cx| {
                 ContextHistory::new(
                     self.project.clone(),
@@ -1667,7 +1667,7 @@ impl ContextEditor {
     ) -> Self {
         let completion_provider = SlashCommandCompletionProvider::new(
             context.read(cx).slash_commands.clone(),
-            Some(cx.view().downgrade()),
+            Some(cx.model().downgrade()),
             Some(workspace.clone()),
         );
 
@@ -1997,7 +1997,7 @@ impl ContextEditor {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        let context_editor = cx.view().downgrade();
+        let context_editor = cx.model().downgrade();
 
         match event {
             ContextEvent::MessagesEdited => {
@@ -2051,7 +2051,7 @@ impl ContextEditor {
                         .map(|tool_use| {
                             let placeholder = FoldPlaceholder {
                                 render: render_fold_icon_button(
-                                    cx.view().downgrade(),
+                                    cx.model().downgrade(),
                                     IconName::PocketKnife,
                                     tool_use.name.clone().into(),
                                 ),
@@ -2238,7 +2238,7 @@ impl ContextEditor {
 
                     let placeholder = FoldPlaceholder {
                         render: render_fold_icon_button(
-                            cx.view().downgrade(),
+                            cx.model().downgrade(),
                             IconName::PocketKnife,
                             format!("Tool Result: {tool_use_id}").into(),
                         ),
@@ -2391,7 +2391,7 @@ impl ContextEditor {
         window: &mut Window,
         cx: &mut ModelContext<ContextEditor>,
     ) {
-        let this = cx.view().downgrade();
+        let this = cx.model().downgrade();
         let mut editors_to_close = Vec::new();
 
         self.editor.update(cx, |editor, cx| {
@@ -2535,7 +2535,7 @@ impl ContextEditor {
                         start..end,
                         FoldPlaceholder {
                             render: render_fold_icon_button(
-                                cx.view().downgrade(),
+                                cx.model().downgrade(),
                                 section.icon,
                                 section.label.clone(),
                             ),
@@ -3303,7 +3303,7 @@ impl ContextEditor {
 
                                 let fold_placeholder = quote_selection_fold_placeholder(
                                     crease_title,
-                                    cx.view().downgrade(),
+                                    cx.model().downgrade(),
                                 );
                                 let crease = Crease::inline(
                                     anchor_before..anchor_after,
@@ -3498,7 +3498,7 @@ impl ContextEditor {
                     let buffer = editor.buffer().read(cx).snapshot(cx);
 
                     let mut buffer_rows_to_fold = BTreeSet::new();
-                    let weak_editor = cx.view().downgrade();
+                    let weak_editor = cx.model().downgrade();
                     editor.insert_creases(
                         metadata.creases.into_iter().map(|metadata| {
                             let start = buffer.anchor_after(
@@ -3994,7 +3994,7 @@ impl ContextEditor {
     ) -> impl IntoElement {
         slash_command_picker::SlashCommandSelector::new(
             self.slash_commands.clone(),
-            cx.view().downgrade(),
+            cx.model().downgrade(),
             Button::new("trigger", "Add Context")
                 .icon(IconName::Plus)
                 .icon_size(IconSize::Small)

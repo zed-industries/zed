@@ -103,7 +103,7 @@ impl MessageEditor {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let this = cx.view().downgrade();
+        let this = cx.model().downgrade();
         editor.update(cx, |editor, cx| {
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, window, cx);
             editor.set_use_autoclose(false);

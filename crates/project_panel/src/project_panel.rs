@@ -4202,7 +4202,7 @@ impl Render for ProjectPanel {
                 )
                 .track_focus(&self.focus_handle(cx))
                 .child(
-                    uniform_list(cx.view().clone(), "entries", item_count, {
+                    uniform_list(cx.model().clone(), "entries", item_count, {
                         |this, range, window, cx| {
                             let mut items = Vec::with_capacity(range.end - range.start);
                             this.for_each_visible_entry(
@@ -4219,7 +4219,7 @@ impl Render for ProjectPanel {
                     .when(show_indent_guides, |list| {
                         list.with_decoration(
                             ui::indent_guides(
-                                cx.view().clone(),
+                                cx.model().clone(),
                                 px(indent_size),
                                 IndentGuideColors::panel(cx),
                                 |this, range, window, cx| {
@@ -4267,7 +4267,7 @@ impl Render for ProjectPanel {
                                 },
                             ))
                             .with_render_fn(
-                                cx.view().clone(),
+                                cx.model().clone(),
                                 move |this, params, window, cx| {
                                     const LEFT_OFFSET: f32 = 14.;
                                     const PADDING_Y: f32 = 4.;

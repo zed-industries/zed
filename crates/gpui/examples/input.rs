@@ -577,7 +577,7 @@ impl Render for TextInput {
                     .p(px(4.))
                     .bg(white())
                     .child(TextElement {
-                        input: cx.view().clone(),
+                        input: cx.model().clone(),
                     }),
             )
     }

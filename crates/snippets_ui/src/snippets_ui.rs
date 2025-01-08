@@ -58,7 +58,7 @@ impl ScopeSelector {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let delegate =
-            ScopeSelectorDelegate::new(workspace, cx.view().downgrade(), language_registry);
+            ScopeSelectorDelegate::new(workspace, cx.model().downgrade(), language_registry);
 
         let picker = window.new_view(cx, |window, cx| Picker::uniform_list(delegate, window, cx));
 

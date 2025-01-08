@@ -1031,7 +1031,7 @@ impl TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let terminal_handle = self.terminal.clone();
-        let terminal_view_handle = cx.view().clone();
+        let terminal_view_handle = cx.model().clone();
 
         let focused = self.focus_handle.is_focused(window);
 

@@ -40,7 +40,7 @@ enum GoToLineRowHighlights {}
 
 impl GoToLine {
     fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Editor>) {
-        let handle = cx.view().downgrade();
+        let handle = cx.model().downgrade();
         editor
             .register_action(move |_: &editor::actions::ToggleGoToLine, window, cx| {
                 let Some(editor) = handle.upgrade() else {

@@ -60,7 +60,7 @@ impl Render for ThreadHistory {
                 } else {
                     history.child(
                         uniform_list(
-                            cx.view().clone(),
+                            cx.model().clone(),
                             "thread-history",
                             threads.len(),
                             move |history, range, _window, _cx| {

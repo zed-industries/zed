@@ -98,7 +98,7 @@ impl AssistantPanel {
         let fs = workspace.app_state().fs.clone();
         let language_registry = workspace.project().read(cx).languages().clone();
         let workspace = workspace.weak_handle();
-        let weak_self = cx.view().downgrade();
+        let weak_self = cx.model().downgrade();
 
         Self {
             active_view: ActiveView::Thread,
@@ -439,7 +439,7 @@ impl AssistantPanel {
                         v_flex().mx_auto().w_4_5().gap_2().children(
                             recent_threads
                                 .into_iter()
-                                .map(|thread| PastThread::new(thread, cx.view().downgrade())),
+                                .map(|thread| PastThread::new(thread, cx.model().downgrade())),
                         ),
                     )
                     .child(

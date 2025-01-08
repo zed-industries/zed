@@ -230,7 +230,7 @@ impl Dock {
         cx: &mut ModelContext<Workspace>,
     ) -> Model<Self> {
         let focus_handle = cx.focus_handle();
-        let workspace = cx.view().clone();
+        let workspace = cx.model().clone();
         let dock = window.new_view(cx, |window: &mut Window, cx: &mut ModelContext<Self>| {
             let focus_subscription = cx.on_focus(&focus_handle, window, |dock, window, cx| {
                 if let Some(active_entry) = dock.active_panel_entry() {

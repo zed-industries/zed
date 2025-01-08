@@ -859,7 +859,7 @@ impl Element for List {
         let hitbox_id = prepaint.hitbox.id;
         window.on_mouse_event(
             // todo! why do i need these type annotations
-            move |event: &ScrollWheelEvent, phase, window: &mut Window, cx: &mut AppContext| {
+            move |event: &ScrollWheelEvent, phase, window, cx| {
                 if phase == DispatchPhase::Bubble && hitbox_id.is_hovered(window) {
                     list_state.0.borrow_mut().scroll(
                         &scroll_top,

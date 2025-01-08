@@ -30,7 +30,7 @@ pub fn toggle(
     let fs = workspace.app_state().fs.clone();
     workspace.toggle_modal(window, cx, |window, cx| {
         BaseKeymapSelector::new(
-            BaseKeymapSelectorDelegate::new(cx.view().downgrade(), fs, window, cx),
+            BaseKeymapSelectorDelegate::new(cx.model().downgrade(), fs, window, cx),
             window,
             cx,
         )

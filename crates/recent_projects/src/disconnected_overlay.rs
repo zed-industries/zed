@@ -61,7 +61,7 @@ impl DisconnectedOverlay {
                 ) {
                     return;
                 }
-                let handle = cx.view().downgrade();
+                let handle = cx.model().downgrade();
 
                 let ssh_connection_options = project.read(cx).ssh_connection_options(cx);
                 let host = if let Some(ssh_connection_options) = ssh_connection_options {

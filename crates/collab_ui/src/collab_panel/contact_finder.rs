@@ -20,7 +20,7 @@ impl ContactFinder {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let delegate = ContactFinderDelegate {
-            parent: cx.view().downgrade(),
+            parent: cx.model().downgrade(),
             user_store,
             potential_contacts: Arc::from([]),
             selected_index: 0,

@@ -608,6 +608,7 @@ struct Follower {
 }
 
 impl AppState {
+    #[track_caller]
     pub fn global(cx: &AppContext) -> Weak<Self> {
         cx.global::<GlobalAppState>().0.clone()
     }
@@ -643,7 +644,7 @@ impl AppState {
         client::init(&client, cx);
         crate::init_settings(cx);
 
-        Arc::new(Self {
+        let state = Arc::new(Self {
             client,
             fs,
             languages,
@@ -652,7 +653,11 @@ impl AppState {
             node_runtime: NodeRuntime::unavailable(),
             build_window_options: |_, _| Default::default(),
             session,
-        })
+        });
+
+        AppState::set_global(Arc::downgrade(&state), cx);
+
+        state
     }
 }
 
@@ -933,7 +938,7 @@ impl Workspace {
         })
         .detach();
 
-        let weak_handle = cx.view().downgrade();
+        let weak_handle = cx.model().downgrade();
         let pane_history_timestamp = Arc::new(AtomicUsize::new(0));
 
         let center_pane = window.new_view(cx, |window, cx| {
@@ -5217,7 +5222,7 @@ impl Render for Workspace {
                                 .border_b_1()
                                 .border_color(colors.border)
                                 .child({
-                                    let this = cx.view().clone();
+                                    let this = cx.model().clone();
                                     canvas(
                                         move |bounds, window, cx| {
                                             this.update(cx, |this, cx| {

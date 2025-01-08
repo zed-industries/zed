@@ -304,7 +304,7 @@ impl Render for SyntaxTreeView {
         {
             let layer = layer.clone();
             rendered = rendered.child(uniform_list(
-                cx.view().clone(),
+                cx.model().clone(),
                 "SyntaxTreeView",
                 layer.node().descendant_count(),
                 move |this, range, window, cx| {
@@ -456,7 +456,7 @@ impl SyntaxTreeToolbarItemView {
         let active_layer = buffer_state.active_layer.clone()?;
         let active_buffer = buffer_state.buffer.read(cx).snapshot();
 
-        let view = cx.view().clone();
+        let view = cx.model().clone();
         Some(
             PopoverMenu::new("Syntax Tree")
                 .trigger(Self::render_header(&active_layer))

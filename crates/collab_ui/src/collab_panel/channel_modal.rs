@@ -42,7 +42,7 @@ impl ChannelModal {
     ) -> Self {
         cx.observe_in(&channel_store, window, |_, _, window, cx| cx.notify())
             .detach();
-        let channel_modal = cx.view().downgrade();
+        let channel_modal = cx.model().downgrade();
         let picker = window.new_view(cx, |window, cx| {
             Picker::uniform_list(
                 ChannelModalDelegate {
@@ -587,7 +587,7 @@ impl ChannelModalDelegate {
             return;
         };
         let user_id = membership.user.id;
-        let picker = cx.view().clone();
+        let picker = cx.model().clone();
         let context_menu = ContextMenu::build(window, cx, |mut menu, _window, _cx| {
             let role = membership.role;
 

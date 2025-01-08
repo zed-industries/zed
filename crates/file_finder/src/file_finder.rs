@@ -143,10 +143,10 @@ impl FileFinder {
             workspace
                 .update_in(&mut cx, |workspace, window, cx| {
                     let project = workspace.project().clone();
-                    let weak_workspace = cx.view().downgrade();
+                    let weak_workspace = cx.model().downgrade();
                     workspace.toggle_modal(window, cx, |window, cx| {
                         let delegate = FileFinderDelegate::new(
-                            cx.view().downgrade(),
+                            cx.model().downgrade(),
                             weak_workspace,
                             project,
                             currently_opened_path,

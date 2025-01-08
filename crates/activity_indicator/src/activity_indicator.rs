@@ -73,6 +73,7 @@ impl ActivityIndicator {
                 anyhow::Ok(())
             })
             .detach();
+
             cx.observe_in(&project, window, |_, _, window, cx| cx.notify())
                 .detach();
 
@@ -484,7 +485,7 @@ impl Render for ActivityIndicator {
         let Some(content) = self.content_to_render(window, cx) else {
             return result;
         };
-        let this = cx.view().downgrade();
+        let this = cx.model().downgrade();
         let truncate_content = content.message.len() > MAX_MESSAGE_LEN;
         result.gap_2().child(
             PopoverMenu::new("activity-indicator-popover")

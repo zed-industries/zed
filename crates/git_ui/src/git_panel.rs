@@ -207,7 +207,8 @@ impl GitPanel {
                 expanded_dir_ids: Default::default(),
 
                 width: Some(px(360.)),
-                scrollbar_state: ScrollbarState::new(scroll_handle.clone()).parent_view(&cx.view()),
+                scrollbar_state: ScrollbarState::new(scroll_handle.clone())
+                    .parent_view(&cx.model()),
                 scroll_handle,
                 selected_item: None,
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
@@ -1009,7 +1010,7 @@ impl GitPanel {
             .size_full()
             .overflow_hidden()
             .child(
-                uniform_list(cx.view().clone(), "entries", item_count, {
+                uniform_list(cx.model().clone(), "entries", item_count, {
                     move |git_panel, range, window, cx| {
                         let mut items = Vec::with_capacity(range.end - range.start);
                         git_panel.for_each_visible_entry(
@@ -1049,7 +1050,7 @@ impl GitPanel {
         let id = id.to_proto() as usize;
         let checkbox_id = ElementId::Name(format!("checkbox_{}", id).into());
         let is_staged = ToggleState::Selected;
-        let handle = cx.view().downgrade();
+        let handle = cx.model().downgrade();
 
         h_flex()
             .id(id)

@@ -286,7 +286,7 @@ impl<D: PickerDelegate> Picker<D> {
                 ElementContainer::UniformList(UniformListScrollHandle::new())
             }
             ContainerKind::List => {
-                let view = cx.view().downgrade();
+                let view = cx.model().downgrade();
                 ElementContainer::List(ListState::new(
                     0,
                     gpui::ListAlignment::Top,
@@ -676,7 +676,7 @@ impl<D: PickerDelegate> Picker<D> {
         };
         match &self.element_container {
             ElementContainer::UniformList(scroll_handle) => uniform_list(
-                cx.view().clone(),
+                cx.model().clone(),
                 "candidates",
                 self.delegate.match_count(),
                 move |picker, visible_range, window, cx| {

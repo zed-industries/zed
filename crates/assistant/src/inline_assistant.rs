@@ -70,7 +70,7 @@ pub fn init(
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
     cx.observe_new_views(|_, window, cx| {
-        let workspace = cx.view().clone();
+        let workspace = cx.model().clone();
         InlineAssistant::update_global(cx, |inline_assistant, cx| {
             inline_assistant.register_workspace(&workspace, window, cx)
         })
@@ -185,7 +185,7 @@ impl InlineAssistant {
             editor.update(cx, |editor, cx| {
                 editor.push_code_action_provider(
                     Rc::new(AssistantCodeActionProvider {
-                        editor: cx.view().downgrade(),
+                        editor: cx.model().downgrade(),
                         workspace: workspace.downgrade(),
                     }),
                     window,
@@ -1381,7 +1381,7 @@ impl EditorInlineAssists {
                     })
                 }),
                 editor.update(cx, |editor, cx| {
-                    let editor_handle = cx.view().downgrade();
+                    let editor_handle = cx.model().downgrade();
                     editor.register_action(move |_: &editor::actions::Newline, window, cx| {
                         InlineAssistant::update_global(cx, |this, cx| {
                             if let Some(editor) = editor_handle.upgrade() {
@@ -1391,7 +1391,7 @@ impl EditorInlineAssists {
                     })
                 }),
                 editor.update(cx, |editor, cx| {
-                    let editor_handle = cx.view().downgrade();
+                    let editor_handle = cx.model().downgrade();
                     editor.register_action(move |_: &editor::actions::Cancel, window, cx| {
                         InlineAssistant::update_global(cx, |this, cx| {
                             if let Some(editor) = editor_handle.upgrade() {

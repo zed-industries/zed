@@ -110,7 +110,7 @@ impl NotificationPanel {
             })
             .detach();
 
-            let view = cx.view().downgrade();
+            let view = cx.model().downgrade();
             let notification_list =
                 ListState::new(0, ListAlignment::Top, px(1000.), move |ix, window, cx| {
                     view.upgrade()
@@ -324,7 +324,7 @@ impl NotificationPanel {
                                             .justify_end()
                                             .child(Button::new("decline", "Decline").on_click({
                                                 let notification = notification.clone();
-                                                let view = cx.view().clone();
+                                                let view = cx.model().clone();
                                                 move |_, window, cx| {
                                                     view.update(cx, |this, cx| {
                                                         this.respond_to_notification(
@@ -338,7 +338,7 @@ impl NotificationPanel {
                                             }))
                                             .child(Button::new("accept", "Accept").on_click({
                                                 let notification = notification.clone();
-                                                let view = cx.view().clone();
+                                                let view = cx.model().clone();
                                                 move |_, window, cx| {
                                                     view.update(cx, |this, cx| {
                                                         this.respond_to_notification(
@@ -585,7 +585,7 @@ impl NotificationPanel {
 
                 workspace.dismiss_notification(&id, window, cx);
                 workspace.show_notification(id, window, cx, |window, cx| {
-                    let workspace = cx.view().downgrade();
+                    let workspace = cx.model().downgrade();
                     window.new_view(cx, |window, _| NotificationToast {
                         notification_id,
                         actor,

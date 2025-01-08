@@ -6177,7 +6177,7 @@ impl Element for EditorElement {
 
                         let height = self.style.text.line_height_in_pixels(rem_size);
                         if auto_width {
-                            let editor_handle = cx.view().clone();
+                            let editor_handle = cx.model().clone();
                             let style = self.style.clone();
                             window.request_measured_layout(
                                 Style::default(),
@@ -6218,7 +6218,7 @@ impl Element for EditorElement {
                         }
                     }
                     EditorMode::AutoHeight { max_lines } => {
-                        let editor_handle = cx.view().clone();
+                        let editor_handle = cx.model().clone();
                         let max_line_number_width =
                             self.max_line_number_width(&editor.snapshot(window, cx), window, cx);
                         window.request_measured_layout(

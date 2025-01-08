@@ -134,7 +134,7 @@ pub fn initialize_workspace(
     cx: &mut AppContext,
 ) {
     cx.observe_new_views(move |workspace: &mut Workspace, window, cx| {
-        let workspace_handle = cx.view().clone();
+        let workspace_handle = cx.model().clone();
         let center_pane = workspace.active_pane().clone();
         initialize_pane(workspace, &center_pane, window, cx);
         cx.subscribe_in(&workspace_handle, window, {
@@ -200,7 +200,7 @@ pub fn initialize_workspace(
 
         auto_update_ui::notify_of_any_new_update(window, cx);
 
-        let handle = cx.view().downgrade();
+        let handle = cx.model().downgrade();
         window.on_window_should_close(cx, move |window, cx| {
             handle
                 .update(cx, |workspace, cx| {

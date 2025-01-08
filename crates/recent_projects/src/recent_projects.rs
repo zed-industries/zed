@@ -112,7 +112,7 @@ impl RecentProjects {
         window: &mut Window,
         cx: &mut ModelContext<Workspace>,
     ) {
-        let weak = cx.view().downgrade();
+        let weak = cx.model().downgrade();
         workspace.toggle_modal(window, cx, |window, cx| {
             let delegate = RecentProjectsDelegate::new(weak, create_new_window, true);
 

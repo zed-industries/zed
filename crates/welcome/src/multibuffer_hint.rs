@@ -113,7 +113,7 @@ impl ToolbarItemView for MultibufferHint {
             return ToolbarItemLocation::Hidden;
         };
 
-        let this = cx.view().downgrade();
+        let this = cx.model().downgrade();
         self.subscription = Some(active_pane_item.subscribe_to_item_events(
             window,
             cx,

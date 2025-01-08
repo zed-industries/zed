@@ -72,7 +72,7 @@ pub fn init(cx: &mut AppContext) {
                     cx,
                 );
 
-                let workspace_handle = cx.view().downgrade();
+                let workspace_handle = cx.model().downgrade();
                 window
                     .spawn(cx, |mut cx| async move {
                         let extension_path =
@@ -540,7 +540,7 @@ impl ExtensionsPage {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> ExtensionCard {
-        let this = cx.view().clone();
+        let this = cx.model().clone();
         let status = Self::extension_status(&extension.id, window, cx);
         let has_dev_extension = Self::dev_extension_exists(&extension.id, window, cx);
 
@@ -724,7 +724,7 @@ impl ExtensionsPage {
                 workspace.toggle_modal(window, cx, |window, cx| {
                     let delegate = ExtensionVersionSelectorDelegate::new(
                         fs,
-                        cx.view().downgrade(),
+                        cx.model().downgrade(),
                         extension_versions,
                     );
 
@@ -1193,7 +1193,7 @@ impl Render for ExtensionsPage {
                     return this.py_4().child(self.render_empty_state(window, cx));
                 }
 
-                let view = cx.view().clone();
+                let view = cx.model().clone();
                 let scroll_handle = self.list.clone();
                 this.child(
                     uniform_list(view, "entries", count, Self::render_extensions)

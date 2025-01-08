@@ -113,10 +113,10 @@ impl NotebookEditor {
             );
         }
 
-        let view = cx.view().downgrade();
+        let view = cx.model().downgrade();
         let cell_count = cell_order.len();
 
-        let this = cx.view();
+        let this = cx.model();
         let cell_list = ListState::new(
             cell_count,
             gpui::ListAlignment::Top,

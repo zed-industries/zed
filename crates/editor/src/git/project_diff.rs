@@ -77,7 +77,7 @@ impl ProjectDiffEditor {
         if let Some(existing) = workspace.item_of_type::<Self>(cx) {
             workspace.activate_item(&existing, true, true, window, cx);
         } else {
-            let workspace_handle = cx.view().downgrade();
+            let workspace_handle = cx.model().downgrade();
             let project_diff = window.new_view(cx, |window, cx| {
                 Self::new(workspace.project().clone(), workspace_handle, window, cx)
             });

@@ -62,7 +62,7 @@ fn test_edit_events(cx: &mut TestAppContext) {
     let editor1 = cx.add_window({
         let events = events.clone();
         |window, cx| {
-            let view = cx.view().clone();
+            let view = cx.model().clone();
             cx.subscribe_in(
                 &view,
                 window,
@@ -83,7 +83,7 @@ fn test_edit_events(cx: &mut TestAppContext) {
         let events = events.clone();
         |window, cx| {
             cx.subscribe_in(
-                &cx.view().clone(),
+                &cx.model().clone(),
                 window,
                 move |_, _, event: &EditorEvent, _, _| match event {
                     EditorEvent::Edited { .. } => events.borrow_mut().push(("editor2", "edited")),
@@ -691,7 +691,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
         window.new_view(cx, |window, cx| {
             let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
             let mut editor = build_editor(buffer.clone(), window, cx);
-            let handle = cx.view();
+            let handle = cx.model();
             editor.set_nav_history(Some(pane.read(cx).nav_history_for_item(&handle)));
 
             fn pop_history(
@@ -14077,7 +14077,7 @@ fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
             let _div = snapshot.render_crease_toggle(
                 MultiBufferRow(1),
                 false,
-                cx.view().clone(),
+                cx.model().clone(),
                 window,
                 cx,
             );
@@ -14298,7 +14298,7 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut gpui::T
             "Initially, only one, test, editor should be open in the workspace"
         );
         assert_eq!(
-            test_editor_cx.view(),
+            test_editor_cx.model(),
             editors.last().expect("Asserted len is 1").clone()
         );
     });
@@ -14334,7 +14334,7 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut gpui::T
         );
         let references_fallback_text = editors
             .into_iter()
-            .find(|new_editor| *new_editor != test_editor_cx.view())
+            .find(|new_editor| *new_editor != test_editor_cx.model())
             .expect("Should have one non-test editor now")
             .read(test_editor_cx)
             .text(test_editor_cx);

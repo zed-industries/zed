@@ -48,7 +48,7 @@ impl LanguageModelSelector {
             .collect::<Vec<_>>();
 
         let delegate = LanguageModelPickerDelegate {
-            language_model_selector: cx.view().downgrade(),
+            language_model_selector: cx.model().downgrade(),
             on_model_changed: on_model_changed.clone(),
             all_models: all_models.clone(),
             filtered_models: all_models,

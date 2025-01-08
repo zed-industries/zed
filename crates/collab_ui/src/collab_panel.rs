@@ -74,7 +74,7 @@ pub fn init(cx: &mut AppContext) {
                 .and_then(|room| room.read(cx).channel_id());
 
             if let Some(channel_id) = channel_id {
-                let workspace = cx.view().clone();
+                let workspace = cx.model().clone();
                 window.defer(cx, move |window, cx| {
                     ChannelView::open(channel_id, None, workspace, window, cx)
                         .detach_and_log_err(cx)
@@ -244,7 +244,7 @@ impl CollabPanel {
             )
             .detach();
 
-            let view = cx.view().downgrade();
+            let view = cx.model().downgrade();
             let list_state = ListState::new(
                 0,
                 gpui::ListAlignment::Top,
@@ -1054,7 +1054,7 @@ impl CollabPanel {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        let this = cx.view().clone();
+        let this = cx.model().clone();
         if !(role == proto::ChannelRole::Guest
             || role == proto::ChannelRole::Talker
             || role == proto::ChannelRole::Member)
@@ -1184,7 +1184,7 @@ impl CollabPanel {
                 .channel_for_id(clipboard.channel_id)
                 .map(|channel| channel.name.clone())
         });
-        let this = cx.view().clone();
+        let this = cx.model().clone();
 
         let context_menu = ContextMenu::build(window, cx, |mut context_menu, window, cx| {
             if self.has_subchannels(ix) {
@@ -1351,7 +1351,7 @@ impl CollabPanel {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        let this = cx.view().clone();
+        let this = cx.model().clone();
         let in_room = ActiveCall::global(cx).read(cx).room().is_some();
 
         let context_menu = ContextMenu::build(window, cx, |mut context_menu, _, _| {

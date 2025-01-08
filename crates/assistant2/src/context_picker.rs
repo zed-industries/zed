@@ -83,7 +83,7 @@ impl ContextPicker {
         }
 
         let delegate = ContextPickerDelegate {
-            context_picker: cx.view().downgrade(),
+            context_picker: cx.model().downgrade(),
             workspace,
             thread_store,
             context_store,

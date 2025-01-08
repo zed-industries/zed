@@ -242,7 +242,7 @@ impl Vim {
     const NAMESPACE: &'static str = "vim";
 
     pub fn new(window: &mut Window, cx: &mut ModelContext<Editor>) -> Model<Self> {
-        let editor = cx.view().clone();
+        let editor = cx.model().clone();
 
         window.new_view(cx, |window, cx| Vim {
             mode: Mode::Normal,
@@ -374,7 +374,7 @@ impl Vim {
         editor.unregister_addon::<VimAddon>();
         editor.set_relative_line_number(None, window, cx);
         if let Some(vim) = Vim::globals(cx).focused_vim() {
-            if vim.entity_id() == cx.view().entity_id() {
+            if vim.entity_id() == cx.model().entity_id() {
                 Vim::globals(cx).focused_vim = None;
             }
         }
@@ -810,7 +810,7 @@ impl Vim {
 
         if VimSettings::get_global(cx).toggle_relative_line_numbers {
             if let Some(old_vim) = Vim::globals(cx).focused_vim() {
-                if old_vim.entity_id() != cx.view().entity_id() {
+                if old_vim.entity_id() != cx.model().entity_id() {
                     old_vim.update(cx, |vim, cx| {
                         vim.update_editor(window, cx, |_, editor, window, cx| {
                             editor.set_relative_line_number(None, window, cx)
@@ -829,7 +829,7 @@ impl Vim {
                 });
             }
         }
-        Vim::globals(cx).focused_vim = Some(cx.view().downgrade());
+        Vim::globals(cx).focused_vim = Some(cx.model().downgrade());
     }
 
     fn blurred(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {

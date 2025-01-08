@@ -499,7 +499,7 @@ impl CompletionsMenu {
         let last_rendered_range = self.last_rendered_range.clone();
         let style = style.clone();
         let list = uniform_list(
-            cx.view().clone(),
+            cx.model().clone(),
             "completions",
             matches.len(),
             move |_editor, range, window, cx| {
@@ -992,7 +992,7 @@ impl CodeActionsMenu {
         let actions = self.actions.clone();
         let selected_item = self.selected_item;
         let list = uniform_list(
-            cx.view().clone(),
+            cx.model().clone(),
             "code_actions_menu",
             self.actions.len(),
             move |_this, range, window, cx| {

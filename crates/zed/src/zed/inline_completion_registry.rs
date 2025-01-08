@@ -22,7 +22,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
 
             register_backward_compatible_actions(editor, window, cx);
 
-            let editor_handle = cx.view().downgrade();
+            let editor_handle = cx.model().downgrade();
             cx.on_release({
                 let editor_handle = editor_handle.clone();
                 let editors = editors.clone();

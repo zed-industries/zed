@@ -42,14 +42,6 @@ impl<'a, T: 'static> ModelContext<'a, T> {
             .expect("The entity must be alive if we have a model context")
     }
 
-    // todo! Remove
-    /// Returns a handle to the model belonging to this context.
-    pub fn view(&self) -> Model<T> {
-        self.weak_model()
-            .upgrade()
-            .expect("The entity must be alive if we have a model context")
-    }
-
     /// Returns a weak handle to the model belonging to this context.
     pub fn weak_model(&self) -> WeakModel<T> {
         self.model_state.clone()
@@ -388,13 +380,6 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         subscription
     }
 
-    // todo! Deal with notification of windows specially
-    // /// Indicate that this view has changed, which will invoke any observers and also mark the window as dirty.
-    // /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
-    // pub fn notify(&mut self) {
-    //     self.window_cx.notify(Some(self.view.entity_id()));
-    // }
-
     /// Register a callback to be invoked when the window is resized.
     pub fn observe_window_bounds(
         &self,
@@ -679,21 +664,6 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         });
     }
 
-    // todo!: I don't think we need this method.
-    // /// Emit an event to be handled by any other views that have subscribed via [ViewContext::subscribe].
-    // pub fn emit<Evt>(&mut self, event: Evt)
-    // where
-    //     Evt: 'static,
-    //     V: EventEmitter<Evt>,
-    // {
-    //     let emitter = self.view.model.entity_id;
-    //     self.push_effect(Effect::Emit {
-    //         emitter,
-    //         event_type: TypeId::of::<Evt>(),
-    //         event: Box::new(event),
-    //     });
-    // }
-
     /// Move focus to the current view, assuming it implements [`FocusableView`].
     pub fn focus_self(&mut self, window: &mut Window)
     where
@@ -704,21 +674,6 @@ impl<'a, T: 'static> ModelContext<'a, T> {
             view.read(cx).focus_handle(cx).focus(window)
         })
     }
-
-    // /// Convenience method for accessing view state in an event callback.
-    // ///
-    // /// Many GPUI callbacks take the form of `Fn(&E, &mut Window, &mut AppContext)`,
-    // /// but it's often useful to be able to access view state in these
-    // /// callbacks. This method provides a convenient way to do so.
-    // pub fn listener<E: ?Sized>(
-    //     &self,
-    //     f: impl Fn(&mut V, &E, &mut Window, &mut ModelContext<V>) + 'static,
-    // ) -> impl Fn(&E, &mut Window, &mut AppContext) + 'static {
-    //     let view = self.weak_model();
-    //     move |e: &E, window: &mut Window, cx: &mut AppContext| {
-    //         view.update(cx, |view, cx| f(view, e, window, cx)).ok();
-    //     }
-    // }
 }
 
 impl<'a, T> ModelContext<'a, T> {

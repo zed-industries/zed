@@ -113,7 +113,7 @@ impl Render for InlineCompletionButton {
                             .tooltip(|window, cx| Tooltip::text("GitHub Copilot", window, cx)),
                     );
                 }
-                let this = cx.view().clone();
+                let this = cx.model().clone();
 
                 div().child(
                     PopoverMenu::new("copilot")
@@ -164,7 +164,7 @@ impl Render for InlineCompletionButton {
 
                 let icon = status.to_icon();
                 let tooltip_text = status.to_tooltip();
-                let this = cx.view().clone();
+                let this = cx.model().clone();
                 let fs = self.fs.clone();
 
                 return div().child(
