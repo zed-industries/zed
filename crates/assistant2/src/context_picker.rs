@@ -12,6 +12,7 @@ use gpui::{
     WeakModel, WeakView,
 };
 use picker::{Picker, PickerDelegate};
+use project::{ProjectPath, WorktreeId};
 use thread_context_picker::{render_thread_context_entry, ThreadContextEntry};
 use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
@@ -57,10 +58,12 @@ impl ContextPicker {
         let mut recent = Vec::new();
         // TODO az
         recent.push(RecentContextPickerEntry::File {
+            worktree_id: WorktreeId::from_usize(0),
             path: PathBuf::from("src/ui/index.tsx").into(),
             path_prefix: "zed.dev".into(),
         });
         recent.push(RecentContextPickerEntry::File {
+            worktree_id: WorktreeId::from_usize(0),
             path: PathBuf::from("path/to/recent/file2").into(),
             path_prefix: "zed.dev".into(),
         });
@@ -159,6 +162,7 @@ struct ContextPickerEntry {
 
 enum RecentContextPickerEntry {
     File {
+        worktree_id: WorktreeId,
         path: Arc<Path>,
         path_prefix: Arc<str>,
     },
@@ -210,7 +214,66 @@ impl PickerDelegate for ContextPickerDelegate {
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
         if self.selected_ix < self.recent.len() {
-            todo!()
+            let Some(context_store) = self.context_store.upgrade() else {
+                return;
+            };
+
+            if let Some(entry) = self.recent.get(self.selected_ix) {
+                match entry {
+                    RecentContextPickerEntry::File {
+                        worktree_id,
+                        path,
+                        path_prefix: _,
+                    } => {
+                        let project_path = ProjectPath {
+                            worktree_id: *worktree_id,
+                            path: path.clone(),
+                        };
+
+                        let task = context_store.update(cx, |context_store, cx| {
+                            context_store.add_file(project_path, cx)
+                        });
+
+                        let workspace = self.workspace.clone();
+
+                        cx.spawn(|_, mut cx| async move {
+                            match task.await {
+                                Ok(_) => {
+                                    return anyhow::Ok(());
+                                }
+                                Err(err) => {
+                                    let Some(workspace) = workspace.upgrade() else {
+                                        return anyhow::Ok(());
+                                    };
+
+                                    workspace.update(&mut cx, |workspace, cx| {
+                                        workspace.show_error(&err, cx);
+                                    })
+                                }
+                            }
+                        })
+                        .detach_and_log_err(cx);
+                    }
+                    RecentContextPickerEntry::Thread(thread) => {
+                        let Some(thread) = self
+                            .thread_store
+                            .as_ref()
+                            .and_then(|thread_store| thread_store.upgrade())
+                            .and_then(|thread_store| {
+                                thread_store.update(cx, |thread_store, cx| {
+                                    thread_store.open_thread(&thread.id, cx)
+                                })
+                            })
+                        else {
+                            return;
+                        };
+
+                        context_store.update(cx, |context_store, cx| {
+                            context_store.insert_thread(thread.read(cx))
+                        });
+                    }
+                }
+            }
         } else {
             let selected_ix = self.selected_ix - self.recent.len();
 
@@ -295,16 +358,18 @@ impl PickerDelegate for ContextPickerDelegate {
             let entry = &self.recent[ix];
 
             match entry {
-                RecentContextPickerEntry::File { path, path_prefix } => {
-                    Some(render_file_context_entry(
-                        self.context_store.clone(),
-                        path,
-                        path_prefix,
-                        ix,
-                        selected,
-                        cx,
-                    ))
-                }
+                RecentContextPickerEntry::File {
+                    worktree_id: _,
+                    path,
+                    path_prefix,
+                } => Some(render_file_context_entry(
+                    self.context_store.clone(),
+                    path,
+                    path_prefix,
+                    ix,
+                    selected,
+                    cx,
+                )),
                 RecentContextPickerEntry::Thread(thread) => Some(render_thread_context_entry(
                     self.context_store.clone(),
                     thread,
