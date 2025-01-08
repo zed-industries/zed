@@ -460,6 +460,7 @@ pub struct DocumentHighlight {
 pub struct Symbol {
     pub language_server_name: LanguageServerName,
     pub source_worktree_id: WorktreeId,
+    pub source_language_server_id: LanguageServerId,
     pub path: ProjectPath,
     pub label: CodeLabel,
     pub name: String,

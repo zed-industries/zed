@@ -2901,6 +2901,7 @@ pub struct LanguageServerStatus {
 struct CoreSymbol {
     pub language_server_name: LanguageServerName,
     pub source_worktree_id: WorktreeId,
+    pub source_language_server_id: LanguageServerId,
     pub path: ProjectPath,
     pub name: String,
     pub kind: lsp::SymbolKind,
@@ -3701,20 +3702,19 @@ impl LspStore {
         else {
             return;
         };
-        for (worktree_id, started_lsp_name) in
-            self.as_local().unwrap().language_server_ids.keys().cloned()
+        for ((worktree_id, started_lsp_name), ids) in &self.as_local().unwrap().language_server_ids
         {
             let language = languages.iter().find_map(|l| {
                 let adapter = self
                     .languages
                     .lsp_adapters(&l.name())
                     .iter()
-                    .find(|adapter| adapter.name == started_lsp_name)?
+                    .find(|adapter| adapter.name == *started_lsp_name)?
                     .clone();
                 Some((l, adapter))
             });
             if let Some((language, adapter)) = language {
-                let worktree = self.worktree_for_id(worktree_id, cx).ok();
+                let worktree = self.worktree_for_id(*worktree_id, cx).ok();
                 let root_file = worktree.as_ref().and_then(|worktree| {
                     worktree
                         .update(cx, |tree, cx| tree.root_file(cx))
@@ -3756,9 +3756,10 @@ impl LspStore {
 
         // Start all the newly-enabled language servers.
         for (worktree, language) in language_servers_to_start {
-            self.as_local_mut()
-                .unwrap()
-                .start_language_servers(&worktree, language, cx);
+            todo!();
+            // self.as_local_mut()
+            //     .unwrap()
+            //     .start_language_servers(&worktree, language, cx);
         }
 
         // Restart all language servers with changed initialization options.
@@ -4869,6 +4870,7 @@ impl LspStore {
             })
         } else if let Some(local) = self.as_local() {
             struct WorkspaceSymbolsResult {
+                server_id: LanguageServerId,
                 lsp_adapter: Arc<CachedLspAdapter>,
                 language: LanguageName,
                 worktree: WeakModel<Worktree>,
@@ -4909,6 +4911,7 @@ impl LspStore {
                         };
                     let worktree_abs_path = worktree.abs_path().clone();
                     let worktree_handle = worktree_handle.clone();
+                    let server_id = server.server_id();
                     requests.push(
                             server
                                 .request::<lsp::request::WorkspaceSymbolRequest>(
@@ -4940,6 +4943,7 @@ impl LspStore {
                                     }).unwrap_or_default();
 
                                     WorkspaceSymbolsResult {
+                                        server_id,
                                         lsp_adapter,
                                         language,
                                         worktree: worktree_handle.downgrade(),
@@ -4989,6 +4993,7 @@ impl LspStore {
                                 };
                                 let signature = this.symbol_signature(&project_path);
                                 Some(CoreSymbol {
+                                    source_language_server_id: result.server_id,
                                     language_server_name: result.lsp_adapter.name.clone(),
                                     source_worktree_id,
                                     path: project_path,
@@ -5554,10 +5559,17 @@ impl LspStore {
                 .await
             })
         } else if let Some(local) = self.as_local() {
-            let Some(&language_server_id) = local.language_server_ids.get(&(
-                symbol.source_worktree_id,
-                symbol.language_server_name.clone(),
-            )) else {
+            let Some(language_server_id) = local
+                .language_server_ids
+                .get(&(
+                    symbol.source_worktree_id,
+                    symbol.language_server_name.clone(),
+                ))
+                .and_then(|ids| {
+                    ids.contains(&symbol.source_language_server_id)
+                        .then_some(symbol.source_language_server_id)
+                })
+            else {
                 return Task::ready(Err(anyhow!(
                     "language server for worktree and language not found"
                 )));
@@ -6810,6 +6822,7 @@ impl LspStore {
                     &Symbol {
                         language_server_name: symbol.language_server_name,
                         source_worktree_id: symbol.source_worktree_id,
+                        source_language_server_id: symbol.source_language_server_id,
                         path: symbol.path,
                         name: symbol.name,
                         kind: symbol.kind,
@@ -7857,6 +7870,7 @@ impl LspStore {
         proto::Symbol {
             language_server_name: symbol.language_server_name.0.to_string(),
             source_worktree_id: symbol.source_worktree_id.to_proto(),
+            language_server_id: symbol.source_language_server_id.to_proto(),
             worktree_id: symbol.path.worktree_id.to_proto(),
             path: symbol.path.path.to_string_lossy().to_string(),
             name: symbol.name.clone(),
@@ -7891,6 +7905,9 @@ impl LspStore {
         Ok(CoreSymbol {
             language_server_name: LanguageServerName(serialized_symbol.language_server_name.into()),
             source_worktree_id,
+            source_language_server_id: LanguageServerId::from_proto(
+                serialized_symbol.language_server_id,
+            ),
             path,
             name: serialized_symbol.name,
             range: Unclipped(PointUtf16::new(start.row, start.column))
@@ -8722,6 +8739,7 @@ async fn populate_labels_for_symbols(
             output.push(Symbol {
                 language_server_name: symbol.language_server_name,
                 source_worktree_id: symbol.source_worktree_id,
+                source_language_server_id: symbol.source_language_server_id,
                 path: symbol.path,
                 label: label.unwrap_or_else(|| CodeLabel::plain(name.clone(), None)),
                 name,
