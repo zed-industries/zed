@@ -13,7 +13,7 @@ use language_model_selector::LanguageModelSelector;
 use project::{ProjectPath, WorktreeId};
 use rope::Point;
 use settings::Settings;
-use theme::ThemeSettings;
+use theme::{get_ui_font_size, ThemeSettings};
 use ui::{
     prelude::*, ButtonLike, ElevationIndex, KeyBinding, PopoverMenu, PopoverMenuHandle,
     SwitchWithLabel,
@@ -27,7 +27,7 @@ use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
-use crate::{Chat, ToggleContextPicker, ToggleModelSelector};
+use crate::{Chat, RemoveAllContext, ToggleContextPicker, ToggleModelSelector};
 
 pub struct MessageEditor {
     thread: Model<Thread>,
@@ -52,7 +52,7 @@ impl MessageEditor {
         thread: Model<Thread>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let context_store = cx.new_model(|_cx| ContextStore::new());
+        let context_store = cx.new_model(|_cx| ContextStore::new(workspace.clone()));
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
@@ -120,6 +120,11 @@ impl MessageEditor {
 
     fn toggle_context_picker(&mut self, _: &ToggleContextPicker, cx: &mut ViewContext<Self>) {
         self.context_picker_menu_handle.toggle(cx);
+    }
+
+    pub fn remove_all_context(&mut self, _: &RemoveAllContext, cx: &mut ViewContext<Self>) {
+        self.context_store.update(cx, |store, _cx| store.clear());
+        cx.notify();
     }
 
     fn chat(&mut self, _: &Chat, cx: &mut ViewContext<Self>) {
@@ -332,6 +337,7 @@ impl Render for MessageEditor {
             .on_action(cx.listener(Self::chat))
             .on_action(cx.listener(Self::toggle_model_selector))
             .on_action(cx.listener(Self::toggle_context_picker))
+            .on_action(cx.listener(Self::remove_all_context))
             .size_full()
             .gap_2()
             .p_2()
@@ -369,7 +375,7 @@ impl Render for MessageEditor {
                             .anchor(gpui::Corner::BottomLeft)
                             .offset(gpui::Point {
                                 x: px(0.0),
-                                y: px(-16.0),
+                                y: (-get_ui_font_size(cx) * 2) - px(4.0),
                             })
                             .with_handle(self.inline_context_picker_menu_handle.clone()),
                     )

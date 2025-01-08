@@ -1,10 +1,14 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use anyhow::{anyhow, bail, Result};
 use collections::{BTreeMap, HashMap};
-use gpui::{AppContext, Model, SharedString};
+use gpui::{AppContext, Model, ModelContext, SharedString, Task, WeakView};
 use language::Buffer;
+use project::{ProjectPath, Worktree};
 use text::BufferId;
+use workspace::Workspace;
 
 use crate::context::{
     ContextKind, ContextSnapshot, DirectoryContext, FetchedUrlContext, ThreadContext,
@@ -16,6 +20,7 @@ use crate::{
 };
 
 pub struct ContextStore {
+    workspace: WeakView<Workspace>,
     context: Vec<Context>,
     // TODO: If an EntityId is used for all context types (like BufferId), can remove ContextId.
     next_context_id: ContextId,
@@ -26,8 +31,9 @@ pub struct ContextStore {
 }
 
 impl ContextStore {
-    pub fn new() -> Self {
+    pub fn new(workspace: WeakView<Workspace>) -> Self {
         Self {
+            workspace,
             context: Vec::new(),
             next_context_id: ContextId(0),
             files: BTreeMap::default(),
@@ -58,6 +64,49 @@ impl ContextStore {
         self.fetched_urls.clear();
     }
 
+    pub fn add_file(
+        &mut self,
+        project_path: ProjectPath,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let workspace = self.workspace.clone();
+        let Some(project) = workspace
+            .upgrade()
+            .map(|workspace| workspace.read(cx).project().clone())
+        else {
+            return Task::ready(Err(anyhow!("failed to read project")));
+        };
+
+        cx.spawn(|this, mut cx| async move {
+            let open_buffer_task =
+                project.update(&mut cx, |project, cx| project.open_buffer(project_path.clone(), cx))?;
+
+            let buffer = open_buffer_task.await?;
+            let buffer_id = buffer.update(&mut cx, |buffer, _cx| buffer.remote_id())?;
+
+            let already_included = this.update(&mut cx, |this, cx| {
+                match this.will_include_buffer(buffer_id, &project_path.path) {
+                    Some(FileInclusion::Direct(context_id)) => {
+                        this.remove_context(context_id);
+                        true
+                    }
+                    Some(FileInclusion::InDirectory(_)) => true,
+                    None => false,
+                }
+            })?;
+
+            if already_included {
+                return anyhow::Ok(());
+            }
+
+            this.update(&mut cx, |this, cx| {
+                this.insert_file(buffer, cx);
+            })?;
+
+            anyhow::Ok(())
+        })
+    }
+
     pub fn insert_file(&mut self, buffer_model: Model<Buffer>, cx: &AppContext) {
         let buffer = buffer_model.read(cx);
         let Some(file) = buffer.file() else {
@@ -79,12 +128,88 @@ impl ContextStore {
         });
     }
 
-    pub fn insert_directory(
+    pub fn add_directory(
         &mut self,
-        path: &Path,
-        buffers: BTreeMap<BufferId, (Model<Buffer>, clock::Global)>,
-        text: impl Into<SharedString>,
-    ) {
+        project_path: ProjectPath,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let workspace = self.workspace.clone();
+        let Some(project) = workspace
+            .upgrade()
+            .map(|workspace| workspace.read(cx).project().clone())
+        else {
+            return Task::ready(Err(anyhow!("failed to read project")));
+        };
+
+        let already_included = if let Some(context_id) = self.includes_directory(&project_path.path)
+        {
+            self.remove_context(context_id);
+            true
+        } else {
+            false
+        };
+        if already_included {
+            return Task::ready(Ok(()));
+        }
+
+        let worktree_id = project_path.worktree_id;
+        cx.spawn(|this, mut cx| async move {
+            let worktree = project.update(&mut cx, |project, cx| {
+                project
+                    .worktree_for_id(worktree_id, cx)
+                    .ok_or_else(|| anyhow!("no worktree found for {worktree_id:?}"))
+            })??;
+
+            let files = worktree.update(&mut cx, |worktree, _cx| {
+                collect_files_in_path(worktree, &project_path.path)
+            })?;
+
+            let open_buffer_tasks = project.update(&mut cx, |project, cx| {
+                files
+                    .into_iter()
+                    .map(|file_path| {
+                        project.open_buffer(
+                            ProjectPath {
+                                worktree_id,
+                                path: file_path.clone(),
+                            },
+                            cx,
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })?;
+
+            let buffers = futures::future::join_all(open_buffer_tasks).await;
+
+            this.update(&mut cx, |this, cx| {
+                let mut text = String::new();
+                let mut directory_buffers = BTreeMap::new();
+                for buffer_model in buffers {
+                    let buffer_model = buffer_model?;
+                    let buffer = buffer_model.read(cx);
+                    let path = buffer.file().map_or(&project_path.path, |file| file.path());
+                    push_fenced_codeblock(&path, buffer.text(), &mut text);
+                    directory_buffers
+                        .insert(buffer.remote_id(), (buffer_model, buffer.version.clone()));
+                }
+
+                if directory_buffers.is_empty() {
+                    bail!(
+                        "could not read any text files from {}",
+                        &project_path.path.display()
+                    );
+                }
+
+                this.insert_directory(&project_path.path, directory_buffers, text);
+
+                anyhow::Ok(())
+            })??;
+
+            anyhow::Ok(())
+        })
+    }
+
+    pub fn insert_directory(&mut self, path: &Path, buffers: BTreeMap<BufferId, (Model<Buffer>, clock::Global)>, text: impl Into<SharedString>) {
         let id = self.next_context_id.post_inc();
         self.directories.insert(path.to_path_buf(), id);
 
@@ -247,4 +372,18 @@ pub(crate) fn push_fenced_codeblock(path: &Path, content: String, buffer: &mut S
     }
 
     buffer.push_str("```\n");
+}
+
+fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {
+    let mut files = Vec::new();
+
+    for entry in worktree.child_entries(path) {
+        if entry.is_dir() {
+            files.extend(collect_files_in_path(worktree, &entry.path));
+        } else if entry.is_file() {
+            files.push(entry.path.clone());
+        }
+    }
+
+    files
 }

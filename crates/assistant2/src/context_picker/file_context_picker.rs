@@ -193,68 +193,41 @@ impl PickerDelegate for FileContextPickerDelegate {
             return;
         };
 
-        let workspace = self.workspace.clone();
-        let Some(project) = workspace
-            .upgrade()
-            .map(|workspace| workspace.read(cx).project().clone())
+        let project_path = ProjectPath {
+            worktree_id: WorktreeId::from_usize(mat.worktree_id),
+            path: mat.path.clone(),
+        };
+
+        let Some(task) = self
+            .context_store
+            .update(cx, |context_store, cx| {
+                context_store.add_file(project_path, cx)
+            })
+            .ok()
         else {
             return;
         };
-        let path = mat.path.clone();
 
-        let already_included = self
-            .context_store
-            .update(cx, |context_store, cx| {
-                match context_store.will_include_file_path(&path, cx) {
-                    Some(FileInclusion::Direct(context_id)) => {
-                        context_store.remove_context(context_id);
-                        true
-                    }
-                    Some(FileInclusion::InDirectory(_)) => true,
-                    None => false,
-                }
-            })
-            .unwrap_or(true);
-        if already_included {
-            return;
-        }
-
-        let worktree_id = WorktreeId::from_usize(mat.worktree_id);
+        let workspace = self.workspace.clone();
         let confirm_behavior = self.confirm_behavior;
         cx.spawn(|this, mut cx| async move {
-            let Some(open_buffer_task) = project
-                .update(&mut cx, |project, cx| {
-                    let project_path = ProjectPath {
-                        worktree_id,
-                        path: path.clone(),
+            match task.await {
+                Ok(()) => {
+                    this.update(&mut cx, |this, cx| match confirm_behavior {
+                        ConfirmBehavior::KeepOpen => {}
+                        ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                    })?;
+                }
+                Err(err) => {
+                    let Some(workspace) = workspace.upgrade() else {
+                        return anyhow::Ok(());
                     };
 
-                    let task = project.open_buffer(project_path, cx);
-
-                    Some(task)
-                })
-                .ok()
-                .flatten()
-            else {
-                return anyhow::Ok(());
-            };
-
-            let buffer = open_buffer_task.await?;
-
-            this.update(&mut cx, |this, cx| {
-                this.delegate
-                    .context_store
-                    .update(cx, |context_store, cx| {
-                        context_store.insert_file(buffer, cx);
+                    workspace.update(&mut cx, |workspace, cx| {
+                        workspace.show_error(&err, cx);
                     })?;
-
-                match confirm_behavior {
-                    ConfirmBehavior::KeepOpen => {}
-                    ConfirmBehavior::Close => this.delegate.dismissed(cx),
                 }
-
-                anyhow::Ok(())
-            })??;
+            }
 
             anyhow::Ok(())
         })

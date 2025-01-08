@@ -449,6 +449,10 @@ where
     );
 }
 
+pub fn log_err<E: std::fmt::Debug>(error: &E) {
+    log_error_with_caller(*Location::caller(), error, log::Level::Warn);
+}
+
 pub trait TryFutureExt {
     fn log_err(self) -> LogErrorFuture<Self>
     where

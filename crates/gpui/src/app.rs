@@ -1418,6 +1418,11 @@ impl AppContext {
     pub fn get_name(&self) -> &'static str {
         self.name.as_ref().unwrap()
     }
+
+    /// Returns `true` if the platform file picker supports selecting a mix of files and directories.
+    pub fn can_select_mixed_files_and_dirs(&self) -> bool {
+        self.platform.can_select_mixed_files_and_dirs()
+    }
 }
 
 impl Context for AppContext {

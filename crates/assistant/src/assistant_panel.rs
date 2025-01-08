@@ -3654,7 +3654,7 @@ impl ContextEditor {
 
         let (style, tooltip) = match token_state(&self.context, cx) {
             Some(TokenState::NoTokensLeft { .. }) => (
-                ButtonStyle::Tinted(TintColor::Negative),
+                ButtonStyle::Tinted(TintColor::Error),
                 Some(Tooltip::text("Token limit reached", cx)),
             ),
             Some(TokenState::HasMoreTokens {
@@ -3711,7 +3711,7 @@ impl ContextEditor {
 
         let (style, tooltip) = match token_state(&self.context, cx) {
             Some(TokenState::NoTokensLeft { .. }) => (
-                ButtonStyle::Tinted(TintColor::Negative),
+                ButtonStyle::Tinted(TintColor::Error),
                 Some(Tooltip::text("Token limit reached", cx)),
             ),
             Some(TokenState::HasMoreTokens {

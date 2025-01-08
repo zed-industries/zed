@@ -1196,7 +1196,15 @@ impl Vim {
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());
             editor.selections.line_mode = matches!(vim.mode, Mode::VisualLine);
-            editor.set_inline_completions_enabled(matches!(vim.mode, Mode::Insert | Mode::Replace));
+
+            let enable_inline_completions = match vim.mode {
+                Mode::Insert | Mode::Replace => true,
+                Mode::Normal => editor
+                    .inline_completion_provider()
+                    .map_or(false, |provider| provider.show_completions_in_normal_mode()),
+                _ => false,
+            };
+            editor.set_inline_completions_enabled(enable_inline_completions);
         });
         cx.notify()
     }
