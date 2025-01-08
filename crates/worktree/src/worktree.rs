@@ -193,8 +193,8 @@ pub struct RepositoryEntry {
     ///     - my_sub_folder_1/project_root/changed_file_1
     ///     - my_sub_folder_2/changed_file_2
     pub(crate) statuses_by_path: SumTree<StatusEntry>,
-    pub(crate) work_directory_id: ProjectEntryId,
-    pub(crate) work_directory: WorkDirectory,
+    pub work_directory_id: ProjectEntryId,
+    pub work_directory: WorkDirectory,
     pub(crate) branch: Option<Arc<str>>,
 }
 
