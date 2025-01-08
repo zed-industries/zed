@@ -7,13 +7,13 @@ use crate::{
     MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
     ScaledPixels, Scene, Shadow, Size, Underline,
 };
+use blade_graphics as gpu;
+use blade_util::{BufferBelt, BufferBeltDescriptor};
 use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
 #[cfg(target_os = "macos")]
 use media::core_video::CVMetalTextureCache;
-
-use blade_graphics as gpu;
-use blade_util::{BufferBelt, BufferBeltDescriptor};
+#[cfg(target_os = "macos")]
 use objc2_metal::MTLDevice;
 use std::{mem, sync::Arc};
 
@@ -343,21 +343,21 @@ impl BladeRenderer {
             .create_surface_configured(window, surface_config)
             .unwrap();
 
-        // Determine the sample count based on the device's capabilities.
-        let mut sample_count = 1;
+        #[cfg(not(target_os = "macos"))]
+        {
+            // TODO: Determine on non-macOS platforms, until Blade supports querying sample counts.
+            let mut sample_count = 4;
+        }
         #[cfg(target_os = "macos")]
         {
+            // Determine the sample count based on the device's capabilities.
+            let mut sample_count = 1;
             for &n in &[4, 2] {
                 if context.gpu.metal_device().supportsTextureSampleCount(n) {
                     sample_count = n as _;
                     break;
                 }
             }
-        }
-        // TODO: Determine on non-macOS platforms, until Blade supports querying sample counts.
-        #[cfg(not(target_os = "macos"))]
-        {
-            sample_count = 4;
         }
 
         let command_encoder = context.gpu.create_command_encoder(gpu::CommandEncoderDesc {
