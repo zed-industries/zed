@@ -1470,15 +1470,18 @@ impl ReferenceMultibuffer {
                     start = hunk_offset;
                 }
 
-                insertion_end_row = buffer
-                    .offset_to_point(
-                        hunk.buffer_range
-                            .end
-                            .to_offset(&buffer)
-                            .min(buffer_range.end),
-                    )
-                    .row
-                    + 1;
+                let insertion_end_point = buffer.offset_to_point(
+                    hunk.buffer_range
+                        .end
+                        .to_offset(&buffer)
+                        .min(buffer_range.end),
+                );
+
+                insertion_end_row = if insertion_end_point.column > 0 {
+                    insertion_end_point.row + 1
+                } else {
+                    insertion_end_point.row
+                };
             }
 
             expected_text.extend(buffer.text_for_range(start..buffer_range.end));
