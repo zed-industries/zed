@@ -397,6 +397,7 @@
       "'": "vim::Quotes",
       "`": "vim::BackQuotes",
       "\"": "vim::DoubleQuotes",
+      "q": "vim::AnyQuotes",
       "|": "vim::VerticalBars",
       "(": "vim::Parentheses",
       ")": "vim::Parentheses",

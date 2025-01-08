@@ -227,7 +227,8 @@
       "cmd-n": "assistant2::NewThread",
       "cmd-shift-h": "assistant2::OpenHistory",
       "cmd-shift-m": "assistant2::ToggleModelSelector",
-      "cmd-shift-a": "assistant2::ToggleContextPicker"
+      "cmd-shift-a": "assistant2::ToggleContextPicker",
+      "cmd-alt-e": "assistant2::RemoveAllContext"
     }
   },
   {
@@ -615,6 +616,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-shift-a": "assistant2::ToggleContextPicker",
+      "cmd-alt-e": "assistant2::RemoveAllContext",
       "ctrl-[": "assistant::CyclePreviousInlineAssist",
       "ctrl-]": "assistant::CycleNextInlineAssist"
     }

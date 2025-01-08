@@ -258,7 +258,7 @@ pub fn render_parsed_markdown(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) enum InlayId {
+pub enum InlayId {
     InlineCompletion(usize),
     Hint(usize),
 }
@@ -3592,7 +3592,7 @@ impl Editor {
         }
     }
 
-    fn splice_inlays(
+    pub fn splice_inlays(
         &self,
         to_remove: Vec<InlayId>,
         to_insert: Vec<Inlay>,
@@ -4883,7 +4883,7 @@ impl Editor {
         }
     }
 
-    fn inline_completion_provider(&self) -> Option<Arc<dyn InlineCompletionProviderHandle>> {
+    pub fn inline_completion_provider(&self) -> Option<Arc<dyn InlineCompletionProviderHandle>> {
         Some(self.inline_completion_provider.as_ref()?.provider.clone())
     }
 

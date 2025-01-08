@@ -15,7 +15,7 @@ use crate::context_store::ContextStore;
 use crate::thread::Thread;
 use crate::thread_store::ThreadStore;
 use crate::ui::ContextPill;
-use crate::{AssistantPanel, ToggleContextPicker};
+use crate::{AssistantPanel, RemoveAllContext, ToggleContextPicker};
 
 pub struct ContextStrip {
     context_store: Model<ContextStore>,
@@ -226,14 +226,23 @@ impl Render for ContextStrip {
                     parent.child(
                         IconButton::new("remove-all-context", IconName::Eraser)
                             .icon_size(IconSize::Small)
-                            .tooltip(move |cx| Tooltip::text("Remove All Context", cx))
-                            .on_click({
-                                let context_store = self.context_store.clone();
-                                cx.listener(move |_this, _event, cx| {
-                                    context_store.update(cx, |this, _cx| this.clear());
-                                    cx.notify();
-                                })
-                            }),
+                            .tooltip({
+                                let focus_handle = focus_handle.clone();
+                                move |cx| {
+                                    Tooltip::for_action_in(
+                                        "Remove All Context",
+                                        &RemoveAllContext,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .on_click(cx.listener({
+                                let focus_handle = focus_handle.clone();
+                                move |_this, _event, cx| {
+                                    focus_handle.dispatch_action(&RemoveAllContext, cx);
+                                }
+                            })),
                     )
                 }
             })
