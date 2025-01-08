@@ -9227,20 +9227,25 @@ impl Editor {
         position: Point,
         cx: &mut ViewContext<'_, Editor>,
     ) -> Option<MultiBufferDiffHunk> {
-        for (ix, position) in [position, Point::zero()].into_iter().enumerate() {
-            if let Some(hunk) = self.go_to_next_hunk_in_direction(
-                snapshot,
-                position,
-                ix > 0,
-                snapshot.buffer_snapshot.diff_hunks_in_range(
-                    position + Point::new(1, 0)..snapshot.buffer_snapshot.max_point(),
-                ),
-                cx,
-            ) {
-                return Some(hunk);
-            }
+        let mut hunk = snapshot
+            .buffer_snapshot
+            .diff_hunks_in_range(position..snapshot.buffer_snapshot.max_point())
+            .find(|hunk| hunk.row_range.start.0 > position.row);
+        if hunk.is_none() {
+            hunk = snapshot
+                .buffer_snapshot
+                .diff_hunks_in_range(Point::zero()..position)
+                .find(|hunk| hunk.row_range.end.0 < position.row)
         }
-        None
+        if let Some(hunk) = &hunk {
+            let destination = Point::new(hunk.row_range.start.0, 0);
+            self.unfold_ranges(&[destination..destination], false, false, cx);
+            self.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                s.select_ranges(vec![destination..destination]);
+            });
+        }
+
+        hunk
     }
 
     fn go_to_prev_hunk(&mut self, _: &GoToPrevHunk, cx: &mut ViewContext<Self>) {

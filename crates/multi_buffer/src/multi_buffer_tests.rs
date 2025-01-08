@@ -2,7 +2,6 @@ use super::*;
 use git::diff::DiffHunkStatus;
 use gpui::{AppContext, Context, TestAppContext};
 use indoc::indoc;
-use itertools::assert_equal;
 use language::{Buffer, Rope};
 use parking_lot::RwLock;
 use rand::prelude::*;
@@ -381,6 +380,52 @@ fn test_diff_boundary_anchors(cx: &mut AppContext) {
         assert_eq!(
             vec![Point::new(1, 0), Point::new(2, 0),],
             snapshot.summaries_for_anchors::<Point, _>(&[before, after]),
+        )
+    })
+}
+
+#[gpui::test]
+fn test_diff_hunks_in_range(cx: &mut AppContext) {
+    let base_text = "one\ntwo\nthree\nfour\nfive\n";
+    let text = "one\nthree\nfive\n";
+    let buffer = cx.new_model(|cx| Buffer::local(text, cx));
+    let snapshot = buffer.read(cx).snapshot();
+    let change_set = cx.new_model(|cx| {
+        let mut change_set = BufferChangeSet::new(&snapshot);
+        change_set.recalculate_diff_sync(base_text.into(), snapshot.text, true, cx);
+        change_set
+    });
+    let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_all_hunks_expanded(cx);
+        multibuffer.add_change_set(change_set, cx);
+    });
+    cx.background_executor().run_until_parked();
+
+    let snapshot = multibuffer.read(cx).snapshot(cx);
+    let actual_text = snapshot.text();
+    let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
+    let actual_diff = format_diff(&actual_text, &actual_row_infos);
+    pretty_assertions::assert_eq!(
+        actual_diff,
+        indoc! {
+            "  one
+             - two
+               three
+             - four
+               five
+             "
+        },
+    );
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        assert_eq!(
+            multibuffer
+                .snapshot(cx)
+                .diff_hunks_in_range(Point::new(1, 0)..Point::MAX)
+                .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0)
+                .collect::<Vec<_>>(),
+            vec![1..2, 3..4]
         )
     })
 }

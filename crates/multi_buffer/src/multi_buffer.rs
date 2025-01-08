@@ -3252,12 +3252,6 @@ impl MultiBufferSnapshot {
             key: range.start,
             value: None,
         });
-        while let Some(region) = cursor.region() {
-            if region.is_main_buffer {
-                break;
-            }
-            cursor.next();
-        }
 
         let mut current_region = cursor.region();
         let mut prev_excerpt_diff_hunks: Option<(ExcerptId, _)> = None;
@@ -3314,9 +3308,7 @@ impl MultiBufferSnapshot {
 
                 if buffer_start.row > 0 {
                     while let Some(region) = &current_region {
-                        if !region.is_main_buffer
-                            || region.buffer_range.end.value.unwrap() < buffer_start
-                        {
+                        if region.buffer_range.end.value.unwrap() < buffer_start {
                             cursor.next();
                             current_region = cursor.region();
                         } else {
@@ -3328,7 +3320,8 @@ impl MultiBufferSnapshot {
                 let start_region = current_region.as_ref()?;
                 let start = if start_region.is_main_buffer {
                     start_region.range.start.value.unwrap()
-                        + (buffer_start - start_region.buffer_range.start.value.unwrap())
+                        + (buffer_start
+                            .saturating_sub(start_region.buffer_range.start.value.unwrap()))
                 } else {
                     start_region.range.start.value.unwrap()
                 };
