@@ -55,46 +55,38 @@ impl ContextPicker {
         recent.push(RecentContextPickerEntry {
             name: "Recent File 1".into(),
             kind: ContextKind::File,
-            icon: IconName::File,
         });
         recent.push(RecentContextPickerEntry {
             name: "Recent File 2".into(),
             kind: ContextKind::File,
-            icon: IconName::File,
         });
         recent.push(RecentContextPickerEntry {
             name: "Recent Thread 1".into(),
             kind: ContextKind::Thread,
-            icon: IconName::MessageCircle,
         });
         recent.push(RecentContextPickerEntry {
             name: "Recent Thread 2".into(),
             kind: ContextKind::Thread,
-            icon: IconName::MessageCircle,
         });
 
         let mut kinds = Vec::new();
         kinds.push(ContextPickerEntry {
             name: "File".into(),
             kind: ContextKind::File,
-            icon: IconName::File,
         });
         kinds.push(ContextPickerEntry {
             name: "Folder".into(),
             kind: ContextKind::Directory,
-            icon: IconName::Folder,
         });
         kinds.push(ContextPickerEntry {
             name: "Fetch".into(),
             kind: ContextKind::FetchedUrl,
-            icon: IconName::Globe,
         });
 
         if thread_store.is_some() {
             kinds.push(ContextPickerEntry {
                 name: "Thread".into(),
                 kind: ContextKind::Thread,
-                icon: IconName::MessageCircle,
             });
         }
 
@@ -159,14 +151,12 @@ impl Render for ContextPicker {
 struct ContextPickerEntry {
     name: SharedString,
     kind: ContextKind,
-    icon: IconName,
 }
 
 struct RecentContextPickerEntry {
     name: SharedString,
     // TODO az considering refining
     kind: ContextKind,
-    icon: IconName,
 }
 
 pub(crate) struct ContextPickerDelegate {
@@ -307,7 +297,7 @@ impl PickerDelegate for ContextPickerDelegate {
                             .min_w(px(250.))
                             .max_w(px(400.))
                             .gap_2()
-                            .child(Icon::new(entry.icon).size(IconSize::Small))
+                            .child(Icon::new(entry.kind.icon()).size(IconSize::Small))
                             .child(Label::new(entry.name.clone()).single_line()),
                     ),
             )
@@ -323,7 +313,7 @@ impl PickerDelegate for ContextPickerDelegate {
                             .min_w(px(250.))
                             .max_w(px(400.))
                             .gap_2()
-                            .child(Icon::new(entry.icon).size(IconSize::Small))
+                            .child(Icon::new(entry.kind.icon()).size(IconSize::Small))
                             .child(Label::new(entry.name.clone()).single_line()),
                     ),
             )

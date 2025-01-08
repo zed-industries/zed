@@ -59,13 +59,6 @@ impl ContextPill {
 
 impl RenderOnce for ContextPill {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let icon = match &self.kind() {
-            ContextKind::File => IconName::File,
-            ContextKind::Directory => IconName::Folder,
-            ContextKind::FetchedUrl => IconName::Globe,
-            ContextKind::Thread => IconName::MessageCircle,
-        };
-
         let color = cx.theme().colors();
 
         let base_pill = h_flex()
@@ -75,7 +68,11 @@ impl RenderOnce for ContextPill {
             .border_1()
             .rounded_md()
             .gap_1()
-            .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted));
+            .child(
+                Icon::new(self.kind().icon())
+                    .size(IconSize::XSmall)
+                    .color(Color::Muted),
+            );
 
         match &self {
             ContextPill::Added {
