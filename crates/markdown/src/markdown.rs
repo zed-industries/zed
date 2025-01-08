@@ -14,7 +14,7 @@ use parser::{parse_links_only, parse_markdown, MarkdownEvent, MarkdownTag, Markd
 
 use std::{iter, mem, ops::Range, rc::Rc, sync::Arc};
 use theme::SyntaxTheme;
-use ui::prelude::*;
+use ui::{prelude::*, Tooltip};
 use util::{ResultExt, TryFutureExt};
 
 #[derive(Clone)]
@@ -667,6 +667,33 @@ impl Element for MarkdownElement {
                     }
                     MarkdownTagEnd::CodeBlock => {
                         builder.trim_trailing_newline();
+                        builder.flush_text();
+                        builder.modify_current_div(|el| {
+                            let id =
+                                ElementId::NamedInteger("copy-markdown-code".into(), range.end);
+                            let copy_button = div()
+                                .font_ui(cx)
+                                .w_6()
+                                .absolute()
+                                .top_2()
+                                .right_2()
+                                .elevation_2(cx)
+                                .child(
+                                    IconButton::new(id, IconName::Copy)
+                                        .on_click({
+                                            let code =
+                                                parsed_markdown.source()[range.clone()].to_string();
+                                            move |_, cx| {
+                                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                                    code.clone(),
+                                                ))
+                                            }
+                                        })
+                                        .tooltip(|cx| Tooltip::text("Copy", cx)),
+                                );
+
+                            el.child(copy_button)
+                        });
                         builder.pop_div();
                         builder.pop_code_block();
                         if self.style.code_block.text.is_some() {
@@ -917,6 +944,13 @@ impl MarkdownElementBuilder {
         self.div_stack.push(div);
     }
 
+    fn modify_current_div(&mut self, f: impl FnOnce(AnyDiv) -> AnyDiv) {
+        self.flush_text();
+        if let Some(div) = self.div_stack.pop() {
+            self.div_stack.push(f(div));
+        }
+    }
+
     fn pop_div(&mut self) {
         self.flush_text();
         let div = self.div_stack.pop().unwrap().into_any_element();
@@ -1001,7 +1035,7 @@ impl MarkdownElementBuilder {
         }
     }
 
-    fn flush_text(&mut self) {
+    pub fn flush_text(&mut self) {
         let line = mem::take(&mut self.pending_line);
         if line.text.is_empty() {
             return;
