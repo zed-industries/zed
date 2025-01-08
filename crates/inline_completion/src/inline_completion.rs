@@ -21,6 +21,7 @@ pub trait InlineCompletionProvider: 'static + Sized {
     fn name() -> &'static str;
     fn display_name() -> &'static str;
     fn show_completions_in_menu() -> bool;
+    fn show_completions_in_normal_mode() -> bool;
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,
@@ -61,6 +62,7 @@ pub trait InlineCompletionProviderHandle {
         cx: &AppContext,
     ) -> bool;
     fn show_completions_in_menu(&self) -> bool;
+    fn show_completions_in_normal_mode(&self) -> bool;
     fn refresh(
         &self,
         buffer: Model<Buffer>,
@@ -99,6 +101,10 @@ where
 
     fn show_completions_in_menu(&self) -> bool {
         T::show_completions_in_menu()
+    }
+
+    fn show_completions_in_normal_mode(&self) -> bool {
+        T::show_completions_in_normal_mode()
     }
 
     fn is_enabled(
