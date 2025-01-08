@@ -18,6 +18,8 @@
         .
         (attribute_item) *
         .
+        (line_comment) *
+        .
         (function_item
             name: (_) @run
             body: _
