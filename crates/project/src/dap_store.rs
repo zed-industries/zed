@@ -487,8 +487,6 @@ impl DapStore {
 
                 let session = store.session_by_id(&session_id).unwrap();
 
-                let client = Arc::new(client);
-
                 session.update(cx, |session, cx| {
                     session.update_configuration(
                         |old_config| {
@@ -496,10 +494,15 @@ impl DapStore {
                         },
                         cx,
                     );
-                    session.add_client(client.clone(), cx);
+                    session.add_client(Arc::new(client), cx);
                 });
 
-                cx.emit(DapStoreEvent::DebugClientStarted((session_id, client_id)));
+                // don't emit this event ourself in tests, so we can add request,
+                // response and event handlers for this client
+                if !cfg!(any(test, feature = "test-support")) {
+                    cx.emit(DapStoreEvent::DebugClientStarted((session_id, client_id)));
+                }
+
                 cx.notify();
             })
         })

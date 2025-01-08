@@ -1,10 +1,13 @@
 use crate::*;
 use dap::{
-    requests::{Disconnect, Initialize, Launch, RunInTerminal, StackTrace},
-    RunInTerminalRequestArguments,
+    client::DebugAdapterClientId,
+    requests::{Disconnect, Initialize, Launch, RunInTerminal, StackTrace, StartDebugging},
+    RunInTerminalRequestArguments, StartDebuggingRequestArguments,
+    StartDebuggingRequestArgumentsRequest,
 };
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{FakeFs, Project};
+use serde_json::json;
 use std::sync::{
     atomic::{AtomicBool, Ordering},
     Arc,
@@ -771,6 +774,136 @@ async fn test_handle_error_run_in_terminal_reverse_request(
             );
         })
         .unwrap();
+
+    let shutdown_session = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |dap_store, cx| {
+            dap_store.shutdown_session(&session.read(cx).id(), cx)
+        })
+    });
+
+    shutdown_session.await.unwrap();
+}
+
+#[gpui::test]
+async fn test_handle_start_debugging_reverse_request(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let send_response = Arc::new(AtomicBool::new(false));
+    let send_launch = Arc::new(AtomicBool::new(false));
+
+    let fs = FakeFs::new(executor.clone());
+
+    let project = Project::test(fs, [], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let task = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |store, cx| {
+            store.start_debug_session(
+                task::DebugAdapterConfig {
+                    label: "test config".into(),
+                    kind: task::DebugAdapterKind::Fake,
+                    request: task::DebugRequestType::Launch,
+                    program: None,
+                    cwd: None,
+                    initialize_args: None,
+                },
+                cx,
+            )
+        })
+    });
+
+    let (session, client) = task.await.unwrap();
+
+    client
+        .on_request::<Initialize, _>(move |_, _| {
+            Ok(dap::Capabilities {
+                supports_step_back: Some(false),
+                ..Default::default()
+            })
+        })
+        .await;
+
+    client.on_request::<Launch, _>(move |_, _| Ok(())).await;
+
+    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
+
+    client
+        .on_response::<StartDebugging, _>({
+            let send_response = send_response.clone();
+            move |response| {
+                send_response.store(true, Ordering::SeqCst);
+
+                assert!(response.success);
+                assert!(response.body.is_some());
+            }
+        })
+        .await;
+
+    cx.run_until_parked();
+
+    client
+        .fake_reverse_request::<StartDebugging>(StartDebuggingRequestArguments {
+            configuration: json!({}),
+            request: StartDebuggingRequestArgumentsRequest::Launch,
+        })
+        .await;
+
+    cx.run_until_parked();
+
+    project.update(cx, |_, cx| {
+        assert_eq!(2, session.read(cx).clients_len());
+    });
+    assert!(
+        send_response.load(std::sync::atomic::Ordering::SeqCst),
+        "Expected to receive response from reverse request"
+    );
+
+    let second_client = project.update(cx, |_, cx| {
+        session
+            .read(cx)
+            .client_by_id(&DebugAdapterClientId(1))
+            .unwrap()
+    });
+
+    project.update(cx, |_, cx| {
+        cx.emit(project::Event::DebugClientStarted((
+            session.read(cx).id(),
+            second_client.id(),
+        )));
+    });
+
+    second_client
+        .on_request::<Initialize, _>(move |_, _| {
+            Ok(dap::Capabilities {
+                supports_step_back: Some(false),
+                ..Default::default()
+            })
+        })
+        .await;
+    second_client
+        .on_request::<Launch, _>({
+            let send_launch = send_launch.clone();
+            move |_, _| {
+                send_launch.store(true, Ordering::SeqCst);
+
+                Ok(())
+            }
+        })
+        .await;
+    second_client
+        .on_request::<Disconnect, _>(move |_, _| Ok(()))
+        .await;
+
+    cx.run_until_parked();
+
+    assert!(
+        send_launch.load(std::sync::atomic::Ordering::SeqCst),
+        "Expected to send launch request on second client"
+    );
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {

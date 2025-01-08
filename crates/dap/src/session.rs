@@ -89,8 +89,9 @@ impl DebugSession {
         self.clients.get(client_id).cloned()
     }
 
-    pub fn has_clients(&self) -> bool {
-        !self.clients.is_empty()
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn clients_len(&self) -> usize {
+        self.clients.len()
     }
 
     pub fn clients(&self) -> impl Iterator<Item = Arc<DebugAdapterClient>> + '_ {

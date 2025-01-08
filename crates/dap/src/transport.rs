@@ -820,6 +820,19 @@ impl FakeTransport {
 #[cfg(any(test, feature = "test-support"))]
 #[async_trait(?Send)]
 impl Transport for FakeTransport {
+    async fn reconnect(&self, cx: &mut AsyncAppContext) -> Result<TransportPipe> {
+        self.start(
+            &DebugAdapterBinary {
+                command: "command".into(),
+                arguments: None,
+                envs: None,
+                cwd: None,
+            },
+            cx,
+        )
+        .await
+    }
+
     async fn start(
         &self,
         _binary: &DebugAdapterBinary,
