@@ -239,21 +239,34 @@ impl PickerDelegate for FileContextPickerDelegate {
                 return anyhow::Ok(());
             };
 
-            let buffer = open_buffer_task.await?;
+            let result = open_buffer_task.await;
 
-            this.update(&mut cx, |this, cx| {
-                this.delegate
-                    .context_store
-                    .update(cx, |context_store, cx| {
-                        context_store.insert_file(buffer.read(cx));
-                    })?;
+            this.update(&mut cx, |this, cx| match result {
+                Ok(buffer) => {
+                    this.delegate
+                        .context_store
+                        .update(cx, |context_store, cx| {
+                            context_store.insert_file(buffer.read(cx));
+                        })?;
 
-                match confirm_behavior {
-                    ConfirmBehavior::KeepOpen => {}
-                    ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                    match confirm_behavior {
+                        ConfirmBehavior::KeepOpen => {}
+                        ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                    }
+
+                    anyhow::Ok(())
                 }
+                Err(err) => {
+                    let Some(workspace) = workspace.upgrade() else {
+                        return anyhow::Ok(());
+                    };
 
-                anyhow::Ok(())
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.show_error(&err, cx);
+                    });
+
+                    anyhow::Ok(())
+                }
             })??;
 
             anyhow::Ok(())

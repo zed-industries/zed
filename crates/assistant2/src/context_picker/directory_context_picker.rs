@@ -231,27 +231,36 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
                     .collect::<Vec<_>>()
             })?;
 
-            let open_all_buffers_tasks = cx.background_executor().spawn(async move {
-                let mut buffers = Vec::with_capacity(open_buffer_tasks.len());
-
-                for open_buffer_task in open_buffer_tasks {
-                    let buffer = open_buffer_task.await?;
-
-                    buffers.push(buffer);
-                }
-
-                anyhow::Ok(buffers)
-            });
-
-            let buffers = open_all_buffers_tasks.await?;
+            let buffers = futures::future::join_all(open_buffer_tasks).await;
 
             this.update(&mut cx, |this, cx| {
                 let mut text = String::new();
 
-                for buffer in buffers {
+                let mut ok_count = 0;
+
+                for buffer in buffers.into_iter().flatten() {
                     let buffer = buffer.read(cx);
                     let path = buffer.file().map_or(&path, |file| file.path());
                     push_fenced_codeblock(&path, buffer.text(), &mut text);
+                    ok_count += 1;
+                }
+
+                if ok_count == 0 {
+                    let Some(workspace) = workspace.upgrade() else {
+                        return anyhow::Ok(());
+                    };
+
+                    workspace.update(cx, |workspace, cx| {
+                        workspace.show_error(
+                            &anyhow::anyhow!(
+                                "Could not read any text files from {}",
+                                path.display()
+                            ),
+                            cx,
+                        );
+                    });
+
+                    return anyhow::Ok(());
                 }
 
                 this.delegate
