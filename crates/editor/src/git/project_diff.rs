@@ -25,7 +25,7 @@ use theme::ActiveTheme;
 use ui::prelude::*;
 use util::{paths::compare_paths, ResultExt};
 use workspace::{
-    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
+    item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams, TabTooltipContent},
     ItemNavHistory, ToolbarItemLocation, Workspace,
 };
 
@@ -933,7 +933,7 @@ impl Item for ProjectDiffEditor {
             .update(cx, |editor, cx| editor.navigate(data, cx))
     }
 
-    fn tab_tooltip_content(&self, _: &AppContext) -> Option<workspace::item::TabTooltipContent> {
+    fn tab_tooltip_content(&self, _: &AppContext) -> Option<TabTooltipContent> {
         Some("Project Diff".into())
     }
 
