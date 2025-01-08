@@ -1,7 +1,5 @@
-use std::path::Path;
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
 use gpui::{
@@ -10,7 +8,6 @@ use gpui::{
 };
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::LanguageModelSelector;
-use project::{ProjectPath, WorktreeId};
 use rope::Point;
 use settings::Settings;
 use theme::{get_ui_font_size, ThemeSettings};
@@ -21,7 +18,6 @@ use ui::{
 use workspace::Workspace;
 
 use crate::assistant_model_selector::AssistantModelSelector;
-use crate::context::Context;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
@@ -31,7 +27,6 @@ use crate::{Chat, RemoveAllContext, ToggleContextPicker, ToggleModelSelector};
 
 pub struct MessageEditor {
     thread: Model<Thread>,
-    workspace: WeakView<Workspace>,
     editor: View<Editor>,
     context_store: Model<ContextStore>,
     context_strip: View<ContextStrip>,
@@ -98,7 +93,6 @@ impl MessageEditor {
 
         Self {
             thread,
-            workspace,
             editor: editor.clone(),
             context_store,
             context_strip,
@@ -153,15 +147,6 @@ impl MessageEditor {
             editor.clear(cx);
             text
         });
-
-        /* todo! Refresh the context text
-        let context = self.context_store.update(cx, {
-            let workspace = self.workspace.clone();
-            move |this, cx| {
-                refresh_context
-            }
-        });
-        */
 
         let thread = self.thread.clone();
         thread.update(cx, |thread, cx| {
@@ -231,91 +216,6 @@ impl MessageEditor {
         let editor_focus_handle = self.editor.focus_handle(cx);
         cx.focus(&editor_focus_handle);
     }
-
-    /*
-    pub async fn refresh_context(
-        workspace: WeakView<Workspace>,
-        context: &[Context],
-        cx: &mut AppContext,
-    ) -> Result<Vec<Context>> {
-        let mut results = Vec::new();
-
-        for context in context {
-            match &context.kind {
-                ContextKind::File {
-                    worktree_id,
-                    path,
-                    version,
-                } => {
-                    if let Some((text, new_buffer_version)) =
-                        Self::text_when_stale(workspace.clone(), *worktree_id, path, version, cx)
-                            .await?
-                    {
-                        results.push(Context {
-                            text,
-                            kind: ContextKind::File {
-                                worktree_id: *worktree_id,
-                                path: path.clone(),
-                                version: new_buffer_version,
-                            },
-                            ..context.clone()
-                        })
-                    } else {
-                        results.push(context.clone());
-                    }
-                }
-                ContextKind::Directory { path_to_version } => {}
-                ContextKind::FetchedUrl => todo!(),
-                ContextKind::Thread { updated_at } => todo!(),
-            };
-        }
-
-        Ok(results)
-    }
-
-    async fn text_when_stale(
-        workspace: WeakView<Workspace>,
-        worktree_id: WorktreeId,
-        path: &Arc<Path>,
-        prior_version: &BufferVersion,
-        cx: &mut AppContext,
-    ) -> Result<Option<(SharedString, BufferVersion)>> {
-        let Some(project) = workspace
-            .upgrade()
-            .map(|workspace| workspace.read(cx).project().clone())
-        else {
-            return Err(anyhow!("no workspace"));
-        };
-
-        let Some(open_buffer_task) = project.update(cx, |project, cx| {
-            let project_path = ProjectPath {
-                worktree_id,
-                path: path.clone(),
-            };
-
-            let task = project.open_buffer(project_path, cx);
-
-            Some(task)
-        }) else {
-            return Err(anyhow!("failed to open buffer"));
-        };
-
-        let buffer = open_buffer_task.await?.read(cx);
-        let is_stale = buffer.remote_id() != prior_version.buffer_id
-            || buffer.version() != prior_version.version;
-        if !is_stale {
-            return Ok(None);
-        }
-
-        Ok(Some((
-            buffer.text().into(),
-            BufferVersion {
-                buffer_id: buffer.remote_id(),
-                version: buffer.version(),
-            },
-        )))
-    }
-    */
 }
 
 impl FocusableView for MessageEditor {

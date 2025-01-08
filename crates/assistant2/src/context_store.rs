@@ -11,13 +11,10 @@ use text::BufferId;
 use workspace::Workspace;
 
 use crate::context::{
-    ContextKind, ContextSnapshot, DirectoryContext, FetchedUrlContext, ThreadContext,
+    Context, ContextId, ContextKind, ContextSnapshot, DirectoryContext, FetchedUrlContext,
+    FileContext, ThreadContext,
 };
-use crate::thread::Thread;
-use crate::{
-    context::{Context, ContextId, ContextVariant, FileContext},
-    thread::ThreadId,
-};
+use crate::thread::{Thread, ThreadId};
 
 pub struct ContextStore {
     workspace: WeakView<Workspace>,
@@ -78,13 +75,14 @@ impl ContextStore {
         };
 
         cx.spawn(|this, mut cx| async move {
-            let open_buffer_task =
-                project.update(&mut cx, |project, cx| project.open_buffer(project_path.clone(), cx))?;
+            let open_buffer_task = project.update(&mut cx, |project, cx| {
+                project.open_buffer(project_path.clone(), cx)
+            })?;
 
             let buffer = open_buffer_task.await?;
             let buffer_id = buffer.update(&mut cx, |buffer, _cx| buffer.remote_id())?;
 
-            let already_included = this.update(&mut cx, |this, cx| {
+            let already_included = this.update(&mut cx, |this, _cx| {
                 match this.will_include_buffer(buffer_id, &project_path.path) {
                     Some(FileInclusion::Direct(context_id)) => {
                         this.remove_context(context_id);
@@ -118,14 +116,12 @@ impl ContextStore {
 
         let id = self.next_context_id.post_inc();
         self.files.insert(buffer.remote_id(), id);
-        self.context.push(Context {
+        self.context.push(Context::File(FileContext {
             id,
-            variant: ContextVariant::File(FileContext {
-                buffer: buffer_model,
-                version: buffer.version.clone(),
-                text: text.into(),
-            }),
-        });
+            buffer: buffer_model,
+            version: buffer.version.clone(),
+            text: text.into(),
+        }));
     }
 
     pub fn add_directory(
@@ -209,7 +205,12 @@ impl ContextStore {
         })
     }
 
-    pub fn insert_directory(&mut self, path: &Path, buffers: BTreeMap<BufferId, (Model<Buffer>, clock::Global)>, text: impl Into<SharedString>) {
+    pub fn insert_directory(
+        &mut self,
+        path: &Path,
+        buffers: BTreeMap<BufferId, (Model<Buffer>, clock::Global)>,
+        text: impl Into<SharedString>,
+    ) {
         let id = self.next_context_id.post_inc();
         self.directories.insert(path.to_path_buf(), id);
 
@@ -225,71 +226,65 @@ impl ContextStore {
             .and_then(|p| p.file_name())
             .map(|p| p.to_string_lossy().into_owned().into());
 
-        self.context.push(Context {
-            id,
-            variant: ContextVariant::Directory(DirectoryContext {
-                path: path.into(),
-                buffers,
-                snapshot: ContextSnapshot {
-                    id,
-                    name,
-                    parent,
-                    tooltip: Some(full_path),
-                    kind: ContextKind::Directory,
-                    text: text.into(),
-                },
-            }),
-        });
+        self.context.push(Context::Directory(DirectoryContext {
+            path: path.into(),
+            buffers,
+            snapshot: ContextSnapshot {
+                id,
+                name,
+                parent,
+                tooltip: Some(full_path),
+                kind: ContextKind::Directory,
+                text: text.into(),
+            },
+        }));
     }
 
     pub fn insert_thread(&mut self, thread: Model<Thread>, cx: &AppContext) {
-        let context_id = self.next_context_id.post_inc();
+        let id = self.next_context_id.post_inc();
         let thread_ref = thread.read(cx);
         let text = thread_ref.text().into();
 
-        self.threads.insert(thread_ref.id().clone(), context_id);
-        self.context.push(Context {
-            id: context_id,
-            variant: ContextVariant::Thread(ThreadContext { thread, text }),
-        });
+        self.threads.insert(thread_ref.id().clone(), id);
+        self.context
+            .push(Context::Thread(ThreadContext { id, thread, text }));
     }
 
     pub fn insert_fetched_url(&mut self, url: String, text: impl Into<SharedString>) {
-        let context_id = self.next_context_id.post_inc();
+        let id = self.next_context_id.post_inc();
 
-        self.fetched_urls.insert(url.clone(), context_id);
-        self.context.push(Context {
-            id: context_id,
-            variant: ContextVariant::FetchedUrl(FetchedUrlContext {
-                url: url.into(),
-                text: text.into(),
-            }),
-        });
+        self.fetched_urls.insert(url.clone(), id);
+        self.context.push(Context::FetchedUrl(FetchedUrlContext {
+            id,
+            url: url.into(),
+            text: text.into(),
+        }));
     }
 
     pub fn remove_context(&mut self, id: ContextId) {
-        let Some(ix) = self.context.iter().position(|context| context.id == id) else {
+        let Some(ix) = self.context.iter().position(|context| context.id() == id) else {
             return;
         };
 
-        match self.context.remove(ix).variant {
-            ContextVariant::File(_) => {
+        match self.context.remove(ix) {
+            Context::File(_) => {
                 self.files.retain(|_, context_id| *context_id != id);
             }
-            ContextVariant::Directory(_) => {
+            Context::Directory(_) => {
                 self.directories.retain(|_, context_id| *context_id != id);
             }
-            ContextVariant::FetchedUrl(_) => {
+            Context::FetchedUrl(_) => {
                 self.fetched_urls.retain(|_, context_id| *context_id != id);
             }
-            ContextVariant::Thread(_) => {
+            Context::Thread(_) => {
                 self.threads.retain(|_, context_id| *context_id != id);
             }
         }
     }
 
-    // todo! The implementation and naming here is assuming that directories will be rescanned.
-
+    /// Returns whether the buffer is already included directly in the context, or if it will be
+    /// included in the context via a directory. Directory inclusion is based on paths rather than
+    /// buffer IDs as the directory will be re-scanned.
     pub fn will_include_buffer(&self, buffer_id: BufferId, path: &Path) -> Option<FileInclusion> {
         if let Some(context_id) = self.files.get(&buffer_id) {
             return Some(FileInclusion::Direct(*context_id));
@@ -298,11 +293,12 @@ impl ContextStore {
         self.will_include_file_path_via_directory(path)
     }
 
+    /// Returns whether this file path is already included directly in the context, or if it will be
+    /// included in the context via a directory.
     pub fn will_include_file_path(&self, path: &Path, cx: &AppContext) -> Option<FileInclusion> {
         if !self.files.is_empty() {
-            // todo! This is not very efficient, and is used when rendering file matches.
-            let found_file_context = self.context.iter().find(|context| match &context.variant {
-                ContextVariant::File(file_context) => {
+            let found_file_context = self.context.iter().find(|context| match &context {
+                Context::File(file_context) => {
                     if let Some(file_path) = file_context.path(cx) {
                         *file_path == *path
                     } else {
@@ -312,7 +308,7 @@ impl ContextStore {
                 _ => false,
             });
             if let Some(context) = found_file_context {
-                return Some(FileInclusion::Direct(context.id));
+                return Some(FileInclusion::Direct(context.id()));
             }
         }
 

@@ -6,7 +6,6 @@ use collections::BTreeMap;
 use gpui::{AppContext, Model, SharedString};
 use language::Buffer;
 use language_model::{LanguageModelRequestMessage, MessageContent};
-use project::ProjectPath;
 use serde::{Deserialize, Serialize};
 
 use text::BufferId;
@@ -41,62 +40,70 @@ pub enum ContextKind {
     Thread,
 }
 
-// Some context referenced by the message editor.
 #[derive(Debug)]
-pub struct Context {
-    pub id: ContextId,
-    pub variant: ContextVariant,
-}
-
-#[derive(Debug)]
-pub enum ContextVariant {
+pub enum Context {
     File(FileContext),
     Directory(DirectoryContext),
     FetchedUrl(FetchedUrlContext),
     Thread(ThreadContext),
 }
 
-// todo! Model<Buffer> holds onto the buffer even if the file is deleted and closed. Should remove
+impl Context {
+    pub fn id(&self) -> ContextId {
+        match self {
+            Self::File(file) => file.id,
+            Self::Directory(directory) => directory.snapshot.id,
+            Self::FetchedUrl(url) => url.id,
+            Self::Thread(thread) => thread.id,
+        }
+    }
+}
+
+// TODO: Model<Buffer> holds onto the buffer even if the file is deleted and closed. Should remove
 // the context from the message editor in this case.
 
 #[derive(Debug)]
 pub struct FileContext {
+    pub id: ContextId,
     pub buffer: Model<Buffer>,
+    #[allow(unused)]
     pub version: clock::Global,
     pub text: SharedString,
 }
 
-// todo! Unlike with files, directory renames will not automatically update.
-
 #[derive(Debug)]
 pub struct DirectoryContext {
+    #[allow(unused)]
     pub path: Rc<Path>,
-    // todo! The choice to make this a BTreeMap was a result of use in a version of
+    // TODO: The choice to make this a BTreeMap was a result of use in a version of
     // ContextStore::will_include_buffer before I realized that the path logic should be used there
     // too.
+    #[allow(unused)]
     pub buffers: BTreeMap<BufferId, (Model<Buffer>, clock::Global)>,
     pub snapshot: ContextSnapshot,
 }
 
 #[derive(Debug)]
 pub struct FetchedUrlContext {
+    pub id: ContextId,
     pub url: SharedString,
     pub text: SharedString,
 }
 
-// todo! Model<Thread> holds onto the thread even if the thread is deleted. Can either handle this
+// TODO: Model<Thread> holds onto the thread even if the thread is deleted. Can either handle this
 // explicitly or have a WeakModel<Thread> and remove during snapshot.
 
 #[derive(Debug)]
 pub struct ThreadContext {
+    pub id: ContextId,
     pub thread: Model<Thread>,
     pub text: SharedString,
 }
 
 impl Context {
     pub fn snapshot(&self, cx: &AppContext) -> Option<ContextSnapshot> {
-        match &self.variant {
-            ContextVariant::File(file_context) => {
+        match &self {
+            Self::File(file_context) => {
                 let path = file_context.path(cx)?;
                 let full_path: SharedString = path.to_string_lossy().into_owned().into();
                 let name = match path.file_name() {
@@ -109,7 +116,7 @@ impl Context {
                     .map(|p| p.to_string_lossy().into_owned().into());
 
                 Some(ContextSnapshot {
-                    id: self.id,
+                    id: self.id(),
                     name,
                     parent,
                     tooltip: Some(full_path),
@@ -117,23 +124,20 @@ impl Context {
                     text: file_context.text.clone(),
                 })
             }
-
-            ContextVariant::Directory(DirectoryContext { snapshot, .. }) => Some(snapshot.clone()),
-
-            ContextVariant::FetchedUrl(FetchedUrlContext { url, text }) => Some(ContextSnapshot {
-                id: self.id,
+            Self::Directory(DirectoryContext { snapshot, .. }) => Some(snapshot.clone()),
+            Self::FetchedUrl(FetchedUrlContext { url, text, id }) => Some(ContextSnapshot {
+                id: *id,
                 name: url.clone(),
                 parent: None,
                 tooltip: None,
                 kind: ContextKind::FetchedUrl,
                 text: text.clone(),
             }),
-
-            ContextVariant::Thread(thread_context) => {
+            Self::Thread(thread_context) => {
                 let thread = thread_context.thread.read(cx);
 
                 Some(ContextSnapshot {
-                    id: self.id,
+                    id: self.id(),
                     name: thread.summary().unwrap_or("New thread".into()),
                     parent: None,
                     tooltip: None,
