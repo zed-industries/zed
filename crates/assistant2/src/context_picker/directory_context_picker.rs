@@ -2,17 +2,16 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use anyhow::anyhow;
 use fuzzy::PathMatch;
 use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakModel, WeakView};
 use picker::{Picker, PickerDelegate};
-use project::{PathMatchCandidateSet, ProjectPath, Worktree, WorktreeId};
+use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use ui::{prelude::*, ListItem};
 use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
-use crate::context_store::{push_fenced_codeblock, ContextStore};
+use crate::context_store::ContextStore;
 
 pub struct DirectoryContextPicker {
     picker: View<Picker<DirectoryContextPickerDelegate>>,
@@ -179,107 +178,45 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
             return;
         };
 
-        let workspace = self.workspace.clone();
-        let Some(project) = workspace
-            .upgrade()
-            .map(|workspace| workspace.read(cx).project().clone())
+        let project_path = ProjectPath {
+            worktree_id: WorktreeId::from_usize(mat.worktree_id),
+            path: mat.path.clone(),
+        };
+
+        let Some(task) = self
+            .context_store
+            .update(cx, |context_store, cx| {
+                context_store.add_directory(project_path, cx)
+            })
+            .ok()
         else {
             return;
         };
-        let path = mat.path.clone();
 
-        let already_included = self
-            .context_store
-            .update(cx, |context_store, _cx| {
-                if let Some(context_id) = context_store.included_directory(&path) {
-                    context_store.remove_context(&context_id);
-                    true
-                } else {
-                    false
-                }
-            })
-            .unwrap_or(true);
-        if already_included {
-            return;
-        }
-
-        let worktree_id = WorktreeId::from_usize(mat.worktree_id);
+        let workspace = self.workspace.clone();
         let confirm_behavior = self.confirm_behavior;
         cx.spawn(|this, mut cx| async move {
-            let worktree = project.update(&mut cx, |project, cx| {
-                project
-                    .worktree_for_id(worktree_id, cx)
-                    .ok_or_else(|| anyhow!("no worktree found for {worktree_id:?}"))
-            })??;
-
-            let files = worktree.update(&mut cx, |worktree, _cx| {
-                collect_files_in_path(worktree, &path)
-            })?;
-
-            let open_buffer_tasks = project.update(&mut cx, |project, cx| {
-                files
-                    .into_iter()
-                    .map(|file_path| {
-                        project.open_buffer(
-                            ProjectPath {
-                                worktree_id,
-                                path: file_path.clone(),
-                            },
-                            cx,
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            })?;
-
-            let buffers = futures::future::join_all(open_buffer_tasks).await;
-
-            this.update(&mut cx, |this, cx| {
-                let mut text = String::new();
-
-                let mut ok_count = 0;
-
-                for buffer in buffers.into_iter().flatten() {
-                    let buffer = buffer.read(cx);
-                    let path = buffer.file().map_or(&path, |file| file.path());
-                    push_fenced_codeblock(&path, buffer.text(), &mut text);
-                    ok_count += 1;
+            match task.await {
+                Ok(()) => {
+                    this.update(&mut cx, |this, cx| match confirm_behavior {
+                        ConfirmBehavior::KeepOpen => {}
+                        ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                    })?;
                 }
-
-                if ok_count == 0 {
+                Err(err) => {
                     let Some(workspace) = workspace.upgrade() else {
                         return anyhow::Ok(());
                     };
 
-                    workspace.update(cx, |workspace, cx| {
-                        workspace.show_error(
-                            &anyhow::anyhow!(
-                                "Could not read any text files from {}",
-                                path.display()
-                            ),
-                            cx,
-                        );
-                    });
-
-                    return anyhow::Ok(());
-                }
-
-                this.delegate
-                    .context_store
-                    .update(cx, |context_store, _cx| {
-                        context_store.insert_directory(&path, text);
+                    workspace.update(&mut cx, |workspace, cx| {
+                        workspace.show_error(&err, cx);
                     })?;
-
-                match confirm_behavior {
-                    ConfirmBehavior::KeepOpen => {}
-                    ConfirmBehavior::Close => this.delegate.dismissed(cx),
                 }
-
-                anyhow::Ok(())
-            })??;
+            }
 
             anyhow::Ok(())
         })
-        .detach_and_log_err(cx)
+        .detach_and_log_err(cx);
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
@@ -326,18 +263,4 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
                 }),
         )
     }
-}
-
-fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {
-    let mut files = Vec::new();
-
-    for entry in worktree.child_entries(path) {
-        if entry.is_dir() {
-            files.extend(collect_files_in_path(worktree, &entry.path));
-        } else if entry.is_file() {
-            files.push(entry.path.clone());
-        }
-    }
-
-    files
 }
