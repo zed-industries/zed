@@ -681,8 +681,11 @@ impl Element for MarkdownElement {
                                 .child(
                                     IconButton::new(id, IconName::Copy)
                                         .on_click({
-                                            let code =
-                                                parsed_markdown.source()[range.clone()].to_string();
+                                            let code = without_fences(
+                                                parsed_markdown.source()[range.clone()].trim(),
+                                            )
+                                            .to_string();
+
                                             move |_, cx| {
                                                 cx.write_to_clipboard(ClipboardItem::new_string(
                                                     code.clone(),
@@ -1252,5 +1255,45 @@ impl RenderedText {
         self.links
             .iter()
             .find(|link| link.source_range.contains(&source_index))
+    }
+}
+
+/// Some markdown blocks are indented, and others have e.g. ```rust … ``` around them.
+/// If this block is fenced with backticks, strip them off (and the language name).
+/// We use this when copying code blocks to the clipboard.
+fn without_fences(mut markdown: &str) -> &str {
+    if let Some(opening_backticks) = markdown.find("```") {
+        markdown = &markdown[opening_backticks..];
+
+        // Trim off the next newline. This also trims off a language name if it's there.
+        if let Some(newline) = markdown.find('\n') {
+            markdown = &markdown[newline + 1..];
+        }
+    };
+
+    if let Some(closing_backticks) = markdown.rfind("```") {
+        markdown = &markdown[..closing_backticks];
+    };
+
+    markdown
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_without_fences() {
+        let input = "```rust\nlet x = 5;\n```";
+        assert_eq!(without_fences(input), "let x = 5;\n");
+
+        let input = "   ```\nno language\n```   ";
+        assert_eq!(without_fences(input), "no language\n");
+
+        let input = "plain text";
+        assert_eq!(without_fences(input), "plain text");
+
+        let input = "```python\nprint('hello')\nprint('world')\n```";
+        assert_eq!(without_fences(input), "print('hello')\nprint('world')\n");
     }
 }
