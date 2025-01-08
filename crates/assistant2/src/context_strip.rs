@@ -1,7 +1,10 @@
 use std::rc::Rc;
 
 use editor::Editor;
-use gpui::{AppContext, FocusHandle, Model, View, WeakModel, WeakView};
+use gpui::{
+    AppContext, DismissEvent, EventEmitter, FocusHandle, Model, Subscription, View, WeakModel,
+    WeakView,
+};
 use language::Buffer;
 use ui::{prelude::*, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip};
 use workspace::Workspace;
@@ -12,7 +15,7 @@ use crate::context_store::ContextStore;
 use crate::thread::Thread;
 use crate::thread_store::ThreadStore;
 use crate::ui::ContextPill;
-use crate::{AssistantPanel, ToggleContextPicker};
+use crate::{AssistantPanel, RemoveAllContext, ToggleContextPicker};
 
 pub struct ContextStrip {
     context_store: Model<ContextStore>,
@@ -21,6 +24,7 @@ pub struct ContextStrip {
     focus_handle: FocusHandle,
     suggest_context_kind: SuggestContextKind,
     workspace: WeakView<Workspace>,
+    _context_picker_subscription: Subscription,
 }
 
 impl ContextStrip {
@@ -33,21 +37,27 @@ impl ContextStrip {
         suggest_context_kind: SuggestContextKind,
         cx: &mut ViewContext<Self>,
     ) -> Self {
+        let context_picker = cx.new_view(|cx| {
+            ContextPicker::new(
+                workspace.clone(),
+                thread_store.clone(),
+                context_store.downgrade(),
+                ConfirmBehavior::KeepOpen,
+                cx,
+            )
+        });
+
+        let context_picker_subscription =
+            cx.subscribe(&context_picker, Self::handle_context_picker_event);
+
         Self {
             context_store: context_store.clone(),
-            context_picker: cx.new_view(|cx| {
-                ContextPicker::new(
-                    workspace.clone(),
-                    thread_store.clone(),
-                    context_store.downgrade(),
-                    ConfirmBehavior::KeepOpen,
-                    cx,
-                )
-            }),
+            context_picker,
             context_picker_menu_handle,
             focus_handle,
             suggest_context_kind,
             workspace,
+            _context_picker_subscription: context_picker_subscription,
         }
     }
 
@@ -106,6 +116,15 @@ impl ContextStrip {
             name: active_thread.summary().unwrap_or("New Thread".into()),
             thread: weak_active_thread,
         })
+    }
+
+    fn handle_context_picker_event(
+        &mut self,
+        _picker: View<ContextPicker>,
+        _event: &DismissEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        cx.emit(ContextStripEvent::PickerDismissed);
     }
 }
 
@@ -207,19 +226,34 @@ impl Render for ContextStrip {
                     parent.child(
                         IconButton::new("remove-all-context", IconName::Eraser)
                             .icon_size(IconSize::Small)
-                            .tooltip(move |cx| Tooltip::text("Remove All Context", cx))
-                            .on_click({
-                                let context_store = self.context_store.clone();
-                                cx.listener(move |_this, _event, cx| {
-                                    context_store.update(cx, |this, _cx| this.clear());
-                                    cx.notify();
-                                })
-                            }),
+                            .tooltip({
+                                let focus_handle = focus_handle.clone();
+                                move |cx| {
+                                    Tooltip::for_action_in(
+                                        "Remove All Context",
+                                        &RemoveAllContext,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .on_click(cx.listener({
+                                let focus_handle = focus_handle.clone();
+                                move |_this, _event, cx| {
+                                    focus_handle.dispatch_action(&RemoveAllContext, cx);
+                                }
+                            })),
                     )
                 }
             })
     }
 }
+
+pub enum ContextStripEvent {
+    PickerDismissed,
+}
+
+impl EventEmitter<ContextStripEvent> for ContextStrip {}
 
 pub enum SuggestContextKind {
     File,

@@ -167,13 +167,7 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         };
 
         self.context_store
-            .update(cx, |context_store, cx| {
-                if let Some(context_id) = context_store.included_thread(&entry.id) {
-                    context_store.remove_context(&context_id);
-                } else {
-                    context_store.insert_thread(thread.read(cx));
-                }
-            })
+            .update(cx, |context_store, cx| context_store.add_thread(thread, cx))
             .ok();
 
         match self.confirm_behavior {
@@ -199,8 +193,8 @@ impl PickerDelegate for ThreadContextPickerDelegate {
     ) -> Option<Self::ListItem> {
         let thread = &self.matches[ix];
 
-        let added = self.context_store.upgrade().map_or(false, |ctx_store| {
-            ctx_store.read(cx).included_thread(&thread.id).is_some()
+        let added = self.context_store.upgrade().map_or(false, |context_store| {
+            context_store.read(cx).included_thread(&thread.id).is_some()
         });
 
         Some(
