@@ -398,6 +398,7 @@ struct BufferEdit {
     new_text: Arc<str>,
     is_insertion: bool,
     original_indent_column: u32,
+    excerpt_id: ExcerptId,
 }
 
 #[derive(Debug, PartialEq)]
@@ -669,7 +670,7 @@ impl MultiBuffer {
             drop(snapshot);
 
             for (buffer_id, mut edits) in buffer_edits {
-                edits.sort_unstable_by_key(|edit| edit.range.start);
+                edits.sort_by_key(|edit| edit.range.start);
                 this.buffers.borrow()[&buffer_id]
                     .buffer
                     .update(cx, |buffer, cx| {
@@ -683,19 +684,23 @@ impl MultiBuffer {
                             mut new_text,
                             mut is_insertion,
                             original_indent_column,
+                            excerpt_id,
                         }) = edits.next()
                         {
                             while let Some(BufferEdit {
                                 range: next_range,
                                 is_insertion: next_is_insertion,
                                 new_text: next_new_text,
+                                excerpt_id: next_excerpt_id,
                                 ..
                             }) = edits.peek()
                             {
                                 if range.end >= next_range.start {
                                     range.end = cmp::max(next_range.end, range.end);
                                     is_insertion |= *next_is_insertion;
-                                    new_text = format!("{new_text}{next_new_text}").into();
+                                    if excerpt_id == *next_excerpt_id {
+                                        new_text = format!("{new_text}{next_new_text}").into();
+                                    }
                                     edits.next();
                                 } else {
                                     break;
@@ -779,6 +784,7 @@ impl MultiBuffer {
                             new_text,
                             is_insertion: true,
                             original_indent_column,
+                            excerpt_id: start_region.excerpt.id,
                         });
                 }
             } else {
@@ -794,6 +800,7 @@ impl MultiBuffer {
                             new_text: new_text.clone(),
                             is_insertion: true,
                             original_indent_column,
+                            excerpt_id: start_region.excerpt.id,
                         });
                 }
                 if end_region.is_main_buffer {
@@ -806,6 +813,7 @@ impl MultiBuffer {
                             new_text: new_text.clone(),
                             is_insertion: false,
                             original_indent_column,
+                            excerpt_id: end_region.excerpt.id,
                         });
                 }
 
@@ -825,6 +833,7 @@ impl MultiBuffer {
                                 new_text: new_text.clone(),
                                 is_insertion: false,
                                 original_indent_column,
+                                excerpt_id: region.excerpt.id,
                             });
                     }
                     cursor.next_excerpt();
