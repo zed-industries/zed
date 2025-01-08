@@ -38,9 +38,8 @@ pub unsafe fn new_renderer(
     _native_view: *mut c_void,
     _bounds: crate::Size<f32>,
     _transparent: bool,
-    sample_count: u32,
 ) -> Renderer {
-    MetalRenderer::new(context, sample_count)
+    MetalRenderer::new(context)
 }
 
 pub(crate) struct InstanceBufferPool {
@@ -109,7 +108,7 @@ pub(crate) struct MetalRenderer {
 }
 
 impl MetalRenderer {
-    pub fn new(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>, sample_count: u32) -> Self {
+    pub fn new(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>) -> Self {
         // Prefer low‐power integrated GPUs on Intel Mac. On Apple
         // Silicon, there is only ever one GPU, so this is equivalent to
         // `metal::Device::system_default()`.
@@ -119,6 +118,15 @@ impl MetalRenderer {
             log::error!("unable to access a compatible graphics device");
             std::process::exit(1);
         };
+
+        // Determine the sample count based on the device's capabilities.
+        let mut sample_count = 1;
+        for &n in &[4, 2] {
+            if device.supports_texture_sample_count(n) {
+                sample_count = n as _;
+                break;
+            }
+        }
 
         let layer = metal::MetalLayer::new();
         layer.set_device(&device);

@@ -589,7 +589,6 @@ impl MacWindow {
                     native_view as *mut _,
                     bounds.size.map(|pixels| pixels.0),
                     false,
-                    4,
                 ),
                 request_frame_callback: None,
                 event_callback: None,

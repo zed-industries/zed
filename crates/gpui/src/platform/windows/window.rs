@@ -1257,7 +1257,6 @@ mod windows_renderer {
         let config = BladeSurfaceConfig {
             size: Default::default(),
             transparent,
-            sample_count: 4,
         };
         BladeRenderer::new(context, &raw, config)
     }

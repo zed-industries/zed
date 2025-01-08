@@ -14,6 +14,7 @@ use media::core_video::CVMetalTextureCache;
 
 use blade_graphics as gpu;
 use blade_util::{BufferBelt, BufferBeltDescriptor};
+use objc2_metal::MTLDevice;
 use std::{mem, sync::Arc};
 
 const MAX_FRAME_TIME_MS: u32 = 10000;
@@ -301,7 +302,6 @@ impl BladePipelines {
 pub struct BladeSurfaceConfig {
     pub size: gpu::Extent,
     pub transparent: bool,
-    pub sample_count: u32,
 }
 
 //Note: we could see some of these fields moved into `BladeContext`
@@ -343,17 +343,34 @@ impl BladeRenderer {
             .create_surface_configured(window, surface_config)
             .unwrap();
 
+        // Determine the sample count based on the device's capabilities.
+        let mut sample_count = 1;
+        #[cfg(target_os = "macos")]
+        {
+            for &n in &[4, 2] {
+                if context.gpu.metal_device().supportsTextureSampleCount(n) {
+                    sample_count = n as _;
+                    break;
+                }
+            }
+        }
+        // TODO: Determine on non-macOS platforms, until Blade supports querying sample counts.
+        #[cfg(not(target_os = "macos"))]
+        {
+            sample_count = 4;
+        }
+
         let command_encoder = context.gpu.create_command_encoder(gpu::CommandEncoderDesc {
             name: "main",
             buffer_count: 2,
         });
-        let pipelines = BladePipelines::new(&context.gpu, surface.info(), config.sample_count);
+        let pipelines = BladePipelines::new(&context.gpu, surface.info(), sample_count);
         let instance_belt = BufferBelt::new(BufferBeltDescriptor {
             memory: gpu::Memory::Shared,
             min_chunk_size: 0x1000,
             alignment: 0x40, // Vulkan `minStorageBufferOffsetAlignment` on Intel Xe
         });
-        let atlas = Arc::new(BladeAtlas::new(&context.gpu, config.sample_count));
+        let atlas = Arc::new(BladeAtlas::new(&context.gpu, sample_count));
         let atlas_sampler = context.gpu.create_sampler(gpu::SamplerDesc {
             name: "atlas",
             mag_filter: gpu::FilterMode::Linear,
@@ -382,7 +399,7 @@ impl BladeRenderer {
             atlas_sampler,
             #[cfg(target_os = "macos")]
             core_video_texture_cache,
-            sample_count: config.sample_count,
+            sample_count,
         })
     }
 
