@@ -1002,7 +1002,7 @@ impl Item for TerminalView {
 
     fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent> {
         let terminal = self.terminal().read(cx);
-        let title = terminal.title(false);
+        let title: SharedString = terminal.title(false).into();
 
         Some(TabTooltipContent::custom(move |cx| {
             cx.new_view(|_| TerminalTooltip::new(title.clone())).into()
