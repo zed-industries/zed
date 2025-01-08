@@ -1180,17 +1180,20 @@ impl LanguageServer {
         {
             return;
         }
-        self.workspace_folders.lock().insert(uri.clone());
-        let params = DidChangeWorkspaceFoldersParams {
-            event: WorkspaceFoldersChangeEvent {
-                added: vec![WorkspaceFolder {
-                    uri,
-                    name: String::default(),
-                }],
-                removed: vec![],
-            },
-        };
-        self.notify::<DidChangeWorkspaceFolders>(params).log_err();
+
+        let is_new_folder = self.workspace_folders.lock().insert(uri.clone());
+        if is_new_folder {
+            let params = DidChangeWorkspaceFoldersParams {
+                event: WorkspaceFoldersChangeEvent {
+                    added: vec![WorkspaceFolder {
+                        uri,
+                        name: String::default(),
+                    }],
+                    removed: vec![],
+                },
+            };
+            self.notify::<DidChangeWorkspaceFolders>(params).log_err();
+        }
     }
     /// Add new workspace folder to the list.
     pub fn remove_workspace_folder(&self, uri: Url) {
@@ -1208,17 +1211,19 @@ impl LanguageServer {
         {
             return;
         }
-        self.workspace_folders.lock().remove(&uri);
-        let params = DidChangeWorkspaceFoldersParams {
-            event: WorkspaceFoldersChangeEvent {
-                added: vec![],
-                removed: vec![WorkspaceFolder {
-                    uri,
-                    name: String::default(),
-                }],
-            },
-        };
-        self.notify::<DidChangeWorkspaceFolders>(params).log_err();
+        let was_removed = self.workspace_folders.lock().remove(&uri);
+        if was_removed {
+            let params = DidChangeWorkspaceFoldersParams {
+                event: WorkspaceFoldersChangeEvent {
+                    added: vec![],
+                    removed: vec![WorkspaceFolder {
+                        uri,
+                        name: String::default(),
+                    }],
+                },
+            };
+            self.notify::<DidChangeWorkspaceFolders>(params).log_err();
+        }
     }
     pub fn workspace_folders<'a>(&'a self) -> impl Deref<Target = BTreeSet<Url>> + 'a {
         self.workspace_folders.lock()
