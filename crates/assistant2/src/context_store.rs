@@ -271,6 +271,10 @@ impl ContextStore {
 
         dupes
     }
+
+    pub fn thread_ids(&self) -> HashSet<ThreadId> {
+        self.threads.keys().cloned().collect()
+    }
 }
 
 pub enum IncludedFile {

@@ -24,8 +24,8 @@ use crate::context_picker::fetch_context_picker::FetchContextPicker;
 use crate::context_picker::file_context_picker::FileContextPicker;
 use crate::context_picker::thread_context_picker::ThreadContextPicker;
 use crate::context_store::ContextStore;
-use crate::thread::ThreadId;
 use crate::thread_store::ThreadStore;
+use crate::AssistantPanel;
 
 #[derive(Debug, Clone, Copy)]
 pub enum ConfirmBehavior {
@@ -128,11 +128,32 @@ impl ContextPicker {
                 return;
             };
 
+            let mut current_threads = {
+                picker
+                    .delegate
+                    .context_store
+                    .upgrade()
+                    .map(|context_store| context_store.read(cx).thread_ids())
+                    .unwrap_or_default()
+            };
+
+            if let Some(active_thread) = picker
+                .delegate
+                .workspace
+                .upgrade()
+                .and_then(|workspace| workspace.read(cx).panel::<AssistantPanel>(cx))
+                .map(|panel| panel.read(cx).active_thread(cx))
+            {
+                current_threads.insert(active_thread.read(cx).id().clone());
+            }
+
             thread_store.update(cx, |thread_store, cx| {
                 recent.extend(
                     thread_store
-                        .recent_threads(2, cx)
+                        .threads(cx)
                         .into_iter()
+                        .filter(|thread| !current_threads.contains(thread.read(cx).id()))
+                        .take(2)
                         .map(|thread| {
                             let thread = thread.read(cx);
 
