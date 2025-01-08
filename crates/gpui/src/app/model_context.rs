@@ -304,7 +304,6 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         &mut self,
         emitter: &Model<Emitter>,
         window: &Window,
-        // todo!("take a strong handle for the emitter")
         mut on_event: impl FnMut(&mut T, &Model<Emitter>, &Evt, &mut Window, &mut ModelContext<'_, T>)
             + 'static,
     ) -> Subscription

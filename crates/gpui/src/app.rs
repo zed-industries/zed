@@ -451,12 +451,13 @@ impl AppContext {
             std::mem::take(self.refresh_observers.entry(window_handle.id).or_default());
         observers.clear();
         observers.extend(entities.iter().map(|entity_id| {
+            let entity_id = *entity_id;
             self.new_observer(
-                *entity_id,
+                entity_id,
                 Box::new(move |cx| {
                     window_handle
-                        .update(cx, |_, window, _| {
-                            window.refresh();
+                        .update(cx, |_, window, cx| {
+                            window.notify(Some(entity_id), cx);
                         })
                         .ok();
                     false
