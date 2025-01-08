@@ -5,7 +5,6 @@ use gpui::{
     EventEmitter, Global, PromptLevel, Render, ScrollHandle, Task, View, ViewContext,
     VisualContext, WindowContext,
 };
-use language::DiagnosticSeverity;
 
 use std::{any::TypeId, ops::DerefMut, time::Duration};
 use ui::{prelude::*, Tooltip};
@@ -266,89 +265,57 @@ impl Render for LanguageServerPrompt {
             return div().id("language_server_prompt_notification");
         };
 
-        h_flex()
+        let (icon, color) = match request.level {
+            PromptLevel::Info => (IconName::Info, Color::Accent),
+            PromptLevel::Warning => (IconName::Warning, Color::Warning),
+            PromptLevel::Critical => (IconName::XCircle, Color::Error),
+        };
+
+        div()
             .id("language_server_prompt_notification")
+            .group("language_server_prompt_notification")
             .occlude()
-            .elevation_3(cx)
-            .items_start()
-            .justify_between()
-            .p_2()
-            .gap_2()
             .w_full()
             .max_h(vh(0.8, cx))
+            .elevation_3(cx)
             .overflow_y_scroll()
             .track_scroll(&self.scroll_handle)
-            .group("")
             .child(
                 v_flex()
-                    .w_full()
+                    .p_3()
                     .overflow_hidden()
                     .child(
                         h_flex()
-                            .w_full()
                             .justify_between()
                             .child(
                                 h_flex()
-                                    .flex_grow()
-                                    .children(
-                                        match request.level {
-                                            PromptLevel::Info => None,
-                                            PromptLevel::Warning => {
-                                                Some(DiagnosticSeverity::WARNING)
-                                            }
-                                            PromptLevel::Critical => {
-                                                Some(DiagnosticSeverity::ERROR)
-                                            }
-                                        }
-                                        .map(|severity| {
-                                            svg()
-                                                .size(cx.text_style().font_size)
-                                                .flex_none()
-                                                .mr_1()
-                                                .mt(px(-2.0))
-                                                .map(|icon| {
-                                                    if severity == DiagnosticSeverity::ERROR {
-                                                        icon.path(IconName::Warning.path())
-                                                            .text_color(Color::Error.color(cx))
-                                                    } else {
-                                                        icon.path(IconName::Warning.path())
-                                                            .text_color(Color::Warning.color(cx))
-                                                    }
-                                                })
-                                        }),
-                                    )
-                                    .child(
-                                        Label::new(request.lsp_name.clone())
-                                            .size(LabelSize::Default),
-                                    ),
+                                    .gap_2()
+                                    .child(Icon::new(icon).color(color))
+                                    .child(Label::new(request.lsp_name.clone())),
                             )
                             .child(
-                                ui::IconButton::new("close", ui::IconName::Close)
-                                    .on_click(cx.listener(|_, _, cx| cx.emit(gpui::DismissEvent))),
+                                h_flex()
+                                    .child(
+                                        IconButton::new("copy", IconName::Copy)
+                                            .on_click({
+                                                let message = request.message.clone();
+                                                move |_, cx| {
+                                                    cx.write_to_clipboard(
+                                                        ClipboardItem::new_string(message.clone()),
+                                                    )
+                                                }
+                                            })
+                                            .tooltip(|cx| Tooltip::text("Copy Description", cx)),
+                                    )
+                                    .child(IconButton::new("close", IconName::Close).on_click(
+                                        cx.listener(|_, _, cx| cx.emit(gpui::DismissEvent)),
+                                    )),
                             ),
                     )
-                    .child(
-                        v_flex()
-                            .child(
-                                h_flex().absolute().right_0().rounded_md().child(
-                                    ui::IconButton::new("copy", ui::IconName::Copy)
-                                        .on_click({
-                                            let message = request.message.clone();
-                                            move |_, cx| {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    message.clone(),
-                                                ))
-                                            }
-                                        })
-                                        .tooltip(|cx| Tooltip::text("Copy", cx))
-                                        .visible_on_hover(""),
-                                ),
-                            )
-                            .child(Label::new(request.message.to_string()).size(LabelSize::Small)),
-                    )
+                    .child(Label::new(request.message.to_string()).size(LabelSize::Small))
                     .children(request.actions.iter().enumerate().map(|(ix, action)| {
                         let this_handle = cx.view().clone();
-                        ui::Button::new(ix, action.title.clone())
+                        Button::new(ix, action.title.clone())
                             .size(ButtonSize::Large)
                             .on_click(move |_, cx| {
                                 let this_handle = this_handle.clone();
