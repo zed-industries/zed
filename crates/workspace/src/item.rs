@@ -539,8 +539,8 @@ impl<T: Item> ItemHandle for View<T> {
         self.focus_handle(cx)
     }
 
-    fn tab_tooltip_content(&self, _cx: &AppContext) -> Option<TabTooltipContent> {
-        None
+    fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent> {
+        self.read(cx).tab_tooltip_content(cx)
     }
 
     fn telemetry_event_text(&self, cx: &WindowContext) -> Option<&'static str> {
