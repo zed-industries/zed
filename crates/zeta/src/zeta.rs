@@ -582,9 +582,34 @@ and then another
         cx.background_executor().spawn(async move {
             let content = output_excerpt.replace(CURSOR_MARKER, "");
 
-            let codefence_start = content
-                .find(EDITABLE_REGION_START_MARKER)
-                .context("could not find start marker")?;
+            let start_markers = content
+                .match_indices(EDITABLE_REGION_START_MARKER)
+                .collect::<Vec<_>>();
+            anyhow::ensure!(
+                start_markers.len() == 1,
+                "expected exactly one start marker, found {}",
+                start_markers.len()
+            );
+
+            let end_markers = content
+                .match_indices(EDITABLE_REGION_END_MARKER)
+                .collect::<Vec<_>>();
+            anyhow::ensure!(
+                end_markers.len() == 1,
+                "expected exactly one end marker, found {}",
+                end_markers.len()
+            );
+
+            let sof_markers = content
+                .match_indices(START_OF_FILE_MARKER)
+                .collect::<Vec<_>>();
+            anyhow::ensure!(
+                sof_markers.len() <= 1,
+                "expected at most one start-of-file marker, found {}",
+                sof_markers.len()
+            );
+
+            let codefence_start = start_markers[0].0;
             let content = &content[codefence_start..];
 
             let newline_ix = content.find('\n').context("could not find newline")?;
