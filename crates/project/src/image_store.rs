@@ -84,7 +84,6 @@ impl ImageItem {
         image: &ImageItem,
         project: &Project,
         cx: &AppContext,
-        fs: Arc<dyn fs::Fs>,
     ) -> Result<ImageItemMeta, String> {
         let worktree = project
             .worktree_for_id(image.project_path(cx).worktree_id, cx)
@@ -111,6 +110,8 @@ impl ImageItem {
             })
             .await
             .map_err(|e| format!("Failed to process image: {}", e))?;
+
+        let fs = project.fs();
 
         let file_metadata = fs
             .metadata(path.as_path())
@@ -142,9 +143,8 @@ impl ImageItem {
         &mut self,
         project: &Project,
         cx: &AppContext,
-        fs: Arc<dyn fs::Fs>,
     ) -> Result<ImageItemMeta, String> {
-        match Self::image_info(self, project, cx, fs).await {
+        match Self::image_info(self, project, cx).await {
             Ok(metadata) => {
                 self.image_meta = Some(metadata.clone());
                 Ok(metadata)
@@ -237,17 +237,14 @@ impl ProjectItem for ImageItem {
                     .update(&mut cx, |project, cx| project.open_image(path, cx))?
                     .await?;
 
-                let fs = Arc::new(fs::RealFs::default());
                 let project_clone = project.clone();
 
                 if let Ok(()) = image_model.update(&mut cx, |image, cx| {
                     let project_ref = project_clone.read(cx);
 
-                    if let Ok(metadata) = futures::executor::block_on(image.load_metadata(
-                        &project_ref,
-                        cx,
-                        fs.clone(),
-                    )) {
+                    if let Ok(metadata) =
+                        futures::executor::block_on(image.load_metadata(&project_ref, cx))
+                    {
                         image.image_meta = Some(metadata)
                     }
                 }) {

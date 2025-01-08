@@ -391,7 +391,7 @@ hyper = "0.14"
 http = "1.1"
 ignore = "0.4.22"
 image = "0.25.5"
-indexmap = { version = "1.6.2", features = ["serde"] }
+indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
 itertools = "0.13.0"
 jsonwebtoken = "9.3"
