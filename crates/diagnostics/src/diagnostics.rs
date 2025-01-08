@@ -14,7 +14,6 @@ use editor::{
     scroll::Autoscroll,
     Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
-use feature_flags::FeatureFlagAppExt;
 use gpui::{
     actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
     FocusableView, Global, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement,
@@ -933,18 +932,16 @@ fn context_range_for_entry(
     snapshot: &BufferSnapshot,
     cx: &AppContext,
 ) -> Range<Point> {
-    if cx.is_staff() {
-        if let Some(rows) = heuristic_syntactic_expand(
-            entry.range.clone(),
-            DIAGNOSTIC_EXPANSION_ROW_LIMIT,
-            snapshot,
-            cx,
-        ) {
-            return Range {
-                start: Point::new(*rows.start(), 0),
-                end: snapshot.clip_point(Point::new(*rows.end(), u32::MAX), Bias::Left),
-            };
-        }
+    if let Some(rows) = heuristic_syntactic_expand(
+        entry.range.clone(),
+        DIAGNOSTIC_EXPANSION_ROW_LIMIT,
+        snapshot,
+        cx,
+    ) {
+        return Range {
+            start: Point::new(*rows.start(), 0),
+            end: snapshot.clip_point(Point::new(*rows.end(), u32::MAX), Bias::Left),
+        };
     }
     Range {
         start: Point::new(entry.range.start.row.saturating_sub(context), 0),

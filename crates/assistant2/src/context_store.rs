@@ -240,6 +240,14 @@ impl ContextStore {
         }));
     }
 
+    pub fn add_thread(&mut self, thread: Model<Thread>, cx: &mut ModelContext<Self>) {
+        if let Some(context_id) = self.includes_thread(&thread.read(cx).id()) {
+            self.remove_context(context_id);
+        } else {
+            self.insert_thread(thread, cx);
+        }
+    }
+
     pub fn insert_thread(&mut self, thread: Model<Thread>, cx: &AppContext) {
         let id = self.next_context_id.post_inc();
         let thread_ref = thread.read(cx);
