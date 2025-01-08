@@ -4,7 +4,7 @@ use zed_extension_api::{self as zed, serde_json, settings::LspSettings, Language
 
 struct ZigExtension {
     cached_binary_path: Option<String>,
-    storage_dir: Option<std::path::PathBuf>
+    storage_dir: Option<std::path::PathBuf>,
 }
 
 #[derive(Clone)]
@@ -20,7 +20,10 @@ impl ZigExtension {
         language_server_id: &LanguageServerId,
         worktree: &zed::Worktree,
     ) -> Result<ZlsBinary> {
-      let storage_dir = self.storage_dir.clone().ok_or("storage dir is not configured")?;
+        let storage_dir = self
+            .storage_dir
+            .clone()
+            .ok_or("storage dir is not configured")?;
         let mut args: Option<Vec<String>> = None;
 
         let (platform, arch) = zed::current_platform();
@@ -97,17 +100,18 @@ impl ZigExtension {
 
         let version_dir_name = format!("zls-{}", release.version);
         let version_dir = storage_dir.join(&version_dir_name);
-         let binary_path = match platform {
+        let binary_path = match platform {
             zed::Os::Mac | zed::Os::Linux => version_dir.join("zls"),
             zed::Os::Windows => version_dir.join("zls.exe"),
         };
 
         if !fs::metadata(&binary_path).map_or(false, |stat| stat.is_file()) {
-             zed::set_language_server_installation_status(
+            zed::set_language_server_installation_status(
                 language_server_id,
                 &zed::LanguageServerInstallationStatus::Downloading,
             );
-             let _ = fs::create_dir_all(&version_dir).map_err(|e| format!("failed to create version directory {e}"))?;
+            let _ = fs::create_dir_all(&version_dir)
+                .map_err(|e| format!("failed to create version directory {e}"))?;
             zed::download_file(
                 &download_url,
                 &version_dir_name,
@@ -120,12 +124,12 @@ impl ZigExtension {
 
             zed::make_file_executable(&binary_path)?;
 
-            let entries =
-                fs::read_dir(storage_dir.as_path()).map_err(|e| format!("failed to list storage directory {e}"))?;
+            let entries = fs::read_dir(storage_dir.as_path())
+                .map_err(|e| format!("failed to list storage directory {e}"))?;
             for entry in entries {
                 let entry = entry.map_err(|e| format!("failed to load directory entry {e}"))?;
                 if entry.file_name() != version_dir_name {
-                     fs::remove_dir_all(entry.path()).ok();
+                    fs::remove_dir_all(entry.path()).ok();
                 }
             }
         }
@@ -142,7 +146,7 @@ impl ZigExtension {
 impl zed::Extension for ZigExtension {
     fn new() -> Self {
         let storage_dir = zed::extension_storage_directory();
-         Self {
+        Self {
             cached_binary_path: None,
             storage_dir: Some(storage_dir),
         }
