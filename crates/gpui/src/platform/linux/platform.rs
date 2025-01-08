@@ -372,6 +372,11 @@ impl<P: LinuxClient + 'static> Platform for P {
         done_rx
     }
 
+    fn can_select_mixed_files_and_dirs(&self) -> bool {
+        // org.freedesktop.portal.FileChooser only supports "pick files" and "pick directories".
+        false
+    }
+
     fn reveal_path(&self, path: &Path) {
         self.reveal_path(path.to_owned());
     }

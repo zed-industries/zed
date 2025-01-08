@@ -34,10 +34,10 @@ use gpui::{
     action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size,
     transparent_black, Action, AnyView, AnyWeakView, AppContext, AsyncAppContext,
     AsyncWindowContext, Bounds, CursorStyle, Decorations, DragMoveEvent, Entity as _, EntityId,
-    EventEmitter, Flatten, FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke,
-    ManagedView, Model, ModelContext, MouseButton, PathPromptOptions, Point, PromptLevel, Render,
-    ResizeEdge, Size, Stateful, Subscription, Task, Tiling, View, WeakView, WindowBounds,
-    WindowHandle, WindowId, WindowOptions,
+    EventEmitter, FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke, ManagedView,
+    Model, ModelContext, MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge,
+    Size, Stateful, Subscription, Task, Tiling, View, WeakView, WindowBounds, WindowHandle,
+    WindowId, WindowOptions,
 };
 pub use item::{
     FollowableItem, FollowableItemHandle, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
@@ -145,6 +145,7 @@ actions!(
         NewTerminal,
         NewWindow,
         Open,
+        OpenFiles,
         OpenInTerminal,
         ReloadActiveItem,
         SaveAs,
@@ -332,6 +333,42 @@ pub fn init_settings(cx: &mut AppContext) {
     TabBarSettings::register(cx);
 }
 
+fn prompt_and_open_paths(
+    app_state: Arc<AppState>,
+    options: PathPromptOptions,
+    cx: &mut AppContext,
+) {
+    let paths = cx.prompt_for_paths(options);
+    cx.spawn(|cx| async move {
+        match paths.await.anyhow().and_then(|res| res) {
+            Ok(Some(paths)) => {
+                cx.update(|cx| {
+                    open_paths(&paths, app_state, OpenOptions::default(), cx).detach_and_log_err(cx)
+                })
+                .ok();
+            }
+            Ok(None) => {}
+            Err(err) => {
+                util::log_err(&err);
+                cx.update(|cx| {
+                    if let Some(workspace_window) = cx
+                        .active_window()
+                        .and_then(|window| window.downcast::<Workspace>())
+                    {
+                        workspace_window
+                            .update(cx, |workspace, cx| {
+                                workspace.show_portal_error(err.to_string(), cx);
+                            })
+                            .ok();
+                    }
+                })
+                .ok();
+            }
+        }
+    })
+    .detach();
+}
+
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     init_settings(cx);
     notifications::init(cx);
@@ -343,41 +380,33 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     cx.on_action({
         let app_state = Arc::downgrade(&app_state);
         move |_: &Open, cx: &mut AppContext| {
-            let paths = cx.prompt_for_paths(PathPromptOptions {
-                files: true,
-                directories: true,
-                multiple: true,
-            });
-
             if let Some(app_state) = app_state.upgrade() {
-                cx.spawn(move |cx| async move {
-                    match Flatten::flatten(paths.await.map_err(|e| e.into())) {
-                        Ok(Some(paths)) => {
-                            cx.update(|cx| {
-                                open_paths(&paths, app_state, OpenOptions::default(), cx)
-                                    .detach_and_log_err(cx)
-                            })
-                            .ok();
-                        }
-                        Ok(None) => {}
-                        Err(err) => {
-                            cx.update(|cx| {
-                                if let Some(workspace_window) = cx
-                                    .active_window()
-                                    .and_then(|window| window.downcast::<Workspace>())
-                                {
-                                    workspace_window
-                                        .update(cx, |workspace, cx| {
-                                            workspace.show_portal_error(err.to_string(), cx);
-                                        })
-                                        .ok();
-                                }
-                            })
-                            .ok();
-                        }
-                    };
-                })
-                .detach();
+                prompt_and_open_paths(
+                    app_state,
+                    PathPromptOptions {
+                        files: true,
+                        directories: true,
+                        multiple: true,
+                    },
+                    cx,
+                );
+            }
+        }
+    });
+    cx.on_action({
+        let app_state = Arc::downgrade(&app_state);
+        move |_: &OpenFiles, cx: &mut AppContext| {
+            let directories = cx.can_select_mixed_files_and_dirs();
+            if let Some(app_state) = app_state.upgrade() {
+                prompt_and_open_paths(
+                    app_state,
+                    PathPromptOptions {
+                        files: true,
+                        directories,
+                        multiple: true,
+                    },
+                    cx,
+                );
             }
         }
     });
