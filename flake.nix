@@ -11,7 +11,7 @@
   };
 
   outputs =
-    { nixpkgs, ... }:
+    { nixpkgs, ... }@inputs:
     let
       systems = [
         "x86_64-linux"
@@ -21,6 +21,10 @@
       ];
 
       overlays = {
+        rust-overlay = inputs.rust-overlay.overlays.default;
+        rust-toolchain = final: prev: {
+          rustToolchain = final.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
+        };
         zed-editor = final: prev: {
           zed-editor = final.callPackage ./nix/build.nix {
             inherit (import nixpkgs { inherit (final) system; }) zed-editor;
