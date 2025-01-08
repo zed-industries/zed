@@ -1477,7 +1477,8 @@ impl ReferenceMultibuffer {
                             .to_offset(&buffer)
                             .min(buffer_range.end),
                     )
-                    .row;
+                    .row
+                    + 1;
             }
 
             expected_text.extend(buffer.text_for_range(start..buffer_range.end));
@@ -1648,6 +1649,7 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
                     let end = excerpt.range.end;
                     let range = snapshot.anchor_in_excerpt(excerpt.id, start).unwrap()
                         ..snapshot.anchor_in_excerpt(excerpt.id, end).unwrap();
+
                     multibuffer.expand_diff_hunks(vec![range], cx);
                     reference.expand_diff_hunks(excerpt.id, start..end, cx);
                 });
@@ -1761,7 +1763,7 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
 
         pretty_assertions::assert_eq!(actual_diff, expected_diff);
         pretty_assertions::assert_eq!(actual_text, expected_text);
-        pretty_assertions::assert_eq!(actual_row_infos, expected_row_infos,);
+        pretty_assertions::assert_eq!(actual_row_infos, expected_row_infos);
 
         eprintln!("{}", actual_diff);
 

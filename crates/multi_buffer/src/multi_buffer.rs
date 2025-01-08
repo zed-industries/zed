@@ -2715,7 +2715,8 @@ impl MultiBuffer {
                                 }
 
                                 if hunk_end_buffer_offset > hunk_start_buffer_offset {
-                                    end_of_current_insert = hunk_excerpt_end;
+                                    end_of_current_insert =
+                                        hunk_excerpt_end.min(*excerpts_cursor.start());
                                 }
 
                                 if was_previously_expanded {
@@ -3195,8 +3196,7 @@ impl MultiBufferSnapshot {
                 );
             }
 
-            let excerpt = region.excerpt;
-            if offset == region.range.end && excerpt.has_trailing_newline {
+            if offset == region.range.end && region.has_trailing_newline {
                 offset -= 1;
                 Some("\n")
             } else {
