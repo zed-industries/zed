@@ -1,15 +1,16 @@
+use std::path::Path;
+use std::rc::Rc;
 use std::sync::Arc;
-use std::{path::Path, rc::Rc};
 
-use crate::thread::Thread;
 use collections::BTreeMap;
 use gpui::{AppContext, Model, SharedString};
 use language::Buffer;
 use language_model::{LanguageModelRequestMessage, MessageContent};
 use serde::{Deserialize, Serialize};
-
 use text::BufferId;
 use util::post_inc;
+
+use crate::thread::Thread;
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct ContextId(pub(crate) usize);
@@ -32,7 +33,7 @@ pub struct ContextSnapshot {
     pub text: SharedString,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextKind {
     File,
     Directory,
