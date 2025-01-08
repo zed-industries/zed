@@ -9,9 +9,9 @@ use dap::{
     messages::{Events, Message},
     requests::{Request, RunInTerminal, StartDebugging},
     session::DebugSessionId,
-    Capabilities, CapabilitiesEvent, ContinuedEvent, ExitedEvent, LoadedSourceEvent, ModuleEvent,
-    OutputEvent, RunInTerminalRequestArguments, StoppedEvent, TerminatedEvent, ThreadEvent,
-    ThreadEventReason,
+    Capabilities, CapabilitiesEvent, ContinuedEvent, ErrorResponse, ExitedEvent, LoadedSourceEvent,
+    ModuleEvent, OutputEvent, RunInTerminalRequestArguments, RunInTerminalResponse, StoppedEvent,
+    TerminatedEvent, ThreadEvent, ThreadEventReason,
 };
 use gpui::{
     actions, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusableView,
@@ -387,21 +387,39 @@ impl DebugPanel {
         request_args: Option<Value>,
         cx: &mut ViewContext<Self>,
     ) {
+        let request_args = request_args.and_then(|request_args| {
+            serde_json::from_value::<RunInTerminalRequestArguments>(request_args).ok()
+        });
         let Some(request_args) = request_args else {
             self.dap_store.update(cx, |store, cx| {
                 store
-                    .respond_to_run_in_terminal(session_id, client_id, false, seq, None, cx)
+                    .respond_to_run_in_terminal(
+                        session_id,
+                        client_id,
+                        false,
+                        seq,
+                        serde_json::to_value(ErrorResponse {
+                            error: Some(dap::Message {
+                                id: seq,
+                                format:
+                                    "Request arguments must be provided when spawnng debug terminal"
+                                        .into(),
+                                variables: None,
+                                send_telemetry: None,
+                                show_user: None,
+                                url: None,
+                                url_label: None,
+                            }),
+                        })
+                        .ok(),
+                        cx,
+                    )
                     .detach_and_log_err(cx);
             });
-
             return;
         };
 
-        let request_args: RunInTerminalRequestArguments =
-            serde_json::from_value(request_args).unwrap();
-
         let mut envs: HashMap<String, String> = Default::default();
-
         if let Some(Value::Object(env)) = request_args.env {
             for (key, value) in env {
                 let value_str = match (key.as_str(), value) {
@@ -459,9 +477,16 @@ impl DebugPanel {
         cx.spawn(|this, mut cx| async move {
             // Ensure a response is always sent, even in error cases,
             // to maintain proper communication with the debug adapter
-            let (success, pid) = match terminal_task {
+            let (success, body) = match terminal_task {
                 Ok(pid_task) => match pid_task.await {
-                    Ok(pid) => (true, pid),
+                    Ok(pid) => (
+                        true,
+                        serde_json::to_value(RunInTerminalResponse {
+                            process_id: None,
+                            shell_process_id: pid.map(|pid| pid.as_u32() as u64),
+                        })
+                        .ok(),
+                    ),
                     Err(error) => {
                         this.update(&mut cx, |this, cx| {
                             this.dap_store.update(cx, |_, cx| {
@@ -470,10 +495,38 @@ impl DebugPanel {
                         })
                         .log_err();
 
-                        (false, None)
+                        (
+                            false,
+                            serde_json::to_value(ErrorResponse {
+                                error: Some(dap::Message {
+                                    id: seq,
+                                    format: error.to_string(),
+                                    variables: None,
+                                    send_telemetry: None,
+                                    show_user: None,
+                                    url: None,
+                                    url_label: None,
+                                }),
+                            })
+                            .ok(),
+                        )
                     }
                 },
-                Err(_) => (false, None),
+                Err(error) => (
+                    false,
+                    serde_json::to_value(ErrorResponse {
+                        error: Some(dap::Message {
+                            id: seq,
+                            format: error.to_string(),
+                            variables: None,
+                            send_telemetry: None,
+                            show_user: None,
+                            url: None,
+                            url_label: None,
+                        }),
+                    })
+                    .ok(),
+                ),
             };
 
             let respond_task = this.update(&mut cx, |this, cx| {
@@ -483,7 +536,7 @@ impl DebugPanel {
                         &client_id,
                         success,
                         seq,
-                        pid.map(|pid| pid.as_u32() as u64),
+                        body,
                         cx,
                     )
                 })

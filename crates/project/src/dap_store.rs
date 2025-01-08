@@ -18,9 +18,9 @@ use dap::{
     ConfigurationDoneArguments, ContinueArguments, DisconnectArguments, ErrorResponse,
     EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, InitializeRequestArguments,
     InitializeRequestArgumentsPathFormat, LaunchRequestArguments, LoadedSourcesArguments, Module,
-    ModulesArguments, NextArguments, PauseArguments, RestartArguments, RunInTerminalResponse,
-    Scope, ScopesArguments, SetBreakpointsArguments, SetExpressionArguments, SetVariableArguments,
-    Source, SourceBreakpoint, StackFrame, StackTraceArguments, StartDebuggingRequestArguments,
+    ModulesArguments, NextArguments, PauseArguments, RestartArguments, Scope, ScopesArguments,
+    SetBreakpointsArguments, SetExpressionArguments, SetVariableArguments, Source,
+    SourceBreakpoint, StackFrame, StackTraceArguments, StartDebuggingRequestArguments,
     StartDebuggingRequestArgumentsRequest, StepBackArguments, StepInArguments, StepOutArguments,
     SteppingGranularity, TerminateArguments, TerminateThreadsArguments, Variable,
     VariablesArguments,
@@ -1005,7 +1005,7 @@ impl DapStore {
         client_id: &DebugAdapterClientId,
         success: bool,
         seq: u64,
-        shell_pid: Option<u64>,
+        body: Option<Value>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some((_, client)) = self.client_by_id(client_id, cx) else {
@@ -1020,17 +1020,10 @@ impl DapStore {
             client
                 .send_message(Message::Response(Response {
                     seq,
-                    request_seq: seq,
+                    body,
                     success,
+                    request_seq: seq,
                     command: RunInTerminal::COMMAND.to_string(),
-                    body: match success {
-                        true => serde_json::to_value(RunInTerminalResponse {
-                            process_id: None,
-                            shell_process_id: shell_pid,
-                        })
-                        .ok(),
-                        false => serde_json::to_value(ErrorResponse { error: None }).ok(),
-                    },
                 }))
                 .await
         })
