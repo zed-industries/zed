@@ -15783,6 +15783,7 @@ dependencies = [
  "db",
  "derive_more",
  "env_logger 0.11.6",
+ "extension_host",
  "fs",
  "futures 0.3.31",
  "gpui",

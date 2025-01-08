@@ -10,10 +10,10 @@ use std::{ops::Range, sync::Arc};
 use client::ExtensionMetadata;
 use collections::{BTreeMap, BTreeSet};
 use editor::{Editor, EditorElement, EditorStyle};
-use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
+use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore, InstallDevExtension};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, uniform_list, Action, AppContext, ClipboardItem, EventEmitter, Flatten, FocusableView,
+    uniform_list, Action, AppContext, ClipboardItem, EventEmitter, Flatten, FocusableView,
     InteractiveElement, KeyContext, ParentElement, Render, Styled, Task, TextStyle,
     UniformListScrollHandle, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
@@ -33,8 +33,6 @@ use crate::components::{ExtensionCard, FeatureUpsell};
 use crate::extension_version_selector::{
     ExtensionVersionSelector, ExtensionVersionSelectorDelegate,
 };
-
-actions!(zed, [InstallDevExtension]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(move |workspace: &mut Workspace, cx| {
@@ -201,8 +199,10 @@ impl ExtensionsPage {
             let subscriptions = [
                 cx.observe(&store, |_, _, cx| cx.notify()),
                 cx.subscribe(&store, move |this, _, event, cx| match event {
-                    extension_host::Event::ExtensionsUpdated => this.fetch_extensions_debounced(cx),
-                    extension_host::Event::ExtensionInstalled(extension_id) => {
+                    extension_host::ExtensionEvent::ExtensionsUpdated => {
+                        this.fetch_extensions_debounced(cx)
+                    }
+                    extension_host::ExtensionEvent::ExtensionInstalled(extension_id) => {
                         this.on_extension_installed(workspace_handle.clone(), extension_id, cx)
                     }
                     _ => {}
@@ -241,6 +241,7 @@ impl ExtensionsPage {
         extension_id: &str,
         cx: &mut ViewContext<Self>,
     ) {
+        //self.is_installing_dev_extension(None);
         let extension_store = ExtensionStore::global(cx).read(cx);
         let themes = extension_store
             .extension_themes(extension_id)
@@ -368,14 +369,15 @@ impl ExtensionsPage {
         } else {
             0
         };
+
         range
             .map(|ix| {
                 if ix < dev_extension_entries_len {
                     let extension = &self.dev_extension_entries[ix];
                     self.render_dev_extension(extension, cx)
                 } else {
-                    let extension_ix =
-                        self.filtered_remote_extension_indices[ix - dev_extension_entries_len];
+                    let index = ix - dev_extension_entries_len;
+                    let extension_ix = self.filtered_remote_extension_indices[index];
                     let extension = &self.remote_extension_entries[extension_ix];
                     self.render_remote_extension(extension, cx)
                 }
@@ -844,6 +846,7 @@ impl ExtensionsPage {
     }
 
     fn fetch_extensions_debounced(&mut self, cx: &mut ViewContext<ExtensionsPage>) {
+        //self.is_installing_dev_extension(None);
         self.extension_fetch_task = Some(cx.spawn(|this, mut cx| async move {
             let search = this
                 .update(&mut cx, |this, cx| this.search_query(cx))

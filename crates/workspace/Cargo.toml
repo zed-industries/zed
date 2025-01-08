@@ -36,6 +36,7 @@ clock.workspace = true
 collections.workspace = true
 db.workspace = true
 derive_more.workspace = true
+extension_host.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
@@ -66,6 +67,7 @@ strum.workspace = true
 call = { workspace = true, features = ["test-support"] }
 client = { workspace = true, features = ["test-support"] }
 db = { workspace = true, features = ["test-support"] }
+extension_host = { workspace = true }
 env_logger.workspace = true
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }

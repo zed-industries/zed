@@ -1,5 +1,5 @@
 use crate::{
-    Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
+    ExtensionEvent, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
     ExtensionIndexThemeEntry, ExtensionManifest, ExtensionSettings, ExtensionStore,
     GrammarManifestEntry, SchemaVersion, RELOAD_DEBOUNCE_DURATION,
 };
@@ -592,7 +592,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     let executor = cx.executor();
     let _task = cx.executor().spawn(async move {
         while let Some(event) = events.next().await {
-            if let Event::StartedReloading = event {
+            if let ExtensionEvent::StartedReloading = event {
                 executor.advance_clock(RELOAD_DEBOUNCE_DURATION);
             }
         }
@@ -600,7 +600,7 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
 
     extension_store.update(cx, |_, cx| {
         cx.subscribe(&extension_store, |_, _, event, _| {
-            if matches!(event, Event::ExtensionFailedToLoad(_)) {
+            if matches!(event, ExtensionEvent::ExtensionFailedToLoad(_)) {
                 panic!("extension failed to load");
             }
         })

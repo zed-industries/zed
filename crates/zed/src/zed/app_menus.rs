@@ -36,6 +36,7 @@ pub fn app_menus() -> Vec<Menu> {
                 }),
                 MenuItem::separator(),
                 MenuItem::action("Extensions", zed_actions::Extensions),
+                MenuItem::action("ExtensionsNoUI", zed_actions::ExtensionsNoUI),
                 MenuItem::action("Install CLI", install_cli::Install),
                 MenuItem::separator(),
                 #[cfg(target_os = "macos")]

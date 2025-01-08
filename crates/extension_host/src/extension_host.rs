@@ -125,14 +125,17 @@ pub enum ExtensionOperation {
 }
 
 #[derive(Clone)]
-pub enum Event {
+pub enum ExtensionEvent {
     ExtensionsUpdated,
     StartedReloading,
+    DevExtensionInstalling(Arc<str>),
+    DevExtensionInstallFailed(Arc<str>),
+    DevExtensionInstallSuccess,
     ExtensionInstalled(Arc<str>),
     ExtensionFailedToLoad(Arc<str>),
 }
 
-impl EventEmitter<Event> for ExtensionStore {}
+impl EventEmitter<ExtensionEvent> for ExtensionStore {}
 
 struct GlobalExtensionStore(Model<ExtensionStore>);
 
@@ -167,6 +170,7 @@ pub struct ExtensionIndexLanguageEntry {
 }
 
 actions!(zed, [ReloadExtensions]);
+actions!(zed, [InstallDevExtension]);
 
 pub fn init(
     extension_host_proxy: Arc<ExtensionHostProxy>,
@@ -399,7 +403,7 @@ impl ExtensionStore {
         self.reload_tx
             .unbounded_send(modified_extension)
             .expect("reload task exited");
-        cx.emit(Event::StartedReloading);
+        cx.emit(ExtensionEvent::StartedReloading);
 
         async move {
             rx.await.ok();
@@ -688,7 +692,7 @@ impl ExtensionStore {
 
             if let ExtensionOperation::Install = operation {
                 this.update(&mut cx, |_, cx| {
-                    cx.emit(Event::ExtensionInstalled(extension_id));
+                    cx.emit(ExtensionEvent::ExtensionInstalled(extension_id));
                 })
                 .ok();
             }
@@ -826,9 +830,22 @@ impl ExtensionStore {
 
         cx.spawn(move |this, mut cx| async move {
             let mut extension_manifest =
-                ExtensionManifest::load(fs.clone(), &extension_source_path).await?;
-            let extension_id = extension_manifest.id.clone();
+                ExtensionManifest::load(fs.clone(), &extension_source_path)
+                    .await
+                    .or_else(|e| {
+                        this.update(&mut cx, |_, cx| {
+                            let arc_string = Arc::new("invalid manifest".to_string());
+                            let arc_str: Arc<str> = Arc::from((&*arc_string).to_string());
+                            cx.emit(ExtensionEvent::DevExtensionInstallFailed(arc_str));
+                        })?;
+                        Err(e)
+                    })?;
 
+            let extension_id = extension_manifest.id.clone();
+            this.update(&mut cx, |_, cx| {
+                let arc_str: Arc<str> = extension_manifest.id.clone();
+                cx.emit(ExtensionEvent::DevExtensionInstalling(arc_str));
+            })?;
             if !this.update(&mut cx, |this, cx| {
                 match this.outstanding_operations.entry(extension_id.clone()) {
                     btree_map::Entry::Occupied(_) => return false,
@@ -866,7 +883,14 @@ impl ExtensionStore {
                             .await
                     }
                 })
-                .await?;
+                .await
+                .or_else(|e| {
+                    this.update(&mut cx, |_, cx| {
+                        let arc_str: Arc<str> = Arc::from(e.to_string());
+                        cx.emit(ExtensionEvent::DevExtensionInstallFailed(arc_str));
+                    })?;
+                    Err(e)
+                })?;
 
             let output_path = &extensions_dir.join(extension_id.as_ref());
             if let Some(metadata) = fs.metadata(output_path).await? {
@@ -889,6 +913,9 @@ impl ExtensionStore {
 
             this.update(&mut cx, |this, cx| this.reload(None, cx))?
                 .await;
+            this.update(&mut cx, |_, cx| {
+                cx.emit(ExtensionEvent::DevExtensionInstallSuccess);
+            })?;
             Ok(())
         })
     }
@@ -1132,7 +1159,7 @@ impl ExtensionStore {
 
         self.extension_index = new_index;
         cx.notify();
-        cx.emit(Event::ExtensionsUpdated);
+        cx.emit(ExtensionEvent::ExtensionsUpdated);
 
         cx.spawn(|this, mut cx| async move {
             cx.background_executor()
@@ -1177,7 +1204,9 @@ impl ExtensionStore {
                     wasm_extensions.push((extension.manifest.clone(), wasm_extension));
                 } else {
                     this.update(&mut cx, |_, cx| {
-                        cx.emit(Event::ExtensionFailedToLoad(extension.manifest.id.clone()))
+                        cx.emit(ExtensionEvent::ExtensionFailedToLoad(
+                            extension.manifest.id.clone(),
+                        ))
                     })
                     .ok();
                 }
