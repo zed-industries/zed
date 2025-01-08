@@ -475,8 +475,8 @@ impl ComponentPreview for Button {
                     ),
                     single_example(
                         "Negative",
-                        Button::new("tinted_negative", "Negative")
-                            .style(ButtonStyle::Tinted(TintColor::Negative)),
+                        Button::new("tinted_negative", "Error")
+                            .style(ButtonStyle::Tinted(TintColor::Error)),
                     ),
                     single_example(
                         "Warning",
@@ -527,8 +527,8 @@ impl ComponentPreview for Button {
                     ),
                     single_example(
                         "Tinted Icons",
-                        Button::new("icon_color", "Delete")
-                            .style(ButtonStyle::Tinted(TintColor::Negative))
+                        Button::new("icon_color", "Error")
+                            .style(ButtonStyle::Tinted(TintColor::Error))
                             .color(Color::Error)
                             .icon_color(Color::Error)
                             .icon(IconName::Trash)
