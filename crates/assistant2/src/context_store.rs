@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
 use collections::{HashMap, HashSet};
-use gpui::{ModelContext, SharedString, Task, WeakView};
+use gpui::{Model, ModelContext, SharedString, Task, WeakView};
 use language::Buffer;
 use project::{ProjectPath, Worktree};
 use workspace::Workspace;
@@ -227,6 +227,14 @@ impl ContextStore {
             kind: ContextKind::Directory,
             text: text.into(),
         });
+    }
+
+    pub fn add_thread(&mut self, thread: Model<Thread>, cx: &mut ModelContext<Self>) {
+        if let Some(context_id) = self.included_thread(&thread.read(cx).id()) {
+            self.remove_context(&context_id);
+        } else {
+            self.insert_thread(thread.read(cx));
+        }
     }
 
     pub fn insert_thread(&mut self, thread: &Thread) {
