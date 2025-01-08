@@ -343,19 +343,20 @@ impl BladeRenderer {
             .create_surface_configured(window, surface_config)
             .unwrap();
 
+        // Determine the sample count based on the device's capabilities.
+        #[cfg(target_os = "macos")]
         let mut sample_count = 1;
-        if cfg!(target_os = "macos") {
-            // Determine the sample count based on the device's capabilities.
-            for &n in &[4, 2] {
-                if context.gpu.metal_device().supportsTextureSampleCount(n) {
-                    sample_count = n as _;
-                    break;
-                }
+        #[cfg(target_os = "macos")]
+        for &n in &[4, 2] {
+            if context.gpu.metal_device().supportsTextureSampleCount(n) {
+                sample_count = n as _;
+                break;
             }
-        } else {
-            // TODO: Determine on non-macOS platforms, until Blade supports querying sample counts.
-            sample_count = 4;
         }
+
+        // TODO: Determine on non-macOS platforms, until Blade supports querying sample counts.
+        #[cfg(not(target_os = "macos"))]
+        let sample_count = 4;
 
         let command_encoder = context.gpu.create_command_encoder(gpu::CommandEncoderDesc {
             name: "main",
