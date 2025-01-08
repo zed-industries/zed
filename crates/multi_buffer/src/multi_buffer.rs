@@ -400,7 +400,7 @@ struct BufferEdit {
     original_indent_column: u32,
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 enum DiffChangeKind {
     DiffUpdated { base_changed: bool },
     InputEdited,
@@ -2726,6 +2726,8 @@ impl MultiBuffer {
                     }
                 }
 
+                let start_delta = delta;
+
                 while cursor.end(&()).0 <= edit.old.end {
                     let Some(item) = cursor.item() else {
                         break;
@@ -2738,7 +2740,10 @@ impl MultiBuffer {
                             old: old_range,
                             new: new_offset..new_offset,
                         };
-                        edits.push(edit);
+
+                        if DiffChangeKind::InputEdited != operation {
+                            edits.push(edit);
+                        }
                     }
 
                     edit_old_end = cursor.start().1 + (edit.old.end - cursor.start().0).value;
@@ -2754,7 +2759,7 @@ impl MultiBuffer {
                 );
 
                 if let DiffChangeKind::InputEdited = operation {
-                    let edit_new_start = (edit_old_start as isize + delta) as usize;
+                    let edit_new_start = (edit_old_start as isize + start_delta) as usize;
                     delta += (edit.new.end - edit.new.start).value as isize
                         - (edit.old.end - edit.old.start).value as isize;
                     let edit_new_end = (edit_old_end as isize + delta) as usize;
