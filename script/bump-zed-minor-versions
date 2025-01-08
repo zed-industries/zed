@@ -77,7 +77,7 @@ git tag ${stable_tag_name}
 echo "Creating new preview branch ${minor_branch_name}..."
 git checkout -q main
 git checkout -q -b ${minor_branch_name}
-git branch --set-upstream-to=origin/${minor_branch_name} ${minor_branch_name}
+git branch --set-upstream-to=origin/${minor_branch_name} ${minor_branch_name} --no-advice
 echo -n preview > crates/zed/RELEASE_CHANNEL
 git commit -q --all --message "${minor_branch_name} preview"
 git tag ${preview_tag_name}
