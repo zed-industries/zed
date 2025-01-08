@@ -3744,8 +3744,9 @@ impl LspStore {
         }
 
         for (worktree_id, adapter_name) in language_servers_to_stop {
-            self.stop_local_language_server(worktree_id, adapter_name, cx)
-                .detach();
+            todo!();
+            // self.stop_local_language_server(worktree_id, adapter_name, cx)
+            //     .detach();
         }
 
         if let Some(prettier_store) = self.as_local().map(|s| s.prettier_store.clone()) {
@@ -3754,13 +3755,12 @@ impl LspStore {
             })
         }
 
-        // Start all the newly-enabled language servers.
-        for (worktree, language) in language_servers_to_start {
-            todo!();
-            // self.as_local_mut()
-            //     .unwrap()
-            //     .start_language_servers(&worktree, language, cx);
-        }
+        // // Start all the newly-enabled language servers.
+        // for (worktree, language) in language_servers_to_start {
+        //     self.as_local_mut()
+        //         .unwrap()
+        //         .start_language_servers(&worktree, language, cx);
+        // }
 
         // Restart all language servers with changed initialization options.
         for (worktree, language) in language_servers_to_restart {
@@ -7316,15 +7316,29 @@ impl LspStore {
     ) {
         let worktree_id = worktree.read(cx).id();
 
-        let stop_tasks = self
-            .languages
-            .clone()
-            .lsp_adapters(&language)
+        let lsp_adapters = self.languages.clone().lsp_adapters(&language);
+        let stop_tasks = lsp_adapters
             .iter()
-            .map(|adapter| {
-                let stop_task =
-                    self.stop_local_language_server(worktree_id, adapter.name.clone(), cx);
-                stop_task
+            .filter_map(|adapter| {
+                let ids = self
+                    .as_local()
+                    .unwrap()
+                    .language_server_ids
+                    .get(&(worktree_id, adapter.name.clone()))?
+                    .clone();
+                let stop_tasks = futures::future::join_all(
+                    ids.into_iter()
+                        .map(|language_server_id| {
+                            self.stop_local_language_server(
+                                worktree_id,
+                                adapter.name.clone(),
+                                language_server_id,
+                                cx,
+                            )
+                        })
+                        .collect::<Vec<_>>(),
+                );
+                Some(stop_tasks)
             })
             .collect::<Vec<_>>();
         if stop_tasks.is_empty() {
