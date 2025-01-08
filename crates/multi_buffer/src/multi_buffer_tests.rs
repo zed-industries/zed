@@ -2,6 +2,7 @@ use super::*;
 use git::diff::DiffHunkStatus;
 use gpui::{AppContext, Context, TestAppContext};
 use indoc::indoc;
+use itertools::assert_equal;
 use language::{Buffer, Rope};
 use parking_lot::RwLock;
 use rand::prelude::*;
@@ -333,6 +334,55 @@ fn test_excerpt_boundaries_and_clipping(cx: &mut AppContext) {
             })
             .collect::<Vec<_>>()
     }
+}
+
+#[gpui::test]
+fn test_diff_boundary_anchors(cx: &mut AppContext) {
+    let base_text = "one\ntwo\nthree\n";
+    let text = "one\nthree\n";
+    let buffer = cx.new_model(|cx| Buffer::local(text, cx));
+    let snapshot = buffer.read(cx).snapshot();
+    let change_set = cx.new_model(|cx| {
+        let mut change_set = BufferChangeSet::new(&snapshot);
+        change_set.recalculate_diff_sync(base_text.into(), snapshot.text, true, cx);
+        change_set
+    });
+    let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.add_change_set(change_set, cx)
+    });
+
+    let (before, after) = multibuffer.update(cx, |multibuffer, cx| {
+        let before = multibuffer.snapshot(cx).anchor_before(Point::new(1, 0));
+        let after = multibuffer.snapshot(cx).anchor_after(Point::new(1, 0));
+        multibuffer.set_all_hunks_expanded(cx);
+        (before, after)
+    });
+    cx.background_executor().run_until_parked();
+
+    let snapshot = multibuffer.read(cx).snapshot(cx);
+    let actual_text = snapshot.text();
+    let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
+    let actual_diff = format_diff(&actual_text, &actual_row_infos);
+    pretty_assertions::assert_eq!(
+        actual_diff,
+        indoc! {
+            "  one
+             - two
+               three
+             "
+        },
+    );
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        let snapshot = multibuffer.snapshot(cx);
+        assert_eq!(before.to_point(&snapshot), Point::new(1, 0));
+        assert_eq!(after.to_point(&snapshot), Point::new(2, 0));
+        assert_eq!(
+            vec![Point::new(1, 0), Point::new(2, 0),],
+            snapshot.summaries_for_anchors::<Point, _>(&[before, after]),
+        )
+    })
 }
 
 #[gpui::test]

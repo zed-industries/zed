@@ -191,7 +191,7 @@ pub struct MultiBufferSnapshot {
     excerpts: SumTree<Excerpt>,
     excerpt_ids: SumTree<ExcerptIdMapping>,
     diffs: TreeMap<BufferId, DiffSnapshot>,
-    diff_transforms: SumTree<DiffTransform>,
+    pub diff_transforms: SumTree<DiffTransform>,
     trailing_excerpt_update_count: usize,
     non_text_state_update_count: usize,
     edit_count: usize,
@@ -202,7 +202,7 @@ pub struct MultiBufferSnapshot {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) enum DiffTransform {
+pub enum DiffTransform {
     BufferContent {
         summary: TextSummary,
         is_inserted_hunk: bool,
@@ -325,7 +325,7 @@ pub struct ExcerptSummary {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct DiffTransformSummary {
+pub struct DiffTransformSummary {
     input: TextSummary,
     output: TextSummary,
 }
@@ -4152,10 +4152,11 @@ impl MultiBufferSnapshot {
                 let excerpt_buffer_start =
                     excerpt.range.context.start.summary::<D>(&excerpt.buffer);
                 let excerpt_buffer_end = excerpt.range.context.end.summary::<D>(&excerpt.buffer);
-                for (buffer_summary, diff_base_anchor) in excerpt
+                for (buffer_summary, (bias, diff_base_anchor)) in excerpt
                     .buffer
                     .summaries_for_anchors_with_payload::<D, _, _>(
-                        excerpt_anchors.map(|a| (&a.text_anchor, &a.diff_base_anchor)),
+                        excerpt_anchors
+                            .map(|a| (&a.text_anchor, (a.text_anchor.bias, &a.diff_base_anchor))),
                     )
                 {
                     let summary = cmp::min(excerpt_buffer_end.clone(), buffer_summary);
@@ -4173,7 +4174,9 @@ impl MultiBufferSnapshot {
                         );
                         let transform_end_position =
                             D::from_text_summary(&diff_transforms_cursor.end(&()).input);
-                        if transform_end_position == position && diff_base_anchor.is_some() {
+                        if transform_end_position == position
+                            && (diff_base_anchor.is_some() || bias == Bias::Right)
+                        {
                             diff_transforms_cursor.next(&());
                         }
                     }
