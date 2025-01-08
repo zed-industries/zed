@@ -18,7 +18,7 @@
         .
         (attribute_item) *
         .
-        (line_comment) *
+        ([line_comment block_comment]) *
         .
         (function_item
             name: (_) @run
