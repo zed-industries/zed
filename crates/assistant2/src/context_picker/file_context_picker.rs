@@ -11,7 +11,7 @@ use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
-use crate::context_store::{ContextStore, IncludedFile};
+use crate::context_store::{ContextStore, FileInclusion};
 
 pub struct FileContextPicker {
     picker: View<Picker<FileContextPickerDelegate>>,
@@ -275,10 +275,11 @@ impl PickerDelegate for FileContextPickerDelegate {
             (file_name, Some(directory))
         };
 
-        let added = self
-            .context_store
-            .upgrade()
-            .and_then(|context_store| context_store.read(cx).included_file(&path_match.path));
+        let added = self.context_store.upgrade().and_then(|context_store| {
+            context_store
+                .read(cx)
+                .will_include_file_path(&path_match.path, cx)
+        });
 
         Some(
             ListItem::new(ix)
@@ -295,7 +296,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                         })),
                 )
                 .when_some(added, |el, added| match added {
-                    IncludedFile::Direct(_) => el.end_slot(
+                    FileInclusion::Direct(_) => el.end_slot(
                         h_flex()
                             .gap_1()
                             .child(
@@ -305,7 +306,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                             )
                             .child(Label::new("Added").size(LabelSize::Small)),
                     ),
-                    IncludedFile::InDirectory(dir_name) => {
+                    FileInclusion::InDirectory(dir_name) => {
                         let dir_name = dir_name.to_string_lossy().into_owned();
 
                         el.end_slot(

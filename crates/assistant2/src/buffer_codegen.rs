@@ -421,8 +421,7 @@ impl CodegenAlternative {
         };
 
         if let Some(context_store) = &self.context_store {
-            let context = context_store.update(cx, |this, _cx| this.context().clone());
-            attach_context_to_message(&mut request_message, context);
+            attach_context_to_message(&mut request_message, context_store.read(cx).snapshot(cx));
         }
 
         request_message.content.push(prompt.into());
@@ -1053,7 +1052,7 @@ mod tests {
         stream::{self},
         Stream,
     };
-    use gpui::{Context, TestAppContext};
+    use gpui::TestAppContext;
     use indoc::indoc;
     use language::{
         language_settings, tree_sitter_rust, Buffer, Language, LanguageConfig, LanguageMatcher,

@@ -240,7 +240,7 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         let added = self.context_store.upgrade().map_or(false, |context_store| {
             context_store
                 .read(cx)
-                .included_directory(&path_match.path)
+                .includes_directory(&path_match.path)
                 .is_some()
         });
 

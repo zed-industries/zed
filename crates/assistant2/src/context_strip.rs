@@ -1,10 +1,12 @@
 use std::rc::Rc;
 
+use collections::HashSet;
 use editor::Editor;
 use gpui::{
     AppContext, DismissEvent, EventEmitter, FocusHandle, Model, Subscription, View, WeakModel,
     WeakView,
 };
+use itertools::Itertools;
 use language::Buffer;
 use ui::{prelude::*, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip};
 use workspace::Workspace;
@@ -73,11 +75,17 @@ impl ContextStrip {
         let active_item = workspace.read(cx).active_item(cx)?;
 
         let editor = active_item.to_any().downcast::<Editor>().ok()?.read(cx);
-        let active_buffer = editor.buffer().read(cx).as_singleton()?;
+        let active_buffer_model = editor.buffer().read(cx).as_singleton()?;
+        let active_buffer = active_buffer_model.read(cx);
 
-        let path = active_buffer.read(cx).file()?.path();
+        let path = active_buffer.file()?.path();
 
-        if self.context_store.read(cx).included_file(path).is_some() {
+        if self
+            .context_store
+            .read(cx)
+            .will_include_buffer(active_buffer.remote_id(), path)
+            .is_some()
+        {
             return None;
         }
 
@@ -88,7 +96,7 @@ impl ContextStrip {
 
         Some(SuggestedContext::File {
             name,
-            buffer: active_buffer.downgrade(),
+            buffer: active_buffer_model.downgrade(),
         })
     }
 
@@ -106,7 +114,7 @@ impl ContextStrip {
         if self
             .context_store
             .read(cx)
-            .included_thread(active_thread.id())
+            .includes_thread(active_thread.id())
             .is_some()
         {
             return None;
@@ -131,13 +139,24 @@ impl ContextStrip {
 impl Render for ContextStrip {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let context_store = self.context_store.read(cx);
-        let context = context_store.context().clone();
+        let context = context_store
+            .context()
+            .iter()
+            .flat_map(|context| context.snapshot(cx))
+            .collect::<Vec<_>>();
         let context_picker = self.context_picker.clone();
         let focus_handle = self.focus_handle.clone();
 
         let suggested_context = self.suggested_context(cx);
 
-        let dupe_names = context_store.duplicated_names();
+        let dupe_names = context
+            .iter()
+            .map(|context| context.name.clone())
+            .sorted()
+            .tuple_windows()
+            .filter(|(a, b)| a == b)
+            .map(|(a, _)| a)
+            .collect::<HashSet<SharedString>>();
 
         h_flex()
             .flex_wrap()
@@ -194,11 +213,11 @@ impl Render for ContextStrip {
                     context.clone(),
                     dupe_names.contains(&context.name),
                     Some({
-                        let context = context.clone();
+                        let id = context.id;
                         let context_store = self.context_store.clone();
                         Rc::new(cx.listener(move |_this, _event, cx| {
                             context_store.update(cx, |this, _cx| {
-                                this.remove_context(&context.id);
+                                this.remove_context(id);
                             });
                             cx.notify();
                         }))
@@ -284,12 +303,12 @@ impl SuggestedContext {
         match self {
             Self::File { buffer, name: _ } => {
                 if let Some(buffer) = buffer.upgrade() {
-                    context_store.insert_file(buffer.read(cx));
+                    context_store.insert_file(buffer, cx);
                 };
             }
             Self::Thread { thread, name: _ } => {
                 if let Some(thread) = thread.upgrade() {
-                    context_store.insert_thread(thread.read(cx));
+                    context_store.insert_thread(thread, cx);
                 };
             }
         }

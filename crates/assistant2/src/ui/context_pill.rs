@@ -3,12 +3,12 @@ use std::rc::Rc;
 use gpui::ClickEvent;
 use ui::{prelude::*, IconButtonShape, Tooltip};
 
-use crate::context::{Context, ContextKind};
+use crate::context::{ContextKind, ContextSnapshot};
 
 #[derive(IntoElement)]
 pub enum ContextPill {
     Added {
-        context: Context,
+        context: ContextSnapshot,
         dupe_name: bool,
         on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
     },
@@ -21,7 +21,7 @@ pub enum ContextPill {
 
 impl ContextPill {
     pub fn new_added(
-        context: Context,
+        context: ContextSnapshot,
         dupe_name: bool,
         on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
     ) -> Self {
@@ -49,10 +49,10 @@ impl ContextPill {
         }
     }
 
-    pub fn kind(&self) -> &ContextKind {
+    pub fn kind(&self) -> ContextKind {
         match self {
-            Self::Added { context, .. } => &context.kind,
-            Self::Suggested { kind, .. } => kind,
+            Self::Added { context, .. } => context.kind,
+            Self::Suggested { kind, .. } => *kind,
         }
     }
 }
