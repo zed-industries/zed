@@ -115,27 +115,48 @@ impl Render for PaintingViewer {
                         canvas(
                             move |_, _| {},
                             move |_, _, cx| {
-                                const STROKE_WIDTH: Pixels = px(2.0);
+
                                 for path in default_lines {
                                     cx.paint_path(path, gpui::black());
                                 }
+
+                                let stroke =tiny_skia::Stroke {
+                                    width: 1.0,
+                                    ..Default::default()
+                                };
+
                                 for points in lines {
-                                    let mut path = Path::new(points[0]);
+                                    if points.len() < 2 {
+                                        continue;
+                                    }
+
+                                    let mut builder = tiny_skia::PathBuilder::new();
+                                    let first_p = points.first().unwrap();
+                                    builder.move_to(first_p.x.0, first_p.y.0);
                                     for p in points.iter().skip(1) {
-                                        path.line_to(*p);
+                                        builder.line_to(p.x.0, p.y.0);
                                     }
 
-                                    let mut last = points.last().unwrap();
-                                    for p in points.iter().rev() {
-                                        let mut offset_x = px(0.);
-                                        if last.x == p.x {
-                                            offset_x = STROKE_WIDTH;
+                                    let path = builder.finish().unwrap();
+                                    let stroke_path = tiny_skia::PathStroker::new().stroke(&path, &stroke, cx.scale_factor());
+                                    if let Some(stroke_path) = stroke_path {
+                                        let Some(first_p) = stroke_path.points().first() else {
+                                            break;
+                                        };
+
+                                        let mut path = Path::new(point(px(first_p.x), px(first_p.y)));
+                                        for i in 1..stroke_path.len() - 1 {
+                                            let p = stroke_path.points()[i];
+                                            let verb = stroke_path.verbs()[i];
+                                            match verb {
+                                                tiny_skia_path::PathVerb::Move => path.move_to(point(px(p.x), px(p.y))),
+                                                tiny_skia_path::PathVerb::Line => path.line_to(point(px(p.x), px(p.y))),
+                                                    _ => {}
+                                            }
                                         }
-                                        path.line_to(point(p.x + offset_x, p.y  + STROKE_WIDTH));
-                                        last = p;
+                                        cx.paint_path(path, gpui::black());
                                     }
 
-                                    cx.paint_path(path, gpui::black());
                                 }
                             },
                         )

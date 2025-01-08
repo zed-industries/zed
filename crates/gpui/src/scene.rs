@@ -722,15 +722,6 @@ impl Path<Pixels> {
         self.current = to;
     }
 
-    /// Close the current contour.
-    pub fn close(&mut self) {
-        self.contour_count += 1;
-        self.push_triangle(
-            (self.current, self.start, self.start),
-            (point(0., 1.), point(0., 1.), point(0., 1.)),
-        );
-    }
-
     /// Draw a straight line from the current point to the given point.
     pub fn line_to(&mut self, to: Point<Pixels>) {
         self.contour_count += 1;

@@ -5379,6 +5379,8 @@ dependencies = [
  "sum_tree",
  "taffy",
  "thiserror 1.0.69",
+ "tiny-skia",
+ "tiny-skia-path",
  "unicode-segmentation",
  "usvg",
  "util",
