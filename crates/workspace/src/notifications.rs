@@ -411,12 +411,10 @@ impl EventEmitter<DismissEvent> for ErrorMessagePrompt {}
 
 pub mod simple_message_notification {
     use gpui::{
-        div, DismissEvent, EventEmitter, InteractiveElement, ParentElement, Render, SharedString,
-        StatefulInteractiveElement, Styled, ViewContext,
+        div, DismissEvent, EventEmitter, ParentElement, Render, SharedString, Styled, ViewContext,
     };
     use std::sync::Arc;
     use ui::prelude::*;
-    use ui::{h_flex, v_flex, Button, Icon, IconName, Label, StyledExt};
 
     pub struct MessageNotification {
         message: SharedString,
@@ -482,36 +480,43 @@ pub mod simple_message_notification {
     impl Render for MessageNotification {
         fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
             v_flex()
+                .p_3()
+                .gap_2()
                 .elevation_3(cx)
-                .p_4()
                 .child(
                     h_flex()
+                        .gap_4()
                         .justify_between()
                         .child(div().max_w_80().child(Label::new(self.message.clone())))
                         .child(
-                            div()
-                                .id("cancel")
-                                .child(Icon::new(IconName::Close))
-                                .cursor_pointer()
+                            IconButton::new("close", IconName::Close)
                                 .on_click(cx.listener(|this, _, cx| this.dismiss(cx))),
                         ),
                 )
                 .child(
                     h_flex()
-                        .gap_3()
+                        .gap_2()
                         .children(self.click_message.iter().map(|message| {
-                            Button::new(message.clone(), message.clone()).on_click(cx.listener(
-                                |this, _, cx| {
+                            Button::new(message.clone(), message.clone())
+                                .label_size(LabelSize::Small)
+                                .icon(IconName::Check)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Success)
+                                .on_click(cx.listener(|this, _, cx| {
                                     if let Some(on_click) = this.on_click.as_ref() {
                                         (on_click)(cx)
                                     };
                                     this.dismiss(cx)
-                                },
-                            ))
+                                }))
                         }))
                         .children(self.secondary_click_message.iter().map(|message| {
                             Button::new(message.clone(), message.clone())
-                                .style(ButtonStyle::Filled)
+                                .label_size(LabelSize::Small)
+                                .icon(IconName::Close)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Error)
                                 .on_click(cx.listener(|this, _, cx| {
                                     if let Some(on_click) = this.secondary_on_click.as_ref() {
                                         (on_click)(cx)
