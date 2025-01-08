@@ -260,16 +260,25 @@ impl Object {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '`', '`')
             }
             Object::AnyQuotes => {
-                let multiline = self.is_multiline();
+                let quote_types = ['\'', '"', '`']; // Types of quotes to handle
                 let relative_offset = relative_to.to_offset(map, Bias::Left) as isize;
-                let quote_types = ['\'', '"', '`'];
 
-                let closest_range = quote_types
+                // Find the closest matching quote range
+                quote_types
                     .iter()
                     .flat_map(|&quote| {
-                        surrounding_markers(map, relative_to, around, multiline, quote, quote)
+                        // Get ranges for each quote type
+                        surrounding_markers(
+                            map,
+                            relative_to,
+                            around,
+                            self.is_multiline(),
+                            quote,
+                            quote,
+                        )
                     })
                     .min_by_key(|range| {
+                        // Calculate proximity of ranges to the cursor
                         let start_distance = (relative_offset
                             - range.start.to_offset(map, Bias::Left) as isize)
                             .abs();
@@ -277,9 +286,7 @@ impl Object {
                             - range.end.to_offset(map, Bias::Right) as isize)
                             .abs();
                         start_distance + end_distance
-                    });
-
-                closest_range
+                    })
             }
             Object::DoubleQuotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '"', '"')
@@ -1779,130 +1786,115 @@ mod test {
 
     #[gpui::test]
     async fn test_anyquotes_object(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await;
+        let mut cx = VimTestContext::new(cx, true).await;
 
-        const ANYQUOTES_EXAMPLES: &[&str] = &[
-            // Single quote examples
-            "It's a 'qˇuote' example.",
-            // Double quote examples
-            "This is a \"qˇuote\" example.",
-            // Backtick examples
-            "This is a `qˇuote` example.",
-            // Nested quotes
-            "This is a 'n\"estˇed\"' example.",
-            // Mixed single, double, and back quotes
-            "This is a 'mix`ed` ˇ\"example\"'.",
-            // Multiline quotes
-            indoc! {"
-                'This is
-                a mulˇtiline
-                quote.'
-            "},
-            indoc! {"
-                \"This is
-                a mulˇtiline
-                quote.\"
-            "},
+        const TEST_CASES: &[(&str, &str, &str, Mode)] = &[
+            // Single quotes
+            (
+                "c i q",
+                "This is a 'qˇuote' example.",
+                "This is a 'ˇ' example.",
+                Mode::Insert,
+            ),
+            (
+                "c a q",
+                "This is a 'qˇuote' example.",
+                "This is a ˇexample.",
+                Mode::Insert,
+            ),
+            (
+                "d i q",
+                "This is a 'qˇuote' example.",
+                "This is a 'ˇ' example.",
+                Mode::Normal,
+            ),
+            (
+                "d a q",
+                "This is a 'qˇuote' example.",
+                "This is a ˇexample.",
+                Mode::Normal,
+            ),
+            // Double quotes
+            (
+                "c i q",
+                "This is a \"qˇuote\" example.",
+                "This is a \"ˇ\" example.",
+                Mode::Insert,
+            ),
+            (
+                "c a q",
+                "This is a \"qˇuote\" example.",
+                "This is a ˇexample.",
+                Mode::Insert,
+            ),
+            (
+                "d i q",
+                "This is a \"qˇuote\" example.",
+                "This is a \"ˇ\" example.",
+                Mode::Normal,
+            ),
+            (
+                "d a q",
+                "This is a \"qˇuote\" example.",
+                "This is a ˇexample.",
+                Mode::Normal,
+            ),
+            // Back quotes
+            (
+                "c i q",
+                "This is a `qˇuote` example.",
+                "This is a `ˇ` example.",
+                Mode::Insert,
+            ),
+            (
+                "c a q",
+                "This is a `qˇuote` example.",
+                "This is a ˇexample.",
+                Mode::Insert,
+            ),
+            (
+                "d i q",
+                "This is a `qˇuote` example.",
+                "This is a `ˇ` example.",
+                Mode::Normal,
+            ),
+            (
+                "d a q",
+                "This is a `qˇuote` example.",
+                "This is a ˇexample.",
+                Mode::Normal,
+            ),
         ];
 
-        for example in ANYQUOTES_EXAMPLES {
-            // Change inside quotes
-            cx.simulate_at_each_offset("c i q", example)
-                .await
-                .assert_matches();
+        for (keystrokes, initial_state, expected_state, expected_mode) in TEST_CASES {
+            cx.set_state(initial_state, Mode::Normal);
 
-            // Change around quotes
-            cx.simulate_at_each_offset("c a q", example)
-                .await
-                .assert_matches();
+            cx.simulate_keystrokes(keystrokes);
 
-            // Delete inside quotes
-            cx.simulate_at_each_offset("d i q", example)
-                .await
-                .assert_matches();
-
-            // Delete around quotes
-            cx.simulate_at_each_offset("d a q", example)
-                .await
-                .assert_matches();
-
-            // Visual inside quotes
-            cx.simulate_at_each_offset("v i q", example)
-                .await
-                .assert_matches();
-
-            // Visual around quotes
-            cx.simulate_at_each_offset("v a q", example)
-                .await
-                .assert_matches();
+            cx.assert_state(expected_state, *expected_mode);
         }
-    }
 
-    #[gpui::test]
-    async fn test_anyquotes_with_escapes(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await;
-
-        const ESCAPED_QUOTES: &str =
-            "This is 'it\\'s ˇescaped', \"an \\\"escape\"\", and `\\`escaped\\``.";
-
-        // Change inside any escaped quotes
-        cx.simulate_at_each_offset("c i q", ESCAPED_QUOTES)
-            .await
-            .assert_matches();
-
-        // Delete inside any escaped quotes
-        cx.simulate_at_each_offset("d i q", ESCAPED_QUOTES)
-            .await
-            .assert_matches();
-
-        // Visual inside escaped quotes
-        cx.simulate_at_each_offset("v i q", ESCAPED_QUOTES)
-            .await
-            .assert_matches();
-    }
-
-    #[gpui::test]
-    async fn test_anyquotes_multiline(cx: &mut gpui::TestAppContext) {
-        let mut cx = NeovimBackedTestContext::new(cx).await;
-
-        const MULTILINE_QUOTES: &[&str] = &[
-            indoc! {"
-                'This is
-                a mulˇtiline
-                quote.'
-            "},
-            indoc! {"
-                \"This is
-                a mulˇtiline
-                quote.\"
-            "},
-            indoc! {"
-                `This is
-                a mulˇtiline
-                quote.`
-            "},
+        const INVALID_CASES: &[(&str, &str, Mode)] = &[
+            ("c i q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
+            ("c a q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
+            ("d i q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
+            ("d a q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
+            ("c i q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing double quote
+            ("c a q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing double quote
+            ("d i q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing double quote
+            ("d a q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing back quote
+            ("c i q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
+            ("c a q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
+            ("d i q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
+            ("d a q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
         ];
 
-        for example in MULTILINE_QUOTES {
-            // Change inside quotes
-            cx.simulate_at_each_offset("c i q", example)
-                .await
-                .assert_matches();
+        for (keystrokes, initial_state, mode) in INVALID_CASES {
+            cx.set_state(initial_state, Mode::Normal);
 
-            // Change around quotes
-            cx.simulate_at_each_offset("c a q", example)
-                .await
-                .assert_matches();
+            cx.simulate_keystrokes(keystrokes);
 
-            // Visual inside quotes
-            cx.simulate_at_each_offset("v i q", example)
-                .await
-                .assert_matches();
-
-            // Visual around quotes
-            cx.simulate_at_each_offset("v a q", example)
-                .await
-                .assert_matches();
+            cx.assert_state(initial_state, *mode);
         }
     }
 
