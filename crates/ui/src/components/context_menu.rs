@@ -434,7 +434,7 @@ impl Render for ContextMenu {
                                     ListItem::new(ix)
                                         .inset(true)
                                         .disabled(*disabled)
-                                        .selected(Some(ix) == self.selected_index)
+                                        .toggle_state(Some(ix) == self.selected_index)
                                         .when_some(*toggle, |list_item, (position, toggled)| {
                                             let contents = if toggled {
                                                 v_flex().flex_none().child(
@@ -495,7 +495,7 @@ impl Render for ContextMenu {
                                     let selectable = *selectable;
                                     ListItem::new(ix)
                                         .inset(true)
-                                        .selected(if selectable {
+                                        .toggle_state(if selectable {
                                             Some(ix) == self.selected_index
                                         } else {
                                             false

@@ -19,24 +19,45 @@ async function main() {
     process.exit(1);
   }
 
-  let priorVersion = [parts[0], parts[1], parts[2] - 1].join(".");
-  let suffix = "";
-
-  if (channel == "preview") {
-    suffix = "-pre";
-    if (parts[2] == 0) {
-      priorVersion = [parts[0], parts[1] - 1, 0].join(".");
-    }
-  } else if (!ensureTag(`v${priorVersion}`)) {
-    console.log("Copy the release notes from preview.");
+  // currently we can only draft notes for patch releases.
+  if (parts[2] == 0) {
     process.exit(0);
   }
 
+  let priorVersion = [parts[0], parts[1], parts[2] - 1].join(".");
+  let suffix = channel == "preview" ? "-pre" : "";
   let [tag, priorTag] = [`v${version}${suffix}`, `v${priorVersion}${suffix}`];
 
-  if (!ensureTag(tag) || !ensureTag(priorTag)) {
-    console.log("Could not draft release notes, missing a tag:", tag, priorTag);
-    process.exit(0);
+  try {
+    execFileSync("rm", ["-rf", "target/shallow_clone"]);
+    execFileSync("git", [
+      "clone",
+      "https://github.com/zed-industries/zed",
+      "target/shallow_clone",
+      "--filter=tree:0",
+      "--no-checkout",
+      "--branch",
+      tag,
+      "--depth",
+      100,
+    ]);
+    execFileSync("git", [
+      "-C",
+      "target/shallow_clone",
+      "rev-parse",
+      "--verify",
+      tag,
+    ]);
+    execFileSync("git", [
+      "-C",
+      "target/shallow_clone",
+      "rev-parse",
+      "--verify",
+      priorTag,
+    ]);
+  } catch (e) {
+    console.error(e.stderr.toString());
+    process.exit(1);
   }
 
   const newCommits = getCommits(priorTag, tag);
@@ -69,7 +90,13 @@ async function main() {
 function getCommits(oldTag, newTag) {
   const pullRequestNumbers = execFileSync(
     "git",
-    ["log", `${oldTag}..${newTag}`, "--format=DIVIDER\n%H|||%B"],
+    [
+      "-C",
+      "target/shallow_clone",
+      "log",
+      `${oldTag}..${newTag}`,
+      "--format=DIVIDER\n%H|||%B",
+    ],
     { encoding: "utf8" },
   )
     .replace(/\r\n/g, "\n")
@@ -98,19 +125,4 @@ function getCommits(oldTag, newTag) {
     });
 
   return pullRequestNumbers;
-}
-
-function ensureTag(tag) {
-  try {
-    execFileSync("git", ["rev-parse", "--verify", tag]);
-    return true;
-  } catch (e) {
-    try {
-      execFileSync("git"[("fetch", "origin", "--shallow-exclude", tag)]);
-      execFileSync("git"[("fetch", "origin", "--deepen", "1")]);
-      return true;
-    } catch (e) {
-      return false;
-    }
-  }
 }

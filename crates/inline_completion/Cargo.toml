@@ -1,0 +1,16 @@
+[package]
+name = "inline_completion"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/inline_completion.rs"
+
+[dependencies]
+gpui.workspace = true
+language.workspace = true

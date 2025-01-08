@@ -20,3 +20,5 @@ pub(crate) use text_system::*;
 pub(crate) use wayland::*;
 #[cfg(feature = "x11")]
 pub(crate) use x11::*;
+
+pub(crate) type PlatformScreenCaptureFrame = ();

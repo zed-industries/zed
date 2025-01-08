@@ -3,19 +3,12 @@ use std::sync::Arc;
 use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
 use feature_flags::FeatureFlagAppExt;
-use fs::Fs;
 use gpui::{AppContext, Pixels};
-use language_model::provider::open_ai;
-use language_model::settings::{
-    AnthropicSettingsContent, AnthropicSettingsContentV1, OllamaSettingsContent,
-    OpenAiSettingsContent, OpenAiSettingsContentV1, VersionedAnthropicSettingsContent,
-    VersionedOpenAiSettingsContent,
-};
-use language_model::{settings::AllLanguageModelSettings, CloudModel, LanguageModel};
+use language_model::{CloudModel, LanguageModel};
 use ollama::Model as OllamaModel;
 use schemars::{schema::Schema, JsonSchema};
 use serde::{Deserialize, Serialize};
-use settings::{update_settings_file, Settings, SettingsSources};
+use settings::{Settings, SettingsSources};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -60,7 +53,6 @@ pub struct AssistantSettings {
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
     pub enable_experimental_live_diffs: bool,
-    pub show_hints: bool,
 }
 
 impl AssistantSettings {
@@ -108,102 +100,11 @@ impl AssistantSettingsContent {
         }
     }
 
-    pub fn update_file(&mut self, fs: Arc<dyn Fs>, cx: &AppContext) {
-        if let AssistantSettingsContent::Versioned(settings) = self {
-            if let VersionedAssistantSettingsContent::V1(settings) = settings {
-                if let Some(provider) = settings.provider.clone() {
-                    match provider {
-                        AssistantProviderContentV1::Anthropic { api_url, .. } => {
-                            update_settings_file::<AllLanguageModelSettings>(
-                                fs,
-                                cx,
-                                move |content, _| {
-                                    if content.anthropic.is_none() {
-                                        content.anthropic =
-                                            Some(AnthropicSettingsContent::Versioned(
-                                                VersionedAnthropicSettingsContent::V1(
-                                                    AnthropicSettingsContentV1 {
-                                                        api_url,
-                                                        available_models: None,
-                                                    },
-                                                ),
-                                            ));
-                                    }
-                                },
-                            )
-                        }
-                        AssistantProviderContentV1::Ollama { api_url, .. } => {
-                            update_settings_file::<AllLanguageModelSettings>(
-                                fs,
-                                cx,
-                                move |content, _| {
-                                    if content.ollama.is_none() {
-                                        content.ollama = Some(OllamaSettingsContent {
-                                            api_url,
-                                            available_models: None,
-                                        });
-                                    }
-                                },
-                            )
-                        }
-                        AssistantProviderContentV1::OpenAi {
-                            api_url,
-                            available_models,
-                            ..
-                        } => update_settings_file::<AllLanguageModelSettings>(
-                            fs,
-                            cx,
-                            move |content, _| {
-                                if content.openai.is_none() {
-                                    let available_models = available_models.map(|models| {
-                                        models
-                                            .into_iter()
-                                            .filter_map(|model| match model {
-                                                OpenAiModel::Custom {
-                                                    name,
-                                                    display_name,
-                                                    max_tokens,
-                                                    max_output_tokens,
-                                                    max_completion_tokens: None,
-                                                } => Some(open_ai::AvailableModel {
-                                                    name,
-                                                    display_name,
-                                                    max_tokens,
-                                                    max_output_tokens,
-                                                    max_completion_tokens: None,
-                                                }),
-                                                _ => None,
-                                            })
-                                            .collect::<Vec<_>>()
-                                    });
-                                    content.openai = Some(OpenAiSettingsContent::Versioned(
-                                        VersionedOpenAiSettingsContent::V1(
-                                            OpenAiSettingsContentV1 {
-                                                api_url,
-                                                available_models,
-                                            },
-                                        ),
-                                    ));
-                                }
-                            },
-                        ),
-                        _ => {}
-                    }
-                }
-            }
-        }
-
-        *self = AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(
-            self.upgrade(),
-        ));
-    }
-
     fn upgrade(&self) -> AssistantSettingsContentV2 {
         match self {
             AssistantSettingsContent::Versioned(settings) => match settings {
                 VersionedAssistantSettingsContent::V1(settings) => AssistantSettingsContentV2 {
                     enabled: settings.enabled,
-                    show_hints: None,
                     button: settings.button,
                     dock: settings.dock,
                     default_width: settings.default_width,
@@ -244,7 +145,6 @@ impl AssistantSettingsContent {
             },
             AssistantSettingsContent::Legacy(settings) => AssistantSettingsContentV2 {
                 enabled: None,
-                show_hints: None,
                 button: settings.button,
                 dock: settings.dock,
                 default_width: settings.default_width,
@@ -357,7 +257,6 @@ impl Default for VersionedAssistantSettingsContent {
     fn default() -> Self {
         Self::V2(AssistantSettingsContentV2 {
             enabled: None,
-            show_hints: None,
             button: None,
             dock: None,
             default_width: None,
@@ -375,11 +274,6 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: true
     enabled: Option<bool>,
-    /// Whether to show inline hints that show keybindings for inline assistant
-    /// and assistant panel.
-    ///
-    /// Default: true
-    show_hints: Option<bool>,
     /// Whether to show the assistant panel button in the status bar.
     ///
     /// Default: true
@@ -514,7 +408,6 @@ impl Settings for AssistantSettings {
 
             let value = value.upgrade();
             merge(&mut settings.enabled, value.enabled);
-            merge(&mut settings.show_hints, value.show_hints);
             merge(&mut settings.button, value.button);
             merge(&mut settings.dock, value.dock);
             merge(
@@ -545,6 +438,7 @@ fn merge<T>(target: &mut T, value: Option<T>) {
 
 #[cfg(test)]
 mod tests {
+    use fs::Fs;
     use gpui::{ReadGlobal, TestAppContext};
 
     use super::*;
@@ -585,7 +479,6 @@ mod tests {
                             }),
                             inline_alternatives: None,
                             enabled: None,
-                            show_hints: None,
                             button: None,
                             dock: None,
                             default_width: None,

@@ -10,12 +10,12 @@ pub use language::*;
 use lsp::{LanguageServerBinary, LanguageServerName};
 use regex::Regex;
 use smol::fs::{self};
+use std::fmt::Display;
 use std::{
     any::Any,
     borrow::Cow,
     path::{Path, PathBuf},
-    sync::Arc,
-    sync::LazyLock,
+    sync::{Arc, LazyLock},
 };
 use task::{TaskTemplate, TaskTemplates, TaskVariables, VariableName};
 use util::{fs::remove_matching, maybe, ResultExt};
@@ -77,6 +77,7 @@ impl LspAdapter for RustLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _: Arc<dyn LanguageToolchainStore>,
         _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which("rust-analyzer".as_ref()).await?;
@@ -252,49 +253,51 @@ impl LspAdapter for RustLspAdapter {
             .as_ref()
             .and_then(|detail| detail.detail.as_ref())
             .or(completion.detail.as_ref())
-            .map(ToOwned::to_owned);
+            .map(|detail| detail.trim());
         let function_signature = completion
             .label_details
             .as_ref()
-            .and_then(|detail| detail.description.as_ref())
-            .or(completion.detail.as_ref())
-            .map(ToOwned::to_owned);
-        match completion.kind {
-            Some(lsp::CompletionItemKind::FIELD) if detail.is_some() => {
+            .and_then(|detail| detail.description.as_deref())
+            .or(completion.detail.as_deref());
+        match (detail, completion.kind) {
+            (Some(detail), Some(lsp::CompletionItemKind::FIELD)) => {
                 let name = &completion.label;
-                let text = format!("{}: {}", name, detail.unwrap());
-                let source = Rope::from(format!("struct S {{ {} }}", text).as_str());
-                let runs = language.highlight_text(&source, 11..11 + text.len());
+                let text = format!("{name}: {detail}");
+                let prefix = "struct S { ";
+                let source = Rope::from(format!("{prefix}{text} }}"));
+                let runs =
+                    language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
                 return Some(CodeLabel {
                     text,
                     runs,
                     filter_range: 0..name.len(),
                 });
             }
-            Some(lsp::CompletionItemKind::CONSTANT | lsp::CompletionItemKind::VARIABLE)
-                if detail.is_some()
-                    && completion.insert_text_format != Some(lsp::InsertTextFormat::SNIPPET) =>
-            {
+            (
+                Some(detail),
+                Some(lsp::CompletionItemKind::CONSTANT | lsp::CompletionItemKind::VARIABLE),
+            ) if completion.insert_text_format != Some(lsp::InsertTextFormat::SNIPPET) => {
                 let name = &completion.label;
                 let text = format!(
                     "{}: {}",
                     name,
-                    completion.detail.as_ref().or(detail.as_ref()).unwrap()
+                    completion.detail.as_deref().unwrap_or(detail)
                 );
-                let source = Rope::from(format!("let {} = ();", text).as_str());
-                let runs = language.highlight_text(&source, 4..4 + text.len());
+                let prefix = "let ";
+                let source = Rope::from(format!("{prefix}{text} = ();"));
+                let runs =
+                    language.highlight_text(&source, prefix.len()..prefix.len() + text.len());
                 return Some(CodeLabel {
                     text,
                     runs,
                     filter_range: 0..name.len(),
                 });
             }
-            Some(lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD)
-                if detail.is_some() =>
-            {
+            (
+                Some(detail),
+                Some(lsp::CompletionItemKind::FUNCTION | lsp::CompletionItemKind::METHOD),
+            ) => {
                 static REGEX: LazyLock<Regex> = LazyLock::new(|| Regex::new("\\(…?\\)").unwrap());
-
-                let detail = detail.unwrap();
                 const FUNCTION_PREFIXES: [&str; 6] = [
                     "async fn",
                     "async unsafe fn",
@@ -314,10 +317,11 @@ impl LspAdapter for RustLspAdapter {
                 // fn keyword should be followed by opening parenthesis.
                 if let Some((prefix, suffix)) = fn_keyword {
                     let mut text = REGEX.replace(&completion.label, suffix).to_string();
-                    let source = Rope::from(format!("{prefix} {} {{}}", text).as_str());
+                    let source = Rope::from(format!("{prefix} {text} {{}}"));
                     let run_start = prefix.len() + 1;
                     let runs = language.highlight_text(&source, run_start..run_start + text.len());
-                    if detail.starts_with(" (") {
+                    if detail.starts_with("(") {
+                        text.push(' ');
                         text.push_str(&detail);
                     }
 
@@ -341,7 +345,7 @@ impl LspAdapter for RustLspAdapter {
                     });
                 }
             }
-            Some(kind) => {
+            (_, Some(kind)) => {
                 let highlight_name = match kind {
                     lsp::CompletionItemKind::STRUCT
                     | lsp::CompletionItemKind::INTERFACE
@@ -355,9 +359,9 @@ impl LspAdapter for RustLspAdapter {
                 };
 
                 let mut label = completion.label.clone();
-                if let Some(detail) = detail.filter(|detail| detail.starts_with(" (")) {
-                    use std::fmt::Write;
-                    write!(label, "{detail}").ok()?;
+                if let Some(detail) = detail.filter(|detail| detail.starts_with("(")) {
+                    label.push(' ');
+                    label.push_str(detail);
                 }
                 let mut label = CodeLabel::plain(label, None);
                 if let Some(highlight_name) = highlight_name {
@@ -444,6 +448,10 @@ const RUST_PACKAGE_TASK_VARIABLE: VariableName =
 const RUST_BIN_NAME_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("RUST_BIN_NAME"));
 
+/// The bin kind (bin/example) corresponding to the current file in Cargo.toml
+const RUST_BIN_KIND_TASK_VARIABLE: VariableName =
+    VariableName::Custom(Cow::Borrowed("RUST_BIN_KIND"));
+
 const RUST_MAIN_FUNCTION_TASK_VARIABLE: VariableName =
     VariableName::Custom(Cow::Borrowed("_rust_main_function_end"));
 
@@ -469,12 +477,16 @@ impl ContextProvider for RustContextProvider {
             .is_some();
 
         if is_main_function {
-            if let Some((package_name, bin_name)) = local_abs_path.and_then(|path| {
+            if let Some(target) = local_abs_path.and_then(|path| {
                 package_name_and_bin_name_from_abs_path(path, project_env.as_ref())
             }) {
                 return Task::ready(Ok(TaskVariables::from_iter([
-                    (RUST_PACKAGE_TASK_VARIABLE.clone(), package_name),
-                    (RUST_BIN_NAME_TASK_VARIABLE.clone(), bin_name),
+                    (RUST_PACKAGE_TASK_VARIABLE.clone(), target.package_name),
+                    (RUST_BIN_NAME_TASK_VARIABLE.clone(), target.target_name),
+                    (
+                        RUST_BIN_KIND_TASK_VARIABLE.clone(),
+                        target.target_kind.to_string(),
+                    ),
                 ])));
             }
         }
@@ -568,8 +580,9 @@ impl ContextProvider for RustContextProvider {
             },
             TaskTemplate {
                 label: format!(
-                    "cargo run -p {} --bin {}",
+                    "cargo run -p {} --{} {}",
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
+                    RUST_BIN_KIND_TASK_VARIABLE.template_value(),
                     RUST_BIN_NAME_TASK_VARIABLE.template_value(),
                 ),
                 command: "cargo".into(),
@@ -577,7 +590,7 @@ impl ContextProvider for RustContextProvider {
                     "run".into(),
                     "-p".into(),
                     RUST_PACKAGE_TASK_VARIABLE.template_value(),
-                    "--bin".into(),
+                    format!("--{}", RUST_BIN_KIND_TASK_VARIABLE.template_value()),
                     RUST_BIN_NAME_TASK_VARIABLE.template_value(),
                 ],
                 cwd: Some("$ZED_DIRNAME".to_owned()),
@@ -635,11 +648,43 @@ struct CargoTarget {
     src_path: String,
 }
 
+#[derive(Debug, PartialEq)]
+enum TargetKind {
+    Bin,
+    Example,
+}
+
+impl Display for TargetKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TargetKind::Bin => write!(f, "bin"),
+            TargetKind::Example => write!(f, "example"),
+        }
+    }
+}
+
+impl TryFrom<&str> for TargetKind {
+    type Error = ();
+    fn try_from(value: &str) -> Result<Self, ()> {
+        match value {
+            "bin" => Ok(Self::Bin),
+            "example" => Ok(Self::Example),
+            _ => Err(()),
+        }
+    }
+}
+/// Which package and binary target are we in?
+struct TargetInfo {
+    package_name: String,
+    target_name: String,
+    target_kind: TargetKind,
+}
+
 fn package_name_and_bin_name_from_abs_path(
     abs_path: &Path,
     project_env: Option<&HashMap<String, String>>,
-) -> Option<(String, String)> {
-    let mut command = std::process::Command::new("cargo");
+) -> Option<TargetInfo> {
+    let mut command = util::command::new_std_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
@@ -656,10 +701,14 @@ fn package_name_and_bin_name_from_abs_path(
     let metadata: CargoMetadata = serde_json::from_slice(&output).log_err()?;
 
     retrieve_package_id_and_bin_name_from_metadata(metadata, abs_path).and_then(
-        |(package_id, bin_name)| {
+        |(package_id, bin_name, target_kind)| {
             let package_name = package_name_from_pkgid(&package_id);
 
-            package_name.map(|package_name| (package_name.to_owned(), bin_name))
+            package_name.map(|package_name| TargetInfo {
+                package_name: package_name.to_owned(),
+                target_name: bin_name,
+                target_kind,
+            })
         },
     )
 }
@@ -667,13 +716,19 @@ fn package_name_and_bin_name_from_abs_path(
 fn retrieve_package_id_and_bin_name_from_metadata(
     metadata: CargoMetadata,
     abs_path: &Path,
-) -> Option<(String, String)> {
+) -> Option<(String, String, TargetKind)> {
     for package in metadata.packages {
         for target in package.targets {
-            let is_bin = target.kind.iter().any(|kind| kind == "bin");
+            let Some(bin_kind) = target
+                .kind
+                .iter()
+                .find_map(|kind| TargetKind::try_from(kind.as_ref()).ok())
+            else {
+                continue;
+            };
             let target_path = PathBuf::from(target.src_path);
-            if target_path == abs_path && is_bin {
-                return Some((package.id, target.name));
+            if target_path == abs_path {
+                return Some((package.id, target.name, bin_kind));
             }
         }
     }
@@ -685,11 +740,10 @@ fn human_readable_package_name(
     package_directory: &Path,
     project_env: Option<&HashMap<String, String>>,
 ) -> Option<String> {
-    let mut command = std::process::Command::new("cargo");
+    let mut command = util::command::new_std_command("cargo");
     if let Some(envs) = project_env {
         command.envs(envs);
     }
-
     let pkgid = String::from_utf8(
         command
             .current_dir(package_directory)
@@ -832,7 +886,7 @@ mod tests {
                         kind: Some(lsp::CompletionItemKind::FUNCTION),
                         label: "hello(…)".to_string(),
                         label_details: Some(CompletionItemLabelDetails {
-                            detail: Some(" (use crate::foo)".into()),
+                            detail: Some("(use crate::foo)".into()),
                             description: Some("fn(&mut Option<T>) -> Vec<T>".to_string())
                         }),
                         ..Default::default()
@@ -1067,7 +1121,11 @@ mod tests {
             (
                 r#"{"packages":[{"id":"path+file:///path/to/zed/crates/zed#0.131.0","targets":[{"name":"zed","kind":["bin"],"src_path":"/path/to/zed/src/main.rs"}]}]}"#,
                 "/path/to/zed/src/main.rs",
-                Some(("path+file:///path/to/zed/crates/zed#0.131.0", "zed")),
+                Some((
+                    "path+file:///path/to/zed/crates/zed#0.131.0",
+                    "zed",
+                    TargetKind::Bin,
+                )),
             ),
             (
                 r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["bin"],"src_path":"/path/to/custom-package/src/main.rs"}]}]}"#,
@@ -1075,6 +1133,16 @@ mod tests {
                 Some((
                     "path+file:///path/to/custom-package#my-custom-package@0.1.0",
                     "my-custom-bin",
+                    TargetKind::Bin,
+                )),
+            ),
+            (
+                r#"{"packages":[{"id":"path+file:///path/to/custom-package#my-custom-package@0.1.0","targets":[{"name":"my-custom-bin","kind":["example"],"src_path":"/path/to/custom-package/src/main.rs"}]}]}"#,
+                "/path/to/custom-package/src/main.rs",
+                Some((
+                    "path+file:///path/to/custom-package#my-custom-package@0.1.0",
+                    "my-custom-bin",
+                    TargetKind::Example,
                 )),
             ),
             (
@@ -1089,7 +1157,7 @@ mod tests {
 
             assert_eq!(
                 retrieve_package_id_and_bin_name_from_metadata(metadata, absolute_path),
-                expected.map(|(pkgid, bin)| (pkgid.to_owned(), bin.to_owned()))
+                expected.map(|(pkgid, name, kind)| (pkgid.to_owned(), name.to_owned(), kind))
             );
         }
     }

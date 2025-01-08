@@ -216,6 +216,8 @@ messages!(
     (GetImplementationResponse, Background),
     (GetLlmToken, Background),
     (GetLlmTokenResponse, Background),
+    (GetStagedText, Foreground),
+    (GetStagedTextResponse, Foreground),
     (GetUsers, Foreground),
     (Hello, Foreground),
     (IncomingCall, Foreground),
@@ -368,6 +370,10 @@ messages!(
     (GetPanicFiles, Background),
     (GetPanicFilesResponse, Background),
     (CancelLanguageServerWork, Foreground),
+    (SyncExtensions, Background),
+    (SyncExtensionsResponse, Background),
+    (InstallExtension, Background),
+    (RegisterBufferWithLanguageServers, Background),
 );
 
 request_messages!(
@@ -408,6 +414,7 @@ request_messages!(
     (GetProjectSymbols, GetProjectSymbolsResponse),
     (GetReferences, GetReferencesResponse),
     (GetSignatureHelp, GetSignatureHelpResponse),
+    (GetStagedText, GetStagedTextResponse),
     (GetSupermavenApiKey, GetSupermavenApiKeyResponse),
     (GetTypeDefinition, GetTypeDefinitionResponse),
     (LinkedEditingRange, LinkedEditingRangeResponse),
@@ -491,6 +498,9 @@ request_messages!(
     (GetPathMetadata, GetPathMetadataResponse),
     (GetPanicFiles, GetPanicFilesResponse),
     (CancelLanguageServerWork, Ack),
+    (SyncExtensions, SyncExtensionsResponse),
+    (InstallExtension, Ack),
+    (RegisterBufferWithLanguageServers, Ack),
 );
 
 entity_messages!(
@@ -520,6 +530,7 @@ entity_messages!(
     GetProjectSymbols,
     GetReferences,
     GetSignatureHelp,
+    GetStagedText,
     GetTypeDefinition,
     InlayHints,
     JoinProject,
@@ -575,6 +586,7 @@ entity_messages!(
     ActiveToolchain,
     GetPathMetadata,
     CancelLanguageServerWork,
+    RegisterBufferWithLanguageServers,
 );
 
 entity_messages!(
@@ -668,7 +680,7 @@ pub fn split_worktree_update(mut message: UpdateWorktree) -> impl Iterator<Item 
         if !repository_map.is_empty() {
             for entry in &updated_entries {
                 if let Some(repo) = repository_map.remove(&entry.id) {
-                    updated_repositories.push(repo)
+                    updated_repositories.push(repo);
                 }
             }
         }

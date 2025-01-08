@@ -500,7 +500,7 @@ impl AnyElement {
 
         if !focus_assigned {
             if let Some(focus_id) = cx.window.next_frame.focus {
-                return FocusHandle::for_id(focus_id, &cx.window.focus_handles);
+                return FocusHandle::for_id(focus_id, &cx.focus_handles);
             }
         }
 

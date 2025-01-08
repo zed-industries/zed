@@ -29,14 +29,14 @@ anyhow.workspace = true
 async-compression.workspace = true
 async-tar.workspace = true
 chrono.workspace = true
-collections.workspace = true
 client.workspace = true
+collections.workspace = true
 command_palette_hooks.workspace = true
-editor.workspace = true
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
+inline_completion.workspace = true
 language.workspace = true
 lsp.workspace = true
 menu.workspace = true
@@ -44,12 +44,12 @@ node_runtime.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 project.workspace = true
+schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
-schemars = { workspace = true, optional = true }
-strum.workspace = true
 settings.workspace = true
 smol.workspace = true
+strum.workspace = true
 task.workspace = true
 ui.workspace = true
 util.workspace = true
@@ -59,18 +59,21 @@ workspace.workspace = true
 async-std = { version = "1.12.0", features = ["unstable"] }
 
 [dev-dependencies]
-clock.workspace = true
 indoc.workspace = true
 serde_json.workspace = true
+clock = { workspace = true, features = ["test-support"] }
+client = { workspace = true, features = ["test-support"] }
 collections = { workspace = true, features = ["test-support"] }
 editor = { workspace = true, features = ["test-support"] }
 fs = { workspace = true, features = ["test-support"] }
 gpui = { workspace = true, features = ["test-support"] }
+http_client = { workspace = true, features = ["test-support"] }
 language = { workspace = true, features = ["test-support"] }
 lsp = { workspace = true, features = ["test-support"] }
+node_runtime = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 rpc = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 util = { workspace = true, features = ["test-support"] }
-http_client = { workspace = true, features = ["test-support"] }
+workspace = { workspace = true, features = ["test-support"] }

@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod file_finder_tests;
 
-mod file_finder_settings;
+pub mod file_finder_settings;
 mod new_path_prompt;
 mod open_path_prompt;
 
@@ -42,7 +42,7 @@ use workspace::{
     Workspace,
 };
 
-actions!(file_finder, [SelectPrev, OpenMenu]);
+actions!(file_finder, [SelectPrev, ToggleMenu]);
 
 impl ModalView for FileFinder {
     fn on_before_dismiss(&mut self, cx: &mut ViewContext<Self>) -> workspace::DismissDecision {
@@ -189,10 +189,12 @@ impl FileFinder {
         cx.dispatch_action(Box::new(menu::SelectPrev));
     }
 
-    fn handle_open_menu(&mut self, _: &OpenMenu, cx: &mut ViewContext<Self>) {
+    fn handle_toggle_menu(&mut self, _: &ToggleMenu, cx: &mut ViewContext<Self>) {
         self.picker.update(cx, |picker, cx| {
             let menu_handle = &picker.delegate.popover_menu_handle;
-            if !menu_handle.is_deployed() {
+            if menu_handle.is_deployed() {
+                menu_handle.hide(cx);
+            } else {
                 menu_handle.show(cx);
             }
         });
@@ -282,7 +284,7 @@ impl Render for FileFinder {
             .w(modal_max_width)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .on_action(cx.listener(Self::handle_select_prev))
-            .on_action(cx.listener(Self::handle_open_menu))
+            .on_action(cx.listener(Self::handle_toggle_menu))
             .on_action(cx.listener(Self::go_to_file_split_left))
             .on_action(cx.listener(Self::go_to_file_split_right))
             .on_action(cx.listener(Self::go_to_file_split_up))
@@ -646,7 +648,7 @@ impl FileFinderDelegate {
         cx.subscribe(project, |file_finder, _, event, cx| {
             match event {
                 project::Event::WorktreeUpdatedEntries(_, _)
-                | project::Event::WorktreeAdded
+                | project::Event::WorktreeAdded(_)
                 | project::Event::WorktreeRemoved(_) => file_finder
                     .picker
                     .update(cx, |picker, cx| picker.refresh(cx)),
@@ -882,7 +884,7 @@ impl FileFinderDelegate {
     fn lookup_absolute_path(
         &self,
         query: FileSearchQuery,
-        cx: &mut ViewContext<'_, Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Task<()> {
         cx.spawn(|picker, mut cx| async move {
             let Some(project) = picker
@@ -1226,7 +1228,7 @@ impl PickerDelegate for FileFinderDelegate {
                 .start_slot::<Icon>(file_icon)
                 .end_slot::<AnyElement>(history_icon)
                 .inset(true)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(
                     h_flex()
                         .gap_2()
@@ -1242,6 +1244,7 @@ impl PickerDelegate for FileFinderDelegate {
     }
 
     fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
+        let context = self.focus_handle.clone();
         Some(
             h_flex()
                 .w_full()
@@ -1258,24 +1261,24 @@ impl PickerDelegate for FileFinderDelegate {
                 .child(
                     PopoverMenu::new("menu-popover")
                         .with_handle(self.popover_menu_handle.clone())
-                        .attach(gpui::AnchorCorner::TopRight)
-                        .anchor(gpui::AnchorCorner::BottomRight)
+                        .attach(gpui::Corner::TopRight)
+                        .anchor(gpui::Corner::BottomRight)
                         .trigger(
                             Button::new("actions-trigger", "Split Options")
                                 .selected_label_color(Color::Accent)
-                                .key_binding(KeyBinding::for_action_in(
-                                    &OpenMenu,
-                                    &self.focus_handle,
-                                    cx,
-                                )),
+                                .key_binding(KeyBinding::for_action_in(&ToggleMenu, &context, cx)),
                         )
                         .menu({
                             move |cx| {
-                                Some(ContextMenu::build(cx, move |menu, _| {
-                                    menu.action("Split Left", pane::SplitLeft.boxed_clone())
-                                        .action("Split Right", pane::SplitRight.boxed_clone())
-                                        .action("Split Up", pane::SplitUp.boxed_clone())
-                                        .action("Split Down", pane::SplitDown.boxed_clone())
+                                Some(ContextMenu::build(cx, {
+                                    let context = context.clone();
+                                    move |menu, _| {
+                                        menu.context(context)
+                                            .action("Split Left", pane::SplitLeft.boxed_clone())
+                                            .action("Split Right", pane::SplitRight.boxed_clone())
+                                            .action("Split Up", pane::SplitUp.boxed_clone())
+                                            .action("Split Down", pane::SplitDown.boxed_clone())
+                                    }
                                 }))
                             }
                         }),

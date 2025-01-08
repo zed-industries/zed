@@ -393,11 +393,8 @@ impl CollabPanel {
                 // Populate the active user.
                 if let Some(user) = user_store.current_user() {
                     self.match_candidates.clear();
-                    self.match_candidates.push(StringMatchCandidate {
-                        id: 0,
-                        string: user.github_login.clone(),
-                        char_bag: user.github_login.chars().collect(),
-                    });
+                    self.match_candidates
+                        .push(StringMatchCandidate::new(0, &user.github_login));
                     let matches = executor.block(match_strings(
                         &self.match_candidates,
                         &query,
@@ -436,11 +433,10 @@ impl CollabPanel {
                 self.match_candidates.clear();
                 self.match_candidates
                     .extend(room.remote_participants().values().map(|participant| {
-                        StringMatchCandidate {
-                            id: participant.user.id as usize,
-                            string: participant.user.github_login.clone(),
-                            char_bag: participant.user.github_login.chars().collect(),
-                        }
+                        StringMatchCandidate::new(
+                            participant.user.id as usize,
+                            &participant.user.github_login,
+                        )
                     }));
                 let mut matches = executor.block(match_strings(
                     &self.match_candidates,
@@ -474,11 +470,10 @@ impl CollabPanel {
                             project_id: project.id,
                             worktree_root_names: project.worktree_root_names.clone(),
                             host_user_id: participant.user.id,
-                            is_last: projects.peek().is_none()
-                                && participant.video_tracks.is_empty(),
+                            is_last: projects.peek().is_none() && !participant.has_video_tracks(),
                         });
                     }
-                    if !participant.video_tracks.is_empty() {
+                    if participant.has_video_tracks() {
                         self.entries.push(ListEntry::ParticipantScreen {
                             peer_id: Some(participant.peer_id),
                             is_last: true,
@@ -490,10 +485,8 @@ impl CollabPanel {
                 self.match_candidates.clear();
                 self.match_candidates
                     .extend(room.pending_participants().iter().enumerate().map(
-                        |(id, participant)| StringMatchCandidate {
-                            id,
-                            string: participant.github_login.clone(),
-                            char_bag: participant.github_login.chars().collect(),
+                        |(id, participant)| {
+                            StringMatchCandidate::new(id, &participant.github_login)
                         },
                     ));
                 let matches = executor.block(match_strings(
@@ -520,17 +513,12 @@ impl CollabPanel {
 
         if channel_store.channel_count() > 0 || self.channel_editing_state.is_some() {
             self.match_candidates.clear();
-            self.match_candidates
-                .extend(
-                    channel_store
-                        .ordered_channels()
-                        .enumerate()
-                        .map(|(ix, (_, channel))| StringMatchCandidate {
-                            id: ix,
-                            string: channel.name.clone().into(),
-                            char_bag: channel.name.chars().collect(),
-                        }),
-                );
+            self.match_candidates.extend(
+                channel_store
+                    .ordered_channels()
+                    .enumerate()
+                    .map(|(ix, (_, channel))| StringMatchCandidate::new(ix, &channel.name)),
+            );
             let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
@@ -601,14 +589,12 @@ impl CollabPanel {
         let channel_invites = channel_store.channel_invitations();
         if !channel_invites.is_empty() {
             self.match_candidates.clear();
-            self.match_candidates
-                .extend(channel_invites.iter().enumerate().map(|(ix, channel)| {
-                    StringMatchCandidate {
-                        id: ix,
-                        string: channel.name.clone().into(),
-                        char_bag: channel.name.chars().collect(),
-                    }
-                }));
+            self.match_candidates.extend(
+                channel_invites
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, channel)| StringMatchCandidate::new(ix, &channel.name)),
+            );
             let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
@@ -638,17 +624,12 @@ impl CollabPanel {
         let incoming = user_store.incoming_contact_requests();
         if !incoming.is_empty() {
             self.match_candidates.clear();
-            self.match_candidates
-                .extend(
-                    incoming
-                        .iter()
-                        .enumerate()
-                        .map(|(ix, user)| StringMatchCandidate {
-                            id: ix,
-                            string: user.github_login.clone(),
-                            char_bag: user.github_login.chars().collect(),
-                        }),
-                );
+            self.match_candidates.extend(
+                incoming
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, user)| StringMatchCandidate::new(ix, &user.github_login)),
+            );
             let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
@@ -667,17 +648,12 @@ impl CollabPanel {
         let outgoing = user_store.outgoing_contact_requests();
         if !outgoing.is_empty() {
             self.match_candidates.clear();
-            self.match_candidates
-                .extend(
-                    outgoing
-                        .iter()
-                        .enumerate()
-                        .map(|(ix, user)| StringMatchCandidate {
-                            id: ix,
-                            string: user.github_login.clone(),
-                            char_bag: user.github_login.chars().collect(),
-                        }),
-                );
+            self.match_candidates.extend(
+                outgoing
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, user)| StringMatchCandidate::new(ix, &user.github_login)),
+            );
             let matches = executor.block(match_strings(
                 &self.match_candidates,
                 &query,
@@ -704,17 +680,12 @@ impl CollabPanel {
         let contacts = user_store.contacts();
         if !contacts.is_empty() {
             self.match_candidates.clear();
-            self.match_candidates
-                .extend(
-                    contacts
-                        .iter()
-                        .enumerate()
-                        .map(|(ix, contact)| StringMatchCandidate {
-                            id: ix,
-                            string: contact.user.github_login.clone(),
-                            char_bag: contact.user.github_login.chars().collect(),
-                        }),
-                );
+            self.match_candidates.extend(
+                contacts
+                    .iter()
+                    .enumerate()
+                    .map(|(ix, contact)| StringMatchCandidate::new(ix, &contact.user.github_login)),
+            );
 
             let matches = executor.block(match_strings(
                 &self.match_candidates,
@@ -842,7 +813,7 @@ impl CollabPanel {
         ListItem::new(SharedString::from(user.github_login.clone()))
             .start_slot(Avatar::new(user.avatar_uri.clone()))
             .child(Label::new(user.github_login.clone()))
-            .selected(is_selected)
+            .toggle_state(is_selected)
             .end_slot(if is_pending {
                 Label::new("Calling").color(Color::Muted).into_any_element()
             } else if is_current_user {
@@ -895,7 +866,7 @@ impl CollabPanel {
         .into();
 
         ListItem::new(project_id as usize)
-            .selected(is_selected)
+            .toggle_state(is_selected)
             .on_click(cx.listener(move |this, _, cx| {
                 this.workspace
                     .update(cx, |workspace, cx| {
@@ -925,7 +896,7 @@ impl CollabPanel {
         let id = peer_id.map_or(usize::MAX, |id| id.as_u64() as usize);
 
         ListItem::new(("screen", id))
-            .selected(is_selected)
+            .toggle_state(is_selected)
             .start_slot(
                 h_flex()
                     .gap_1()
@@ -965,7 +936,7 @@ impl CollabPanel {
         let channel_store = self.channel_store.read(cx);
         let has_channel_buffer_changed = channel_store.has_channel_buffer_changed(channel_id);
         ListItem::new("channel-notes")
-            .selected(is_selected)
+            .toggle_state(is_selected)
             .on_click(cx.listener(move |this, _, cx| {
                 this.open_channel_notes(channel_id, cx);
             }))
@@ -997,7 +968,7 @@ impl CollabPanel {
         let channel_store = self.channel_store.read(cx);
         let has_messages_notification = channel_store.has_new_messages(channel_id);
         ListItem::new("channel-chat")
-            .selected(is_selected)
+            .toggle_state(is_selected)
             .on_click(cx.listener(move |this, _, cx| {
                 this.join_channel_chat(channel_id, cx);
             }))
@@ -2254,7 +2225,7 @@ impl CollabPanel {
                 })
                 .inset(true)
                 .end_slot::<AnyElement>(button)
-                .selected(is_selected),
+                .toggle_state(is_selected),
         )
     }
 
@@ -2271,7 +2242,7 @@ impl CollabPanel {
         let item = ListItem::new(github_login.clone())
             .indent_level(1)
             .indent_step_size(px(20.))
-            .selected(is_selected)
+            .toggle_state(is_selected)
             .child(
                 h_flex()
                     .w_full()
@@ -2382,7 +2353,7 @@ impl CollabPanel {
         ListItem::new(github_login.clone())
             .indent_level(1)
             .indent_step_size(px(20.))
-            .selected(is_selected)
+            .toggle_state(is_selected)
             .child(
                 h_flex()
                     .w_full()
@@ -2426,7 +2397,7 @@ impl CollabPanel {
         ];
 
         ListItem::new(("channel-invite", channel.id.0 as usize))
-            .selected(is_selected)
+            .toggle_state(is_selected)
             .child(
                 h_flex()
                     .w_full()
@@ -2449,7 +2420,7 @@ impl CollabPanel {
         ListItem::new("contact-placeholder")
             .child(Icon::new(IconName::Plus))
             .child(Label::new("Add a Contact"))
-            .selected(is_selected)
+            .toggle_state(is_selected)
             .on_click(cx.listener(|this, _, cx| this.toggle_contact_finder(cx)))
     }
 
@@ -2548,7 +2519,7 @@ impl CollabPanel {
                     // Add one level of depth for the disclosure arrow.
                     .indent_level(depth + 1)
                     .indent_step_size(px(20.))
-                    .selected(is_selected || is_active)
+                    .toggle_state(is_selected || is_active)
                     .toggle(disclosed)
                     .on_toggle(
                         cx.listener(move |this, _, cx| {
@@ -2737,7 +2708,7 @@ impl Render for CollabPanel {
                 deferred(
                     anchored()
                         .position(*position)
-                        .anchor(gpui::AnchorCorner::TopLeft)
+                        .anchor(gpui::Corner::TopLeft)
                         .child(menu.clone()),
                 )
                 .with_priority(1)
@@ -2748,7 +2719,7 @@ impl Render for CollabPanel {
 impl EventEmitter<PanelEvent> for CollabPanel {}
 
 impl Panel for CollabPanel {
-    fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
+    fn position(&self, cx: &WindowContext) -> DockPosition {
         CollaborationPanelSettings::get_global(cx).dock
     }
 
@@ -2764,7 +2735,7 @@ impl Panel for CollabPanel {
         );
     }
 
-    fn size(&self, cx: &gpui::WindowContext) -> Pixels {
+    fn size(&self, cx: &WindowContext) -> Pixels {
         self.width
             .unwrap_or_else(|| CollaborationPanelSettings::get_global(cx).default_width)
     }
@@ -2775,7 +2746,7 @@ impl Panel for CollabPanel {
         cx.notify();
     }
 
-    fn icon(&self, cx: &gpui::WindowContext) -> Option<ui::IconName> {
+    fn icon(&self, cx: &WindowContext) -> Option<ui::IconName> {
         CollaborationPanelSettings::get_global(cx)
             .button
             .then_some(ui::IconName::UserGroup)
@@ -2791,6 +2762,10 @@ impl Panel for CollabPanel {
 
     fn persistent_name() -> &'static str {
         "CollabPanel"
+    }
+
+    fn activation_priority(&self) -> u32 {
+        6
     }
 }
 

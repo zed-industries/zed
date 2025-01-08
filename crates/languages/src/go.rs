@@ -8,13 +8,14 @@ pub use language::*;
 use lsp::{LanguageServerBinary, LanguageServerName};
 use regex::Regex;
 use serde_json::json;
-use smol::{fs, process};
+use smol::fs;
 use std::{
     any::Any,
     borrow::Cow,
     ffi::{OsStr, OsString},
     ops::Range,
     path::PathBuf,
+    process::Output,
     str,
     sync::{
         atomic::{AtomicBool, Ordering::SeqCst},
@@ -35,12 +36,18 @@ impl GoLspAdapter {
     const SERVER_NAME: LanguageServerName = LanguageServerName::new_static("gopls");
 }
 
-static GOPLS_VERSION_REGEX: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"\d+\.\d+\.\d+").expect("Failed to create GOPLS_VERSION_REGEX"));
+static VERSION_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\d+\.\d+\.\d+").expect("Failed to create VERSION_REGEX"));
 
 static GO_ESCAPE_SUBTEST_NAME_REGEX: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r#"[.*+?^${}()|\[\]\\]"#).expect("Failed to create GO_ESCAPE_SUBTEST_NAME_REGEX")
 });
+
+const BINARY: &str = if cfg!(target_os = "windows") {
+    "gopls.exe"
+} else {
+    "gopls"
+};
 
 #[async_trait(?Send)]
 impl super::LspAdapter for GoLspAdapter {
@@ -67,6 +74,7 @@ impl super::LspAdapter for GoLspAdapter {
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,
+        _: Arc<dyn LanguageToolchainStore>,
         _: &AsyncAppContext,
     ) -> Option<LanguageServerBinary> {
         let path = delegate.which(Self::SERVER_NAME.as_ref()).await?;
@@ -110,11 +118,18 @@ impl super::LspAdapter for GoLspAdapter {
         container_dir: PathBuf,
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
+        let go = delegate.which("go".as_ref()).await.unwrap_or("go".into());
+        let go_version_output = util::command::new_smol_command(&go)
+            .args(["version"])
+            .output()
+            .await
+            .context("failed to get go version via `go version` command`")?;
+        let go_version = parse_version_output(&go_version_output)?;
         let version = version.downcast::<Option<String>>().unwrap();
         let this = *self;
 
         if let Some(version) = *version {
-            let binary_path = container_dir.join(format!("gopls_{version}"));
+            let binary_path = container_dir.join(format!("gopls_{version}_go_{go_version}"));
             if let Ok(metadata) = fs::metadata(&binary_path).await {
                 if metadata.is_file() {
                     remove_matching(&container_dir, |entry| {
@@ -138,8 +153,7 @@ impl super::LspAdapter for GoLspAdapter {
 
         let gobin_dir = container_dir.join("gobin");
         fs::create_dir_all(&gobin_dir).await?;
-        let go = delegate.which("go".as_ref()).await.unwrap_or("go".into());
-        let install_output = process::Command::new(go)
+        let install_output = util::command::new_smol_command(go)
             .env("GO111MODULE", "on")
             .env("GOBIN", &gobin_dir)
             .args(["install", "golang.org/x/tools/gopls@latest"])
@@ -156,19 +170,14 @@ impl super::LspAdapter for GoLspAdapter {
             return Err(anyhow!("failed to install gopls with `go install`. Is `go` installed and in the PATH? Check logs for more information."));
         }
 
-        let installed_binary_path = gobin_dir.join("gopls");
-        let version_output = process::Command::new(&installed_binary_path)
+        let installed_binary_path = gobin_dir.join(BINARY);
+        let version_output = util::command::new_smol_command(&installed_binary_path)
             .arg("version")
             .output()
             .await
             .context("failed to run installed gopls binary")?;
-        let version_stdout = str::from_utf8(&version_output.stdout)
-            .context("gopls version produced invalid utf8 output")?;
-        let version = GOPLS_VERSION_REGEX
-            .find(version_stdout)
-            .with_context(|| format!("failed to parse golps version output '{version_stdout}'"))?
-            .as_str();
-        let binary_path = container_dir.join(format!("gopls_{version}"));
+        let gopls_version = parse_version_output(&version_output)?;
+        let binary_path = container_dir.join(format!("gopls_{gopls_version}_go_{go_version}"));
         fs::rename(&installed_binary_path, &binary_path).await?;
 
         Ok(LanguageServerBinary {
@@ -362,6 +371,18 @@ impl super::LspAdapter for GoLspAdapter {
             filter_range,
         })
     }
+}
+
+fn parse_version_output(output: &Output) -> Result<&str> {
+    let version_stdout =
+        str::from_utf8(&output.stdout).context("version command produced invalid utf8 output")?;
+
+    let version = VERSION_REGEX
+        .find(version_stdout)
+        .with_context(|| format!("failed to parse version output '{version_stdout}'"))?
+        .as_str();
+
+    Ok(version)
 }
 
 async fn get_cached_server_binary(container_dir: PathBuf) -> Option<LanguageServerBinary> {

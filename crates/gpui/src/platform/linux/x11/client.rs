@@ -1,46 +1,43 @@
 use core::str;
-use std::cell::RefCell;
-use std::collections::{BTreeMap, HashSet};
-use std::ops::Deref;
-use std::path::PathBuf;
-use std::rc::{Rc, Weak};
-use std::time::{Duration, Instant};
+use std::{
+    cell::RefCell,
+    collections::{BTreeMap, HashSet},
+    ops::Deref,
+    path::PathBuf,
+    rc::{Rc, Weak},
+    time::{Duration, Instant},
+};
 
-use calloop::generic::{FdWrapper, Generic};
-use calloop::{EventLoop, LoopHandle, RegistrationToken};
+use calloop::{
+    generic::{FdWrapper, Generic},
+    EventLoop, LoopHandle, RegistrationToken,
+};
 
+use anyhow::Context as _;
 use collections::HashMap;
 use http_client::Url;
 use smallvec::SmallVec;
 use util::ResultExt;
 
-use x11rb::connection::{Connection, RequestConnection};
-use x11rb::cursor;
-use x11rb::errors::ConnectionError;
-use x11rb::protocol::randr::ConnectionExt as _;
-use x11rb::protocol::xinput::ConnectionExt;
-use x11rb::protocol::xkb::ConnectionExt as _;
-use x11rb::protocol::xproto::{
-    AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent, ConnectionExt as _,
-    EventMask, KeyPressEvent,
+use x11rb::{
+    connection::{Connection, RequestConnection},
+    cursor,
+    errors::ConnectionError,
+    protocol::randr::ConnectionExt as _,
+    protocol::xinput::ConnectionExt,
+    protocol::xkb::ConnectionExt as _,
+    protocol::xproto::{
+        AtomEnum, ChangeWindowAttributesAux, ClientMessageData, ClientMessageEvent,
+        ConnectionExt as _, EventMask, KeyPressEvent,
+    },
+    protocol::{randr, render, xinput, xkb, xproto, Event},
+    resource_manager::Database,
+    wrapper::ConnectionExt as _,
+    xcb_ffi::XCBConnection,
 };
-use x11rb::protocol::{randr, render, xinput, xkb, xproto, Event};
-use x11rb::resource_manager::Database;
-use x11rb::wrapper::ConnectionExt as _;
-use x11rb::xcb_ffi::XCBConnection;
-use xim::{x11rb::X11rbClient, Client};
-use xim::{AttributeName, InputStyle};
+use xim::{x11rb::X11rbClient, AttributeName, Client, InputStyle};
 use xkbc::x11::ffi::{XKB_X11_MIN_MAJOR_XKB_VERSION, XKB_X11_MIN_MINOR_XKB_VERSION};
-use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask};
-
-use crate::platform::linux::LinuxClient;
-use crate::platform::{LinuxCommon, PlatformWindow};
-use crate::{
-    modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, CursorStyle,
-    DisplayId, FileDropEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels,
-    Platform, PlatformDisplay, PlatformInput, Point, RequestFrameOptions, ScaledPixels,
-    ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
-};
+use xkbcommon::xkb::{self as xkbc, LayoutIndex, ModMask, STATE_LAYOUT_EFFECTIVE};
 
 use super::{
     button_or_scroll_from_event_detail, get_valuator_axis_index, modifiers_from_state,
@@ -48,10 +45,23 @@ use super::{
 };
 use super::{X11Display, X11WindowStatePtr, XcbAtoms};
 use super::{XimCallbackEvent, XimHandler};
-use crate::platform::linux::platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES};
-use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSource};
-use crate::platform::linux::{
-    get_xkb_compose_state, is_within_click_distance, open_uri_internal, reveal_path_internal,
+
+use crate::platform::{
+    blade::BladeContext,
+    linux::{
+        get_xkb_compose_state, is_within_click_distance, open_uri_internal,
+        platform::{DOUBLE_CLICK_INTERVAL, SCROLL_LINES},
+        reveal_path_internal,
+        xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
+        LinuxClient,
+    },
+    LinuxCommon, PlatformWindow,
+};
+use crate::{
+    modifiers_from_xinput_info, point, px, AnyWindowHandle, Bounds, ClipboardItem, CursorStyle,
+    DisplayId, FileDropEvent, Keystroke, Modifiers, ModifiersChangedEvent, MouseButton, Pixels,
+    Platform, PlatformDisplay, PlatformInput, Point, RequestFrameOptions, ScaledPixels,
+    ScrollDelta, Size, TouchPhase, WindowParams, X11Window,
 };
 
 /// Value for DeviceId parameters which selects all devices.
@@ -157,6 +167,8 @@ pub struct X11ClientState {
     pub(crate) last_location: Point<Pixels>,
     pub(crate) current_count: usize,
 
+    gpu_context: BladeContext,
+
     pub(crate) scale_factor: f32,
 
     xkb_context: xkbc::Context,
@@ -178,7 +190,7 @@ pub struct X11ClientState {
     pub(crate) compose_state: Option<xkbc::compose::State>,
     pub(crate) pre_edit_text: Option<String>,
     pub(crate) composing: bool,
-    pub(crate) pre_ime_key_down: Option<Keystroke>,
+    pub(crate) pre_key_char_down: Option<Keystroke>,
     pub(crate) cursor_handle: cursor::Handle,
     pub(crate) cursor_styles: HashMap<xproto::Window, CursorStyle>,
     pub(crate) cursor_cache: HashMap<CursorStyle, xproto::Cursor>,
@@ -359,6 +371,8 @@ impl X11Client {
         let compose_state = get_xkb_compose_state(&xkb_context);
         let resource_database = x11rb::resource_manager::new_from_default(&xcb_connection).unwrap();
 
+        let gpu_context = BladeContext::new().expect("Unable to init GPU context");
+
         let scale_factor = resource_database
             .get_value("Xft.dpi", "Xft.dpi")
             .ok()
@@ -427,6 +441,7 @@ impl X11Client {
             last_mouse_button: None,
             last_location: Point::new(px(0.0), px(0.0)),
             current_count: 0,
+            gpu_context,
             scale_factor,
 
             xkb_context,
@@ -446,7 +461,7 @@ impl X11Client {
 
             compose_state,
             pre_edit_text: None,
-            pre_ime_key_down: None,
+            pre_key_char_down: None,
             composing: false,
 
             cursor_handle,
@@ -776,11 +791,11 @@ impl X11Client {
                     },
                 };
                 let window = self.get_window(event.window)?;
-                window.configure(bounds);
+                window.configure(bounds).unwrap();
             }
             Event::PropertyNotify(event) => {
                 let window = self.get_window(event.window)?;
-                window.property_notify(event);
+                window.property_notify(event).unwrap();
             }
             Event::FocusIn(event) => {
                 let window = self.get_window(event.event)?;
@@ -825,6 +840,8 @@ impl X11Client {
             }
             Event::XkbStateNotify(event) => {
                 let mut state = self.0.borrow_mut();
+                let old_layout = state.xkb.serialize_layout(STATE_LAYOUT_EFFECTIVE);
+                let new_layout = u32::from(event.group);
                 state.xkb.update_mask(
                     event.base_mods.into(),
                     event.latched_mods.into(),
@@ -838,6 +855,17 @@ impl X11Client {
                     latched_layout: event.latched_group as u32,
                     locked_layout: event.locked_group.into(),
                 };
+
+                if new_layout != old_layout {
+                    if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take()
+                    {
+                        drop(state);
+                        callback();
+                        state = self.0.borrow_mut();
+                        state.common.callbacks.keyboard_layout_change = Some(callback);
+                    }
+                }
+
                 let modifiers = Modifiers::from_xkb(&state.xkb);
                 if state.modifiers == modifiers {
                     drop(state);
@@ -858,7 +886,7 @@ impl X11Client {
 
                 let modifiers = modifiers_from_state(event.state);
                 state.modifiers = modifiers;
-                state.pre_ime_key_down.take();
+                state.pre_key_char_down.take();
                 let keystroke = {
                     let code = event.detail.into();
                     let xkb_state = state.previous_xkb_state.clone();
@@ -880,13 +908,13 @@ impl X11Client {
                         match compose_state.status() {
                             xkbc::Status::Composed => {
                                 state.pre_edit_text.take();
-                                keystroke.ime_key = compose_state.utf8();
+                                keystroke.key_char = compose_state.utf8();
                                 if let Some(keysym) = compose_state.keysym() {
                                     keystroke.key = xkbc::keysym_get_name(keysym);
                                 }
                             }
                             xkbc::Status::Composing => {
-                                keystroke.ime_key = None;
+                                keystroke.key_char = None;
                                 state.pre_edit_text = compose_state
                                     .utf8()
                                     .or(crate::Keystroke::underlying_dead_key(keysym));
@@ -1156,7 +1184,7 @@ impl X11Client {
         match event {
             Event::KeyPress(event) | Event::KeyRelease(event) => {
                 let mut state = self.0.borrow_mut();
-                state.pre_ime_key_down = Some(Keystroke::from_xkb(
+                state.pre_key_char_down = Some(Keystroke::from_xkb(
                     &state.xkb,
                     state.modifiers,
                     event.detail.into(),
@@ -1187,11 +1215,11 @@ impl X11Client {
     fn xim_handle_commit(&self, window: xproto::Window, text: String) -> Option<()> {
         let window = self.get_window(window).unwrap();
         let mut state = self.0.borrow_mut();
-        let keystroke = state.pre_ime_key_down.take();
+        let keystroke = state.pre_key_char_down.take();
         state.composing = false;
         drop(state);
         if let Some(mut keystroke) = keystroke {
-            keystroke.ime_key = Some(text.clone());
+            keystroke.key_char = Some(text.clone());
             window.handle_input(PlatformInput::KeyDown(crate::KeyDownEvent {
                 keystroke,
                 is_held: false,
@@ -1250,6 +1278,16 @@ impl LinuxClient for X11Client {
         f(&mut self.0.borrow_mut().common)
     }
 
+    fn keyboard_layout(&self) -> String {
+        let state = self.0.borrow();
+        let layout_idx = state.xkb.serialize_layout(STATE_LAYOUT_EFFECTIVE);
+        state
+            .xkb
+            .get_keymap()
+            .layout_get_name(layout_idx)
+            .to_string()
+    }
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         let state = self.0.borrow();
         let setup = state.xcb_connection.setup();
@@ -1258,11 +1296,9 @@ impl LinuxClient for X11Client {
             .iter()
             .enumerate()
             .filter_map(|(root_id, _)| {
-                Some(Rc::new(X11Display::new(
-                    &state.xcb_connection,
-                    state.scale_factor,
-                    root_id,
-                )?) as Rc<dyn PlatformDisplay>)
+                Some(Rc::new(
+                    X11Display::new(&state.xcb_connection, state.scale_factor, root_id).ok()?,
+                ) as Rc<dyn PlatformDisplay>)
             })
             .collect()
     }
@@ -1283,11 +1319,9 @@ impl LinuxClient for X11Client {
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>> {
         let state = self.0.borrow();
 
-        Some(Rc::new(X11Display::new(
-            &state.xcb_connection,
-            state.scale_factor,
-            id.0 as usize,
-        )?))
+        Some(Rc::new(
+            X11Display::new(&state.xcb_connection, state.scale_factor, id.0 as usize).ok()?,
+        ))
     }
 
     fn open_window(
@@ -1302,6 +1336,7 @@ impl LinuxClient for X11Client {
             handle,
             X11ClientStatePtr(Rc::downgrade(&self.0)),
             state.common.foreground_executor.clone(),
+            &state.gpu_context,
             params,
             &state.xcb_connection,
             state.client_side_decorations_supported,
@@ -1421,9 +1456,10 @@ impl LinuxClient for X11Client {
                     ..Default::default()
                 },
             )
-            .expect("failed to change window cursor")
-            .check()
-            .unwrap();
+            .anyhow()
+            .and_then(|cookie| cookie.check().anyhow())
+            .context("setting cursor style")
+            .log_err();
     }
 
     fn open_uri(&self, uri: &str) {
@@ -1567,7 +1603,7 @@ impl LinuxClient for X11Client {
     }
 }
 
-// Adatpted from:
+// Adapted from:
 // https://docs.rs/winit/0.29.11/src/winit/platform_impl/linux/x11/monitor.rs.html#103-111
 pub fn mode_refresh_rate(mode: &randr::ModeInfo) -> Duration {
     if mode.dot_clock == 0 || mode.htotal == 0 || mode.vtotal == 0 {

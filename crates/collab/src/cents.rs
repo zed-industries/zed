@@ -1,3 +1,5 @@
+use serde::Serialize;
+
 /// A number of cents.
 #[derive(
     Debug,
@@ -12,6 +14,7 @@
     derive_more::AddAssign,
     derive_more::Sub,
     derive_more::SubAssign,
+    Serialize,
 )]
 pub struct Cents(pub u32);
 

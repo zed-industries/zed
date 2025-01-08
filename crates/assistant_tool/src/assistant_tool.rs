@@ -1,4 +1,5 @@
 mod tool_registry;
+mod tool_working_set;
 
 use std::sync::Arc;
 
@@ -6,7 +7,8 @@ use anyhow::Result;
 use gpui::{AppContext, Task, WeakView, WindowContext};
 use workspace::Workspace;
 
-pub use tool_registry::*;
+pub use crate::tool_registry::*;
+pub use crate::tool_working_set::*;
 
 pub fn init(cx: &mut AppContext) {
     ToolRegistry::default_global(cx);

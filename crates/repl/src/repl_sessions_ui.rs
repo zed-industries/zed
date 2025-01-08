@@ -3,7 +3,7 @@ use gpui::{
     actions, prelude::*, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
     Subscription, View,
 };
-use project::Item as _;
+use project::ProjectItem as _;
 use ui::{prelude::*, ButtonLike, ElevationIndex, KeyBinding};
 use util::ResultExt as _;
 use workspace::item::ItemEvent;
@@ -73,21 +73,27 @@ pub fn init(cx: &mut AppContext) {
                 return;
             }
 
-            let project_path = editor
-                .buffer()
-                .read(cx)
-                .as_singleton()
-                .and_then(|buffer| buffer.read(cx).project_path(cx));
+            let buffer = editor.buffer().read(cx).as_singleton();
+
+            let language = buffer
+                .as_ref()
+                .and_then(|buffer| buffer.read(cx).language());
+
+            let project_path = buffer.and_then(|buffer| buffer.read(cx).project_path(cx));
 
             let editor_handle = cx.view().downgrade();
 
-            if let (Some(project_path), Some(project)) = (project_path, project) {
-                let store = ReplStore::global(cx);
-                store.update(cx, |store, cx| {
-                    store
-                        .refresh_python_kernelspecs(project_path.worktree_id, &project, cx)
-                        .detach_and_log_err(cx);
-                });
+            if let Some(language) = language {
+                if language.name() == "Python".into() {
+                    if let (Some(project_path), Some(project)) = (project_path, project) {
+                        let store = ReplStore::global(cx);
+                        store.update(cx, |store, cx| {
+                            store
+                                .refresh_python_kernelspecs(project_path.worktree_id, &project, cx)
+                                .detach_and_log_err(cx);
+                        });
+                    }
+                }
             }
 
             editor

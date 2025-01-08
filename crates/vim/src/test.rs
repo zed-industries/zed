@@ -367,6 +367,46 @@ async fn test_join_lines(cx: &mut gpui::TestAppContext) {
       two three fourˇ five
       six
       "});
+
+    cx.set_shared_state(indoc! {"
+      ˇone
+      two
+      three
+      four
+      five
+      six
+      "})
+        .await;
+    cx.simulate_shared_keystrokes("g shift-j").await;
+    cx.shared_state().await.assert_eq(indoc! {"
+          oneˇtwo
+          three
+          four
+          five
+          six
+          "});
+    cx.simulate_shared_keystrokes("3 g shift-j").await;
+    cx.shared_state().await.assert_eq(indoc! {"
+          onetwothreeˇfour
+          five
+          six
+          "});
+
+    cx.set_shared_state(indoc! {"
+      ˇone
+      two
+      three
+      four
+      five
+      six
+      "})
+        .await;
+    cx.simulate_shared_keystrokes("j v 3 j g shift-j").await;
+    cx.shared_state().await.assert_eq(indoc! {"
+      one
+      twothreefourˇfive
+      six
+      "});
 }
 
 #[cfg(target_os = "macos")]

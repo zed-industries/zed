@@ -16,14 +16,17 @@ doctest = false
 alacritty_terminal.workspace = true
 anyhow.workspace = true
 async-dispatcher.workspace = true
+async-tungstenite = { workspace = true, features = ["async-std", "async-tls"] }
 base64.workspace = true
 client.workspace = true
 collections.workspace = true
 command_palette_hooks.workspace = true
 editor.workspace = true
 feature_flags.workspace = true
+file_icons.workspace = true
 futures.workspace = true
 gpui.workspace = true
+http_client.workspace = true
 image.workspace = true
 jupyter-websocket-client.workspace = true
 jupyter-protocol.workspace = true
@@ -40,6 +43,7 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 smol.workspace = true
+telemetry.workspace = true
 terminal.workspace = true
 terminal_view.workspace = true
 theme.workspace = true
@@ -48,9 +52,6 @@ util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 picker.workspace = true
-
-[target.'cfg(target_os = "windows")'.dependencies]
-windows.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }
@@ -62,6 +63,7 @@ language = { workspace = true, features = ["test-support"] }
 languages = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
+terminal_view = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
 tree-sitter-typescript.workspace = true

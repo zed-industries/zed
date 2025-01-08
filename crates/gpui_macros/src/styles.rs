@@ -271,6 +271,20 @@ pub fn cursor_style_methods(input: TokenStream) -> TokenStream {
             self
         }
 
+        /// Sets cursor style when hovering over an element to `nesw-resize`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_nesw_resize(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ResizeUpRightDownLeft);
+            self
+        }
+
+        /// Sets cursor style when hovering over an element to `nwse-resize`.
+        /// [Docs](https://tailwindcss.com/docs/cursor)
+        #visibility fn cursor_nwse_resize(mut self) -> Self {
+            self.style().mouse_cursor = Some(gpui::CursorStyle::ResizeUpLeftDownRight);
+            self
+        }
+
         /// Sets cursor style when hovering over an element to `col-resize`.
         /// [Docs](https://tailwindcss.com/docs/cursor)
         #visibility fn cursor_col_resize(mut self) -> Self {

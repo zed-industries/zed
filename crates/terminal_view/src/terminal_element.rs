@@ -867,7 +867,7 @@ impl Element for TerminalElement {
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         layout: &mut Self::PrepaintState,
-        cx: &mut WindowContext<'_>,
+        cx: &mut WindowContext,
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
             let scroll_top = self.terminal_view.read(cx).scroll_top;
@@ -1001,6 +1001,7 @@ impl InputHandler for TerminalInputHandler {
     fn text_for_range(
         &mut self,
         _: std::ops::Range<usize>,
+        _: &mut Option<std::ops::Range<usize>>,
         _: &mut WindowContext,
     ) -> Option<String> {
         None
