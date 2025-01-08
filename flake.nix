@@ -7,17 +7,11 @@
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    crane.url = "github:ipetkov/crane";
-    flake-compat.url = "github:edolstra/flake-compat";
+    flake-compat.url = "github:nix-community/flake-compat";
   };
 
   outputs =
-    {
-      nixpkgs,
-      rust-overlay,
-      crane,
-      ...
-    }:
+    { nixpkgs, ... }:
     let
       systems = [
         "x86_64-linux"
@@ -27,14 +21,9 @@
       ];
 
       overlays = {
-        rust-overlay = rust-overlay.overlays.default;
-        rust-toolchain = final: prev: {
-          rustToolchain = final.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
-        };
         zed-editor = final: prev: {
           zed-editor = final.callPackage ./nix/build.nix {
-            crane = crane.mkLib final;
-            rustToolchain = final.rustToolchain;
+            inherit (import nixpkgs { inherit (final) system; }) zed-editor;
           };
         };
       };
