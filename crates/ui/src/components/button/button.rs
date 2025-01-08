@@ -484,9 +484,9 @@ impl ComponentPreview for Button {
                             .style(ButtonStyle::Tinted(TintColor::Warning)),
                     ),
                     single_example(
-                        "Positive",
-                        Button::new("tinted_positive", "Positive")
-                            .style(ButtonStyle::Tinted(TintColor::Positive)),
+                        "Success",
+                        Button::new("tinted_positive", "Success")
+                            .style(ButtonStyle::Tinted(TintColor::Success)),
                     ),
                 ],
             ),
