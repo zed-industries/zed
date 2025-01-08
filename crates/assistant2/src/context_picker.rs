@@ -55,27 +55,6 @@ impl ContextPicker {
         confirm_behavior: ConfirmBehavior,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let mut recent = Vec::new();
-        // TODO az
-        recent.push(RecentContextPickerEntry::File {
-            worktree_id: WorktreeId::from_usize(0),
-            path: PathBuf::from("src/ui/index.tsx").into(),
-            path_prefix: "zed.dev".into(),
-        });
-        recent.push(RecentContextPickerEntry::File {
-            worktree_id: WorktreeId::from_usize(0),
-            path: PathBuf::from("path/to/recent/file2").into(),
-            path_prefix: "zed.dev".into(),
-        });
-        recent.push(RecentContextPickerEntry::Thread(ThreadContextEntry {
-            id: ThreadId::new(),
-            summary: "Recent Thread 1".into(),
-        }));
-        recent.push(RecentContextPickerEntry::Thread(ThreadContextEntry {
-            id: ThreadId::new(),
-            summary: "Recent Thread 2".into(),
-        }));
-
         let mut kinds = Vec::new();
         kinds.push(ContextPickerEntry {
             name: "File".into(),
@@ -103,7 +82,7 @@ impl ContextPicker {
             thread_store,
             context_store,
             confirm_behavior,
-            recent,
+            recent: Vec::with_capacity(6),
             kinds,
             selected_ix: 0,
         };
@@ -120,6 +99,51 @@ impl ContextPicker {
 
     pub fn reset_mode(&mut self) {
         self.mode = ContextPickerMode::Default;
+    }
+
+    pub fn update_recent(&mut self, cx: &mut WindowContext) {
+        self.picker.update(cx, |picker, cx| {
+            let recent = &mut picker.delegate.recent;
+
+            recent.clear();
+
+            // TODO az
+            recent.push(RecentContextPickerEntry::File {
+                worktree_id: WorktreeId::from_usize(0),
+                path: PathBuf::from("src/ui/index.tsx").into(),
+                path_prefix: "zed.dev".into(),
+            });
+            recent.push(RecentContextPickerEntry::File {
+                worktree_id: WorktreeId::from_usize(0),
+                path: PathBuf::from("path/to/recent/file2").into(),
+                path_prefix: "zed.dev".into(),
+            });
+
+            let Some(thread_store) = picker
+                .delegate
+                .thread_store
+                .as_ref()
+                .and_then(|thread_store| thread_store.upgrade())
+            else {
+                return;
+            };
+
+            thread_store.update(cx, |thread_store, cx| {
+                recent.extend(
+                    thread_store
+                        .recent_threads(2, cx)
+                        .into_iter()
+                        .map(|thread| {
+                            let thread = thread.read(cx);
+
+                            RecentContextPickerEntry::Thread(ThreadContextEntry {
+                                id: thread.id().clone(),
+                                summary: thread.summary_or_default(),
+                            })
+                        }),
+                );
+            });
+        });
     }
 }
 
@@ -255,21 +279,12 @@ impl PickerDelegate for ContextPickerDelegate {
                         .detach_and_log_err(cx);
                     }
                     RecentContextPickerEntry::Thread(thread) => {
-                        let Some(thread) = self
-                            .thread_store
-                            .as_ref()
-                            .and_then(|thread_store| thread_store.upgrade())
-                            .and_then(|thread_store| {
-                                thread_store.update(cx, |thread_store, cx| {
-                                    thread_store.open_thread(&thread.id, cx)
-                                })
-                            })
-                        else {
+                        let Some(thread_store) = self.thread_store.clone() else {
                             return;
                         };
 
                         context_store.update(cx, |context_store, cx| {
-                            context_store.insert_thread(thread.read(cx))
+                            context_store.add_thread(&thread.id, thread_store, cx);
                         });
                     }
                 }

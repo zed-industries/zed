@@ -19,7 +19,7 @@ use crate::{AssistantPanel, RemoveAllContext, ToggleContextPicker};
 
 pub struct ContextStrip {
     context_store: Model<ContextStore>,
-    context_picker: View<ContextPicker>,
+    pub context_picker: View<ContextPicker>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     focus_handle: FocusHandle,
     suggest_context_kind: SuggestContextKind,

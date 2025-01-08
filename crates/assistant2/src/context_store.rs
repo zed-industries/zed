@@ -3,12 +3,13 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet};
-use gpui::{ModelContext, SharedString, Task, WeakView};
+use gpui::{ModelContext, SharedString, Task, WeakModel, WeakView};
 use language::Buffer;
 use project::ProjectPath;
 use workspace::Workspace;
 
 use crate::thread::Thread;
+use crate::thread_store::ThreadStore;
 use crate::{
     context::{Context, ContextId, ContextKind},
     thread::ThreadId,
@@ -146,6 +147,35 @@ impl ContextStore {
             kind: ContextKind::Directory,
             text: text.into(),
         });
+    }
+
+    pub fn add_thread(
+        &mut self,
+        thread_id: &ThreadId,
+        thread_store: WeakModel<ThreadStore>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let already_included = match self.included_thread(thread_id) {
+            Some(context_id) => {
+                self.remove_context(&context_id);
+                true
+            }
+            None => false,
+        };
+
+        if already_included {
+            return;
+        }
+
+        let Some(thread) = thread_store.upgrade().as_ref().and_then(|thread_store| {
+            thread_store.update(cx, |thread_store, cx| {
+                thread_store.open_thread(thread_id, cx)
+            })
+        }) else {
+            return;
+        };
+
+        self.insert_thread(thread.read(cx))
     }
 
     pub fn insert_thread(&mut self, thread: &Thread) {
