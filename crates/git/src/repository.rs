@@ -1,3 +1,4 @@
+use crate::status::GitStatusItem;
 use crate::GitHostingProviderRegistry;
 use crate::{blame::Blame, status::GitStatus};
 use anyhow::{Context, Result};
@@ -295,24 +296,28 @@ impl GitRepository for FakeGitRepository {
     fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
         let state = self.state.lock();
 
-        let mut entries = state
+        let mut items = state
             .worktree_statuses
             .iter()
-            .filter_map(|(repo_path, status)| {
+            .filter_map(|(repo_path, status_worktree)| {
                 if path_prefixes
                     .iter()
                     .any(|path_prefix| repo_path.0.starts_with(path_prefix))
                 {
-                    Some((repo_path.to_owned(), *status))
+                    Some(GitStatusItem {
+                        path: repo_path.to_owned(),
+                        index_status: None,
+                        worktree_status: Some(*status_worktree),
+                    })
                 } else {
                     None
                 }
             })
             .collect::<Vec<_>>();
-        entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        items.sort_unstable_by(|a, b| a.path.cmp(&b.path));
 
         Ok(GitStatus {
-            entries: entries.into(),
+            items: items.into(),
         })
     }
 
@@ -398,6 +403,7 @@ fn check_path_to_repo_path_errors(relative_file_path: &Path) -> Result<()> {
 pub enum GitFileStatus {
     Added,
     Modified,
+    // FIXME remove this (?)
     Conflict,
     Deleted,
     Untracked,
@@ -423,6 +429,16 @@ impl GitFileStatus {
             (Some(GitFileStatus::Added), _) | (_, Some(GitFileStatus::Added)) => {
                 Some(GitFileStatus::Added)
             }
+            _ => None,
+        }
+    }
+
+    pub fn from_byte(byte: u8) -> Option<Self> {
+        match byte {
+            b'M' => Some(GitFileStatus::Modified),
+            b'A' => Some(GitFileStatus::Added),
+            b'D' => Some(GitFileStatus::Deleted),
+            b'?' => Some(GitFileStatus::Untracked),
             _ => None,
         }
     }

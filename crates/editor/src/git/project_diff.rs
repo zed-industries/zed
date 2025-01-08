@@ -199,7 +199,10 @@ impl ProjectDiffEditor {
                             .repositories()
                             .flat_map(|entry| {
                                 entry.status().map(|git_entry| {
-                                    (git_entry.status, entry.join(git_entry.repo_path))
+                                    (
+                                        git_entry.combined_status_bad(),
+                                        entry.join(git_entry.repo_path),
+                                    )
                                 })
                             })
                             .filter_map(|(status, path)| {

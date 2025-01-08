@@ -5,6 +5,7 @@ use crate::{
 use anyhow::{Context as _, Result};
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
+use futures::future::OptionFuture;
 use git::repository::{GitFileStatus, RepoPath};
 use gpui::*;
 use language::Buffer;
@@ -22,7 +23,6 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
 };
-use worktree::StatusEntry;
 
 actions!(git_panel, [ToggleFocus, OpenEntryMenu]);
 
@@ -290,16 +290,16 @@ impl GitPanel {
     }
 
     fn calculate_depth_and_difference(
-        entry: &StatusEntry,
+        repo_path: &RepoPath,
         visible_entries: &HashSet<RepoPath>,
     ) -> (usize, usize) {
         // Skip the entry itself when looking at ancestors
-        let ancestors = entry.repo_path.ancestors().skip(1);
+        let ancestors = repo_path.ancestors().skip(1);
 
         // Find the first ancestor that exists in our visible entries
         for ancestor in ancestors {
             if let Some(parent_entry) = visible_entries.get(ancestor) {
-                let entry_component_count = entry.repo_path.components().count();
+                let entry_component_count = repo_path.components().count();
                 let parent_component_count = parent_entry.components().count();
 
                 // Calculate how many levels deep this entry is from its parent
@@ -389,15 +389,15 @@ impl GitPanel {
 }
 
 impl GitPanel {
-    fn stage_all(&mut self, _: &StageAll, _cx: &mut ViewContext<Self>) {
-        // TODO: Implement stage all
-        println!("Stage all triggered");
+    fn stage_all(&mut self, _: &StageAll, cx: &mut ViewContext<Self>) {
+        self.git_state
+            .update(cx, |state, cx| state.stage_all(&self.project, cx));
     }
 
     fn unstage_all(&mut self, _: &UnstageAll, cx: &mut ViewContext<Self>) {
         let state = self.git_state.clone();
-        state.update(cx, |state, _| {
-            state.unstage_all_entries();
+        state.update(cx, |state, cx| {
+            state.unstage_all(&self.project, cx);
         });
     }
 
@@ -562,9 +562,13 @@ impl GitPanel {
         cx: &mut ViewContext<Self>,
     ) {
         let handle = cx.view().downgrade();
+        let mut rx = self.git_state.read(cx).git_task_rx.clone();
 
         self.pending_update = cx.spawn(|_, mut cx| async move {
-            cx.background_executor().timer(UPDATE_DEBOUNCE).await;
+            futures::join!(
+                OptionFuture::from(rx.as_mut().map(|rx| rx.recv())),
+                cx.background_executor().timer(UPDATE_DEBOUNCE)
+            );
 
             if let Some(handle) = handle.upgrade() {
                 handle
@@ -620,31 +624,32 @@ impl GitPanel {
             if let Some(repository) =
                 repositories.find(|repo| repo.work_directory_id() == active_repo_id)
             {
-                let mut path_set = HashSet::new();
-                let mut entries = Vec::new();
-
+                let entries = || {
+                    repository
+                        .status()
+                        .filter_map(|status| Some((status.repo_path, status.worktree_status?)))
+                };
                 // First pass - collect all paths
-                for status_entry in repository.status() {
-                    path_set.insert(status_entry.repo_path.clone());
-                    entries.push(status_entry);
-                }
+                let path_set = HashSet::from_iter(entries().map(|(repo_path, _)| repo_path));
 
                 // Second pass - create entries with proper depth calculation
-                for status_entry in entries {
+                for (repo_path, status) in entries() {
                     let (depth, difference) =
-                        Self::calculate_depth_and_difference(&status_entry, &path_set);
+                        Self::calculate_depth_and_difference(&repo_path, &path_set);
 
-                    let path = status_entry.repo_path.clone();
                     let display_name = if difference > 1 {
                         // Show partial path for deeply nested files
-                        path.iter()
-                            .skip(path.components().count() - difference)
+                        repo_path
+                            .as_ref()
+                            .iter()
+                            .skip(repo_path.components().count() - difference)
                             .collect::<PathBuf>()
                             .to_string_lossy()
                             .into_owned()
                     } else {
                         // Just show filename
-                        path.file_name()
+                        repo_path
+                            .file_name()
                             .map(|name| name.to_string_lossy().into_owned())
                             .unwrap_or_default()
                     };
@@ -652,8 +657,8 @@ impl GitPanel {
                     let entry = GitListEntry {
                         depth,
                         display_name,
-                        repo_path: status_entry.repo_path,
-                        status: status_entry.status,
+                        repo_path,
+                        status,
                     };
 
                     self.visible_entries.push(entry);
@@ -925,7 +930,9 @@ impl GitPanel {
     ) -> impl IntoElement {
         let state = self.git_state.clone();
         let repo_path = entry_details.repo_path.clone();
-        let is_staged = state.read(cx).is_staged(repo_path.clone());
+        let is_staged = state
+            .read(cx)
+            .is_staged(repo_path.clone(), &self.project, cx);
         let status = entry_details.status;
         let entry_id = ElementId::Name(format!("entry_{}", entry_details.display_name).into());
         let checkbox_id =
@@ -975,13 +982,17 @@ impl GitPanel {
                 Checkbox::new(checkbox_id, is_staged.into())
                     .fill()
                     .elevation(ElevationIndex::Surface)
-                    .on_click(move |_, cx| {
-                        let repo_path = repo_path.clone();
-
-                        state.update(cx, move |git_state, _cx| {
+                    .on_click({
+                        let project = self.project.clone();
+                        move |_, cx| {
                             let repo_path = repo_path.clone();
-                            git_state.toggle_staged_entry(repo_path)
-                        });
+                            let project = project.clone();
+                            state.update(cx, {
+                                move |git_state, cx| {
+                                    git_state.toggle_staged_entry(repo_path, &project, cx);
+                                }
+                            });
+                        }
                     }),
             )
             .child(git_status_icon(status))

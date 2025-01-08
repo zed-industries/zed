@@ -1,9 +1,9 @@
 use ::settings::Settings;
-use collections::HashSet;
 use git::repository::{GitFileStatus, RepoPath};
 use gpui::{actions, AppContext, Context, Global, Hsla, Model};
 use project::{Project, ProjectEntryId, WorktreeId};
 use settings::GitPanelSettings;
+use sum_tree::TreeMap;
 use ui::{Color, Icon, IconName, IntoElement, SharedString};
 
 pub mod git_panel;
@@ -46,6 +46,12 @@ struct GlobalGitState(Model<GitState>);
 
 impl Global for GlobalGitState {}
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StatusAction {
+    Stage,
+    Unstage,
+}
+
 pub struct GitState {
     /// The current commit message being composed.
     commit_message: Option<SharedString>,
@@ -58,9 +64,12 @@ pub struct GitState {
     /// are currently being viewed or modified in the UI.
     active_repository: Option<ProjectEntryId>,
 
-    /// The set of staged entries in the current git repository.
-    /// Each entry is identified by its [`ProjectEntryId`] and [`RepoPath`].
-    staged_entries: HashSet<(ProjectEntryId, RepoPath)>,
+    /// Task to update the actual git state.
+    git_task_rx: Option<async_broadcast::Receiver<()>>,
+
+    /// Actions that have been taken since the last task was launched,
+    /// that will be flushed out when we launch the next task.
+    status_actions_since_task: TreeMap<(ProjectEntryId, RepoPath), StatusAction>,
 
     list_view_mode: GitViewMode,
 }
@@ -70,7 +79,8 @@ impl GitState {
         GitState {
             commit_message: None,
             active_repository: None,
-            staged_entries: HashSet::default(),
+            git_task_rx: None,
+            status_actions_since_task: TreeMap::default(),
             list_view_mode: GitViewMode::default(),
         }
     }
@@ -95,51 +105,106 @@ impl GitState {
         self.commit_message = None;
     }
 
-    pub fn staged_entries(&self) -> &HashSet<(ProjectEntryId, RepoPath)> {
-        &self.staged_entries
-    }
-
     pub fn stage_entry(&mut self, repo_path: RepoPath) {
         if let Some(active_repository) = self.active_repository {
-            self.staged_entries.insert((active_repository, repo_path));
+            self.status_actions_since_task
+                .insert((active_repository, repo_path), StatusAction::Stage);
         }
     }
 
     pub fn unstage_entry(&mut self, repo_path: RepoPath) {
         if let Some(active_repository) = self.active_repository {
-            self.staged_entries.remove(&(active_repository, repo_path));
+            self.status_actions_since_task
+                .insert((active_repository, repo_path), StatusAction::Unstage);
         }
     }
 
     pub fn stage_entries(&mut self, entries: Vec<RepoPath>) {
         if let Some(active_repository) = self.active_repository {
-            self.staged_entries
-                .extend(entries.into_iter().map(|path| (active_repository, path)));
+            for entry in entries {
+                self.status_actions_since_task
+                    .insert((active_repository, entry), StatusAction::Stage);
+            }
         }
     }
 
-    pub fn unstage_all_entries(&mut self) {
+    fn act_on_all(&mut self, action: StatusAction, project: &Model<Project>, cx: &AppContext) {
+        // FIXME this performs suboptimally, we might want to only collect actions
+        // for entries that we think actually need to be acted upon
         if let Some(active_repository) = self.active_repository {
-            self.staged_entries
-                .retain(|(id, _)| id != &active_repository);
+            // FIXME give TreeMap a clear method
+            self.status_actions_since_task.retain(|_, _| false);
+            let Some(worktree) = project.read(cx).worktree_for_entry(active_repository, cx) else {
+                // FIXME maybe should handle this differently
+                return;
+            };
+            let snapshot = worktree.read(cx).snapshot();
+            let Some(repo) = snapshot
+                .repositories()
+                .find(|repo| repo.work_directory_id() == active_repository)
+            else {
+                // FIXME maybe should handle this differently
+                return;
+            };
+            for status in repo.status() {
+                self.status_actions_since_task
+                    .insert((active_repository, status.repo_path), action);
+            }
         }
     }
 
-    pub fn toggle_staged_entry(&mut self, repo_path: RepoPath) {
-        if self.is_staged(repo_path.clone()) {
+    pub fn stage_all(&mut self, project: &Model<Project>, cx: &AppContext) {
+        self.act_on_all(StatusAction::Stage, project, cx);
+    }
+
+    pub fn unstage_all(&mut self, project: &Model<Project>, cx: &AppContext) {
+        self.act_on_all(StatusAction::Unstage, project, cx);
+    }
+
+    pub fn toggle_staged_entry(
+        &mut self,
+        repo_path: RepoPath,
+        project: &Model<Project>,
+        cx: &AppContext,
+    ) {
+        // FIXME can make this faster
+        if self.is_staged(repo_path.clone(), project, cx) {
             self.unstage_entry(repo_path);
         } else {
             self.stage_entry(repo_path);
         }
     }
 
-    pub fn is_staged(&self, repo_path: RepoPath) -> bool {
-        if let Some(active_repository) = self.active_repository {
-            self.staged_entries
-                .contains(&(active_repository, repo_path))
-        } else {
-            false
+    pub fn is_staged(
+        &self,
+        repo_path: RepoPath,
+        project: &Model<Project>,
+        cx: &AppContext,
+    ) -> bool {
+        let Some(active_repository) = self.active_repository else {
+            return false;
+        };
+        if let Some(action) = self
+            .status_actions_since_task
+            .get(&(active_repository, repo_path.clone()))
+        {
+            return action == &StatusAction::Stage;
         }
+        // FIXME what follows is ungainly
+        let Some(worktree) = project.read(cx).worktree_for_entry(active_repository, cx) else {
+            return false;
+        };
+        let snapshot = worktree.read(cx).snapshot();
+        let Some(repo) = snapshot
+            .repositories()
+            .find(|repo| repo.work_directory_id() == active_repository)
+        else {
+            return false;
+        };
+        // FIXME this logic is wrong
+        snapshot
+            .status_for_file(repo.work_directory.unrelativize(&repo_path).unwrap())
+            .is_none()
     }
 }
 
