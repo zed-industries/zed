@@ -249,6 +249,13 @@ async fn create_billing_subscription(
         ));
     }
 
+    if app.db.has_overdue_billing_subscriptions(user.id).await? {
+        return Err(Error::http(
+            StatusCode::PAYMENT_REQUIRED,
+            "user has overdue billing subscriptions".into(),
+        ));
+    }
+
     let customer_id =
         if let Some(existing_customer) = app.db.get_billing_customer_by_user_id(user.id).await? {
             CustomerId::from_str(&existing_customer.stripe_customer_id)
@@ -719,6 +726,10 @@ async fn handle_customer_subscription_event(
                 billing_customer_id: billing_customer.id,
                 stripe_subscription_id: subscription.id.to_string(),
                 stripe_subscription_status: subscription.status.into(),
+                stripe_cancellation_reason: subscription
+                    .cancellation_details
+                    .and_then(|details| details.reason)
+                    .map(|reason| reason.into()),
             })
             .await?;
     }
