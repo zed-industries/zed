@@ -8,6 +8,8 @@ use std::{
 
 /// [RootPathTrie] is a workhorse of [super::ProjectTree]. It is responsible for determining the closest known project root for a given path.
 /// It also determines how much of a given path is unexplored, thus letting callers fill in that gap if needed.
+/// Conceptually, it allows one to annotate Worktree entries with arbitrary extra metadata and run closest-ancestor searches.
+///
 /// A path is unexplored when the closest ancestor of a path is not the path itself; that means that we have not yet ran the scan on that path.
 /// For example, if there's a project root at path `python/project` and we query for a path `python/project/subdir/another_subdir/file.py`, there is
 /// a known root at `python/project` and the unexplored part is `subdir/another_subdir` - we need to run a scan on these 2 directories.
@@ -33,8 +35,9 @@ pub(super) struct RootPathTrie<Label> {
 /// such scan more than once.
 #[derive(Clone, Copy, Debug, PartialOrd, PartialEq, Ord, Eq)]
 pub(super) enum LabelPresence {
-    Present,
+    Forbidden,
     KnownAbsent,
+    Present,
 }
 
 impl<Label: Ord> RootPathTrie<Label> {
@@ -100,10 +103,6 @@ impl<Label: Ord> RootPathTrie<Label> {
         if let Some(final_entry_name) = path.0.last() {
             current.children.remove(final_entry_name);
         }
-    }
-    /// Remove all labels from this trie.
-    pub(super) fn remove_label(&mut self, label: &Label) {
-        todo!();
     }
 }
 

@@ -130,6 +130,7 @@ impl ProjectTree {
                 .into_iter()
                 .map(|adapter| (AdapterWrapper(adapter), None)),
         );
+        dbg!(&language_name, roots.len());
         let worktree_roots = match self.root_points.entry(worktree_id) {
             Entry::Occupied(occupied_entry) => occupied_entry.get().clone(),
             Entry::Vacant(vacant_entry) => {
@@ -149,6 +150,7 @@ impl ProjectTree {
         let mut known_missing = HashSet::default();
         worktree_roots.update(cx, |this, _| {
             this.roots.walk(&key, &mut |path, labels| {
+                dbg!(&path, &labels);
                 for (label, presence) in labels {
                     if *presence == LabelPresence::Present {
                         known_missing.remove(label);
@@ -181,6 +183,7 @@ impl ProjectTree {
             let root = adapter
                 .0
                 .find_closest_project_root(worktree_id, path.clone());
+            dbg!(&root);
             match root {
                 Some(known_root) => worktree_roots.update(cx, |this, _| {
                     let root = TriePath::from(&*known_root);
@@ -214,11 +217,6 @@ impl ProjectTree {
                 self.root_points.remove(&worktree_id);
             }
             _ => {}
-        }
-    }
-    fn remove(&mut self, key: &(WorktreeId, LanguageServerName), cx: &mut AppContext) {
-        if let Some(roots) = self.root_points.get(&key.0) {
-            roots.update(cx, |this, cx| this.roots.remove_label(&key.1));
         }
     }
 }

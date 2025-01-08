@@ -1766,6 +1766,7 @@ impl LocalLspStore {
                     cx,
                 )
                 .filter_map(|server_node| {
+                    dbg!(server_node.server_name(), server_node.server_id());
                     let server_state = self.language_servers.get(&server_node.server_id()?)?;
                     if let LanguageServerState::Running { server, .. } = server_state {
                         Some(server.clone())
@@ -2891,7 +2892,6 @@ pub enum LspStoreEvent {
 #[derive(Clone, Debug, Serialize)]
 pub struct LanguageServerStatus {
     pub name: String,
-    root_path: String,
     pub pending_work: BTreeMap<String, LanguageServerProgress>,
     pub has_pending_diagnostic_updates: bool,
     progress_tokens: HashSet<String>,
@@ -5370,7 +5370,6 @@ impl LspStore {
                     server: Some(proto::LanguageServer {
                         id: server_id.0 as u64,
                         name: status.name.clone(),
-                        path: Some(status.root_path.clone()),
                         worktree_id: None,
                     }),
                 })
@@ -5402,7 +5401,6 @@ impl LspStore {
                     LanguageServerId(server.id as usize),
                     LanguageServerStatus {
                         name: server.name,
-                        root_path: server.path.unwrap_or_default(),
                         pending_work: Default::default(),
                         has_pending_diagnostic_updates: false,
                         progress_tokens: Default::default(),
@@ -6077,7 +6075,6 @@ impl LspStore {
                 server_id,
                 LanguageServerStatus {
                     name: server.name.clone(),
-                    root_path: server.path.clone().unwrap_or_default(),
                     pending_work: Default::default(),
                     has_pending_diagnostic_updates: false,
                     progress_tokens: Default::default(),
@@ -7533,7 +7530,6 @@ impl LspStore {
             server_id,
             LanguageServerStatus {
                 name: language_server.name().to_string(),
-                root_path: todo!(),
                 pending_work: Default::default(),
                 has_pending_diagnostic_updates: false,
                 progress_tokens: Default::default(),
@@ -7555,7 +7551,6 @@ impl LspStore {
                         id: server_id.0 as u64,
                         name: language_server.name().to_string(),
                         worktree_id: Some(key.0.to_proto()),
-                        path: todo!(),
                     }),
                 })
                 .log_err();
