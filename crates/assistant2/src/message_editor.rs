@@ -21,7 +21,7 @@ use ui::{
 use workspace::Workspace;
 
 use crate::assistant_model_selector::AssistantModelSelector;
-use crate::context::{BufferVersion, Context, ContextKind};
+use crate::context::Context;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
@@ -149,38 +149,36 @@ impl MessageEditor {
             text
         });
 
+        /* todo! Refresh the context text
         let context = self.context_store.update(cx, {
             let workspace = self.workspace.clone();
-            move |this, cx| Self::refresh_context(workspace, this.context(), cx)
+            move |this, cx| {
+                refresh_context
+            }
         });
+        */
 
         let thread = self.thread.clone();
-        cx.spawn(|this, mut cx| async move {
-            let context = context.await?;
+        thread.update(cx, |thread, cx| {
+            let context = self.context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
+            thread.insert_user_message(user_message, context, cx);
+            let mut request = thread.to_completion_request(request_kind, cx);
 
-            thread.update(&mut cx, |thread, cx| {
-                thread.insert_user_message(user_message, context.clone(), cx);
-                let mut request = thread.to_completion_request(request_kind, cx);
+            if self.use_tools {
+                request.tools = thread
+                    .tools()
+                    .tools(cx)
+                    .into_iter()
+                    .map(|tool| LanguageModelRequestTool {
+                        name: tool.name(),
+                        description: tool.description(),
+                        input_schema: tool.input_schema(),
+                    })
+                    .collect();
+            }
 
-                if self.use_tools {
-                    request.tools = thread
-                        .tools()
-                        .tools(cx)
-                        .into_iter()
-                        .map(|tool| LanguageModelRequestTool {
-                            name: tool.name(),
-                            description: tool.description(),
-                            input_schema: tool.input_schema(),
-                        })
-                        .collect();
-                }
-
-                thread.stream_completion(request, model, cx)
-            });
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
+            thread.stream_completion(request, model, cx)
+        });
 
         None
     }
@@ -229,7 +227,8 @@ impl MessageEditor {
         cx.focus(&editor_focus_handle);
     }
 
-    async fn refresh_context(
+    /*
+    pub async fn refresh_context(
         workspace: WeakView<Workspace>,
         context: &[Context],
         cx: &mut AppContext,
@@ -311,6 +310,7 @@ impl MessageEditor {
             },
         )))
     }
+    */
 }
 
 impl FocusableView for MessageEditor {

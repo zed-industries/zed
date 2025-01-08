@@ -3,6 +3,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use anyhow::anyhow;
+use collections::BTreeMap;
 use fuzzy::PathMatch;
 use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakModel, WeakView};
 use picker::{Picker, PickerDelegate};
@@ -191,8 +192,8 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         let already_included = self
             .context_store
             .update(cx, |context_store, _cx| {
-                if let Some(context_id) = context_store.included_directory(&path) {
-                    context_store.remove_context(&context_id);
+                if let Some(context_id) = context_store.includes_directory(&path) {
+                    context_store.remove_context(context_id);
                     true
                 } else {
                     false
@@ -231,33 +232,31 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
                     .collect::<Vec<_>>()
             })?;
 
-            let open_all_buffers_tasks = cx.background_executor().spawn(async move {
+            let open_all_buffers_task = cx.background_executor().spawn(async move {
                 let mut buffers = Vec::with_capacity(open_buffer_tasks.len());
-
                 for open_buffer_task in open_buffer_tasks {
-                    let buffer = open_buffer_task.await?;
-
-                    buffers.push(buffer);
+                    buffers.push(open_buffer_task.await?);
                 }
-
                 anyhow::Ok(buffers)
             });
 
-            let buffers = open_all_buffers_tasks.await?;
+            let buffers = open_all_buffers_task.await?;
 
             this.update(&mut cx, |this, cx| {
                 let mut text = String::new();
-
-                for buffer in buffers {
-                    let buffer = buffer.read(cx);
+                let mut directory_buffers = BTreeMap::new();
+                for buffer_model in buffers {
+                    let buffer = buffer_model.read(cx);
                     let path = buffer.file().map_or(&path, |file| file.path());
                     push_fenced_codeblock(&path, buffer.text(), &mut text);
+                    directory_buffers
+                        .insert(buffer.remote_id(), (buffer_model, buffer.version.clone()));
                 }
 
                 this.delegate
                     .context_store
                     .update(cx, |context_store, _cx| {
-                        context_store.insert_directory(&path, text);
+                        context_store.insert_directory(&path, directory_buffers, text);
                     })?;
 
                 match confirm_behavior {
@@ -294,7 +293,7 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         let added = self.context_store.upgrade().map_or(false, |context_store| {
             context_store
                 .read(cx)
-                .included_directory(&path_match.path)
+                .includes_directory(&path_match.path)
                 .is_some()
         });
 

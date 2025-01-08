@@ -477,6 +477,7 @@ dependencies = [
  "html_to_markdown",
  "http_client",
  "indoc",
+ "itertools 0.13.0",
  "language",
  "language_model",
  "language_model_selector",

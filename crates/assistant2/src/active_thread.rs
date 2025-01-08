@@ -282,11 +282,13 @@ impl ActiveThread {
                     .child(div().p_2p5().text_ui(cx).child(markdown.clone()))
                     .when_some(context, |parent, context| {
                         if !context.is_empty() {
-                            parent.child(h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
-                                context.iter().map(|context| {
-                                    ContextPill::new_added(context.clone(), false, None)
-                                }),
-                            ))
+                            parent.child(
+                                h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
+                                    context.into_iter().map(|context| {
+                                        ContextPill::new_added(context, false, None)
+                                    }),
+                                ),
+                            )
                         } else {
                             parent
                         }

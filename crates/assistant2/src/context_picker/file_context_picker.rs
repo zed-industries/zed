@@ -3,18 +3,15 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use fuzzy::PathMatch;
-use gpui::{
-    AppContext, DismissEvent, FocusHandle, FocusableView, ModelContext, Task, View, WeakModel,
-    WeakView,
-};
+use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakModel, WeakView};
 use picker::{Picker, PickerDelegate};
-use project::{PathMatchCandidateSet, Project, ProjectPath, WorktreeId};
+use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use ui::{prelude::*, ListItem, Tooltip};
 use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
-use crate::context_store::{ContextStore, IncludedFile};
+use crate::context_store::{ContextStore, FileInclusion};
 
 pub struct FileContextPicker {
     picker: View<Picker<FileContextPickerDelegate>>,
@@ -207,13 +204,13 @@ impl PickerDelegate for FileContextPickerDelegate {
 
         let already_included = self
             .context_store
-            .update(cx, |context_store, _cx| {
-                match context_store.included_file(&path) {
-                    Some(IncludedFile::Direct(context_id)) => {
-                        context_store.remove_context(&context_id);
+            .update(cx, |context_store, cx| {
+                match context_store.will_include_file_path(&path, cx) {
+                    Some(FileInclusion::Direct(context_id)) => {
+                        context_store.remove_context(context_id);
                         true
                     }
-                    Some(IncludedFile::InDirectory(_)) => true,
+                    Some(FileInclusion::InDirectory(_)) => true,
                     None => false,
                 }
             })
@@ -248,7 +245,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                 this.delegate
                     .context_store
                     .update(cx, |context_store, cx| {
-                        context_store.insert_file(buffer.read(cx));
+                        context_store.insert_file(buffer, cx);
                     })?;
 
                 match confirm_behavior {
@@ -305,10 +302,11 @@ impl PickerDelegate for FileContextPickerDelegate {
             (file_name, Some(directory))
         };
 
-        let added = self
-            .context_store
-            .upgrade()
-            .and_then(|context_store| context_store.read(cx).included_file(&path_match.path));
+        let added = self.context_store.upgrade().and_then(|context_store| {
+            context_store
+                .read(cx)
+                .will_include_file_path(&path_match.path, cx)
+        });
 
         Some(
             ListItem::new(ix)
@@ -325,7 +323,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                         })),
                 )
                 .when_some(added, |el, added| match added {
-                    IncludedFile::Direct(_) => el.end_slot(
+                    FileInclusion::Direct(_) => el.end_slot(
                         h_flex()
                             .gap_1()
                             .child(
@@ -335,7 +333,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                             )
                             .child(Label::new("Added").size(LabelSize::Small)),
                     ),
-                    IncludedFile::InDirectory(dir_name) => {
+                    FileInclusion::InDirectory(dir_name) => {
                         let dir_name = dir_name.to_string_lossy().into_owned();
 
                         el.end_slot(
@@ -354,27 +352,3 @@ impl PickerDelegate for FileContextPickerDelegate {
         )
     }
 }
-
-// pub fn open_file_context_buffer(
-//     worktree_id: WorktreeId,
-//     path: &Path,
-//     project: &Project,
-//     cx: &mut ModelContext<Project>,
-// ) -> Result<()> {
-//     let Some(open_buffer_task) = project
-//         .update(&mut cx, |project, cx| {
-//             let project_path = ProjectPath {
-//                 worktree_id,
-//                 path: path.clone(),
-//             };
-
-//             let task = project.open_buffer(project_path, cx);
-
-//             Some(task)
-//         })
-//         .ok()
-//         .flatten()
-//     else {
-//         return anyhow::Ok(());
-//     };
-// }
