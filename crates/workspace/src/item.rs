@@ -185,15 +185,13 @@ impl TabTooltipContent {
     where
         F: for<'a> Fn(&'a mut WindowContext) -> AnyView + 'static,
     {
-        TabTooltipContent(Box::new(f))
+        Self(Box::new(f))
     }
 
     pub fn text(txt: impl Into<SharedString>) -> Self {
         let txt = txt.into();
 
-        TabTooltipContent(Box::new(move |cx: &mut WindowContext| {
-            Tooltip::text(txt.clone(), cx)
-        }))
+        Self::custom(move |cx| Tooltip::text(txt.clone(), cx))
     }
 
     pub fn view(&self, cx: &mut WindowContext) -> AnyView {
@@ -201,21 +199,9 @@ impl TabTooltipContent {
     }
 }
 
-impl Into<TabTooltipContent> for SharedString {
-    fn into(self) -> TabTooltipContent {
-        TabTooltipContent::text(self)
-    }
-}
-
-impl Into<TabTooltipContent> for String {
-    fn into(self) -> TabTooltipContent {
-        TabTooltipContent::text(self)
-    }
-}
-
-impl Into<TabTooltipContent> for &'static str {
-    fn into(self) -> TabTooltipContent {
-        TabTooltipContent::text(self)
+impl<T: Into<SharedString>> From<T> for TabTooltipContent {
+    fn from(value: T) -> Self {
+        TabTooltipContent::text(value)
     }
 }
 

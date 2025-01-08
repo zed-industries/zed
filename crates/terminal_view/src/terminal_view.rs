@@ -1004,7 +1004,7 @@ impl Item for TerminalView {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(false);
 
-        Some(TabTooltipContent::custom(move |cx: &mut WindowContext| {
+        Some(TabTooltipContent::custom(move |cx| {
             cx.new_view(|_| TerminalTooltip::new(title.clone())).into()
         }))
     }
