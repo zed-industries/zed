@@ -114,6 +114,11 @@ impl Thread {
         self.summary.clone()
     }
 
+    pub fn summary_or_default(&self) -> SharedString {
+        const DEFAULT: SharedString = SharedString::new_static("New Thread");
+        self.summary.clone().unwrap_or(DEFAULT)
+    }
+
     pub fn set_summary(&mut self, summary: impl Into<SharedString>, cx: &mut ModelContext<Self>) {
         self.summary = Some(summary.into());
         cx.emit(ThreadEvent::SummaryChanged);

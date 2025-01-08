@@ -103,10 +103,8 @@ impl PickerDelegate for ThreadContextPickerDelegate {
             this.threads(cx)
                 .into_iter()
                 .map(|thread| {
-                    const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Thread");
-
                     let id = thread.read(cx).id().clone();
-                    let summary = thread.read(cx).summary().unwrap_or(DEFAULT_SUMMARY);
+                    let summary = thread.read(cx).summary_or_default();
                     ThreadContextEntry { id, summary }
                 })
                 .collect::<Vec<_>>()

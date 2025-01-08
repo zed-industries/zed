@@ -154,7 +154,7 @@ impl ContextStore {
 
         self.context.push(Context {
             id: context_id,
-            name: thread.summary().unwrap_or("New thread".into()),
+            name: thread.summary_or_default(),
             parent: None,
             tooltip: None,
             kind: ContextKind::Thread,

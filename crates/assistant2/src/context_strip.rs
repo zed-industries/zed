@@ -113,7 +113,7 @@ impl ContextStrip {
         }
 
         Some(SuggestedContext::Thread {
-            name: active_thread.summary().unwrap_or("New Thread".into()),
+            name: active_thread.summary_or_default(),
             thread: weak_active_thread,
         })
     }
