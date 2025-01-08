@@ -487,7 +487,7 @@ impl VariableList {
             .iter()
             .filter_map(|variable| {
                 Some((
-                    (variable.stack_frame_id, variable.stack_frame_id),
+                    (variable.stack_frame_id, variable.scope_id),
                     ScopeVariableIndex::from_proto(variable.variables.clone()?),
                 ))
             })
@@ -536,7 +536,7 @@ impl VariableList {
             })
             .collect();
 
-        self.list.reset(self.entries.len());
+        self.build_entries(true, true, cx);
         cx.notify();
     }
 
