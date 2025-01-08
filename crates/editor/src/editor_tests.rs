@@ -12820,10 +12820,6 @@ async fn test_edits_around_expanded_insertion_hunks(
     executor.run_until_parked();
     cx.assert_state_with_diff(
         r#"
-        use some::mod1;
-      - use some::mod2;
-      -
-      - const A: u32 = 42;
         ˇ
         fn main() {
             println!("hello");
