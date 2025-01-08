@@ -91,8 +91,6 @@ impl Render for Breadcrumbs {
         });
 
         let breadcrumbs_stack = h_flex().gap_1().children(breadcrumbs);
-        let dirty_indicator = pane::render_item_indicator(active_item.boxed_clone(), cx);
-
         match active_item
             .downcast::<Editor>()
             .map(|editor| editor.downgrade())
@@ -128,7 +126,7 @@ impl Render for Breadcrumbs {
                     .children(
                         [breadcrumbs_stack.into_any_element()].into_iter().chain(
                             (!TabBarSettings::get_global(cx).show)
-                                .then(|| dirty_indicator)
+                                .then(|| pane::render_item_indicator(active_item.boxed_clone(), cx))
                                 .flatten()
                                 .map(|item| div().ml_1p5().child(item).into_any_element()),
                         ),
