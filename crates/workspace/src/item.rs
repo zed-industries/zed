@@ -31,7 +31,7 @@ use std::{
     time::Duration,
 };
 use theme::Theme;
-use ui::{Color, Element as _, Icon, IntoElement, Label, LabelCommon};
+use ui::{Color, Element as _, Icon, IntoElement, Label, LabelCommon, Tooltip};
 use util::ResultExt;
 
 pub const LEADER_UPDATE_THROTTLE: Duration = Duration::from_millis(200);
@@ -178,6 +178,8 @@ impl TabContentParams {
     }
 }
 
+pub struct TabTooltipContent(pub Box<dyn for<'a> Fn(&'a mut WindowContext) -> AnyView + 'static>);
+
 pub trait Item: FocusableView + EventEmitter<Self::Event> {
     type Event;
 
@@ -216,6 +218,13 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     }
     fn tab_tooltip_text(&self, _: &AppContext) -> Option<SharedString> {
         None
+    }
+    fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent> {
+        self.tab_tooltip_text(cx).map(|txt| {
+            TabTooltipContent(Box::new(move |cx: &mut WindowContext| {
+                Tooltip::text(txt.clone(), cx)
+            }))
+        })
     }
     fn tab_description(&self, _: usize, _: &AppContext) -> Option<SharedString> {
         None
@@ -395,6 +404,7 @@ pub trait ItemHandle: 'static + Send {
     ) -> gpui::Subscription;
     fn focus_handle(&self, cx: &WindowContext) -> FocusHandle;
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
+    fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent>;
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement;
     fn tab_icon(&self, cx: &WindowContext) -> Option<Icon>;
@@ -496,6 +506,10 @@ impl<T: Item> ItemHandle for View<T> {
 
     fn focus_handle(&self, cx: &WindowContext) -> FocusHandle {
         self.focus_handle(cx)
+    }
+
+    fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent> {
+        self.read(cx).tab_tooltip_content(cx)
     }
 
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
