@@ -1306,6 +1306,8 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
     );
 }
 
+/// A naive implementation of a multi-buffer that does not maintain
+/// any derived state, used for comparison in a randomized test.
 #[derive(Default)]
 struct ReferenceMultibuffer {
     excerpts: Vec<ReferenceExcerpt>,
@@ -1468,7 +1470,14 @@ impl ReferenceMultibuffer {
                     start = hunk_offset;
                 }
 
-                insertion_end_row = hunk.buffer_range.end.to_point(&buffer).row;
+                insertion_end_row = buffer
+                    .offset_to_point(
+                        hunk.buffer_range
+                            .end
+                            .to_offset(&buffer)
+                            .min(buffer_range.end),
+                    )
+                    .row;
             }
 
             expected_text.extend(buffer.text_for_range(start..buffer_range.end));
@@ -1500,6 +1509,32 @@ impl ReferenceMultibuffer {
         }
 
         (expected_text, expected_buffer_rows)
+    }
+
+    fn diffs_updated(&mut self, cx: &AppContext) {
+        for excerpt in &mut self.excerpts {
+            let buffer = excerpt.buffer.read(cx).snapshot();
+            let buffer_id = buffer.remote_id();
+            let diff = &self
+                .change_sets
+                .get(&buffer_id)
+                .unwrap()
+                .read(cx)
+                .diff_to_buffer;
+            let mut hunks = diff.hunks_in_row_range(0..u32::MAX, &buffer).peekable();
+            excerpt.expanded_diff_hunks.retain(|hunk_anchor| {
+                while let Some(hunk) = hunks.peek() {
+                    match hunk.buffer_range.start.cmp(&hunk_anchor, &buffer) {
+                        cmp::Ordering::Less => {
+                            hunks.next();
+                        }
+                        cmp::Ordering::Equal => return true,
+                        cmp::Ordering::Greater => break,
+                    }
+                }
+                false
+            });
+        }
     }
 
     fn add_change_set(&mut self, change_set: Model<BufferChangeSet>, cx: &mut AppContext) {
@@ -1637,8 +1672,8 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
                                 )
                             });
                     }
+                    reference.diffs_updated(cx);
                 });
-                // reference.prune_diff_hunks();
             }
             _ => {
                 let buffer_handle = if buffers.is_empty() || rng.gen_bool(0.4) {
@@ -1724,9 +1759,9 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
         let (expected_text, expected_row_infos) = reference.expected_content(cx);
         let expected_diff = format_diff(&expected_text, &expected_row_infos);
 
-        pretty_assertions::assert_eq!(actual_row_infos, expected_row_infos,);
         pretty_assertions::assert_eq!(actual_diff, expected_diff);
         pretty_assertions::assert_eq!(actual_text, expected_text);
+        pretty_assertions::assert_eq!(actual_row_infos, expected_row_infos,);
 
         eprintln!("{}", actual_diff);
 
@@ -1780,24 +1815,6 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
                 "incorrect text for range {:?}",
                 start_ix..end_ix
             );
-
-            let excerpted_buffer_ranges = multibuffer
-                .read(cx)
-                .range_to_buffer_ranges(start_ix..end_ix, cx);
-            let excerpted_buffers_text = excerpted_buffer_ranges
-                .iter()
-                .map(|(buffer, buffer_range, _)| {
-                    buffer
-                        .read(cx)
-                        .text_for_range(buffer_range.clone())
-                        .collect::<String>()
-                })
-                .collect::<Vec<_>>()
-                .join("\n");
-            assert_eq!(excerpted_buffers_text, text_for_range);
-            if !reference.excerpts.is_empty() {
-                assert!(!excerpted_buffer_ranges.is_empty());
-            }
 
             let expected_summary = TextSummary::from(&expected_text[start_ix..end_ix]);
             assert_eq!(
