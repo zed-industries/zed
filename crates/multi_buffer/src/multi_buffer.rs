@@ -6243,15 +6243,19 @@ impl<'a> MultiBufferRows<'a> {
             self.buffer_row_range.end = excerpt_start + excerpt.text_summary.lines.row + 1;
         }
     }
-}
-
-impl<'a> MultiBufferRows<'a> {
-    fn next_excerpt_row(&mut self) -> Option<Option<u32>> {
+    fn next_excerpt_row(&mut self) -> Option<(u32, bool)> {
         loop {
             if !self.buffer_row_range.is_empty() {
-                let row = Some(self.buffer_row_range.start);
+                let row = self.buffer_row_range.start;
                 self.buffer_row_range.start += 1;
-                return Some(row);
+                let is_inserted_line = if let Some(excerpt) = self.excerpts.item() {
+                    self.buffer_row_range.is_empty()
+                        && excerpt.has_trailing_newline
+                        && excerpt.text_summary.last_line_chars == 0
+                } else {
+                    false
+                };
+                return Some((row, is_inserted_line));
             }
             self.excerpts.item()?;
             self.excerpts.next(&());
@@ -6286,10 +6290,11 @@ impl<'a> Iterator for MultiBufferRows<'a> {
             } else {
                 None
             };
-            self.next_excerpt_row().map(|row| RowInfo {
-                buffer_row: row,
-                diff_status,
-            })
+            self.next_excerpt_row()
+                .map(|(row, is_inserted_line)| RowInfo {
+                    buffer_row: Some(row),
+                    diff_status: if is_inserted_line { None } else { diff_status },
+                })
         };
         self.point += Point::new(1, 0);
         result

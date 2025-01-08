@@ -12639,8 +12639,6 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
           - bbb
           + BBB
 
-          - ddd
-          - eee
           + EEE
             fff
         "
