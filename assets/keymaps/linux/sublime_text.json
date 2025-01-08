@@ -50,6 +50,8 @@
       "shift-alt-m": "markdown::OpenPreviewToTheSide",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
       "ctrl-delete": "editor::DeleteToNextWordEnd"
+    	"ctrl-enter": "editor::NewlineBelow",
+    	"ctrl-shift-enter": "editor::NewlineAbove"
     }
   },
   {
