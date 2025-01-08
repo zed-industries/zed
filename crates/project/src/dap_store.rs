@@ -892,45 +892,57 @@ impl DapStore {
         let session_id = *session_id;
         let config = session.read(cx).configuration().clone();
 
-        cx.spawn(|this, mut cx| async move {
-            let (success, body) = if let Some(args) = args {
-                let task = this.update(&mut cx, |store, cx| {
-                    // Merge the new configuration over the existing configuration
-                    let mut initialize_args = config.initialize_args.unwrap_or_default();
-                    merge_json_value_into(args.configuration, &mut initialize_args);
+        let request_args = args.unwrap_or_else(|| StartDebuggingRequestArguments {
+            configuration: config.initialize_args.clone().unwrap_or_default(),
+            request: match config.request {
+                DebugRequestType::Launch => StartDebuggingRequestArgumentsRequest::Launch,
+                DebugRequestType::Attach(_) => StartDebuggingRequestArgumentsRequest::Attach,
+            },
+        });
 
-                    store.reconnect_client(
-                        &session_id,
-                        client.adapter().clone(),
-                        client.binary().clone(),
-                        DebugAdapterConfig {
-                            label: config.label.clone(),
-                            kind: config.kind.clone(),
-                            request: match args.request {
-                                StartDebuggingRequestArgumentsRequest::Launch => {
-                                    DebugRequestType::Launch
-                                }
-                                StartDebuggingRequestArgumentsRequest::Attach => {
-                                    DebugRequestType::Attach(
-                                        if let DebugRequestType::Attach(attach_config) =
-                                            config.request
-                                        {
-                                            attach_config
-                                        } else {
-                                            AttachConfig::default()
-                                        },
-                                    )
-                                }
-                            },
-                            program: config.program.clone(),
-                            cwd: config.cwd.clone(),
-                            initialize_args: Some(initialize_args),
-                        },
-                        cx,
-                    )
+        // Merge the new configuration over the existing configuration
+        let mut initialize_args = config.initialize_args.unwrap_or_default();
+        merge_json_value_into(request_args.configuration, &mut initialize_args);
+
+        let new_config = DebugAdapterConfig {
+            label: config.label.clone(),
+            kind: config.kind.clone(),
+            request: match request_args.request {
+                StartDebuggingRequestArgumentsRequest::Launch => DebugRequestType::Launch,
+                StartDebuggingRequestArgumentsRequest::Attach => DebugRequestType::Attach(
+                    if let DebugRequestType::Attach(attach_config) = config.request {
+                        attach_config
+                    } else {
+                        AttachConfig::default()
+                    },
+                ),
+            },
+            program: config.program.clone(),
+            cwd: config.cwd.clone(),
+            initialize_args: Some(initialize_args),
+        };
+
+        cx.spawn(|this, mut cx| async move {
+            let (success, body) = {
+                let reconnect_task = this.update(&mut cx, |store, cx| {
+                    if !client.adapter().supports_attach()
+                        && matches!(new_config.request, DebugRequestType::Attach(_))
+                    {
+                        Task::ready(Err(anyhow!(
+                            "Debug adapter does not support `attach` request"
+                        )))
+                    } else {
+                        store.reconnect_client(
+                            &session_id,
+                            client.adapter().clone(),
+                            client.binary().clone(),
+                            new_config,
+                            cx,
+                        )
+                    }
                 });
 
-                match task {
+                match reconnect_task {
                     Ok(task) => match task.await {
                         Ok(_) => (true, None),
                         Err(error) => {
@@ -970,11 +982,6 @@ impl DapStore {
                         })?),
                     ),
                 }
-            } else {
-                (
-                    false,
-                    Some(serde_json::to_value(ErrorResponse { error: None })?),
-                )
             };
 
             client
