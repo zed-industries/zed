@@ -4950,8 +4950,7 @@ impl Workspace {
     }
 
     pub fn for_window(window: &mut Window, cx: &mut AppContext) -> Option<Model<Workspace>> {
-        let window = window.window_handle().downcast::<Workspace>()?;
-        cx.read_window(&window, |workspace, _| workspace).ok()
+        window.root_model().flatten()
     }
 
     pub fn zoomed_item(&self) -> Option<&AnyWeakView> {
