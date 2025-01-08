@@ -474,7 +474,7 @@ impl ComponentPreview for Button {
                             .style(ButtonStyle::Tinted(TintColor::Accent)),
                     ),
                     single_example(
-                        "Negative",
+                        "Error",
                         Button::new("tinted_negative", "Error")
                             .style(ButtonStyle::Tinted(TintColor::Error)),
                     ),
