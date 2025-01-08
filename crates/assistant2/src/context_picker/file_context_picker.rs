@@ -251,76 +251,88 @@ impl PickerDelegate for FileContextPickerDelegate {
     ) -> Option<Self::ListItem> {
         let path_match = &self.matches[ix];
 
-        let (file_name, directory) = if path_match.path.as_ref() == Path::new("") {
-            (SharedString::from(path_match.path_prefix.clone()), None)
-        } else {
-            let file_name = path_match
-                .path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string()
-                .into();
-
-            let mut directory = format!("{}/", path_match.path_prefix);
-            if let Some(parent) = path_match
-                .path
-                .parent()
-                .filter(|parent| parent != &Path::new(""))
-            {
-                directory.push_str(&parent.to_string_lossy());
-                directory.push('/');
-            }
-
-            (file_name, Some(directory))
-        };
-
-        let added = self
-            .context_store
-            .upgrade()
-            .and_then(|context_store| context_store.read(cx).included_file(&path_match.path));
-
-        Some(
-            ListItem::new(ix)
-                .inset(true)
-                .toggle_state(selected)
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .child(Label::new(file_name))
-                        .children(directory.map(|directory| {
-                            Label::new(directory)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
-                        })),
-                )
-                .when_some(added, |el, added| match added {
-                    IncludedFile::Direct(_) => el.end_slot(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Icon::new(IconName::Check)
-                                    .size(IconSize::Small)
-                                    .color(Color::Success),
-                            )
-                            .child(Label::new("Added").size(LabelSize::Small)),
-                    ),
-                    IncludedFile::InDirectory(dir_name) => {
-                        let dir_name = dir_name.to_string_lossy().into_owned();
-
-                        el.end_slot(
-                            h_flex()
-                                .gap_1()
-                                .child(
-                                    Icon::new(IconName::Check)
-                                        .size(IconSize::Small)
-                                        .color(Color::Success),
-                                )
-                                .child(Label::new("Included").size(LabelSize::Small)),
-                        )
-                        .tooltip(move |cx| Tooltip::text(format!("in {dir_name}"), cx))
-                    }
-                }),
-        )
+        Some(render_file_context_entry(
+            self.context_store.clone(),
+            &path_match.path,
+            &path_match.path_prefix,
+            ix,
+            selected,
+            cx,
+        ))
     }
+}
+
+pub fn render_file_context_entry(
+    context_store: WeakModel<ContextStore>,
+    path: &Path,
+    path_prefix: &Arc<str>,
+    ix: usize,
+    selected: bool,
+    cx: &WindowContext,
+) -> ListItem {
+    let (file_name, directory) = if path == Path::new("") {
+        (SharedString::from(path_prefix.clone()), None)
+    } else {
+        let file_name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
+            .into();
+
+        let mut directory = format!("{}/", path_prefix);
+
+        if let Some(parent) = path.parent().filter(|parent| parent != &Path::new("")) {
+            directory.push_str(&parent.to_string_lossy());
+            directory.push('/');
+        }
+
+        (file_name, Some(directory))
+    };
+
+    let added = context_store
+        .upgrade()
+        .and_then(|context_store| context_store.read(cx).included_file(path));
+
+    ListItem::new(ix)
+        .inset(true)
+        .toggle_state(selected)
+        .child(Icon::new(IconName::File).size(IconSize::Small))
+        .child(
+            h_flex()
+                .gap_2()
+                .child(Label::new(file_name))
+                .children(directory.map(|directory| {
+                    Label::new(directory)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                })),
+        )
+        .when_some(added, |el, added| match added {
+            IncludedFile::Direct(_) => el.end_slot(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::Check)
+                            .size(IconSize::Small)
+                            .color(Color::Success),
+                    )
+                    .child(Label::new("Added").size(LabelSize::Small)),
+            ),
+            IncludedFile::InDirectory(dir_name) => {
+                let dir_name = dir_name.to_string_lossy().into_owned();
+
+                el.end_slot(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Icon::new(IconName::Check)
+                                .size(IconSize::Small)
+                                .color(Color::Success),
+                        )
+                        .child(Label::new("Included").size(LabelSize::Small)),
+                )
+                .tooltip(move |cx| Tooltip::text(format!("in {dir_name}"), cx))
+            }
+        })
 }

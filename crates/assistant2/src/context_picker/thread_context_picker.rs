@@ -6,7 +6,7 @@ use picker::{Picker, PickerDelegate};
 use ui::{prelude::*, ListItem};
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
-use crate::context_store;
+use crate::context_store::{self, ContextStore};
 use crate::thread::ThreadId;
 use crate::thread_store::ThreadStore;
 
@@ -47,9 +47,9 @@ impl Render for ThreadContextPicker {
 }
 
 #[derive(Debug, Clone)]
-struct ThreadContextEntry {
-    id: ThreadId,
-    summary: SharedString,
+pub struct ThreadContextEntry {
+    pub id: ThreadId,
+    pub summary: SharedString,
 }
 
 pub struct ThreadContextPickerDelegate {
@@ -199,27 +199,42 @@ impl PickerDelegate for ThreadContextPickerDelegate {
     ) -> Option<Self::ListItem> {
         let thread = &self.matches[ix];
 
-        let added = self.context_store.upgrade().map_or(false, |ctx_store| {
-            ctx_store.read(cx).included_thread(&thread.id).is_some()
-        });
-
-        Some(
-            ListItem::new(ix)
-                .inset(true)
-                .toggle_state(selected)
-                .child(Label::new(thread.summary.clone()))
-                .when(added, |el| {
-                    el.end_slot(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Icon::new(IconName::Check)
-                                    .size(IconSize::Small)
-                                    .color(Color::Success),
-                            )
-                            .child(Label::new("Added").size(LabelSize::Small)),
-                    )
-                }),
-        )
+        Some(render_thread_context_entry(
+            self.context_store.clone(),
+            thread,
+            ix,
+            selected,
+            cx,
+        ))
     }
+}
+
+pub fn render_thread_context_entry(
+    context_store: WeakModel<ContextStore>,
+    thread: &ThreadContextEntry,
+    ix: usize,
+    selected: bool,
+    cx: &mut WindowContext,
+) -> ListItem {
+    let added = context_store.upgrade().map_or(false, |ctx_store| {
+        ctx_store.read(cx).included_thread(&thread.id).is_some()
+    });
+
+    ListItem::new(ix)
+        .inset(true)
+        .toggle_state(selected)
+        .child(Icon::new(IconName::MessageCircle).size(IconSize::Small))
+        .child(Label::new(thread.summary.clone()))
+        .when(added, |el| {
+            el.end_slot(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::Check)
+                            .size(IconSize::Small)
+                            .color(Color::Success),
+                    )
+                    .child(Label::new("Added").size(LabelSize::Small)),
+            )
+        })
 }

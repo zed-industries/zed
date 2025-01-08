@@ -3,13 +3,16 @@ mod fetch_context_picker;
 mod file_context_picker;
 mod thread_context_picker;
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use file_context_picker::render_file_context_entry;
 use gpui::{
     AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, SharedString, Task, View,
     WeakModel, WeakView,
 };
 use picker::{Picker, PickerDelegate};
+use thread_context_picker::{render_thread_context_entry, ThreadContextEntry};
 use ui::{prelude::*, ListItem, ListItemSpacing};
 use util::ResultExt;
 use workspace::Workspace;
@@ -20,6 +23,7 @@ use crate::context_picker::fetch_context_picker::FetchContextPicker;
 use crate::context_picker::file_context_picker::FileContextPicker;
 use crate::context_picker::thread_context_picker::ThreadContextPicker;
 use crate::context_store::ContextStore;
+use crate::thread::ThreadId;
 use crate::thread_store::ThreadStore;
 
 #[derive(Debug, Clone, Copy)]
@@ -52,22 +56,22 @@ impl ContextPicker {
     ) -> Self {
         let mut recent = Vec::new();
         // TODO az
-        recent.push(RecentContextPickerEntry {
-            name: "Recent File 1".into(),
-            kind: ContextKind::File,
+        recent.push(RecentContextPickerEntry::File {
+            path: PathBuf::from("src/ui/index.tsx").into(),
+            path_prefix: "zed.dev".into(),
         });
-        recent.push(RecentContextPickerEntry {
-            name: "Recent File 2".into(),
-            kind: ContextKind::File,
+        recent.push(RecentContextPickerEntry::File {
+            path: PathBuf::from("path/to/recent/file2").into(),
+            path_prefix: "zed.dev".into(),
         });
-        recent.push(RecentContextPickerEntry {
-            name: "Recent Thread 1".into(),
-            kind: ContextKind::Thread,
-        });
-        recent.push(RecentContextPickerEntry {
-            name: "Recent Thread 2".into(),
-            kind: ContextKind::Thread,
-        });
+        recent.push(RecentContextPickerEntry::Thread(ThreadContextEntry {
+            id: ThreadId::new(),
+            summary: "Recent Thread 1".into(),
+        }));
+        recent.push(RecentContextPickerEntry::Thread(ThreadContextEntry {
+            id: ThreadId::new(),
+            summary: "Recent Thread 2".into(),
+        }));
 
         let mut kinds = Vec::new();
         kinds.push(ContextPickerEntry {
@@ -153,10 +157,12 @@ struct ContextPickerEntry {
     kind: ContextKind,
 }
 
-struct RecentContextPickerEntry {
-    name: SharedString,
-    // TODO az considering refining
-    kind: ContextKind,
+enum RecentContextPickerEntry {
+    File {
+        path: Arc<Path>,
+        path_prefix: Arc<str>,
+    },
+    Thread(ThreadContextEntry),
 }
 
 pub(crate) struct ContextPickerDelegate {
@@ -283,24 +289,30 @@ impl PickerDelegate for ContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         if ix < self.recent.len() {
             let entry = &self.recent[ix];
-            Some(
-                ListItem::new(ix)
-                    .inset(true)
-                    .spacing(ListItemSpacing::Dense)
-                    .toggle_state(selected)
-                    .child(
-                        h_flex()
-                            .min_w(px(250.))
-                            .max_w(px(400.))
-                            .gap_2()
-                            .child(Icon::new(entry.kind.icon()).size(IconSize::Small))
-                            .child(Label::new(entry.name.clone()).single_line()),
-                    ),
-            )
+
+            match entry {
+                RecentContextPickerEntry::File { path, path_prefix } => {
+                    Some(render_file_context_entry(
+                        self.context_store.clone(),
+                        path,
+                        path_prefix,
+                        ix,
+                        selected,
+                        cx,
+                    ))
+                }
+                RecentContextPickerEntry::Thread(thread) => Some(render_thread_context_entry(
+                    self.context_store.clone(),
+                    thread,
+                    ix,
+                    selected,
+                    cx,
+                )),
+            }
         } else {
             let entry = &self.kinds[ix - self.recent.len()];
             Some(
