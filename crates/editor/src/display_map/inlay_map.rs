@@ -33,7 +33,7 @@ enum Transform {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Inlay {
+pub struct Inlay {
     pub(crate) id: InlayId,
     pub position: Anchor,
     pub text: text::Rope,
