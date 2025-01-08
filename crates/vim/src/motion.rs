@@ -1206,6 +1206,7 @@ fn up_down_buffer_rows(
     times: isize,
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
+    let bias = if times < 0 { Bias::Left } else { Bias::Right };
     let start = map.display_point_to_fold_point(point, Bias::Left);
     let begin_folded_line = map.fold_point_to_display_point(
         map.fold_snapshot
@@ -1229,14 +1230,14 @@ fn up_down_buffer_rows(
 
     let mut begin_folded_line = map.fold_point_to_display_point(
         map.fold_snapshot
-            .clip_point(FoldPoint::new(new_row, 0), Bias::Left),
+            .clip_point(FoldPoint::new(new_row, 0), bias),
     );
 
     let mut i = 0;
     while i < goal_wrap && begin_folded_line.row() < map.max_point().row() {
         let next_folded_line = DisplayPoint::new(begin_folded_line.row().next_row(), 0);
         if map
-            .display_point_to_fold_point(next_folded_line, Bias::Right)
+            .display_point_to_fold_point(next_folded_line, bias)
             .row()
             == new_row
         {
@@ -1254,10 +1255,7 @@ fn up_down_buffer_rows(
     };
 
     (
-        map.clip_point(
-            DisplayPoint::new(begin_folded_line.row(), new_col),
-            Bias::Left,
-        ),
+        map.clip_point(DisplayPoint::new(begin_folded_line.row(), new_col), bias),
         goal,
     )
 }
@@ -2484,7 +2482,11 @@ fn section_motion(
 #[cfg(test)]
 mod test {
 
-    use crate::test::NeovimBackedTestContext;
+    use crate::{
+        state::Mode,
+        test::{NeovimBackedTestContext, VimTestContext},
+    };
+    use editor::display_map::Inlay;
     use indoc::indoc;
 
     #[gpui::test]
@@ -3145,5 +3147,36 @@ mod test {
               return
             }ˇ»
         "});
+    }
+
+    #[gpui::test]
+    async fn test_clipping_with_inlay_hints(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+            struct Foo {
+            ˇ
+            }
+        "},
+            Mode::Normal,
+        );
+
+        cx.update_editor(|editor, cx| {
+            let range = editor.selections.newest_anchor().range();
+            let inlay_text = "  field: int,\n  field2: string\n  field3: float";
+            let inlay = Inlay::inline_completion(1, range.start, inlay_text);
+            editor.splice_inlays(vec![], vec![inlay], cx);
+        });
+
+        cx.simulate_keystrokes("j");
+        cx.assert_state(
+            indoc! {"
+            struct Foo {
+
+            ˇ}
+        "},
+            Mode::Normal,
+        );
     }
 }
