@@ -671,29 +671,24 @@ impl Element for MarkdownElement {
                         builder.modify_current_div(|el| {
                             let id =
                                 ElementId::NamedInteger("copy-markdown-code".into(), range.end);
-                            let copy_button = div()
-                                .font_ui(cx)
-                                .w_6()
-                                .absolute()
-                                .top_2()
-                                .right_2()
-                                .elevation_2(cx)
-                                .child(
-                                    IconButton::new(id, IconName::Copy)
-                                        .on_click({
-                                            let code = without_fences(
-                                                parsed_markdown.source()[range.clone()].trim(),
-                                            )
-                                            .to_string();
+                            let copy_button = div().absolute().top_1().right_1().w_5().child(
+                                IconButton::new(id, IconName::Copy)
+                                    .icon_color(Color::Muted)
+                                    .shape(ui::IconButtonShape::Square)
+                                    .tooltip(|cx| Tooltip::text("Copy Code Block", cx))
+                                    .on_click({
+                                        let code = without_fences(
+                                            parsed_markdown.source()[range.clone()].trim(),
+                                        )
+                                        .to_string();
 
-                                            move |_, cx| {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    code.clone(),
-                                                ))
-                                            }
-                                        })
-                                        .tooltip(|cx| Tooltip::text("Copy", cx)),
-                                );
+                                        move |_, cx| {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                code.clone(),
+                                            ))
+                                        }
+                                    }),
+                            );
 
                             el.child(copy_button)
                         });
