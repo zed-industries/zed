@@ -19,10 +19,10 @@ use std::{
     time::Duration,
 };
 
-#[cfg(debug_assertions)]
+#[cfg(any(test, feature = "test-support"))]
 const DAP_REQUEST_TIMEOUT: Duration = Duration::from_secs(2);
 
-#[cfg(not(debug_assertions))]
+#[cfg(not(any(test, feature = "test-support")))]
 const DAP_REQUEST_TIMEOUT: Duration = Duration::from_secs(12);
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
