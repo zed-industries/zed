@@ -7,6 +7,7 @@ pub struct CreateBillingSubscriptionParams {
     pub billing_customer_id: BillingCustomerId,
     pub stripe_subscription_id: String,
     pub stripe_subscription_status: StripeSubscriptionStatus,
+    pub stripe_cancellation_reason: Option<StripeCancellationReason>,
 }
 
 #[derive(Debug, Default)]
@@ -29,6 +30,7 @@ impl Database {
                 billing_customer_id: ActiveValue::set(params.billing_customer_id),
                 stripe_subscription_id: ActiveValue::set(params.stripe_subscription_id.clone()),
                 stripe_subscription_status: ActiveValue::set(params.stripe_subscription_status),
+                stripe_cancellation_reason: ActiveValue::set(params.stripe_cancellation_reason),
                 ..Default::default()
             })
             .exec_without_returning(&*tx)
@@ -160,6 +162,42 @@ impl Database {
                         billing_subscription::Column::StripeSubscriptionStatus
                             .eq(StripeSubscriptionStatus::Active),
                     ),
+                )
+                .count(&*tx)
+                .await?;
+
+            Ok(count as usize)
+        })
+        .await
+    }
+
+    /// Returns whether the user has any overdue billing subscriptions.
+    pub async fn has_overdue_billing_subscriptions(&self, user_id: UserId) -> Result<bool> {
+        Ok(self.count_overdue_billing_subscriptions(user_id).await? > 0)
+    }
+
+    /// Returns the count of the overdue billing subscriptions for the user with the specified ID.
+    ///
+    /// This includes subscriptions:
+    /// - Whose status is `past_due`
+    /// - Whose status is `canceled` and the cancellation reason is `payment_failed`
+    pub async fn count_overdue_billing_subscriptions(&self, user_id: UserId) -> Result<usize> {
+        self.transaction(|tx| async move {
+            let past_due = billing_subscription::Column::StripeSubscriptionStatus
+                .eq(StripeSubscriptionStatus::PastDue);
+            let payment_failed = billing_subscription::Column::StripeSubscriptionStatus
+                .eq(StripeSubscriptionStatus::Canceled)
+                .and(
+                    billing_subscription::Column::StripeCancellationReason
+                        .eq(StripeCancellationReason::PaymentFailed),
+                );
+
+            let count = billing_subscription::Entity::find()
+                .inner_join(billing_customer::Entity)
+                .filter(
+                    billing_customer::Column::UserId
+                        .eq(user_id)
+                        .and(past_due.or(payment_failed)),
                 )
                 .count(&*tx)
                 .await?;
