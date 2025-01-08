@@ -38,8 +38,9 @@ pub unsafe fn new_renderer(
     _native_view: *mut c_void,
     _bounds: crate::Size<f32>,
     _transparent: bool,
+    sample_count: u32,
 ) -> Renderer {
-    MetalRenderer::new(context)
+    MetalRenderer::new(context, sample_count)
 }
 
 pub(crate) struct InstanceBufferPool {
@@ -108,7 +109,7 @@ pub(crate) struct MetalRenderer {
 }
 
 impl MetalRenderer {
-    pub fn new(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>) -> Self {
+    pub fn new(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>, sample_count: u32) -> Self {
         // Prefer low‐power integrated GPUs on Intel Mac. On Apple
         // Silicon, there is only ever one GPU, so this is equivalent to
         // `metal::Device::system_default()`.
@@ -170,6 +171,7 @@ impl MetalRenderer {
             "path_rasterization_vertex",
             "path_rasterization_fragment",
             MTLPixelFormat::R16Float,
+            sample_count,
         );
         let path_sprites_pipeline_state = build_pipeline_state(
             &device,
@@ -229,7 +231,7 @@ impl MetalRenderer {
         );
 
         let command_queue = device.new_command_queue();
-        let sprite_atlas = Arc::new(MetalAtlas::new(device.clone()));
+        let sprite_atlas = Arc::new(MetalAtlas::new(device.clone(), sample_count));
         let core_video_texture_cache =
             unsafe { CVMetalTextureCache::new(device.as_ptr()).unwrap() };
 
@@ -531,9 +533,19 @@ impl MetalRenderer {
                 .unwrap();
 
             let texture = self.sprite_atlas.metal_texture(texture_id);
-            color_attachment.set_texture(Some(&texture));
-            color_attachment.set_load_action(metal::MTLLoadAction::Clear);
-            color_attachment.set_store_action(metal::MTLStoreAction::Store);
+            let msaa_texture = self.sprite_atlas.msaa_texture(texture_id);
+
+            if let Some(msaa_texture) = msaa_texture {
+                color_attachment.set_texture(Some(&msaa_texture));
+                color_attachment.set_resolve_texture(Some(&texture));
+                color_attachment.set_load_action(metal::MTLLoadAction::Clear);
+                color_attachment.set_store_action(metal::MTLStoreAction::MultisampleResolve);
+                color_attachment.set_resolve_level(0);
+            } else {
+                color_attachment.set_texture(Some(&texture));
+                color_attachment.set_load_action(metal::MTLLoadAction::Clear);
+                color_attachment.set_store_action(metal::MTLStoreAction::Store);
+            }
             color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., 1.));
             let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
             command_encoder.set_render_pipeline_state(&self.paths_rasterization_pipeline_state);
@@ -1160,6 +1172,7 @@ fn build_path_rasterization_pipeline_state(
     vertex_fn_name: &str,
     fragment_fn_name: &str,
     pixel_format: metal::MTLPixelFormat,
+    sample_count: u32,
 ) -> metal::RenderPipelineState {
     let vertex_fn = library
         .get_function(vertex_fn_name, None)
@@ -1172,6 +1185,10 @@ fn build_path_rasterization_pipeline_state(
     descriptor.set_label(label);
     descriptor.set_vertex_function(Some(vertex_fn.as_ref()));
     descriptor.set_fragment_function(Some(fragment_fn.as_ref()));
+    if sample_count > 1 {
+        descriptor.set_raster_sample_count(sample_count as _);
+        descriptor.set_alpha_to_coverage_enabled(true);
+    }
     let color_attachment = descriptor.color_attachments().object_at(0).unwrap();
     color_attachment.set_pixel_format(pixel_format);
     color_attachment.set_blending_enabled(true);
