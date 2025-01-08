@@ -598,9 +598,13 @@ impl Fs for RealFs {
             }
         };
 
-        let path_exists = path
-            .try_exists()
-            .with_context(|| format!("checking existence for path {path:?}"))?;
+        let path_buf = path.to_path_buf();
+        let path_exists = smol::unblock(move || {
+            path_buf
+                .try_exists()
+                .with_context(|| format!("checking existence for path {path_buf:?}"))
+        })
+        .await?;
         let is_symlink = symlink_metadata.file_type().is_symlink();
         let metadata = match (is_symlink, path_exists) {
             (true, true) => smol::fs::metadata(path)
