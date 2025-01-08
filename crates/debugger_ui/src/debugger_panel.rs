@@ -436,6 +436,7 @@ impl DebugPanel {
                         args,
                         envs,
                         cwd: PathBuf::from(request_args.cwd),
+                        title: request_args.title,
                     },
                     task::RevealStrategy::Always,
                     cx,

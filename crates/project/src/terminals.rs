@@ -41,6 +41,7 @@ pub enum TerminalKind {
         args: Vec<String>,
         envs: HashMap<String, String>,
         cwd: PathBuf,
+        title: Option<String>,
     },
 }
 
@@ -280,6 +281,7 @@ impl Project {
                 command,
                 args,
                 envs,
+                title,
                 ..
             } => {
                 env.extend(envs);
@@ -288,7 +290,7 @@ impl Project {
                     Shell::WithArguments {
                         program,
                         args,
-                        title_override: Some("debugger".into()),
+                        title_override: Some(title.unwrap_or("Debug Terminal".into()).into()),
                     }
                 } else {
                     settings.shell.clone()
