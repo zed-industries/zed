@@ -2,9 +2,19 @@ use crate::repository::{GitFileStatus, RepoPath};
 use anyhow::{anyhow, Result};
 use std::{path::Path, process::Stdio, sync::Arc};
 
+#[derive(Clone, Debug)]
+pub struct GitStatusItem {
+    pub path: RepoPath,
+    // Not both `None`.
+    pub index_status: Option<GitFileStatus>,
+    pub worktree_status: Option<GitFileStatus>,
+}
+
+impl GitStatusItem {}
+
 #[derive(Clone)]
 pub struct GitStatus {
-    pub entries: Arc<[(RepoPath, GitFileStatus)]>,
+    pub items: Arc<[GitStatusItem]>,
 }
 
 impl GitStatus {
@@ -44,45 +54,38 @@ impl GitStatus {
             return Err(anyhow!("git status process failed: {}", stderr));
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut entries = stdout
+        let mut items = stdout
             .split('\0')
             .filter_map(|entry| {
-                if entry.is_char_boundary(3) {
-                    let (status, path) = entry.split_at(3);
-                    let status = status.trim();
-                    Some((
-                        RepoPath(Path::new(path).into()),
-                        match status {
-                            "A" => GitFileStatus::Added,
-                            "M" => GitFileStatus::Modified,
-                            "D" => GitFileStatus::Deleted,
-                            "??" => GitFileStatus::Untracked,
-                            _ => return None,
-                        },
-                    ))
-                } else {
-                    None
+                if !entry.is_char_boundary(3) {
+                    return None;
                 }
+                let (status, path) = entry.split_at(3);
+                let status = status.trim_end().as_bytes();
+                let index_status = GitFileStatus::from_byte(status.get(0).copied()?);
+                let worktree_status = GitFileStatus::from_byte(status.get(1).copied()?);
+                if (index_status, worktree_status) == (None, None) {
+                    return None;
+                }
+                let path = RepoPath(Path::new(path).into());
+                Some(GitStatusItem {
+                    path,
+                    index_status,
+                    worktree_status,
+                })
             })
             .collect::<Vec<_>>();
-        entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        items.sort_unstable_by(|a, b| a.path.cmp(&b.path));
         Ok(Self {
-            entries: entries.into(),
+            items: items.into(),
         })
-    }
-
-    pub fn get(&self, path: &Path) -> Option<GitFileStatus> {
-        self.entries
-            .binary_search_by(|(repo_path, _)| repo_path.0.as_ref().cmp(path))
-            .ok()
-            .map(|index| self.entries[index].1)
     }
 }
 
 impl Default for GitStatus {
     fn default() -> Self {
         Self {
-            entries: Arc::new([]),
+            items: Arc::new([]),
         }
     }
 }

@@ -18,11 +18,11 @@ use futures::{
     FutureExt as _, Stream, StreamExt,
 };
 use fuzzy::CharBag;
-use git::GitHostingProviderRegistry;
 use git::{
     repository::{GitFileStatus, GitRepository, RepoPath},
     COOKIES, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE,
 };
+use git::{status::GitStatusItem, GitHostingProviderRegistry};
 use gpui::{
     AppContext, AsyncAppContext, BackgroundExecutor, Context, EventEmitter, Model, ModelContext,
     Task,
@@ -234,7 +234,7 @@ impl RepositoryEntry {
                 .iter()
                 .map(|entry| proto::StatusEntry {
                     repo_path: entry.repo_path.to_string_lossy().to_string(),
-                    status: git_status_to_proto(entry.status),
+                    status: git_status_to_proto(entry.combined_status_bad()),
                 })
                 .collect(),
             removed_statuses: Default::default(),
@@ -259,7 +259,7 @@ impl RepositoryEntry {
                             current_new_entry = new_statuses.next();
                         }
                         Ordering::Equal => {
-                            if new_entry.status != old_entry.status {
+                            if new_entry.combined_status_bad() != old_entry.combined_status_bad() {
                                 updated_statuses.push(new_entry.to_proto());
                             }
                             current_old_entry = old_statuses.next();
@@ -2360,7 +2360,7 @@ impl Snapshot {
             let repo_path = repo.relativize(path).unwrap();
             repo.statuses_by_path
                 .get(&PathKey(repo_path.0), &())
-                .map(|entry| entry.status)
+                .map(|entry| entry.combined_status_bad())
         })
     }
 
@@ -3623,17 +3623,36 @@ pub struct GitRepositoryChange {
 pub type UpdatedEntriesSet = Arc<[(Arc<Path>, ProjectEntryId, PathChange)]>;
 pub type UpdatedGitRepositoriesSet = Arc<[(Arc<Path>, GitRepositoryChange)]>;
 
+// TODO figure out how to remove the redundancy with git::GitStatusItem
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatusEntry {
     pub repo_path: RepoPath,
-    pub status: GitFileStatus,
+    pub index_status: Option<GitFileStatus>,
+    pub worktree_status: Option<GitFileStatus>,
+}
+
+impl From<GitStatusItem> for StatusEntry {
+    fn from(item: GitStatusItem) -> Self {
+        StatusEntry {
+            repo_path: item.path.clone(),
+            index_status: item.index_status,
+            worktree_status: item.worktree_status,
+        }
+    }
+}
+
+impl StatusEntry {
+    // FIXME this is wrong
+    pub fn combined_status_bad(&self) -> GitFileStatus {
+        self.worktree_status.or(self.index_status).unwrap()
+    }
 }
 
 impl StatusEntry {
     fn to_proto(&self) -> proto::StatusEntry {
         proto::StatusEntry {
             repo_path: self.repo_path.to_proto(),
-            status: git_status_to_proto(self.status),
+            status: git_status_to_proto(self.combined_status_bad()),
         }
     }
 }
@@ -3643,8 +3662,12 @@ impl TryFrom<proto::StatusEntry> for StatusEntry {
     fn try_from(value: proto::StatusEntry) -> Result<Self, Self::Error> {
         Ok(Self {
             repo_path: RepoPath(Path::new(&value.repo_path).into()),
-            status: git_status_from_proto(Some(value.status))
-                .ok_or_else(|| anyhow!("Unable to parse status value {}", value.status))?,
+            // FIXME this is wrong
+            index_status: None,
+            worktree_status: Some(
+                git_status_from_proto(Some(value.status))
+                    .ok_or_else(|| anyhow!("Unable to parse status value {}", value.status))?,
+            ),
         })
     }
 }
@@ -3729,7 +3752,7 @@ impl sum_tree::Item for StatusEntry {
     fn summary(&self, _: &<Self::Summary as Summary>::Context) -> Self::Summary {
         PathSummary {
             max_path: self.repo_path.0.clone(),
-            item_summary: match self.status {
+            item_summary: match self.combined_status_bad() {
                 GitFileStatus::Added => GitStatuses {
                     added: 1,
                     ..Default::default()
@@ -4818,18 +4841,15 @@ impl BackgroundScanner {
                 let statuses = paths.entry.statuses_by_path.clone();
                 let mut cursor = statuses.cursor::<PathProgress>(&());
 
-                for (repo_path, status) in &*status.entries {
-                    paths.remove_repo_path(repo_path);
-                    if cursor.seek_forward(&PathTarget::Path(&repo_path), Bias::Left, &()) {
-                        if cursor.item().unwrap().status == *status {
+                for item in &*status.items {
+                    paths.remove_repo_path(&item.path);
+                    if cursor.seek_forward(&PathTarget::Path(&item.path), Bias::Left, &()) {
+                        if cursor.item().unwrap() == &StatusEntry::from(item.clone()) {
                             continue;
                         }
                     }
 
-                    changed_path_statuses.push(Edit::Insert(StatusEntry {
-                        repo_path: repo_path.clone(),
-                        status: *status,
-                    }));
+                    changed_path_statuses.push(Edit::Insert(item.clone().into()));
                 }
 
                 let mut cursor = statuses.cursor::<PathProgress>(&());
@@ -5251,16 +5271,10 @@ impl BackgroundScanner {
         };
 
         let mut new_entries_by_path = SumTree::new(&());
-        for (repo_path, status) in statuses.entries.iter() {
-            let project_path = repository.work_directory.unrelativize(repo_path);
+        for item in statuses.items.iter() {
+            let project_path = repository.work_directory.unrelativize(&item.path);
 
-            new_entries_by_path.insert_or_replace(
-                StatusEntry {
-                    repo_path: repo_path.clone(),
-                    status: *status,
-                },
-                &(),
-            );
+            new_entries_by_path.insert_or_replace(item.clone().into(), &());
 
             if let Some(path) = project_path {
                 changed_paths.push(path);
@@ -5771,7 +5785,7 @@ impl<'a> GitTraversal<'a> {
         } else if entry.is_file() {
             // For a file entry, park the cursor on the corresponding status
             if statuses.seek_forward(&PathTarget::Path(repo_path.as_ref()), Bias::Left, &()) {
-                self.current_entry_status = Some(statuses.item().unwrap().status);
+                self.current_entry_status = Some(statuses.item().unwrap().combined_status_bad());
             }
         }
     }
