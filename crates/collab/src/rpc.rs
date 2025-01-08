@@ -417,12 +417,10 @@ impl Server {
             .add_message_handler(
                 broadcast_project_message_from_host::<proto::RemoveActiveDebugLine>,
             )
-            .add_message_handler(broadcast_project_message_from_host::<proto::SetDebuggerPanelItem>)
-            .add_message_handler(broadcast_project_message_from_host::<proto::UpdateDebugAdapter>)
-            .add_message_handler(
-                broadcast_project_message_from_host::<proto::SetDebugClientCapabilities>,
-            )
-            .add_message_handler(broadcast_project_message_from_host::<proto::ShutdownDebugClient>);
+            .add_message_handler(set_debug_client_panel_item)
+            .add_message_handler(update_debug_adapter)
+            .add_message_handler(update_debug_client_capabilities)
+            .add_message_handler(shutdown_debug_client);
 
         Arc::new(server)
     }
@@ -1883,6 +1881,7 @@ fn join_project_internal(
         language_servers: project.language_servers.clone(),
         role: project.role.into(),
         breakpoints,
+        debug_sessions: project.debug_sessions.clone(), // Todo(Debugger) Figure out how to avoid cloning
     })?;
 
     for (worktree_id, worktree) in mem::take(&mut project.worktrees) {
@@ -2069,7 +2068,7 @@ async fn update_worktree_settings(
     Ok(())
 }
 
-/// Notify other participants that a  language server has started.
+/// Notify other participants that a language server has started.
 async fn start_language_server(
     request: proto::StartLanguageServer,
     session: Session,
@@ -2106,6 +2105,95 @@ async fn update_language_server(
     broadcast(
         Some(session.connection_id),
         project_connection_ids.iter().copied(),
+        |connection_id| {
+            session
+                .peer
+                .forward_send(session.connection_id, connection_id, request.clone())
+        },
+    );
+    Ok(())
+}
+
+/// Notify other participants that a debug client has shutdown
+async fn shutdown_debug_client(
+    request: proto::ShutdownDebugClient,
+    session: Session,
+) -> Result<()> {
+    let guest_connection_ids = session
+        .db()
+        .await
+        .shutdown_debug_client(session.connection_id, &request)
+        .await?;
+
+    broadcast(
+        Some(session.connection_id),
+        guest_connection_ids.iter().copied(),
+        |connection_id| {
+            session
+                .peer
+                .forward_send(session.connection_id, connection_id, request.clone())
+        },
+    );
+    Ok(())
+}
+
+/// Notify other participants that a debug panel item has been updated
+async fn update_debug_adapter(request: proto::UpdateDebugAdapter, session: Session) -> Result<()> {
+    let guest_connection_ids = session
+        .db()
+        .await
+        .update_debug_adapter(session.connection_id, &request)
+        .await?;
+
+    broadcast(
+        Some(session.connection_id),
+        guest_connection_ids.iter().copied(),
+        |connection_id| {
+            session
+                .peer
+                .forward_send(session.connection_id, connection_id, request.clone())
+        },
+    );
+    Ok(())
+}
+
+/// Notify other participants that there's a new debug panel item
+async fn set_debug_client_panel_item(
+    request: proto::SetDebuggerPanelItem,
+    session: Session,
+) -> Result<()> {
+    let guest_connection_ids = session
+        .db()
+        .await
+        .set_debug_client_panel_item(session.connection_id, &request)
+        .await?;
+
+    broadcast(
+        Some(session.connection_id),
+        guest_connection_ids.iter().copied(),
+        |connection_id| {
+            session
+                .peer
+                .forward_send(session.connection_id, connection_id, request.clone())
+        },
+    );
+    Ok(())
+}
+
+/// Notify other participants that a debug client's capabilities has been created or updated
+async fn update_debug_client_capabilities(
+    request: proto::SetDebugClientCapabilities,
+    session: Session,
+) -> Result<()> {
+    let guest_connection_ids = session
+        .db()
+        .await
+        .update_debug_client_capabilities(session.connection_id, &request)
+        .await?;
+
+    broadcast(
+        Some(session.connection_id),
+        guest_connection_ids.iter().copied(),
         |connection_id| {
             session
                 .peer

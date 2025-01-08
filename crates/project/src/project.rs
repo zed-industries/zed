@@ -1013,6 +1013,7 @@ impl Project {
             let mut dap_store = DapStore::new_remote(remote_id, client.clone().into(), cx);
 
             dap_store.set_breakpoints_from_proto(response.payload.breakpoints, cx);
+            dap_store.set_debug_sessions_from_proto(response.payload.debug_sessions, cx);
             dap_store
         })?;
 

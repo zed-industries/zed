@@ -572,6 +572,7 @@ message JoinProjectResponse {
     ChannelRole role = 6;
     reserved 7;
     repeated SynchronizeBreakpoints breakpoints = 8;
+    repeated DebuggerSession debug_sessions = 9;
 }
 
 message LeaveProject {
@@ -2423,6 +2424,19 @@ enum BreakpointKind {
     Log = 1;
 }
 
+message DebuggerSession {
+    uint64 session_id = 1;
+    uint64 project_id = 2;
+    repeated DebugClient clients = 3;
+}
+
+message DebugClient {
+    uint64 client_id = 1;
+    SetDebugClientCapabilities capabilities = 2;
+    SetActiveDebugLine active_debug_line = 3;
+    repeated SetDebuggerPanelItem debug_panel_items = 4;
+}
+
 message ShutdownDebugClient {
     uint64 session_id = 1;
     uint64 client_id = 2;
@@ -2624,11 +2638,12 @@ message UpdateDebugAdapter {
     uint64 project_id = 1;
     uint64 client_id = 2;
     optional uint64 thread_id = 3;
+    uint64 session_id = 4;
     oneof variant {
-        DebuggerThreadState thread_state = 4;
-        DebuggerStackFrameList stack_frame_list = 5;
-        DebuggerVariableList variable_list = 6;
-        DebuggerModuleList modules = 7;
+        DebuggerThreadState thread_state = 5;
+        DebuggerStackFrameList stack_frame_list = 6;
+        DebuggerVariableList variable_list = 7;
+        DebuggerModuleList modules = 8;
     }
 }
 

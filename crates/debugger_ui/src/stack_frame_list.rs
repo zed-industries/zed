@@ -3,6 +3,7 @@ use std::path::Path;
 use anyhow::{anyhow, Result};
 use dap::client::DebugAdapterClientId;
 use dap::proto_conversions::ProtoConversion;
+use dap::session::DebugSessionId;
 use dap::StackFrame;
 use gpui::{
     list, AnyElement, EventEmitter, FocusHandle, ListState, Subscription, Task, View, WeakView,
@@ -34,6 +35,7 @@ pub struct StackFrameList {
     stack_frames: Vec<StackFrame>,
     workspace: WeakView<Workspace>,
     client_id: DebugAdapterClientId,
+    session_id: DebugSessionId,
     _subscriptions: Vec<Subscription>,
     fetch_stack_frames_task: Option<Task<Result<()>>>,
 }
@@ -44,6 +46,7 @@ impl StackFrameList {
         debug_panel_item: &View<DebugPanelItem>,
         dap_store: &Model<DapStore>,
         client_id: &DebugAdapterClientId,
+        session_id: &DebugSessionId,
         thread_id: u64,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -66,6 +69,7 @@ impl StackFrameList {
             focus_handle,
             _subscriptions,
             client_id: *client_id,
+            session_id: *session_id,
             workspace: workspace.clone(),
             dap_store: dap_store.clone(),
             fetch_stack_frames_task: None,
@@ -173,6 +177,7 @@ impl StackFrameList {
         if let Some((client, id)) = self.dap_store.read(cx).downstream_client() {
             let request = UpdateDebugAdapter {
                 client_id: self.client_id.to_proto(),
+                session_id: self.session_id.to_proto(),
                 project_id: *id,
                 thread_id: Some(self.thread_id),
                 variant: Some(rpc::proto::update_debug_adapter::Variant::StackFrameList(

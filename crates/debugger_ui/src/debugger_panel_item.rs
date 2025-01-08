@@ -102,13 +102,23 @@ impl DebugPanelItem {
 
         let this = cx.view().clone();
         let stack_frame_list = cx.new_view(|cx| {
-            StackFrameList::new(&workspace, &this, &dap_store, client_id, thread_id, cx)
+            StackFrameList::new(
+                &workspace, &this, &dap_store, client_id, session_id, thread_id, cx,
+            )
         });
 
-        let variable_list = cx
-            .new_view(|cx| VariableList::new(&stack_frame_list, dap_store.clone(), &client_id, cx));
+        let variable_list = cx.new_view(|cx| {
+            VariableList::new(
+                &stack_frame_list,
+                dap_store.clone(),
+                &client_id,
+                session_id,
+                cx,
+            )
+        });
 
-        let module_list = cx.new_view(|cx| ModuleList::new(dap_store.clone(), &client_id, cx));
+        let module_list =
+            cx.new_view(|cx| ModuleList::new(dap_store.clone(), &client_id, &session_id, cx));
 
         let loaded_source_list =
             cx.new_view(|cx| LoadedSourceList::new(&this, dap_store.clone(), &client_id, cx));

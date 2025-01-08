@@ -1,8 +1,8 @@
 use crate::stack_frame_list::{StackFrameList, StackFrameListEvent};
 use anyhow::{anyhow, Result};
 use dap::{
-    client::DebugAdapterClientId, proto_conversions::ProtoConversion, Scope, ScopePresentationHint,
-    Variable,
+    client::DebugAdapterClientId, proto_conversions::ProtoConversion, session::DebugSessionId,
+    Scope, ScopePresentationHint, Variable,
 };
 use editor::{
     actions::{self, SelectAll},
@@ -366,6 +366,7 @@ pub struct VariableList {
     dap_store: Model<DapStore>,
     open_entries: Vec<OpenEntry>,
     client_id: DebugAdapterClientId,
+    session_id: DebugSessionId,
     scopes: HashMap<StackFrameId, Vec<Scope>>,
     set_variable_editor: View<Editor>,
     _subscriptions: Vec<Subscription>,
@@ -382,6 +383,7 @@ impl VariableList {
         stack_frame_list: &View<StackFrameList>,
         dap_store: Model<DapStore>,
         client_id: &DebugAdapterClientId,
+        session_id: &DebugSessionId,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let weakview = cx.view().downgrade();
@@ -416,6 +418,7 @@ impl VariableList {
             _subscriptions,
             set_variable_editor,
             client_id: *client_id,
+            session_id: *session_id,
             open_context_menu: None,
             set_variable_state: None,
             fetch_variables_task: None,
@@ -775,6 +778,7 @@ impl VariableList {
         if let Some((client, project_id)) = self.dap_store.read(cx).downstream_client() {
             let request = UpdateDebugAdapter {
                 client_id: self.client_id.to_proto(),
+                session_id: self.session_id.to_proto(),
                 thread_id: Some(self.stack_frame_list.read(cx).thread_id()),
                 project_id: *project_id,
                 variant: Some(rpc::proto::update_debug_adapter::Variant::VariableList(

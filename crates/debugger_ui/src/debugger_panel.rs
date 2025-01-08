@@ -202,7 +202,9 @@ impl DebugPanel {
                 }),
             ];
 
-            Self {
+            let dap_store = project.read(cx).dap_store();
+
+            let mut debug_panel = Self {
                 pane,
                 size: px(300.),
                 _subscriptions,
@@ -211,8 +213,20 @@ impl DebugPanel {
                 thread_states: Default::default(),
                 message_queue: Default::default(),
                 workspace: workspace.weak_handle(),
-                dap_store: project.read(cx).dap_store(),
+                dap_store: dap_store.clone(),
+            };
+
+            if let Some(mut dap_event_queue) = debug_panel
+                .dap_store
+                .clone()
+                .update(cx, |this, _| this.remote_event_queue())
+            {
+                while let Some(dap_event) = dap_event_queue.pop_front() {
+                    debug_panel.on_dap_store_event(debug_panel.dap_store.clone(), &dap_event, cx);
+                }
             }
+
+            debug_panel
         })
     }
 
@@ -878,7 +892,6 @@ impl DebugPanel {
         event: &project::dap_store::DapStoreEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        //handle the even
         match event {
             project::dap_store::DapStoreEvent::SetDebugPanelItem(set_debug_panel_item) => {
                 self.handle_set_debug_panel_item(set_debug_panel_item, cx);

@@ -738,6 +738,7 @@ pub struct Project {
     pub worktrees: BTreeMap<u64, Worktree>,
     pub language_servers: Vec<proto::LanguageServer>,
     pub breakpoints: HashMap<proto::ProjectPath, HashSet<proto::Breakpoint>>,
+    pub debug_sessions: Vec<proto::DebuggerSession>,
 }
 
 pub struct ProjectCollaborator {

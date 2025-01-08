@@ -42,6 +42,7 @@ use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use serde_json::Value;
 use settings::{Settings as _, WorktreeId};
 use smol::lock::Mutex;
+use std::collections::VecDeque;
 use std::{
     collections::{BTreeMap, HashSet},
     ffi::OsStr,
@@ -108,6 +109,7 @@ impl LocalDapStore {
 pub struct RemoteDapStore {
     upstream_client: Option<AnyProtoClient>,
     upstream_project_id: u64,
+    event_queue: Option<VecDeque<DapStoreEvent>>,
 }
 
 pub struct DapStore {
@@ -174,6 +176,7 @@ impl DapStore {
             mode: DapStoreMode::Remote(RemoteDapStore {
                 upstream_client: Some(upstream_client),
                 upstream_project_id: project_id,
+                event_queue: Some(VecDeque::default()),
             }),
             downstream_client: None,
             active_debug_line: None,
@@ -186,6 +189,14 @@ impl DapStore {
         match &self.mode {
             DapStoreMode::Remote(remote_dap_store) => Some(remote_dap_store),
             _ => None,
+        }
+    }
+
+    pub fn remote_event_queue(&mut self) -> Option<VecDeque<DapStoreEvent>> {
+        if let DapStoreMode::Remote(remote) = &mut self.mode {
+            remote.event_queue.take()
+        } else {
+            None
         }
     }
 
@@ -1489,6 +1500,38 @@ impl DapStore {
 
             client.shutdown().await
         })
+    }
+
+    pub fn set_debug_sessions_from_proto(
+        &mut self,
+        debug_sessions: Vec<proto::DebuggerSession>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        for (session_id, debug_clients) in debug_sessions
+            .into_iter()
+            .map(|session| (session.session_id, session.clients))
+        {
+            for debug_client in debug_clients {
+                if let DapStoreMode::Remote(remote) = &mut self.mode {
+                    if let Some(queue) = &mut remote.event_queue {
+                        debug_client.debug_panel_items.into_iter().for_each(|item| {
+                            queue.push_back(DapStoreEvent::SetDebugPanelItem(item));
+                        });
+                    }
+                }
+
+                self.update_capabilities_for_client(
+                    &DebugSessionId::from_proto(session_id),
+                    &DebugAdapterClientId::from_proto(debug_client.client_id),
+                    &dap::proto_conversions::capabilities_from_proto(
+                        &debug_client.capabilities.unwrap_or_default(),
+                    ),
+                    cx,
+                );
+            }
+        }
+
+        cx.notify();
     }
 
     pub fn set_breakpoints_from_proto(
