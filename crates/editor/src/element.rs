@@ -5452,7 +5452,7 @@ impl LineWithInvisibles {
                                         line_end_offset: line.len() + line_chunk.len(),
                                     });
                                 }
-                            } else {                                
+                            } else {
                                 invisibles.extend(line_chunk.char_indices().filter_map(
                                     |(index, c)| {
                                         let is_whitespace = c.is_whitespace();
@@ -5468,7 +5468,6 @@ impl LineWithInvisibles {
                                         }
                                     },
                                 ))
-                                )
                             }
                         }
 
