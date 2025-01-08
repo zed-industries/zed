@@ -54,6 +54,7 @@ pub unsafe fn new_renderer(
                 depth: 1,
             },
             transparent,
+            sample_count: 4,
         },
     )
     .unwrap()

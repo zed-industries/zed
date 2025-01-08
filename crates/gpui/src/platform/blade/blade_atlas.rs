@@ -27,6 +27,7 @@ struct BladeAtlasState {
     tiles_by_key: FxHashMap<AtlasKey, AtlasTile>,
     initializations: Vec<AtlasTextureId>,
     uploads: Vec<PendingUpload>,
+    sample_count: u32,
 }
 
 #[cfg(gles)]
@@ -42,10 +43,11 @@ impl BladeAtlasState {
 pub struct BladeTextureInfo {
     pub size: gpu::Extent,
     pub raw_view: gpu::TextureView,
+    pub msaa_view: Option<gpu::TextureView>,
 }
 
 impl BladeAtlas {
-    pub(crate) fn new(gpu: &Arc<gpu::Context>) -> Self {
+    pub(crate) fn new(gpu: &Arc<gpu::Context>, sample_count: u32) -> Self {
         BladeAtlas(Mutex::new(BladeAtlasState {
             gpu: Arc::clone(gpu),
             upload_belt: BufferBelt::new(BufferBeltDescriptor {
@@ -57,6 +59,7 @@ impl BladeAtlas {
             tiles_by_key: Default::default(),
             initializations: Vec::new(),
             uploads: Vec::new(),
+            sample_count,
         }))
     }
 
@@ -106,6 +109,7 @@ impl BladeAtlas {
                 depth: 1,
             },
             raw_view: texture.raw_view,
+            msaa_view: texture.msaa_view,
         }
     }
 }
@@ -227,6 +231,34 @@ impl BladeAtlasState {
                 subresources: &Default::default(),
             },
         );
+        let msaa_view = if self.sample_count > 1 {
+            let msaa = self.gpu.create_texture(gpu::TextureDesc {
+                name: "msaa texture",
+                format,
+                size: gpu::Extent {
+                    width: size.width.into(),
+                    height: size.height.into(),
+                    depth: 1,
+                },
+                array_layer_count: 1,
+                mip_level_count: 1,
+                sample_count: self.sample_count,
+                dimension: gpu::TextureDimension::D2,
+                usage: gpu::TextureUsage::TARGET,
+            });
+
+            Some(self.gpu.create_texture_view(
+                msaa,
+                gpu::TextureViewDesc {
+                    name: "msaa texture view",
+                    format,
+                    dimension: gpu::ViewDimension::D2,
+                    subresources: &Default::default(),
+                },
+            ))
+        } else {
+            None
+        };
 
         let texture_list = &mut self.storage[kind];
         let index = texture_list.free_list.pop();
@@ -240,6 +272,7 @@ impl BladeAtlasState {
             format,
             raw,
             raw_view,
+            msaa_view,
             live_atlas_keys: 0,
         };
 
@@ -354,6 +387,7 @@ struct BladeAtlasTexture {
     allocator: BucketedAtlasAllocator,
     raw: gpu::Texture,
     raw_view: gpu::TextureView,
+    msaa_view: Option<gpu::TextureView>,
     format: gpu::TextureFormat,
     live_atlas_keys: u32,
 }
@@ -381,6 +415,9 @@ impl BladeAtlasTexture {
     fn destroy(&mut self, gpu: &gpu::Context) {
         gpu.destroy_texture(self.raw);
         gpu.destroy_texture_view(self.raw_view);
+        if let Some(msaa_view) = self.msaa_view {
+            gpu.destroy_texture_view(msaa_view);
+        }
     }
 
     fn bytes_per_pixel(&self) -> u8 {
