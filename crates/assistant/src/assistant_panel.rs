@@ -4272,6 +4272,10 @@ impl Item for ContextEditor {
             None
         }
     }
+
+    fn include_in_nav_history() -> bool {
+        false
+    }
 }
 
 impl SearchableItem for ContextEditor {
