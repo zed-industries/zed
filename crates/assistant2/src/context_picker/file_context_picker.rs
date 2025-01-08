@@ -193,81 +193,41 @@ impl PickerDelegate for FileContextPickerDelegate {
             return;
         };
 
-        let workspace = self.workspace.clone();
-        let Some(project) = workspace
-            .upgrade()
-            .map(|workspace| workspace.read(cx).project().clone())
+        let project_path = ProjectPath {
+            worktree_id: WorktreeId::from_usize(mat.worktree_id),
+            path: mat.path.clone(),
+        };
+
+        let Some(task) = self
+            .context_store
+            .update(cx, |context_store, cx| {
+                context_store.add_file(project_path, cx)
+            })
+            .ok()
         else {
             return;
         };
-        let path = mat.path.clone();
 
-        let already_included = self
-            .context_store
-            .update(cx, |context_store, _cx| {
-                match context_store.included_file(&path) {
-                    Some(IncludedFile::Direct(context_id)) => {
-                        context_store.remove_context(&context_id);
-                        true
-                    }
-                    Some(IncludedFile::InDirectory(_)) => true,
-                    None => false,
-                }
-            })
-            .unwrap_or(true);
-        if already_included {
-            return;
-        }
-
-        let worktree_id = WorktreeId::from_usize(mat.worktree_id);
+        let workspace = self.workspace.clone();
         let confirm_behavior = self.confirm_behavior;
         cx.spawn(|this, mut cx| async move {
-            let Some(open_buffer_task) = project
-                .update(&mut cx, |project, cx| {
-                    let project_path = ProjectPath {
-                        worktree_id,
-                        path: path.clone(),
-                    };
-
-                    let task = project.open_buffer(project_path, cx);
-
-                    Some(task)
-                })
-                .ok()
-                .flatten()
-            else {
-                return anyhow::Ok(());
-            };
-
-            let result = open_buffer_task.await;
-
-            this.update(&mut cx, |this, cx| match result {
-                Ok(buffer) => {
-                    this.delegate
-                        .context_store
-                        .update(cx, |context_store, cx| {
-                            context_store.insert_file(buffer.read(cx));
-                        })?;
-
-                    match confirm_behavior {
+            match task.await {
+                Ok(()) => {
+                    this.update(&mut cx, |this, cx| match confirm_behavior {
                         ConfirmBehavior::KeepOpen => {}
                         ConfirmBehavior::Close => this.delegate.dismissed(cx),
-                    }
-
-                    anyhow::Ok(())
+                    })?;
                 }
                 Err(err) => {
                     let Some(workspace) = workspace.upgrade() else {
                         return anyhow::Ok(());
                     };
 
-                    workspace.update(cx, |workspace, cx| {
+                    workspace.update(&mut cx, |workspace, cx| {
                         workspace.show_error(&err, cx);
-                    });
-
-                    anyhow::Ok(())
+                    })?;
                 }
-            })??;
+            }
 
             anyhow::Ok(())
         })

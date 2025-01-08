@@ -1,9 +1,12 @@
 use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 
+use anyhow::{anyhow, Result};
 use collections::{HashMap, HashSet};
-use gpui::SharedString;
+use gpui::{ModelContext, SharedString, Task, WeakView};
 use language::Buffer;
+use project::ProjectPath;
+use workspace::Workspace;
 
 use crate::thread::Thread;
 use crate::{
@@ -12,6 +15,7 @@ use crate::{
 };
 
 pub struct ContextStore {
+    workspace: WeakView<Workspace>,
     context: Vec<Context>,
     next_context_id: ContextId,
     files: HashMap<PathBuf, ContextId>,
@@ -21,8 +25,9 @@ pub struct ContextStore {
 }
 
 impl ContextStore {
-    pub fn new() -> Self {
+    pub fn new(workspace: WeakView<Workspace>) -> Self {
         Self {
+            workspace,
             context: Vec::new(),
             next_context_id: ContextId(0),
             files: HashMap::default(),
@@ -42,6 +47,44 @@ impl ContextStore {
         self.directories.clear();
         self.threads.clear();
         self.fetched_urls.clear();
+    }
+
+    pub fn add_file(
+        &mut self,
+        project_path: ProjectPath,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let workspace = self.workspace.clone();
+        let Some(project) = workspace
+            .upgrade()
+            .map(|workspace| workspace.read(cx).project().clone())
+        else {
+            return Task::ready(Err(anyhow!("failed to read project")));
+        };
+
+        let already_included = match self.included_file(&project_path.path) {
+            Some(IncludedFile::Direct(context_id)) => {
+                self.remove_context(&context_id);
+                true
+            }
+            Some(IncludedFile::InDirectory(_)) => true,
+            None => false,
+        };
+        if already_included {
+            return Task::ready(Ok(()));
+        }
+
+        cx.spawn(|this, mut cx| async move {
+            let open_buffer_task =
+                project.update(&mut cx, |project, cx| project.open_buffer(project_path, cx))?;
+
+            let buffer = open_buffer_task.await?;
+            this.update(&mut cx, |this, cx| {
+                this.insert_file(buffer.read(cx));
+            })?;
+
+            anyhow::Ok(())
+        })
     }
 
     pub fn insert_file(&mut self, buffer: &Buffer) {
