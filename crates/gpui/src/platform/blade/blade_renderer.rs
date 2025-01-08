@@ -176,10 +176,7 @@ impl BladePipelines {
                 depth_stencil: None,
                 fragment: Some(shader.at("fs_quad")),
                 color_targets,
-                multisample_state: gpu::MultisampleState {
-                    sample_count,
-                    ..Default::default()
-                },
+                multisample_state: gpu::MultisampleState::default(),
             }),
             shadows: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "shadows",
@@ -193,10 +190,7 @@ impl BladePipelines {
                 depth_stencil: None,
                 fragment: Some(shader.at("fs_shadow")),
                 color_targets,
-                multisample_state: gpu::MultisampleState {
-                    sample_count,
-                    ..Default::default()
-                },
+                multisample_state: gpu::MultisampleState::default(),
             }),
             path_rasterization: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "path_rasterization",
@@ -231,10 +225,7 @@ impl BladePipelines {
                 depth_stencil: None,
                 fragment: Some(shader.at("fs_path")),
                 color_targets,
-                multisample_state: gpu::MultisampleState {
-                    sample_count,
-                    ..Default::default()
-                },
+                multisample_state: gpu::MultisampleState::default(),
             }),
             underlines: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "underlines",
@@ -248,10 +239,7 @@ impl BladePipelines {
                 depth_stencil: None,
                 fragment: Some(shader.at("fs_underline")),
                 color_targets,
-                multisample_state: gpu::MultisampleState {
-                    sample_count,
-                    ..Default::default()
-                },
+                multisample_state: gpu::MultisampleState::default(),
             }),
             mono_sprites: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "mono-sprites",
@@ -265,10 +253,7 @@ impl BladePipelines {
                 depth_stencil: None,
                 fragment: Some(shader.at("fs_mono_sprite")),
                 color_targets,
-                multisample_state: gpu::MultisampleState {
-                    sample_count,
-                    ..Default::default()
-                },
+                multisample_state: gpu::MultisampleState::default(),
             }),
             poly_sprites: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "poly-sprites",
@@ -282,10 +267,7 @@ impl BladePipelines {
                 depth_stencil: None,
                 fragment: Some(shader.at("fs_poly_sprite")),
                 color_targets,
-                multisample_state: gpu::MultisampleState {
-                    sample_count,
-                    ..Default::default()
-                },
+                multisample_state: gpu::MultisampleState::default(),
             }),
             surfaces: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "surfaces",
@@ -299,10 +281,7 @@ impl BladePipelines {
                 depth_stencil: None,
                 fragment: Some(shader.at("fs_surface")),
                 color_targets,
-                multisample_state: gpu::MultisampleState {
-                    sample_count,
-                    ..Default::default()
-                },
+                multisample_state: gpu::MultisampleState::default(),
             }),
         }
     }
@@ -342,8 +321,6 @@ pub struct BladeRenderer {
     atlas_sampler: gpu::Sampler,
     #[cfg(target_os = "macos")]
     core_video_texture_cache: CVMetalTextureCache,
-    msaa_texture: Option<gpu::Texture>,
-    msaa_view: Option<gpu::TextureView>,
     sample_count: u32,
 }
 
@@ -405,8 +382,6 @@ impl BladeRenderer {
             atlas_sampler,
             #[cfg(target_os = "macos")]
             core_video_texture_cache,
-            msaa_texture: None,
-            msaa_view: None,
             sample_count: config.sample_count,
         })
     }
@@ -422,15 +397,6 @@ impl BladeRenderer {
 
     pub fn update_drawable_size(&mut self, size: Size<DevicePixels>) {
         self.update_drawable_size_impl(size, false);
-
-        // Reset the MSAA texture if the size has changed
-        let surface_info = self.surface.info();
-        self.msaa_texture = None;
-        self.msaa_view = None;
-        self.recreate_msaa_texutres_if_needed(
-            (size.width.into(), size.height.into()),
-            surface_info.format,
-        );
     }
 
     /// Like `update_drawable_size` but skips the check that the size has changed. This is useful in
@@ -439,46 +405,6 @@ impl BladeRenderer {
     #[cfg_attr(any(target_os = "macos", target_os = "linux"), allow(dead_code))]
     pub fn update_drawable_size_even_if_unchanged(&mut self, size: Size<DevicePixels>) {
         self.update_drawable_size_impl(size, true);
-    }
-
-    fn recreate_msaa_texutres_if_needed(
-        &mut self,
-        (width, height): (u32, u32),
-        format: gpu::TextureFormat,
-    ) {
-        if self.sample_count <= 1 {
-            return;
-        }
-        if self.msaa_texture.is_some() {
-            return;
-        }
-
-        let msaa_texture = self.gpu.create_texture(gpu::TextureDesc {
-            name: "msaa texture",
-            format,
-            size: gpu::Extent {
-                width,
-                height,
-                depth: 1,
-            },
-            sample_count: self.sample_count,
-            dimension: gpu::TextureDimension::D2,
-            usage: gpu::TextureUsage::TARGET,
-            array_layer_count: 1,
-            mip_level_count: 1,
-        });
-        let msaa_view = self.gpu.create_texture_view(
-            msaa_texture,
-            gpu::TextureViewDesc {
-                name: "msaa texture view",
-                format,
-                dimension: gpu::ViewDimension::D2,
-                subresources: &Default::default(),
-            },
-        );
-
-        self.msaa_texture = Some(msaa_texture);
-        self.msaa_view = Some(msaa_view);
     }
 
     fn update_drawable_size_impl(&mut self, size: Size<DevicePixels>, always_resize: bool) {
@@ -620,28 +546,9 @@ impl BladeRenderer {
         self.gpu.destroy_command_encoder(&mut self.command_encoder);
         self.pipelines.destroy(&self.gpu);
         self.gpu.destroy_surface(&mut self.surface);
-
-        if let Some(msaa_texture) = self.msaa_texture.take() {
-            self.gpu.destroy_texture(msaa_texture);
-        }
-        if let Some(msaa_view) = self.msaa_view.take() {
-            self.gpu.destroy_texture_view(msaa_view);
-        }
     }
 
     pub fn draw(&mut self, scene: &Scene) {
-        self.recreate_msaa_texutres_if_needed(
-            (
-                self.surface_config.size.width,
-                self.surface_config.size.height,
-            ),
-            self.surface.info().format,
-        );
-
-        if let Some(msaa_texture) = self.msaa_texture {
-            self.command_encoder.init_texture(msaa_texture);
-        }
-
         self.command_encoder.start();
         self.atlas.before_frame(&mut self.command_encoder);
         self.rasterize_paths(scene.paths());
@@ -664,29 +571,17 @@ impl BladeRenderer {
             pad: 0,
         };
 
-        let frame_view = frame.texture_view();
-
-        let target_set = if self.sample_count > 1 {
+        if let mut pass = self.command_encoder.render(
+            "main",
             gpu::RenderTargetSet {
                 colors: &[gpu::RenderTarget {
-                    view: self.msaa_view.unwrap(),
-                    init_op: gpu::InitOp::Clear(gpu::TextureColor::TransparentBlack),
-                    finish_op: gpu::FinishOp::ResolveTo(frame_view),
-                }],
-                depth_stencil: None,
-            }
-        } else {
-            gpu::RenderTargetSet {
-                colors: &[gpu::RenderTarget {
-                    view: frame_view,
+                    view: frame.texture_view(),
                     init_op: gpu::InitOp::Clear(gpu::TextureColor::TransparentBlack),
                     finish_op: gpu::FinishOp::Store,
                 }],
                 depth_stencil: None,
-            }
-        };
-
-        if let mut pass = self.command_encoder.render("main", target_set) {
+            },
+        ) {
             profiling::scope!("render pass");
             for batch in scene.batches() {
                 match batch {
