@@ -2,7 +2,7 @@ use ::settings::Settings;
 use collections::HashSet;
 use git::repository::{GitFileStatus, RepoPath};
 use gpui::{actions, AppContext, Context, Global, Hsla, Model};
-use project::ProjectEntryId;
+use project::{Project, ProjectEntryId, WorktreeId};
 use settings::GitPanelSettings;
 use ui::{Color, Icon, IconName, IntoElement, SharedString};
 
@@ -27,6 +27,21 @@ pub fn init(cx: &mut AppContext) {
     cx.set_global(GlobalGitState(git_state));
 }
 
+#[derive(Default, Debug, PartialEq, Eq, Clone)]
+pub enum GitViewMode {
+    #[default]
+    List,
+    Tree,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct GitListEntry {
+    depth: usize,
+    display_name: String,
+    repo_path: RepoPath,
+    status: GitFileStatus,
+}
+
 struct GlobalGitState(Model<GitState>);
 
 impl Global for GlobalGitState {}
@@ -46,6 +61,8 @@ pub struct GitState {
     /// The set of staged entries in the current git repository.
     /// Each entry is identified by its [`ProjectEntryId`] and [`RepoPath`].
     staged_entries: HashSet<(ProjectEntryId, RepoPath)>,
+
+    list_view_mode: GitViewMode,
 }
 
 impl GitState {
@@ -54,6 +71,7 @@ impl GitState {
             commit_message: None,
             active_repository: None,
             staged_entries: HashSet::default(),
+            list_view_mode: GitViewMode::default(),
         }
     }
 
@@ -75,6 +93,10 @@ impl GitState {
 
     pub fn clear_commit_message(&mut self) {
         self.commit_message = None;
+    }
+
+    pub fn staged_entries(&self) -> &HashSet<(ProjectEntryId, RepoPath)> {
+        &self.staged_entries
     }
 
     pub fn stage_entry(&mut self, repo_path: RepoPath) {
@@ -119,6 +141,21 @@ impl GitState {
             false
         }
     }
+}
+
+pub fn first_worktree_repository(
+    project: &Model<Project>,
+    worktree_id: WorktreeId,
+    cx: &mut AppContext,
+) -> Option<ProjectEntryId> {
+    project
+        .read(cx)
+        .worktree_for_id(worktree_id, cx)
+        .and_then(|worktree| {
+            let snapshot = worktree.read(cx).snapshot();
+            let mut repositories = snapshot.repositories();
+            repositories.next().map(|repo| repo.work_directory_id())
+        })
 }
 
 const ADDED_COLOR: Hsla = Hsla {
