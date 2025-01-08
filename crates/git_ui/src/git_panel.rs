@@ -183,6 +183,19 @@ impl GitPanel {
 
             let scroll_handle = UniformListScrollHandle::new();
 
+            git_state.update(cx, |state, cx| {
+                let mut visible_worktrees = project.read(cx).visible_worktrees(cx);
+                let Some(first_worktree) = visible_worktrees.next() else {
+                    return;
+                };
+                drop(visible_worktrees);
+                let snapshot = first_worktree.read(cx).snapshot();
+
+                if let Some(repository) = first_worktree_repository(&project, snapshot.id(), cx) {
+                    state.activate_repository(repository);
+                }
+            });
+
             let mut git_panel = Self {
                 focus_handle: cx.focus_handle(),
                 fs,
