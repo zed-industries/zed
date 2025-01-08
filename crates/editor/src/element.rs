@@ -5578,21 +5578,21 @@ impl LineWithInvisibles {
                                     });
                                 }
                             } else {
-                                invisibles.extend(
-                                    line_chunk
-                                        .bytes()
-                                        .enumerate()
-                                        .filter(|(_, line_byte)| {
-                                            let is_whitespace =
-                                                (*line_byte as char).is_whitespace();
-                                            non_whitespace_added |= !is_whitespace;
-                                            is_whitespace
-                                                && (non_whitespace_added || !is_soft_wrapped)
-                                        })
-                                        .map(|(whitespace_index, _)| Invisible::Whitespace {
-                                            line_offset: line.len() + whitespace_index,
-                                        }),
-                                )
+                                invisibles.extend(line_chunk.char_indices().filter_map(
+                                    |(index, c)| {
+                                        let is_whitespace = c.is_whitespace();
+                                        non_whitespace_added |= !is_whitespace;
+                                        if is_whitespace
+                                            && (non_whitespace_added || !is_soft_wrapped)
+                                        {
+                                            Some(Invisible::Whitespace {
+                                                line_offset: line.len() + index,
+                                            })
+                                        } else {
+                                            None
+                                        }
+                                    },
+                                ))
                             }
                         }
 
