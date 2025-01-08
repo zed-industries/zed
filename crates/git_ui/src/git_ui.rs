@@ -2,7 +2,7 @@ use ::settings::Settings;
 use collections::HashSet;
 use git::repository::{GitFileStatus, RepoPath};
 use gpui::{actions, AppContext, Context, Global, Hsla, Model};
-use project::WorktreeId;
+use project::ProjectEntryId;
 use settings::GitPanelSettings;
 use ui::{Color, Icon, IconName, IntoElement, SharedString};
 
@@ -32,16 +32,27 @@ struct GlobalGitState(Model<GitState>);
 impl Global for GlobalGitState {}
 
 pub struct GitState {
+    /// The current commit message being composed.
     commit_message: Option<SharedString>,
-    current_worktree: Option<WorktreeId>,
-    staged_entries: HashSet<(WorktreeId, RepoPath)>,
+
+    /// The ProjectEntryId of the currently selected git repository's work directory.
+    /// This uniquely identifies a directory entry in a worktree that contains the root
+    /// of a git repository.
+    ///
+    /// When a git repository is selected, this ID is used to track which repository's changes
+    /// are currently being viewed or modified in the UI.
+    active_repository: Option<ProjectEntryId>,
+
+    /// The set of staged entries in the current git repository.
+    /// Each entry is identified by its [`ProjectEntryId`] and [`RepoPath`].
+    staged_entries: HashSet<(ProjectEntryId, RepoPath)>,
 }
 
 impl GitState {
     pub fn new() -> Self {
         GitState {
             commit_message: None,
-            current_worktree: None,
+            active_repository: None,
             staged_entries: HashSet::default(),
         }
     }
@@ -50,8 +61,12 @@ impl GitState {
         cx.global::<GlobalGitState>().0.clone()
     }
 
-    pub fn current_worktree(&mut self, worktree_id: Option<WorktreeId>) {
-        self.current_worktree = worktree_id;
+    pub fn activate_repository(&mut self, active_repository: ProjectEntryId) {
+        self.active_repository = Some(active_repository);
+    }
+
+    pub fn active_repository(&self) -> Option<ProjectEntryId> {
+        self.active_repository
     }
 
     pub fn commit_message(&mut self, message: Option<SharedString>) {
@@ -63,27 +78,28 @@ impl GitState {
     }
 
     pub fn stage_entry(&mut self, repo_path: RepoPath) {
-        if let Some(worktree_id) = self.current_worktree {
-            self.staged_entries.insert((worktree_id, repo_path));
+        if let Some(active_repository) = self.active_repository {
+            self.staged_entries.insert((active_repository, repo_path));
         }
     }
 
     pub fn unstage_entry(&mut self, repo_path: RepoPath) {
-        if let Some(worktree_id) = self.current_worktree {
-            self.staged_entries.remove(&(worktree_id, repo_path));
+        if let Some(active_repository) = self.active_repository {
+            self.staged_entries.remove(&(active_repository, repo_path));
         }
     }
 
     pub fn stage_entries(&mut self, entries: Vec<RepoPath>) {
-        if let Some(worktree_id) = self.current_worktree {
+        if let Some(active_repository) = self.active_repository {
             self.staged_entries
-                .extend(entries.into_iter().map(|path| (worktree_id, path)));
+                .extend(entries.into_iter().map(|path| (active_repository, path)));
         }
     }
 
     pub fn unstage_all_entries(&mut self) {
-        if let Some(worktree_id) = self.current_worktree {
-            self.staged_entries.retain(|(id, _)| id != &worktree_id);
+        if let Some(active_repository) = self.active_repository {
+            self.staged_entries
+                .retain(|(id, _)| id != &active_repository);
         }
     }
 
@@ -96,8 +112,9 @@ impl GitState {
     }
 
     pub fn is_staged(&self, repo_path: RepoPath) -> bool {
-        if let Some(current_worktree) = self.current_worktree {
-            self.staged_entries.contains(&(current_worktree, repo_path))
+        if let Some(active_repository) = self.active_repository {
+            self.staged_entries
+                .contains(&(active_repository, repo_path))
         } else {
             false
         }

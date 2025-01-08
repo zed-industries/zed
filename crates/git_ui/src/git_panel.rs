@@ -68,6 +68,7 @@ pub enum ViewMode {
 
 pub struct GitStatusEntry {}
 
+// TODO: We are carrying some redundant data in EntryDetails.
 #[derive(Debug, PartialEq, Eq, Clone)]
 struct EntryDetails {
     filename: String,
@@ -87,7 +88,6 @@ struct SerializedGitPanel {
 }
 
 pub struct GitPanel {
-    // workspace: WeakView<Workspace>,
     current_modifiers: Modifiers,
     focus_handle: FocusHandle,
     fs: Arc<dyn Fs>,
@@ -100,16 +100,10 @@ pub struct GitPanel {
     view_mode: ViewMode,
     show_scrollbar: bool,
     pending_update: Task<()>,
-    // TODO Reintroduce expanded directories, once we're deriving directories from paths
-    // expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     git_state: Model<GitState>,
     commit_editor: View<Editor>,
-    // The entries that are currently shown in the panel, aka
-    // not hidden by folding or such
     visible_entries: Vec<WorktreeEntries>,
     width: Option<Pixels>,
-    // git_diff_editor: Option<View<Editor>>,
-    // git_diff_editor_updates: Task<()>,
     reveal_in_editor: Task<()>,
 }
 
@@ -159,7 +153,6 @@ impl GitPanel {
         let git_state = GitState::get_global(cx);
 
         let fs = workspace.app_state().fs.clone();
-        // let weak_workspace = workspace.weak_handle();
         let project = workspace.project().clone();
         let language_registry = workspace.app_state().languages.clone();
 
@@ -214,7 +207,6 @@ impl GitPanel {
                 } else {
                     commit_editor.set_text("", cx);
                 }
-                // commit_editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
                 commit_editor.set_use_autoclose(false);
                 commit_editor.set_show_gutter(false, cx);
                 commit_editor.set_show_wrap_guides(false, cx);
@@ -245,13 +237,11 @@ impl GitPanel {
             let scroll_handle = UniformListScrollHandle::new();
 
             let mut git_panel = Self {
-                // workspace: weak_workspace,
                 focus_handle: cx.focus_handle(),
                 fs,
                 pending_serialization: Task::ready(None),
                 visible_entries: Vec::new(),
                 current_modifiers: cx.modifiers(),
-                // expanded_dir_ids: Default::default(),
                 width: Some(px(360.)),
                 scrollbar_state: ScrollbarState::new(scroll_handle.clone()).parent_view(cx.view()),
                 scroll_handle,
@@ -260,8 +250,6 @@ impl GitPanel {
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
                 pending_update: Task::ready(()),
-                // git_diff_editor: Some(diff_display_editor(cx)),
-                // git_diff_editor_updates: Task::ready(()),
                 commit_editor,
                 git_state,
                 reveal_in_editor: Task::ready(()),
@@ -275,6 +263,7 @@ impl GitPanel {
     }
 
     fn serialize(&mut self, cx: &mut ViewContext<Self>) {
+        // TODO: we can store stage status here
         let width = self.width;
         self.pending_serialization = cx.background_executor().spawn(
             async move {
@@ -605,6 +594,7 @@ impl GitPanel {
         });
     }
 
+    /// Update the visible entries for the given worktree
     #[track_caller]
     fn update_visible_entries(
         &mut self,
@@ -1203,8 +1193,7 @@ impl GitPanel {
         let is_staged = ToggleState::Selected;
         let handle = cx.view().downgrade();
 
-        // TODO: At this point, an entry should really have a status.
-        // Is this fixed with the new git status stuff?
+        // TODO: Get this from StatusEntry, where it isn't optional
         let status = details.status.unwrap_or(GitFileStatus::Untracked);
 
         let end_slot = h_flex()
