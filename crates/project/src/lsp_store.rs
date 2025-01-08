@@ -5592,13 +5592,13 @@ impl LspStore {
         <R::LspRequest as lsp::request::Request>::Result: Send,
         <R::LspRequest as lsp::request::Request>::Params: Send,
     {
-        debug_assert!(self.upstream_client().is_none());
+        let Some(local) = self.as_local() else {
+            return Task::ready(Vec::new());
+        };
 
         let snapshot = buffer.read(cx).snapshot();
         let scope = position.and_then(|position| snapshot.language_scope_at(position));
-        let server_ids = self
-            .as_local()
-            .unwrap()
+        let server_ids = local
             .language_servers_for_buffer(buffer.read(cx), cx)
             .filter(|(adapter, _)| {
                 scope
