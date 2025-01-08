@@ -9,8 +9,6 @@ use git::GitHostingProviderRegistry;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-use smol::process::Command;
 
 #[cfg(unix)]
 use std::os::fd::AsFd;
@@ -547,25 +545,36 @@ impl Fs for RealFs {
             }
             Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
                 if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-                    let target_path = path.to_path_buf();
-                    let temp_file = smol::unblock(move || create_temp_file(&target_path)).await?;
+                    let pkexec_path = smol::unblock(|| which::which("pkexec"))
+                        .await
+                        .map_err(|_| anyhow::anyhow!("pkexec not found in PATH"))?;
 
-                    let temp_path = temp_file.into_temp_path();
-                    let temp_path_for_write = temp_path.to_path_buf();
+                    let mut child = smol::process::Command::new(&pkexec_path)
+                        .arg("sh")
+                        .arg("-c")
+                        .arg(format!(
+                            "cat > {}",
+                            shlex::try_quote(&path.to_string_lossy())?
+                        ))
+                        .stdin(std::process::Stdio::piped())
+                        .spawn()?;
 
-                    let async_file = smol::fs::OpenOptions::new()
-                        .write(true)
-                        .open(&temp_path)
-                        .await?;
-
-                    let mut writer = smol::io::BufWriter::with_capacity(buffer_size, async_file);
-
-                    for chunk in chunks(text, line_ending) {
+                    let Some(stdin) = child.stdin.take() else {
+                        return Err(anyhow::anyhow!("Failed to write to file as root, no stdin"));
+                    };
+                    let mut writer = smol::io::BufWriter::with_capacity(buffer_size, stdin);
+                    for chunk in text.chunks() {
                         writer.write_all(chunk.as_bytes()).await?;
                     }
                     writer.flush().await?;
-
-                    write_to_file_as_root(temp_path_for_write, path.to_path_buf()).await
+                    let output = child.output().await?;
+                    if !output.status.success() {
+                        return Err(anyhow::anyhow!(
+                            "Failed to write to file as root, exit status {}",
+                            output.status
+                        ));
+                    }
+                    Ok(())
                 } else {
                     // Todo: Implement for Mac and Windows
                     Err(e.into())
@@ -2000,61 +2009,6 @@ fn create_temp_file(path: &Path) -> Result<NamedTempFile> {
     };
 
     Ok(temp_file)
-}
-
-#[cfg(target_os = "macos")]
-async fn write_to_file_as_root(_temp_file_path: PathBuf, _target_file_path: PathBuf) -> Result<()> {
-    unimplemented!("write_to_file_as_root is not implemented")
-}
-
-#[cfg(target_os = "windows")]
-async fn write_to_file_as_root(_temp_file_path: PathBuf, _target_file_path: PathBuf) -> Result<()> {
-    unimplemented!("write_to_file_as_root is not implemented")
-}
-
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-async fn write_to_file_as_root(temp_file_path: PathBuf, target_file_path: PathBuf) -> Result<()> {
-    use shlex::try_quote;
-    use std::os::unix::fs::PermissionsExt;
-    use which::which;
-
-    let pkexec_path = smol::unblock(|| which("pkexec"))
-        .await
-        .map_err(|_| anyhow::anyhow!("pkexec not found in PATH"))?;
-
-    let script_file = smol::unblock(move || {
-        let script_file = tempfile::Builder::new()
-            .prefix("write-to-file-as-root-")
-            .tempfile_in(paths::temp_dir())?;
-
-        writeln!(
-            script_file.as_file(),
-            "#!/usr/bin/env sh\nset -eu\ncat \"{}\" > \"{}\"",
-            try_quote(&temp_file_path.to_string_lossy())?,
-            try_quote(&target_file_path.to_string_lossy())?
-        )?;
-
-        let mut perms = script_file.as_file().metadata()?.permissions();
-        perms.set_mode(0o700); // rwx------
-        script_file.as_file().set_permissions(perms)?;
-
-        Result::<_>::Ok(script_file)
-    })
-    .await?;
-
-    let script_path = script_file.into_temp_path();
-
-    let output = Command::new(&pkexec_path)
-        .arg("--disable-internal-agent")
-        .arg(&script_path)
-        .output()
-        .await?;
-
-    if !output.status.success() {
-        return Err(anyhow::anyhow!("Failed to write to file as root"));
-    }
-
-    Ok(())
 }
 
 pub fn normalize_path(path: &Path) -> PathBuf {
