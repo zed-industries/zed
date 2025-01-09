@@ -14,6 +14,7 @@ pub enum ContextPill {
     },
     Suggested {
         name: SharedString,
+        icon_path: Option<SharedString>,
         kind: ContextKind,
         on_add: Rc<dyn Fn(&ClickEvent, &mut WindowContext)>,
     },
@@ -34,10 +35,16 @@ impl ContextPill {
 
     pub fn new_suggested(
         name: SharedString,
+        icon_path: Option<SharedString>,
         kind: ContextKind,
         on_add: Rc<dyn Fn(&ClickEvent, &mut WindowContext)>,
     ) -> Self {
-        Self::Suggested { name, kind, on_add }
+        Self::Suggested {
+            name,
+            icon_path,
+            kind,
+            on_add,
+        }
     }
 
     pub fn id(&self) -> ElementId {
@@ -55,7 +62,15 @@ impl ContextPill {
                 Some(icon_path) => Icon::from_path(icon_path),
                 None => Icon::new(context.kind.icon()),
             },
-            Self::Suggested { kind, .. } => Icon::new(kind.icon()),
+            Self::Suggested {
+                icon_path: Some(icon_path),
+                ..
+            } => Icon::from_path(icon_path),
+            Self::Suggested {
+                kind,
+                icon_path: None,
+                ..
+            } => Icon::new(kind.icon()),
         }
     }
 }
@@ -114,7 +129,12 @@ impl RenderOnce for ContextPill {
                             }),
                     )
                 }),
-            ContextPill::Suggested { name, kind, on_add } => base_pill
+            ContextPill::Suggested {
+                name,
+                icon_path: _,
+                kind,
+                on_add,
+            } => base_pill
                 .cursor_pointer()
                 .pr_1()
                 .border_color(color.border_variant.opacity(0.5))

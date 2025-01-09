@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use collections::HashSet;
 use editor::Editor;
+use file_icons::FileIcons;
 use gpui::{
     AppContext, DismissEvent, EventEmitter, FocusHandle, Model, Subscription, View, WeakModel,
     WeakView,
@@ -94,9 +95,12 @@ impl ContextStrip {
             None => path.to_string_lossy().into_owned().into(),
         };
 
+        let icon_path = FileIcons::get_icon(path, cx);
+
         Some(SuggestedContext::File {
             name,
             buffer: active_buffer_model.downgrade(),
+            icon_path,
         })
     }
 
@@ -227,6 +231,7 @@ impl Render for ContextStrip {
             .when_some(suggested_context, |el, suggested| {
                 el.child(ContextPill::new_suggested(
                     suggested.name().clone(),
+                    suggested.icon_path(),
                     suggested.kind(),
                     {
                         let context_store = self.context_store.clone();
@@ -283,6 +288,7 @@ pub enum SuggestContextKind {
 pub enum SuggestedContext {
     File {
         name: SharedString,
+        icon_path: Option<SharedString>,
         buffer: WeakModel<Buffer>,
     },
     Thread {
@@ -299,9 +305,20 @@ impl SuggestedContext {
         }
     }
 
+    pub fn icon_path(&self) -> Option<SharedString> {
+        match self {
+            Self::File { icon_path, .. } => icon_path.clone(),
+            Self::Thread { .. } => None,
+        }
+    }
+
     pub fn accept(&self, context_store: &mut ContextStore, cx: &mut AppContext) {
         match self {
-            Self::File { buffer, name: _ } => {
+            Self::File {
+                buffer,
+                icon_path: _,
+                name: _,
+            } => {
                 if let Some(buffer) = buffer.upgrade() {
                     context_store.insert_file(buffer, cx);
                 };
