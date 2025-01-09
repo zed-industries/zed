@@ -1,6 +1,7 @@
 mod persistence;
 pub mod terminal_element;
 pub mod terminal_panel;
+pub mod terminal_tab_tooltip;
 
 use collections::HashSet;
 use editor::{actions::SelectAll, scroll::Autoscroll, Editor};
@@ -26,13 +27,16 @@ use terminal::{
 };
 use terminal_element::{is_blank, TerminalElement};
 use terminal_panel::TerminalPanel;
+use terminal_tab_tooltip::TerminalTooltip;
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
 use util::{
     paths::{PathWithPosition, SanitizedPath},
     ResultExt,
 };
 use workspace::{
-    item::{BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams},
+    item::{
+        BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
+    },
     register_serializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
     CloseActiveItem, NewCenterTerminal, NewTerminal, OpenVisible, ToolbarItemLocation, Workspace,
@@ -996,28 +1000,20 @@ impl Render for TerminalView {
 impl Item for TerminalView {
     type Event = ItemEvent;
 
-    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
+    fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent> {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(false);
-    
+
         let pid_getter = terminal.pty_info.get_pid_getter();
         let pid_text = pid_getter.fallback_pid();
 
-        let pid_info = if pid_text != 0 {
-            format!("Process ID (PID): {}", pid_text)
-        } else {
-            String::from("No Process ID available")
-        };      
-
-        let tooltip_text = format!(
-            "{}\n{}\n{}",
-            title,
-            "-".repeat(30),
-            pid_info
-        );
-    
-        Some(tooltip_text.into())                    
-    }    
+        Some(TabTooltipContent::Custom(Box::new(
+            move |cx: &mut WindowContext| {
+                cx.new_view(|_| TerminalTooltip::new(title.clone(), pid_text))
+                    .into()
+            },
+        )))
+    }
 
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
         let terminal = self.terminal().read(cx);

@@ -151,7 +151,6 @@ impl PtyProcessInfo {
         has_changed
     }
 
-    // Getter for `pid_getter`
     pub fn get_pid_getter(&self) -> &ProcessIdGetter {
         &self.pid_getter
     }
