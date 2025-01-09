@@ -8,7 +8,7 @@ use crate::{
 use anyhow::{Context as _, Result};
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
-use futures::future::OptionFuture;
+use futures::future::{BoxFuture, OptionFuture};
 use git::repository::{GitFileStatus, RepoPath};
 use gpui::*;
 use language::Buffer;
@@ -16,7 +16,10 @@ use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::{Fs, Project, ProjectEntryId, WorktreeId};
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
-use std::{collections::HashSet, ops::Range, path::PathBuf, sync::Arc, time::Duration, usize};
+use std::{
+    collections::HashSet, future::pending, ops::Range, path::PathBuf, sync::Arc, time::Duration,
+    usize,
+};
 use theme::ThemeSettings;
 use ui::{
     prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, Scrollbar, ScrollbarState, Tooltip,
@@ -606,18 +609,30 @@ impl GitPanel {
         cx: &mut ViewContext<Self>,
     ) {
         let handle = cx.view().downgrade();
-        let mut rx = self.git_state.read(cx).git_task_rx.clone();
+        let mut rx = self.git_state.update(cx, |state, cx| {
+            if state.git_task_rx.is_none() {
+                state.launch_git_task(&self.project, cx);
+            }
+            state.git_task_rx.clone()
+        });
 
         self.pending_update = cx.spawn(|_, mut cx| async move {
-            futures::join!(
-                OptionFuture::from(rx.as_mut().map(|rx| rx.recv())),
-                cx.background_executor().timer(UPDATE_DEBOUNCE)
-            );
+            let rx = match rx.as_mut() {
+                Some(rx) => rx.recv() as BoxFuture<'_, _>,
+                None => Box::pin(pending()) as _,
+            };
+            let _ = futures::join!(rx, cx.background_executor().timer(UPDATE_DEBOUNCE));
 
             if let Some(handle) = handle.upgrade() {
                 handle
                     .update(&mut cx, |panel, cx| {
                         panel.update_visible_entries(repository, new_selected_entry, cx);
+                        panel.git_state.update(cx, |state, cx| {
+                            if state.git_task_rx.is_none() {
+                                eprintln!("launching git task after scheduled update");
+                                state.launch_git_task(&panel.project, cx);
+                            }
+                        });
                     })
                     .ok();
             }
