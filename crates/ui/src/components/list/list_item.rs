@@ -11,8 +11,8 @@ use crate::{prelude::*, Disclosure};
 pub enum ListItemSpacing {
     #[default]
     Dense,
-    Sparse,
     ExtraDense,
+    Sparse,
 }
 
 #[derive(IntoElement)]
@@ -220,8 +220,8 @@ impl RenderOnce for ListItem {
                     .px(DynamicSpacing::Base06.rems(cx))
                     .map(|this| match self.spacing {
                         ListItemSpacing::Dense => this,
-                        ListItemSpacing::Sparse => this.py_1(),
                         ListItemSpacing::ExtraDense => this.py_neg_px(),
+                        ListItemSpacing::Sparse => this.py_1(),
                     })
                     .when(self.inset && !self.disabled, |this| {
                         this
