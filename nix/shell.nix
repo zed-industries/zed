@@ -30,7 +30,7 @@ pkgs.mkShell rec {
       pkgs.sqlite
       pkgs.zlib
       pkgs.zstd
-      pkgs.rustToolchain
+      (pkgs.rust-bin.fromRustupToolchainFile ../rust-toolchain.toml)
     ]
     ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
       pkgs.alsa-lib

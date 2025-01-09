@@ -2,56 +2,28 @@
   description = "High-performance, multiplayer code editor from the creators of Atom and Tree-sitter";
 
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs?ref=nixos-unstable";
+    nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
     rust-overlay = {
       url = "github:oxalica/rust-overlay";
       inputs.nixpkgs.follows = "nixpkgs";
     };
-    crane.url = "github:ipetkov/crane";
-    flake-compat.url = "github:edolstra/flake-compat";
+    flake-compat.url = "github:nix-community/flake-compat";
   };
 
   outputs =
-    {
-      nixpkgs,
-      rust-overlay,
-      crane,
-      ...
-    }:
+    { nixpkgs, ... }@inputs:
     let
-      systems = [
-        "x86_64-linux"
-        "x86_64-darwin"
-        "aarch64-linux"
-        "aarch64-darwin"
-      ];
+      overlays = [ inputs.rust-overlay.overlays.default ];
 
-      overlays = {
-        rust-overlay = rust-overlay.overlays.default;
-        rust-toolchain = final: prev: {
-          rustToolchain = final.rust-bin.fromRustupToolchainFile ./rust-toolchain.toml;
-        };
-        zed-editor = final: prev: {
-          zed-editor = final.callPackage ./nix/build.nix {
-            crane = crane.mkLib final;
-            rustToolchain = final.rustToolchain;
-          };
-        };
-      };
-
-      mkPkgs =
-        system:
-        import nixpkgs {
-          inherit system;
-          overlays = builtins.attrValues overlays;
-        };
-
-      forAllSystems = f: nixpkgs.lib.genAttrs systems (system: f (mkPkgs system));
+      forAllSystems =
+        f:
+        nixpkgs.lib.genAttrs nixpkgs.lib.systems.flakeExposed (
+          system: f (import nixpkgs { inherit system overlays; })
+        );
     in
     {
-      packages = forAllSystems (pkgs: {
-        zed-editor = pkgs.zed-editor;
-        default = pkgs.zed-editor;
+      packages = forAllSystems (_: {
+        default = throw "Nix package was removed from repo, see PR #22825 for an approach you can use instead";
       });
 
       devShells = forAllSystems (pkgs: {
@@ -59,9 +31,5 @@
       });
 
       formatter = forAllSystems (pkgs: pkgs.nixfmt-rfc-style);
-
-      overlays = overlays // {
-        default = nixpkgs.lib.composeManyExtensions (builtins.attrValues overlays);
-      };
     };
 }
