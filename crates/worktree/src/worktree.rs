@@ -1097,6 +1097,32 @@ impl Worktree {
         }
     }
 
+    pub fn expand_all_for_entry(
+        &mut self,
+        entry_id: ProjectEntryId,
+        cx: &Context<Worktree>,
+    ) -> Option<Task<Result<()>>> {
+        match self {
+            Worktree::Local(this) => this.expand_all_for_entry(entry_id, cx),
+            Worktree::Remote(this) => {
+                let response = this.client.request(proto::ExpandAllForProjectEntry {
+                    project_id: this.project_id,
+                    entry_id: entry_id.to_proto(),
+                });
+                Some(cx.spawn(move |this, mut cx| async move {
+                    let response = response.await?;
+                    this.update(&mut cx, |this, _| {
+                        this.as_remote_mut()
+                            .unwrap()
+                            .wait_for_snapshot(response.worktree_scan_id as usize)
+                    })?
+                    .await?;
+                    Ok(())
+                }))
+            }
+        }
+    }
+
     pub async fn handle_create_entry(
         this: Entity<Self>,
         request: proto::CreateProjectEntry,
@@ -1150,6 +1176,21 @@ impl Worktree {
         task.ok_or_else(|| anyhow!("no such entry"))?.await?;
         let scan_id = this.read_with(&cx, |this, _| this.scan_id())?;
         Ok(proto::ExpandProjectEntryResponse {
+            worktree_scan_id: scan_id as u64,
+        })
+    }
+
+    pub async fn handle_expand_all_for_entry(
+        this: Entity<Self>,
+        request: proto::ExpandAllForProjectEntry,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ExpandAllForProjectEntryResponse> {
+        let task = this.update(&mut cx, |this, cx| {
+            this.expand_all_for_entry(ProjectEntryId::from_proto(request.entry_id), cx)
+        })?;
+        task.ok_or_else(|| anyhow!("no such entry"))?.await?;
+        let scan_id = this.read_with(&cx, |this, _| this.scan_id())?;
+        Ok(proto::ExpandAllForProjectEntryResponse {
             worktree_scan_id: scan_id as u64,
         })
     }
@@ -1959,6 +2000,17 @@ impl LocalWorktree {
             refresh.next().await;
             Ok(())
         }))
+    }
+
+    fn expand_all_for_entry(
+        &self,
+        entry_id: ProjectEntryId,
+        cx: &Context<Worktree>,
+    ) -> Option<Task<Result<()>>> {
+        let path = self.entry_for_id(entry_id).unwrap().path.clone();
+        self.add_path_prefix_to_scan(path.clone());
+        // TODO: Figure out how to listen to complete status. And, emit event to update UI.
+        None
     }
 
     fn refresh_entries_for_paths(&self, paths: Vec<Arc<Path>>) -> barrier::Receiver {

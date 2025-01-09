@@ -1577,6 +1577,18 @@ impl Project {
         worktree.update(cx, |worktree, cx| worktree.expand_entry(entry_id, cx))
     }
 
+    pub fn expand_all_for_entry(
+        &mut self,
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+        cx: &mut Context<Self>,
+    ) -> Option<Task<Result<()>>> {
+        let worktree = self.worktree_for_id(worktree_id, cx)?;
+        worktree.update(cx, |worktree, cx| {
+            worktree.expand_all_for_entry(entry_id, cx)
+        })
+    }
+
     pub fn shared(&mut self, project_id: u64, cx: &mut Context<Self>) -> Result<()> {
         if !matches!(self.client_state, ProjectClientState::Local) {
             return Err(anyhow!("project was already shared"));

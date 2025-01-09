@@ -883,6 +883,59 @@ impl ProjectPanel {
         }
     }
 
+    fn expand_all_for_entry(
+        &mut self,
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.project.update(cx, |project, cx| {
+            if let Some((worktree, expanded_dir_ids)) = project
+                .worktree_for_id(worktree_id, cx)
+                .zip(self.expanded_dir_ids.get_mut(&worktree_id))
+            {
+                project.expand_all_for_entry(worktree_id, entry_id, cx);
+                let worktree = worktree.read(cx);
+
+                if let Some(mut entry) = worktree.entry_for_id(entry_id) {
+                    loop {
+                        if let Err(ix) = expanded_dir_ids.binary_search(&entry.id) {
+                            expanded_dir_ids.insert(ix, entry.id);
+                        }
+
+                        if let Some(parent_entry) =
+                            entry.path.parent().and_then(|p| worktree.entry_for_path(p))
+                        {
+                            entry = parent_entry;
+                        } else {
+                            break;
+                        }
+                    }
+                }
+
+                let mut dirs_to_expand = vec![entry_id];
+
+                while let Some(current_id) = dirs_to_expand.pop() {
+                    let Some(current_entry) = worktree.entry_for_id(current_id) else {
+                        continue;
+                    };
+                    if !current_entry.is_dir() {
+                        continue;
+                    }
+                    for child in worktree.child_entries(&current_entry.path) {
+                        if child.is_dir() {
+                            dirs_to_expand.push(child.id);
+                            if let Err(ix) = expanded_dir_ids.binary_search(&child.id) {
+                                expanded_dir_ids.insert(ix, child.id);
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+
     fn select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut Context<Self>) {
         if let Some(edit_state) = &self.edit_state {
             if edit_state.processing_filename.is_none() {
@@ -3585,7 +3638,13 @@ impl ProjectPanel {
                         }
                     } else if kind.is_dir() {
                         this.marked_entries.clear();
-                        this.toggle_expanded(entry_id, window, cx);
+                        if event.down.modifiers.alt {
+                            this.expand_all_for_entry(worktree_id, entry_id, window, cx);
+                            this.update_visible_entries(Some((worktree_id, entry_id)), cx);
+                            cx.notify();
+                        } else {
+                            this.toggle_expanded(entry_id, window, cx);
+                        }
                     } else {
                         let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
                         let click_count = event.up.click_count;
