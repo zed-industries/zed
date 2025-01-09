@@ -65,6 +65,7 @@ pub enum WorktreeStoreEvent {
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
     WorktreeUpdatedGitRepositories(WorktreeId),
     WorktreeDeletedEntry(WorktreeId, ProjectEntryId),
+    WorktreeExpandedAllForEntry(WorktreeId, ProjectEntryId),
 }
 
 impl EventEmitter<WorktreeStoreEvent> for WorktreeStore {}

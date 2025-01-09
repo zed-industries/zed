@@ -322,6 +322,37 @@ impl ProjectPanel {
                     this.update_visible_entries(None, cx);
                     cx.notify();
                 }
+                project::Event::ExpandedAllForEntry(worktree_id, entry_id) => {
+                    if let Some((worktree, expanded_dir_ids)) = project.read(cx)
+                        .worktree_for_id(worktree_id.clone(), cx)
+                        .zip(this.expanded_dir_ids.get_mut(&worktree_id))
+                    {
+                        let worktree = worktree.read(cx);
+                        let entry_id = entry_id.clone();
+
+                        let mut dirs_to_expand = vec![entry_id];
+
+                        while let Some(current_id) = dirs_to_expand.pop() {
+                            let Some(current_entry) = worktree.entry_for_id(current_id) else {
+                                continue;
+                            };
+                            if !current_entry.is_dir() {
+                                continue;
+                            }
+                            for child in worktree.child_entries(&current_entry.path) {
+                                if child.is_dir() {
+                                    dirs_to_expand.push(child.id);
+                                    if let Err(ix) = expanded_dir_ids.binary_search(&child.id) {
+                                        expanded_dir_ids.insert(ix, child.id);
+                                    }
+                    
+                                }
+                            }
+                        }
+                        this.update_visible_entries(None, cx);
+                        cx.notify();
+                    }
+                }
                 _ => {}
             })
             .detach();
@@ -487,6 +518,7 @@ impl ProjectPanel {
                         }
                     }
                 }
+          
                 _ => {}
             }
         })
@@ -913,25 +945,6 @@ impl ProjectPanel {
                             entry = parent_entry;
                         } else {
                             break;
-                        }
-                    }
-                }
-
-                let mut dirs_to_expand = vec![entry_id];
-
-                while let Some(current_id) = dirs_to_expand.pop() {
-                    let Some(current_entry) = worktree.entry_for_id(current_id) else {
-                        continue;
-                    };
-                    if !current_entry.is_dir() {
-                        continue;
-                    }
-                    for child in worktree.child_entries(&current_entry.path) {
-                        if child.is_dir() {
-                            dirs_to_expand.push(child.id);
-                            if let Err(ix) = expanded_dir_ids.binary_search(&child.id) {
-                                expanded_dir_ids.insert(ix, child.id);
-                            }
                         }
                     }
                 }

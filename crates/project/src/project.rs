@@ -281,6 +281,7 @@ pub enum Event {
     RefreshInlayHints,
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
+    ExpandedAllForEntry(WorktreeId, ProjectEntryId),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
@@ -2331,6 +2332,9 @@ impl Project {
             }
             WorktreeStoreEvent::WorktreeDeletedEntry(worktree_id, id) => {
                 cx.emit(Event::DeletedEntry(*worktree_id, *id))
+            }
+            WorktreeStoreEvent::WorktreeExpandedAllForEntry(worktree_id, id) => {
+                cx.emit(Event::ExpandedAllForEntry(*worktree_id, *id))
             }
         }
     }

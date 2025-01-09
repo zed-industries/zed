@@ -3133,7 +3133,8 @@ impl LspStore {
                         this.update_local_worktree_language_servers(&worktree, changes, cx);
                     }
                     worktree::Event::UpdatedGitRepositories(_)
-                    | worktree::Event::DeletedEntry(_) => {}
+                    | worktree::Event::DeletedEntry(_)
+                    | worktree::Event::ExpandedAllForEntry(_) => {}
                 })
                 .detach()
             }
