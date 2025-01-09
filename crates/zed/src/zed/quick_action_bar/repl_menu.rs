@@ -309,6 +309,7 @@ impl QuickActionBar {
             worktree_id,
             ButtonLike::new("kernel-selector")
                 .style(ButtonStyle::Subtle)
+                .size(ButtonSize::Compact)
                 .child(
                     h_flex()
                         .w_full()
@@ -357,9 +358,10 @@ impl QuickActionBar {
                 .child(self.render_kernel_selector(cx))
                 .child(
                     IconButton::new("toggle_repl_icon", IconName::ReplNeutral)
-                        .size(ButtonSize::Compact)
-                        .icon_color(Color::Muted)
                         .style(ButtonStyle::Subtle)
+                        .shape(ui::IconButtonShape::Square)
+                        .icon_size(ui::IconSize::Small)
+                        .icon_color(Color::Muted)
                         .tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
                         .on_click(|_, cx| {
                             cx.open_url(&format!("{}#installation", ZED_REPL_DOCUMENTATION))

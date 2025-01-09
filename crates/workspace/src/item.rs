@@ -320,6 +320,10 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn preserve_preview(&self, _cx: &AppContext) -> bool {
         false
     }
+
+    fn include_in_nav_history() -> bool {
+        true
+    }
 }
 
 pub trait SerializableItem: Item {
@@ -464,6 +468,7 @@ pub trait ItemHandle: 'static + Send {
     fn downgrade_item(&self) -> Box<dyn WeakItemHandle>;
     fn workspace_settings<'a>(&self, cx: &'a AppContext) -> &'a WorkspaceSettings;
     fn preserve_preview(&self, cx: &AppContext) -> bool;
+    fn include_in_nav_history(&self) -> bool;
 }
 
 pub trait WeakItemHandle: Send + Sync {
@@ -876,6 +881,10 @@ impl<T: Item> ItemHandle for View<T> {
 
     fn preserve_preview(&self, cx: &AppContext) -> bool {
         self.read(cx).preserve_preview(cx)
+    }
+
+    fn include_in_nav_history(&self) -> bool {
+        T::include_in_nav_history()
     }
 }
 

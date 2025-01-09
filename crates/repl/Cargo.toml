@@ -63,6 +63,7 @@ language = { workspace = true, features = ["test-support"] }
 languages = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
 settings = { workspace = true, features = ["test-support"] }
+terminal_view = { workspace = true, features = ["test-support"] }
 theme = { workspace = true, features = ["test-support"] }
 tree-sitter-md.workspace = true
 tree-sitter-typescript.workspace = true

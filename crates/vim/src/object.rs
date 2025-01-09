@@ -25,6 +25,7 @@ pub enum Object {
     Paragraph,
     Quotes,
     BackQuotes,
+    AnyQuotes,
     DoubleQuotes,
     VerticalBars,
     Parentheses,
@@ -61,6 +62,7 @@ actions!(
         Paragraph,
         Quotes,
         BackQuotes,
+        AnyQuotes,
         DoubleQuotes,
         VerticalBars,
         Parentheses,
@@ -95,6 +97,9 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &BackQuotes, cx| {
         vim.object(Object::BackQuotes, cx)
+    });
+    Vim::action(editor, cx, |vim, _: &AnyQuotes, cx| {
+        vim.object(Object::AnyQuotes, cx)
     });
     Vim::action(editor, cx, |vim, _: &DoubleQuotes, cx| {
         vim.object(Object::DoubleQuotes, cx)
@@ -156,6 +161,7 @@ impl Object {
             Object::Word { .. }
             | Object::Quotes
             | Object::BackQuotes
+            | Object::AnyQuotes
             | Object::VerticalBars
             | Object::DoubleQuotes => false,
             Object::Sentence
@@ -182,6 +188,7 @@ impl Object {
             | Object::IndentObj { .. } => false,
             Object::Quotes
             | Object::BackQuotes
+            | Object::AnyQuotes
             | Object::DoubleQuotes
             | Object::VerticalBars
             | Object::Parentheses
@@ -200,6 +207,7 @@ impl Object {
             Object::Word { .. }
             | Object::Sentence
             | Object::Quotes
+            | Object::AnyQuotes
             | Object::BackQuotes
             | Object::DoubleQuotes => {
                 if current_mode == Mode::VisualBlock {
@@ -250,6 +258,35 @@ impl Object {
             }
             Object::BackQuotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '`', '`')
+            }
+            Object::AnyQuotes => {
+                let quote_types = ['\'', '"', '`']; // Types of quotes to handle
+                let relative_offset = relative_to.to_offset(map, Bias::Left) as isize;
+
+                // Find the closest matching quote range
+                quote_types
+                    .iter()
+                    .flat_map(|&quote| {
+                        // Get ranges for each quote type
+                        surrounding_markers(
+                            map,
+                            relative_to,
+                            around,
+                            self.is_multiline(),
+                            quote,
+                            quote,
+                        )
+                    })
+                    .min_by_key(|range| {
+                        // Calculate proximity of ranges to the cursor
+                        let start_distance = (relative_offset
+                            - range.start.to_offset(map, Bias::Left) as isize)
+                            .abs();
+                        let end_distance = (relative_offset
+                            - range.end.to_offset(map, Bias::Right) as isize)
+                            .abs();
+                        start_distance + end_distance
+                    })
             }
             Object::DoubleQuotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '"', '"')
@@ -514,13 +551,15 @@ fn text_object(
 
     let excerpt = snapshot.excerpt_containing(offset..offset)?;
     let buffer = excerpt.buffer();
+    let offset = excerpt.map_offset_to_buffer(offset);
 
     let mut matches: Vec<Range<usize>> = buffer
         .text_object_ranges(offset..offset, TreeSitterOptions::default())
         .filter_map(|(r, m)| if m == target { Some(r) } else { None })
         .collect();
     matches.sort_by_key(|r| (r.end - r.start));
-    if let Some(range) = matches.first() {
+    if let Some(buffer_range) = matches.first() {
+        let range = excerpt.map_range_from_buffer(buffer_range.clone());
         return Some(range.start.to_display_point(map)..range.end.to_display_point(map));
     }
 
@@ -537,12 +576,14 @@ fn text_object(
         .filter_map(|(r, m)| if m == target { Some(r) } else { None })
         .collect();
     matches.sort_by_key(|r| r.start);
-    if let Some(range) = matches.first() {
-        if !range.is_empty() {
+    if let Some(buffer_range) = matches.first() {
+        if !buffer_range.is_empty() {
+            let range = excerpt.map_range_from_buffer(buffer_range.clone());
             return Some(range.start.to_display_point(map)..range.end.to_display_point(map));
         }
     }
-    return Some(around_range.start.to_display_point(map)..around_range.end.to_display_point(map));
+    let buffer_range = excerpt.map_range_from_buffer(around_range.clone());
+    return Some(buffer_range.start.to_display_point(map)..buffer_range.end.to_display_point(map));
 }
 
 fn argument(
@@ -1744,6 +1785,120 @@ mod test {
             cx.simulate_at_each_offset(&format!("d a {end}"), &marked_string)
                 .await
                 .assert_matches();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_anyquotes_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        const TEST_CASES: &[(&str, &str, &str, Mode)] = &[
+            // Single quotes
+            (
+                "c i q",
+                "This is a 'qˇuote' example.",
+                "This is a 'ˇ' example.",
+                Mode::Insert,
+            ),
+            (
+                "c a q",
+                "This is a 'qˇuote' example.",
+                "This is a ˇexample.",
+                Mode::Insert,
+            ),
+            (
+                "d i q",
+                "This is a 'qˇuote' example.",
+                "This is a 'ˇ' example.",
+                Mode::Normal,
+            ),
+            (
+                "d a q",
+                "This is a 'qˇuote' example.",
+                "This is a ˇexample.",
+                Mode::Normal,
+            ),
+            // Double quotes
+            (
+                "c i q",
+                "This is a \"qˇuote\" example.",
+                "This is a \"ˇ\" example.",
+                Mode::Insert,
+            ),
+            (
+                "c a q",
+                "This is a \"qˇuote\" example.",
+                "This is a ˇexample.",
+                Mode::Insert,
+            ),
+            (
+                "d i q",
+                "This is a \"qˇuote\" example.",
+                "This is a \"ˇ\" example.",
+                Mode::Normal,
+            ),
+            (
+                "d a q",
+                "This is a \"qˇuote\" example.",
+                "This is a ˇexample.",
+                Mode::Normal,
+            ),
+            // Back quotes
+            (
+                "c i q",
+                "This is a `qˇuote` example.",
+                "This is a `ˇ` example.",
+                Mode::Insert,
+            ),
+            (
+                "c a q",
+                "This is a `qˇuote` example.",
+                "This is a ˇexample.",
+                Mode::Insert,
+            ),
+            (
+                "d i q",
+                "This is a `qˇuote` example.",
+                "This is a `ˇ` example.",
+                Mode::Normal,
+            ),
+            (
+                "d a q",
+                "This is a `qˇuote` example.",
+                "This is a ˇexample.",
+                Mode::Normal,
+            ),
+        ];
+
+        for (keystrokes, initial_state, expected_state, expected_mode) in TEST_CASES {
+            cx.set_state(initial_state, Mode::Normal);
+
+            cx.simulate_keystrokes(keystrokes);
+
+            cx.assert_state(expected_state, *expected_mode);
+        }
+
+        const INVALID_CASES: &[(&str, &str, Mode)] = &[
+            ("c i q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
+            ("c a q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
+            ("d i q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
+            ("d a q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
+            ("c i q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing double quote
+            ("c a q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing double quote
+            ("d i q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing double quote
+            ("d a q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing back quote
+            ("c i q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
+            ("c a q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
+            ("d i q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
+            ("d a q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
+        ];
+
+        for (keystrokes, initial_state, mode) in INVALID_CASES {
+            cx.set_state(initial_state, Mode::Normal);
+
+            cx.simulate_keystrokes(keystrokes);
+
+            cx.assert_state(initial_state, *mode);
         }
     }
 

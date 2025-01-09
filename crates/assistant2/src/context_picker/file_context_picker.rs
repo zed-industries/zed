@@ -11,7 +11,7 @@ use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
-use crate::context_store::{ContextStore, IncludedFile};
+use crate::context_store::{ContextStore, FileInclusion};
 
 pub struct FileContextPicker {
     picker: View<Picker<FileContextPickerDelegate>>,
@@ -193,68 +193,41 @@ impl PickerDelegate for FileContextPickerDelegate {
             return;
         };
 
-        let workspace = self.workspace.clone();
-        let Some(project) = workspace
-            .upgrade()
-            .map(|workspace| workspace.read(cx).project().clone())
+        let project_path = ProjectPath {
+            worktree_id: WorktreeId::from_usize(mat.worktree_id),
+            path: mat.path.clone(),
+        };
+
+        let Some(task) = self
+            .context_store
+            .update(cx, |context_store, cx| {
+                context_store.add_file(project_path, cx)
+            })
+            .ok()
         else {
             return;
         };
-        let path = mat.path.clone();
 
-        if self
-            .context_store
-            .update(cx, |context_store, _cx| {
-                match context_store.included_file(&path) {
-                    Some(IncludedFile::Direct(context_id)) => {
-                        context_store.remove_context(&context_id);
-                        true
-                    }
-                    Some(IncludedFile::InDirectory(_)) => true,
-                    None => false,
-                }
-            })
-            .unwrap_or(true)
-        {
-            return;
-        }
-
-        let worktree_id = WorktreeId::from_usize(mat.worktree_id);
+        let workspace = self.workspace.clone();
         let confirm_behavior = self.confirm_behavior;
         cx.spawn(|this, mut cx| async move {
-            let Some(open_buffer_task) = project
-                .update(&mut cx, |project, cx| {
-                    let project_path = ProjectPath {
-                        worktree_id,
-                        path: path.clone(),
+            match task.await {
+                Ok(()) => {
+                    this.update(&mut cx, |this, cx| match confirm_behavior {
+                        ConfirmBehavior::KeepOpen => {}
+                        ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                    })?;
+                }
+                Err(err) => {
+                    let Some(workspace) = workspace.upgrade() else {
+                        return anyhow::Ok(());
                     };
 
-                    let task = project.open_buffer(project_path, cx);
-
-                    Some(task)
-                })
-                .ok()
-                .flatten()
-            else {
-                return anyhow::Ok(());
-            };
-
-            let buffer = open_buffer_task.await?;
-
-            this.update(&mut cx, |this, cx| {
-                this.delegate
-                    .context_store
-                    .update(cx, |context_store, cx| {
-                        context_store.insert_file(buffer.read(cx));
+                    workspace.update(&mut cx, |workspace, cx| {
+                        workspace.show_error(&err, cx);
                     })?;
-
-                match confirm_behavior {
-                    ConfirmBehavior::KeepOpen => {}
-                    ConfirmBehavior::Close => this.delegate.dismissed(cx),
                 }
-
-                anyhow::Ok(())
-            })??;
+            }
 
             anyhow::Ok(())
         })
@@ -302,10 +275,11 @@ impl PickerDelegate for FileContextPickerDelegate {
             (file_name, Some(directory))
         };
 
-        let added = self
-            .context_store
-            .upgrade()
-            .and_then(|context_store| context_store.read(cx).included_file(&path_match.path));
+        let added = self.context_store.upgrade().and_then(|context_store| {
+            context_store
+                .read(cx)
+                .will_include_file_path(&path_match.path, cx)
+        });
 
         Some(
             ListItem::new(ix)
@@ -322,14 +296,30 @@ impl PickerDelegate for FileContextPickerDelegate {
                         })),
                 )
                 .when_some(added, |el, added| match added {
-                    IncludedFile::Direct(_) => {
-                        el.end_slot(Label::new("Added").size(LabelSize::XSmall))
-                    }
-                    IncludedFile::InDirectory(dir_name) => {
+                    FileInclusion::Direct(_) => el.end_slot(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Check)
+                                    .size(IconSize::Small)
+                                    .color(Color::Success),
+                            )
+                            .child(Label::new("Added").size(LabelSize::Small)),
+                    ),
+                    FileInclusion::InDirectory(dir_name) => {
                         let dir_name = dir_name.to_string_lossy().into_owned();
 
-                        el.end_slot(Label::new("Included").size(LabelSize::XSmall))
-                            .tooltip(move |cx| Tooltip::text(format!("in {dir_name}"), cx))
+                        el.end_slot(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Icon::new(IconName::Check)
+                                        .size(IconSize::Small)
+                                        .color(Color::Success),
+                                )
+                                .child(Label::new("Included").size(LabelSize::Small)),
+                        )
+                        .tooltip(move |cx| Tooltip::text(format!("in {dir_name}"), cx))
                     }
                 }),
         )

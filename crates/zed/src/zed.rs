@@ -153,8 +153,8 @@ pub fn initialize_workspace(
         })
         .detach();
 
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        initialize_linux_file_watcher(cx);
+        #[cfg(not(target_os = "macos"))]
+        initialize_file_watcher(cx);
 
         if let Some(specs) = cx.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);
@@ -235,8 +235,8 @@ fn feature_gate_zed_pro_actions(cx: &mut AppContext) {
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-fn initialize_linux_file_watcher(cx: &mut ViewContext<Workspace>) {
-    if let Err(e) = fs::linux_watcher::global(|_| {}) {
+fn initialize_file_watcher(cx: &mut ViewContext<Workspace>) {
+    if let Err(e) = fs::fs_watcher::global(|_| {}) {
         let message = format!(
             db::indoc! {r#"
             inotify_init returned {}
@@ -256,6 +256,36 @@ fn initialize_linux_file_watcher(cx: &mut ViewContext<Workspace>) {
                 cx.update(|cx| {
                     cx.open_url("https://zed.dev/docs/linux#could-not-start-inotify");
                     cx.quit();
+                })
+                .ok();
+            }
+        })
+        .detach()
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn initialize_file_watcher(cx: &mut ViewContext<Workspace>) {
+    if let Err(e) = fs::fs_watcher::global(|_| {}) {
+        let message = format!(
+            db::indoc! {r#"
+            ReadDirectoryChangesW initialization failed: {}
+
+            This may occur on network filesystems and WSL paths. For troubleshooting see: https://zed.dev/docs/windows
+            "#},
+            e
+        );
+        let prompt = cx.prompt(
+            PromptLevel::Critical,
+            "Could not start ReadDirectoryChangesW",
+            Some(&message),
+            &["Troubleshoot and Quit"],
+        );
+        cx.spawn(|_, mut cx| async move {
+            if prompt.await == Ok(0) {
+                cx.update(|cx| {
+                    cx.open_url("https://zed.dev/docs/windows");
+                    cx.quit()
                 })
                 .ok();
             }

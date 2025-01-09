@@ -84,6 +84,9 @@ version_info=$(rustc --version --verbose)
 host_line=$(echo "$version_info" | grep host)
 local_target_triple=${host_line#*: }
 
+# Generate the licenses first, so they can be baked into the binaries
+script/generate-licenses
+
 if [ "$local_arch" = true ]; then
     echo "Building for local target only."
     cargo build ${build_flag} --package zed --package cli --package remote_server

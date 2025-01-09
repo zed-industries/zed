@@ -82,10 +82,12 @@ impl FetchContextPickerDelegate {
     }
 
     async fn build_message(http_client: Arc<HttpClientWithUrl>, url: &str) -> Result<String> {
-        let mut url = url.to_owned();
-        if !url.starts_with("https://") && !url.starts_with("http://") {
-            url = format!("https://{url}");
-        }
+        let prefixed_url = if !url.starts_with("https://") && !url.starts_with("http://") {
+            Some(format!("https://{url}"))
+        } else {
+            None
+        };
+        let url = prefixed_url.as_deref().unwrap_or(url);
 
         let mut response = http_client.get(&url, AsyncBody::default(), true).await?;
 
@@ -200,7 +202,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
                 this.delegate
                     .context_store
                     .update(cx, |context_store, _cx| {
-                        if context_store.included_url(&url).is_none() {
+                        if context_store.includes_url(&url).is_none() {
                             context_store.insert_fetched_url(url, text);
                         }
                     })?;
@@ -234,7 +236,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
         cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let added = self.context_store.upgrade().map_or(false, |context_store| {
-            context_store.read(cx).included_url(&self.url).is_some()
+            context_store.read(cx).includes_url(&self.url).is_some()
         });
 
         Some(
@@ -243,9 +245,16 @@ impl PickerDelegate for FetchContextPickerDelegate {
                 .toggle_state(selected)
                 .child(Label::new(self.url.clone()))
                 .when(added, |child| {
-                    child
-                        .disabled(true)
-                        .end_slot(Label::new("Added").size(LabelSize::XSmall))
+                    child.disabled(true).end_slot(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Check)
+                                    .size(IconSize::Small)
+                                    .color(Color::Success),
+                            )
+                            .child(Label::new("Added").size(LabelSize::Small)),
+                    )
                 }),
         )
     }

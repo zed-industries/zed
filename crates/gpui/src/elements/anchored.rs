@@ -19,6 +19,7 @@ pub struct Anchored {
     fit_mode: AnchoredFitMode,
     anchor_position: Option<Point<Pixels>>,
     position_mode: AnchoredPositionMode,
+    offset: Option<Point<Pixels>>,
 }
 
 /// anchored gives you an element that will avoid overflowing the window bounds.
@@ -30,6 +31,7 @@ pub fn anchored() -> Anchored {
         fit_mode: AnchoredFitMode::SwitchAnchor,
         anchor_position: None,
         position_mode: AnchoredPositionMode::Window,
+        offset: None,
     }
 }
 
@@ -44,6 +46,13 @@ impl Anchored {
     /// (otherwise the location the anchored element is rendered is used)
     pub fn position(mut self, anchor: Point<Pixels>) -> Self {
         self.anchor_position = Some(anchor);
+        self
+    }
+
+    /// Offset the final position by this amount.
+    /// Useful when you want to anchor to an element but offset from it, such as in PopoverMenu.
+    pub fn offset(mut self, offset: Point<Pixels>) -> Self {
+        self.offset = Some(offset);
         self
     }
 
@@ -129,6 +138,7 @@ impl Element for Anchored {
             self.anchor_corner,
             size,
             bounds,
+            self.offset,
         );
 
         let limits = Bounds {
@@ -245,18 +255,22 @@ impl AnchoredPositionMode {
         anchor_corner: Corner,
         size: Size<Pixels>,
         bounds: Bounds<Pixels>,
+        offset: Option<Point<Pixels>>,
     ) -> (Point<Pixels>, Bounds<Pixels>) {
+        let offset = offset.unwrap_or_default();
+
         match self {
             AnchoredPositionMode::Window => {
                 let anchor_position = anchor_position.unwrap_or(bounds.origin);
-                let bounds = Bounds::from_corner_and_size(anchor_corner, anchor_position, size);
+                let bounds =
+                    Bounds::from_corner_and_size(anchor_corner, anchor_position + offset, size);
                 (anchor_position, bounds)
             }
             AnchoredPositionMode::Local => {
                 let anchor_position = anchor_position.unwrap_or_default();
                 let bounds = Bounds::from_corner_and_size(
                     anchor_corner,
-                    bounds.origin + anchor_position,
+                    bounds.origin + anchor_position + offset,
                     size,
                 );
                 (anchor_position, bounds)
