@@ -895,7 +895,10 @@ impl ProjectPanel {
                 .worktree_for_id(worktree_id, cx)
                 .zip(self.expanded_dir_ids.get_mut(&worktree_id))
             {
-                project.expand_all_for_entry(worktree_id, entry_id, cx);
+                if let Some(task) = project.expand_all_for_entry(worktree_id, entry_id, cx) {
+                    task.detach();
+                }
+
                 let worktree = worktree.read(cx);
 
                 if let Some(mut entry) = worktree.entry_for_id(entry_id) {
