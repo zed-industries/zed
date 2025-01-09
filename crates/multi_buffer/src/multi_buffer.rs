@@ -3296,8 +3296,29 @@ impl MultiBufferSnapshot {
         D: TextDimension + Ord + Copy + Sub<D, Output = D> + std::fmt::Debug,
         M: Clone,
     {
+        let max_position = D::from_text_summary(&self.text_summary());
         let mut current_excerpt_metadata: Option<(ExcerptId, I)> = None;
         let mut cursor = self.cursor::<DimensionPair<usize, D>>();
+
+        // Find the excerpt and buffer offset where the given range ends.
+        cursor.seek(&DimensionPair {
+            key: range.end,
+            value: None,
+        });
+        let mut range_end = None;
+        while let Some(region) = cursor.region() {
+            if region.is_main_buffer {
+                let mut buffer_end = region.buffer_range.start.key;
+                if region.is_main_buffer {
+                    let overshoot = range.end.saturating_sub(region.range.start.key);
+                    buffer_end.add_assign(&overshoot);
+                }
+                range_end = Some((region.excerpt.id, buffer_end));
+                break;
+            }
+            cursor.next();
+        }
+
         cursor.seek(&DimensionPair {
             key: range.start,
             value: None,
@@ -3317,32 +3338,32 @@ impl MultiBufferSnapshot {
             // and retrieve the metadata for the resulting range.
             else {
                 let region = cursor.region()?;
-                let excerpt_range = excerpt.range.context.to_offset(&excerpt.buffer);
-                let start_overshoot = range.start.saturating_sub(region.range.start.key);
-                let end_overshoot = range.end.saturating_sub(region.range.start.key);
-                let buffer_start = excerpt_range.start + start_overshoot;
-                let buffer_end = excerpt_range.start + end_overshoot;
-                let buffer_end = excerpt
-                    .buffer
-                    .clip_offset(buffer_end, Bias::Right)
-                    .min(excerpt_range.end);
+                let buffer_start = if region.is_main_buffer {
+                    let start_overshoot = range.start.saturating_sub(region.range.start.key);
+                    region.buffer_range.start.key + start_overshoot
+                } else {
+                    cursor.main_buffer_position()?.key
+                };
+                let mut buffer_end = excerpt.range.context.end.to_offset(&excerpt.buffer);
+                if let Some((end_excerpt_id, end_buffer_offset)) = range_end {
+                    if excerpt.id == end_excerpt_id {
+                        buffer_end = buffer_end.min(end_buffer_offset);
+                    }
+                }
 
                 if let Some(iterator) =
                     get_buffer_metadata(self, &excerpt.buffer, buffer_start..buffer_end)
                 {
-                    Some(
-                        &mut current_excerpt_metadata
-                            .insert((region.excerpt.id, iterator))
-                            .1,
-                    )
+                    Some(&mut current_excerpt_metadata.insert((excerpt.id, iterator)).1)
                 } else {
                     None
                 }
             };
 
-            // Convert each metadata item's range to multibuffer coordinates.
+            // Visit each metadata item.
             if let Some((metadata, range)) = metadata_iter.and_then(Iterator::next) {
-                // Find the multibuffer region that contains the start of this range.
+                // Find the multibuffer regions that contain the start and end of
+                // the metadata item's range.
                 if range.start > D::default() {
                     while let Some(region) = cursor.region() {
                         if region.buffer_range.end.value.unwrap() < range.start {
@@ -3352,15 +3373,7 @@ impl MultiBufferSnapshot {
                         }
                     }
                 }
-
                 let start_region = cursor.region()?;
-                let mut start = start_region.range.start.value.unwrap();
-                let region_buffer_start = start_region.buffer_range.start.value.unwrap();
-                if start_region.is_main_buffer && range.start > region_buffer_start {
-                    start.add_assign(&(range.start - region_buffer_start));
-                }
-
-                // Find the multibuffer region that contains the end of the range.
                 while let Some(region) = cursor.region() {
                     if !region.is_main_buffer || region.buffer_range.end.value.unwrap() <= range.end
                     {
@@ -3369,17 +3382,22 @@ impl MultiBufferSnapshot {
                         break;
                     }
                 }
+                let end_region = cursor.region();
 
-                let mut end;
-                if let Some(end_region) = cursor.region() {
+                // Convert the metadata item's range into multibuffer coordinates.
+                let mut start = start_region.range.start.value.unwrap();
+                let region_buffer_start = start_region.buffer_range.start.value.unwrap();
+                if start_region.is_main_buffer && range.start > region_buffer_start {
+                    start.add_assign(&(range.start - region_buffer_start));
+                }
+                let mut end = max_position;
+                if let Some(end_region) = end_region {
                     end = end_region.range.start.value.unwrap();
                     debug_assert!(end_region.is_main_buffer);
                     let region_buffer_start = end_region.buffer_range.start.value.unwrap();
                     if range.end > region_buffer_start {
                         end.add_assign(&(range.end - region_buffer_start));
                     }
-                } else {
-                    end = D::from_text_summary(&self.text_summary());
                 }
 
                 return Some((metadata, &excerpt.buffer, start..end));
@@ -5432,6 +5450,20 @@ where
             self.cached_region = self.build_region();
         }
         self.cached_region.clone()
+    }
+
+    fn main_buffer_position(&self) -> Option<D> {
+        if let DiffTransform::BufferContent { .. } = self.diff_transforms.next_item()? {
+            let excerpt = self.excerpts.item()?;
+            let buffer = &excerpt.buffer;
+            let buffer_context_start = excerpt.range.context.start.summary::<D>(buffer);
+            let mut buffer_start = buffer_context_start;
+            let overshoot = self.diff_transforms.end(&()).1 .0 - self.excerpts.start().0;
+            buffer_start.add_assign(&overshoot);
+            Some(buffer_start)
+        } else {
+            None
+        }
     }
 
     fn build_region(&self) -> Option<MultiBufferRegion<'a, D>> {
