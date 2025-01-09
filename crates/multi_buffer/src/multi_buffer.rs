@@ -2548,6 +2548,10 @@ impl MultiBuffer {
         changes: Vec<(text::Edit<ExcerptOffset>, DiffChangeKind)>,
         #[allow(unused)] cx: &AppContext,
     ) {
+        if changes.is_empty() {
+            return;
+        }
+
         let mut cursor = snapshot
             .diff_transforms
             .cursor::<(ExcerptOffset, usize)>(&());
@@ -2555,9 +2559,10 @@ impl MultiBuffer {
         let mut new_transforms = SumTree::default();
         let mut edits = Vec::new();
 
-        let mut changes = changes.into_iter().peekable();
+        let mut excerpt_edits = changes.into_iter().peekable();
         let mut delta = 0_isize;
-        while let Some((mut edit, mut operation)) = changes.next() {
+        while let Some((mut edit, mut operation)) = excerpt_edits.next() {
+            // Keep any transforms that are before the edit.
             let mut preserved_transforms = cursor.slice(&edit.old.start, Bias::Left, &());
             if cursor.end(&()).0 == edit.old.start && cursor.start().0 < edit.old.start {
                 preserved_transforms.extend(cursor.item().cloned(), &());
@@ -2568,46 +2573,40 @@ impl MultiBuffer {
             let mut end_of_current_insert = ExcerptOffset::new(0);
             loop {
                 let edit_old_start = cursor.start().1 + (edit.old.start - cursor.start().0).value;
-                let mut edit_old_end = cursor.start().1 + (edit.old.end - cursor.start().0).value;
 
-                excerpts_cursor.seek(&edit.new.start, Bias::Right, &());
+                // Visit each excerpt that intersects the edit.
+                excerpts_cursor.seek_forward(&edit.new.start, Bias::Right, &());
                 while let Some(excerpt) = excerpts_cursor.item() {
-                    if *excerpts_cursor.start() > edit.new.end {
-                        break;
-                    }
-                    let buffer = &excerpt.buffer;
                     let excerpt_start = *excerpts_cursor.start();
-                    let excerpt_buffer_start = excerpt.range.context.start.to_offset(buffer);
-                    let buffer_id = excerpt.buffer_id;
-                    let diff_state = snapshot.diffs.get(&buffer_id);
-                    excerpts_cursor.next(&());
+                    let excerpt_end = excerpts_cursor.end(&());
 
-                    let edit_buffer_start = excerpt_buffer_start
-                        + edit.new.start.value.saturating_sub(excerpt_start.value);
-                    let edit_buffer_end = excerpt_buffer_start
-                        + edit
-                            .new
-                            .end
-                            .value
-                            .saturating_sub(excerpt_start.value)
-                            .min(excerpt.text_summary.len);
-                    let edit_anchor_range = buffer.anchor_before(edit_buffer_start)
-                        ..buffer.anchor_after(edit_buffer_end);
-                    if let Some(diff_state) = diff_state {
+                    // Recompute the expanded hunks in the portion of the excerpt that
+                    // intersects the edit.
+                    if let Some(diff_state) = snapshot.diffs.get(&excerpt.buffer_id) {
                         let diff = &diff_state.diff;
                         let base_text = &diff_state.base_text;
+                        let buffer = &excerpt.buffer;
+                        let excerpt_buffer_start = excerpt.range.context.start.to_offset(buffer);
+                        let edit_buffer_start = excerpt_buffer_start
+                            + edit.new.start.value.saturating_sub(excerpt_start.value);
+                        let edit_buffer_end = excerpt_buffer_start
+                            + edit
+                                .new
+                                .end
+                                .value
+                                .saturating_sub(excerpt_start.value)
+                                .min(excerpt.text_summary.len);
+                        let edit_anchor_range = buffer.anchor_before(edit_buffer_start)
+                            ..buffer.anchor_after(edit_buffer_end);
 
                         for hunk in diff.hunks_intersecting_range(edit_anchor_range, buffer) {
-                            let hunk_start_buffer_offset =
-                                hunk.buffer_range.start.to_offset(buffer);
-                            let hunk_end_buffer_offset = hunk.buffer_range.end.to_offset(buffer);
-
+                            let hunk_buffer_range = hunk.buffer_range.to_offset(buffer);
                             let hunk_excerpt_start = excerpt_start
                                 + ExcerptOffset::new(
-                                    hunk_start_buffer_offset.saturating_sub(excerpt_buffer_start),
+                                    hunk_buffer_range.start.saturating_sub(excerpt_buffer_start),
                                 );
                             let hunk_excerpt_end = excerpt_start
-                                + ExcerptOffset::new(hunk_end_buffer_offset - excerpt_buffer_start);
+                                + ExcerptOffset::new(hunk_buffer_range.end - excerpt_buffer_start);
 
                             self.push_buffer_content_transform(
                                 &*snapshot,
@@ -2616,6 +2615,7 @@ impl MultiBuffer {
                                 end_of_current_insert,
                             );
 
+                            // Record edits for any hunks which are no longer present.
                             while cursor.end(&()).0 < hunk_excerpt_start
                                 || (cursor.end(&()).0 == hunk_excerpt_start
                                     && cursor.start().0 < hunk_excerpt_start)
@@ -2636,6 +2636,8 @@ impl MultiBuffer {
                                 cursor.next(&());
                             }
 
+                            // For every existing hunk, determine if it was previously expanded
+                            // and if it should currently be expanded.
                             let mut was_previously_expanded = false;
                             let mut previous_expanded_summary = TextSummary::default();
                             if cursor.start().0 == hunk_excerpt_start {
@@ -2657,16 +2659,13 @@ impl MultiBuffer {
                                 };
                             }
 
-                            let hunk_is_deletion =
-                                hunk_start_buffer_offset == hunk_end_buffer_offset;
-
                             let should_expand_hunk = match &operation {
                                 DiffChangeKind::DiffUpdated { base_changed: true } => {
                                     self.all_diff_hunks_expanded
                                 }
                                 DiffChangeKind::ExpandOrCollapseHunks { expand } => {
-                                    let intersects = hunk_is_deletion
-                                        || hunk_end_buffer_offset > edit_buffer_start;
+                                    let intersects = hunk_buffer_range.is_empty()
+                                        || hunk_buffer_range.end > edit_buffer_start;
                                     if *expand {
                                         was_previously_expanded
                                             || self.all_diff_hunks_expanded
@@ -2681,8 +2680,8 @@ impl MultiBuffer {
                             };
 
                             if should_expand_hunk {
-                                if hunk.diff_base_byte_range.len() > 0
-                                    && hunk_start_buffer_offset >= edit_buffer_start
+                                if !hunk.diff_base_byte_range.is_empty()
+                                    && hunk_buffer_range.start >= edit_buffer_start
                                 {
                                     let mut text_cursor =
                                         base_text.as_rope().cursor(hunk.diff_base_byte_range.start);
@@ -2690,9 +2689,7 @@ impl MultiBuffer {
                                         .summary::<TextSummary>(hunk.diff_base_byte_range.end);
 
                                     let mut needs_newline = false;
-                                    let mut diff_byte_len = hunk.diff_base_byte_range.len();
                                     if base_text_summary.last_line_chars > 0 {
-                                        diff_byte_len += 1;
                                         base_text_summary += TextSummary::newline();
                                         needs_newline = true;
                                     }
@@ -2705,8 +2702,9 @@ impl MultiBuffer {
                                         let old_start = cursor.start().1 + hunk_overshoot;
                                         let old_end = old_start + previous_expanded_summary.len;
                                         let new_start = new_transforms.summary().output.len;
-                                        let new_end = new_start + diff_byte_len;
-                                        delta += diff_byte_len as isize;
+                                        let new_end = new_start + base_text_summary.len;
+                                        delta += base_text_summary.len as isize
+                                            - previous_expanded_summary.len as isize;
                                         let edit = Edit {
                                             old: old_start..old_end,
                                             new: new_start..new_end,
@@ -2718,16 +2716,15 @@ impl MultiBuffer {
                                         DiffTransform::DeletedHunk {
                                             base_text_byte_range: hunk.diff_base_byte_range.clone(),
                                             summary: base_text_summary,
-                                            buffer_id,
+                                            buffer_id: excerpt.buffer_id,
                                             needs_newline,
                                         },
                                         &(),
                                     );
                                 }
 
-                                if hunk_end_buffer_offset > hunk_start_buffer_offset {
-                                    end_of_current_insert =
-                                        hunk_excerpt_end.min(*excerpts_cursor.start());
+                                if !hunk_buffer_range.is_empty() {
+                                    end_of_current_insert = hunk_excerpt_end.min(excerpt_end);
                                 }
 
                                 if was_previously_expanded {
@@ -2736,10 +2733,14 @@ impl MultiBuffer {
                             }
                         }
                     }
+
+                    if excerpt_end > edit.new.end {
+                        break;
+                    }
+                    excerpts_cursor.next(&());
                 }
 
                 let start_delta = delta;
-
                 while cursor.end(&()).0 <= edit.old.end {
                     let Some(item) = cursor.item() else {
                         break;
@@ -2757,9 +2758,6 @@ impl MultiBuffer {
                             edits.push(edit);
                         }
                     }
-
-                    edit_old_end = cursor.start().1 + (edit.old.end - cursor.start().0).value;
-
                     cursor.next(&());
                 }
 
@@ -2771,6 +2769,8 @@ impl MultiBuffer {
                 );
 
                 if let DiffChangeKind::InputEdited = operation {
+                    let edit_old_end =
+                        cursor.start().1 + (edit.old.end.saturating_sub(cursor.start().0)).value;
                     let edit_new_start = (edit_old_start as isize + start_delta) as usize;
                     delta += (edit.new.end - edit.new.start).value as isize
                         - (edit.old.end - edit.old.start).value as isize;
@@ -2782,24 +2782,25 @@ impl MultiBuffer {
                     edits.push(edit);
                 }
 
-                if let Some((next_edit, _)) = changes.peek() {
-                    if next_edit.old.start < cursor.end(&()).0 {
-                        (edit, operation) = changes.next().unwrap();
-                        continue;
-                    }
+                if excerpt_edits.peek().map_or(false, |(next_edit, _)| {
+                    next_edit.old.start < cursor.end(&()).0
+                }) {
+                    (edit, operation) = excerpt_edits.next().unwrap();
+                    continue;
                 }
 
-                let suffix = cursor.end(&()).0 - edit.old.end;
-                let transform_end = new_transforms.summary().excerpt_len() + suffix;
-                self.push_buffer_content_transform(
-                    &*snapshot,
-                    &mut new_transforms,
-                    transform_end,
-                    end_of_current_insert,
-                );
-                cursor.next(&());
                 break;
             }
+
+            let suffix = cursor.end(&()).0 - edit.old.end;
+            let transform_end = new_transforms.summary().excerpt_len() + suffix;
+            self.push_buffer_content_transform(
+                &*snapshot,
+                &mut new_transforms,
+                transform_end,
+                end_of_current_insert,
+            );
+            cursor.next(&());
         }
 
         self.append_transforms(&mut new_transforms, cursor.suffix(&()));
@@ -2810,9 +2811,6 @@ impl MultiBuffer {
         snapshot.diff_transforms = new_transforms;
         snapshot.edit_count += 1;
         drop(snapshot);
-
-        // #[cfg(test)]
-        // self.check_invariants(cx);
     }
 
     fn append_transforms(
@@ -3383,8 +3381,6 @@ impl MultiBufferSnapshot {
                     .clip_offset(region.buffer_range.start.key + overshoot, Bias::Right),
             );
             let buffer_end = excerpt.buffer.anchor_after(buffer_position);
-
-            dbg!(position, buffer_position, overshoot, region.is_main_buffer);
 
             if let Some(diff_state) = self.diffs.get(&excerpt.buffer_id) {
                 let mut hunks = diff_state.diff.hunks_intersecting_range_rev(

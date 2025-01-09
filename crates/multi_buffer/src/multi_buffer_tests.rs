@@ -1423,6 +1423,47 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
             .collect::<Vec<_>>(),
         &[0..1, 2..4, 5..7, 9..10, 12..13, 14..17]
     );
+
+    buffer_2.update(cx, |buffer, cx| {
+        buffer.edit_via_marked_text(
+            indoc!(
+                "
+                eight
+                «»eleven
+                THIRTEEN
+                FOURTEEN
+                "
+            ),
+            None,
+            cx,
+        );
+    });
+
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+            + ZERO
+              one
+            - two
+            + TWO
+              three
+            - four
+            - five
+              six
+
+            - seven
+              eight
+              eleven
+            - twelve
+            + THIRTEEN
+            + FOURTEEN
+            "
+        ),
+    );
 }
 
 /// A naive implementation of a multi-buffer that does not maintain
@@ -1546,24 +1587,26 @@ impl ReferenceMultibuffer {
             let base_buffer = change_set.base_text.as_ref().unwrap().read(cx);
 
             let mut start = buffer_range.start;
-            let mut insertion_end_row = 0;
+            let mut insertion_end_point = Point::zero();
 
-            for hunk_anchor in &excerpt.expanded_diff_hunks {
-                let hunk_offset = hunk_anchor.to_offset(buffer);
-                let hunk = diff
-                    .hunks_in_row_range(0..u32::MAX, buffer)
-                    .find(|hunk| hunk.buffer_range.start == *hunk_anchor)
-                    .unwrap();
+            for hunk in diff.hunks_intersecting_range(excerpt.range.clone(), buffer) {
+                if !excerpt
+                    .expanded_diff_hunks
+                    .contains(&hunk.buffer_range.start)
+                {
+                    continue;
+                }
 
+                let hunk_offset = hunk.buffer_range.start.to_offset(buffer);
                 if hunk_offset > start {
+                    // Add the buffer text before the hunk
                     expected_text.extend(buffer.text_for_range(start..hunk_offset));
-
                     let start_point = buffer.offset_to_point(start);
                     let end_point = buffer.offset_to_point(hunk_offset);
                     for row in start_point.row..end_point.row {
                         expected_buffer_rows.push(RowInfo {
                             buffer_row: Some(row),
-                            diff_status: if row < insertion_end_row {
+                            diff_status: if Point::new(row, 0) < insertion_end_point {
                                 Some(DiffHunkStatus::Added)
                             } else {
                                 None
@@ -1571,36 +1614,32 @@ impl ReferenceMultibuffer {
                         });
                     }
 
+                    // Add the deleted text for the hunk.
                     if !hunk.diff_base_byte_range.is_empty() {
-                        let base_text = base_buffer
+                        let mut base_text = base_buffer
                             .text_for_range(hunk.diff_base_byte_range)
                             .collect::<String>();
-                        let mut lines: Vec<_> = base_text.split('\n').collect();
-                        assert_eq!(Some(""), lines.pop());
-                        for line in lines {
-                            expected_text.push_str(line);
-                            expected_text.push('\n');
+                        if !base_text.ends_with('\n') {
+                            base_text.push('\n');
+                        }
+                        expected_text.push_str(&base_text);
+                        for _ in base_text.matches('\n') {
                             expected_buffer_rows.push(RowInfo {
                                 buffer_row: None,
                                 diff_status: Some(DiffHunkStatus::Removed),
                             });
                         }
                     }
+
                     start = hunk_offset;
                 }
 
-                let insertion_end_point = buffer.offset_to_point(
+                insertion_end_point = buffer.offset_to_point(
                     hunk.buffer_range
                         .end
                         .to_offset(&buffer)
                         .min(buffer_range.end),
                 );
-
-                insertion_end_row = if insertion_end_point.column > 0 {
-                    insertion_end_point.row + 1
-                } else {
-                    insertion_end_point.row
-                };
             }
 
             expected_text.extend(buffer.text_for_range(start..buffer_range.end));
@@ -1610,7 +1649,7 @@ impl ReferenceMultibuffer {
             for row in buffer_row_range {
                 expected_buffer_rows.push(RowInfo {
                     buffer_row: Some(row),
-                    diff_status: if row < insertion_end_row {
+                    diff_status: if Point::new(row, 0) < insertion_end_point {
                         Some(DiffHunkStatus::Added)
                     } else {
                         None
@@ -1883,13 +1922,11 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
         let (expected_text, expected_row_infos) = reference.expected_content(cx);
         let expected_diff = format_diff(&expected_text, &expected_row_infos);
 
+        log::info!("Multibuffer content:\n{}", actual_diff);
+
         pretty_assertions::assert_eq!(actual_diff, expected_diff);
         pretty_assertions::assert_eq!(actual_text, expected_text);
         pretty_assertions::assert_eq!(actual_row_infos, expected_row_infos);
-
-        eprintln!("{}", actual_diff);
-
-        log::info!("MultiBuffer text: {:?}", expected_text);
 
         for _ in 0..5 {
             let start_row = rng.gen_range(0..=expected_row_infos.len());
