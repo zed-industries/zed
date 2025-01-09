@@ -290,45 +290,41 @@ impl ProjectPanel {
                     this.hide_scrollbar(window, cx);
                 })
                 .detach();
-                cx.subscribe_in(
-                    &project,
-                    window,
-                    |this, project, event, window, cx| match event {
-                        project::Event::ActiveEntryChanged(Some(entry_id)) => {
-                            if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
-                                this.reveal_entry(project.clone(), *entry_id, true, window, cx);
-                            }
+                cx.subscribe(&project, |this, project, event, cx| match event {
+                    project::Event::ActiveEntryChanged(Some(entry_id)) => {
+                        if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
+                            this.reveal_entry(project.clone(), *entry_id, true, cx);
                         }
-                        project::Event::RevealInProjectPanel(entry_id) => {
-                            this.reveal_entry(project.clone(), *entry_id, false, window, cx);
-                            cx.emit(PanelEvent::Activate);
-                        }
-                        project::Event::ActivateProjectPanel => {
-                            cx.emit(PanelEvent::Activate);
-                        }
-                        project::Event::DiskBasedDiagnosticsFinished { .. }
-                        | project::Event::DiagnosticsUpdated { .. } => {
-                            if ProjectPanelSettings::get_global(cx).show_diagnostics
-                                != ShowDiagnostics::Off
-                            {
-                                this.update_diagnostics(window, cx);
-                                cx.notify();
-                            }
-                        }
-                        project::Event::WorktreeRemoved(id) => {
-                            this.expanded_dir_ids.remove(id);
-                            this.update_visible_entries(None, window, cx);
+                    }
+                    project::Event::RevealInProjectPanel(entry_id) => {
+                        this.reveal_entry(project.clone(), *entry_id, false, cx);
+                        cx.emit(PanelEvent::Activate);
+                    }
+                    project::Event::ActivateProjectPanel => {
+                        cx.emit(PanelEvent::Activate);
+                    }
+                    project::Event::DiskBasedDiagnosticsFinished { .. }
+                    | project::Event::DiagnosticsUpdated { .. } => {
+                        if ProjectPanelSettings::get_global(cx).show_diagnostics
+                            != ShowDiagnostics::Off
+                        {
+                            this.update_diagnostics(cx);
                             cx.notify();
                         }
-                        project::Event::WorktreeUpdatedEntries(_, _)
-                        | project::Event::WorktreeAdded(_)
-                        | project::Event::WorktreeOrderChanged => {
-                            this.update_visible_entries(None, window, cx);
-                            cx.notify();
-                        }
-                        _ => {}
-                    },
-                )
+                    }
+                    project::Event::WorktreeRemoved(id) => {
+                        this.expanded_dir_ids.remove(id);
+                        this.update_visible_entries(None, cx);
+                        cx.notify();
+                    }
+                    project::Event::WorktreeUpdatedEntries(_, _)
+                    | project::Event::WorktreeAdded(_)
+                    | project::Event::WorktreeOrderChanged => {
+                        this.update_visible_entries(None, cx);
+                        cx.notify();
+                    }
+                    _ => {}
+                })
                 .detach();
 
                 let trash_action = [TypeId::of::<Trash>()];
@@ -347,7 +343,7 @@ impl ProjectPanel {
                     window,
                     |project_panel, _, editor_event, window, cx| match editor_event {
                         EditorEvent::BufferEdited | EditorEvent::SelectionsChanged { .. } => {
-                            project_panel.autoscroll(window, cx);
+                            project_panel.autoscroll(cx);
                         }
                         EditorEvent::Blurred => {
                             if project_panel
@@ -356,7 +352,7 @@ impl ProjectPanel {
                                 .map_or(false, |state| state.processing_filename.is_none())
                             {
                                 project_panel.edit_state = None;
-                                project_panel.update_visible_entries(None, window, cx);
+                                project_panel.update_visible_entries(None, cx);
                                 cx.notify();
                             }
                         }
@@ -375,7 +371,7 @@ impl ProjectPanel {
                     let new_settings = *ProjectPanelSettings::get_global(cx);
                     if project_panel_settings != new_settings {
                         project_panel_settings = new_settings;
-                        this.update_diagnostics(window, cx);
+                        this.update_diagnostics(cx);
                         cx.notify();
                     }
                 })
@@ -414,7 +410,7 @@ impl ProjectPanel {
                     scroll_handle,
                     mouse_down: false,
                 };
-                this.update_visible_entries(None, window, cx);
+                this.update_visible_entries(None, cx);
 
                 this
             });
@@ -527,7 +523,7 @@ impl ProjectPanel {
         })
     }
 
-    fn update_diagnostics(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn update_diagnostics(&mut self, cx: &mut ModelContext<Self>) {
         let mut diagnostics: HashMap<(WorktreeId, PathBuf), DiagnosticSeverity> =
             Default::default();
         let show_diagnostics_setting = ProjectPanelSettings::get_global(cx).show_diagnostics;
@@ -791,7 +787,7 @@ impl ProjectPanel {
                         });
 
                         expanded_dir_ids.insert(ix, entry_id);
-                        self.update_visible_entries(None, window, cx);
+                        self.update_visible_entries(None, cx);
                         cx.notify();
                     }
                 }
@@ -840,7 +836,7 @@ impl ProjectPanel {
             match expanded_dir_ids.binary_search(&entry_id) {
                 Ok(ix) => {
                     expanded_dir_ids.remove(ix);
-                    self.update_visible_entries(Some((worktree_id, entry_id)), window, cx);
+                    self.update_visible_entries(Some((worktree_id, entry_id)), cx);
                     cx.notify();
                     break;
                 }
@@ -867,7 +863,7 @@ impl ProjectPanel {
         // (which is it's default behavior when there's no entry for a worktree in expanded_dir_ids).
         self.expanded_dir_ids
             .retain(|_, expanded_entries| expanded_entries.is_empty());
-        self.update_visible_entries(None, window, cx);
+        self.update_visible_entries(None, cx);
         cx.notify();
     }
 
@@ -890,7 +886,7 @@ impl ProjectPanel {
                         }
                     }
                 });
-                self.update_visible_entries(Some((worktree_id, entry_id)), window, cx);
+                self.update_visible_entries(Some((worktree_id, entry_id)), cx);
                 window.focus(&self.focus_handle);
                 cx.notify();
             }
@@ -933,7 +929,7 @@ impl ProjectPanel {
             if window.modifiers().shift {
                 self.marked_entries.insert(selection);
             }
-            self.autoscroll(window, cx);
+            self.autoscroll(cx);
             cx.notify();
         } else {
             self.select_first(&SelectFirst {}, window, cx);
@@ -1039,7 +1035,7 @@ impl ProjectPanel {
                 Err(e) => {
                     project_panel.update_in(&mut cx, |project_panel, window, cx| {
                         project_panel.marked_entries.clear();
-                        project_panel.update_visible_entries(None, window, cx);
+                        project_panel.update_visible_entries(None,  cx);
                     }).ok();
                     Err(e)?;
                 }
@@ -1053,7 +1049,7 @@ impl ProjectPanel {
                                 project_panel.expand_to_selection(window, cx);
                             }
                         }
-                        project_panel.update_visible_entries(None, window, cx);
+                        project_panel.update_visible_entries(None, cx);
                         if is_new_entry && !is_dir {
                             project_panel.open_entry(new_entry.id, true, false, window, cx);
                         }
@@ -1064,7 +1060,7 @@ impl ProjectPanel {
                     if let Some(open_task) = project_panel
                         .update_in(&mut cx, |project_panel, window, cx| {
                             project_panel.marked_entries.clear();
-                            project_panel.update_visible_entries(None, window, cx);
+                            project_panel.update_visible_entries(None,  cx);
 
                             if is_dir {
                                 project_panel.project.update(cx, |_, cx| {
@@ -1096,14 +1092,14 @@ impl ProjectPanel {
 
     fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
         let previous_edit_state = self.edit_state.take();
-        self.update_visible_entries(None, window, cx);
+        self.update_visible_entries(None, cx);
         self.marked_entries.clear();
 
         if let Some(previously_focused) =
             previous_edit_state.and_then(|edit_state| edit_state.previously_focused)
         {
             self.selection = Some(previously_focused);
-            self.autoscroll(window, cx);
+            self.autoscroll(cx);
         }
 
         window.focus(&self.focus_handle);
@@ -1200,8 +1196,8 @@ impl ProjectPanel {
                 editor.clear(window, cx);
                 editor.focus(window, cx);
             });
-            self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), window, cx);
-            self.autoscroll(window, cx);
+            self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), cx);
+            self.autoscroll(cx);
             cx.notify();
         }
     }
@@ -1252,8 +1248,8 @@ impl ProjectPanel {
                         });
                         editor.focus(window, cx);
                     });
-                    self.update_visible_entries(None, window, cx);
-                    self.autoscroll(window, cx);
+                    self.update_visible_entries(None, cx);
+                    self.autoscroll(cx);
                     cx.notify();
                 }
             }
@@ -1374,7 +1370,7 @@ impl ProjectPanel {
                 panel.update_in(&mut cx, |panel, window, cx| {
                     if let Some(next_selection) = next_selection {
                         panel.selection = Some(next_selection);
-                        panel.autoscroll(window, cx);
+                        panel.autoscroll(cx);
                     } else {
                         panel.select_last(&SelectLast {}, window, cx);
                     }
@@ -1495,8 +1491,8 @@ impl ProjectPanel {
                 }
             }
 
-            self.update_visible_entries(None, window, cx);
-            self.autoscroll(window, cx);
+            self.update_visible_entries(None, cx);
+            self.autoscroll(cx);
             cx.notify();
         }
     }
@@ -1526,8 +1522,8 @@ impl ProjectPanel {
                 }
             }
 
-            self.update_visible_entries(None, window, cx);
-            self.autoscroll(window, cx);
+            self.update_visible_entries(None, cx);
+            self.autoscroll(cx);
             cx.notify();
         }
     }
@@ -1571,7 +1567,7 @@ impl ProjectPanel {
                         self.marked_entries.insert(selection);
                     }
 
-                    self.autoscroll(window, cx);
+                    self.autoscroll(cx);
                     cx.notify();
                 }
             }
@@ -1609,13 +1605,9 @@ impl ProjectPanel {
 
         if let Some(selection) = selection {
             self.selection = Some(selection);
-            self.expand_entry(selection.worktree_id, selection.entry_id, window, cx);
-            self.update_visible_entries(
-                Some((selection.worktree_id, selection.entry_id)),
-                window,
-                cx,
-            );
-            self.autoscroll(window, cx);
+            self.expand_entry(selection.worktree_id, selection.entry_id, cx);
+            self.update_visible_entries(Some((selection.worktree_id, selection.entry_id)), cx);
+            self.autoscroll(cx);
             cx.notify();
         }
     }
@@ -1649,13 +1641,9 @@ impl ProjectPanel {
 
         if let Some(selection) = selection {
             self.selection = Some(selection);
-            self.expand_entry(selection.worktree_id, selection.entry_id, window, cx);
-            self.update_visible_entries(
-                Some((selection.worktree_id, selection.entry_id)),
-                window,
-                cx,
-            );
-            self.autoscroll(window, cx);
+            self.expand_entry(selection.worktree_id, selection.entry_id, cx);
+            self.update_visible_entries(Some((selection.worktree_id, selection.entry_id)), cx);
+            self.autoscroll(cx);
             cx.notify();
         }
     }
@@ -1689,13 +1677,9 @@ impl ProjectPanel {
 
         if let Some(selection) = selection {
             self.selection = Some(selection);
-            self.expand_entry(selection.worktree_id, selection.entry_id, window, cx);
-            self.update_visible_entries(
-                Some((selection.worktree_id, selection.entry_id)),
-                window,
-                cx,
-            );
-            self.autoscroll(window, cx);
+            self.expand_entry(selection.worktree_id, selection.entry_id, cx);
+            self.update_visible_entries(Some((selection.worktree_id, selection.entry_id)), cx);
+            self.autoscroll(cx);
             cx.notify();
         }
     }
@@ -1726,7 +1710,7 @@ impl ProjectPanel {
 
         if let Some(selection) = selection {
             self.selection = Some(selection);
-            self.autoscroll(window, cx);
+            self.autoscroll(cx);
             cx.notify();
         }
     }
@@ -1757,7 +1741,7 @@ impl ProjectPanel {
 
         if let Some(selection) = selection {
             self.selection = Some(selection);
-            self.autoscroll(window, cx);
+            self.autoscroll(cx);
             cx.notify();
         }
     }
@@ -1791,13 +1775,9 @@ impl ProjectPanel {
 
         if let Some(selection) = selection {
             self.selection = Some(selection);
-            self.expand_entry(selection.worktree_id, selection.entry_id, window, cx);
-            self.update_visible_entries(
-                Some((selection.worktree_id, selection.entry_id)),
-                window,
-                cx,
-            );
-            self.autoscroll(window, cx);
+            self.expand_entry(selection.worktree_id, selection.entry_id, cx);
+            self.update_visible_entries(Some((selection.worktree_id, selection.entry_id)), cx);
+            self.autoscroll(cx);
             cx.notify();
         }
     }
@@ -1816,7 +1796,7 @@ impl ProjectPanel {
                         worktree_id: worktree.id(),
                         entry_id: parent_entry.id,
                     });
-                    self.autoscroll(window, cx);
+                    self.autoscroll(cx);
                     cx.notify();
                 }
             }
@@ -1844,7 +1824,7 @@ impl ProjectPanel {
                 if window.modifiers().shift {
                     self.marked_entries.insert(selection);
                 }
-                self.autoscroll(window, cx);
+                self.autoscroll(cx);
                 cx.notify();
             }
         }
@@ -1862,13 +1842,13 @@ impl ProjectPanel {
                     worktree_id,
                     entry_id: last_entry.id,
                 });
-                self.autoscroll(window, cx);
+                self.autoscroll(cx);
                 cx.notify();
             }
         }
     }
 
-    fn autoscroll(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn autoscroll(&mut self, cx: &mut ModelContext<Self>) {
         if let Some((_, _, index)) = self.selection.and_then(|s| self.index_for_selection(s)) {
             self.scroll_handle
                 .scroll_to_item(index, ScrollStrategy::Center);
@@ -2039,7 +2019,7 @@ impl ProjectPanel {
             })
             .detach_and_log_err(cx);
 
-            self.expand_entry(worktree_id, entry.id, window, cx);
+            self.expand_entry(worktree_id, entry.id, cx);
             Some(())
         });
     }
@@ -2264,7 +2244,7 @@ impl ProjectPanel {
         });
 
         if let Some(destination_worktree) = destination_worktree {
-            self.expand_entry(destination_worktree, destination, window, cx);
+            self.expand_entry(destination_worktree, destination, cx);
         }
     }
 
@@ -2434,7 +2414,6 @@ impl ProjectPanel {
     fn update_visible_entries(
         &mut self,
         new_selected_entry: Option<(WorktreeId, ProjectEntryId)>,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let auto_collapse_dirs = ProjectPanelSettings::get_global(cx).auto_fold_dirs;
@@ -2664,7 +2643,6 @@ impl ProjectPanel {
         &mut self,
         worktree_id: WorktreeId,
         entry_id: ProjectEntryId,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.project.update(cx, |project, cx| {
@@ -3924,7 +3902,6 @@ impl ProjectPanel {
         project: Model<Project>,
         entry_id: ProjectEntryId,
         skip_ignored: bool,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(worktree) = project.read(cx).worktree_for_entry(entry_id, cx) {
@@ -3938,8 +3915,8 @@ impl ProjectPanel {
             }
 
             let worktree_id = worktree.id();
-            self.expand_entry(worktree_id, entry_id, window, cx);
-            self.update_visible_entries(Some((worktree_id, entry_id)), window, cx);
+            self.expand_entry(worktree_id, entry_id, cx);
+            self.update_visible_entries(Some((worktree_id, entry_id)), cx);
 
             if self.marked_entries.len() == 1
                 && self
@@ -3950,7 +3927,7 @@ impl ProjectPanel {
             {
                 self.marked_entries.clear();
             }
-            self.autoscroll(window, cx);
+            self.autoscroll(cx);
             cx.notify();
         }
     }
