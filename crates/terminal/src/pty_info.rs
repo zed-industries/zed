@@ -104,6 +104,10 @@ impl PtyProcessInfo {
         }
     }
 
+    pub fn pid_getter(&self) -> &ProcessIdGetter {
+        &self.pid_getter
+    }
+
     fn refresh(&mut self) -> Option<&Process> {
         let pid = self.pid_getter.pid()?;
         if self.system.refresh_processes_specifics(
@@ -149,9 +153,5 @@ impl PtyProcessInfo {
             self.current = current;
         }
         has_changed
-    }
-
-    pub fn get_pid_getter(&self) -> &ProcessIdGetter {
-        &self.pid_getter
     }
 }

@@ -1003,13 +1003,11 @@ impl Item for TerminalView {
     fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent> {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(false);
-
-        let pid_getter = terminal.pty_info.get_pid_getter();
-        let pid_text = pid_getter.fallback_pid();
+        let pid = terminal.pty_info.pid_getter().fallback_pid();
 
         Some(TabTooltipContent::Custom(Box::new(
             move |cx: &mut WindowContext| {
-                cx.new_view(|_| TerminalTooltip::new(title.clone(), pid_text))
+                cx.new_view(|_| TerminalTooltip::new(title.clone(), pid))
                     .into()
             },
         )))
