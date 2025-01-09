@@ -228,7 +228,7 @@ impl GitPanel {
                 reveal_in_editor: Task::ready(()),
                 project,
             };
-            git_panel.update_visible_entries(None, None, cx);
+            git_panel.schedule_update(None, None, cx);
             git_panel
         });
 
@@ -255,9 +255,22 @@ impl GitPanel {
     fn dispatch_context(&self, cx: &ViewContext<Self>) -> KeyContext {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("GitPanel");
-        dispatch_context.add("menu");
+
+        if self.is_focused(cx) {
+            dispatch_context.add("menu");
+            dispatch_context.add("ChangesList");
+        }
+
+        if self.commit_editor.read(cx).is_focused(cx) {
+            dispatch_context.add("CommitEditor");
+        }
 
         dispatch_context
+    }
+
+    fn is_focused(&self, cx: &ViewContext<Self>) -> bool {
+        cx.focused()
+            .map_or(false, |focused| self.focus_handle == focused)
     }
 
     fn close_panel(&mut self, _: &Close, cx: &mut ViewContext<Self>) {
@@ -405,7 +418,17 @@ impl GitPanel {
         cx.notify();
     }
 
-    fn focus_changes(&mut self, _: &FocusChanges, cx: &mut ViewContext<Self>) {
+    fn select_first_entry(&mut self, cx: &mut ViewContext<Self>) {
+        if !self.no_entries() && self.selected_entry.is_none() {
+            self.selected_entry = Some(0);
+            self.scroll_to_selected_entry(cx);
+            cx.notify();
+        }
+    }
+
+    fn focus_changes_list(&mut self, _: &FocusChanges, cx: &mut ViewContext<Self>) {
+        self.select_first_entry(cx);
+
         cx.focus_self();
         cx.notify();
     }
@@ -1068,13 +1091,15 @@ impl Render for GitPanel {
                     this.commit_all_changes(&CommitAllChanges, cx)
                 }))
             })
-            .on_action(cx.listener(Self::select_first))
-            .on_action(cx.listener(Self::select_next))
-            .on_action(cx.listener(Self::select_prev))
-            .on_action(cx.listener(Self::select_last))
-            .on_action(cx.listener(Self::close_panel))
+            .when(self.is_focused(cx), |this| {
+                this.on_action(cx.listener(Self::select_first))
+                    .on_action(cx.listener(Self::select_next))
+                    .on_action(cx.listener(Self::select_prev))
+                    .on_action(cx.listener(Self::select_last))
+                    .on_action(cx.listener(Self::close_panel))
+            })
             .on_action(cx.listener(Self::open_selected))
-            .on_action(cx.listener(Self::focus_changes))
+            .on_action(cx.listener(Self::focus_changes_list))
             .on_action(cx.listener(Self::focus_editor))
             .on_action(cx.listener(Self::toggle_staged_for_selected))
             // .on_action(cx.listener(|this, &OpenSelected, cx| this.open_selected(&OpenSelected, cx)))
