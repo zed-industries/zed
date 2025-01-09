@@ -914,15 +914,20 @@ impl ProjectPanel {
         }
     }
 
-    fn toggle_expand_all(&mut self, entry_id: ProjectEntryId, cx: &mut ViewContext<Self>) {
+    fn toggle_expand_all(
+        &mut self,
+        entry_id: ProjectEntryId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         if let Some(worktree_id) = self.project.read(cx).worktree_id_for_entry(entry_id, cx) {
             if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree_id) {
                 match expanded_dir_ids.binary_search(&entry_id) {
                     Ok(_ix) => {
-                        self.collapse_all_for_entry(worktree_id, entry_id, cx);
+                        self.collapse_all_for_entry(worktree_id, entry_id, window, cx);
                     }
                     Err(_ix) => {
-                        self.expand_all_for_entry(worktree_id, entry_id, cx);
+                        self.expand_all_for_entry(worktree_id, entry_id, window, cx);
                     }
                 }
                 self.update_visible_entries(Some((worktree_id, entry_id)), cx);
