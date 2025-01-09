@@ -1027,6 +1027,10 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()), cx)
     }
 
+    fn is_refreshing(&self) -> bool {
+        !self.pending_completions.is_empty()
+    }
+
     fn refresh(
         &mut self,
         buffer: Model<Buffer>,

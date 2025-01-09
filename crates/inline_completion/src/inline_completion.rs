@@ -28,6 +28,7 @@ pub trait InlineCompletionProvider: 'static + Sized {
         cursor_position: language::Anchor,
         cx: &AppContext,
     ) -> bool;
+    fn is_refreshing(&self) -> bool;
     fn refresh(
         &mut self,
         buffer: Model<Buffer>,
@@ -63,6 +64,7 @@ pub trait InlineCompletionProviderHandle {
     ) -> bool;
     fn show_completions_in_menu(&self) -> bool;
     fn show_completions_in_normal_mode(&self) -> bool;
+    fn is_refreshing(&self, cx: &AppContext) -> bool;
     fn refresh(
         &self,
         buffer: Model<Buffer>,
@@ -114,6 +116,10 @@ where
         cx: &AppContext,
     ) -> bool {
         self.read(cx).is_enabled(buffer, cursor_position, cx)
+    }
+
+    fn is_refreshing(&self, cx: &AppContext) -> bool {
+        self.read(cx).is_refreshing()
     }
 
     fn refresh(
