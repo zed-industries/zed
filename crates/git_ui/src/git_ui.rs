@@ -111,10 +111,17 @@ impl GitState {
         self.commit_message = None;
     }
 
+    fn changed(&mut self) {
+        if self.git_task_rx.is_none() {
+            self.launch_git_task(project, cx);
+        }
+    }
+
     pub fn stage_entry(&mut self, repo_path: RepoPath) {
         if let Some(active_repository) = self.active_repository {
             self.status_actions_since_task
                 .insert((active_repository, repo_path), StatusAction::Stage);
+            self.changed();
         }
     }
 
@@ -207,10 +214,56 @@ impl GitState {
         else {
             return false;
         };
-        // FIXME this logic is wrong
+        // FIXME this logic is wrong, need a better accessor
         snapshot
             .status_for_file(repo.work_directory.unrelativize(&repo_path).unwrap())
             .is_none()
+    }
+
+    fn launch_git_task(&mut self, project: &Model<Project>, cx: &AppContext) {
+        let Some(active_repository) = self.active_repository else {
+            // FIXME wrong?
+            return;
+        };
+        let project = project.read(cx);
+        let Some(worktree) = project.worktree_for_entry(active_repository, cx) else {
+            // FIXME wrong?
+            return;
+        };
+        let Some(worktree) = worktree.read(cx).as_local() else {
+            // FIXME should never happen right?
+            return;
+        };
+        // FIXME clean all of this up
+        let Some(repo_entry) = worktree
+            .repositories()
+            .find(|repo| repo.work_directory_id() == active_repository)
+        else {
+            return;
+        };
+        let Some(git_repo) = worktree.local_git_repo(&repo_entry) else {
+            return;
+        };
+        let actions = std::mem::take(&mut self.status_actions_since_task);
+        if actions.is_empty() {
+            return;
+        }
+        let (tx, rx) = async_broadcast::broadcast(1);
+        cx.background_executor()
+            .spawn(async move {
+                let mut to_stage = Vec::new();
+                let mut to_unstage = Vec::new();
+                for ((_, path), action) in actions.iter() {
+                    match action {
+                        StatusAction::Stage => to_stage.push(path.clone()),
+                        StatusAction::Unstage => to_unstage.push(path.clone()),
+                    }
+                }
+                let _ = git_repo.update_index(&to_stage, &to_unstage);
+                let _ = tx.broadcast(()).await;
+            })
+            .detach();
+        self.git_task_rx = Some(rx.clone());
     }
 }
 

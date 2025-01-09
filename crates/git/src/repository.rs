@@ -52,6 +52,8 @@ pub trait GitRepository: Send + Sync {
 
     /// Returns the path to the repository, typically the `.git` folder.
     fn dot_git_dir(&self) -> PathBuf;
+
+    fn update_index(&self, stage: &[RepoPath], unstage: &[RepoPath]) -> Result<()>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -229,6 +231,11 @@ impl GitRepository for RealGitRepository {
             self.hosting_provider_registry.clone(),
         )
     }
+
+    fn update_index(&self, stage: &[RepoPath], unstage: &[RepoPath]) -> Result<()> {
+        eprintln!("got an update: {stage:?} and {unstage:?}");
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -367,6 +374,10 @@ impl GitRepository for FakeGitRepository {
             .get(path)
             .with_context(|| format!("failed to get blame for {:?}", path))
             .cloned()
+    }
+
+    fn update_index(&self, stage: &[RepoPath], unstage: &[RepoPath]) -> Result<()> {
+        todo!()
     }
 }
 
