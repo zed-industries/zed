@@ -1783,7 +1783,6 @@ impl LocalLspStore {
                     cx,
                 )
                 .filter_map(|server_node| {
-                    dbg!(server_node.server_name(), server_node.server_id());
                     let server_state = self.language_servers.get(&server_node.server_id()?)?;
                     if let LanguageServerState::Running { server, .. } = server_state {
                         Some(server.clone())
