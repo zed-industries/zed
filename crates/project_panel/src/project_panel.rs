@@ -323,14 +323,14 @@ impl ProjectPanel {
                     cx.notify();
                 }
                 project::Event::ExpandedAllForEntry(worktree_id, entry_id) => {
-                    if let Some((worktree, expanded_dir_ids)) = project.read(cx)
-                        .worktree_for_id(worktree_id.clone(), cx)
+                    if let Some((worktree, expanded_dir_ids)) = project
+                        .read(cx)
+                        .worktree_for_id(*worktree_id, cx)
                         .zip(this.expanded_dir_ids.get_mut(&worktree_id))
                     {
                         let worktree = worktree.read(cx);
-                        let entry_id = entry_id.clone();
 
-                        let mut dirs_to_expand = vec![entry_id];
+                        let mut dirs_to_expand = vec![*entry_id];
 
                         while let Some(current_id) = dirs_to_expand.pop() {
                             let Some(current_entry) = worktree.entry_for_id(current_id) else {
@@ -345,7 +345,6 @@ impl ProjectPanel {
                                     if let Err(ix) = expanded_dir_ids.binary_search(&child.id) {
                                         expanded_dir_ids.insert(ix, child.id);
                                     }
-                    
                                 }
                             }
                         }
@@ -518,7 +517,7 @@ impl ProjectPanel {
                         }
                     }
                 }
-          
+
                 _ => {}
             }
         })
@@ -915,6 +914,24 @@ impl ProjectPanel {
         }
     }
 
+    fn toggle_expand_all(&mut self, entry_id: ProjectEntryId, cx: &mut ViewContext<Self>) {
+        if let Some(worktree_id) = self.project.read(cx).worktree_id_for_entry(entry_id, cx) {
+            if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree_id) {
+                match expanded_dir_ids.binary_search(&entry_id) {
+                    Ok(_ix) => {
+                        self.collapse_all_for_entry(worktree_id, entry_id, cx);
+                    }
+                    Err(_ix) => {
+                        self.expand_all_for_entry(worktree_id, entry_id, cx);
+                    }
+                }
+                self.update_visible_entries(Some((worktree_id, entry_id)), cx);
+                cx.focus(&self.focus_handle);
+                cx.notify();
+            }
+        }
+    }
+
     fn expand_all_for_entry(
         &mut self,
         worktree_id: WorktreeId,
@@ -945,6 +962,39 @@ impl ProjectPanel {
                             entry = parent_entry;
                         } else {
                             break;
+                        }
+                    }
+                }
+            }
+        });
+    }
+
+    fn collapse_all_for_entry(
+        &mut self,
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.project.update(cx, |project, cx| {
+            if let Some((worktree, expanded_dir_ids)) = project
+                .worktree_for_id(worktree_id, cx)
+                .zip(self.expanded_dir_ids.get_mut(&worktree_id))
+            {
+                let worktree = worktree.read(cx);
+
+                let mut dirs_to_collapse = vec![entry_id];
+
+                while let Some(current_id) = dirs_to_collapse.pop() {
+                    let Some(current_entry) = worktree.entry_for_id(current_id) else {
+                        continue;
+                    };
+                    if let Ok(ix) = expanded_dir_ids.binary_search(&current_id) {
+                        expanded_dir_ids.remove(ix);
+                    }
+                    for child in worktree.child_entries(&current_entry.path) {
+                        if child.is_dir() {
+                            dirs_to_collapse.push(child.id);
                         }
                     }
                 }
