@@ -24,7 +24,8 @@ impl Render for TerminalTooltip {
                         .child(Divider::horizontal())
                         .child(
                             Label::new(format!("Process ID (PID): {}", self.pid))
-                                .color(Color::Muted),
+                                .color(Color::Muted)
+                                .size(LabelSize::Small),
                         ),
                 )
         })
