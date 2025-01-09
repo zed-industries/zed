@@ -3815,10 +3815,8 @@ impl Editor {
                 return None;
             };
 
-        let mat = completions_menu
-            .entries
-            .get(item_ix.unwrap_or(completions_menu.selected_item))?;
-
+        let entries = completions_menu.entries.borrow();
+        let mat = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
         let mat = match mat {
             CompletionEntry::InlineCompletionHint { .. } => {
                 self.accept_inline_completion(&AcceptInlineCompletion, cx);
@@ -3832,12 +3830,14 @@ impl Editor {
                 mat
             }
         };
+        let candidate_id = mat.candidate_id;
+        drop(entries);
 
         let buffer_handle = completions_menu.buffer;
         let completion = completions_menu
             .completions
             .borrow()
-            .get(mat.candidate_id)?
+            .get(candidate_id)?
             .clone();
         cx.stop_propagation();
 
@@ -3986,7 +3986,7 @@ impl Editor {
         let apply_edits = provider.apply_additional_edits_for_completion(
             buffer_handle,
             completions_menu.completions.clone(),
-            mat.candidate_id,
+            candidate_id,
             true,
             cx,
         );
@@ -5110,9 +5110,11 @@ impl Editor {
             .borrow()
             .as_ref()
             .map_or(false, |menu| match menu {
-                CodeContextMenu::Completions(menu) => menu.entries.first().map_or(false, |entry| {
-                    matches!(entry, CompletionEntry::InlineCompletionHint(_))
-                }),
+                CodeContextMenu::Completions(menu) => {
+                    menu.entries.borrow().first().map_or(false, |entry| {
+                        matches!(entry, CompletionEntry::InlineCompletionHint(_))
+                    })
+                }
                 CodeContextMenu::CodeActions(_) => false,
             })
     }
