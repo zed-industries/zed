@@ -274,6 +274,7 @@ pub enum Event {
     RefreshInlayHints,
     RevealInProjectPanel(ProjectEntryId),
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
+    ExpandedAllForEntry(WorktreeId, ProjectEntryId),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Hash, PartialOrd, Ord)]
@@ -2347,6 +2348,9 @@ impl Project {
                     cx.emit(Event::WorktreeUpdatedGitRepositories(worktree_id));
                 }
                 worktree::Event::DeletedEntry(id) => cx.emit(Event::DeletedEntry(worktree_id, *id)),
+                worktree::Event::ExpandedAllForEntry(id) => {
+                    cx.emit(Event::ExpandedAllForEntry(worktree_id, *id))
+                }
             }
         })
         .detach();
