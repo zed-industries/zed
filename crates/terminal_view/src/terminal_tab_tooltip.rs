@@ -2,13 +2,16 @@ use gpui::{IntoElement, Render, ViewContext};
 use ui::{prelude::*, tooltip_container, Divider};
 
 pub struct TerminalTooltip {
-    title: String,
+    title: SharedString,
     pid: u32,
 }
 
 impl TerminalTooltip {
-    pub fn new(title: String, pid: u32) -> Self {
-        Self { title, pid }
+    pub fn new(title: impl Into<SharedString>, pid: u32) -> Self {
+        Self {
+            title: title.into(),
+            pid,
+        }
     }
 }
 
