@@ -204,23 +204,17 @@ impl Render for InlineCompletionButton {
                     return div();
                 }
 
+                let this = cx.view().clone();
                 div().child(
-                    IconButton::new("zeta", IconName::ZedPredict)
-                        .tooltip(|cx| {
-                            Tooltip::with_meta(
-                                "Zed Predict",
-                                Some(&RateCompletions),
-                                "Click to rate completions",
-                                cx,
-                            )
+                    PopoverMenu::new("zeta")
+                        .menu(move |cx| {
+                            Some(this.update(cx, |this, cx| this.build_zeta_context_menu(cx)))
                         })
-                        .on_click(cx.listener(|this, _, cx| {
-                            if let Some(workspace) = this.workspace.upgrade() {
-                                workspace.update(cx, |workspace, cx| {
-                                    RateCompletionModal::toggle(workspace, cx)
-                                });
-                            }
-                        })),
+                        .anchor(Corner::BottomRight)
+                        .trigger(
+                            IconButton::new("zeta", IconName::ZedPredict)
+                                .tooltip(|cx| Tooltip::text("Zed Predict", cx)),
+                        ),
                 )
             }
         }
@@ -357,6 +351,25 @@ impl InlineCompletionButton {
             self.build_language_settings_menu(menu, cx)
                 .separator()
                 .action("Sign Out", supermaven::SignOut.boxed_clone())
+        })
+    }
+
+    fn build_zeta_context_menu(&self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
+        let workspace = self.workspace.clone();
+        ContextMenu::build(cx, |menu, cx| {
+            self.build_language_settings_menu(menu, cx)
+                .separator()
+                .entry(
+                    "Rate Completions",
+                    Some(RateCompletions.boxed_clone()),
+                    move |cx| {
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                RateCompletionModal::toggle(workspace, cx)
+                            })
+                            .ok();
+                    },
+                )
         })
     }
 
