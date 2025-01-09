@@ -34,7 +34,6 @@ actions!(
         OpenKeymap,
         About,
         Extensions,
-        ExtensionsNoUI,
         OpenLicenses,
         OpenTelemetryLog,
         DecreaseBufferFontSize,

@@ -170,6 +170,7 @@ pub struct ExtensionIndexLanguageEntry {
 }
 
 actions!(zed, [ReloadExtensions]);
+//moved from extension_us to avoid circular dependency
 actions!(zed, [InstallDevExtension]);
 
 pub fn init(

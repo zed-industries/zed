@@ -241,7 +241,6 @@ impl ExtensionsPage {
         extension_id: &str,
         cx: &mut ViewContext<Self>,
     ) {
-        //self.is_installing_dev_extension(None);
         let extension_store = ExtensionStore::global(cx).read(cx);
         let themes = extension_store
             .extension_themes(extension_id)
@@ -369,15 +368,14 @@ impl ExtensionsPage {
         } else {
             0
         };
-
         range
             .map(|ix| {
                 if ix < dev_extension_entries_len {
                     let extension = &self.dev_extension_entries[ix];
                     self.render_dev_extension(extension, cx)
                 } else {
-                    let index = ix - dev_extension_entries_len;
-                    let extension_ix = self.filtered_remote_extension_indices[index];
+                    let extension_ix =
+                        self.filtered_remote_extension_indices[ix - dev_extension_entries_len];
                     let extension = &self.remote_extension_entries[extension_ix];
                     self.render_remote_extension(extension, cx)
                 }

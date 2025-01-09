@@ -6275,8 +6275,6 @@ fn on_dev_extension_install(
     message: &str,
     is_error: bool,
 ) {
-    //workspace_handle
-    //.update(cx, |workspace_data, cx| {
     if is_error {
         let t = Toast::new(
             NotificationId::unique::<InstallDevExtension>(),
@@ -6296,8 +6294,6 @@ fn on_dev_extension_install(
         .autohide();
         workspace.show_toast(t, cx);
     }
-    //})
-    //.ok();
 }
 
 #[cfg(test)]
