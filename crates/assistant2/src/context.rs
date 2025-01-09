@@ -104,48 +104,10 @@ pub struct ThreadContext {
 impl Context {
     pub fn snapshot(&self, cx: &AppContext) -> Option<ContextSnapshot> {
         match &self {
-            Self::File(file_context) => {
-                let path = file_context.path(cx)?;
-                let full_path: SharedString = path.to_string_lossy().into_owned().into();
-                let name = match path.file_name() {
-                    Some(name) => name.to_string_lossy().into_owned().into(),
-                    None => full_path.clone(),
-                };
-                let parent = path
-                    .parent()
-                    .and_then(|p| p.file_name())
-                    .map(|p| p.to_string_lossy().into_owned().into());
-
-                Some(ContextSnapshot {
-                    id: self.id(),
-                    name,
-                    parent,
-                    tooltip: Some(full_path),
-                    kind: ContextKind::File,
-                    text: file_context.text.clone(),
-                })
-            }
-            Self::Directory(DirectoryContext { snapshot, .. }) => Some(snapshot.clone()),
-            Self::FetchedUrl(FetchedUrlContext { url, text, id }) => Some(ContextSnapshot {
-                id: *id,
-                name: url.clone(),
-                parent: None,
-                tooltip: None,
-                kind: ContextKind::FetchedUrl,
-                text: text.clone(),
-            }),
-            Self::Thread(thread_context) => {
-                let thread = thread_context.thread.read(cx);
-
-                Some(ContextSnapshot {
-                    id: self.id(),
-                    name: thread.summary().unwrap_or("New thread".into()),
-                    parent: None,
-                    tooltip: None,
-                    kind: ContextKind::Thread,
-                    text: thread_context.text.clone(),
-                })
-            }
+            Self::File(file_context) => file_context.snapshot(cx),
+            Self::Directory(directory_context) => Some(directory_context.snapshot()),
+            Self::FetchedUrl(fetched_url_context) => Some(fetched_url_context.snapshot()),
+            Self::Thread(thread_context) => Some(thread_context.snapshot(cx)),
         }
     }
 }
@@ -158,6 +120,61 @@ impl FileContext {
         } else {
             log::error!("Buffer that had a path unexpectedly no longer has a path.");
             None
+        }
+    }
+
+    pub fn snapshot(&self, cx: &AppContext) -> Option<ContextSnapshot> {
+        let path = self.path(cx)?;
+        let full_path: SharedString = path.to_string_lossy().into_owned().into();
+        let name = match path.file_name() {
+            Some(name) => name.to_string_lossy().into_owned().into(),
+            None => full_path.clone(),
+        };
+        let parent = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|p| p.to_string_lossy().into_owned().into());
+
+        Some(ContextSnapshot {
+            id: self.id,
+            name,
+            parent,
+            tooltip: Some(full_path),
+            kind: ContextKind::File,
+            text: self.text.clone(),
+        })
+    }
+}
+
+impl DirectoryContext {
+    pub fn snapshot(&self) -> ContextSnapshot {
+        self.snapshot.clone()
+    }
+}
+
+impl FetchedUrlContext {
+    pub fn snapshot(&self) -> ContextSnapshot {
+        ContextSnapshot {
+            id: self.id,
+            name: self.url.clone(),
+            parent: None,
+            tooltip: None,
+            kind: ContextKind::FetchedUrl,
+            text: self.text.clone(),
+        }
+    }
+}
+
+impl ThreadContext {
+    pub fn snapshot(&self, cx: &AppContext) -> ContextSnapshot {
+        let thread = self.thread.read(cx);
+        ContextSnapshot {
+            id: self.id,
+            name: thread.summary().unwrap_or("New thread".into()),
+            parent: None,
+            tooltip: None,
+            kind: ContextKind::Thread,
+            text: self.text.clone(),
         }
     }
 }
