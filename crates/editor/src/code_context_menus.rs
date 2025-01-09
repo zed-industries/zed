@@ -333,9 +333,7 @@ impl CompletionsMenu {
                 entries[0] = hint;
             }
             _ => {
-                if self.selected_item != 0 {
-                    self.selected_item += 1;
-                }
+                self.selected_item += 1;
                 entries.insert(0, hint);
             }
         }
@@ -674,6 +672,11 @@ impl CompletionsMenu {
     }
 
     pub async fn filter(&mut self, query: Option<&str>, executor: BackgroundExecutor) {
+        let inline_completion_was_selected = self.selected_item == 0
+            && self.entries.borrow().first().map_or(false, |entry| {
+                matches!(entry, CompletionEntry::InlineCompletionHint(_))
+            });
+
         let mut matches = if let Some(query) = query {
             fuzzy::match_strings(
                 &self.match_candidates,
@@ -770,12 +773,16 @@ impl CompletionsMenu {
         let mut entries = self.entries.borrow_mut();
         if let Some(CompletionEntry::InlineCompletionHint(_)) = entries.first() {
             entries.truncate(1);
+            if inline_completion_was_selected {
+                self.selected_item = 0;
+            } else {
+                self.selected_item = 1;
+            }
         } else {
             entries.truncate(0);
+            self.selected_item = 0;
         }
         entries.extend(matches.into_iter().map(CompletionEntry::Match));
-
-        self.selected_item = 0;
     }
 }
 
