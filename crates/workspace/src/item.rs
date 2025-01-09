@@ -218,9 +218,9 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
         None
     }
 
-    /// Returns the tab tooltip contents.
+    /// Returns the tab tooltip content.
     ///
-    /// By default this returns a Tooltip text from from
+    /// By default this returns a Tooltip text from
     /// `tab_tooltip_text`.
     fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent> {
         self.tab_tooltip_text(cx).map(TabTooltipContent::Text)
