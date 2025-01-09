@@ -28,7 +28,7 @@ mod windows;
 
 use crate::{
     point, Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
-    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GPUSpecs, GlyphId,
+    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs,
     ImageSource, Keymap, LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImage,
     RenderImageParams, RenderSvgParams, ScaledPixels, Scene, SharedString, Size, SvgRenderer,
     SvgSize, Task, TaskLabel, WindowContext, DEFAULT_WINDOW_SIZE,
@@ -46,6 +46,7 @@ use smallvec::SmallVec;
 use std::borrow::Cow;
 use std::hash::{Hash, Hasher};
 use std::io::Cursor;
+use std::ops;
 use std::time::{Duration, Instant};
 use std::{
     fmt::{self, Debug},
@@ -69,6 +70,9 @@ pub use semantic_version::SemanticVersion;
 pub(crate) use test::*;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::*;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use test::TestScreenCaptureSource;
 
 #[cfg(target_os = "macos")]
 pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
@@ -149,6 +153,10 @@ pub(crate) trait Platform: 'static {
         None
     }
 
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
+
     fn open_window(
         &self,
         handle: AnyWindowHandle,
@@ -167,6 +175,7 @@ pub(crate) trait Platform: 'static {
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>>;
     fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Result<Option<PathBuf>>>;
+    fn can_select_mixed_files_and_dirs(&self) -> bool;
     fn reveal_path(&self, path: &Path);
     fn open_with_system(&self, path: &Path);
 
@@ -227,6 +236,25 @@ pub trait PlatformDisplay: Send + Sync + Debug {
         Bounds::new(origin, DEFAULT_WINDOW_SIZE)
     }
 }
+
+/// A source of on-screen video content that can be captured.
+pub trait ScreenCaptureSource {
+    /// Returns the video resolution of this source.
+    fn resolution(&self) -> Result<Size<Pixels>>;
+
+    /// Start capture video from this source, invoking the given callback
+    /// with each frame.
+    fn stream(
+        &self,
+        frame_callback: Box<dyn Fn(ScreenCaptureFrame)>,
+    ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>>;
+}
+
+/// A video stream captured from a screen.
+pub trait ScreenCaptureStream {}
+
+/// A frame of video captured from a screen.
+pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
 
 /// An opaque identifier for a hardware display
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
@@ -393,6 +421,9 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn get_raw_handle(&self) -> windows::HWND;
 
     // Linux specific methods
+    fn inner_window_bounds(&self) -> WindowBounds {
+        self.window_bounds()
+    }
     fn request_decorations(&self, _decorations: WindowDecorations) {}
     fn show_window_menu(&self, _position: Point<Pixels>) {}
     fn start_window_move(&self) {}
@@ -405,7 +436,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         WindowControls::default()
     }
     fn set_client_inset(&self, _inset: Pixels) {}
-    fn gpu_specs(&self) -> Option<GPUSpecs>;
+    fn gpu_specs(&self) -> Option<GpuSpecs>;
 
     fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>);
 
@@ -561,6 +592,42 @@ pub(crate) trait PlatformAtlas: Send + Sync {
         key: &AtlasKey,
         build: &mut dyn FnMut() -> Result<Option<(Size<DevicePixels>, Cow<'a, [u8]>)>>,
     ) -> Result<Option<AtlasTile>>;
+    fn remove(&self, key: &AtlasKey);
+}
+
+struct AtlasTextureList<T> {
+    textures: Vec<Option<T>>,
+    free_list: Vec<usize>,
+}
+
+impl<T> Default for AtlasTextureList<T> {
+    fn default() -> Self {
+        Self {
+            textures: Vec::default(),
+            free_list: Vec::default(),
+        }
+    }
+}
+
+impl<T> ops::Index<usize> for AtlasTextureList<T> {
+    type Output = Option<T>;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        &self.textures[index]
+    }
+}
+
+impl<T> AtlasTextureList<T> {
+    #[allow(unused)]
+    fn drain(&mut self) -> std::vec::Drain<Option<T>> {
+        self.free_list.clear();
+        self.textures.drain(..)
+    }
+
+    #[allow(dead_code)]
+    fn iter_mut(&mut self) -> impl DoubleEndedIterator<Item = &mut T> {
+        self.textures.iter_mut().flatten()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -643,9 +710,13 @@ impl PlatformInputHandler {
     }
 
     #[cfg_attr(any(target_os = "linux", target_os = "freebsd"), allow(dead_code))]
-    fn text_for_range(&mut self, range_utf16: Range<usize>) -> Option<String> {
+    fn text_for_range(
+        &mut self,
+        range_utf16: Range<usize>,
+        adjusted: &mut Option<Range<usize>>,
+    ) -> Option<String> {
         self.cx
-            .update(|cx| self.handler.text_for_range(range_utf16, cx))
+            .update(|cx| self.handler.text_for_range(range_utf16, adjusted, cx))
             .ok()
             .flatten()
     }
@@ -712,6 +783,7 @@ impl PlatformInputHandler {
 
 /// A struct representing a selection in a text buffer, in UTF16 characters.
 /// This is different from a range because the head may be before the tail.
+#[derive(Debug)]
 pub struct UTF16Selection {
     /// The range of text in the document this selection corresponds to
     /// in UTF16 characters.
@@ -749,6 +821,7 @@ pub trait InputHandler: 'static {
     fn text_for_range(
         &mut self,
         range_utf16: Range<usize>,
+        adjusted_range: &mut Option<Range<usize>>,
         cx: &mut WindowContext,
     ) -> Option<String>;
 

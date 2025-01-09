@@ -16,12 +16,13 @@ use editor::{
 };
 use gpui::{
     actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
-    FocusableView, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement, Render,
-    SharedString, Styled, StyledText, Subscription, Task, View, ViewContext, VisualContext,
+    FocusableView, Global, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement,
+    Render, SharedString, Styled, StyledText, Subscription, Task, View, ViewContext, VisualContext,
     WeakView, WindowContext,
 };
 use language::{
-    Bias, Buffer, Diagnostic, DiagnosticEntry, DiagnosticSeverity, Point, Selection, SelectionGoal,
+    Bias, Buffer, BufferRow, BufferSnapshot, Diagnostic, DiagnosticEntry, DiagnosticSeverity,
+    Point, Selection, SelectionGoal, ToTreeSitterPoint,
 };
 use lsp::LanguageServerId;
 use project::{DiagnosticSummary, Project, ProjectPath};
@@ -29,10 +30,12 @@ use project_diagnostics_settings::ProjectDiagnosticsSettings;
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
+    cmp,
     cmp::Ordering,
     mem,
-    ops::Range,
+    ops::{Range, RangeInclusive},
     sync::Arc,
+    time::Duration,
 };
 use theme::ActiveTheme;
 pub use toolbar_controls::ToolbarControls;
@@ -40,10 +43,14 @@ use ui::{h_flex, prelude::*, Icon, IconName, Label};
 use util::ResultExt;
 use workspace::{
     item::{BreadcrumbText, Item, ItemEvent, ItemHandle, TabContentParams},
+    searchable::SearchableItemHandle,
     ItemNavHistory, ToolbarItemLocation, Workspace,
 };
 
 actions!(diagnostics, [Deploy, ToggleWarnings]);
+
+struct IncludeWarnings(bool);
+impl Global for IncludeWarnings {}
 
 pub fn init(cx: &mut AppContext) {
     ProjectDiagnosticsSettings::register(cx);
@@ -82,6 +89,8 @@ struct DiagnosticGroupState {
 
 impl EventEmitter<EditorEvent> for ProjectDiagnosticsEditor {}
 
+const DIAGNOSTICS_UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
+
 impl Render for ProjectDiagnosticsEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let child = if self.path_states.is_empty() {
@@ -114,6 +123,7 @@ impl ProjectDiagnosticsEditor {
 
     fn new_with_context(
         context: u32,
+        include_warnings: bool,
         project_handle: Model<Project>,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
@@ -155,7 +165,7 @@ impl ProjectDiagnosticsEditor {
         let excerpts = cx.new_model(|cx| MultiBuffer::new(project_handle.read(cx).capability()));
         let editor = cx.new_view(|cx| {
             let mut editor =
-                Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), false, cx);
+                Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), true, cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor
         });
@@ -172,19 +182,24 @@ impl ProjectDiagnosticsEditor {
             }
         })
         .detach();
+        cx.observe_global::<IncludeWarnings>(|this, cx| {
+            this.include_warnings = cx.global::<IncludeWarnings>().0;
+            this.update_all_excerpts(cx);
+        })
+        .detach();
 
         let project = project_handle.read(cx);
         let mut this = Self {
             project: project_handle.clone(),
             context,
             summary: project.diagnostic_summary(false, cx),
+            include_warnings,
             workspace,
             excerpts,
             focus_handle,
             editor,
             path_states: Default::default(),
             paths_to_update: Default::default(),
-            include_warnings: ProjectDiagnosticsSettings::get_global(cx).include_warnings,
             update_excerpts_task: None,
             _subscription: project_event_subscription,
         };
@@ -198,6 +213,9 @@ impl ProjectDiagnosticsEditor {
         }
         let project_handle = self.project.clone();
         self.update_excerpts_task = Some(cx.spawn(|this, mut cx| async move {
+            cx.background_executor()
+                .timer(DIAGNOSTICS_UPDATE_DEBOUNCE)
+                .await;
             loop {
                 let Some((path, language_server_id)) = this.update(&mut cx, |this, _| {
                     let Some((path, language_server_id)) = this.paths_to_update.pop_first() else {
@@ -226,11 +244,13 @@ impl ProjectDiagnosticsEditor {
 
     fn new(
         project_handle: Model<Project>,
+        include_warnings: bool,
         workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         Self::new_with_context(
             editor::DEFAULT_MULTIBUFFER_CONTEXT,
+            include_warnings,
             project_handle,
             workspace,
             cx,
@@ -242,8 +262,19 @@ impl ProjectDiagnosticsEditor {
             workspace.activate_item(&existing, true, true, cx);
         } else {
             let workspace_handle = cx.view().downgrade();
+
+            let include_warnings = match cx.try_global::<IncludeWarnings>() {
+                Some(include_warnings) => include_warnings.0,
+                None => ProjectDiagnosticsSettings::get_global(cx).include_warnings,
+            };
+
             let diagnostics = cx.new_view(|cx| {
-                ProjectDiagnosticsEditor::new(workspace.project().clone(), workspace_handle, cx)
+                ProjectDiagnosticsEditor::new(
+                    workspace.project().clone(),
+                    include_warnings,
+                    workspace_handle,
+                    cx,
+                )
             });
             workspace.add_item_to_active_pane(Box::new(diagnostics), None, true, cx);
         }
@@ -251,6 +282,7 @@ impl ProjectDiagnosticsEditor {
 
     fn toggle_warnings(&mut self, _: &ToggleWarnings, cx: &mut ViewContext<Self>) {
         self.include_warnings = !self.include_warnings;
+        cx.set_global(IncludeWarnings(self.include_warnings));
         self.update_all_excerpts(cx);
         cx.notify();
     }
@@ -392,31 +424,28 @@ impl ProjectDiagnosticsEditor {
                         blocks: Default::default(),
                         block_count: 0,
                     };
-                    let mut pending_range: Option<(Range<Point>, usize)> = None;
+                    let mut pending_range: Option<(Range<Point>, Range<Point>, usize)> = None;
                     let mut is_first_excerpt_for_group = true;
                     for (ix, entry) in group.entries.iter().map(Some).chain([None]).enumerate() {
                         let resolved_entry = entry.map(|e| e.resolve::<Point>(&snapshot));
-                        if let Some((range, start_ix)) = &mut pending_range {
-                            if let Some(entry) = resolved_entry.as_ref() {
-                                if entry.range.start.row <= range.end.row + 1 + self.context * 2 {
-                                    range.end = range.end.max(entry.range.end);
+                        let expanded_range = resolved_entry.as_ref().map(|entry| {
+                            context_range_for_entry(entry, self.context, &snapshot, cx)
+                        });
+                        if let Some((range, context_range, start_ix)) = &mut pending_range {
+                            if let Some(expanded_range) = expanded_range.clone() {
+                                // If the entries are overlapping or next to each-other, merge them into one excerpt.
+                                if context_range.end.row + 1 >= expanded_range.start.row {
+                                    context_range.end = context_range.end.max(expanded_range.end);
                                     continue;
                                 }
                             }
-
-                            let excerpt_start =
-                                Point::new(range.start.row.saturating_sub(self.context), 0);
-                            let excerpt_end = snapshot.clip_point(
-                                Point::new(range.end.row + self.context, u32::MAX),
-                                Bias::Left,
-                            );
 
                             let excerpt_id = excerpts
                                 .insert_excerpts_after(
                                     prev_excerpt_id,
                                     buffer.clone(),
                                     [ExcerptRange {
-                                        context: excerpt_start..excerpt_end,
+                                        context: context_range.clone(),
                                         primary: Some(range.clone()),
                                     }],
                                     cx,
@@ -473,8 +502,9 @@ impl ProjectDiagnosticsEditor {
                             pending_range.take();
                         }
 
-                        if let Some(entry) = resolved_entry {
-                            pending_range = Some((entry.range.clone(), ix));
+                        if let Some(entry) = resolved_entry.as_ref() {
+                            let range = entry.range.clone();
+                            pending_range = Some((range, expanded_range.unwrap(), ix));
                         }
                     }
 
@@ -695,7 +725,7 @@ impl Item for ProjectDiagnosticsEditor {
     fn for_each_project_item(
         &self,
         cx: &AppContext,
-        f: &mut dyn FnMut(gpui::EntityId, &dyn project::Item),
+        f: &mut dyn FnMut(gpui::EntityId, &dyn project::ProjectItem),
     ) {
         self.editor.for_each_project_item(cx, f)
     }
@@ -719,7 +749,12 @@ impl Item for ProjectDiagnosticsEditor {
         Self: Sized,
     {
         Some(cx.new_view(|cx| {
-            ProjectDiagnosticsEditor::new(self.project.clone(), self.workspace.clone(), cx)
+            ProjectDiagnosticsEditor::new(
+                self.project.clone(),
+                self.include_warnings,
+                self.workspace.clone(),
+                cx,
+            )
         }))
     }
 
@@ -776,7 +811,11 @@ impl Item for ProjectDiagnosticsEditor {
         }
     }
 
-    fn breadcrumb_location(&self) -> ToolbarItemLocation {
+    fn as_searchable(&self, _: &View<Self>) -> Option<Box<dyn SearchableItemHandle>> {
+        Some(Box::new(self.editor.clone()))
+    }
+
+    fn breadcrumb_location(&self, _: &AppContext) -> ToolbarItemLocation {
         ToolbarItemLocation::PrimaryLeft
     }
 
@@ -796,19 +835,23 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let (message, code_ranges) = highlight_diagnostic_message(&diagnostic, None);
     let message: SharedString = message;
     Arc::new(move |cx| {
-        let highlight_style: HighlightStyle = cx.theme().colors().text_accent.into();
+        let color = cx.theme().colors();
+        let highlight_style: HighlightStyle = color.text_accent.into();
+
         h_flex()
             .id(DIAGNOSTIC_HEADER)
             .block_mouse_down()
             .h(2. * cx.line_height())
-            .pl_10()
-            .pr_5()
             .w_full()
+            .px_9()
             .justify_between()
             .gap_2()
             .child(
                 h_flex()
-                    .gap_3()
+                    .gap_2()
+                    .px_1()
+                    .rounded_md()
+                    .bg(color.surface_background.opacity(0.5))
                     .map(|stack| {
                         stack.child(
                             svg()
@@ -840,22 +883,18 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                                 stack.child(
                                     div()
                                         .child(SharedString::from(format!("({code})")))
-                                        .text_color(cx.theme().colors().text_muted),
+                                        .text_color(color.text_muted),
                                 )
                             }),
                     ),
             )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .when_some(diagnostic.source.as_ref(), |stack, source| {
-                        stack.child(
-                            div()
-                                .child(SharedString::from(source.clone()))
-                                .text_color(cx.theme().colors().text_muted),
-                        )
-                    }),
-            )
+            .when_some(diagnostic.source.as_ref(), |stack, source| {
+                stack.child(
+                    div()
+                        .child(SharedString::from(source.clone()))
+                        .text_color(color.text_muted),
+                )
+            })
             .into_any_element()
     })
 }
@@ -883,4 +922,168 @@ fn compare_diagnostics(
                 .cmp(&new.range.end.to_offset(snapshot))
         })
         .then_with(|| old.diagnostic.message.cmp(&new.diagnostic.message))
+}
+
+const DIAGNOSTIC_EXPANSION_ROW_LIMIT: u32 = 32;
+
+fn context_range_for_entry(
+    entry: &DiagnosticEntry<Point>,
+    context: u32,
+    snapshot: &BufferSnapshot,
+    cx: &AppContext,
+) -> Range<Point> {
+    if let Some(rows) = heuristic_syntactic_expand(
+        entry.range.clone(),
+        DIAGNOSTIC_EXPANSION_ROW_LIMIT,
+        snapshot,
+        cx,
+    ) {
+        return Range {
+            start: Point::new(*rows.start(), 0),
+            end: snapshot.clip_point(Point::new(*rows.end(), u32::MAX), Bias::Left),
+        };
+    }
+    Range {
+        start: Point::new(entry.range.start.row.saturating_sub(context), 0),
+        end: snapshot.clip_point(
+            Point::new(entry.range.end.row + context, u32::MAX),
+            Bias::Left,
+        ),
+    }
+}
+
+/// Expands the input range using syntax information from TreeSitter. This expansion will be limited
+/// to the specified `max_row_count`.
+///
+/// If there is a containing outline item that is less than `max_row_count`, it will be returned.
+/// Otherwise fairly arbitrary heuristics are applied to attempt to return a logical block of code.
+fn heuristic_syntactic_expand<'a>(
+    input_range: Range<Point>,
+    max_row_count: u32,
+    snapshot: &'a BufferSnapshot,
+    cx: &'a AppContext,
+) -> Option<RangeInclusive<BufferRow>> {
+    let input_row_count = input_range.end.row - input_range.start.row;
+    if input_row_count > max_row_count {
+        return None;
+    }
+
+    // If the outline node contains the diagnostic and is small enough, just use that.
+    let outline_range = snapshot.outline_range_containing(input_range.clone());
+    if let Some(outline_range) = outline_range.clone() {
+        // Remove blank lines from start and end
+        if let Some(start_row) = (outline_range.start.row..outline_range.end.row)
+            .find(|row| !snapshot.line_indent_for_row(*row).is_line_blank())
+        {
+            if let Some(end_row) = (outline_range.start.row..outline_range.end.row + 1)
+                .rev()
+                .find(|row| !snapshot.line_indent_for_row(*row).is_line_blank())
+            {
+                let row_count = end_row.saturating_sub(start_row);
+                if row_count <= max_row_count {
+                    return Some(RangeInclusive::new(
+                        outline_range.start.row,
+                        outline_range.end.row,
+                    ));
+                }
+            }
+        }
+    }
+
+    let mut node = snapshot.syntax_ancestor(input_range.clone())?;
+    loop {
+        let node_start = Point::from_ts_point(node.start_position());
+        let node_end = Point::from_ts_point(node.end_position());
+        let node_range = node_start..node_end;
+        let row_count = node_end.row - node_start.row + 1;
+
+        // Stop if we've exceeded the row count or reached an outline node. Then, find the interval
+        // of node children which contains the query range. For example, this allows just returning
+        // the header of a declaration rather than the entire declaration.
+        if row_count > max_row_count || outline_range == Some(node_range.clone()) {
+            let mut cursor = node.walk();
+            let mut included_child_start = None;
+            let mut included_child_end = None;
+            let mut previous_end = node_start;
+            if cursor.goto_first_child() {
+                loop {
+                    let child_node = cursor.node();
+                    let child_range = previous_end..Point::from_ts_point(child_node.end_position());
+                    if included_child_start.is_none() && child_range.contains(&input_range.start) {
+                        included_child_start = Some(child_range.start);
+                    }
+                    if child_range.contains(&input_range.end) {
+                        included_child_end = Some(child_range.end);
+                    }
+                    previous_end = child_range.end;
+                    if !cursor.goto_next_sibling() {
+                        break;
+                    }
+                }
+            }
+            let end = included_child_end.unwrap_or(node_range.end);
+            if let Some(start) = included_child_start {
+                let row_count = end.row - start.row;
+                if row_count < max_row_count {
+                    return Some(RangeInclusive::new(start.row, end.row));
+                }
+            }
+
+            log::info!(
+                "Expanding to ancestor started on {} node exceeding row limit of {max_row_count}.",
+                node.grammar_name()
+            );
+            return None;
+        }
+
+        let node_name = node.grammar_name();
+        let node_row_range = RangeInclusive::new(node_range.start.row, node_range.end.row);
+        if node_name.ends_with("block") {
+            return Some(node_row_range);
+        } else if node_name.ends_with("statement") || node_name.ends_with("declaration") {
+            // Expand to the nearest dedent or blank line for statements and declarations.
+            let tab_size = snapshot.settings_at(node_range.start, cx).tab_size.get();
+            let indent_level = snapshot
+                .line_indent_for_row(node_range.start.row)
+                .len(tab_size);
+            let rows_remaining = max_row_count.saturating_sub(row_count);
+            let Some(start_row) = (node_range.start.row.saturating_sub(rows_remaining)
+                ..node_range.start.row)
+                .rev()
+                .find(|row| is_line_blank_or_indented_less(indent_level, *row, tab_size, snapshot))
+            else {
+                return Some(node_row_range);
+            };
+            let rows_remaining = max_row_count.saturating_sub(node_range.end.row - start_row);
+            let Some(end_row) = (node_range.end.row + 1
+                ..cmp::min(
+                    node_range.end.row + rows_remaining + 1,
+                    snapshot.row_count(),
+                ))
+                .find(|row| is_line_blank_or_indented_less(indent_level, *row, tab_size, snapshot))
+            else {
+                return Some(node_row_range);
+            };
+            return Some(RangeInclusive::new(start_row, end_row));
+        }
+
+        // TODO: doing this instead of walking a cursor as that doesn't work - why?
+        let Some(parent) = node.parent() else {
+            log::info!(
+                "Expanding to ancestor reached the top node, so using default context line count.",
+            );
+            return None;
+        };
+        node = parent;
+    }
+}
+
+fn is_line_blank_or_indented_less(
+    indent_level: u32,
+    row: u32,
+    tab_size: u32,
+    snapshot: &BufferSnapshot,
+) -> bool {
+    let line_indent = snapshot.line_indent_for_row(row);
+    line_indent.is_line_blank() || line_indent.len(tab_size) < indent_level
 }

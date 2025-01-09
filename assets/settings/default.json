@@ -101,6 +101,8 @@
   // Whether to show the informational hover box when moving the mouse
   // over symbols in the editor.
   "hover_popover_enabled": true,
+  // Time to wait before showing the informational hover box
+  "hover_popover_delay": 350,
   // Whether to confirm before quitting Zed.
   "confirm_quit": false,
   // Whether to restore last closed project when fresh Zed instance is opened.
@@ -144,20 +146,23 @@
   // 4. Highlight the full line (default):
   //    "all"
   "current_line_highlight": "all",
+  // The debounce delay before querying highlights from the language
+  // server based on the current cursor location.
+  "lsp_highlight_debounce": 75,
   // Whether to pop the completions menu while typing in an editor without
   // explicitly requesting it.
   "show_completions_on_input": true,
   // Whether to display inline and alongside documentation for items in the
   // completions menu
   "show_completion_documentation": true,
-  // The debounce delay before re-querying the language server for completion
-  // documentation when not included in original completion list.
-  "completion_documentation_secondary_query_debounce": 300,
   // Show method signatures in the editor, when inside parentheses.
   "auto_signature_help": false,
   /// Whether to show the signature help after completion or a bracket pair inserted.
   /// If `auto_signature_help` is enabled, this setting will be treated as enabled also.
   "show_signature_help_after_edits": false,
+  /// Whether to show the inline completions next to the completions provided by a language server.
+  /// Only has an effect if inline completion provider supports it.
+  "show_inline_completions_in_menu": true,
   // Whether to show wrap guides (vertical rulers) in the editor.
   // Setting this to true will show a guide at the 'preferred_line_length' value
   // if 'soft_wrap' is set to 'preferred_line_length', and will show any
@@ -251,8 +256,20 @@
     "search_results": true,
     // Whether to show selected symbol occurrences in the scrollbar.
     "selected_symbol": true,
-    // Whether to show diagnostic indicators in the scrollbar.
-    "diagnostics": true
+    // Which diagnostic indicators to show in the scrollbar:
+    //  - "none" or false: do not show diagnostics
+    //  - "error": show only errors
+    //  - "warning": show only errors and warnings
+    //  - "information": show only errors, warnings, and information
+    //  - "all" or true: show all diagnostics
+    "diagnostics": "all",
+    /// Forcefully enable or disable the scrollbar for each axis
+    "axes": {
+      /// When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
+      "horizontal": true,
+      /// When false, forcefully disables the vertical scrollbar. Otherwise, obey other settings.
+      "vertical": true
+    }
   },
   // Enable middle-click paste on Linux.
   "middle_click_paste": true,
@@ -300,6 +317,10 @@
   "scroll_beyond_last_line": "one_page",
   // The number of lines to keep above/below the cursor when scrolling.
   "vertical_scroll_margin": 3,
+  // Whether to scroll when clicking near the edge of the visible text area.
+  "autoscroll_on_clicks": false,
+  // The number of characters to keep on either side when scrolling with the mouse
+  "horizontal_scroll_margin": 5,
   // Scroll sensitivity multiplier. This multiplier is applied
   // to both the horizontal and vertical delta values while scrolling.
   "scroll_sensitivity": 1.0,
@@ -351,6 +372,8 @@
     "default_width": 240,
     // Where to dock the project panel. Can be 'left' or 'right'.
     "dock": "left",
+    // Spacing between worktree entries in the project panel. Can be 'comfortable' or 'standard'.
+    "entry_spacing": "comfortable",
     // Whether to show file icons in the project panel.
     "file_icons": true,
     // Whether to show folder icons or chevrons for directories in the project panel.
@@ -465,12 +488,22 @@
     "default_width": 240
   },
   "chat_panel": {
-    // Whether to show the chat panel button in the status bar.
-    "button": true,
+    // When to show the chat panel button in the status bar.
+    // Can be 'never', 'always', or 'when_in_call',
+    // or a boolean (interpreted as 'never'/'always').
+    "button": "when_in_call",
     // Where to the chat panel. Can be 'left' or 'right'.
     "dock": "right",
     // Default width of the chat panel.
     "default_width": 240
+  },
+  "git_panel": {
+    // Whether to show the git panel button in the status bar.
+    "button": true,
+    // Where to the git panel. Can be 'left' or 'right'.
+    "dock": "left",
+    // Default width of the git panel.
+    "default_width": 360
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
@@ -542,6 +575,8 @@
   // 4. Save when idle for a certain amount of time:
   //     "autosave": { "after_delay": {"milliseconds": 500} },
   "autosave": "off",
+  // Maximum number of tabs per pane. Unset for unlimited.
+  "max_tabs": null,
   // Settings related to the editor's tab bar.
   "tab_bar": {
     // Whether or not to show the tab bar in the editor
@@ -557,13 +592,28 @@
     "close_position": "right",
     // Whether to show the file icon for a tab.
     "file_icons": false,
+    // Whether to always show the close button on tabs.
+    "always_show_close_button": false,
     // What to do after closing the current tab.
     //
     // 1. Activate the tab that was open previously (default)
-    //     "History"
-    // 2. Activate the neighbour tab (prefers the right one, if present)
-    //     "Neighbour"
-    "activate_on_close": "history"
+    //     "history"
+    // 2. Activate the right neighbour tab if present
+    //     "neighbour"
+    // 3. Activate the left neighbour tab if present
+    //     "left_neighbour"
+    "activate_on_close": "history",
+    /// Which files containing diagnostic errors/warnings to mark in the tabs.
+    /// Diagnostics are only shown when file icons are also active.
+    /// This setting only works when can take the following three values:
+    ///
+    /// 1. Do not mark any files:
+    ///    "off"
+    /// 2. Only mark files with errors:
+    ///    "errors"
+    /// 3. Mark files with errors and warnings:
+    ///    "all"
+    "show_diagnostics": "off"
   },
   // Settings related to preview tabs.
   "preview_tabs": {
@@ -581,20 +631,22 @@
   "file_finder": {
     // Whether to show file icons in the file finder.
     "file_icons": true,
-    // Width of the file finder modal. This setting can
-    // take four values.
+    // Determines how much space the file finder can take up in relation to the available window width.
+    // There are 5 possible width values:
     //
-    // 1. Small width:
-    //   "modal_width": "small",
-    // 2. Medium width (default):
-    //   "modal_width": "medium",
-    // 3. Large width:
-    //   "modal_width": "large",
-    // 4. Extra Large width:
-    //   "modal_width": "xlarge"
-    // 5. Fullscreen width:
-    //   "modal_width": "full"
-    "modal_width": "medium"
+    // 1. Small: This value is essentially a fixed width.
+    //    "modal_width": "small"
+    // 2. Medium:
+    //    "modal_width": "medium"
+    // 3. Large:
+    //    "modal_width": "large"
+    // 4. Extra Large:
+    //    "modal_width": "xlarge"
+    // 5. Fullscreen: This value removes any horizontal padding, as it consumes the whole viewport width.
+    //    "modal_width": "full"
+    //
+    // Default: small
+    "modal_max_width": "small"
   },
   // Whether or not to remove any trailing whitespace from lines of a buffer
   // before saving it.
@@ -663,17 +715,23 @@
   },
   // Add files or globs of files that will be excluded by Zed entirely:
   // they will be skipped during FS scan(s), file tree and file search
-  // will lack the corresponding file entries.
+  // will lack the corresponding file entries. Overrides `file_scan_inclusions`.
   "file_scan_exclusions": [
     "**/.git",
     "**/.svn",
     "**/.hg",
+    "**/.jj",
     "**/CVS",
     "**/.DS_Store",
     "**/Thumbs.db",
     "**/.classpath",
     "**/.settings"
   ],
+  // Add files or globs of files that will be included by Zed, even when
+  // ignored by git. This is useful for files that are not tracked by git,
+  // but are still important to your project. Note that globs that are
+  // overly broad can slow down Zed's file scanning. Overridden by `file_scan_exclusions`.
+  "file_scan_inclusions": [".env*"],
   // Git gutter behavior configuration.
   "git": {
     // Control whether the git gutter is shown. May take 2 values:
@@ -690,7 +748,7 @@
       // Delay is restarted with every cursor movement.
       // "delay_ms": 600
       //
-      // Whether or not do display the git commit summary on the same line.
+      // Whether or not to display the git commit summary on the same line.
       // "show_commit_summary": false
       //
       // The minimum column number to show the inline blame information at
@@ -834,8 +892,12 @@
       }
     },
     "toolbar": {
-      // Whether to display the terminal title in its toolbar.
-      "title": true
+      // Whether to display the terminal title in its toolbar's breadcrumbs.
+      // Only shown if the terminal title is not empty.
+      //
+      // The shell running in the terminal needs to be configured to emit the title.
+      // Example: `echo -e "\e]2;New Title\007";`
+      "breadcrumbs": true
     }
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
@@ -871,15 +933,8 @@
   //
   "file_types": {
     "Plain Text": ["txt"],
-    "JSON": ["flake.lock"],
-    "JSONC": [
-      "**/.zed/**/*.json",
-      "**/zed/**/*.json",
-      "**/Zed/**/*.json",
-      "tsconfig.json",
-      "pyrightconfig.json"
-    ],
-    "TOML": ["uv.lock"]
+    "JSONC": ["**/.zed/**/*.json", "**/zed/**/*.json", "**/Zed/**/*.json", "**/.vscode/**/*.json"],
+    "Shell Script": [".env.*"]
   },
   /// By default use a recent system version of node, or install our own.
   /// You can override this to use a version of node that is not in $PATH with:
@@ -1055,6 +1110,9 @@
       "prettier": {
         "allowed": true
       }
+    },
+    "Zig": {
+      "language_servers": ["zls", "..."]
     }
   },
   // Different settings for specific language models.
@@ -1121,6 +1179,7 @@
     "use_system_clipboard": "always",
     "use_multiline_find": false,
     "use_smartcase_find": false,
+    "highlight_on_yank_duration": 200,
     "custom_digraphs": {}
   },
   // The server to connect to. If the environment variable
@@ -1178,6 +1237,8 @@
   //   "W": "workspace::Save"
   // }
   "command_aliases": {},
+  // Whether to show user picture in titlebar.
+  "show_user_picture": true,
   // ssh_connections is an array of ssh connections.
   // You can configure these from `project: Open Remote` in the command palette.
   // Zed's ssh support will pull configuration from your ~/.ssh too.

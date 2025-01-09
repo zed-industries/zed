@@ -1,5 +1,5 @@
 use editor::{Editor, ToPoint};
-use gpui::{AppContext, Subscription, Task, View, WeakView};
+use gpui::{AppContext, FocusHandle, FocusableView, Subscription, Task, View, WeakView};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -22,6 +22,7 @@ pub(crate) struct SelectionStats {
 pub struct CursorPosition {
     position: Option<Point>,
     selected_count: SelectionStats,
+    context: Option<FocusHandle>,
     workspace: WeakView<Workspace>,
     update_position: Task<()>,
     _observe_active_editor: Option<Subscription>,
@@ -31,6 +32,7 @@ impl CursorPosition {
     pub fn new(workspace: &Workspace) -> Self {
         Self {
             position: None,
+            context: None,
             selected_count: Default::default(),
             workspace: workspace.weak_handle(),
             update_position: Task::ready(()),
@@ -46,40 +48,61 @@ impl CursorPosition {
     ) {
         let editor = editor.downgrade();
         self.update_position = cx.spawn(|cursor_position, mut cx| async move {
-            if let Some(debounce) = debounce {
-                cx.background_executor().timer(debounce).await;
+            let is_singleton = editor
+                .update(&mut cx, |editor, cx| {
+                    editor.buffer().read(cx).is_singleton()
+                })
+                .ok()
+                .unwrap_or(true);
+
+            if !is_singleton {
+                if let Some(debounce) = debounce {
+                    cx.background_executor().timer(debounce).await;
+                }
             }
 
             editor
                 .update(&mut cx, |editor, cx| {
-                    let buffer = editor.buffer().read(cx).snapshot(cx);
                     cursor_position.update(cx, |cursor_position, cx| {
                         cursor_position.selected_count = SelectionStats::default();
                         cursor_position.selected_count.selections = editor.selections.count();
-                        let mut last_selection = None::<Selection<usize>>;
-                        for selection in editor.selections.all::<usize>(cx) {
-                            cursor_position.selected_count.characters += buffer
-                                .text_for_range(selection.start..selection.end)
-                                .map(|t| t.chars().count())
-                                .sum::<usize>();
-                            if last_selection
-                                .as_ref()
-                                .map_or(true, |last_selection| selection.id > last_selection.id)
-                            {
-                                last_selection = Some(selection);
+                        match editor.mode() {
+                            editor::EditorMode::AutoHeight { .. }
+                            | editor::EditorMode::SingleLine { .. } => {
+                                cursor_position.position = None;
+                                cursor_position.context = None;
                             }
-                        }
-                        for selection in editor.selections.all::<Point>(cx) {
-                            if selection.end != selection.start {
-                                cursor_position.selected_count.lines +=
-                                    (selection.end.row - selection.start.row) as usize;
-                                if selection.end.column != 0 {
-                                    cursor_position.selected_count.lines += 1;
+                            editor::EditorMode::Full => {
+                                let mut last_selection = None::<Selection<usize>>;
+                                let buffer = editor.buffer().read(cx).snapshot(cx);
+                                if buffer.excerpts().count() > 0 {
+                                    for selection in editor.selections.all::<usize>(cx) {
+                                        cursor_position.selected_count.characters += buffer
+                                            .text_for_range(selection.start..selection.end)
+                                            .map(|t| t.chars().count())
+                                            .sum::<usize>();
+                                        if last_selection.as_ref().map_or(true, |last_selection| {
+                                            selection.id > last_selection.id
+                                        }) {
+                                            last_selection = Some(selection);
+                                        }
+                                    }
+                                    for selection in editor.selections.all::<Point>(cx) {
+                                        if selection.end != selection.start {
+                                            cursor_position.selected_count.lines +=
+                                                (selection.end.row - selection.start.row) as usize;
+                                            if selection.end.column != 0 {
+                                                cursor_position.selected_count.lines += 1;
+                                            }
+                                        }
+                                    }
                                 }
+                                cursor_position.position =
+                                    last_selection.map(|s| s.head().to_point(&buffer));
+                                cursor_position.context = Some(editor.focus_handle(cx));
                             }
                         }
-                        cursor_position.position =
-                            last_selection.map(|s| s.head().to_point(&buffer));
+
                         cx.notify();
                     })
                 })
@@ -148,6 +171,8 @@ impl Render for CursorPosition {
             );
             self.write_position(&mut text, cx);
 
+            let context = self.context.clone();
+
             el.child(
                 Button::new("go-to-line-column", text)
                     .label_size(LabelSize::Small)
@@ -164,12 +189,18 @@ impl Render for CursorPosition {
                             });
                         }
                     }))
-                    .tooltip(|cx| {
-                        Tooltip::for_action(
+                    .tooltip(move |cx| match context.as_ref() {
+                        Some(context) => Tooltip::for_action_in(
+                            "Go to Line/Column",
+                            &editor::actions::ToggleGoToLine,
+                            context,
+                            cx,
+                        ),
+                        None => Tooltip::for_action(
                             "Go to Line/Column",
                             &editor::actions::ToggleGoToLine,
                             cx,
-                        )
+                        ),
                     }),
             )
         })

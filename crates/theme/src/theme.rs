@@ -71,7 +71,7 @@ impl From<WindowAppearance> for Appearance {
     }
 }
 
-/// Which themes should be loaded. This is used primarlily for testing.
+/// Which themes should be loaded. This is used primarily for testing.
 pub enum LoadThemes {
     /// Only load the base theme.
     ///
@@ -314,6 +314,22 @@ impl Theme {
     #[inline(always)]
     pub fn window_background_appearance(&self) -> WindowBackgroundAppearance {
         self.styles.window_background_appearance
+    }
+
+    /// Darkens the color by reducing its lightness.
+    /// The resulting lightness is clamped to ensure it doesn't go below 0.0.
+    ///
+    /// The first value darkens light appearance mode, the second darkens appearance dark mode.
+    ///
+    /// Note: This is a tentative solution and may be replaced with a more robust color system.
+    pub fn darken(&self, color: Hsla, light_amount: f32, dark_amount: f32) -> Hsla {
+        let amount = match self.appearance {
+            Appearance::Light => light_amount,
+            Appearance::Dark => dark_amount,
+        };
+        let mut hsla = color;
+        hsla.l = (hsla.l - amount).max(0.0);
+        hsla
     }
 }
 

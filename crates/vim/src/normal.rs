@@ -44,6 +44,8 @@ actions!(
         InsertLineAbove,
         InsertLineBelow,
         InsertAtPrevious,
+        JoinLines,
+        JoinLinesNoWhitespace,
         DeleteLeft,
         DeleteRight,
         ChangeToEndOfLine,
@@ -53,7 +55,6 @@ actions!(
         ChangeCase,
         ConvertToUpperCase,
         ConvertToLowerCase,
-        JoinLines,
         ToggleComments,
         Undo,
         Redo,
@@ -77,17 +78,17 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
 
     Vim::action(editor, cx, |vim, _: &DeleteLeft, cx| {
         vim.record_current_action(cx);
-        let times = vim.take_count(cx);
+        let times = Vim::take_count(cx);
         vim.delete_motion(Motion::Left, times, cx);
     });
     Vim::action(editor, cx, |vim, _: &DeleteRight, cx| {
         vim.record_current_action(cx);
-        let times = vim.take_count(cx);
+        let times = Vim::take_count(cx);
         vim.delete_motion(Motion::Right, times, cx);
     });
     Vim::action(editor, cx, |vim, _: &ChangeToEndOfLine, cx| {
         vim.start_recording(cx);
-        let times = vim.take_count(cx);
+        let times = Vim::take_count(cx);
         vim.change_motion(
             Motion::EndOfLine {
                 display_lines: false,
@@ -98,7 +99,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     });
     Vim::action(editor, cx, |vim, _: &DeleteToEndOfLine, cx| {
         vim.record_current_action(cx);
-        let times = vim.take_count(cx);
+        let times = Vim::take_count(cx);
         vim.delete_motion(
             Motion::EndOfLine {
                 display_lines: false,
@@ -108,29 +109,15 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         );
     });
     Vim::action(editor, cx, |vim, _: &JoinLines, cx| {
-        vim.record_current_action(cx);
-        let mut times = vim.take_count(cx).unwrap_or(1);
-        if vim.mode.is_visual() {
-            times = 1;
-        } else if times > 1 {
-            // 2J joins two lines together (same as J or 1J)
-            times -= 1;
-        }
+        vim.join_lines_impl(true, cx);
+    });
 
-        vim.update_editor(cx, |_, editor, cx| {
-            editor.transact(cx, |editor, cx| {
-                for _ in 0..times {
-                    editor.join_lines(&Default::default(), cx)
-                }
-            })
-        });
-        if vim.mode.is_visual() {
-            vim.switch_mode(Mode::Normal, true, cx)
-        }
+    Vim::action(editor, cx, |vim, _: &JoinLinesNoWhitespace, cx| {
+        vim.join_lines_impl(false, cx);
     });
 
     Vim::action(editor, cx, |vim, _: &Undo, cx| {
-        let times = vim.take_count(cx);
+        let times = Vim::take_count(cx);
         vim.update_editor(cx, |_, editor, cx| {
             for _ in 0..times.unwrap_or(1) {
                 editor.undo(&editor::actions::Undo, cx);
@@ -138,7 +125,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         });
     });
     Vim::action(editor, cx, |vim, _: &Redo, cx| {
-        let times = vim.take_count(cx);
+        let times = Vim::take_count(cx);
         vim.update_editor(cx, |_, editor, cx| {
             for _ in 0..times.unwrap_or(1) {
                 editor.redo(&editor::actions::Redo, cx);
@@ -170,6 +157,9 @@ impl Vim {
             Some(Operator::Indent) => self.indent_motion(motion, times, IndentDirection::In, cx),
             Some(Operator::Rewrap) => self.rewrap_motion(motion, times, cx),
             Some(Operator::Outdent) => self.indent_motion(motion, times, IndentDirection::Out, cx),
+            Some(Operator::AutoIndent) => {
+                self.indent_motion(motion, times, IndentDirection::Auto, cx)
+            }
             Some(Operator::Lowercase) => {
                 self.change_case_motion(motion, times, CaseTarget::Lowercase, cx)
             }
@@ -201,6 +191,9 @@ impl Vim {
                 }
                 Some(Operator::Outdent) => {
                     self.indent_object(object, around, IndentDirection::Out, cx)
+                }
+                Some(Operator::AutoIndent) => {
+                    self.indent_object(object, around, IndentDirection::Auto, cx)
                 }
                 Some(Operator::Rewrap) => self.rewrap_object(object, around, cx),
                 Some(Operator::Lowercase) => {
@@ -395,8 +388,30 @@ impl Vim {
         });
     }
 
+    fn join_lines_impl(&mut self, insert_whitespace: bool, cx: &mut ViewContext<Self>) {
+        self.record_current_action(cx);
+        let mut times = Vim::take_count(cx).unwrap_or(1);
+        if self.mode.is_visual() {
+            times = 1;
+        } else if times > 1 {
+            // 2J joins two lines together (same as J or 1J)
+            times -= 1;
+        }
+
+        self.update_editor(cx, |_, editor, cx| {
+            editor.transact(cx, |editor, cx| {
+                for _ in 0..times {
+                    editor.join_lines_impl(insert_whitespace, cx)
+                }
+            })
+        });
+        if self.mode.is_visual() {
+            self.switch_mode(Mode::Normal, true, cx)
+        }
+    }
+
     fn yank_line(&mut self, _: &YankLine, cx: &mut ViewContext<Self>) {
-        let count = self.take_count(cx);
+        let count = Vim::take_count(cx);
         self.yank_motion(motion::Motion::CurrentLine, count, cx)
     }
 
@@ -416,7 +431,7 @@ impl Vim {
     }
 
     pub(crate) fn normal_replace(&mut self, text: Arc<str>, cx: &mut ViewContext<Self>) {
-        let count = self.take_count(cx).unwrap_or(1);
+        let count = Vim::take_count(cx).unwrap_or(1);
         self.stop_recording(cx);
         self.update_editor(cx, |_, editor, cx| {
             editor.transact(cx, |editor, cx| {

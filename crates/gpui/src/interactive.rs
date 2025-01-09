@@ -468,7 +468,7 @@ mod test {
 
     use crate::{
         self as gpui, div, FocusHandle, InteractiveElement, IntoElement, KeyBinding, Keystroke,
-        ParentElement, Render, TestAppContext, VisualContext,
+        ParentElement, Render, TestAppContext, ViewContext, VisualContext,
     };
 
     struct TestView {
@@ -480,7 +480,7 @@ mod test {
     actions!(test, [TestAction]);
 
     impl Render for TestView {
-        fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
+        fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
             div().id("testview").child(
                 div()
                     .key_context("parent")

@@ -23,7 +23,10 @@ pub fn app_menus() -> Vec<Menu> {
                             zed_actions::OpenDefaultKeymap,
                         ),
                         MenuItem::action("Open Project Settings", super::OpenProjectSettings),
-                        MenuItem::action("Select Theme...", theme_selector::Toggle::default()),
+                        MenuItem::action(
+                            "Select Theme...",
+                            zed_actions::theme_selector::Toggle::default(),
+                        ),
                     ],
                 }),
                 MenuItem::separator(),
@@ -32,11 +35,14 @@ pub fn app_menus() -> Vec<Menu> {
                     items: vec![],
                 }),
                 MenuItem::separator(),
-                MenuItem::action("Extensions", extensions_ui::Extensions),
+                MenuItem::action("Extensions", zed_actions::Extensions),
                 MenuItem::action("Install CLI", install_cli::Install),
                 MenuItem::separator(),
+                #[cfg(target_os = "macos")]
                 MenuItem::action("Hide Zed", super::Hide),
+                #[cfg(target_os = "macos")]
                 MenuItem::action("Hide Others", super::HideOthers),
+                #[cfg(target_os = "macos")]
                 MenuItem::action("Show All", super::ShowAll),
                 MenuItem::action("Quit", Quit),
             ],
@@ -50,7 +56,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Open…", workspace::Open),
                 MenuItem::action(
                     "Open Recent...",
-                    recent_projects::OpenRecent {
+                    zed_actions::OpenRecent {
                         create_new_window: true,
                     },
                 ),
@@ -146,11 +152,14 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("Back", workspace::GoBack),
                 MenuItem::action("Forward", workspace::GoForward),
                 MenuItem::separator(),
-                MenuItem::action("Command Palette...", command_palette::Toggle),
+                MenuItem::action("Command Palette...", zed_actions::command_palette::Toggle),
                 MenuItem::separator(),
                 MenuItem::action("Go to File...", workspace::ToggleFileFinder::default()),
                 // MenuItem::action("Go to Symbol in Project", project_symbols::Toggle),
-                MenuItem::action("Go to Symbol in Editor...", editor::actions::ToggleOutline),
+                MenuItem::action(
+                    "Go to Symbol in Editor...",
+                    zed_actions::outline::ToggleOutline,
+                ),
                 MenuItem::action("Go to Line/Column...", editor::actions::ToggleGoToLine),
                 MenuItem::separator(),
                 MenuItem::action("Go to Definition", editor::actions::GoToDefinition),
@@ -176,7 +185,7 @@ pub fn app_menus() -> Vec<Menu> {
                 MenuItem::action("View Telemetry", zed_actions::OpenTelemetryLog),
                 MenuItem::action("View Dependency Licenses", zed_actions::OpenLicenses),
                 MenuItem::action("Show Welcome", workspace::Welcome),
-                MenuItem::action("Give Feedback...", feedback::GiveFeedback),
+                MenuItem::action("Give Feedback...", zed_actions::feedback::GiveFeedback),
                 MenuItem::separator(),
                 MenuItem::action(
                     "Documentation",

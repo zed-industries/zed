@@ -1,5 +1,5 @@
 use crate::{
-    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DispatchEventResult, GPUSpecs,
+    AnyWindowHandle, AtlasKey, AtlasTextureId, AtlasTile, Bounds, DispatchEventResult, GpuSpecs,
     Pixels, PlatformAtlas, PlatformDisplay, PlatformInput, PlatformInputHandler, PlatformWindow,
     Point, RequestFrameOptions, ScaledPixels, Size, TestPlatform, TileId, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowParams,
@@ -276,7 +276,7 @@ impl PlatformWindow for TestWindow {
 
     fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {}
 
-    fn gpu_specs(&self) -> Option<GPUSpecs> {
+    fn gpu_specs(&self) -> Option<GpuSpecs> {
         None
     }
 }
@@ -338,5 +338,10 @@ impl PlatformAtlas for TestAtlas {
         );
 
         Ok(Some(state.tiles[key].clone()))
+    }
+
+    fn remove(&self, key: &AtlasKey) {
+        let mut state = self.0.lock();
+        state.tiles.remove(key);
     }
 }

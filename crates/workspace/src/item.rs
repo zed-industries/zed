@@ -42,6 +42,8 @@ pub struct ItemSettings {
     pub close_position: ClosePosition,
     pub activate_on_close: ActivateOnClose,
     pub file_icons: bool,
+    pub show_diagnostics: ShowDiagnostics,
+    pub always_show_close_button: bool,
 }
 
 #[derive(Deserialize)]
@@ -59,12 +61,22 @@ pub enum ClosePosition {
     Right,
 }
 
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShowDiagnostics {
+    #[default]
+    Off,
+    Errors,
+    All,
+}
+
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
-#[serde(rename_all = "lowercase")]
+#[serde(rename_all = "snake_case")]
 pub enum ActivateOnClose {
     #[default]
     History,
     Neighbour,
+    LeftNeighbour,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -85,6 +97,15 @@ pub struct ItemSettingsContent {
     ///
     /// Default: history
     pub activate_on_close: Option<ActivateOnClose>,
+    /// Which files containing diagnostic errors/warnings to mark in the tabs.
+    /// This setting can take the following three values:
+    ///
+    /// Default: off
+    show_diagnostics: Option<ShowDiagnostics>,
+    /// Whether to always show the close button on tabs.
+    ///
+    /// Default: false
+    always_show_close_button: Option<bool>,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema)]
@@ -157,6 +178,11 @@ impl TabContentParams {
     }
 }
 
+pub enum TabTooltipContent {
+    Text(SharedString),
+    Custom(Box<dyn Fn(&mut WindowContext) -> AnyView>),
+}
+
 pub trait Item: FocusableView + EventEmitter<Self::Event> {
     type Event;
 
@@ -185,6 +211,25 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
         None
     }
 
+    /// Returns the tab tooltip text.
+    ///
+    /// Use this if you don't need to customize the tab tooltip content.
+    fn tab_tooltip_text(&self, _: &AppContext) -> Option<SharedString> {
+        None
+    }
+
+    /// Returns the tab tooltip content.
+    ///
+    /// By default this returns a Tooltip text from
+    /// `tab_tooltip_text`.
+    fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent> {
+        self.tab_tooltip_text(cx).map(TabTooltipContent::Text)
+    }
+
+    fn tab_description(&self, _: usize, _: &AppContext) -> Option<SharedString> {
+        None
+    }
+
     fn to_item_events(_event: &Self::Event, _f: impl FnMut(ItemEvent)) {}
 
     fn deactivated(&mut self, _: &mut ViewContext<Self>) {}
@@ -192,12 +237,6 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn workspace_deactivated(&mut self, _: &mut ViewContext<Self>) {}
     fn navigate(&mut self, _: Box<dyn Any>, _: &mut ViewContext<Self>) -> bool {
         false
-    }
-    fn tab_tooltip_text(&self, _: &AppContext) -> Option<SharedString> {
-        None
-    }
-    fn tab_description(&self, _: usize, _: &AppContext) -> Option<SharedString> {
-        None
     }
 
     fn telemetry_event_text(&self) -> Option<&'static str> {
@@ -208,7 +247,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn for_each_project_item(
         &self,
         _: &AppContext,
-        _: &mut dyn FnMut(EntityId, &dyn project::Item),
+        _: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
     ) {
     }
     fn is_singleton(&self, _cx: &AppContext) -> bool {
@@ -278,7 +317,7 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
         None
     }
 
-    fn breadcrumb_location(&self) -> ToolbarItemLocation {
+    fn breadcrumb_location(&self, _: &AppContext) -> ToolbarItemLocation {
         ToolbarItemLocation::Hidden
     }
 
@@ -299,6 +338,10 @@ pub trait Item: FocusableView + EventEmitter<Self::Event> {
     fn preserve_preview(&self, _cx: &AppContext) -> bool {
         false
     }
+
+    fn include_in_nav_history() -> bool {
+        true
+    }
 }
 
 pub trait SerializableItem: Item {
@@ -315,7 +358,7 @@ pub trait SerializableItem: Item {
         _workspace: WeakView<Workspace>,
         _workspace_id: WorkspaceId,
         _item_id: ItemId,
-        _cx: &mut ViewContext<Pane>,
+        _cx: &mut WindowContext,
     ) -> Task<Result<View<Self>>>;
 
     fn serialize(
@@ -373,10 +416,11 @@ pub trait ItemHandle: 'static + Send {
         handler: Box<dyn Fn(ItemEvent, &mut WindowContext)>,
     ) -> gpui::Subscription;
     fn focus_handle(&self, cx: &WindowContext) -> FocusHandle;
-    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement;
     fn tab_icon(&self, cx: &WindowContext) -> Option<Icon>;
+    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
+    fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent>;
     fn telemetry_event_text(&self, cx: &WindowContext) -> Option<&'static str>;
     fn dragged_tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
@@ -386,7 +430,7 @@ pub trait ItemHandle: 'static + Send {
     fn for_each_project_item(
         &self,
         _: &AppContext,
-        _: &mut dyn FnMut(EntityId, &dyn project::Item),
+        _: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
     );
     fn is_singleton(&self, cx: &AppContext) -> bool;
     fn boxed_clone(&self) -> Box<dyn ItemHandle>;
@@ -443,6 +487,7 @@ pub trait ItemHandle: 'static + Send {
     fn downgrade_item(&self) -> Box<dyn WeakItemHandle>;
     fn workspace_settings<'a>(&self, cx: &'a AppContext) -> &'a WorkspaceSettings;
     fn preserve_preview(&self, cx: &AppContext) -> bool;
+    fn include_in_nav_history(&self) -> bool;
 }
 
 pub trait WeakItemHandle: Send + Sync {
@@ -477,10 +522,6 @@ impl<T: Item> ItemHandle for View<T> {
         self.focus_handle(cx)
     }
 
-    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
-        self.read(cx).tab_tooltip_text(cx)
-    }
-
     fn telemetry_event_text(&self, cx: &WindowContext) -> Option<&'static str> {
         self.read(cx).telemetry_event_text()
     }
@@ -495,6 +536,14 @@ impl<T: Item> ItemHandle for View<T> {
 
     fn tab_icon(&self, cx: &WindowContext) -> Option<Icon> {
         self.read(cx).tab_icon(cx)
+    }
+
+    fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent> {
+        self.read(cx).tab_tooltip_content(cx)
+    }
+
+    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
+        self.read(cx).tab_tooltip_text(cx)
     }
 
     fn dragged_tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
@@ -563,7 +612,7 @@ impl<T: Item> ItemHandle for View<T> {
     fn for_each_project_item(
         &self,
         cx: &AppContext,
-        f: &mut dyn FnMut(EntityId, &dyn project::Item),
+        f: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
     ) {
         self.read(cx).for_each_project_item(cx, f)
     }
@@ -827,7 +876,7 @@ impl<T: Item> ItemHandle for View<T> {
     }
 
     fn breadcrumb_location(&self, cx: &AppContext) -> ToolbarItemLocation {
-        self.read(cx).breadcrumb_location()
+        self.read(cx).breadcrumb_location(cx)
     }
 
     fn breadcrumbs(&self, theme: &Theme, cx: &AppContext) -> Option<Vec<BreadcrumbText>> {
@@ -855,6 +904,10 @@ impl<T: Item> ItemHandle for View<T> {
 
     fn preserve_preview(&self, cx: &AppContext) -> bool {
         self.read(cx).preserve_preview(cx)
+    }
+
+    fn include_in_nav_history(&self) -> bool {
+        T::include_in_nav_history()
     }
 }
 
@@ -891,7 +944,7 @@ impl<T: Item> WeakItemHandle for WeakView<T> {
 }
 
 pub trait ProjectItem: Item {
-    type Item: project::Item;
+    type Item: project::ProjectItem;
 
     fn for_project_item(
         project: Model<Project>,
@@ -1032,11 +1085,11 @@ impl<T: FollowableItem> WeakFollowableItemHandle for WeakView<T> {
 #[cfg(any(test, feature = "test-support"))]
 pub mod test {
     use super::{Item, ItemEvent, SerializableItem, TabContentParams};
-    use crate::{ItemId, ItemNavHistory, Pane, Workspace, WorkspaceId};
+    use crate::{ItemId, ItemNavHistory, Workspace, WorkspaceId};
     use gpui::{
         AnyElement, AppContext, Context as _, EntityId, EventEmitter, FocusableView,
         InteractiveElement, IntoElement, Model, Render, SharedString, Task, View, ViewContext,
-        VisualContext, WeakView,
+        VisualContext, WeakView, WindowContext,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
     use std::{any::Any, cell::Cell, path::Path};
@@ -1044,6 +1097,7 @@ pub mod test {
     pub struct TestProjectItem {
         pub entry_id: Option<ProjectEntryId>,
         pub project_path: Option<ProjectPath>,
+        pub is_dirty: bool,
     }
 
     pub struct TestItem {
@@ -1064,7 +1118,7 @@ pub mod test {
         focus_handle: gpui::FocusHandle,
     }
 
-    impl project::Item for TestProjectItem {
+    impl project::ProjectItem for TestProjectItem {
         fn try_open(
             _project: &Model<Project>,
             _path: &ProjectPath,
@@ -1072,13 +1126,16 @@ pub mod test {
         ) -> Option<Task<gpui::Result<Model<Self>>>> {
             None
         }
-
         fn entry_id(&self, _: &AppContext) -> Option<ProjectEntryId> {
             self.entry_id
         }
 
         fn project_path(&self, _: &AppContext) -> Option<ProjectPath> {
             self.project_path.clone()
+        }
+
+        fn is_dirty(&self) -> bool {
+            self.is_dirty
         }
     }
 
@@ -1096,6 +1153,7 @@ pub mod test {
             cx.new_model(|_| Self {
                 entry_id,
                 project_path,
+                is_dirty: false,
             })
         }
 
@@ -1103,6 +1161,7 @@ pub mod test {
             cx.new_model(|_| Self {
                 project_path: None,
                 entry_id: None,
+                is_dirty: false,
             })
         }
     }
@@ -1212,11 +1271,7 @@ pub mod test {
             None
         }
 
-        fn tab_content(
-            &self,
-            params: TabContentParams,
-            _cx: &ui::prelude::WindowContext,
-        ) -> AnyElement {
+        fn tab_content(&self, params: TabContentParams, _cx: &WindowContext) -> AnyElement {
             self.tab_detail.set(params.detail);
             gpui::div().into_any_element()
         }
@@ -1224,7 +1279,7 @@ pub mod test {
         fn for_each_project_item(
             &self,
             cx: &AppContext,
-            f: &mut dyn FnMut(EntityId, &dyn project::Item),
+            f: &mut dyn FnMut(EntityId, &dyn project::ProjectItem),
         ) {
             self.project_items
                 .iter()
@@ -1339,7 +1394,7 @@ pub mod test {
             _workspace: WeakView<Workspace>,
             workspace_id: WorkspaceId,
             _item_id: ItemId,
-            cx: &mut ViewContext<Pane>,
+            cx: &mut WindowContext,
         ) -> Task<anyhow::Result<View<Self>>> {
             let view = cx.new_view(|cx| Self::new_deserialized(workspace_id, cx));
             Task::ready(Ok(view))
@@ -1348,7 +1403,7 @@ pub mod test {
         fn cleanup(
             _workspace_id: WorkspaceId,
             _alive_items: Vec<ItemId>,
-            _cx: &mut ui::WindowContext,
+            _cx: &mut WindowContext,
         ) -> Task<anyhow::Result<()>> {
             Task::ready(Ok(()))
         }

@@ -4,8 +4,8 @@ use crate::{
     Element, Empty, Entity, EventEmitter, ForegroundExecutor, Global, InputEvent, Keystroke, Model,
     ModelContext, Modifiers, ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Platform, Point, Render, Result, Size, Task, TestDispatcher,
-    TestPlatform, TestWindow, TextSystem, View, ViewContext, VisualContext, WindowBounds,
-    WindowContext, WindowHandle, WindowOptions,
+    TestPlatform, TestScreenCaptureSource, TestWindow, TextSystem, View, ViewContext,
+    VisualContext, WindowBounds, WindowContext, WindowHandle, WindowOptions,
 };
 use anyhow::{anyhow, bail};
 use futures::{channel::oneshot, Stream, StreamExt};
@@ -77,7 +77,7 @@ impl Context for TestAppContext {
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+        F: FnOnce(AnyView, &mut WindowContext) -> T,
     {
         let mut lock = self.app.borrow_mut();
         lock.update_window(window, f)
@@ -285,6 +285,12 @@ impl TestAppContext {
     /// Simulates the user resizing the window to the new size.
     pub fn simulate_window_resize(&self, window_handle: AnyWindowHandle, size: Size<Pixels>) {
         self.test_window(window_handle).simulate_resize(size);
+    }
+
+    /// Causes the given sources to be returned if the application queries for screen
+    /// capture sources.
+    pub fn set_screen_capture_sources(&self, sources: Vec<TestScreenCaptureSource>) {
+        self.test_platform.set_screen_capture_sources(sources);
     }
 
     /// Returns all windows open in the test.
@@ -538,12 +544,15 @@ impl<T: 'static> Model<T> {
 
 impl<V: 'static> View<V> {
     /// Returns a future that resolves when the view is next updated.
-    pub fn next_notification(&self, cx: &TestAppContext) -> impl Future<Output = ()> {
+    pub fn next_notification(
+        &self,
+        advance_clock_by: Duration,
+        cx: &TestAppContext,
+    ) -> impl Future<Output = ()> {
         use postage::prelude::{Sink as _, Stream as _};
 
         let (mut tx, mut rx) = postage::mpsc::channel(1);
-        let mut cx = cx.app.app.borrow_mut();
-        let subscription = cx.observe(self, move |_, _| {
+        let subscription = cx.app.app.borrow_mut().observe(self, move |_, _| {
             tx.try_send(()).ok();
         });
 
@@ -552,6 +561,8 @@ impl<V: 'static> View<V> {
         } else {
             Duration::from_secs(1)
         };
+
+        cx.executor().advance_clock(advance_clock_by);
 
         async move {
             let notification = crate::util::timeout(duration, rx.recv())
@@ -905,7 +916,7 @@ impl Context for VisualTestContext {
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+        F: FnOnce(AnyView, &mut WindowContext) -> T,
     {
         self.cx.update_window(window, f)
     }
@@ -925,7 +936,7 @@ impl Context for VisualTestContext {
 impl VisualContext for VisualTestContext {
     fn new_view<V>(
         &mut self,
-        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
+        build_view: impl FnOnce(&mut ViewContext<V>) -> V,
     ) -> Self::Result<View<V>>
     where
         V: 'static + Render,
@@ -938,7 +949,7 @@ impl VisualContext for VisualTestContext {
     fn update_view<V: 'static, R>(
         &mut self,
         view: &View<V>,
-        update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
+        update: impl FnOnce(&mut V, &mut ViewContext<V>) -> R,
     ) -> Self::Result<R> {
         self.window
             .update(&mut self.cx, |_, cx| cx.update_view(view, update))
@@ -947,7 +958,7 @@ impl VisualContext for VisualTestContext {
 
     fn replace_root_view<V>(
         &mut self,
-        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
+        build_view: impl FnOnce(&mut ViewContext<V>) -> V,
     ) -> Self::Result<View<V>>
     where
         V: 'static + Render,
@@ -982,7 +993,7 @@ impl AnyWindowHandle {
     pub fn build_view<V: Render + 'static>(
         &self,
         cx: &mut TestAppContext,
-        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
+        build_view: impl FnOnce(&mut ViewContext<V>) -> V,
     ) -> View<V> {
         self.update(cx, |_, cx| cx.new_view(build_view)).unwrap()
     }

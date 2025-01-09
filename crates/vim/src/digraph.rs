@@ -83,7 +83,7 @@ impl Vim {
         cx: &mut ViewContext<Self>,
     ) {
         // handled by handle_literal_input
-        if keystroke_event.keystroke.ime_key.is_some() {
+        if keystroke_event.keystroke.key_char.is_some() {
             return;
         };
 

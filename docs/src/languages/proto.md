@@ -1,9 +1,44 @@
 # Proto
 
-Proto/proto3 (Protocol Buffers definition language) support is available natively in Zed.
+Proto/proto3 (Protocol Buffers definition language) support is available through the [Proto extension](https://github.com/zed-industries/zed/tree/main/extensions/proto).
 
 - Tree Sitter: [coder3101/tree-sitter-proto](https://github.com/coder3101/tree-sitter-proto)
-- Language Server: [protols](https://github.com/coder3101/protols)
+- Language Servers: [protobuf-language-server](https://github.com/lasorda/protobuf-language-server)
+
+<!--
+TBD: Clarify which language server(s) to use / Feature support.
+
+## Setup
+
+### Install protobuf-language-server
+
+Install protobuf-language-server and make sure it's in your PATH:
+
+```
+go install github.com/lasorda/protobuf-language-server@latest
+which protobuf-language-server
+```
+
+### Install ProtoLS
+
+Install protols and make sure it's in your PATH:
+
+```
+cargo install protols
+which protols
+```
+
+## Configuration
+
+```json
+"lsp": {
+  "protobuf-language-server": {
+    "binary": {
+      "path": "protols"
+    }
+  }
+}
+```
 
 ## Formatting
 
@@ -41,3 +76,4 @@ Or you can have zed directly invoke `clang-format` by specifying it as a [format
     },
   }
 ```
+-->

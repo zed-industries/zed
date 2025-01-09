@@ -9,14 +9,12 @@ use gpui::{
     Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
     Subscription, Task, View, ViewContext, WeakView,
 };
-use itertools::Itertools;
 use ordered_float::OrderedFloat;
 use picker::{
     highlighted_match_with_paths::{HighlightedMatchWithPaths, HighlightedText},
     Picker, PickerDelegate,
 };
 pub use remote_servers::RemoteServerProjects;
-use serde::Deserialize;
 use settings::Settings;
 pub use ssh_connections::SshSettings;
 use std::{
@@ -29,19 +27,7 @@ use workspace::{
     CloseIntent, ModalView, OpenOptions, SerializedWorkspaceLocation, Workspace, WorkspaceId,
     WORKSPACE_DB,
 };
-
-#[derive(PartialEq, Clone, Deserialize, Default)]
-pub struct OpenRecent {
-    #[serde(default = "default_create_new_window")]
-    pub create_new_window: bool,
-}
-
-fn default_create_new_window() -> bool {
-    false
-}
-
-gpui::impl_actions!(projects, [OpenRecent]);
-gpui::actions!(projects, [OpenRemote]);
+use zed_actions::{OpenRecent, OpenRemote};
 
 pub fn init(cx: &mut AppContext) {
     SshSettings::register(cx);
@@ -224,24 +210,14 @@ impl PickerDelegate for RecentProjectsDelegate {
             .enumerate()
             .filter(|(_, (id, _))| !self.is_current_workspace(*id, cx))
             .map(|(id, (_, location))| {
-                let combined_string = match location {
-                    SerializedWorkspaceLocation::Local(paths, order) => order
-                        .order()
-                        .iter()
-                        .zip(paths.paths().iter())
-                        .sorted_by_key(|(i, _)| *i)
-                        .map(|(_, path)| path.compact().to_string_lossy().into_owned())
-                        .collect::<Vec<_>>()
-                        .join(""),
-                    SerializedWorkspaceLocation::Ssh(ssh_project) => ssh_project
-                        .ssh_urls()
-                        .iter()
-                        .map(|path| path.to_string_lossy().to_string())
-                        .collect::<Vec<_>>()
-                        .join(""),
-                };
+                let combined_string = location
+                    .sorted_paths()
+                    .iter()
+                    .map(|path| path.compact().to_string_lossy().into_owned())
+                    .collect::<Vec<_>>()
+                    .join("");
 
-                StringMatchCandidate::new(id, combined_string)
+                StringMatchCandidate::new(id, &combined_string)
             })
             .collect::<Vec<_>>();
         self.matches = smol::block_on(fuzzy::match_strings(
@@ -377,21 +353,11 @@ impl PickerDelegate for RecentProjectsDelegate {
         let (_, location) = self.workspaces.get(hit.candidate_id)?;
 
         let mut path_start_offset = 0;
-        let paths = match location {
-            SerializedWorkspaceLocation::Local(paths, order) => Arc::new(
-                order
-                    .order()
-                    .iter()
-                    .zip(paths.paths().iter())
-                    .sorted_by_key(|(i, _)| **i)
-                    .map(|(_, path)| path.compact())
-                    .collect(),
-            ),
-            SerializedWorkspaceLocation::Ssh(ssh_project) => Arc::new(ssh_project.ssh_urls()),
-        };
 
-        let (match_labels, paths): (Vec<_>, Vec<_>) = paths
+        let (match_labels, paths): (Vec<_>, Vec<_>) = location
+            .sorted_paths()
             .iter()
+            .map(|p| p.compact())
             .map(|path| {
                 let highlighted_text =
                     highlights_for_path(path.as_ref(), &hit.positions, path_start_offset);
@@ -408,7 +374,7 @@ impl PickerDelegate for RecentProjectsDelegate {
 
         Some(
             ListItem::new(ix)
-                .selected(selected)
+                .toggle_state(selected)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .child(

@@ -7,6 +7,7 @@ use windows::Win32::{
     Graphics::Gdi::*,
     System::SystemServices::*,
     UI::{
+        Controls::*,
         HiDpi::*,
         Input::{Ime::*, KeyboardAndMouse::*},
         WindowsAndMessaging::*,
@@ -32,7 +33,7 @@ pub(crate) fn handle_msg(
         WM_ACTIVATE => handle_activate_msg(handle, wparam, state_ptr),
         WM_CREATE => handle_create_msg(handle, state_ptr),
         WM_MOVE => handle_move_msg(handle, lparam, state_ptr),
-        WM_SIZE => handle_size_msg(lparam, state_ptr),
+        WM_SIZE => handle_size_msg(wparam, lparam, state_ptr),
         WM_ENTERSIZEMOVE | WM_ENTERMENULOOP => handle_size_move_loop(handle),
         WM_EXITSIZEMOVE | WM_EXITMENULOOP => handle_size_move_loop_exit(handle),
         WM_TIMER => handle_timer_msg(handle, wparam, state_ptr),
@@ -43,8 +44,10 @@ pub(crate) fn handle_msg(
         WM_PAINT => handle_paint_msg(handle, state_ptr),
         WM_CLOSE => handle_close_msg(state_ptr),
         WM_DESTROY => handle_destroy_msg(handle, state_ptr),
-        WM_MOUSEMOVE => handle_mouse_move_msg(lparam, wparam, state_ptr),
+        WM_MOUSEMOVE => handle_mouse_move_msg(handle, lparam, wparam, state_ptr),
+        WM_MOUSELEAVE => handle_mouse_leave_msg(state_ptr),
         WM_NCMOUSEMOVE => handle_nc_mouse_move_msg(handle, lparam, state_ptr),
+        WM_NCMOUSELEAVE => handle_nc_mouse_leave_msg(state_ptr),
         WM_NCLBUTTONDOWN => {
             handle_nc_mouse_down_msg(handle, MouseButton::Left, wparam, lparam, state_ptr)
         }
@@ -134,13 +137,31 @@ fn handle_move_msg(
     Some(0)
 }
 
-fn handle_size_msg(lparam: LPARAM, state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+fn handle_size_msg(
+    wparam: WPARAM,
+    lparam: LPARAM,
+    state_ptr: Rc<WindowsWindowStatePtr>,
+) -> Option<isize> {
+    let mut lock = state_ptr.state.borrow_mut();
+
+    // Don't resize the renderer when the window is minimized, but record that it was minimized so
+    // that on restore the swap chain can be recreated via `update_drawable_size_even_if_unchanged`.
+    if wparam.0 == SIZE_MINIMIZED as usize {
+        lock.restore_from_minimized = lock.callbacks.request_frame.take();
+        return Some(0);
+    }
+
     let width = lparam.loword().max(1) as i32;
     let height = lparam.hiword().max(1) as i32;
-    let mut lock = state_ptr.state.borrow_mut();
     let new_size = size(DevicePixels(width), DevicePixels(height));
     let scale_factor = lock.scale_factor;
-    lock.renderer.update_drawable_size(new_size);
+    if lock.restore_from_minimized.is_some() {
+        lock.renderer
+            .update_drawable_size_even_if_unchanged(new_size);
+        lock.callbacks.request_frame = lock.restore_from_minimized.take();
+    } else {
+        lock.renderer.update_drawable_size(new_size);
+    }
     let new_size = new_size.to_pixels(scale_factor);
     lock.logical_size = new_size;
     if let Some(mut callback) = lock.callbacks.resize.take() {
@@ -234,10 +255,32 @@ fn handle_destroy_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Opt
 }
 
 fn handle_mouse_move_msg(
+    handle: HWND,
     lparam: LPARAM,
     wparam: WPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    let mut lock = state_ptr.state.borrow_mut();
+    if !lock.hovered {
+        lock.hovered = true;
+        unsafe {
+            TrackMouseEvent(&mut TRACKMOUSEEVENT {
+                cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                dwFlags: TME_LEAVE,
+                hwndTrack: handle,
+                dwHoverTime: HOVER_DEFAULT,
+            })
+            .log_err()
+        };
+        if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
+            drop(lock);
+            callback(true);
+            state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
+        }
+    } else {
+        drop(lock);
+    }
+
     let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
@@ -270,6 +313,30 @@ fn handle_mouse_move_msg(
         return result;
     }
     Some(1)
+}
+
+fn handle_nc_mouse_leave_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    let mut lock = state_ptr.state.borrow_mut();
+    lock.hovered = false;
+    if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
+        drop(lock);
+        callback(false);
+        state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
+    }
+
+    Some(0)
+}
+
+fn handle_mouse_leave_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    let mut lock = state_ptr.state.borrow_mut();
+    lock.hovered = false;
+    if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
+        drop(lock);
+        callback(false);
+        state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
+    }
+
+    Some(0)
 }
 
 fn handle_syskeydown_msg(
@@ -386,7 +453,7 @@ fn handle_char_msg(
         return Some(1);
     };
     drop(lock);
-    let ime_key = keystroke.ime_key.clone();
+    let key_char = keystroke.key_char.clone();
     let event = KeyDownEvent {
         keystroke,
         is_held: lparam.0 & (0x1 << 30) > 0,
@@ -397,7 +464,7 @@ fn handle_char_msg(
     if dispatch_event_result.default_prevented || !dispatch_event_result.propagate {
         return Some(0);
     }
-    let Some(ime_char) = ime_key else {
+    let Some(ime_char) = key_char else {
         return Some(1);
     };
     with_input_handler(&state_ptr, |input_handler| {
@@ -918,6 +985,27 @@ fn handle_nc_mouse_move_msg(
     }
 
     let mut lock = state_ptr.state.borrow_mut();
+    if !lock.hovered {
+        lock.hovered = true;
+        unsafe {
+            TrackMouseEvent(&mut TRACKMOUSEEVENT {
+                cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                dwFlags: TME_LEAVE | TME_NONCLIENT,
+                hwndTrack: handle,
+                dwHoverTime: HOVER_DEFAULT,
+            })
+            .log_err()
+        };
+        if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
+            drop(lock);
+            callback(true);
+            state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
+        }
+    } else {
+        drop(lock);
+    }
+
+    let mut lock = state_ptr.state.borrow_mut();
     if let Some(mut callback) = lock.callbacks.input.take() {
         let scale_factor = lock.scale_factor;
         drop(lock);
@@ -1160,6 +1248,8 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         VK_END => "end",
         VK_PRIOR => "pageup",
         VK_NEXT => "pagedown",
+        VK_BROWSER_BACK => "back",
+        VK_BROWSER_FORWARD => "forward",
         VK_ESCAPE => "escape",
         VK_INSERT => "insert",
         VK_DELETE => "delete",
@@ -1170,7 +1260,7 @@ fn parse_syskeydown_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
     Some(Keystroke {
         modifiers,
         key,
-        ime_key: None,
+        key_char: None,
     })
 }
 
@@ -1196,6 +1286,8 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
         VK_END => "end",
         VK_PRIOR => "pageup",
         VK_NEXT => "pagedown",
+        VK_BROWSER_BACK => "back",
+        VK_BROWSER_FORWARD => "forward",
         VK_ESCAPE => "escape",
         VK_INSERT => "insert",
         VK_DELETE => "delete",
@@ -1216,7 +1308,7 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
                 return Some(KeystrokeOrModifier::Keystroke(Keystroke {
                     modifiers,
                     key: format!("f{}", offset + 1),
-                    ime_key: None,
+                    key_char: None,
                 }));
             };
             return None;
@@ -1227,7 +1319,7 @@ fn parse_keydown_msg_keystroke(wparam: WPARAM) -> Option<KeystrokeOrModifier> {
     Some(KeystrokeOrModifier::Keystroke(Keystroke {
         modifiers,
         key,
-        ime_key: None,
+        key_char: None,
     }))
 }
 
@@ -1249,7 +1341,7 @@ fn parse_char_msg_keystroke(wparam: WPARAM) -> Option<Keystroke> {
         Some(Keystroke {
             modifiers,
             key,
-            ime_key: Some(first_char.to_string()),
+            key_char: Some(first_char.to_string()),
         })
     }
 }
@@ -1323,7 +1415,7 @@ fn basic_vkcode_to_string(code: u16, modifiers: Modifiers) -> Option<Keystroke> 
     Some(Keystroke {
         modifiers,
         key,
-        ime_key: None,
+        key_char: None,
     })
 }
 

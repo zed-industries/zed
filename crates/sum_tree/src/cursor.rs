@@ -9,6 +9,15 @@ struct StackEntry<'a, T: Item, D> {
     position: D,
 }
 
+impl<'a, T: Item + fmt::Debug, D: fmt::Debug> fmt::Debug for StackEntry<'a, T, D> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("StackEntry")
+            .field("index", &self.index)
+            .field("position", &self.position)
+            .finish()
+    }
+}
+
 #[derive(Clone)]
 pub struct Cursor<'a, T: Item, D> {
     tree: &'a SumTree<T>,
@@ -16,6 +25,21 @@ pub struct Cursor<'a, T: Item, D> {
     position: D,
     did_seek: bool,
     at_end: bool,
+}
+
+impl<'a, T: Item + fmt::Debug, D: fmt::Debug> fmt::Debug for Cursor<'a, T, D>
+where
+    T::Summary: fmt::Debug,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Cursor")
+            .field("tree", &self.tree)
+            .field("stack", &self.stack)
+            .field("position", &self.position)
+            .field("did_seek", &self.did_seek)
+            .field("at_end", &self.at_end)
+            .finish()
+    }
 }
 
 pub struct Iter<'a, T: Item> {
@@ -60,6 +84,7 @@ where
         }
     }
 
+    /// Item is None, when the list is empty, or this cursor is at the end of the list.
     #[track_caller]
     pub fn item(&self) -> Option<&'a T> {
         self.assert_did_seek();

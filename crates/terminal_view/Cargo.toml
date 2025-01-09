@@ -8,14 +8,19 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[features]
+test-support = ["editor/test-support", "gpui/test-support"]
+
 [lib]
 path = "src/terminal_view.rs"
 doctest = false
 
 [dependencies]
 anyhow.workspace = true
-db.workspace = true
+async-recursion.workspace = true
+breadcrumbs.workspace = true
 collections.workspace = true
+db.workspace = true
 dirs.workspace = true
 editor.workspace = true
 futures.workspace = true
@@ -24,7 +29,6 @@ itertools.workspace = true
 language.workspace = true
 project.workspace = true
 task.workspace = true
-tasks_ui.workspace = true
 search.workspace = true
 serde.workspace = true
 serde_json.workspace = true

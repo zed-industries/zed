@@ -18,6 +18,9 @@ use std::{
 use tempfile::NamedTempFile;
 use util::paths::PathWithPosition;
 
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+use std::io::IsTerminal;
+
 struct Detect;
 
 trait InstalledApp {
@@ -59,6 +62,13 @@ struct Args {
     /// Run zed in dev-server mode
     #[arg(long)]
     dev_server_token: Option<String>,
+    /// Uninstall Zed from user system
+    #[cfg(all(
+        any(target_os = "linux", target_os = "macos"),
+        not(feature = "no-bundled-uninstall")
+    ))]
+    #[arg(long)]
+    uninstall: bool,
 }
 
 fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
@@ -66,7 +76,7 @@ fn parse_path_with_position(argument_str: &str) -> anyhow::Result<String> {
         Ok(existing_path) => PathWithPosition::from_path(existing_path),
         Err(_) => {
             let path = PathWithPosition::parse_str(argument_str);
-            let curdir = env::current_dir().context("reteiving current directory")?;
+            let curdir = env::current_dir().context("retrieving current directory")?;
             path.map_path(|path| match fs::canonicalize(&path) {
                 Ok(path) => Ok(path),
                 Err(e) => {
@@ -119,6 +129,29 @@ fn main() -> Result<()> {
         return Ok(());
     }
 
+    #[cfg(all(
+        any(target_os = "linux", target_os = "macos"),
+        not(feature = "no-bundled-uninstall")
+    ))]
+    if args.uninstall {
+        static UNINSTALL_SCRIPT: &[u8] = include_bytes!("../../../script/uninstall.sh");
+
+        let tmp_dir = tempfile::tempdir()?;
+        let script_path = tmp_dir.path().join("uninstall.sh");
+        fs::write(&script_path, UNINSTALL_SCRIPT)?;
+
+        use std::os::unix::fs::PermissionsExt as _;
+        fs::set_permissions(&script_path, fs::Permissions::from_mode(0o755))?;
+
+        let status = std::process::Command::new("sh")
+            .arg(&script_path)
+            .env("ZED_CHANNEL", &*release_channel::RELEASE_CHANNEL_NAME)
+            .status()
+            .context("Failed to execute uninstall script")?;
+
+        std::process::exit(status.code().unwrap_or(1));
+    }
+
     let (server, server_name) =
         IpcOneShotServer::<IpcHandshake>::new().context("Handshake before Zed spawn")?;
     let url = format!("zed-cli://{server_name}");
@@ -131,7 +164,25 @@ fn main() -> Result<()> {
         None
     };
 
-    let env = Some(std::env::vars().collect::<HashMap<_, _>>());
+    let env = {
+        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+        {
+            // On Linux, the desktop entry uses `cli` to spawn `zed`.
+            // We need to handle env vars correctly since std::env::vars() may not contain
+            // project-specific vars (e.g. those set by direnv).
+            // By setting env to None here, the LSP will use worktree env vars instead,
+            // which is what we want.
+            if !std::io::stdout().is_terminal() {
+                None
+            } else {
+                Some(std::env::vars().collect::<HashMap<_, _>>())
+            }
+        }
+
+        #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
+        Some(std::env::vars().collect::<HashMap<_, _>>())
+    };
+
     let exit_status = Arc::new(Mutex::new(None));
     let mut paths = vec![];
     let mut urls = vec![];
@@ -232,6 +283,7 @@ mod linux {
         os::unix::net::{SocketAddr, UnixDatagram},
         path::{Path, PathBuf},
         process::{self, ExitStatus},
+        sync::LazyLock,
         thread,
         time::Duration,
     };
@@ -239,12 +291,11 @@ mod linux {
     use anyhow::anyhow;
     use cli::FORCE_CLI_MODE_ENV_VAR_NAME;
     use fork::Fork;
-    use once_cell::sync::Lazy;
 
     use crate::{Detect, InstalledApp};
 
-    static RELEASE_CHANNEL: Lazy<String> =
-        Lazy::new(|| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string());
+    static RELEASE_CHANNEL: LazyLock<String> =
+        LazyLock::new(|| include_str!("../../zed/RELEASE_CHANNEL").trim().to_string());
 
     struct App(PathBuf);
 

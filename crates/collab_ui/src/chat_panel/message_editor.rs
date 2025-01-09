@@ -12,10 +12,15 @@ use language::{
     language_settings::SoftWrap, Anchor, Buffer, BufferSnapshot, CodeLabel, LanguageRegistry,
     LanguageServerId, ToOffset,
 };
-use parking_lot::RwLock;
 use project::{search::SearchQuery, Completion};
 use settings::Settings;
-use std::{ops::Range, sync::Arc, sync::LazyLock, time::Duration};
+use std::{
+    cell::RefCell,
+    ops::Range,
+    rc::Rc,
+    sync::{Arc, LazyLock},
+    time::Duration,
+};
 use theme::ThemeSettings;
 use ui::{prelude::*, TextSize};
 
@@ -68,20 +73,10 @@ impl CompletionProvider for MessageEditorCompletionProvider {
         &self,
         _buffer: Model<Buffer>,
         _completion_indices: Vec<usize>,
-        _completions: Arc<RwLock<Box<[Completion]>>>,
+        _completions: Rc<RefCell<Box<[Completion]>>>,
         _cx: &mut ViewContext<Editor>,
     ) -> Task<anyhow::Result<bool>> {
         Task::ready(Ok(false))
-    }
-
-    fn apply_additional_edits_for_completion(
-        &self,
-        _buffer: Model<Buffer>,
-        _completion: Completion,
-        _push_to_history: bool,
-        _cx: &mut ViewContext<Editor>,
-    ) -> Task<Result<Option<language::Transaction>>> {
-        Task::ready(Ok(None))
     }
 
     fn is_completion_trigger(
@@ -314,6 +309,7 @@ impl MessageEditor {
                     server_id: LanguageServerId(0), // TODO: Make this optional or something?
                     lsp_completion: Default::default(), // TODO: Make this optional or something?
                     confirm: None,
+                    resolved: true,
                 }
             })
             .collect()
@@ -381,11 +377,7 @@ impl MessageEditor {
 
         let candidates = names
             .into_iter()
-            .map(|user| StringMatchCandidate {
-                id: 0,
-                string: user.clone(),
-                char_bag: user.chars().collect(),
-            })
+            .map(|user| StringMatchCandidate::new(0, &user))
             .collect::<Vec<_>>();
 
         Some((start_anchor, query, candidates))
@@ -401,11 +393,7 @@ impl MessageEditor {
             LazyLock::new(|| {
                 let emojis = emojis::iter()
                     .flat_map(|s| s.shortcodes())
-                    .map(|emoji| StringMatchCandidate {
-                        id: 0,
-                        string: emoji.to_string(),
-                        char_bag: emoji.chars().collect(),
-                    })
+                    .map(|emoji| StringMatchCandidate::new(0, emoji))
                     .collect::<Vec<_>>();
                 emojis
             });

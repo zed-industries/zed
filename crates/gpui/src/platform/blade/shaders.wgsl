@@ -15,23 +15,44 @@ struct Bounds {
     origin: vec2<f32>,
     size: vec2<f32>,
 }
+
 struct Corners {
     top_left: f32,
     top_right: f32,
     bottom_right: f32,
     bottom_left: f32,
 }
+
 struct Edges {
     top: f32,
     right: f32,
     bottom: f32,
     left: f32,
 }
+
 struct Hsla {
     h: f32,
     s: f32,
     l: f32,
     a: f32,
+}
+
+struct LinearColorStop {
+    color: Hsla,
+    percentage: f32,
+}
+
+struct Background {
+    // 0u is Solid
+    // 1u is LinearGradient
+    tag: u32,
+    // 0u is sRGB linear color
+    // 1u is Oklab color
+    color_space: u32,
+    solid: Hsla,
+    angle: f32,
+    colors: array<LinearColorStop, 2>,
+    pad: u32,
 }
 
 struct AtlasTextureId {
@@ -43,6 +64,7 @@ struct AtlasBounds {
     origin: vec2<i32>,
     size: vec2<i32>,
 }
+
 struct AtlasTile {
     texture_id: AtlasTextureId,
     tile_id: u32,
@@ -96,6 +118,24 @@ fn srgb_to_linear(srgb: vec3<f32>) -> vec3<f32> {
     return select(higher, lower, cutoff);
 }
 
+fn linear_to_srgb(linear: vec3<f32>) -> vec3<f32> {
+    let cutoff = linear < vec3<f32>(0.0031308);
+    let higher = vec3<f32>(1.055) * pow(linear, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
+    let lower = linear * vec3<f32>(12.92);
+    return select(higher, lower, cutoff);
+}
+
+/// Convert a linear color to sRGBA space.
+fn linear_to_srgba(color: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(linear_to_srgb(color.rgb), color.a);
+}
+
+/// Convert a sRGBA color to linear space.
+fn srgba_to_linear(color: vec4<f32>) -> vec4<f32> {
+    return vec4<f32>(srgb_to_linear(color.rgb), color.a);
+}
+
+/// Hsla to linear RGBA conversion.
 fn hsla_to_rgba(hsla: Hsla) -> vec4<f32> {
     let h = hsla.h * 6.0; // Now, it's an angle but scaled in [0, 6) range
     let s = hsla.s;
@@ -133,6 +173,43 @@ fn hsla_to_rgba(hsla: Hsla) -> vec4<f32> {
     // texture format or the swapchain color space.
     let linear = srgb_to_linear(color);
     return vec4<f32>(linear, a);
+}
+
+/// Convert a linear sRGB to Oklab space.
+/// Reference: https://bottosson.github.io/posts/oklab/#converting-from-linear-srgb-to-oklab
+fn linear_srgb_to_oklab(color: vec4<f32>) -> vec4<f32> {
+	let l = 0.4122214708 * color.r + 0.5363325363 * color.g + 0.0514459929 * color.b;
+	let m = 0.2119034982 * color.r + 0.6806995451 * color.g + 0.1073969566 * color.b;
+	let s = 0.0883024619 * color.r + 0.2817188376 * color.g + 0.6299787005 * color.b;
+
+	let l_ = pow(l, 1.0 / 3.0);
+	let m_ = pow(m, 1.0 / 3.0);
+	let s_ = pow(s, 1.0 / 3.0);
+
+	return vec4<f32>(
+		0.2104542553 * l_ + 0.7936177850 * m_ - 0.0040720468 * s_,
+		1.9779984951 * l_ - 2.4285922050 * m_ + 0.4505937099 * s_,
+		0.0259040371 * l_ + 0.7827717662 * m_ - 0.8086757660 * s_,
+		color.a
+	);
+}
+
+/// Convert an Oklab color to linear sRGB space.
+fn oklab_to_linear_srgb(color: vec4<f32>) -> vec4<f32> {
+	let l_ = color.r + 0.3963377774 * color.g + 0.2158037573 * color.b;
+	let m_ = color.r - 0.1055613458 * color.g - 0.0638541728 * color.b;
+	let s_ = color.r - 0.0894841775 * color.g - 1.2914855480 * color.b;
+
+	let l = l_ * l_ * l_;
+	let m = m_ * m_ * m_;
+	let s = s_ * s_ * s_;
+
+	return vec4<f32>(
+		4.0767416621 * l - 3.3077115913 * m + 0.2309699292 * s,
+		-1.2684380046 * l + 2.6097574011 * m - 0.3413193965 * s,
+		-0.0041960863 * l - 0.7034186147 * m + 1.7076147010 * s,
+		color.a
+	);
 }
 
 fn over(below: vec4<f32>, above: vec4<f32>) -> vec4<f32> {
@@ -197,6 +274,94 @@ fn blend_color(color: vec4<f32>, alpha_factor: f32) -> vec4<f32> {
     return vec4<f32>(color.rgb * multiplier, alpha);
 }
 
+
+struct GradientColor {
+    solid: vec4<f32>,
+    color0: vec4<f32>,
+    color1: vec4<f32>,
+}
+
+fn prepare_gradient_color(tag: u32, color_space: u32,
+    solid: Hsla, colors: array<LinearColorStop, 2>) -> GradientColor {
+    var result = GradientColor();
+
+    if (tag == 0u) {
+        result.solid = hsla_to_rgba(solid);
+    } else if (tag == 1u) {
+        // The hsla_to_rgba is returns a linear sRGB color
+        result.color0 = hsla_to_rgba(colors[0].color);
+        result.color1 = hsla_to_rgba(colors[1].color);
+
+        // Prepare color space in vertex for avoid conversion
+        // in fragment shader for performance reasons
+        if (color_space == 0u) {
+            // sRGB
+            result.color0 = linear_to_srgba(result.color0);
+            result.color1 = linear_to_srgba(result.color1);
+        } else if (color_space == 1u) {
+            // Oklab
+            result.color0 = linear_srgb_to_oklab(result.color0);
+            result.color1 = linear_srgb_to_oklab(result.color1);
+        }
+    }
+
+    return result;
+}
+
+fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
+    sold_color: vec4<f32>, color0: vec4<f32>, color1: vec4<f32>) -> vec4<f32> {
+    var background_color = vec4<f32>(0.0);
+
+    switch (background.tag) {
+        default: {
+            return sold_color;
+        }
+        case 1u: {
+            // Linear gradient background.
+            // -90 degrees to match the CSS gradient angle.
+            let radians = (background.angle % 360.0 - 90.0) * M_PI_F / 180.0;
+            var direction = vec2<f32>(cos(radians), sin(radians));
+            let stop0_percentage = background.colors[0].percentage;
+            let stop1_percentage = background.colors[1].percentage;
+
+            // Expand the short side to be the same as the long side
+            if (bounds.size.x > bounds.size.y) {
+                direction.y *= bounds.size.y / bounds.size.x;
+            } else {
+                direction.x *= bounds.size.x / bounds.size.y;
+            }
+
+            // Get the t value for the linear gradient with the color stop percentages.
+            let half_size = bounds.size / 2.0;
+            let center = bounds.origin + half_size;
+            let center_to_point = position - center;
+            var t = dot(center_to_point, direction) / length(direction);
+            // Check the direct to determine the use x or y
+            if (abs(direction.x) > abs(direction.y)) {
+                t = (t + half_size.x) / bounds.size.x;
+            } else {
+                t = (t + half_size.y) / bounds.size.y;
+            }
+
+            // Adjust t based on the stop percentages
+            t = (t - stop0_percentage) / (stop1_percentage - stop0_percentage);
+            t = clamp(t, 0.0, 1.0);
+
+            switch (background.color_space) {
+                default: {
+                    background_color = srgba_to_linear(mix(color0, color1, t));
+                }
+                case 1u: {
+                    let oklab_color = mix(color0, color1, t);
+                    background_color = oklab_to_linear_srgb(oklab_color);
+                }
+            }
+        }
+    }
+
+    return background_color;
+}
+
 // --- quads --- //
 
 struct Quad {
@@ -204,7 +369,7 @@ struct Quad {
     pad: u32,
     bounds: Bounds,
     content_mask: Bounds,
-    background: Hsla,
+    background: Background,
     border_color: Hsla,
     corner_radii: Corners,
     border_widths: Edges,
@@ -213,11 +378,13 @@ var<storage, read> b_quads: array<Quad>;
 
 struct QuadVarying {
     @builtin(position) position: vec4<f32>,
-    @location(0) @interpolate(flat) background_color: vec4<f32>,
-    @location(1) @interpolate(flat) border_color: vec4<f32>,
-    @location(2) @interpolate(flat) quad_id: u32,
-    //TODO: use `clip_distance` once Naga supports it
-    @location(3) clip_distances: vec4<f32>,
+    @location(0) @interpolate(flat) border_color: vec4<f32>,
+    @location(1) @interpolate(flat) quad_id: u32,
+    // TODO: use `clip_distance` once Naga supports it
+    @location(2) clip_distances: vec4<f32>,
+    @location(3) @interpolate(flat) background_solid: vec4<f32>,
+    @location(4) @interpolate(flat) background_color0: vec4<f32>,
+    @location(5) @interpolate(flat) background_color1: vec4<f32>,
 }
 
 @vertex
@@ -227,7 +394,16 @@ fn vs_quad(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
 
     var out = QuadVarying();
     out.position = to_device_position(unit_vertex, quad.bounds);
-    out.background_color = hsla_to_rgba(quad.background);
+
+    let gradient = prepare_gradient_color(
+        quad.background.tag,
+        quad.background.color_space,
+        quad.background.solid,
+        quad.background.colors
+    );
+    out.background_solid = gradient.solid;
+    out.background_color0 = gradient.color0;
+    out.background_color1 = gradient.color1;
     out.border_color = hsla_to_rgba(quad.border_color);
     out.quad_id = instance_id;
     out.clip_distances = distance_from_clip_rect(unit_vertex, quad.bounds, quad.content_mask);
@@ -242,21 +418,23 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
     }
 
     let quad = b_quads[input.quad_id];
+    let half_size = quad.bounds.size / 2.0;
+    let center = quad.bounds.origin + half_size;
+    let center_to_point = input.position.xy - center;
+
+    let background_color = gradient_color(quad.background, input.position.xy, quad.bounds,
+        input.background_solid, input.background_color0, input.background_color1);
+
     // Fast path when the quad is not rounded and doesn't have any border.
     if (quad.corner_radii.top_left == 0.0 && quad.corner_radii.bottom_left == 0.0 &&
         quad.corner_radii.top_right == 0.0 &&
         quad.corner_radii.bottom_right == 0.0 && quad.border_widths.top == 0.0 &&
         quad.border_widths.left == 0.0 && quad.border_widths.right == 0.0 &&
         quad.border_widths.bottom == 0.0) {
-        return blend_color(input.background_color, 1.0);
+        return blend_color(background_color, 1.0);
     }
 
-    let half_size = quad.bounds.size / 2.0;
-    let center = quad.bounds.origin + half_size;
-    let center_to_point = input.position.xy - center;
-
     let corner_radius = pick_corner_radius(center_to_point, quad.corner_radii);
-
     let rounded_edge_to_point = abs(center_to_point) - half_size + corner_radius;
     let distance =
       length(max(vec2<f32>(0.0), rounded_edge_to_point)) +
@@ -277,13 +455,13 @@ fn fs_quad(input: QuadVarying) -> @location(0) vec4<f32> {
         border_width = vertical_border;
     }
 
-    var color = input.background_color;
+    var color = background_color;
     if (border_width > 0.0) {
         let inset_distance = distance + border_width;
         // Blend the border on top of the background and then linearly interpolate
         // between the two as we slide inside the background.
-        let blended_border = over(input.background_color, input.border_color);
-        color = mix(blended_border, input.background_color,
+        let blended_border = over(background_color, input.border_color);
+        color = mix(blended_border, background_color,
                     saturate(0.5 - inset_distance));
     }
 
@@ -408,7 +586,7 @@ fn fs_path_rasterization(input: PathRasterizationVarying) -> @location(0) f32 {
 
 struct PathSprite {
     bounds: Bounds,
-    color: Hsla,
+    color: Background,
     tile: AtlasTile,
 }
 var<storage, read> b_path_sprites: array<PathSprite>;
@@ -416,7 +594,10 @@ var<storage, read> b_path_sprites: array<PathSprite>;
 struct PathVarying {
     @builtin(position) position: vec4<f32>,
     @location(0) tile_position: vec2<f32>,
-    @location(1) color: vec4<f32>,
+    @location(1) @interpolate(flat) instance_id: u32,
+    @location(2) @interpolate(flat) color_solid: vec4<f32>,
+    @location(3) @interpolate(flat) color0: vec4<f32>,
+    @location(4) @interpolate(flat) color1: vec4<f32>,
 }
 
 @vertex
@@ -428,7 +609,17 @@ fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
     var out = PathVarying();
     out.position = to_device_position(unit_vertex, sprite.bounds);
     out.tile_position = to_tile_position(unit_vertex, sprite.tile);
-    out.color = hsla_to_rgba(sprite.color);
+    out.instance_id = instance_id;
+
+    let gradient = prepare_gradient_color(
+        sprite.color.tag,
+        sprite.color.color_space,
+        sprite.color.solid,
+        sprite.color.colors
+    );
+    out.color_solid = gradient.solid;
+    out.color0 = gradient.color0;
+    out.color1 = gradient.color1;
     return out;
 }
 
@@ -436,7 +627,11 @@ fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
 fn fs_path(input: PathVarying) -> @location(0) vec4<f32> {
     let sample = textureSample(t_sprite, s_sprite, input.tile_position).r;
     let mask = 1.0 - abs(1.0 - sample % 2.0);
-    return blend_color(input.color, mask);
+    let sprite = b_path_sprites[input.instance_id];
+    let background = sprite.color;
+    let color = gradient_color(background, input.position.xy, sprite.bounds,
+        input.color_solid, input.color0, input.color1);
+    return blend_color(color, mask);
 }
 
 // --- underlines --- //

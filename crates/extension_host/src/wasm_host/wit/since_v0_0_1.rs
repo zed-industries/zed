@@ -3,7 +3,7 @@ use crate::wasm_host::wit::since_v0_0_4;
 use crate::wasm_host::WasmState;
 use anyhow::Result;
 use async_trait::async_trait;
-use extension::WorktreeDelegate;
+use extension::{ExtensionLanguageServerProxy, WorktreeDelegate};
 use language::LanguageServerBinaryStatus;
 use semantic_version::SemanticVersion;
 use std::sync::{Arc, OnceLock};
@@ -149,8 +149,9 @@ impl ExtensionImports for WasmState {
         };
 
         self.host
-            .registration_hooks
-            .update_lsp_status(lsp::LanguageServerName(server_name.into()), status);
+            .proxy
+            .update_language_server_status(lsp::LanguageServerName(server_name.into()), status);
+
         Ok(())
     }
 

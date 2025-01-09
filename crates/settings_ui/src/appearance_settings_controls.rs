@@ -145,7 +145,7 @@ impl RenderOnce for ThemeModeControl {
                 ToggleButton::new("light", "Light")
                     .style(ButtonStyle::Filled)
                     .size(ButtonSize::Large)
-                    .selected(value == ThemeMode::Light)
+                    .toggle_state(value == ThemeMode::Light)
                     .on_click(|_, cx| Self::write(ThemeMode::Light, cx))
                     .first(),
             )
@@ -153,7 +153,7 @@ impl RenderOnce for ThemeModeControl {
                 ToggleButton::new("system", "System")
                     .style(ButtonStyle::Filled)
                     .size(ButtonSize::Large)
-                    .selected(value == ThemeMode::System)
+                    .toggle_state(value == ThemeMode::System)
                     .on_click(|_, cx| Self::write(ThemeMode::System, cx))
                     .middle(),
             )
@@ -161,7 +161,7 @@ impl RenderOnce for ThemeModeControl {
                 ToggleButton::new("dark", "Dark")
                     .style(ButtonStyle::Filled)
                     .size(ButtonSize::Large)
-                    .selected(value == ThemeMode::Dark)
+                    .toggle_state(value == ThemeMode::Dark)
                     .on_click(|_, cx| Self::write(ThemeMode::Dark, cx))
                     .last(),
             )
@@ -375,8 +375,8 @@ impl RenderOnce for UiFontLigaturesControl {
             |selection, cx| {
                 Self::write(
                     match selection {
-                        Selection::Selected => true,
-                        Selection::Unselected | Selection::Indeterminate => false,
+                        ToggleState::Selected => true,
+                        ToggleState::Unselected | ToggleState::Indeterminate => false,
                     },
                     cx,
                 );

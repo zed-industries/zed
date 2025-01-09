@@ -1,14 +1,12 @@
 use crate::{Supermaven, SupermavenCompletionStateId};
 use anyhow::Result;
-use client::telemetry::Telemetry;
-use editor::{CompletionProposal, Direction, InlayProposal, InlineCompletionProvider};
 use futures::StreamExt as _;
 use gpui::{AppContext, EntityId, Model, ModelContext, Task};
+use inline_completion::{Direction, InlineCompletion, InlineCompletionProvider};
 use language::{language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot};
 use std::{
     ops::{AddAssign, Range},
     path::Path,
-    sync::Arc,
     time::Duration,
 };
 use text::{ToOffset, ToPoint};
@@ -21,8 +19,7 @@ pub struct SupermavenCompletionProvider {
     buffer_id: Option<EntityId>,
     completion_id: Option<SupermavenCompletionStateId>,
     file_extension: Option<String>,
-    pending_refresh: Task<Result<()>>,
-    telemetry: Option<Arc<Telemetry>>,
+    pending_refresh: Option<Task<Result<()>>>,
 }
 
 impl SupermavenCompletionProvider {
@@ -32,32 +29,26 @@ impl SupermavenCompletionProvider {
             buffer_id: None,
             completion_id: None,
             file_extension: None,
-            pending_refresh: Task::ready(Ok(())),
-            telemetry: None,
+            pending_refresh: None,
         }
-    }
-
-    pub fn with_telemetry(mut self, telemetry: Arc<Telemetry>) -> Self {
-        self.telemetry = Some(telemetry);
-        self
     }
 }
 
-// Computes the completion state from the difference between the completion text.
+// Computes the inline completion from the difference between the completion text.
 // this is defined by greedily matching the buffer text against the completion text, with any leftover buffer placed at the end.
 // for example, given the completion text "moo cows are cool" and the buffer text "cowsre pool", the completion state would be
 // the inlays "moo ", " a", and "cool" which will render as "[moo ]cows[ a]re [cool]pool" in the editor.
-fn completion_state_from_diff(
+fn completion_from_diff(
     snapshot: BufferSnapshot,
     completion_text: &str,
     position: Anchor,
     delete_range: Range<Anchor>,
-) -> CompletionProposal {
+) -> InlineCompletion {
     let buffer_text = snapshot
         .text_for_range(delete_range.clone())
         .collect::<String>();
 
-    let mut inlays: Vec<InlayProposal> = Vec::new();
+    let mut edits: Vec<(Range<language::Anchor>, String)> = Vec::new();
 
     let completion_graphemes: Vec<&str> = completion_text.graphemes(true).collect();
     let buffer_graphemes: Vec<&str> = buffer_text.graphemes(true).collect();
@@ -74,11 +65,10 @@ fn completion_state_from_diff(
         match k {
             Some(k) => {
                 if k != 0 {
+                    let offset = snapshot.anchor_after(offset);
                     // the range from the current position to item is an inlay.
-                    inlays.push(InlayProposal::Suggestion(
-                        snapshot.anchor_after(offset),
-                        completion_graphemes[i..i + k].join("").into(),
-                    ));
+                    let edit = (offset..offset, completion_graphemes[i..i + k].join(""));
+                    edits.push(edit);
                 }
                 i += k + 1;
                 j += 1;
@@ -93,23 +83,31 @@ fn completion_state_from_diff(
     }
 
     if j == buffer_graphemes.len() && i < completion_graphemes.len() {
+        let offset = snapshot.anchor_after(offset);
         // there is leftover completion text, so drop it as an inlay.
-        inlays.push(InlayProposal::Suggestion(
-            snapshot.anchor_after(offset),
-            completion_graphemes[i..].join("").into(),
-        ));
+        let edit_range = offset..offset;
+        let edit_text = completion_graphemes[i..].join("");
+        edits.push((edit_range, edit_text));
     }
 
-    CompletionProposal {
-        inlays,
-        text: completion_text.into(),
-        delete_range: Some(delete_range),
-    }
+    InlineCompletion { edits }
 }
 
 impl InlineCompletionProvider for SupermavenCompletionProvider {
     fn name() -> &'static str {
         "supermaven"
+    }
+
+    fn display_name() -> &'static str {
+        "Supermaven"
+    }
+
+    fn show_completions_in_menu() -> bool {
+        false
+    }
+
+    fn show_completions_in_normal_mode() -> bool {
+        false
     }
 
     fn is_enabled(&self, buffer: &Model<Buffer>, cursor_position: Anchor, cx: &AppContext) -> bool {
@@ -122,6 +120,10 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         let language = buffer.language_at(cursor_position);
         let settings = all_language_settings(file, cx);
         settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()), cx)
+    }
+
+    fn is_refreshing(&self) -> bool {
+        self.pending_refresh.is_some()
     }
 
     fn refresh(
@@ -137,7 +139,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
             return;
         };
 
-        self.pending_refresh = cx.spawn(|this, mut cx| async move {
+        self.pending_refresh = Some(cx.spawn(|this, mut cx| async move {
             if debounce {
                 cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
             }
@@ -154,11 +156,12 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
                                 .to_string(),
                         )
                     });
+                    this.pending_refresh = None;
                     cx.notify();
                 })?;
             }
             Ok(())
-        });
+        }));
     }
 
     fn cycle(
@@ -171,44 +174,21 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
     }
 
     fn accept(&mut self, _cx: &mut ModelContext<Self>) {
-        if self.completion_id.is_some() {
-            if let Some(telemetry) = self.telemetry.as_ref() {
-                telemetry.report_inline_completion_event(
-                    Self::name().to_string(),
-                    true,
-                    self.file_extension.clone(),
-                );
-            }
-        }
-        self.pending_refresh = Task::ready(Ok(()));
+        self.pending_refresh = None;
         self.completion_id = None;
     }
 
-    fn discard(
+    fn discard(&mut self, _cx: &mut ModelContext<Self>) {
+        self.pending_refresh = None;
+        self.completion_id = None;
+    }
+
+    fn suggest(
         &mut self,
-        should_report_inline_completion_event: bool,
-        _cx: &mut ModelContext<Self>,
-    ) {
-        if should_report_inline_completion_event && self.completion_id.is_some() {
-            if let Some(telemetry) = self.telemetry.as_ref() {
-                telemetry.report_inline_completion_event(
-                    Self::name().to_string(),
-                    false,
-                    self.file_extension.clone(),
-                );
-            }
-        }
-
-        self.pending_refresh = Task::ready(Ok(()));
-        self.completion_id = None;
-    }
-
-    fn active_completion_text<'a>(
-        &'a self,
         buffer: &Model<Buffer>,
         cursor_position: Anchor,
-        cx: &'a AppContext,
-    ) -> Option<CompletionProposal> {
+        cx: &mut ModelContext<Self>,
+    ) -> Option<InlineCompletion> {
         let completion_text = self
             .supermaven
             .read(cx)
@@ -223,7 +203,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
             let mut point = cursor_position.to_point(&snapshot);
             point.column = snapshot.line_len(point.row);
             let range = cursor_position..snapshot.anchor_after(point);
-            Some(completion_state_from_diff(
+            Some(completion_from_diff(
                 snapshot,
                 completion_text,
                 cursor_position,

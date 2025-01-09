@@ -13,5 +13,5 @@ workspace = true
 
 [dependencies]
 gpui.workspace = true
-itertools = { package = "itertools", version = "0.13" }
+itertools = { package = "itertools", version = "0.14" }
 smallvec.workspace = true
