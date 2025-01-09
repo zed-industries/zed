@@ -1787,6 +1787,17 @@ impl Editor {
         self.refresh_inline_completion(false, true, cx);
     }
 
+    pub fn inline_completions_enabled(&self, cx: &AppContext) -> bool {
+        let cursor = self.selections.newest_anchor().head();
+        if let Some((buffer, buffer_position)) =
+            self.buffer.read(cx).text_anchor_for_position(cursor, cx)
+        {
+            self.should_show_inline_completions(&buffer, buffer_position, cx)
+        } else {
+            false
+        }
+    }
+
     fn should_show_inline_completions(
         &self,
         buffer: &Model<Buffer>,
