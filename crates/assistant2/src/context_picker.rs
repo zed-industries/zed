@@ -132,7 +132,7 @@ impl ContextPicker {
 
             recent.extend(
                 workspace
-                    .recent_navigation_history(Some(2), cx)
+                    .recent_navigation_history(Some(4), cx)
                     .into_iter()
                     .filter_map(|(path, _)| {
                         if current_files.contains(&path.path.to_path_buf()) {
