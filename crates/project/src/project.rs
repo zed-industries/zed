@@ -2631,14 +2631,13 @@ impl Project {
 
     pub fn format(
         &mut self,
-        buffers: HashSet<Model<Buffer>>,
+        target: lsp_store::FormatTargetHandles,
         push_to_history: bool,
         trigger: lsp_store::FormatTrigger,
-        target: lsp_store::FormatTarget,
         cx: &mut ModelContext<Project>,
     ) -> Task<anyhow::Result<ProjectTransaction>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.format(buffers, push_to_history, trigger, target, cx)
+            lsp_store.format(target, push_to_history, trigger, cx)
         })
     }
 

@@ -16,7 +16,7 @@ use language::{
 };
 use node_runtime::NodeRuntime;
 use project::{
-    lsp_store::{FormatTarget, FormatTrigger},
+    lsp_store::{FormatTargetHandles, FormatTrigger},
     ProjectPath,
 };
 use remote::SshRemoteClient;
@@ -471,10 +471,9 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     project_b
         .update(cx_b, |project, cx| {
             project.format(
-                HashSet::from_iter([buffer_b.clone()]),
+                FormatTargetHandles::Buffers(HashSet::from_iter([buffer_b.clone()])),
                 true,
                 FormatTrigger::Save,
-                FormatTarget::Buffer,
                 cx,
             )
         })
@@ -508,10 +507,9 @@ async fn test_ssh_collaboration_formatting_with_prettier(
     project_a
         .update(cx_a, |project, cx| {
             project.format(
-                HashSet::from_iter([buffer_a.clone()]),
+                FormatTargetHandles::Buffers(HashSet::from_iter([buffer_a.clone()])),
                 true,
                 FormatTrigger::Manual,
-                FormatTarget::Buffer,
                 cx,
             )
         })

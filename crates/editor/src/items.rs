@@ -29,7 +29,7 @@ use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 
-use project::lsp_store::FormatTarget;
+use project::lsp_store::FormatTargetHandles;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -753,10 +753,13 @@ impl Item for Editor {
         cx.spawn(|this, mut cx| async move {
             if format {
                 this.update(&mut cx, |editor, cx| {
+                    let buffer = self.buffer().clone();
+                    let mut buffers = buffer.read(cx).all_buffers();
+                    buffers.retain(|buffer| buffer.read(cx).is_dirty());
                     editor.perform_format(
                         project.clone(),
                         FormatTrigger::Save,
-                        FormatTarget::Buffer,
+                        FormatTarget::Buffer(buffers),
                         cx,
                     )
                 })?

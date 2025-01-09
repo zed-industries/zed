@@ -129,7 +129,7 @@ use multi_buffer::{
 };
 use project::{
     buffer_store::BufferChangeSet,
-    lsp_store::{FormatTarget, FormatTrigger, OpenLspBufferHandle},
+    lsp_store::{FormatTarget, FormatTargetHandles, FormatTrigger, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Location, LocationLink,
     LspStore, Project, ProjectItem, ProjectTransaction, TaskSourceKind,
@@ -10237,7 +10237,7 @@ impl Editor {
             None => return None,
         };
 
-        Some(self.perform_format(project, FormatTrigger::Manual, FormatTarget::Buffer, cx))
+        Some(self.perform_format(project, FormatTrigger::Manual, FormatTarget::Buffers, cx))
     }
 
     fn format_selections(
@@ -10279,9 +10279,7 @@ impl Editor {
         }
 
         let mut timeout = cx.background_executor().timer(FORMAT_TIMEOUT).fuse();
-        let format = project.update(cx, |project, cx| {
-            project.format(buffers, true, trigger, target, cx)
-        });
+        let format = project.update(cx, |project, cx| project.format(target, true, trigger, cx));
 
         cx.spawn(|_, mut cx| async move {
             let transaction = futures::select_biased! {
