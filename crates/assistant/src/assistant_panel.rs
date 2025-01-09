@@ -595,7 +595,7 @@ impl AssistantPanel {
                 true
             }
 
-            pane::Event::ActivateItem { local } => {
+            pane::Event::ActivateItem { local, .. } => {
                 if *local {
                     self.workspace
                         .update(cx, |workspace, cx| {

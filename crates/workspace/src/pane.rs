@@ -206,6 +206,7 @@ pub enum Event {
     },
     ActivateItem {
         local: bool,
+        focus_changed: bool,
     },
     Remove {
         focus_on_pane: Option<View<Pane>>,
@@ -236,7 +237,7 @@ impl fmt::Debug for Event {
                 .debug_struct("AddItem")
                 .field("item", &item.item_id())
                 .finish(),
-            Event::ActivateItem { local } => f
+            Event::ActivateItem { local, .. } => f
                 .debug_struct("ActivateItem")
                 .field("local", local)
                 .finish(),
@@ -1092,9 +1093,6 @@ impl Pane {
                     prev_item.deactivated(cx);
                 }
             }
-            cx.emit(Event::ActivateItem {
-                local: activate_pane,
-            });
 
             if let Some(newly_active_item) = self.items.get(index) {
                 self.activation_history
@@ -1113,6 +1111,11 @@ impl Pane {
             if focus_item {
                 self.focus_active_item(cx);
             }
+
+            cx.emit(Event::ActivateItem {
+                local: activate_pane,
+                focus_changed: focus_item,
+            });
 
             if !self.is_tab_pinned(index) {
                 self.tab_bar_scroll_handle
