@@ -73,6 +73,7 @@ util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+file_icons.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
