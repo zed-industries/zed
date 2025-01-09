@@ -272,6 +272,10 @@ impl ContextStore {
         dupes
     }
 
+    pub fn file_paths(&self) -> HashSet<PathBuf> {
+        self.files.keys().cloned().collect()
+    }
+
     pub fn thread_ids(&self) -> HashSet<ThreadId> {
         self.threads.keys().cloned().collect()
     }
