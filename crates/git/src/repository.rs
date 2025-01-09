@@ -469,6 +469,12 @@ impl RepoPath {
     }
 }
 
+impl std::fmt::Display for RepoPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.to_string_lossy().fmt(f)
+    }
+}
+
 impl From<&Path> for RepoPath {
     fn from(value: &Path) -> Self {
         RepoPath::new(value.into())
