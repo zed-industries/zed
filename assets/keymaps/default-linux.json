@@ -578,6 +578,13 @@
     }
   },
   {
+    "context": "MessageEditor > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "assistant2::Chat"
+    }
+  },
+  {
     "context": "PromptEditor",
     "bindings": {
       "ctrl-[": "assistant::CyclePreviousInlineAssist",
