@@ -683,28 +683,35 @@
     }
   },
   {
-    "context": "GitPanel",
+    "context": "GitPanel && !CommitEditor",
     "use_key_equivalents": true,
     "bindings": {
-      "escape": "git_panel::Close",
+      "escape": "git_panel::Close"
+    }
+  },
+  {
+    "context": "GitPanel && ChangesList",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "menu::SelectPrev",
+      "down": "menu::SelectNext",
+      "cmd-up": "menu::SelectFirst",
+      "cmd-down": "menu::SelectLast",
       "enter": "menu::Confirm",
       "space": "git::ToggleStaged",
       "cmd-shift-space": "git::StageAll",
       "ctrl-shift-space": "git::UnstageAll",
-      // "cmd-.": "git_panel::OpenContextMenu",
-      // "ctrl-space": "git_panel::OpenContextMenu",
       "alt-down": "git_panel::FocusEditor"
     }
   },
   {
-    "context": "GitPanel > Editor",
+    "context": "GitPanel && CommitEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "alt_up": "git_panel::FocusChanges",
+      "alt-up": "git_panel::FocusChanges",
       "escape": "git_panel::FocusChanges",
       "cmd-enter": "git::CommitChanges",
-      "cmd-alt-enter": "git::CommitAllChanges",
-      "delete": "git::ClearCommitMessage"
+      "cmd-alt-enter": "git::CommitAllChanges"
     }
   },
   {
