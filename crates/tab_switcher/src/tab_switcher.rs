@@ -233,18 +233,7 @@ impl TabSwitcherDelegate {
             a_score.cmp(&b_score)
         });
 
-        if let Some(item_id) = selected_item_id {
-            self.selected_index = self.compute_selected_index(item_id);
-        } else {
-            if self.matches.len() > 1 {
-                if self.select_last {
-                    self.selected_index = self.matches.len() - 1;
-                } else {
-                    // Index 0 is active, so don't preselect it for switching.
-                    self.selected_index = 1;
-                }
-            }
-        }
+        self.selected_index = self.compute_selected_index(selected_item_id);
     }
 
     fn selected_item_id(&self) -> Option<EntityId> {
@@ -253,22 +242,34 @@ impl TabSwitcherDelegate {
             .map(|tab_match| tab_match.item.item_id())
     }
 
-    fn compute_selected_index(&mut self, prev_selected_item_id: EntityId) -> usize {
+    fn compute_selected_index(&mut self, prev_selected_item_id: Option<EntityId>) -> usize {
         if self.matches.is_empty() {
             return 0;
         }
 
-        // If the previously selected item is still in the list, select its new position.
-        if let Some(item_index) = self
-            .matches
-            .iter()
-            .position(|tab_match| tab_match.item.item_id() == prev_selected_item_id)
-        {
-            return item_index;
+        if let Some(selected_item_id) = prev_selected_item_id {
+            // If the previously selected item is still in the list, select its new position.
+            if let Some(item_index) = self
+                .matches
+                .iter()
+                .position(|tab_match| tab_match.item.item_id() == selected_item_id)
+            {
+                return item_index;
+            }
+            // Otherwise, try to preserve the previously selected index.
+            return self.selected_index.min(self.matches.len() - 1);
         }
 
-        // Otherwise, try to preserve the previously selected index.
-        return self.selected_index.min(self.matches.len() - 1);
+        if self.select_last {
+            return self.matches.len() - 1;
+        }
+
+        if self.matches.len() > 1 {
+            // Index 0 is active, so don't preselect it for switching.
+            return 1;
+        }
+
+        0
     }
 
     fn close_item_at(&mut self, ix: usize, cx: &mut ViewContext<Picker<TabSwitcherDelegate>>) {
