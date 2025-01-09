@@ -21,11 +21,11 @@ pub enum ShowIndentGuides {
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 #[serde(rename_all = "snake_case")]
 pub enum EntrySpacing {
-    #[default]
     /// Comfortable spacing of entries.
+    #[default]
     Comfortable,
-    /// Compact spacing of entries.
-    Compact,
+    /// The standard spacing of entries.
+    Standard,
 }
 
 #[derive(Deserialize, Debug, Clone, Copy, PartialEq)]

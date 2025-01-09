@@ -3449,7 +3449,7 @@ impl ProjectPanel {
                     .indent_step_size(px(settings.indent_size))
                     .spacing(match settings.entry_spacing {
                         project_panel_settings::EntrySpacing::Comfortable => ListItemSpacing::Dense,
-                        project_panel_settings::EntrySpacing::Compact => {
+                        project_panel_settings::EntrySpacing::Standard => {
                             ListItemSpacing::ExtraDense
                         }
                     })
