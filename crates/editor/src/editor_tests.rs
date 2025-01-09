@@ -10178,7 +10178,26 @@ async fn go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext)
     );
 
     cx.update_editor(|editor, cx| {
-        for _ in 0..3 {
+        editor.go_to_prev_hunk(&GoToPrevHunk, cx);
+    });
+
+    cx.assert_editor_state(
+        &r#"
+        ˇuse some::modified;
+
+
+        fn main() {
+            println!("hello there");
+
+            println!("around the");
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| {
+        for _ in 0..2 {
             editor.go_to_prev_hunk(&GoToPrevHunk, cx);
         }
     });

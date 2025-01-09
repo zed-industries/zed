@@ -88,8 +88,8 @@ use gpui::{
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
+use hunk_diff::DiffMap;
 pub(crate) use hunk_diff::HoveredHunk;
-use hunk_diff::{diff_hunk_to_display, DiffMap};
 use indent_guides::ActiveIndentGuidesState;
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion::Direction;
@@ -9260,52 +9260,19 @@ impl Editor {
         position: Point,
         cx: &mut ViewContext<'_, Editor>,
     ) -> Option<MultiBufferDiffHunk> {
-        for (ix, position) in [position, snapshot.buffer_snapshot.max_point()]
-            .into_iter()
-            .enumerate()
-        {
-            if let Some(hunk) = self.go_to_next_hunk_in_direction(
-                snapshot,
-                position,
-                ix > 0,
-                snapshot
-                    .buffer_snapshot
-                    .diff_hunks_in_range_rev(Point::zero()..position),
-                cx,
-            ) {
-                return Some(hunk);
-            }
+        let mut hunk = snapshot.buffer_snapshot.diff_hunk_before(position);
+        if hunk.is_none() {
+            hunk = snapshot.buffer_snapshot.diff_hunk_before(Point::MAX);
         }
-        None
-    }
-
-    fn go_to_next_hunk_in_direction(
-        &mut self,
-        snapshot: &DisplaySnapshot,
-        initial_point: Point,
-        is_wrapped: bool,
-        hunks: impl Iterator<Item = MultiBufferDiffHunk>,
-        cx: &mut ViewContext<Editor>,
-    ) -> Option<MultiBufferDiffHunk> {
-        let display_point = initial_point.to_display_point(snapshot);
-        let mut hunks = hunks
-            .map(|hunk| (diff_hunk_to_display(&hunk, snapshot), hunk))
-            .filter(|(display_hunk, _)| {
-                is_wrapped || !display_hunk.contains_display_row(display_point.row())
-            })
-            .dedup();
-
-        if let Some((display_hunk, hunk)) = hunks.next() {
+        if let Some(hunk) = &hunk {
+            let destination = Point::new(hunk.row_range.start.0, 0);
+            self.unfold_ranges(&[destination..destination], false, false, cx);
             self.change_selections(Some(Autoscroll::fit()), cx, |s| {
-                let row = display_hunk.start_display_row();
-                let point = DisplayPoint::new(row, 0);
-                s.select_display_ranges([point..point]);
+                s.select_ranges(vec![destination..destination]);
             });
-
-            Some(hunk)
-        } else {
-            None
         }
+
+        hunk
     }
 
     pub fn go_to_definition(

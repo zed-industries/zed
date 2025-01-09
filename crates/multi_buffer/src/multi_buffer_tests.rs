@@ -418,16 +418,32 @@ fn test_diff_hunks_in_range(cx: &mut AppContext) {
         },
     );
 
-    multibuffer.update(cx, |multibuffer, cx| {
-        assert_eq!(
-            multibuffer
-                .snapshot(cx)
-                .diff_hunks_in_range(Point::new(1, 0)..Point::MAX)
-                .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0)
-                .collect::<Vec<_>>(),
-            vec![1..2, 3..4]
-        )
-    })
+    assert_eq!(
+        snapshot
+            .diff_hunks_in_range(Point::new(1, 0)..Point::MAX)
+            .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0)
+            .collect::<Vec<_>>(),
+        vec![1..2, 3..4]
+    );
+
+    assert_eq!(
+        snapshot
+            .diff_hunk_before(Point::new(1, 1))
+            .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0),
+        None,
+    );
+    assert_eq!(
+        snapshot
+            .diff_hunk_before(Point::new(2, 1))
+            .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0),
+        Some(1..2)
+    );
+    assert_eq!(
+        snapshot
+            .diff_hunk_before(Point::new(4, 0))
+            .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0),
+        Some(3..4)
+    );
 }
 
 #[gpui::test]
@@ -1209,6 +1225,14 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
               six
             "
         ),
+    );
+
+    assert_eq!(
+        snapshot
+            .diff_hunks_in_range(0..snapshot.len())
+            .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0)
+            .collect::<Vec<_>>(),
+        &[0..4, 5..7]
     );
 }
 

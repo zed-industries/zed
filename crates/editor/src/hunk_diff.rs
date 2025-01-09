@@ -1024,29 +1024,6 @@ fn editor_with_deleted_text(
     (editor_height, editor)
 }
 
-impl DisplayDiffHunk {
-    pub fn start_display_row(&self) -> DisplayRow {
-        match self {
-            &DisplayDiffHunk::Folded { display_row } => display_row,
-            DisplayDiffHunk::Unfolded {
-                display_row_range, ..
-            } => display_row_range.start,
-        }
-    }
-
-    pub fn contains_display_row(&self, display_row: DisplayRow) -> bool {
-        let range = match self {
-            &DisplayDiffHunk::Folded { display_row } => display_row..=display_row,
-
-            DisplayDiffHunk::Unfolded {
-                display_row_range, ..
-            } => display_row_range.start..=display_row_range.end,
-        };
-
-        range.contains(&display_row)
-    }
-}
-
 pub fn diff_hunk_to_display(
     hunk: &MultiBufferDiffHunk,
     snapshot: &DisplaySnapshot,
@@ -1301,15 +1278,16 @@ mod tests {
         assert_eq!(
             snapshot
                 .buffer_snapshot
-                .diff_hunks_in_range_rev(Point::zero()..Point::new(12, 0))
-                .map(|hunk| (hunk_status(&hunk), hunk.row_range))
-                .collect::<Vec<_>>(),
-            expected
-                .iter()
-                .rev()
-                .cloned()
-                .collect::<Vec<_>>()
-                .as_slice(),
+                .diff_hunk_before(Point::new(3, 0))
+                .map(|hunk| (hunk_status(&hunk), hunk.row_range)),
+            Some(expected[2].clone()),
+        );
+        assert_eq!(
+            snapshot
+                .buffer_snapshot
+                .diff_hunk_before(Point::new(7, 0))
+                .map(|hunk| (hunk_status(&hunk), hunk.row_range)),
+            Some(expected[3].clone()),
         );
     }
 }
