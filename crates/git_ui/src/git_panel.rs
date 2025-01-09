@@ -257,13 +257,6 @@ impl GitPanel {
         dispatch_context.add("GitPanel");
         dispatch_context.add("menu");
 
-        // let identifier = if self.commit_editor.focus_handle(cx).is_focused(cx) {
-        //     "editing"
-        // } else {
-        //     "not_editing"
-        // };
-
-        // dispatch_context.add(identifier);
         dispatch_context
     }
 
@@ -318,31 +311,24 @@ impl GitPanel {
         repo_path: &RepoPath,
         visible_entries: &HashSet<RepoPath>,
     ) -> (usize, usize) {
-        // Skip the entry itself when looking at ancestors
         let ancestors = repo_path.ancestors().skip(1);
-
-        // Find the first ancestor that exists in our visible entries
         for ancestor in ancestors {
             if let Some(parent_entry) = visible_entries.get(ancestor) {
                 let entry_component_count = repo_path.components().count();
                 let parent_component_count = parent_entry.components().count();
 
-                // Calculate how many levels deep this entry is from its parent
                 let difference = entry_component_count - parent_component_count;
 
-                // Calculate the parent's depth by counting its ancestors that are in visible_entries
                 let parent_depth = parent_entry
                     .ancestors()
                     .skip(1) // Skip the parent itself
                     .filter(|ancestor| visible_entries.contains(*ancestor))
                     .count();
 
-                // This entry's depth is parent's depth + 1
                 return (parent_depth + 1, difference);
             }
         }
 
-        // If no ancestor was found, this is a root-level entry
         (0, 0)
     }
 
@@ -475,13 +461,11 @@ impl GitPanel {
                 state.stage_entry(entry.repo_path.clone());
             });
         }
+
+        cx.notify();
     }
 
-    fn toggle_staged_for_selected(
-        &mut self,
-        _: &menu::SecondaryConfirm,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn toggle_staged_for_selected(&mut self, _: &ToggleStaged, cx: &mut ViewContext<Self>) {
         let selected_entry = self.get_selected_entry();
 
         if let Some(selected_entry) = selected_entry {
@@ -1071,17 +1055,18 @@ impl Render for GitPanel {
             .track_focus(&self.focus_handle)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .when(!project.is_read_only(cx), |this| {
-                this.on_action(cx.listener(|this, &StageAll, cx| this.stage_all(&StageAll, cx)))
-                    .on_action(
-                        cx.listener(|this, &UnstageAll, cx| this.unstage_all(&UnstageAll, cx)),
-                    )
-                    .on_action(cx.listener(|this, &RevertAll, cx| this.discard_all(&RevertAll, cx)))
-                    .on_action(cx.listener(|this, &CommitChanges, cx| {
-                        this.commit_changes(&CommitChanges, cx)
-                    }))
-                    .on_action(cx.listener(|this, &CommitAllChanges, cx| {
-                        this.commit_all_changes(&CommitAllChanges, cx)
-                    }))
+                this.on_action(cx.listener(|this, &ToggleStaged, cx| {
+                    this.toggle_staged_for_selected(&ToggleStaged, cx)
+                }))
+                .on_action(cx.listener(|this, &StageAll, cx| this.stage_all(&StageAll, cx)))
+                .on_action(cx.listener(|this, &UnstageAll, cx| this.unstage_all(&UnstageAll, cx)))
+                .on_action(cx.listener(|this, &RevertAll, cx| this.discard_all(&RevertAll, cx)))
+                .on_action(
+                    cx.listener(|this, &CommitChanges, cx| this.commit_changes(&CommitChanges, cx)),
+                )
+                .on_action(cx.listener(|this, &CommitAllChanges, cx| {
+                    this.commit_all_changes(&CommitAllChanges, cx)
+                }))
             })
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_next))
@@ -1089,6 +1074,8 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::close_panel))
             .on_action(cx.listener(Self::open_selected))
+            .on_action(cx.listener(Self::focus_changes))
+            .on_action(cx.listener(Self::focus_editor))
             .on_action(cx.listener(Self::toggle_staged_for_selected))
             // .on_action(cx.listener(|this, &OpenSelected, cx| this.open_selected(&OpenSelected, cx)))
             .on_hover(cx.listener(|this, hovered, cx| {
