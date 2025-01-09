@@ -391,7 +391,7 @@ ignore = "0.4.22"
 image = "0.25.1"
 indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
-itertools = "0.13.0"
+itertools = "0.14.0"
 jsonwebtoken = "9.3"
 jupyter-protocol = { version = "0.5.0" }
 jupyter-websocket-client = { version = "0.8.0" }

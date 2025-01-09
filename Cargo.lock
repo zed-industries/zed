@@ -477,7 +477,7 @@ dependencies = [
  "html_to_markdown",
  "http_client",
  "indoc",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "language",
  "language_model",
  "language_model_selector",
@@ -1724,7 +1724,7 @@ dependencies = [
  "bitflags 2.6.0",
  "cexpr",
  "clang-sys",
- "itertools 0.13.0",
+ "itertools 0.10.5",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -1945,7 +1945,7 @@ version = "0.1.0"
 dependencies = [
  "editor",
  "gpui",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "theme",
  "ui",
  "workspace",
@@ -3906,7 +3906,7 @@ dependencies = [
  "http_client",
  "indoc",
  "inline_completion",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "language",
  "linkify",
  "log",
@@ -5347,7 +5347,7 @@ dependencies = [
  "gpui_macros",
  "http_client",
  "image",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "linkme",
  "log",
  "media",
@@ -5878,7 +5878,7 @@ dependencies = [
  "httpdate",
  "itoa",
  "pin-project-lite",
- "socket2 0.4.10",
+ "socket2 0.5.8",
  "tokio",
  "tower-service",
  "tracing",
@@ -6499,9 +6499,9 @@ dependencies = [
 
 [[package]]
 name = "itertools"
-version = "0.13.0"
+version = "0.14.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "413ee7dfc52ee1a4949ceeb7dbc8a33f2d6c088194d9f922fb8318faf1f01186"
+checksum = "2b192c782037fadd9cfa75548310488aabdbf3d2da73885b31bd0abd03351285"
 dependencies = [
  "either",
 ]
@@ -6691,7 +6691,7 @@ dependencies = [
  "gpui",
  "http_client",
  "indoc",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "log",
  "lsp",
  "parking_lot",
@@ -6853,7 +6853,7 @@ dependencies = [
  "env_logger 0.11.6",
  "futures 0.3.31",
  "gpui",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "language",
  "lsp",
  "project",
@@ -7694,7 +7694,7 @@ dependencies = [
  "env_logger 0.11.6",
  "futures 0.3.31",
  "gpui",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "language",
  "log",
  "parking_lot",
@@ -8634,7 +8634,7 @@ dependencies = [
  "file_icons",
  "fuzzy",
  "gpui",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "language",
  "log",
  "menu",
@@ -9781,7 +9781,7 @@ dependencies = [
  "gpui",
  "http_client",
  "image",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "language",
  "log",
  "lsp",
@@ -9937,7 +9937,7 @@ checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes 1.9.0",
  "heck 0.5.0",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "log",
  "multimap 0.10.0",
  "once_cell",
@@ -9970,7 +9970,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81bddcdb20abf9501610992b6759a4c888aef7d1a7247ef75e2404275ac24af1"
 dependencies = [
  "anyhow",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "proc-macro2",
  "quote",
  "syn 2.0.90",
@@ -10496,7 +10496,7 @@ dependencies = [
  "fs",
  "futures 0.3.31",
  "gpui",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "log",
  "parking_lot",
  "paths",
@@ -12346,7 +12346,7 @@ name = "story"
 version = "0.1.0"
 dependencies = [
  "gpui",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "smallvec",
 ]
 
@@ -12971,7 +12971,7 @@ dependencies = [
  "editor",
  "futures 0.3.31",
  "gpui",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "language",
  "project",
  "rand 0.8.5",
@@ -13991,7 +13991,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "gpui",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "menu",
  "serde",
  "settings",
@@ -14194,7 +14194,7 @@ dependencies = [
  "futures-lite 1.13.0",
  "git2",
  "globset",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "libc",
  "log",
  "rand 0.8.5",
@@ -14321,7 +14321,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "indoc",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "language",
  "log",
  "lsp",
@@ -15802,7 +15802,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "http_client",
- "itertools 0.13.0",
+ "itertools 0.14.0",
  "language",
  "log",
  "node_runtime",
