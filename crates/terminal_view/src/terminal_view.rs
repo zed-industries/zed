@@ -1259,6 +1259,7 @@ impl SearchableItem for TerminalView {
             regex: true,
             replacement: false,
             selection: false,
+            filters: false,
         }
     }
 

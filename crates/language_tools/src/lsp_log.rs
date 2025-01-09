@@ -1091,6 +1091,7 @@ impl SearchableItem for LspLogView {
             // LSP log is read-only.
             replacement: false,
             selection: false,
+            filters: false,
         }
     }
     fn active_match_index(
