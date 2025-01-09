@@ -17,8 +17,8 @@ pub struct CopilotCompletionProvider {
     completions: Vec<Completion>,
     active_completion_index: usize,
     file_extension: Option<String>,
-    pending_refresh: Task<Result<()>>,
-    pending_cycling_refresh: Task<Result<()>>,
+    pending_refresh: Option<Task<Result<()>>>,
+    pending_cycling_refresh: Option<Task<Result<()>>>,
     copilot: Model<Copilot>,
 }
 
@@ -30,8 +30,8 @@ impl CopilotCompletionProvider {
             completions: Vec::new(),
             active_completion_index: 0,
             file_extension: None,
-            pending_refresh: Task::ready(Ok(())),
-            pending_cycling_refresh: Task::ready(Ok(())),
+            pending_refresh: None,
+            pending_cycling_refresh: None,
             copilot,
         }
     }
@@ -67,6 +67,10 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         false
     }
 
+    fn is_refreshing(&self) -> bool {
+        self.pending_refresh.is_some()
+    }
+
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,
@@ -92,7 +96,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         cx: &mut ModelContext<Self>,
     ) {
         let copilot = self.copilot.clone();
-        self.pending_refresh = cx.spawn(|this, mut cx| async move {
+        self.pending_refresh = Some(cx.spawn(|this, mut cx| async move {
             if debounce {
                 cx.background_executor()
                     .timer(COPILOT_DEBOUNCE_TIMEOUT)
@@ -108,7 +112,8 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             this.update(&mut cx, |this, cx| {
                 if !completions.is_empty() {
                     this.cycled = false;
-                    this.pending_cycling_refresh = Task::ready(Ok(()));
+                    this.pending_refresh = None;
+                    this.pending_cycling_refresh = None;
                     this.completions.clear();
                     this.active_completion_index = 0;
                     this.buffer_id = Some(buffer.entity_id());
@@ -129,7 +134,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             })?;
 
             Ok(())
-        });
+        }));
     }
 
     fn cycle(
@@ -161,7 +166,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             cx.notify();
         } else {
             let copilot = self.copilot.clone();
-            self.pending_cycling_refresh = cx.spawn(|this, mut cx| async move {
+            self.pending_cycling_refresh = Some(cx.spawn(|this, mut cx| async move {
                 let completions = copilot
                     .update(&mut cx, |copilot, cx| {
                         copilot.completions_cycling(&buffer, cursor_position, cx)
@@ -185,7 +190,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
                 })?;
 
                 Ok(())
-            });
+            }));
         }
     }
 

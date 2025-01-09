@@ -1787,6 +1787,17 @@ impl Editor {
         self.refresh_inline_completion(false, true, cx);
     }
 
+    pub fn inline_completions_enabled(&self, cx: &AppContext) -> bool {
+        let cursor = self.selections.newest_anchor().head();
+        if let Some((buffer, buffer_position)) =
+            self.buffer.read(cx).text_anchor_for_position(cursor, cx)
+        {
+            self.should_show_inline_completions(&buffer, buffer_position, cx)
+        } else {
+            false
+        }
+    }
+
     fn should_show_inline_completions(
         &self,
         buffer: &Model<Buffer>,
@@ -3815,10 +3826,8 @@ impl Editor {
                 return None;
             };
 
-        let mat = completions_menu
-            .entries
-            .get(item_ix.unwrap_or(completions_menu.selected_item))?;
-
+        let entries = completions_menu.entries.borrow();
+        let mat = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
         let mat = match mat {
             CompletionEntry::InlineCompletionHint { .. } => {
                 self.accept_inline_completion(&AcceptInlineCompletion, cx);
@@ -3832,12 +3841,14 @@ impl Editor {
                 mat
             }
         };
+        let candidate_id = mat.candidate_id;
+        drop(entries);
 
         let buffer_handle = completions_menu.buffer;
         let completion = completions_menu
             .completions
             .borrow()
-            .get(mat.candidate_id)?
+            .get(candidate_id)?
             .clone();
         cx.stop_propagation();
 
@@ -3986,7 +3997,7 @@ impl Editor {
         let apply_edits = provider.apply_additional_edits_for_completion(
             buffer_handle,
             completions_menu.completions.clone(),
-            mat.candidate_id,
+            candidate_id,
             true,
             cx,
         );
@@ -4571,6 +4582,23 @@ impl Editor {
         _: &AcceptInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
+        let buffer = self.buffer.read(cx);
+        let snapshot = buffer.snapshot(cx);
+        let selection = self.selections.newest_adjusted(cx);
+        let cursor = selection.head();
+        let current_indent = snapshot.indent_size_for_line(MultiBufferRow(cursor.row));
+        let suggested_indents = snapshot.suggested_indents([cursor.row], cx);
+        if let Some(suggested_indent) = suggested_indents.get(&MultiBufferRow(cursor.row)).copied()
+        {
+            if cursor.column < suggested_indent.len
+                && cursor.column <= current_indent.len
+                && current_indent.len <= suggested_indent.len
+            {
+                self.tab(&Default::default(), cx);
+                return;
+            }
+        }
+
         if self.show_inline_completions_in_menu(cx) {
             self.hide_context_menu(cx);
         }
@@ -5110,9 +5138,11 @@ impl Editor {
             .borrow()
             .as_ref()
             .map_or(false, |menu| match menu {
-                CodeContextMenu::Completions(menu) => menu.entries.first().map_or(false, |entry| {
-                    matches!(entry, CompletionEntry::InlineCompletionHint(_))
-                }),
+                CodeContextMenu::Completions(menu) => {
+                    menu.entries.borrow().first().map_or(false, |entry| {
+                        matches!(entry, CompletionEntry::InlineCompletionHint(_))
+                    })
+                }
                 CodeContextMenu::CodeActions(_) => false,
             })
     }

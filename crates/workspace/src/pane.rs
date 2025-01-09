@@ -1,7 +1,7 @@
 use crate::{
     item::{
         ActivateOnClose, ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
-        ShowDiagnostics, TabContentParams, WeakItemHandle,
+        ShowDiagnostics, TabContentParams, TabTooltipContent, WeakItemHandle,
     },
     move_item,
     notifications::NotifyResultExt,
@@ -206,6 +206,7 @@ pub enum Event {
     },
     ActivateItem {
         local: bool,
+        focus_changed: bool,
     },
     Remove {
         focus_on_pane: Option<View<Pane>>,
@@ -236,7 +237,7 @@ impl fmt::Debug for Event {
                 .debug_struct("AddItem")
                 .field("item", &item.item_id())
                 .finish(),
-            Event::ActivateItem { local } => f
+            Event::ActivateItem { local, .. } => f
                 .debug_struct("ActivateItem")
                 .field("local", local)
                 .finish(),
@@ -1092,9 +1093,6 @@ impl Pane {
                     prev_item.deactivated(cx);
                 }
             }
-            cx.emit(Event::ActivateItem {
-                local: activate_pane,
-            });
 
             if let Some(newly_active_item) = self.items.get(index) {
                 self.activation_history
@@ -1113,6 +1111,11 @@ impl Pane {
             if focus_item {
                 self.focus_active_item(cx);
             }
+
+            cx.emit(Event::ActivateItem {
+                local: activate_pane,
+                focus_changed: focus_item,
+            });
 
             if !self.is_tab_pinned(index) {
                 self.tab_bar_scroll_handle
@@ -2146,8 +2149,11 @@ impl Pane {
                 this.drag_split_direction = None;
                 this.handle_external_paths_drop(paths, cx)
             }))
-            .when_some(item.tab_tooltip_text(cx), |tab, text| {
-                tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
+            .when_some(item.tab_tooltip_content(cx), |tab, content| match content {
+                TabTooltipContent::Text(text) => {
+                    tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
+                }
+                TabTooltipContent::Custom(element_fn) => tab.tooltip(move |cx| element_fn(cx)),
             })
             .start_slot::<Indicator>(indicator)
             .map(|this| {
@@ -3095,8 +3101,14 @@ impl Render for Pane {
 
 impl ItemNavHistory {
     pub fn push<D: 'static + Send + Any>(&mut self, data: Option<D>, cx: &mut WindowContext) {
-        self.history
-            .push(data, self.item.clone(), self.is_preview, cx);
+        if self
+            .item
+            .upgrade()
+            .is_some_and(|item| item.include_in_nav_history())
+        {
+            self.history
+                .push(data, self.item.clone(), self.is_preview, cx);
+        }
     }
 
     pub fn pop_backward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry> {

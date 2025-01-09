@@ -194,7 +194,7 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         let thread = &self.matches[ix];
 
         let added = self.context_store.upgrade().map_or(false, |context_store| {
-            context_store.read(cx).included_thread(&thread.id).is_some()
+            context_store.read(cx).includes_thread(&thread.id).is_some()
         });
 
         Some(
