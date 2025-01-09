@@ -91,6 +91,7 @@ impl Render for Breadcrumbs {
         });
 
         let breadcrumbs_stack = h_flex().gap_1().children(breadcrumbs);
+
         match active_item
             .downcast::<Editor>()
             .map(|editor| editor.downgrade())
