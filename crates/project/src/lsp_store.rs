@@ -16,7 +16,7 @@ use crate::{
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use client::{proto, TypedEnvelope};
-use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
+use collections::{btree_map, BTreeMap, HashMap, HashSet};
 use futures::{
     future::{join_all, Shared},
     select,
@@ -29,18 +29,18 @@ use gpui::{
     Task, WeakModel,
 };
 use http_client::HttpClient;
-use itertools::{Either, Itertools as _};
+use itertools::Itertools as _;
 use language::{
     language_settings::{
         language_settings, FormatOnSave, Formatter, LanguageSettings, SelectedFormatter,
     },
     markdown, point_to_lsp, prepare_completion_documentation,
     proto::{deserialize_anchor, deserialize_version, serialize_anchor, serialize_version},
-    range_from_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel, Diagnostic,
-    DiagnosticEntry, DiagnosticSet, Diff, Documentation, File as _, Language, LanguageName,
-    LanguageRegistry, LanguageServerBinaryStatus, LanguageToolchainStore, LocalFile, LspAdapter,
-    LspAdapterDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16, Transaction,
-    Unclipped,
+    range_from_lsp, range_to_lsp, Bias, Buffer, BufferSnapshot, CachedLspAdapter, CodeLabel,
+    Diagnostic, DiagnosticEntry, DiagnosticSet, Diff, Documentation, File as _, Language,
+    LanguageName, LanguageRegistry, LanguageServerBinaryStatus, LanguageToolchainStore, LocalFile,
+    LspAdapter, LspAdapterDelegate, Patch, PointUtf16, TextBufferSnapshot, ToOffset, ToPointUtf16,
+    Transaction, Unclipped,
 };
 use lsp::{
     notification::DidRenameFiles, CodeActionKind, CompletionContext, DiagnosticSeverity,
@@ -77,7 +77,7 @@ use std::{
     sync::Arc,
     time::{Duration, Instant},
 };
-use text::{Anchor, BufferId, LineEnding, Point, Selection};
+use text::{Anchor, BufferId, LineEnding, OffsetRangeExt};
 use util::{
     debug_panic, defer, maybe, merge_json_value_into, post_inc, ResultExt, TryFutureExt as _,
 };
@@ -100,15 +100,9 @@ pub enum FormatTrigger {
     Manual,
 }
 
-pub enum FormatTarget {
+pub enum LspFormatTarget {
     Buffers,
-    // todo! Point
-    Ranges(Vec<Selection<Point>>),
-}
-
-pub enum FormatTargetHandles {
-    Buffers(HashSet<Model<Buffer>>),
-    Ranges(BTreeMap<BufferId, (Model<Buffer>, Vec<Range<Point>>)>),
+    Ranges(BTreeMap<BufferId, Vec<Range<Anchor>>>),
 }
 
 // proto::RegisterBufferWithLanguageServer {}
@@ -1072,9 +1066,9 @@ impl LocalLspStore {
     async fn format_locally(
         lsp_store: WeakModel<LspStore>,
         mut buffers: Vec<FormattableBuffer>,
+        target: &LspFormatTarget,
         push_to_history: bool,
         trigger: FormatTrigger,
-        target: FormatTargetHandles,
         mut cx: AsyncAppContext,
     ) -> anyhow::Result<ProjectTransaction> {
         // Do not allow multiple concurrent formatting requests for the
@@ -1179,7 +1173,7 @@ impl LocalLspStore {
             // Except for code actions, which are applied with all connected language servers.
             let primary_language_server =
                 primary_adapter_and_server.map(|(_adapter, server)| server.clone());
-            let server_and_buffer = primary_language_server
+            let primary_server_and_path = primary_language_server
                 .as_ref()
                 .zip(buffer.abs_path.as_ref());
 
@@ -1189,11 +1183,11 @@ impl LocalLspStore {
                     .clone()
             })?;
 
-            let ranges = match &target {
-                FormatTargetHandles::Buffers(_) => None,
-                FormatTargetHandles::Ranges(ref buffers) => {
-                    let Some((_, ranges)) = buffers.get(&buffer.id) else {
-                        continue;
+            let ranges = match target {
+                LspFormatTarget::Buffers => None,
+                LspFormatTarget::Ranges(ranges) => {
+                    let Some(ranges) = ranges.get(&buffer.id) else {
+                        return Err(anyhow!("No format ranges provided for buffer"));
                     };
                     Some(ranges)
                 }
@@ -1215,10 +1209,10 @@ impl LocalLspStore {
                                             if prettier_settings.allowed {
                                                 Self::perform_format(
                                                     &Formatter::Prettier,
-                                                    ranges,
-                                                    server_and_buffer,
-                                                    lsp_store.clone(),
                                                     buffer,
+                                                    ranges,
+                                                    primary_server_and_path,
+                                                    lsp_store.clone(),
                                                     &settings,
                                                     &adapters_and_servers,
                                                     push_to_history,
@@ -1229,10 +1223,10 @@ impl LocalLspStore {
                                             } else {
                                                 Self::perform_format(
                                                     &Formatter::LanguageServer { name: None },
-                                                    ranges,
-                                                    server_and_buffer,
-                                                    lsp_store.clone(),
                                                     buffer,
+                                                    ranges,
+                                                    primary_server_and_path,
+                                                    lsp_store.clone(),
                                                     &settings,
                                                     &adapters_and_servers,
                                                     push_to_history,
@@ -1251,10 +1245,10 @@ impl LocalLspStore {
                                         for formatter in formatters.as_ref() {
                                             let diff = Self::perform_format(
                                                 formatter,
-                                                ranges,
-                                                server_and_buffer,
-                                                lsp_store.clone(),
                                                 buffer,
+                                                ranges,
+                                                primary_server_and_path,
+                                                lsp_store.clone(),
                                                 &settings,
                                                 &adapters_and_servers,
                                                 push_to_history,
@@ -1275,10 +1269,10 @@ impl LocalLspStore {
                                 for formatter in formatters.as_ref() {
                                     let diff = Self::perform_format(
                                         formatter,
-                                        ranges,
-                                        server_and_buffer,
-                                        lsp_store.clone(),
                                         buffer,
+                                        ranges,
+                                        primary_server_and_path,
+                                        lsp_store.clone(),
                                         &settings,
                                         &adapters_and_servers,
                                         push_to_history,
@@ -1301,10 +1295,10 @@ impl LocalLspStore {
                                     if prettier_settings.allowed {
                                         Self::perform_format(
                                             &Formatter::Prettier,
-                                            ranges,
-                                            server_and_buffer,
-                                            lsp_store.clone(),
                                             buffer,
+                                            ranges,
+                                            primary_server_and_path,
+                                            lsp_store.clone(),
                                             &settings,
                                             &adapters_and_servers,
                                             push_to_history,
@@ -1320,10 +1314,10 @@ impl LocalLspStore {
                                         };
                                         Self::perform_format(
                                             &formatter,
-                                            ranges,
-                                            server_and_buffer,
-                                            lsp_store.clone(),
                                             buffer,
+                                            ranges,
+                                            primary_server_and_path,
+                                            lsp_store.clone(),
                                             &settings,
                                             &adapters_and_servers,
                                             push_to_history,
@@ -1343,10 +1337,10 @@ impl LocalLspStore {
                                     // format with formatter
                                     let diff = Self::perform_format(
                                         formatter,
-                                        ranges,
-                                        server_and_buffer,
-                                        lsp_store.clone(),
                                         buffer,
+                                        ranges,
+                                        primary_server_and_path,
+                                        lsp_store.clone(),
                                         &settings,
                                         &adapters_and_servers,
                                         push_to_history,
@@ -1415,10 +1409,10 @@ impl LocalLspStore {
     #[allow(clippy::too_many_arguments)]
     async fn perform_format(
         formatter: &Formatter,
-        ranges: Option<&Vec<Range<Point>>>,
-        primary_server_and_buffer: Option<(&Arc<LanguageServer>, &PathBuf)>,
-        lsp_store: WeakModel<LspStore>,
         buffer: &FormattableBuffer,
+        ranges: Option<&Vec<Range<Anchor>>>,
+        primary_server_and_path: Option<(&Arc<LanguageServer>, &PathBuf)>,
+        lsp_store: WeakModel<LspStore>,
         settings: &LanguageSettings,
         adapters_and_servers: &[(Arc<CachedLspAdapter>, Arc<LanguageServer>)],
         push_to_history: bool,
@@ -1427,7 +1421,7 @@ impl LocalLspStore {
     ) -> Result<Option<FormatOperation>, anyhow::Error> {
         let result = match formatter {
             Formatter::LanguageServer { name } => {
-                if let Some((language_server, buffer_abs_path)) = primary_server_and_buffer {
+                if let Some((language_server, buffer_abs_path)) = primary_server_and_path {
                     let language_server = if let Some(name) = name {
                         adapters_and_servers
                             .iter()
@@ -1440,10 +1434,10 @@ impl LocalLspStore {
                     };
 
                     let result = if let Some(ranges) = ranges {
-                        Self::format_range_via_lsp(
+                        Self::format_ranges_via_lsp(
                             &lsp_store,
-                            &buffer.handle,
-                            &ranges,
+                            &buffer,
+                            ranges,
                             buffer_abs_path,
                             language_server,
                             settings,
@@ -1506,10 +1500,10 @@ impl LocalLspStore {
         anyhow::Ok(result)
     }
 
-    pub async fn format_range_via_lsp(
+    pub async fn format_ranges_via_lsp(
         this: &WeakModel<LspStore>,
-        buffer: &Model<Buffer>,
-        ranges: &Vec<Range<Point>>,
+        buffer: &FormattableBuffer,
+        ranges: &Vec<Range<Anchor>>,
         abs_path: &Path,
         language_server: &Arc<LanguageServer>,
         settings: &LanguageSettings,
@@ -1529,14 +1523,23 @@ impl LocalLspStore {
         let text_document = lsp::TextDocumentIdentifier::new(uri);
 
         let lsp_edits = {
-            let ranges = ranges.into_iter().map(|s| {
-                let start = lsp::Position::new(s.start.row, s.start.column);
-                let end = lsp::Position::new(s.end.row, s.end.column);
-                lsp::Range::new(start, end)
-            });
+            let mut lsp_ranges = Vec::new();
+            this.update(cx, |_this, cx| {
+                // TODO(#22930): In the case of formatting multibuffer selections, this buffer may
+                // not have been sent to the language server. This seems like a fairly systemic
+                // issue, though, the resolution probably is not specific to formatting.
+                //
+                // TODO: Instead of using current snapshot, should use the latest snapshot sent to
+                // LSP.
+                let snapshot = buffer.handle.read(cx).snapshot();
+                for range in ranges {
+                    lsp_ranges.push(range_to_lsp(range.to_point_utf16(&snapshot))?);
+                }
+                anyhow::Ok(())
+            })??;
 
             let mut edits = None;
-            for range in ranges {
+            for range in lsp_ranges {
                 if let Some(mut edit) = language_server
                     .request::<lsp::request::RangeFormatting>(lsp::DocumentRangeFormattingParams {
                         text_document: text_document.clone(),
@@ -1555,7 +1558,7 @@ impl LocalLspStore {
         if let Some(lsp_edits) = lsp_edits {
             this.update(cx, |this, cx| {
                 this.as_local_mut().unwrap().edits_from_lsp(
-                    buffer,
+                    &buffer.handle,
                     lsp_edits,
                     language_server.server_id(),
                     None,
@@ -6912,34 +6915,23 @@ impl LspStore {
 
     pub fn format(
         &mut self,
-        target: FormatTargetHandles,
+        buffers: HashSet<Model<Buffer>>,
+        target: LspFormatTarget,
         push_to_history: bool,
         trigger: FormatTrigger,
         cx: &mut ModelContext<Self>,
     ) -> Task<anyhow::Result<ProjectTransaction>> {
         if let Some(_) = self.as_local() {
-            let buffers = match target {
-                FormatTargetHandles::Buffers(ref buffers) => buffers
-                    .iter()
-                    .map(|buffer_handle| {
-                        let buffer = buffer_handle.read(cx);
-                        let buffer_abs_path = File::from_dyn(buffer.file())
-                            .and_then(|file| file.as_local().map(|f| f.abs_path(cx)));
+            let buffers = buffers
+                .into_iter()
+                .map(|buffer_handle| {
+                    let buffer = buffer_handle.read(cx);
+                    let buffer_abs_path = File::from_dyn(buffer.file())
+                        .and_then(|file| file.as_local().map(|f| f.abs_path(cx)));
 
-                        (buffer_handle.clone(), buffer_abs_path, buffer.remote_id())
-                    })
-                    .collect::<Vec<_>>(),
-                FormatTargetHandles::Ranges(ref buffer_ranges) => buffer_ranges
-                    .iter()
-                    .map(|(_, (buffer_handle, _))| {
-                        let buffer = buffer_handle.read(cx);
-                        let buffer_abs_path = File::from_dyn(buffer.file())
-                            .and_then(|file| file.as_local().map(|f| f.abs_path(cx)));
-
-                        (buffer_handle.clone(), buffer_abs_path, buffer.remote_id())
-                    })
-                    .collect::<Vec<_>>(),
-            };
+                    (buffer_handle, buffer_abs_path, buffer.remote_id())
+                })
+                .collect::<Vec<_>>();
 
             cx.spawn(move |lsp_store, mut cx| async move {
                 let mut formattable_buffers = Vec::with_capacity(buffers.len());
@@ -6962,9 +6954,9 @@ impl LspStore {
                 let result = LocalLspStore::format_locally(
                     lsp_store.clone(),
                     formattable_buffers,
+                    &target,
                     push_to_history,
                     trigger,
-                    target,
                     cx.clone(),
                 )
                 .await;
@@ -6976,9 +6968,12 @@ impl LspStore {
             })
         } else if let Some((client, project_id)) = self.upstream_client() {
             // Don't support formatting ranges via remote
-            let FormatTargetHandles::Buffers(buffers) = target else {
-                return Task::ready(Ok(ProjectTransaction::default()));
-            };
+            match target {
+                LspFormatTarget::Buffers => {}
+                LspFormatTarget::Ranges(_) => {
+                    return Task::ready(Ok(ProjectTransaction::default()));
+                }
+            }
 
             let buffer_store = self.buffer_store();
             cx.spawn(move |lsp_store, mut cx| async move {
@@ -7029,7 +7024,7 @@ impl LspStore {
                 buffers.insert(this.buffer_store.read(cx).get_existing(buffer_id)?);
             }
             let trigger = FormatTrigger::from_proto(envelope.payload.trigger);
-            anyhow::Ok(this.format(FormatTargetHandles::Buffers(buffers), false, trigger, cx))
+            anyhow::Ok(this.format(buffers, LspFormatTarget::Buffers, false, trigger, cx))
         })??;
 
         let project_transaction = format.await?;

@@ -27,10 +27,10 @@ use language::{
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
-use project::lsp_store::FormatTargetHandles;
 use project::{
-    lsp_store::FormatTrigger, search::SearchQuery, search::SearchResult, DiagnosticSummary,
-    HoverBlockKind, Project, ProjectPath,
+    lsp_store::{FormatTrigger, LspFormatTarget},
+    search::{SearchQuery, SearchResult},
+    DiagnosticSummary, HoverBlockKind, Project, ProjectPath,
 };
 use rand::prelude::*;
 use serde_json::json;
@@ -4399,7 +4399,8 @@ async fn test_formatting_buffer(
     project_b
         .update(cx_b, |project, cx| {
             project.format(
-                FormatTargetHandles::Buffers(HashSet::from_iter([buffer_b.clone()])),
+                HashSet::from_iter([buffer_b.clone()]),
+                LspFormatTarget::Buffers,
                 true,
                 FormatTrigger::Save,
                 cx,
@@ -4434,7 +4435,8 @@ async fn test_formatting_buffer(
     project_b
         .update(cx_b, |project, cx| {
             project.format(
-                FormatTargetHandles::Buffers(HashSet::from_iter([buffer_b.clone()])),
+                HashSet::from_iter([buffer_b.clone()]),
+                LspFormatTarget::Buffers,
                 true,
                 FormatTrigger::Save,
                 cx,
@@ -4543,7 +4545,8 @@ async fn test_prettier_formatting_buffer(
     project_b
         .update(cx_b, |project, cx| {
             project.format(
-                FormatTargetHandles::Buffers(HashSet::from_iter([buffer_b.clone()])),
+                HashSet::from_iter([buffer_b.clone()]),
+                LspFormatTarget::Buffers,
                 true,
                 FormatTrigger::Save,
                 cx,
@@ -4562,7 +4565,8 @@ async fn test_prettier_formatting_buffer(
     project_a
         .update(cx_a, |project, cx| {
             project.format(
-                FormatTargetHandles::Buffers(HashSet::from_iter([buffer_a.clone()])),
+                HashSet::from_iter([buffer_a.clone()]),
+                LspFormatTarget::Buffers,
                 true,
                 FormatTrigger::Manual,
                 cx,
