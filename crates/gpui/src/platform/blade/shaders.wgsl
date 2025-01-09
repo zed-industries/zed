@@ -625,8 +625,9 @@ fn vs_path(@builtin(vertex_index) vertex_id: u32, @builtin(instance_index) insta
 
 @fragment
 fn fs_path(input: PathVarying) -> @location(0) vec4<f32> {
-    let sample = textureSample(t_sprite, s_sprite, input.tile_position).r;
-    let mask = 1.0 - abs(1.0 - sample % 2.0);
+    let sample = textureGather(0, t_sprite, s_sprite, input.tile_position);
+    let sample_avg = (sample.x + sample.y + sample.z + sample.w) * 0.25;
+    let mask = 1.0 - abs(1.0 - sample_avg % 2.0);
     let sprite = b_path_sprites[input.instance_id];
     let background = sprite.color;
     let color = gradient_color(background, input.position.xy, sprite.bounds,

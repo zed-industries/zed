@@ -515,9 +515,10 @@ fragment float4 path_sprite_fragment(
     texture2d<float> atlas_texture [[texture(SpriteInputIndex_AtlasTexture)]]) {
   constexpr sampler atlas_texture_sampler(mag_filter::linear,
                                           min_filter::linear);
-  float4 sample =
-      atlas_texture.sample(atlas_texture_sampler, input.tile_position);
-  float mask = 1. - abs(1. - fmod(sample.r, 2.));
+  // Sample the texture and get the average of the color channels.
+  float4 sample = atlas_texture.gather(atlas_texture_sampler, input.tile_position);
+  float sample_avg = (sample.x + sample.y + sample.z + sample.w) * 0.25;
+  float mask = 1. - abs(1. - fmod(sample_avg, 2.));
   PathSprite sprite = sprites[input.sprite_id];
   Background background = sprite.color;
   float4 color = gradient_color(background, input.position.xy, sprite.bounds,
