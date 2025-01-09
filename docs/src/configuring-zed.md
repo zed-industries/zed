@@ -2320,11 +2320,11 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 }
 ```
 
-2. Compact entry spacing
+2. Standard entry spacing
 
 ```json
 {
-  "entry_spacing": "compact"
+  "entry_spacing": "standard"
 }
 ```
 
