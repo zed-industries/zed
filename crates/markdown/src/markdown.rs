@@ -14,7 +14,7 @@ use parser::{parse_links_only, parse_markdown, MarkdownEvent, MarkdownTag, Markd
 
 use std::{iter, mem, ops::Range, rc::Rc, sync::Arc};
 use theme::SyntaxTheme;
-use ui::prelude::*;
+use ui::{prelude::*, Tooltip};
 use util::{ResultExt, TryFutureExt};
 
 #[derive(Clone)]
@@ -667,6 +667,31 @@ impl Element for MarkdownElement {
                     }
                     MarkdownTagEnd::CodeBlock => {
                         builder.trim_trailing_newline();
+                        builder.flush_text();
+                        builder.modify_current_div(|el| {
+                            let id =
+                                ElementId::NamedInteger("copy-markdown-code".into(), range.end);
+                            let copy_button = div().absolute().top_1().right_1().w_5().child(
+                                IconButton::new(id, IconName::Copy)
+                                    .icon_color(Color::Muted)
+                                    .shape(ui::IconButtonShape::Square)
+                                    .tooltip(|cx| Tooltip::text("Copy Code Block", cx))
+                                    .on_click({
+                                        let code = without_fences(
+                                            parsed_markdown.source()[range.clone()].trim(),
+                                        )
+                                        .to_string();
+
+                                        move |_, cx| {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                code.clone(),
+                                            ))
+                                        }
+                                    }),
+                            );
+
+                            el.child(copy_button)
+                        });
                         builder.pop_div();
                         builder.pop_code_block();
                         if self.style.code_block.text.is_some() {
@@ -917,6 +942,13 @@ impl MarkdownElementBuilder {
         self.div_stack.push(div);
     }
 
+    fn modify_current_div(&mut self, f: impl FnOnce(AnyDiv) -> AnyDiv) {
+        self.flush_text();
+        if let Some(div) = self.div_stack.pop() {
+            self.div_stack.push(f(div));
+        }
+    }
+
     fn pop_div(&mut self) {
         self.flush_text();
         let div = self.div_stack.pop().unwrap().into_any_element();
@@ -1001,7 +1033,7 @@ impl MarkdownElementBuilder {
         }
     }
 
-    fn flush_text(&mut self) {
+    pub fn flush_text(&mut self) {
         let line = mem::take(&mut self.pending_line);
         if line.text.is_empty() {
             return;
@@ -1218,5 +1250,45 @@ impl RenderedText {
         self.links
             .iter()
             .find(|link| link.source_range.contains(&source_index))
+    }
+}
+
+/// Some markdown blocks are indented, and others have e.g. ```rust … ``` around them.
+/// If this block is fenced with backticks, strip them off (and the language name).
+/// We use this when copying code blocks to the clipboard.
+fn without_fences(mut markdown: &str) -> &str {
+    if let Some(opening_backticks) = markdown.find("```") {
+        markdown = &markdown[opening_backticks..];
+
+        // Trim off the next newline. This also trims off a language name if it's there.
+        if let Some(newline) = markdown.find('\n') {
+            markdown = &markdown[newline + 1..];
+        }
+    };
+
+    if let Some(closing_backticks) = markdown.rfind("```") {
+        markdown = &markdown[..closing_backticks];
+    };
+
+    markdown
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_without_fences() {
+        let input = "```rust\nlet x = 5;\n```";
+        assert_eq!(without_fences(input), "let x = 5;\n");
+
+        let input = "   ```\nno language\n```   ";
+        assert_eq!(without_fences(input), "no language\n");
+
+        let input = "plain text";
+        assert_eq!(without_fences(input), "plain text");
+
+        let input = "```python\nprint('hello')\nprint('world')\n```";
+        assert_eq!(without_fences(input), "print('hello')\nprint('world')\n");
     }
 }
