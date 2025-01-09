@@ -300,29 +300,35 @@ impl Zeta {
         cx.spawn(|this, mut cx| async move {
             let request_sent_at = Instant::now();
 
-            let input_events = cx
+            let (input_events, input_excerpt, input_outline) = cx
                 .background_executor()
-                .spawn(async move {
-                    let mut input_events = String::new();
-                    for event in events {
-                        if !input_events.is_empty() {
-                            input_events.push('\n');
-                            input_events.push('\n');
+                .spawn({
+                    let snapshot = snapshot.clone();
+                    let excerpt_range = excerpt_range.clone();
+                    async move {
+                        let mut input_events = String::new();
+                        for event in events {
+                            if !input_events.is_empty() {
+                                input_events.push('\n');
+                                input_events.push('\n');
+                            }
+                            input_events.push_str(&event.to_prompt());
                         }
-                        input_events.push_str(&event.to_prompt());
+
+                        let input_excerpt = prompt_for_excerpt(&snapshot, &excerpt_range, offset);
+                        let input_outline = prompt_for_outline(&snapshot);
+
+                        (input_events, input_excerpt, input_outline)
                     }
-                    input_events
                 })
                 .await;
-
-            let input_excerpt = prompt_for_excerpt(&snapshot, &excerpt_range, offset);
-            let input_outline = prompt_for_outline(&snapshot);
 
             log::debug!("Events:\n{}\nExcerpt:\n{}", input_events, input_excerpt);
 
             let body = PredictEditsParams {
                 input_events: input_events.clone(),
                 input_excerpt: input_excerpt.clone(),
+                outline: Some(input_outline.clone()),
             };
 
             let response = perform_predict_edits(client, llm_token, body).await?;
