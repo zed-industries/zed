@@ -411,6 +411,21 @@ impl GitPanel {
             self.scroll_to_selected_entry(cx);
         }
     }
+
+    fn open_entry(&self, entry: &GitListEntry) {
+        println!("Open {} triggered!", entry.repo_path);
+    }
+
+    fn open_selected(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+        println!("Open Selected triggered!");
+        let current_selection = self.selected_entry;
+
+        if let Some(entry) = current_selection.and_then(|i| self.visible_entries.get(i)) {
+            self.open_entry(entry);
+
+            cx.notify();
+        }
+    }
 }
 
 impl GitPanel {
@@ -954,6 +969,9 @@ impl GitPanel {
             .child(end_slot)
             // TODO: Only fire this if the entry is not currently revealed, otherwise the ui flashes
             .on_click(move |_, cx| {
+                // TODO: add `select_entry` method then do after that
+                cx.dispatch_action(Box::new(OpenSelected));
+
                 handle
                     .update(cx, |git_panel, _| {
                         git_panel.selected_entry = Some(ix);
@@ -992,6 +1010,8 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::select_prev))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::close_panel))
+            .on_action(cx.listener(Self::open_selected))
+            // .on_action(cx.listener(|this, &OpenSelected, cx| this.open_selected(&OpenSelected, cx)))
             .on_hover(cx.listener(|this, hovered, cx| {
                 if *hovered {
                     this.show_scrollbar = true;
