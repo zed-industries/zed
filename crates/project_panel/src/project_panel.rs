@@ -8421,6 +8421,382 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_expand_all_for_entry(cx: &mut gpui::TestAppContext) {
+        init_test_with_editor(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                ".gitignore": "**/ignored_dir\n**/ignored_nested",
+                "dir1": {
+                    "empty1": {
+                        "empty2": {
+                            "empty3": {
+                                "file.txt": ""
+                            }
+                        }
+                    },
+                    "subdir1": {
+                        "file1.txt": "",
+                        "file2.txt": "",
+                        "ignored_nested": {
+                            "ignored_file.txt": ""
+                        }
+                    },
+                    "ignored_dir": {
+                        "subdir": {
+                            "deep_file.txt": ""
+                        }
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        // Test 1: When auto-fold is enabled
+        cx.update(|_, cx| {
+            let settings = *ProjectPanelSettings::get_global(cx);
+            ProjectPanelSettings::override_global(
+                ProjectPanelSettings {
+                    auto_fold_dirs: true,
+                    ..settings
+                },
+                cx,
+            );
+        });
+
+        let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &["v root", "    > dir1", "      .gitignore",],
+            "Initial state should show collapsed root structure"
+        );
+
+        toggle_expand_dir(&panel, "root/dir1", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v root",
+                "    v dir1  <== selected",
+                "        > empty1/empty2/empty3",
+                "        > ignored_dir",
+                "        > subdir1",
+                "      .gitignore",
+            ],
+            "Should show first level with auto-folded dirs and ignored dir visible"
+        );
+
+        let entry_id = find_project_entry(&panel, "root/dir1", cx).unwrap();
+        panel.update_in(cx, |panel, window, cx| {
+            let project = panel.project.read(cx);
+            let worktree = project.worktrees(cx).next().unwrap().read(cx);
+            panel.expand_all_for_entry(worktree.id(), entry_id, window, cx);
+            panel.update_visible_entries(None, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v root",
+                "    v dir1  <== selected",
+                "        v empty1",
+                "            v empty2",
+                "                v empty3",
+                "                      file.txt",
+                "        > ignored_dir",
+                "        v subdir1",
+                "            > ignored_nested",
+                "              file1.txt",
+                "              file2.txt",
+                "      .gitignore",
+            ],
+            "After expand_all with auto-fold: should not expand ignored_dir, should expand folded dirs, and should not expand ignored_nested"
+        );
+
+        // Test 2: When auto-fold is disabled
+        cx.update(|_, cx| {
+            let settings = *ProjectPanelSettings::get_global(cx);
+            ProjectPanelSettings::override_global(
+                ProjectPanelSettings {
+                    auto_fold_dirs: false,
+                    ..settings
+                },
+                cx,
+            );
+        });
+
+        panel.update_in(cx, |panel, window, cx| {
+            panel.collapse_all_entries(&CollapseAllEntries, window, cx);
+        });
+
+        toggle_expand_dir(&panel, "root/dir1", cx);
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v root",
+                "    v dir1  <== selected",
+                "        > empty1",
+                "        > ignored_dir",
+                "        > subdir1",
+                "      .gitignore",
+            ],
+            "With auto-fold disabled: should show all directories separately"
+        );
+
+        let entry_id = find_project_entry(&panel, "root/dir1", cx).unwrap();
+        panel.update_in(cx, |panel, window, cx| {
+            let project = panel.project.read(cx);
+            let worktree = project.worktrees(cx).next().unwrap().read(cx);
+            panel.expand_all_for_entry(worktree.id(), entry_id, window, cx);
+            panel.update_visible_entries(None, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v root",
+                "    v dir1  <== selected",
+                "        v empty1",
+                "            v empty2",
+                "                v empty3",
+                "                      file.txt",
+                "        > ignored_dir",
+                "        v subdir1",
+                "            > ignored_nested",
+                "              file1.txt",
+                "              file2.txt",
+                "      .gitignore",
+            ],
+            "After expand_all without auto-fold: should expand all dirs normally, \
+         expand ignored_dir itself but not its subdirs, and not expand ignored_nested"
+        );
+
+        // Test 3: When explicitly called on ignored directory
+        let ignored_dir_entry = find_project_entry(&panel, "root/dir1/ignored_dir", cx).unwrap();
+        panel.update_in(cx, |panel, window, cx| {
+            let project = panel.project.read(cx);
+            let worktree = project.worktrees(cx).next().unwrap().read(cx);
+            panel.expand_all_for_entry(worktree.id(), ignored_dir_entry, window, cx);
+            panel.update_visible_entries(None, cx);
+        });
+        cx.run_until_parked();
+
+        assert_eq!(
+            visible_entries_as_strings(&panel, 0..20, cx),
+            &[
+                "v root",
+                "    v dir1  <== selected",
+                "        v empty1",
+                "            v empty2",
+                "                v empty3",
+                "                      file.txt",
+                "        v ignored_dir",
+                "            > subdir",
+                "        v subdir1",
+                "            > ignored_nested",
+                "              file1.txt",
+                "              file2.txt",
+                "      .gitignore",
+            ],
+            "After expand_all on ignored_dir: should expand all contents of the ignored directory"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_collapse_all_for_entry(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+
+        let fs = FakeFs::new(cx.executor().clone());
+        fs.insert_tree(
+            "/root",
+            json!({
+                "dir1": {
+                    "subdir1": {
+                        "nested1": {
+                            "file1.txt": "",
+                            "file2.txt": ""
+                        },
+                    },
+                    "subdir2": {
+                        "file4.txt": ""
+                    }
+                },
+                "dir2": {
+                    "single_file": {
+                        "file5.txt": ""
+                    }
+                }
+            }),
+        )
+        .await;
+
+        let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+        // Test 1: Basic collapsing
+        {
+            let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+            toggle_expand_dir(&panel, "root/dir1", cx);
+            toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
+            toggle_expand_dir(&panel, "root/dir1/subdir1/nested1", cx);
+            toggle_expand_dir(&panel, "root/dir1/subdir2", cx);
+
+            assert_eq!(
+                visible_entries_as_strings(&panel, 0..20, cx),
+                &[
+                    "v root",
+                    "    v dir1",
+                    "        v subdir1",
+                    "            v nested1",
+                    "                  file1.txt",
+                    "                  file2.txt",
+                    "        v subdir2  <== selected",
+                    "              file4.txt",
+                    "    > dir2",
+                ],
+                "Initial state with everything expanded"
+            );
+
+            let entry_id = find_project_entry(&panel, "root/dir1", cx).unwrap();
+            panel.update_in(cx, |panel, window, cx| {
+                let project = panel.project.read(cx);
+                let worktree = project.worktrees(cx).next().unwrap().read(cx);
+                panel.collapse_all_for_entry(worktree.id(), entry_id, window, cx);
+                panel.update_visible_entries(None, cx);
+            });
+
+            assert_eq!(
+                visible_entries_as_strings(&panel, 0..20, cx),
+                &["v root", "    > dir1", "    > dir2",],
+                "All subdirs under dir1 should be collapsed"
+            );
+        }
+
+        // Test 2: With auto-fold enabled
+        {
+            cx.update(|_, cx| {
+                let settings = *ProjectPanelSettings::get_global(cx);
+                ProjectPanelSettings::override_global(
+                    ProjectPanelSettings {
+                        auto_fold_dirs: true,
+                        ..settings
+                    },
+                    cx,
+                );
+            });
+
+            let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+            toggle_expand_dir(&panel, "root/dir1", cx);
+            toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
+            toggle_expand_dir(&panel, "root/dir1/subdir1/nested1", cx);
+
+            assert_eq!(
+                visible_entries_as_strings(&panel, 0..20, cx),
+                &[
+                    "v root",
+                    "    v dir1",
+                    "        v subdir1/nested1  <== selected",
+                    "              file1.txt",
+                    "              file2.txt",
+                    "        > subdir2",
+                    "    > dir2/single_file",
+                ],
+                "Initial state with some dirs expanded"
+            );
+
+            let entry_id = find_project_entry(&panel, "root/dir1", cx).unwrap();
+            panel.update_in(cx, |panel, window, cx| {
+                let project = panel.project.read(cx);
+                let worktree = project.worktrees(cx).next().unwrap().read(cx);
+                panel.collapse_all_for_entry(worktree.id(), entry_id, window, cx);
+            });
+
+            toggle_expand_dir(&panel, "root/dir1", cx);
+
+            assert_eq!(
+                visible_entries_as_strings(&panel, 0..20, cx),
+                &[
+                    "v root",
+                    "    v dir1  <== selected",
+                    "        > subdir1/nested1",
+                    "        > subdir2",
+                    "    > dir2/single_file",
+                ],
+                "Subdirs should be collapsed and folded with auto-fold enabled"
+            );
+        }
+
+        // Test 3: With auto-fold disabled
+        {
+            cx.update(|_, cx| {
+                let settings = *ProjectPanelSettings::get_global(cx);
+                ProjectPanelSettings::override_global(
+                    ProjectPanelSettings {
+                        auto_fold_dirs: false,
+                        ..settings
+                    },
+                    cx,
+                );
+            });
+
+            let panel = workspace.update(cx, ProjectPanel::new).unwrap();
+
+            toggle_expand_dir(&panel, "root/dir1", cx);
+            toggle_expand_dir(&panel, "root/dir1/subdir1", cx);
+            toggle_expand_dir(&panel, "root/dir1/subdir1/nested1", cx);
+
+            assert_eq!(
+                visible_entries_as_strings(&panel, 0..20, cx),
+                &[
+                    "v root",
+                    "    v dir1",
+                    "        v subdir1",
+                    "            v nested1  <== selected",
+                    "                  file1.txt",
+                    "                  file2.txt",
+                    "        > subdir2",
+                    "    > dir2",
+                ],
+                "Initial state with some dirs expanded and auto-fold disabled"
+            );
+
+            let entry_id = find_project_entry(&panel, "root/dir1", cx).unwrap();
+            panel.update_in(cx, |panel, window, cx| {
+                let project = panel.project.read(cx);
+                let worktree = project.worktrees(cx).next().unwrap().read(cx);
+                panel.collapse_all_for_entry(worktree.id(), entry_id, window, cx);
+            });
+
+            toggle_expand_dir(&panel, "root/dir1", cx);
+
+            assert_eq!(
+                visible_entries_as_strings(&panel, 0..20, cx),
+                &[
+                    "v root",
+                    "    v dir1  <== selected",
+                    "        > subdir1",
+                    "        > subdir2",
+                    "    > dir2",
+                ],
+                "Subdirs should be collapsed but not folded with auto-fold disabled"
+            );
+        }
+    }
+
     fn select_path(
         panel: &Entity<ProjectPanel>,
         path: impl AsRef<Path>,
