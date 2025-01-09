@@ -144,7 +144,13 @@ impl Render for ContextStrip {
             .gap_1()
             .child(
                 PopoverMenu::new("context-picker")
-                    .menu(move |_cx| Some(context_picker.clone()))
+                    .menu(move |cx| {
+                        context_picker.update(cx, |this, cx| {
+                            this.update_recent(cx);
+                        });
+
+                        Some(context_picker.clone())
+                    })
                     .trigger(
                         IconButton::new("add-context", IconName::Plus)
                             .icon_size(IconSize::Small)

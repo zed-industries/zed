@@ -113,14 +113,6 @@ impl MessageEditor {
     }
 
     fn toggle_context_picker(&mut self, _: &ToggleContextPicker, cx: &mut ViewContext<Self>) {
-        if !self.context_picker_menu_handle.is_deployed() {
-            self.context_strip.update(cx, |strip, cx| {
-                strip.context_picker.update(cx, |picker, cx| {
-                    picker.update_recent(cx);
-                })
-            });
-        }
-
         self.context_picker_menu_handle.toggle(cx);
     }
 
