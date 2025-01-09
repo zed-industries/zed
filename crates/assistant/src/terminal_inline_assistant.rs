@@ -20,7 +20,7 @@ use language::Buffer;
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
-use language_model_selector::LanguageModelSelector;
+use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use language_models::report_assistant_event;
 use settings::{update_settings_file, Settings};
 use std::{
@@ -32,7 +32,7 @@ use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal::Terminal;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
-use ui::{prelude::*, IconButtonShape, Tooltip};
+use ui::{prelude::*, text_for_action, IconButtonShape, Tooltip};
 use util::ResultExt;
 use workspace::{notifications::NotificationId, Toast, Workspace};
 
@@ -476,9 +476,9 @@ enum PromptEditorEvent {
 
 struct PromptEditor {
     id: TerminalInlineAssistId,
-    fs: Arc<dyn Fs>,
     height_in_lines: u8,
     editor: View<Editor>,
+    language_model_selector: View<LanguageModelSelector>,
     edited_since_done: bool,
     prompt_history: VecDeque<String>,
     prompt_history_ix: Option<usize>,
@@ -614,17 +614,8 @@ impl Render for PromptEditor {
                     .w_12()
                     .justify_center()
                     .gap_2()
-                    .child(LanguageModelSelector::new(
-                        {
-                            let fs = self.fs.clone();
-                            move |model, cx| {
-                                update_settings_file::<AssistantSettings>(
-                                    fs.clone(),
-                                    cx,
-                                    move |settings, _| settings.set_model(model.clone()),
-                                );
-                            }
-                        },
+                    .child(LanguageModelSelectorPopoverMenu::new(
+                        self.language_model_selector.clone(),
                         IconButton::new("context", IconName::SettingsAlt)
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::Small)
@@ -704,7 +695,7 @@ impl PromptEditor {
                 cx,
             );
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text("Add a prompt…", cx);
+            editor.set_placeholder_text(Self::placeholder_text(cx), cx);
             editor
         });
 
@@ -718,6 +709,19 @@ impl PromptEditor {
             id,
             height_in_lines: 1,
             editor: prompt_editor,
+            language_model_selector: cx.new_view(|cx| {
+                let fs = fs.clone();
+                LanguageModelSelector::new(
+                    move |model, cx| {
+                        update_settings_file::<AssistantSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _| settings.set_model(model.clone()),
+                        );
+                    },
+                    cx,
+                )
+            }),
             edited_since_done: false,
             prompt_history,
             prompt_history_ix: None,
@@ -725,7 +729,6 @@ impl PromptEditor {
             _codegen_subscription: cx.observe(&codegen, Self::handle_codegen_changed),
             editor_subscriptions: Vec::new(),
             codegen,
-            fs,
             pending_token_count: Task::ready(Ok(())),
             token_count: None,
             _token_count_subscriptions: token_count_subscriptions,
@@ -735,6 +738,14 @@ impl PromptEditor {
         this.count_tokens(cx);
         this.subscribe_to_editor(cx);
         this
+    }
+
+    fn placeholder_text(cx: &WindowContext) -> String {
+        let context_keybinding = text_for_action(&crate::ToggleFocus, cx)
+            .map(|keybinding| format!(" • {keybinding} for context"))
+            .unwrap_or_default();
+
+        format!("Generate…{context_keybinding} • ↓↑ for history")
     }
 
     fn subscribe_to_editor(&mut self, cx: &mut ViewContext<Self>) {

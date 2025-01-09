@@ -1,8 +1,10 @@
-use std::cell::{Ref, RefCell, RefMut};
-use std::ffi::c_void;
-use std::ptr::NonNull;
-use std::rc::Rc;
-use std::sync::Arc;
+use std::{
+    cell::{Ref, RefCell, RefMut},
+    ffi::c_void,
+    ptr::NonNull,
+    rc::Rc,
+    sync::Arc,
+};
 
 use blade_graphics as gpu;
 use collections::HashMap;
@@ -19,13 +21,14 @@ use wayland_protocols::xdg::shell::client::xdg_surface;
 use wayland_protocols::xdg::shell::client::xdg_toplevel::{self};
 use wayland_protocols_plasma::blur::client::org_kde_kwin_blur;
 
-use crate::platform::blade::{BladeRenderer, BladeSurfaceConfig};
-use crate::platform::linux::wayland::display::WaylandDisplay;
-use crate::platform::linux::wayland::serial::SerialKind;
-use crate::platform::{PlatformAtlas, PlatformInputHandler, PlatformWindow};
+use crate::platform::{
+    blade::{BladeContext, BladeRenderer, BladeSurfaceConfig},
+    linux::wayland::{display::WaylandDisplay, serial::SerialKind},
+    PlatformAtlas, PlatformInputHandler, PlatformWindow,
+};
 use crate::scene::Scene;
 use crate::{
-    px, size, AnyWindowHandle, Bounds, Decorations, GPUSpecs, Globals, Modifiers, Output, Pixels,
+    px, size, AnyWindowHandle, Bounds, Decorations, Globals, GpuSpecs, Modifiers, Output, Pixels,
     PlatformDisplay, PlatformInput, Point, PromptLevel, RequestFrameOptions, ResizeEdge,
     ScaledPixels, Size, Tiling, WaylandClientStatePtr, WindowAppearance,
     WindowBackgroundAppearance, WindowBounds, WindowControls, WindowDecorations, WindowParams,
@@ -123,37 +126,28 @@ impl WaylandWindowState {
         viewport: Option<wp_viewport::WpViewport>,
         client: WaylandClientStatePtr,
         globals: Globals,
+        gpu_context: &BladeContext,
         options: WindowParams,
     ) -> anyhow::Result<Self> {
-        let raw = RawWindow {
-            window: surface.id().as_ptr().cast::<c_void>(),
-            display: surface
-                .backend()
-                .upgrade()
-                .unwrap()
-                .display_ptr()
-                .cast::<c_void>(),
-        };
-        let gpu = Arc::new(
-            unsafe {
-                gpu::Context::init_windowed(
-                    &raw,
-                    gpu::ContextDesc {
-                        validation: false,
-                        capture: false,
-                        overlay: false,
-                    },
-                )
-            }
-            .map_err(|e| anyhow::anyhow!("{:?}", e))?,
-        );
-        let config = BladeSurfaceConfig {
-            size: gpu::Extent {
-                width: options.bounds.size.width.0 as u32,
-                height: options.bounds.size.height.0 as u32,
-                depth: 1,
-            },
-            transparent: true,
+        let renderer = {
+            let raw_window = RawWindow {
+                window: surface.id().as_ptr().cast::<c_void>(),
+                display: surface
+                    .backend()
+                    .upgrade()
+                    .unwrap()
+                    .display_ptr()
+                    .cast::<c_void>(),
+            };
+            let config = BladeSurfaceConfig {
+                size: gpu::Extent {
+                    width: options.bounds.size.width.0 as u32,
+                    height: options.bounds.size.height.0 as u32,
+                    depth: 1,
+                },
+                transparent: true,
+            };
+            BladeRenderer::new(gpu_context, &raw_window, config)?
         };
 
         Ok(Self {
@@ -168,7 +162,7 @@ impl WaylandWindowState {
             globals,
             outputs: HashMap::default(),
             display: None,
-            renderer: BladeRenderer::new(gpu, config),
+            renderer,
             bounds: options.bounds,
             scale: 1.0,
             input_handler: None,
@@ -193,6 +187,23 @@ impl WaylandWindowState {
     pub fn is_transparent(&self) -> bool {
         self.decorations == WindowDecorations::Client
             || self.background_appearance != WindowBackgroundAppearance::Opaque
+    }
+
+    pub fn primary_output_scale(&mut self) -> i32 {
+        let mut scale = 1;
+        let mut current_output = self.display.take();
+        for (id, output) in self.outputs.iter() {
+            if let Some((_, output_data)) = &current_output {
+                if output.scale > output_data.scale {
+                    current_output = Some((id.clone(), output.clone()));
+                }
+            } else {
+                current_output = Some((id.clone(), output.clone()));
+            }
+            scale = scale.max(output.scale);
+        }
+        self.display = current_output;
+        scale
     }
 }
 
@@ -249,6 +260,7 @@ impl WaylandWindow {
     pub fn new(
         handle: AnyWindowHandle,
         globals: Globals,
+        gpu_context: &BladeContext,
         client: WaylandClientStatePtr,
         params: WindowParams,
         appearance: WindowAppearance,
@@ -291,6 +303,7 @@ impl WaylandWindow {
                 viewport,
                 client,
                 globals,
+                gpu_context,
                 params,
             )?)),
             callbacks: Rc::new(RefCell::new(Callbacks::default())),
@@ -560,7 +573,7 @@ impl WaylandWindowStatePtr {
 
                 state.outputs.insert(id, output.clone());
 
-                let scale = primary_output_scale(&mut state);
+                let scale = state.primary_output_scale();
 
                 // We use `PreferredBufferScale` instead to set the scale if it's available
                 if state.surface.version() < wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
@@ -572,7 +585,7 @@ impl WaylandWindowStatePtr {
             wl_surface::Event::Leave { output } => {
                 state.outputs.remove(&output.id());
 
-                let scale = primary_output_scale(&mut state);
+                let scale = state.primary_output_scale();
 
                 // We use `PreferredBufferScale` instead to set the scale if it's available
                 if state.surface.version() < wl_surface::EVT_PREFERRED_BUFFER_SCALE_SINCE {
@@ -719,6 +732,10 @@ impl WaylandWindowStatePtr {
             (fun)()
         }
     }
+
+    pub fn primary_output_scale(&self) -> i32 {
+        self.state.borrow_mut().primary_output_scale()
+    }
 }
 
 fn extract_states<'a, S: TryFrom<u32> + 'a>(states: &'a [u8]) -> impl Iterator<Item = S> + 'a
@@ -730,23 +747,6 @@ where
         .flat_map(TryInto::<[u8; 4]>::try_into)
         .map(u32::from_ne_bytes)
         .flat_map(S::try_from)
-}
-
-fn primary_output_scale(state: &mut RefMut<WaylandWindowState>) -> i32 {
-    let mut scale = 1;
-    let mut current_output = state.display.take();
-    for (id, output) in state.outputs.iter() {
-        if let Some((_, output_data)) = &current_output {
-            if output.scale > output_data.scale {
-                current_output = Some((id.clone(), output.clone()));
-            }
-        } else {
-            current_output = Some((id.clone(), output.clone()));
-        }
-        scale = scale.max(output.scale);
-    }
-    state.display = current_output;
-    scale
 }
 
 impl rwh::HasWindowHandle for WaylandWindow {
@@ -778,6 +778,19 @@ impl PlatformWindow for WaylandWindow {
         } else {
             drop(state);
             WindowBounds::Windowed(self.bounds())
+        }
+    }
+
+    fn inner_window_bounds(&self) -> WindowBounds {
+        let state = self.borrow();
+        if state.fullscreen {
+            WindowBounds::Fullscreen(state.window_bounds)
+        } else if state.maximized {
+            WindowBounds::Maximized(state.window_bounds)
+        } else {
+            let inset = state.inset.unwrap_or(px(0.));
+            drop(state);
+            WindowBounds::Windowed(self.bounds().inset(inset))
         }
     }
 
@@ -1015,7 +1028,7 @@ impl PlatformWindow for WaylandWindow {
         state.client.update_ime_position(bounds);
     }
 
-    fn gpu_specs(&self) -> Option<GPUSpecs> {
+    fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.borrow().renderer.gpu_specs().into()
     }
 }

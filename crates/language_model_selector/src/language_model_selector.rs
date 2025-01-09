@@ -1,7 +1,10 @@
 use std::sync::Arc;
 
 use feature_flags::ZedPro;
-use gpui::{Action, AnyElement, AppContext, DismissEvent, SharedString, Task};
+use gpui::{
+    Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
+    Subscription, Task, View, WeakView,
+};
 use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
 use picker::{Picker, PickerDelegate};
 use proto::Plan;
@@ -12,19 +15,136 @@ const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
 
 type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &AppContext) + 'static>;
 
-#[derive(IntoElement)]
-pub struct LanguageModelSelector<T: PopoverTrigger> {
-    handle: Option<PopoverMenuHandle<Picker<LanguageModelPickerDelegate>>>,
-    on_model_changed: OnModelChanged,
-    trigger: T,
-    info_text: Option<SharedString>,
+pub struct LanguageModelSelector {
+    picker: View<Picker<LanguageModelPickerDelegate>>,
+    /// The task used to update the picker's matches when there is a change to
+    /// the language model registry.
+    update_matches_task: Option<Task<()>>,
+    _subscriptions: Vec<Subscription>,
 }
 
-pub struct LanguageModelPickerDelegate {
-    on_model_changed: OnModelChanged,
-    all_models: Vec<ModelInfo>,
-    filtered_models: Vec<ModelInfo>,
-    selected_index: usize,
+impl LanguageModelSelector {
+    pub fn new(
+        on_model_changed: impl Fn(Arc<dyn LanguageModel>, &AppContext) + 'static,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
+        let on_model_changed = Arc::new(on_model_changed);
+
+        let all_models = Self::all_models(cx);
+        let delegate = LanguageModelPickerDelegate {
+            language_model_selector: cx.view().downgrade(),
+            on_model_changed: on_model_changed.clone(),
+            all_models: all_models.clone(),
+            filtered_models: all_models,
+            selected_index: 0,
+        };
+
+        let picker =
+            cx.new_view(|cx| Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into())));
+
+        LanguageModelSelector {
+            picker,
+            update_matches_task: None,
+            _subscriptions: vec![cx.subscribe(
+                &LanguageModelRegistry::global(cx),
+                Self::handle_language_model_registry_event,
+            )],
+        }
+    }
+
+    fn handle_language_model_registry_event(
+        &mut self,
+        _registry: Model<LanguageModelRegistry>,
+        event: &language_model::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            language_model::Event::ProviderStateChanged
+            | language_model::Event::AddedProvider(_)
+            | language_model::Event::RemovedProvider(_) => {
+                let task = self.picker.update(cx, |this, cx| {
+                    let query = this.query(cx);
+                    this.delegate.all_models = Self::all_models(cx);
+                    this.delegate.update_matches(query, cx)
+                });
+                self.update_matches_task = Some(task);
+            }
+            _ => {}
+        }
+    }
+
+    fn all_models(cx: &AppContext) -> Vec<ModelInfo> {
+        LanguageModelRegistry::global(cx)
+            .read(cx)
+            .providers()
+            .iter()
+            .flat_map(|provider| {
+                let icon = provider.icon();
+
+                provider.provided_models(cx).into_iter().map(move |model| {
+                    let model = model.clone();
+                    let icon = model.icon().unwrap_or(icon);
+
+                    ModelInfo {
+                        model: model.clone(),
+                        icon,
+                        availability: model.availability(),
+                    }
+                })
+            })
+            .collect::<Vec<_>>()
+    }
+}
+
+impl EventEmitter<DismissEvent> for LanguageModelSelector {}
+
+impl FocusableView for LanguageModelSelector {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        self.picker.focus_handle(cx)
+    }
+}
+
+impl Render for LanguageModelSelector {
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+        self.picker.clone()
+    }
+}
+
+#[derive(IntoElement)]
+pub struct LanguageModelSelectorPopoverMenu<T>
+where
+    T: PopoverTrigger,
+{
+    language_model_selector: View<LanguageModelSelector>,
+    trigger: T,
+    handle: Option<PopoverMenuHandle<LanguageModelSelector>>,
+}
+
+impl<T: PopoverTrigger> LanguageModelSelectorPopoverMenu<T> {
+    pub fn new(language_model_selector: View<LanguageModelSelector>, trigger: T) -> Self {
+        Self {
+            language_model_selector,
+            trigger,
+            handle: None,
+        }
+    }
+
+    pub fn with_handle(mut self, handle: PopoverMenuHandle<LanguageModelSelector>) -> Self {
+        self.handle = Some(handle);
+        self
+    }
+}
+
+impl<T: PopoverTrigger> RenderOnce for LanguageModelSelectorPopoverMenu<T> {
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+        let language_model_selector = self.language_model_selector.clone();
+
+        PopoverMenu::new("model-switcher")
+            .menu(move |_cx| Some(language_model_selector.clone()))
+            .trigger(self.trigger)
+            .attach(gpui::Corner::BottomLeft)
+            .when_some(self.handle.clone(), |menu, handle| menu.with_handle(handle))
+    }
 }
 
 #[derive(Clone)]
@@ -32,34 +152,14 @@ struct ModelInfo {
     model: Arc<dyn LanguageModel>,
     icon: IconName,
     availability: LanguageModelAvailability,
-    is_selected: bool,
 }
 
-impl<T: PopoverTrigger> LanguageModelSelector<T> {
-    pub fn new(
-        on_model_changed: impl Fn(Arc<dyn LanguageModel>, &AppContext) + 'static,
-        trigger: T,
-    ) -> Self {
-        LanguageModelSelector {
-            handle: None,
-            on_model_changed: Arc::new(on_model_changed),
-            trigger,
-            info_text: None,
-        }
-    }
-
-    pub fn with_handle(
-        mut self,
-        handle: PopoverMenuHandle<Picker<LanguageModelPickerDelegate>>,
-    ) -> Self {
-        self.handle = Some(handle);
-        self
-    }
-
-    pub fn info_text(mut self, text: impl Into<SharedString>) -> Self {
-        self.info_text = Some(text.into());
-        self
-    }
+pub struct LanguageModelPickerDelegate {
+    language_model_selector: WeakView<LanguageModelSelector>,
+    on_model_changed: OnModelChanged,
+    all_models: Vec<ModelInfo>,
+    filtered_models: Vec<ModelInfo>,
+    selected_index: usize,
 }
 
 impl PickerDelegate for LanguageModelPickerDelegate {
@@ -87,25 +187,25 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
         let llm_registry = LanguageModelRegistry::global(cx);
 
-        let configured_models: Vec<_> = llm_registry
+        let configured_providers = llm_registry
             .read(cx)
             .providers()
             .iter()
             .filter(|provider| provider.is_authenticated(cx))
             .map(|provider| provider.id())
-            .collect();
+            .collect::<Vec<_>>();
 
         cx.spawn(|this, mut cx| async move {
             let filtered_models = cx
                 .background_executor()
                 .spawn(async move {
-                    let displayed_models = if configured_models.is_empty() {
+                    let displayed_models = if configured_providers.is_empty() {
                         all_models
                     } else {
                         all_models
                             .into_iter()
                             .filter(|model_info| {
-                                configured_models.contains(&model_info.model.provider_id())
+                                configured_providers.contains(&model_info.model.provider_id())
                             })
                             .collect::<Vec<_>>()
                     };
@@ -142,23 +242,15 @@ impl PickerDelegate for LanguageModelPickerDelegate {
             let model = model_info.model.clone();
             (self.on_model_changed)(model.clone(), cx);
 
-            // Update the selection status
-            let selected_model_id = model_info.model.id();
-            let selected_provider_id = model_info.model.provider_id();
-            for model in &mut self.all_models {
-                model.is_selected = model.model.id() == selected_model_id
-                    && model.model.provider_id() == selected_provider_id;
-            }
-            for model in &mut self.filtered_models {
-                model.is_selected = model.model.id() == selected_model_id
-                    && model.model.provider_id() == selected_provider_id;
-            }
-
             cx.emit(DismissEvent);
         }
     }
 
-    fn dismissed(&mut self, _cx: &mut ViewContext<Picker<Self>>) {}
+    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+        self.language_model_selector
+            .update(cx, |_this, cx| cx.emit(DismissEvent))
+            .ok();
+    }
 
     fn render_header(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<AnyElement> {
         let configured_models_count = LanguageModelRegistry::global(cx)
@@ -195,11 +287,22 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         let model_info = self.filtered_models.get(ix)?;
         let provider_name: String = model_info.model.provider_name().0.clone().into();
 
+        let active_provider_id = LanguageModelRegistry::read_global(cx)
+            .active_provider()
+            .map(|m| m.id());
+
+        let active_model_id = LanguageModelRegistry::read_global(cx)
+            .active_model()
+            .map(|m| m.id());
+
+        let is_selected = Some(model_info.model.provider_id()) == active_provider_id
+            && Some(model_info.model.id()) == active_model_id;
+
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .start_slot(
                     div().pr_0p5().child(
                         Icon::new(model_info.icon)
@@ -235,7 +338,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                                 }),
                         ),
                 )
-                .end_slot(div().when(model_info.is_selected, |this| {
+                .end_slot(div().when(is_selected, |this| {
                     this.child(
                         Icon::new(IconName::Check)
                             .color(Color::Accent)
@@ -294,60 +397,5 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                 )
                 .into_any(),
         )
-    }
-}
-
-impl<T: PopoverTrigger> RenderOnce for LanguageModelSelector<T> {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let selected_provider = LanguageModelRegistry::read_global(cx)
-            .active_provider()
-            .map(|m| m.id());
-
-        let selected_model = LanguageModelRegistry::read_global(cx)
-            .active_model()
-            .map(|m| m.id());
-
-        let all_models = LanguageModelRegistry::global(cx)
-            .read(cx)
-            .providers()
-            .iter()
-            .flat_map(|provider| {
-                let provider_id = provider.id();
-                let icon = provider.icon();
-                let selected_model = selected_model.clone();
-                let selected_provider = selected_provider.clone();
-
-                provider.provided_models(cx).into_iter().map(move |model| {
-                    let model = model.clone();
-                    let icon = model.icon().unwrap_or(icon);
-
-                    ModelInfo {
-                        model: model.clone(),
-                        icon,
-                        availability: model.availability(),
-                        is_selected: selected_model.as_ref() == Some(&model.id())
-                            && selected_provider.as_ref() == Some(&provider_id),
-                    }
-                })
-            })
-            .collect::<Vec<_>>();
-
-        let delegate = LanguageModelPickerDelegate {
-            on_model_changed: self.on_model_changed.clone(),
-            all_models: all_models.clone(),
-            filtered_models: all_models,
-            selected_index: 0,
-        };
-
-        let picker_view = cx.new_view(|cx| {
-            let picker = Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into()));
-            picker
-        });
-
-        PopoverMenu::new("model-switcher")
-            .menu(move |_cx| Some(picker_view.clone()))
-            .trigger(self.trigger)
-            .attach(gpui::AnchorCorner::BottomLeft)
-            .when_some(self.handle, |menu, handle| menu.with_handle(handle))
     }
 }

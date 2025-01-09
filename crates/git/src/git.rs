@@ -16,6 +16,7 @@ use std::sync::LazyLock;
 pub use crate::hosting_provider::*;
 pub use crate::remote::*;
 pub use git2 as libgit;
+pub use repository::WORK_DIRECTORY_REPO_PATH;
 
 pub static DOT_GIT: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".git"));
 pub static COOKIES: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("cookies"));

@@ -130,6 +130,7 @@ pub struct AvailableLanguage {
     name: LanguageName,
     grammar: Option<Arc<str>>,
     matcher: LanguageMatcher,
+    hidden: bool,
     load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
     loaded: bool,
 }
@@ -141,6 +142,9 @@ impl AvailableLanguage {
 
     pub fn matcher(&self) -> &LanguageMatcher {
         &self.matcher
+    }
+    pub fn hidden(&self) -> bool {
+        self.hidden
     }
 }
 
@@ -177,6 +181,7 @@ pub const QUERY_FILENAME_PREFIXES: &[(
     ("overrides", |q| &mut q.overrides),
     ("redactions", |q| &mut q.redactions),
     ("runnables", |q| &mut q.runnables),
+    ("textobjects", |q| &mut q.text_objects),
 ];
 
 /// Tree-sitter language queries for a given language.
@@ -191,6 +196,7 @@ pub struct LanguageQueries {
     pub overrides: Option<Cow<'static, str>>,
     pub redactions: Option<Cow<'static, str>>,
     pub runnables: Option<Cow<'static, str>>,
+    pub text_objects: Option<Cow<'static, str>>,
 }
 
 #[derive(Clone, Default)]
@@ -288,6 +294,7 @@ impl LanguageRegistry {
             config.name.clone(),
             config.grammar.clone(),
             config.matcher.clone(),
+            config.hidden,
             Arc::new(move || {
                 Ok(LoadedLanguage {
                     config: config.clone(),
@@ -436,6 +443,7 @@ impl LanguageRegistry {
         name: LanguageName,
         grammar_name: Option<Arc<str>>,
         matcher: LanguageMatcher,
+        hidden: bool,
         load: Arc<dyn Fn() -> Result<LoadedLanguage> + 'static + Send + Sync>,
     ) {
         let state = &mut *self.state.write();
@@ -455,6 +463,7 @@ impl LanguageRegistry {
             grammar: grammar_name,
             matcher,
             load,
+            hidden,
             loaded: false,
         });
         state.version += 1;
@@ -522,6 +531,7 @@ impl LanguageRegistry {
             name: language.name(),
             grammar: language.config.grammar.clone(),
             matcher: language.config.matcher.clone(),
+            hidden: language.config.hidden,
             load: Arc::new(|| Err(anyhow!("already loaded"))),
             loaded: true,
         });
@@ -590,15 +600,12 @@ impl LanguageRegistry {
         async move { rx.await? }
     }
 
-    pub fn available_language_for_name(
-        self: &Arc<Self>,
-        name: &LanguageName,
-    ) -> Option<AvailableLanguage> {
+    pub fn available_language_for_name(self: &Arc<Self>, name: &str) -> Option<AvailableLanguage> {
         let state = self.state.read();
         state
             .available_languages
             .iter()
-            .find(|l| &l.name == name)
+            .find(|l| l.name.0.as_ref() == name)
             .cloned()
     }
 

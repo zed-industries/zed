@@ -994,10 +994,12 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
             }),
         )
         .await;
-    let (project_a, worktree_id) = client_a.build_local_project("/dir", cx_a).await;
+    let (project_a, _) = client_a.build_local_project("/dir", cx_a).await;
 
     let _buffer_a = project_a
-        .update(cx_a, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx))
+        .update(cx_a, |p, cx| {
+            p.open_local_buffer_with_lsp("/dir/main.rs", cx)
+        })
         .await
         .unwrap();
 
@@ -1587,7 +1589,6 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         })
         .await
         .unwrap();
-    let fake_language_server = fake_language_servers.next().await.unwrap();
     let editor_a = workspace_a
         .update(cx_a, |workspace, cx| {
             workspace.open_path((worktree_id, "main.rs"), None, true, cx)
@@ -1596,6 +1597,8 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
+
+    let fake_language_server = fake_language_servers.next().await.unwrap();
 
     // Set up the language server to return an additional inlay hint on each request.
     let edits_made = Arc::new(AtomicUsize::new(0));

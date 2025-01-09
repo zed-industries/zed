@@ -265,8 +265,8 @@ impl RenderOnce for BufferFontLigaturesControl {
             |selection, cx| {
                 Self::write(
                     match selection {
-                        Selection::Selected => true,
-                        Selection::Unselected | Selection::Indeterminate => false,
+                        ToggleState::Selected => true,
+                        ToggleState::Unselected | ToggleState::Indeterminate => false,
                     },
                     cx,
                 );
@@ -318,8 +318,8 @@ impl RenderOnce for InlineGitBlameControl {
             |selection, cx| {
                 Self::write(
                     match selection {
-                        Selection::Selected => true,
-                        Selection::Unselected | Selection::Indeterminate => false,
+                        ToggleState::Selected => true,
+                        ToggleState::Unselected | ToggleState::Indeterminate => false,
                     },
                     cx,
                 );
@@ -371,8 +371,8 @@ impl RenderOnce for LineNumbersControl {
             |selection, cx| {
                 Self::write(
                     match selection {
-                        Selection::Selected => true,
-                        Selection::Unselected | Selection::Indeterminate => false,
+                        ToggleState::Selected => true,
+                        ToggleState::Unselected | ToggleState::Indeterminate => false,
                     },
                     cx,
                 );

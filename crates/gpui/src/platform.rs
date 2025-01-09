@@ -28,7 +28,7 @@ mod windows;
 
 use crate::{
     point, Action, AnyWindowHandle, AsyncWindowContext, BackgroundExecutor, Bounds, DevicePixels,
-    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GPUSpecs, GlyphId,
+    DispatchEventResult, Font, FontId, FontMetrics, FontRun, ForegroundExecutor, GlyphId, GpuSpecs,
     ImageSource, Keymap, LineLayout, Pixels, PlatformInput, Point, RenderGlyphParams, RenderImage,
     RenderImageParams, RenderSvgParams, ScaledPixels, Scene, SharedString, Size, SvgRenderer,
     SvgSize, Task, TaskLabel, WindowContext, DEFAULT_WINDOW_SIZE,
@@ -70,6 +70,9 @@ pub use semantic_version::SemanticVersion;
 pub(crate) use test::*;
 #[cfg(target_os = "windows")]
 pub(crate) use windows::*;
+
+#[cfg(any(test, feature = "test-support"))]
+pub use test::TestScreenCaptureSource;
 
 #[cfg(target_os = "macos")]
 pub(crate) fn current_platform(headless: bool) -> Rc<dyn Platform> {
@@ -150,6 +153,10 @@ pub(crate) trait Platform: 'static {
         None
     }
 
+    fn screen_capture_sources(
+        &self,
+    ) -> oneshot::Receiver<Result<Vec<Box<dyn ScreenCaptureSource>>>>;
+
     fn open_window(
         &self,
         handle: AnyWindowHandle,
@@ -168,6 +175,7 @@ pub(crate) trait Platform: 'static {
         options: PathPromptOptions,
     ) -> oneshot::Receiver<Result<Option<Vec<PathBuf>>>>;
     fn prompt_for_new_path(&self, directory: &Path) -> oneshot::Receiver<Result<Option<PathBuf>>>;
+    fn can_select_mixed_files_and_dirs(&self) -> bool;
     fn reveal_path(&self, path: &Path);
     fn open_with_system(&self, path: &Path);
 
@@ -228,6 +236,25 @@ pub trait PlatformDisplay: Send + Sync + Debug {
         Bounds::new(origin, DEFAULT_WINDOW_SIZE)
     }
 }
+
+/// A source of on-screen video content that can be captured.
+pub trait ScreenCaptureSource {
+    /// Returns the video resolution of this source.
+    fn resolution(&self) -> Result<Size<Pixels>>;
+
+    /// Start capture video from this source, invoking the given callback
+    /// with each frame.
+    fn stream(
+        &self,
+        frame_callback: Box<dyn Fn(ScreenCaptureFrame)>,
+    ) -> oneshot::Receiver<Result<Box<dyn ScreenCaptureStream>>>;
+}
+
+/// A video stream captured from a screen.
+pub trait ScreenCaptureStream {}
+
+/// A frame of video captured from a screen.
+pub struct ScreenCaptureFrame(pub PlatformScreenCaptureFrame);
 
 /// An opaque identifier for a hardware display
 #[derive(PartialEq, Eq, Hash, Copy, Clone)]
@@ -394,6 +421,9 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
     fn get_raw_handle(&self) -> windows::HWND;
 
     // Linux specific methods
+    fn inner_window_bounds(&self) -> WindowBounds {
+        self.window_bounds()
+    }
     fn request_decorations(&self, _decorations: WindowDecorations) {}
     fn show_window_menu(&self, _position: Point<Pixels>) {}
     fn start_window_move(&self) {}
@@ -406,7 +436,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         WindowControls::default()
     }
     fn set_client_inset(&self, _inset: Pixels) {}
-    fn gpu_specs(&self) -> Option<GPUSpecs>;
+    fn gpu_specs(&self) -> Option<GpuSpecs>;
 
     fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>);
 

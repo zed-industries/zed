@@ -447,7 +447,7 @@ impl Render for ConfigurationView {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
-        let ollama_intro = "Get up and running with Llama 3.2, Mistral, Gemma 2, and other large language models with Ollama.";
+        let ollama_intro = "Get up and running with Llama 3.3, Mistral, Gemma 2, and other large language models with Ollama.";
         let ollama_reqs =
             "Ollama must be running with at least one model installed to use it in the assistant.";
 

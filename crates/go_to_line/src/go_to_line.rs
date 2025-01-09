@@ -9,7 +9,7 @@ use gpui::{
 use settings::Settings;
 use text::{Bias, Point};
 use theme::ActiveTheme;
-use ui::{h_flex, prelude::*, v_flex, Label};
+use ui::prelude::*;
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::ModalView;
 
@@ -73,7 +73,7 @@ impl GoToLine {
         let last_line = editor.buffer().read(cx).snapshot(cx).max_point().row;
         let scroll_position = active_editor.update(cx, |editor, cx| editor.scroll_position(cx));
 
-        let current_text = format!("line {} of {} (column {})", line, last_line + 1, column);
+        let current_text = format!("{} of {} (column {})", line, last_line + 1, column);
 
         Self {
             line_editor,
@@ -186,36 +186,27 @@ impl Render for GoToLine {
             }
         }
 
-        div()
+        v_flex()
+            .w(rems(24.))
             .elevation_2(cx)
             .key_context("GoToLine")
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
-            .w_96()
             .child(
-                v_flex()
-                    .px_1()
-                    .pt_0p5()
-                    .gap_px()
-                    .child(
-                        v_flex()
-                            .py_0p5()
-                            .px_1()
-                            .child(div().px_1().py_0p5().child(self.line_editor.clone())),
-                    )
-                    .child(
-                        div()
-                            .h_px()
-                            .w_full()
-                            .bg(cx.theme().colors().element_background),
-                    )
-                    .child(
-                        h_flex()
-                            .justify_between()
-                            .px_2()
-                            .py_1()
-                            .child(Label::new(help_text).color(Color::Muted)),
-                    ),
+                div()
+                    .border_b_1()
+                    .border_color(cx.theme().colors().border_variant)
+                    .px_2()
+                    .py_1()
+                    .child(self.line_editor.clone()),
+            )
+            .child(
+                h_flex()
+                    .px_2()
+                    .py_1()
+                    .gap_1()
+                    .child(Label::new("Current Line:").color(Color::Muted))
+                    .child(Label::new(help_text).color(Color::Muted)),
             )
     }
 }

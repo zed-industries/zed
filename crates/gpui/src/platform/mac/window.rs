@@ -152,10 +152,6 @@ unsafe fn build_classes() {
             sel!(flagsChanged:),
             handle_view_event as extern "C" fn(&Object, Sel, id),
         );
-        decl.add_method(
-            sel!(cancelOperation:),
-            cancel_operation as extern "C" fn(&Object, Sel, id),
-        );
 
         decl.add_method(
             sel!(makeBackingLayer),
@@ -331,6 +327,7 @@ struct MacWindowState {
     traffic_light_position: Option<Point<Pixels>>,
     previous_modifiers_changed_event: Option<PlatformInput>,
     keystroke_for_do_command: Option<Keystroke>,
+    do_command_handled: Option<bool>,
     external_files_dragged: bool,
     // Whether the next left-mouse click is also the focusing click.
     first_mouse: bool,
@@ -609,6 +606,7 @@ impl MacWindow {
                     .and_then(|titlebar| titlebar.traffic_light_position),
                 previous_modifiers_changed_event: None,
                 keystroke_for_do_command: None,
+                do_command_handled: None,
                 external_files_dragged: false,
                 first_mouse: false,
                 fullscreen_restore_bounds: Bounds::default(),
@@ -1104,15 +1102,21 @@ impl PlatformWindow for MacWindow {
         self.0.lock().renderer.sprite_atlas().clone()
     }
 
-    fn gpu_specs(&self) -> Option<crate::GPUSpecs> {
+    fn gpu_specs(&self) -> Option<crate::GpuSpecs> {
         None
     }
 
     fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {
-        unsafe {
-            let input_context: id = msg_send![class!(NSTextInputContext), currentInputContext];
-            let _: () = msg_send![input_context, invalidateCharacterCoordinates];
-        }
+        let executor = self.0.lock().executor.clone();
+        executor
+            .spawn(async move {
+                unsafe {
+                    let input_context: id =
+                        msg_send![class!(NSTextInputContext), currentInputContext];
+                    let _: () = msg_send![input_context, invalidateCharacterCoordinates];
+                }
+            })
+            .detach()
     }
 }
 
@@ -1251,14 +1255,25 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     // otherwise we only send to the input handler if we don't have a matching binding.
     // The input handler may call `do_command_by_selector` if it doesn't know how to handle
     // a key. If it does so, it will return YES so we won't send the key twice.
-    if is_composing || event.keystroke.key.is_empty() {
-        window_state.as_ref().lock().keystroke_for_do_command = Some(event.keystroke.clone());
+    // We also do this for non-printing keys (like arrow keys and escape) as the IME menu
+    // may need them even if there is no marked text;
+    // however we skip keys with control or the input handler adds control-characters to the buffer.
+    if is_composing || (event.keystroke.key_char.is_none() && !event.keystroke.modifiers.control) {
+        {
+            let mut lock = window_state.as_ref().lock();
+            lock.keystroke_for_do_command = Some(event.keystroke.clone());
+            lock.do_command_handled.take();
+            drop(lock);
+        }
+
         let handled: BOOL = unsafe {
             let input_context: id = msg_send![this, inputContext];
             msg_send![input_context, handleEvent: native_event]
         };
         window_state.as_ref().lock().keystroke_for_do_command.take();
-        if handled == YES {
+        if let Some(handled) = window_state.as_ref().lock().do_command_handled.take() {
+            return handled as BOOL;
+        } else if handled == YES {
             return YES;
         }
 
@@ -1377,6 +1392,14 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
         };
 
         match &event {
+            PlatformInput::MouseDown(_) => {
+                drop(lock);
+                unsafe {
+                    let input_context: id = msg_send![this, inputContext];
+                    msg_send![input_context, handleEvent: native_event]
+                }
+                lock = window_state.as_ref().lock();
+            }
             PlatformInput::MouseMove(
                 event @ MouseMoveEvent {
                     pressed_button: Some(_),
@@ -1425,29 +1448,6 @@ extern "C" fn handle_view_event(this: &Object, _: Sel, native_event: id) {
             callback(event);
             window_state.lock().event_callback = Some(callback);
         }
-    }
-}
-
-// Allows us to receive `cmd-.` (the shortcut for closing a dialog)
-// https://bugs.eclipse.org/bugs/show_bug.cgi?id=300620#c6
-extern "C" fn cancel_operation(this: &Object, _sel: Sel, _sender: id) {
-    let window_state = unsafe { get_window_state(this) };
-    let mut lock = window_state.as_ref().lock();
-
-    let keystroke = Keystroke {
-        modifiers: Default::default(),
-        key: ".".into(),
-        key_char: None,
-    };
-    let event = PlatformInput::KeyDown(KeyDownEvent {
-        keystroke: keystroke.clone(),
-        is_held: false,
-    });
-
-    if let Some(mut callback) = lock.event_callback.take() {
-        drop(lock);
-        callback(event);
-        window_state.lock().event_callback = Some(callback);
     }
 }
 
@@ -1683,7 +1683,10 @@ extern "C" fn first_rect_for_character_range(
         let lock = state.lock();
         let mut frame = NSWindow::frame(lock.native_window);
         let content_layout_rect: CGRect = msg_send![lock.native_window, contentLayoutRect];
-        frame.origin.y -= frame.size.height - content_layout_rect.size.height;
+        let style_mask: NSWindowStyleMask = msg_send![lock.native_window, styleMask];
+        if !style_mask.contains(NSWindowStyleMask::NSFullSizeContentViewWindowMask) {
+            frame.origin.y -= frame.size.height - content_layout_rect.size.height;
+        }
         frame
     };
     with_input_handler(this, |input_handler| {
@@ -1790,10 +1793,11 @@ extern "C" fn do_command_by_selector(this: &Object, _: Sel, _: Sel) {
     drop(lock);
 
     if let Some((keystroke, mut callback)) = keystroke.zip(event_callback.as_mut()) {
-        (callback)(PlatformInput::KeyDown(KeyDownEvent {
+        let handled = (callback)(PlatformInput::KeyDown(KeyDownEvent {
             keystroke,
             is_held: false,
         }));
+        state.as_ref().lock().do_command_handled = Some(!handled.propagate);
     }
 
     state.as_ref().lock().event_callback = event_callback;

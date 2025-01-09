@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod file_finder_tests;
 
-mod file_finder_settings;
+pub mod file_finder_settings;
 mod new_path_prompt;
 mod open_path_prompt;
 
@@ -648,7 +648,7 @@ impl FileFinderDelegate {
         cx.subscribe(project, |file_finder, _, event, cx| {
             match event {
                 project::Event::WorktreeUpdatedEntries(_, _)
-                | project::Event::WorktreeAdded
+                | project::Event::WorktreeAdded(_)
                 | project::Event::WorktreeRemoved(_) => file_finder
                     .picker
                     .update(cx, |picker, cx| picker.refresh(cx)),
@@ -884,7 +884,7 @@ impl FileFinderDelegate {
     fn lookup_absolute_path(
         &self,
         query: FileSearchQuery,
-        cx: &mut ViewContext<'_, Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Task<()> {
         cx.spawn(|picker, mut cx| async move {
             let Some(project) = picker
@@ -1228,7 +1228,7 @@ impl PickerDelegate for FileFinderDelegate {
                 .start_slot::<Icon>(file_icon)
                 .end_slot::<AnyElement>(history_icon)
                 .inset(true)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(
                     h_flex()
                         .gap_2()
@@ -1261,8 +1261,8 @@ impl PickerDelegate for FileFinderDelegate {
                 .child(
                     PopoverMenu::new("menu-popover")
                         .with_handle(self.popover_menu_handle.clone())
-                        .attach(gpui::AnchorCorner::TopRight)
-                        .anchor(gpui::AnchorCorner::BottomRight)
+                        .attach(gpui::Corner::TopRight)
+                        .anchor(gpui::Corner::BottomRight)
                         .trigger(
                             Button::new("actions-trigger", "Split Options")
                                 .selected_label_color(Color::Accent)

@@ -20,6 +20,7 @@ use serde_json::json;
 use settings::{initial_server_settings_content, Settings, SettingsLocation, SettingsStore};
 use smol::stream::StreamExt;
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -78,13 +79,22 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         })
         .await
         .unwrap();
+    let change_set = project
+        .update(cx, |project, cx| {
+            project.open_unstaged_changes(buffer.clone(), cx)
+        })
+        .await
+        .unwrap();
+
+    change_set.update(cx, |change_set, cx| {
+        assert_eq!(
+            change_set.base_text_string(cx).unwrap(),
+            "fn one() -> usize { 0 }"
+        );
+    });
 
     buffer.update(cx, |buffer, cx| {
         assert_eq!(buffer.text(), "fn one() -> usize { 1 }");
-        assert_eq!(
-            buffer.diff_base().unwrap().to_string(),
-            "fn one() -> usize { 0 }"
-        );
         let ix = buffer.text().find('1').unwrap();
         buffer.edit([(ix..ix + 1, "100")], None, cx);
     });
@@ -140,9 +150,9 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
         &[(Path::new("src/lib2.rs"), "fn one() -> usize { 100 }".into())],
     );
     cx.executor().run_until_parked();
-    buffer.update(cx, |buffer, _| {
+    change_set.update(cx, |change_set, cx| {
         assert_eq!(
-            buffer.diff_base().unwrap().to_string(),
+            change_set.base_text_string(cx).unwrap(),
             "fn one() -> usize { 100 }"
         );
     });
@@ -213,7 +223,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
     // test that the headless server is tracking which buffers we have open correctly.
     cx.run_until_parked();
     headless.update(server_cx, |headless, cx| {
-        assert!(!headless.buffer_store.read(cx).shared_buffers().is_empty())
+        assert!(headless.buffer_store.read(cx).has_shared_buffers())
     });
     do_search(&project, cx.clone()).await;
 
@@ -222,7 +232,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
     });
     cx.run_until_parked();
     headless.update(server_cx, |headless, cx| {
-        assert!(headless.buffer_store.read(cx).shared_buffers().is_empty())
+        assert!(!headless.buffer_store.read(cx).has_shared_buffers())
     });
 
     do_search(&project, cx.clone()).await;
@@ -431,9 +441,9 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     // Wait for the settings to synchronize
     cx.run_until_parked();
 
-    let buffer = project
+    let (buffer, _handle) = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+            project.open_buffer_with_lsp((worktree_id, Path::new("src/lib.rs")), cx)
         })
         .await
         .unwrap();
@@ -607,9 +617,9 @@ async fn test_remote_cancel_language_server_work(
 
     cx.run_until_parked();
 
-    let buffer = project
+    let (buffer, _handle) = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+            project.open_buffer_with_lsp((worktree_id, Path::new("src/lib.rs")), cx)
         })
         .await
         .unwrap();
@@ -1141,6 +1151,10 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let (project, headless_project) = init_test(&fs, cx, server_cx).await;
     let branches = ["main", "dev", "feature-1"];
+    let branches_set = branches
+        .iter()
+        .map(ToString::to_string)
+        .collect::<HashSet<_>>();
     fs.insert_branches(Path::new("/code/project1/.git"), &branches);
 
     let (worktree, _) = project
@@ -1164,10 +1178,10 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let remote_branches = remote_branches
         .into_iter()
-        .map(|branch| branch.name)
-        .collect::<Vec<_>>();
+        .map(|branch| branch.name.to_string())
+        .collect::<HashSet<_>>();
 
-    assert_eq!(&remote_branches, &branches);
+    assert_eq!(&remote_branches, &branches_set);
 
     cx.update(|cx| {
         project.update(cx, |project, cx| {

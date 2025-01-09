@@ -22,14 +22,12 @@ extend-exclude = [
     # Stripe IDs are flagged as typos.
     "crates/collab/src/db/tests/processed_stripe_event_tests.rs",
     # Not our typos.
-    "crates/live_kit_server/",
+    "crates/livekit_server/",
     # Vim makes heavy use of partial typing tables.
     "crates/vim/",
     # Editor and file finder rely on partial typing and custom in-string syntax.
     "crates/file_finder/src/file_finder_tests.rs",
     "crates/editor/src/editor_tests.rs",
-    # Clojure uses .edn filename extension, which is not a misspelling of "end".
-    "extensions/clojure/languages/clojure/config.toml",
     # There are some names in the test data that are incorrectly flagged as typos.
     "crates/git/test_data/blame_incremental_complex",
     "crates/git/test_data/golden/blame_incremental_complex.json",
@@ -43,6 +41,8 @@ extend-exclude = [
     "docs/theme/css/",
     # Spellcheck triggers on `|Fixe[sd]|` regex part.
     "script/danger/dangerfile.ts",
+    # Hashes are not typos
+    "script/patches/use-cross-platform-livekit.patch"
 ]
 
 [default]
@@ -52,9 +52,6 @@ extend-ignore-re = [
     '"ba"',
     # :/ crates/collab/migrations/20231009181554_add_release_channel_to_rooms.sql
     "COLUMN enviroment",
-    # Typo in ClickHouse column name.
-    # crates/collab/src/api/events.rs
-    "rename = \"sesssion_id\"",
     "doas",
     # ProtoLS crate with tree-sitter Protobuf grammar.
     "protols",

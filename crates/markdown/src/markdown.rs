@@ -6,15 +6,15 @@ use gpui::{
     actions, point, quad, AnyElement, AppContext, Bounds, ClipboardItem, CursorStyle,
     DispatchPhase, Edges, FocusHandle, FocusableView, FontStyle, FontWeight, GlobalElementId,
     Hitbox, Hsla, KeyContext, Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent,
-    Point, Render, StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout, TextRun,
-    TextStyle, TextStyleRefinement, View,
+    Point, Render, Stateful, StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout,
+    TextRun, TextStyle, TextStyleRefinement, View,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_links_only, parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
 
 use std::{iter, mem, ops::Range, rc::Rc, sync::Arc};
 use theme::SyntaxTheme;
-use ui::prelude::*;
+use ui::{prelude::*, Tooltip};
 use util::{ResultExt, TryFutureExt};
 
 #[derive(Clone)]
@@ -71,8 +71,8 @@ impl Markdown {
         source: String,
         style: MarkdownStyle,
         language_registry: Option<Arc<LanguageRegistry>>,
-        cx: &ViewContext<Self>,
         fallback_code_block_language: Option<String>,
+        cx: &ViewContext<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
         let mut this = Self {
@@ -97,8 +97,8 @@ impl Markdown {
         source: String,
         style: MarkdownStyle,
         language_registry: Option<Arc<LanguageRegistry>>,
-        cx: &ViewContext<Self>,
         fallback_code_block_language: Option<String>,
+        cx: &ViewContext<Self>,
     ) -> Self {
         let focus_handle = cx.focus_handle();
         let mut this = Self {
@@ -614,11 +614,11 @@ impl Element for MarkdownElement {
                             };
                             builder.push_div(
                                 div()
+                                    .mb_1()
                                     .h_flex()
-                                    .mb_2()
-                                    .line_height(rems(1.3))
                                     .items_start()
                                     .gap_1()
+                                    .line_height(rems(1.3))
                                     .child(bullet),
                                 range,
                                 markdown_end,
@@ -667,6 +667,31 @@ impl Element for MarkdownElement {
                     }
                     MarkdownTagEnd::CodeBlock => {
                         builder.trim_trailing_newline();
+                        builder.flush_text();
+                        builder.modify_current_div(|el| {
+                            let id =
+                                ElementId::NamedInteger("copy-markdown-code".into(), range.end);
+                            let copy_button = div().absolute().top_1().right_1().w_5().child(
+                                IconButton::new(id, IconName::Copy)
+                                    .icon_color(Color::Muted)
+                                    .shape(ui::IconButtonShape::Square)
+                                    .tooltip(|cx| Tooltip::text("Copy Code Block", cx))
+                                    .on_click({
+                                        let code = without_fences(
+                                            parsed_markdown.source()[range.clone()].trim(),
+                                        )
+                                        .to_string();
+
+                                        move |_, cx| {
+                                            cx.write_to_clipboard(ClipboardItem::new_string(
+                                                code.clone(),
+                                            ))
+                                        }
+                                    }),
+                            );
+
+                            el.child(copy_button)
+                        });
                         builder.pop_div();
                         builder.pop_code_block();
                         if self.style.code_block.text.is_some() {
@@ -785,8 +810,52 @@ impl IntoElement for MarkdownElement {
     }
 }
 
+enum AnyDiv {
+    Div(Div),
+    Stateful(Stateful<Div>),
+}
+
+impl AnyDiv {
+    fn into_any_element(self) -> AnyElement {
+        match self {
+            Self::Div(div) => div.into_any_element(),
+            Self::Stateful(div) => div.into_any_element(),
+        }
+    }
+}
+
+impl From<Div> for AnyDiv {
+    fn from(value: Div) -> Self {
+        Self::Div(value)
+    }
+}
+
+impl From<Stateful<Div>> for AnyDiv {
+    fn from(value: Stateful<Div>) -> Self {
+        Self::Stateful(value)
+    }
+}
+
+impl Styled for AnyDiv {
+    fn style(&mut self) -> &mut StyleRefinement {
+        match self {
+            Self::Div(div) => div.style(),
+            Self::Stateful(div) => div.style(),
+        }
+    }
+}
+
+impl ParentElement for AnyDiv {
+    fn extend(&mut self, elements: impl IntoIterator<Item = AnyElement>) {
+        match self {
+            Self::Div(div) => div.extend(elements),
+            Self::Stateful(div) => div.extend(elements),
+        }
+    }
+}
+
 struct MarkdownElementBuilder {
-    div_stack: Vec<Div>,
+    div_stack: Vec<AnyDiv>,
     rendered_lines: Vec<RenderedLine>,
     pending_line: PendingLine,
     rendered_links: Vec<RenderedLink>,
@@ -812,7 +881,7 @@ struct ListStackEntry {
 impl MarkdownElementBuilder {
     fn new(base_text_style: TextStyle, syntax_theme: Arc<SyntaxTheme>) -> Self {
         Self {
-            div_stack: vec![div().debug_selector(|| "inner".into())],
+            div_stack: vec![div().debug_selector(|| "inner".into()).into()],
             rendered_lines: Vec::new(),
             pending_line: PendingLine::default(),
             rendered_links: Vec::new(),
@@ -841,11 +910,12 @@ impl MarkdownElementBuilder {
         self.text_style_stack.pop();
     }
 
-    fn push_div(&mut self, mut div: Div, range: &Range<usize>, markdown_end: usize) {
+    fn push_div(&mut self, div: impl Into<AnyDiv>, range: &Range<usize>, markdown_end: usize) {
+        let mut div = div.into();
         self.flush_text();
 
         if range.start == 0 {
-            //first element, remove top margin
+            // Remove the top margin on the first element.
             div.style().refine(&StyleRefinement {
                 margin: gpui::EdgesRefinement {
                     top: Some(Length::Definite(px(0.).into())),
@@ -856,6 +926,7 @@ impl MarkdownElementBuilder {
                 ..Default::default()
             });
         }
+
         if range.end == markdown_end {
             div.style().refine(&StyleRefinement {
                 margin: gpui::EdgesRefinement {
@@ -867,12 +938,20 @@ impl MarkdownElementBuilder {
                 ..Default::default()
             });
         }
+
         self.div_stack.push(div);
+    }
+
+    fn modify_current_div(&mut self, f: impl FnOnce(AnyDiv) -> AnyDiv) {
+        self.flush_text();
+        if let Some(div) = self.div_stack.pop() {
+            self.div_stack.push(f(div));
+        }
     }
 
     fn pop_div(&mut self) {
         self.flush_text();
-        let div = self.div_stack.pop().unwrap().into_any();
+        let div = self.div_stack.pop().unwrap().into_any_element();
         self.div_stack.last_mut().unwrap().extend(iter::once(div));
     }
 
@@ -954,7 +1033,7 @@ impl MarkdownElementBuilder {
         }
     }
 
-    fn flush_text(&mut self) {
+    pub fn flush_text(&mut self) {
         let line = mem::take(&mut self.pending_line);
         if line.text.is_empty() {
             return;
@@ -973,7 +1052,7 @@ impl MarkdownElementBuilder {
         debug_assert_eq!(self.div_stack.len(), 1);
         self.flush_text();
         RenderedMarkdown {
-            element: self.div_stack.pop().unwrap().into_any(),
+            element: self.div_stack.pop().unwrap().into_any_element(),
             text: RenderedText {
                 lines: self.rendered_lines.into(),
                 links: self.rendered_links.into(),
@@ -1171,5 +1250,45 @@ impl RenderedText {
         self.links
             .iter()
             .find(|link| link.source_range.contains(&source_index))
+    }
+}
+
+/// Some markdown blocks are indented, and others have e.g. ```rust … ``` around them.
+/// If this block is fenced with backticks, strip them off (and the language name).
+/// We use this when copying code blocks to the clipboard.
+fn without_fences(mut markdown: &str) -> &str {
+    if let Some(opening_backticks) = markdown.find("```") {
+        markdown = &markdown[opening_backticks..];
+
+        // Trim off the next newline. This also trims off a language name if it's there.
+        if let Some(newline) = markdown.find('\n') {
+            markdown = &markdown[newline + 1..];
+        }
+    };
+
+    if let Some(closing_backticks) = markdown.rfind("```") {
+        markdown = &markdown[..closing_backticks];
+    };
+
+    markdown
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_without_fences() {
+        let input = "```rust\nlet x = 5;\n```";
+        assert_eq!(without_fences(input), "let x = 5;\n");
+
+        let input = "   ```\nno language\n```   ";
+        assert_eq!(without_fences(input), "no language\n");
+
+        let input = "plain text";
+        assert_eq!(without_fences(input), "plain text");
+
+        let input = "```python\nprint('hello')\nprint('world')\n```";
+        assert_eq!(without_fences(input), "print('hello')\nprint('world')\n");
     }
 }

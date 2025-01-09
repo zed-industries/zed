@@ -1,10 +1,12 @@
 use anyhow::Result;
 use copilot::{Copilot, Status};
 use editor::{scroll::Autoscroll, Editor};
+use feature_flags::{FeatureFlagAppExt, ZetaFeatureFlag};
 use fs::Fs;
 use gpui::{
-    div, Action, AnchorCorner, AppContext, AsyncWindowContext, Entity, IntoElement, ParentElement,
-    Render, Subscription, View, ViewContext, WeakView, WindowContext,
+    actions, div, pulsating_between, Action, Animation, AnimationExt, AppContext,
+    AsyncWindowContext, Corner, Entity, IntoElement, ParentElement, Render, Subscription, View,
+    ViewContext, WeakView, WindowContext,
 };
 use language::{
     language_settings::{
@@ -13,7 +15,7 @@ use language::{
     File, Language,
 };
 use settings::{update_settings_file, Settings, SettingsStore};
-use std::{path::Path, sync::Arc};
+use std::{path::Path, sync::Arc, time::Duration};
 use supermaven::{AccountStatus, Supermaven};
 use workspace::{
     create_and_open_local_file,
@@ -25,6 +27,9 @@ use workspace::{
     StatusItemView, Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
+use zeta::RateCompletionModal;
+
+actions!(zeta, [RateCompletions]);
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
 
@@ -35,7 +40,9 @@ pub struct InlineCompletionButton {
     editor_enabled: Option<bool>,
     language: Option<Arc<Language>>,
     file: Option<Arc<dyn File>>,
+    inline_completion_provider: Option<Arc<dyn inline_completion::InlineCompletionProviderHandle>>,
     fs: Arc<dyn Fs>,
+    workspace: WeakView<Workspace>,
 }
 
 enum SupermavenButtonStatus {
@@ -118,7 +125,7 @@ impl Render for InlineCompletionButton {
                                 _ => this.update(cx, |this, cx| this.build_copilot_start_menu(cx)),
                             })
                         })
-                        .anchor(AnchorCorner::BottomRight)
+                        .anchor(Corner::BottomRight)
                         .trigger(
                             IconButton::new("copilot-icon", icon)
                                 .tooltip(|cx| Tooltip::text("GitHub Copilot", cx)),
@@ -186,19 +193,59 @@ impl Render for InlineCompletionButton {
                             ),
                             _ => None,
                         })
-                        .anchor(AnchorCorner::BottomRight)
+                        .anchor(Corner::BottomRight)
                         .trigger(
                             IconButton::new("supermaven-icon", icon)
                                 .tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx)),
                         ),
                 );
             }
+
+            InlineCompletionProvider::Zeta => {
+                if !cx.has_flag::<ZetaFeatureFlag>() {
+                    return div();
+                }
+
+                let this = cx.view().clone();
+                let button = IconButton::new("zeta", IconName::ZedPredict)
+                    .tooltip(|cx| Tooltip::text("Zed Predict", cx));
+
+                let is_refreshing = self
+                    .inline_completion_provider
+                    .as_ref()
+                    .map_or(false, |provider| provider.is_refreshing(cx));
+
+                let mut popover_menu = PopoverMenu::new("zeta")
+                    .menu(move |cx| {
+                        Some(this.update(cx, |this, cx| this.build_zeta_context_menu(cx)))
+                    })
+                    .anchor(Corner::BottomRight);
+                if is_refreshing {
+                    popover_menu = popover_menu.trigger(
+                        button.with_animation(
+                            "pulsating-label",
+                            Animation::new(Duration::from_secs(2))
+                                .repeat()
+                                .with_easing(pulsating_between(0.2, 1.0)),
+                            |icon_button, delta| icon_button.alpha(delta),
+                        ),
+                    );
+                } else {
+                    popover_menu = popover_menu.trigger(button);
+                }
+
+                div().child(popover_menu.into_any_element())
+            }
         }
     }
 }
 
 impl InlineCompletionButton {
-    pub fn new(fs: Arc<dyn Fs>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(
+        workspace: WeakView<Workspace>,
+        fs: Arc<dyn Fs>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         if let Some(copilot) = Copilot::global(cx) {
             cx.observe(&copilot, |_, _, cx| cx.notify()).detach()
         }
@@ -211,6 +258,8 @@ impl InlineCompletionButton {
             editor_enabled: None,
             language: None,
             file: None,
+            inline_completion_provider: None,
+            workspace,
             fs,
         }
     }
@@ -325,6 +374,25 @@ impl InlineCompletionButton {
         })
     }
 
+    fn build_zeta_context_menu(&self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
+        let workspace = self.workspace.clone();
+        ContextMenu::build(cx, |menu, cx| {
+            self.build_language_settings_menu(menu, cx)
+                .separator()
+                .entry(
+                    "Rate Completions",
+                    Some(RateCompletions.boxed_clone()),
+                    move |cx| {
+                        workspace
+                            .update(cx, |workspace, cx| {
+                                RateCompletionModal::toggle(workspace, cx)
+                            })
+                            .ok();
+                    },
+                )
+        })
+    }
+
     pub fn update_enabled(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
         let editor = editor.read(cx);
         let snapshot = editor.buffer().read(cx).snapshot(cx);
@@ -342,6 +410,7 @@ impl InlineCompletionButton {
                     ),
             )
         };
+        self.inline_completion_provider = editor.inline_completion_provider();
         self.language = language.cloned();
         self.file = file;
 

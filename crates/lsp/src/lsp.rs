@@ -82,6 +82,7 @@ pub struct LanguageServer {
     outbound_tx: channel::Sender<String>,
     name: LanguageServerName,
     process_name: Arc<str>,
+    binary: LanguageServerBinary,
     capabilities: RwLock<ServerCapabilities>,
     code_action_kinds: Option<Vec<CodeActionKind>>,
     notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
@@ -284,6 +285,7 @@ impl<F: Future> LspRequestFuture<F::Output> for LspRequest<F> {
 }
 
 /// Combined capabilities of the server and the adapter.
+#[derive(Debug)]
 pub struct AdapterServerCapabilities {
     // Reported capabilities by the server
     pub server_capabilities: ServerCapabilities,
@@ -346,7 +348,7 @@ impl LanguageServer {
         let mut server = util::command::new_smol_command(&binary.path)
             .current_dir(working_dir)
             .args(&binary.arguments)
-            .envs(binary.env.unwrap_or_default())
+            .envs(binary.env.clone().unwrap_or_default())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
@@ -362,7 +364,7 @@ impl LanguageServer {
         let stdin = server.stdin.take().unwrap();
         let stdout = server.stdout.take().unwrap();
         let stderr = server.stderr.take().unwrap();
-        let mut server = Self::new_internal(
+        let server = Self::new_internal(
             server_id,
             server_name,
             stdin,
@@ -373,6 +375,7 @@ impl LanguageServer {
             root_path,
             working_dir,
             code_action_kinds,
+            binary,
             cx,
             move |notification| {
                 log::info!(
@@ -383,10 +386,6 @@ impl LanguageServer {
                 );
             },
         );
-
-        if let Some(name) = binary.path.file_name() {
-            server.process_name = name.to_string_lossy().into();
-        }
 
         Ok(server)
     }
@@ -403,6 +402,7 @@ impl LanguageServer {
         root_path: &Path,
         working_dir: &Path,
         code_action_kinds: Option<Vec<CodeActionKind>>,
+        binary: LanguageServerBinary,
         cx: AsyncAppContext,
         on_unhandled_notification: F,
     ) -> Self
@@ -443,7 +443,7 @@ impl LanguageServer {
                 let stderr_captures = stderr_capture.clone();
                 cx.spawn(|_| Self::handle_stderr(stderr, io_handlers, stderr_captures).log_err())
             })
-            .unwrap_or_else(|| Task::Ready(Some(None)));
+            .unwrap_or_else(|| Task::ready(None));
         let input_task = cx.spawn(|_| async move {
             let (stdout, stderr) = futures::join!(stdout_input_task, stderr_input_task);
             stdout.or(stderr)
@@ -465,7 +465,12 @@ impl LanguageServer {
             response_handlers,
             io_handlers,
             name: server_name,
-            process_name: Arc::default(),
+            process_name: binary
+                .path
+                .file_name()
+                .map(|name| Arc::from(name.to_string_lossy()))
+                .unwrap_or_default(),
+            binary,
             capabilities: Default::default(),
             code_action_kinds,
             next_id: Default::default(),
@@ -599,23 +604,19 @@ impl LanguageServer {
         Ok(())
     }
 
-    /// Initializes a language server by sending the `Initialize` request.
-    /// Note that `options` is used directly to construct [`InitializeParams`], which is why it is owned.
-    ///
-    /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize)
-    pub fn initialize(
-        mut self,
-        options: Option<Value>,
-        cx: &AppContext,
-    ) -> Task<Result<Arc<Self>>> {
+    pub fn default_initialize_params(&self, cx: &AppContext) -> InitializeParams {
         let root_uri = Url::from_file_path(&self.working_dir).unwrap();
         #[allow(deprecated)]
-        let params = InitializeParams {
+        InitializeParams {
             process_id: None,
             root_path: None,
             root_uri: Some(root_uri.clone()),
-            initialization_options: options,
+            initialization_options: None,
             capabilities: ClientCapabilities {
+                general: Some(GeneralClientCapabilities {
+                    position_encodings: Some(vec![PositionEncodingKind::UTF16]),
+                    ..Default::default()
+                }),
                 workspace: Some(WorkspaceClientCapabilities {
                     configuration: Some(true),
                     did_change_watched_files: Some(DidChangeWatchedFilesClientCapabilities {
@@ -646,6 +647,13 @@ impl LanguageServer {
                         snippet_edit_support: Some(true),
                         ..WorkspaceEditClientCapabilities::default()
                     }),
+                    file_operations: Some(WorkspaceFileOperationsClientCapabilities {
+                        dynamic_registration: Some(false),
+                        did_rename: Some(true),
+                        will_rename: Some(true),
+                        ..Default::default()
+                    }),
+                    apply_edit: Some(true),
                     ..Default::default()
                 }),
                 text_document: Some(TextDocumentClientCapabilities {
@@ -697,6 +705,7 @@ impl LanguageServer {
                                 "commitCharacters".to_owned(),
                                 "editRange".to_owned(),
                                 "insertTextMode".to_owned(),
+                                "insertTextFormat".to_owned(),
                                 "data".to_owned(),
                             ]),
                         }),
@@ -761,9 +770,11 @@ impl LanguageServer {
                 })),
                 window: Some(WindowClientCapabilities {
                     work_done_progress: Some(true),
+                    show_message: Some(ShowMessageRequestClientCapabilities {
+                        message_action_item: None,
+                    }),
                     ..Default::default()
                 }),
-                general: None,
             },
             trace: None,
             workspace_folders: Some(vec![WorkspaceFolder {
@@ -777,7 +788,24 @@ impl LanguageServer {
                 }
             }),
             locale: None,
+
             ..Default::default()
+        }
+    }
+
+    /// Initializes a language server by sending the `Initialize` request.
+    /// Note that `options` is used directly to construct [`InitializeParams`], which is why it is owned.
+    ///
+    /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#initialize)
+    pub fn initialize(
+        mut self,
+        initialize_params: Option<InitializeParams>,
+        cx: &AppContext,
+    ) -> Task<Result<Arc<Self>>> {
+        let params = if let Some(params) = initialize_params {
+            params
+        } else {
+            self.default_initialize_params(cx)
         };
 
         cx.spawn(|_| async move {
@@ -1031,6 +1059,11 @@ impl LanguageServer {
         &self.root_path
     }
 
+    /// Language server's binary information.
+    pub fn binary(&self) -> &LanguageServerBinary {
+        &self.binary
+    }
+
     /// Sends a RPC request to the language server.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#requestMessage)
@@ -1254,12 +1287,13 @@ impl FakeLanguageServer {
             root,
             root,
             None,
+            binary.clone(),
             cx.clone(),
             |_| {},
         );
         server.process_name = process_name;
         let fake = FakeLanguageServer {
-            binary,
+            binary: binary.clone(),
             server: Arc::new({
                 let mut server = LanguageServer::new_internal(
                     server_id,
@@ -1272,7 +1306,8 @@ impl FakeLanguageServer {
                     root,
                     root,
                     None,
-                    cx,
+                    binary,
+                    cx.clone(),
                     move |msg| {
                         notifications_tx
                             .try_send((

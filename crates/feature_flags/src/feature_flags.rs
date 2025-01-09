@@ -49,6 +49,26 @@ impl FeatureFlag for Assistant2FeatureFlag {
     }
 }
 
+pub struct ToolUseFeatureFlag;
+
+impl FeatureFlag for ToolUseFeatureFlag {
+    const NAME: &'static str = "assistant-tool-use";
+
+    fn enabled_for_staff() -> bool {
+        false
+    }
+}
+
+pub struct ZetaFeatureFlag;
+impl FeatureFlag for ZetaFeatureFlag {
+    const NAME: &'static str = "zeta";
+}
+
+pub struct GitUiFeatureFlag;
+impl FeatureFlag for GitUiFeatureFlag {
+    const NAME: &'static str = "git-ui";
+}
+
 pub struct Remoting {}
 impl FeatureFlag for Remoting {
     const NAME: &'static str = "remoting";

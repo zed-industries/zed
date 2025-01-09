@@ -1,6 +1,6 @@
 use crate::{
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
-    Project, ProjectEntryId, ProjectPath,
+    Project, ProjectEntryId, ProjectItem, ProjectPath,
 };
 use anyhow::{Context as _, Result};
 use collections::{hash_map, HashMap, HashSet};
@@ -114,7 +114,7 @@ impl ImageItem {
     }
 }
 
-impl crate::Item for ImageItem {
+impl ProjectItem for ImageItem {
     fn try_open(
         project: &Model<Project>,
         path: &ProjectPath,
@@ -123,9 +123,17 @@ impl crate::Item for ImageItem {
         let path = path.clone();
         let project = project.clone();
 
-        let ext = path
-            .path
+        let worktree_abs_path = project
+            .read(cx)
+            .worktree_for_id(path.worktree_id, cx)?
+            .read(cx)
+            .abs_path();
+
+        // Resolve the file extension from either the worktree path (if it's a single file)
+        // or from the project path's subpath.
+        let ext = worktree_abs_path
             .extension()
+            .or_else(|| path.path.extension())
             .and_then(OsStr::to_str)
             .map(str::to_lowercase)
             .unwrap_or_default();
@@ -150,6 +158,10 @@ impl crate::Item for ImageItem {
 
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath> {
         Some(self.project_path(cx).clone())
+    }
+
+    fn is_dirty(&self) -> bool {
+        false
     }
 }
 

@@ -1,15 +1,16 @@
 use crate::slash_command::context_server_command;
+use crate::SlashCommandId;
 use crate::{
     prompts::PromptBuilder, slash_command_working_set::SlashCommandWorkingSet, Context,
     ContextEvent, ContextId, ContextOperation, ContextVersion, SavedContext, SavedContextMetadata,
 };
-use crate::{tools, SlashCommandId, ToolId, ToolWorkingSet};
 use anyhow::{anyhow, Context as _, Result};
+use assistant_tool::{ToolId, ToolWorkingSet};
 use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
 use clock::ReplicaId;
 use collections::HashMap;
-use context_servers::manager::ContextServerManager;
-use context_servers::ContextServerFactoryRegistry;
+use context_server::manager::ContextServerManager;
+use context_server::{ContextServerFactoryRegistry, ContextServerTool};
 use fs::Fs;
 use futures::StreamExt;
 use fuzzy::StringMatchCandidate;
@@ -21,6 +22,7 @@ use paths::contexts_dir;
 use project::Project;
 use regex::Regex;
 use rpc::AnyProtoClient;
+use std::sync::LazyLock;
 use std::{
     cmp::Reverse,
     ffi::OsStr,
@@ -715,7 +717,7 @@ impl ContextStore {
                 let candidates = metadata
                     .iter()
                     .enumerate()
-                    .map(|(id, metadata)| StringMatchCandidate::new(id, metadata.title.clone()))
+                    .map(|(id, metadata)| StringMatchCandidate::new(id, &metadata.title))
                     .collect::<Vec<_>>();
                 let matches = fuzzy::match_strings(
                     &candidates,
@@ -752,8 +754,8 @@ impl ContextStore {
                     continue;
                 }
 
-                let pattern = r" - \d+.zed.json$";
-                let re = Regex::new(pattern).unwrap();
+                static ASSISTANT_CONTEXT_REGEX: LazyLock<Regex> =
+                    LazyLock::new(|| Regex::new(r" - \d+.zed.json$").unwrap());
 
                 let metadata = fs.metadata(&path).await?;
                 if let Some((file_name, metadata)) = path
@@ -762,11 +764,15 @@ impl ContextStore {
                     .zip(metadata)
                 {
                     // This is used to filter out contexts saved by the new assistant.
-                    if !re.is_match(file_name) {
+                    if !ASSISTANT_CONTEXT_REGEX.is_match(file_name) {
                         continue;
                     }
 
-                    if let Some(title) = re.replace(file_name, "").lines().next() {
+                    if let Some(title) = ASSISTANT_CONTEXT_REGEX
+                        .replace(file_name, "")
+                        .lines()
+                        .next()
+                    {
                         contexts.push(SavedContextMetadata {
                             title: title.to_string(),
                             path,
@@ -808,13 +814,13 @@ impl ContextStore {
     fn handle_context_server_event(
         &mut self,
         context_server_manager: Model<ContextServerManager>,
-        event: &context_servers::manager::Event,
+        event: &context_server::manager::Event,
         cx: &mut ModelContext<Self>,
     ) {
         let slash_command_working_set = self.slash_commands.clone();
         let tool_working_set = self.tools.clone();
         match event {
-            context_servers::manager::Event::ServerStarted { server_id } => {
+            context_server::manager::Event::ServerStarted { server_id } => {
                 if let Some(server) = context_server_manager.read(cx).get_server(server_id) {
                     let context_server_manager = context_server_manager.clone();
                     cx.spawn({
@@ -825,7 +831,7 @@ impl ContextStore {
                                 return;
                             };
 
-                            if protocol.capable(context_servers::protocol::ServerCapability::Prompts) {
+                            if protocol.capable(context_server::protocol::ServerCapability::Prompts) {
                                 if let Some(prompts) = protocol.list_prompts().await.log_err() {
                                     let slash_command_ids = prompts
                                         .into_iter()
@@ -853,12 +859,12 @@ impl ContextStore {
                                 }
                             }
 
-                            if protocol.capable(context_servers::protocol::ServerCapability::Tools) {
+                            if protocol.capable(context_server::protocol::ServerCapability::Tools) {
                                 if let Some(tools) = protocol.list_tools().await.log_err() {
                                     let tool_ids = tools.tools.into_iter().map(|tool| {
                                         log::info!("registering context server tool: {:?}", tool.name);
                                         tool_working_set.insert(
-                                            Arc::new(tools::context_server_tool::ContextServerTool::new(
+                                            Arc::new(ContextServerTool::new(
                                                 context_server_manager.clone(),
                                                 server.id(),
                                                 tool,
@@ -880,7 +886,7 @@ impl ContextStore {
                     .detach();
                 }
             }
-            context_servers::manager::Event::ServerStopped { server_id } => {
+            context_server::manager::Event::ServerStopped { server_id } => {
                 if let Some(slash_command_ids) =
                     self.context_server_slash_command_ids.remove(server_id)
                 {

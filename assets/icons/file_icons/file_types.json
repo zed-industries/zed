@@ -34,6 +34,7 @@
     "dat": "storage",
     "db": "storage",
     "dbf": "storage",
+    "diff": "diff",
     "dll": "storage",
     "doc": "document",
     "docx": "document",
@@ -58,6 +59,11 @@
     "gitignore": "vcs",
     "gitkeep": "vcs",
     "gitmodules": "vcs",
+    "TAG_EDITMSG": "vcs",
+    "MERGE_MSG": "vcs",
+    "COMMIT_EDITMSG": "vcs",
+    "NOTES_EDITMSG": "vcs",
+    "EDIT_DESCRIPTION": "vcs",
     "gleam": "gleam",
     "go": "go",
     "gql": "graphql",
@@ -107,11 +113,13 @@
     "mdf": "storage",
     "mdx": "document",
     "metadata": "code",
+    "metal": "metal",
     "mjs": "javascript",
     "mka": "audio",
     "mkv": "video",
     "ml": "ocaml",
     "mli": "ocaml",
+    "mod": "go",
     "mov": "video",
     "mp3": "audio",
     "mp4": "video",
@@ -127,6 +135,7 @@
     "ogg": "audio",
     "opus": "audio",
     "otf": "font",
+    "pcss": "css",
     "pdb": "storage",
     "pdf": "document",
     "php": "php",
@@ -173,6 +182,9 @@
     "tsx": "react",
     "ttf": "font",
     "txt": "document",
+    "v": "v",
+    "vsh": "v",
+    "vv": "v",
     "vue": "vue",
     "wav": "audio",
     "webm": "video",
@@ -181,6 +193,7 @@
     "wmv": "video",
     "woff": "font",
     "woff2": "font",
+    "work": "go",
     "wv": "audio",
     "xls": "document",
     "xlsx": "document",
@@ -234,6 +247,9 @@
     },
     "default": {
       "icon": "icons/file_icons/file.svg"
+    },
+    "diff": {
+      "icon": "icons/file_icons/diff.svg"
     },
     "docker": {
       "icon": "icons/file_icons/docker.svg"
@@ -307,6 +323,9 @@
     "lua": {
       "icon": "icons/file_icons/lua.svg"
     },
+    "metal": {
+      "icon": "icons/file_icons/metal.svg"
+    },
     "nim": {
       "icon": "icons/file_icons/nim.svg"
     },
@@ -378,6 +397,9 @@
     },
     "typescript": {
       "icon": "icons/file_icons/typescript.svg"
+    },
+    "v": {
+      "icon": "icons/file_icons/v.svg"
     },
     "vcs": {
       "icon": "icons/file_icons/git.svg"

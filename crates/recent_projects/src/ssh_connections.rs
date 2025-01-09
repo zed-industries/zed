@@ -201,7 +201,7 @@ impl SshPrompt {
             selection_background_color: cx.theme().players().local().selection,
             ..Default::default()
         };
-        let markdown = cx.new_view(|cx| Markdown::new_text(prompt, markdown_style, None, cx, None));
+        let markdown = cx.new_view(|cx| Markdown::new_text(prompt, markdown_style, None, None, cx));
         self.prompt = Some((markdown, tx));
         self.status_message.take();
         cx.focus_view(&self.editor);
@@ -357,7 +357,7 @@ impl RenderOnce for SshConnectionHeader {
 }
 
 impl Render for SshConnectionModal {
-    fn render(&mut self, cx: &mut ui::ViewContext<Self>) -> impl ui::IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl ui::IntoElement {
         let nickname = self.prompt.read(cx).nickname.clone();
         let connection_string = self.prompt.read(cx).connection_string.clone();
 

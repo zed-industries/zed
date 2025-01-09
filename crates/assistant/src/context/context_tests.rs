@@ -1,6 +1,5 @@
 use super::{AssistantEdit, MessageCacheMetadata};
 use crate::slash_command_working_set::SlashCommandWorkingSet;
-use crate::ToolWorkingSet;
 use crate::{
     assistant_panel, prompt_library, slash_command::file_command, AssistantEditKind, CacheStatus,
     Context, ContextEvent, ContextId, ContextOperation, InvokedSlashCommandId, MessageId,
@@ -11,13 +10,14 @@ use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandContent, SlashCommandEvent, SlashCommandOutput,
     SlashCommandOutputSection, SlashCommandRegistry, SlashCommandResult,
 };
+use assistant_tool::ToolWorkingSet;
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
 use futures::{
     channel::mpsc,
     stream::{self, StreamExt},
 };
-use gpui::{AppContext, Model, SharedString, Task, TestAppContext, WeakView};
+use gpui::{prelude::*, AppContext, Model, SharedString, Task, TestAppContext, WeakView};
 use language::{Buffer, BufferSnapshot, LanguageRegistry, LspAdapterDelegate};
 use language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Role};
 use parking_lot::Mutex;
@@ -35,7 +35,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 use text::{network::Network, OffsetRangeExt as _, ReplicaId, ToOffset};
-use ui::{Context as _, IconName, WindowContext};
+use ui::{IconName, WindowContext};
 use unindent::Unindent;
 use util::{
     test::{generate_marked_text, marked_text_ranges},

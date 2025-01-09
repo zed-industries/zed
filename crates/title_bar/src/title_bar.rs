@@ -7,6 +7,10 @@ mod window_controls;
 mod stories;
 
 use crate::application_menu::ApplicationMenu;
+
+#[cfg(not(target_os = "macos"))]
+use crate::application_menu::{NavigateApplicationMenuInDirection, OpenApplicationMenu};
+
 use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
@@ -17,8 +21,9 @@ use gpui::{
     Interactivity, IntoElement, Model, MouseButton, ParentElement, Render, Stateful,
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
-use project::{Project, RepositoryEntry};
+use project::Project;
 use rpc::proto;
+use settings::Settings as _;
 use smallvec::SmallVec;
 use std::sync::Arc;
 use theme::ActiveTheme;
@@ -52,7 +57,39 @@ actions!(
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, cx| {
         let item = cx.new_view(|cx| TitleBar::new("title-bar", workspace, cx));
-        workspace.set_titlebar_item(item.into(), cx)
+        workspace.set_titlebar_item(item.into(), cx);
+
+        #[cfg(not(target_os = "macos"))]
+        workspace.register_action(|workspace, action: &OpenApplicationMenu, cx| {
+            if let Some(titlebar) = workspace
+                .titlebar_item()
+                .and_then(|item| item.downcast::<TitleBar>().ok())
+            {
+                titlebar.update(cx, |titlebar, cx| {
+                    if let Some(ref menu) = titlebar.application_menu {
+                        menu.update(cx, |menu, cx| menu.open_menu(action, cx));
+                    }
+                });
+            }
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        workspace.register_action(
+            |workspace, action: &NavigateApplicationMenuInDirection, cx| {
+                if let Some(titlebar) = workspace
+                    .titlebar_item()
+                    .and_then(|item| item.downcast::<TitleBar>().ok())
+                {
+                    titlebar.update(cx, |titlebar, cx| {
+                        if let Some(ref menu) = titlebar.application_menu {
+                            menu.update(cx, |menu, cx| {
+                                menu.navigate_menus_in_direction(action, cx)
+                            });
+                        }
+                    });
+                }
+            },
+        );
     })
     .detach();
 }
@@ -133,10 +170,20 @@ impl Render for TitleBar {
                     .child(
                         h_flex()
                             .gap_1()
-                            .when_some(self.application_menu.clone(), |this, menu| this.child(menu))
-                            .children(self.render_project_host(cx))
-                            .child(self.render_project_name(cx))
-                            .children(self.render_project_branch(cx))
+                            .map(|title_bar| {
+                                let mut render_project_items = true;
+                                title_bar
+                                    .when_some(self.application_menu.clone(), |title_bar, menu| {
+                                        render_project_items = !menu.read(cx).all_menus_shown();
+                                        title_bar.child(menu)
+                                    })
+                                    .when(render_project_items, |title_bar| {
+                                        title_bar
+                                            .children(self.render_project_host(cx))
+                                            .child(self.render_project_name(cx))
+                                            .children(self.render_project_branch(cx))
+                                    })
+                            })
                             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation()),
                     )
                     .child(self.render_collaborator_list(cx))
@@ -215,7 +262,13 @@ impl TitleBar {
 
         let platform_style = PlatformStyle::platform();
         let application_menu = match platform_style {
-            PlatformStyle::Mac => None,
+            PlatformStyle::Mac => {
+                if option_env!("ZED_USE_CROSS_PLATFORM_MENU").is_some() {
+                    Some(cx.new_view(ApplicationMenu::new))
+                } else {
+                    None
+                }
+            }
             PlatformStyle::Linux | PlatformStyle::Windows => {
                 Some(cx.new_view(ApplicationMenu::new))
             }
@@ -302,21 +355,24 @@ impl TitleBar {
         Some(
             ButtonLike::new("ssh-server-icon")
                 .child(
-                    IconWithIndicator::new(
-                        Icon::new(IconName::Server)
-                            .size(IconSize::XSmall)
-                            .color(icon_color),
-                        Some(Indicator::dot().color(indicator_color)),
-                    )
-                    .indicator_border_color(Some(cx.theme().colors().title_bar_background))
-                    .into_any_element(),
-                )
-                .child(
-                    div()
+                    h_flex()
+                        .gap_2()
                         .max_w_32()
-                        .overflow_hidden()
-                        .text_ellipsis()
-                        .child(Label::new(nickname.clone()).size(LabelSize::Small)),
+                        .child(
+                            IconWithIndicator::new(
+                                Icon::new(IconName::Server)
+                                    .size(IconSize::XSmall)
+                                    .color(icon_color),
+                                Some(Indicator::dot().color(indicator_color)),
+                            )
+                            .indicator_border_color(Some(cx.theme().colors().title_bar_background))
+                            .into_any_element(),
+                        )
+                        .child(
+                            Label::new(nickname.clone())
+                                .size(LabelSize::Small)
+                                .text_ellipsis(),
+                        ),
                 )
                 .tooltip(move |cx| {
                     Tooltip::with_meta("Remote Project", Some(&OpenRemote), meta.clone(), cx)
@@ -431,7 +487,7 @@ impl TitleBar {
         let workspace = self.workspace.upgrade()?;
         let branch_name = entry
             .as_ref()
-            .and_then(RepositoryEntry::branch)
+            .and_then(|entry| entry.branch())
             .map(|branch| util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH))?;
         Some(
             Button::new("project_branch_trigger", branch_name)
@@ -600,7 +656,11 @@ impl TitleBar {
                         .child(
                             h_flex()
                                 .gap_0p5()
-                                .child(Avatar::new(user.avatar_uri.clone()))
+                                .children(
+                                    workspace::WorkspaceSettings::get_global(cx)
+                                        .show_user_picture
+                                        .then(|| Avatar::new(user.avatar_uri.clone())),
+                                )
                                 .child(
                                     Icon::new(IconName::ChevronDown)
                                         .size(IconSize::Small)
@@ -610,7 +670,7 @@ impl TitleBar {
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
                 )
-                .anchor(gpui::AnchorCorner::TopRight)
+                .anchor(gpui::Corner::TopRight)
         } else {
             PopoverMenu::new("user-menu")
                 .menu(|cx| {

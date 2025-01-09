@@ -1134,7 +1134,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                     let end = PointUtf16::new(end_row, end_column);
                                     let range = if start > end { end..start } else { start..end };
                                     highlights.push(lsp::DocumentHighlight {
-                                        range: range_to_lsp(range.clone()),
+                                        range: range_to_lsp(range.clone()).unwrap(),
                                         kind: Some(lsp::DocumentHighlightKind::READ),
                                     });
                                 }
@@ -1336,10 +1336,24 @@ impl RandomizedTest for ProjectCollaborationTest {
                         (_, None) => panic!("guest's file is None, hosts's isn't"),
                     }
 
-                    let host_diff_base = host_buffer
-                        .read_with(host_cx, |b, _| b.diff_base().map(ToString::to_string));
-                    let guest_diff_base = guest_buffer
-                        .read_with(client_cx, |b, _| b.diff_base().map(ToString::to_string));
+                    let host_diff_base = host_project.read_with(host_cx, |project, cx| {
+                        project
+                            .buffer_store()
+                            .read(cx)
+                            .get_unstaged_changes(host_buffer.read(cx).remote_id())
+                            .unwrap()
+                            .read(cx)
+                            .base_text_string(cx)
+                    });
+                    let guest_diff_base = guest_project.read_with(client_cx, |project, cx| {
+                        project
+                            .buffer_store()
+                            .read(cx)
+                            .get_unstaged_changes(guest_buffer.read(cx).remote_id())
+                            .unwrap()
+                            .read(cx)
+                            .base_text_string(cx)
+                    });
                     assert_eq!(
                             guest_diff_base, host_diff_base,
                             "guest {} diff base does not match host's for path {path:?} in project {project_id}",

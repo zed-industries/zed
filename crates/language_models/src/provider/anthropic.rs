@@ -52,6 +52,8 @@ pub struct AvailableModel {
     pub cache_configuration: Option<LanguageModelCacheConfiguration>,
     pub max_output_tokens: Option<u32>,
     pub default_temperature: Option<f32>,
+    #[serde(default)]
+    pub extra_beta_headers: Vec<String>,
 }
 
 pub struct AnthropicLanguageModelProvider {
@@ -202,6 +204,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                     }),
                     max_output_tokens: model.max_output_tokens,
                     default_temperature: model.default_temperature,
+                    extra_beta_headers: model.extra_beta_headers.clone(),
                 },
             );
         }
@@ -498,7 +501,7 @@ pub fn map_to_language_model_completion_events(
                                     Some(maybe!({
                                         Ok(LanguageModelCompletionEvent::ToolUse(
                                             LanguageModelToolUse {
-                                                id: tool_use.id,
+                                                id: tool_use.id.into(),
                                                 name: tool_use.name,
                                                 input: if tool_use.input_json.is_empty() {
                                                     serde_json::Value::Null

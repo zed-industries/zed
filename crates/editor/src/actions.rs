@@ -1,6 +1,6 @@
 //! This module contains all actions supported by [`Editor`].
 use super::*;
-use gpui::action_as;
+use gpui::{action_aliases, action_as};
 use util::serde::default_true;
 
 #[derive(PartialEq, Clone, Deserialize, Default)]
@@ -105,6 +105,7 @@ pub struct MoveDownByLines {
     #[serde(default)]
     pub(super) lines: u32,
 }
+
 #[derive(PartialEq, Clone, Deserialize, Default)]
 pub struct SelectUpByLines {
     #[serde(default)]
@@ -166,6 +167,13 @@ pub struct SpawnNearestTask {
     pub reveal: task::RevealStrategy,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone, Copy, Deserialize, Default)]
+pub enum UuidVersion {
+    #[default]
+    V4,
+    V7,
+}
+
 impl_actions!(
     editor,
     [
@@ -196,7 +204,7 @@ impl_actions!(
         ToggleCodeActions,
         ToggleComments,
         UnfoldAt,
-        FoldAtLevel
+        FoldAtLevel,
     ]
 );
 
@@ -243,11 +251,13 @@ gpui::actions!(
         DisplayCursorNames,
         DuplicateLineDown,
         DuplicateLineUp,
+        DuplicateSelection,
         ExpandAllHunkDiffs,
         ExpandMacroRecursively,
         FindAllReferences,
         Fold,
         FoldAll,
+        FoldFunctionBodies,
         FoldRecursive,
         FoldSelectedRanges,
         ToggleFold,
@@ -270,6 +280,8 @@ gpui::actions!(
         HalfPageUp,
         Hover,
         Indent,
+        InsertUuidV4,
+        InsertUuidV7,
         JoinLines,
         KillRingCut,
         KillRingYank,
@@ -295,14 +307,15 @@ gpui::actions!(
         NewlineBelow,
         NextInlineCompletion,
         NextScreen,
+        OpenContextMenu,
         OpenExcerpts,
         OpenExcerptsSplit,
         OpenProposedChangesEditor,
-        OpenFile,
         OpenDocs,
         OpenPermalinkToLine,
         OpenUrl,
         Outdent,
+        AutoIndent,
         PageDown,
         PageUp,
         Paste,
@@ -374,6 +387,6 @@ gpui::actions!(
     ]
 );
 
-action_as!(outline, ToggleOutline as Toggle);
-
 action_as!(go_to_line, ToggleGoToLine as Toggle);
+
+action_aliases!(editor, OpenSelectedFilename, [OpenFile]);

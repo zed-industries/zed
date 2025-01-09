@@ -89,7 +89,7 @@ impl ComponentPreview for Indicator {
         "An indicator visually represents a status or state."
     }
 
-    fn examples(_: &WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
         vec![
             example_group_with_title(
                 "Types",
