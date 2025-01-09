@@ -19,6 +19,7 @@
 
 mod block_map;
 mod crease_map;
+mod custom_highlights;
 mod fold_map;
 mod inlay_map;
 pub(crate) mod invisibles;
@@ -31,6 +32,7 @@ use crate::{
 pub use block_map::{
     Block, BlockBufferRows, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap,
     BlockPlacement, BlockPoint, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
+    StickyHeaderExcerpt,
 };
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
@@ -40,7 +42,7 @@ use fold_map::{FoldMap, FoldSnapshot};
 use gpui::{
     AnyElement, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
 };
-pub(crate) use inlay_map::Inlay;
+pub use inlay_map::Inlay;
 use inlay_map::{InlayMap, InlaySnapshot};
 pub use inlay_map::{InlayOffset, InlayPoint};
 use invisibles::{is_invisible, replacement};
@@ -269,7 +271,7 @@ impl DisplayMap {
                     let start = buffer_snapshot.anchor_before(range.start);
                     let end = buffer_snapshot.anchor_after(range.end);
                     BlockProperties {
-                        placement: BlockPlacement::Replace(start..end),
+                        placement: BlockPlacement::Replace(start..=end),
                         render,
                         height,
                         style,
@@ -334,6 +336,38 @@ impl DisplayMap {
             .update(cx, |map, cx| map.sync(snapshot, edits, cx));
         let mut block_map = self.block_map.write(snapshot, edits);
         block_map.remove_intersecting_replace_blocks(offset_ranges, inclusive);
+    }
+
+    pub fn fold_buffer(&mut self, buffer_id: language::BufferId, cx: &mut ModelContext<Self>) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let edits = self.buffer_subscription.consume().into_inner();
+        let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
+        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        let mut block_map = self.block_map.write(snapshot, edits);
+        block_map.fold_buffer(buffer_id, self.buffer.read(cx), cx)
+    }
+
+    pub fn unfold_buffer(&mut self, buffer_id: language::BufferId, cx: &mut ModelContext<Self>) {
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let edits = self.buffer_subscription.consume().into_inner();
+        let tab_size = Self::tab_size(&self.buffer, cx);
+        let (snapshot, edits) = self.inlay_map.sync(snapshot, edits);
+        let (snapshot, edits) = self.fold_map.read(snapshot, edits);
+        let (snapshot, edits) = self.tab_map.sync(snapshot, edits, tab_size);
+        let (snapshot, edits) = self
+            .wrap_map
+            .update(cx, |map, cx| map.sync(snapshot, edits, cx));
+        let mut block_map = self.block_map.write(snapshot, edits);
+        block_map.unfold_buffer(buffer_id, self.buffer.read(cx), cx)
+    }
+
+    pub(crate) fn buffer_folded(&self, buffer_id: language::BufferId) -> bool {
+        self.block_map.folded_buffers.contains(&buffer_id)
     }
 
     pub fn insert_creases(
@@ -712,7 +746,11 @@ impl DisplaySnapshot {
         }
     }
 
-    pub fn next_line_boundary(&self, mut point: MultiBufferPoint) -> (Point, DisplayPoint) {
+    pub fn next_line_boundary(
+        &self,
+        mut point: MultiBufferPoint,
+    ) -> (MultiBufferPoint, DisplayPoint) {
+        let original_point = point;
         loop {
             let mut inlay_point = self.inlay_snapshot.to_inlay_point(point);
             let mut fold_point = self.fold_snapshot.to_fold_point(inlay_point, Bias::Right);
@@ -723,7 +761,7 @@ impl DisplaySnapshot {
             let mut display_point = self.point_to_display_point(point, Bias::Right);
             *display_point.column_mut() = self.line_len(display_point.row());
             let next_point = self.display_point_to_point(display_point, Bias::Right);
-            if next_point == point {
+            if next_point == point || original_point == point || original_point == next_point {
                 return (point, display_point);
             }
             point = next_point;
@@ -1068,6 +1106,10 @@ impl DisplaySnapshot {
             .map(|(row, block)| (DisplayRow(row), block))
     }
 
+    pub fn sticky_header_excerpt(&self, row: DisplayRow) -> Option<StickyHeaderExcerpt<'_>> {
+        self.block_snapshot.sticky_header_excerpt(row.0)
+    }
+
     pub fn block_for_id(&self, id: BlockId) -> Option<Block> {
         self.block_snapshot.block_for_id(id)
     }
@@ -1079,10 +1121,6 @@ impl DisplaySnapshot {
     pub fn is_line_folded(&self, buffer_row: MultiBufferRow) -> bool {
         self.block_snapshot.is_line_replaced(buffer_row)
             || self.fold_snapshot.is_line_folded(buffer_row)
-    }
-
-    pub fn is_line_replaced(&self, buffer_row: MultiBufferRow) -> bool {
-        self.block_snapshot.is_line_replaced(buffer_row)
     }
 
     pub fn is_block_line(&self, display_row: DisplayRow) -> bool {
@@ -2231,7 +2269,7 @@ pub mod tests {
                 [BlockProperties {
                     placement: BlockPlacement::Replace(
                         buffer_snapshot.anchor_before(Point::new(1, 2))
-                            ..buffer_snapshot.anchor_after(Point::new(2, 3)),
+                            ..=buffer_snapshot.anchor_after(Point::new(2, 3)),
                     ),
                     height: 4,
                     style: BlockStyle::Fixed,

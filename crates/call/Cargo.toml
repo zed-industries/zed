@@ -40,6 +40,7 @@ schemars.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 settings.workspace = true
+telemetry.workspace = true
 util.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]

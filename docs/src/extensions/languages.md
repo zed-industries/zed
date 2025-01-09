@@ -51,10 +51,10 @@ Zed uses the [Tree-sitter](https://tree-sitter.github.io) parsing library to pro
 ```toml
 [grammars.gleam]
 repository = "https://github.com/gleam-lang/tree-sitter-gleam"
-commit = "58b7cac8fc14c92b0677c542610d8738c373fa81"
+rev = "58b7cac8fc14c92b0677c542610d8738c373fa81"
 ```
 
-The `repository` field must specify a repository where the Tree-sitter grammar should be loaded from, and the `commit` field must contain the SHA of the Git commit to use. An extension can provide multiple grammars by referencing multiple tree-sitter repositories.
+The `repository` field must specify a repository where the Tree-sitter grammar should be loaded from, and the `rev` field must contain a Git revision to use, such as the SHA of a Git commit. An extension can provide multiple grammars by referencing multiple tree-sitter repositories.
 
 ## Tree-sitter Queries
 
@@ -203,19 +203,19 @@ Here's an example from an `injections.scm` file for Markdown:
 ```scheme
 (fenced_code_block
   (info_string
-    (language) @language)
-  (code_fence_content) @content)
+    (language) @injection.language)
+  (code_fence_content) @injection.content)
 
 ((inline) @content
- (#set! "language" "markdown-inline"))
+ (#set! injection.language "markdown-inline"))
 ```
 
 This query identifies fenced code blocks, capturing the language specified in the info string and the content within the block. It also captures inline content and sets its language to "markdown-inline".
 
-| Capture   | Description                                                |
-| --------- | ---------------------------------------------------------- |
-| @language | Captures the language identifier for a code block          |
-| @content  | Captures the content to be treated as a different language |
+| Capture             | Description                                                |
+| ------------------- | ---------------------------------------------------------- |
+| @injection.language | Captures the language identifier for a code block          |
+| @injection.content  | Captures the content to be treated as a different language |
 
 Note that we couldn't use JSON as an example here because it doesn't support language injections.
 
@@ -363,12 +363,12 @@ TBD: `#set! tag`
 
 Zed uses the [Language Server Protocol](https://microsoft.github.io/language-server-protocol/) to provide advanced language support.
 
-An extension may provide any number of language servers. To provide a language server from your extension, add an entry to your `extension.toml` with the name of your language server and the language it applies to:
+An extension may provide any number of language servers. To provide a language server from your extension, add an entry to your `extension.toml` with the name of your language server and the language(s) it applies to:
 
 ```toml
 [language_servers.my-language]
 name = "My Language LSP"
-language = "My Language"
+languages = ["My Language"]
 ```
 
 Then, in the Rust code for your extension, implement the `language_server_command` method on your extension:

@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use call::{report_call_event_for_room, ActiveCall, ParticipantLocation, Room};
+use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, User};
 use gpui::{actions, AppContext, Task, WindowContext};
 use gpui::{canvas, point, AnyElement, Hsla, IntoElement, MouseButton, Path, Styled};
@@ -19,22 +19,19 @@ actions!(
 fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut WindowContext) {
     let call = ActiveCall::global(cx).read(cx);
     if let Some(room) = call.room().cloned() {
-        let client = call.client();
         let toggle_screen_sharing = room.update(cx, |room, cx| {
             if room.is_screen_sharing() {
-                report_call_event_for_room(
-                    "disable screen share",
-                    room.id(),
-                    room.channel_id(),
-                    &client,
+                telemetry::event!(
+                    "Screen Share Disabled",
+                    room_id = room.id(),
+                    channel_id = room.channel_id(),
                 );
                 Task::ready(room.unshare_screen(cx))
             } else {
-                report_call_event_for_room(
-                    "enable screen share",
-                    room.id(),
-                    room.channel_id(),
-                    &client,
+                telemetry::event!(
+                    "Screen Share Enabled",
+                    room_id = room.id(),
+                    channel_id = room.channel_id(),
                 );
                 room.share_screen(cx)
             }
@@ -46,14 +43,17 @@ fn toggle_screen_sharing(_: &ToggleScreenSharing, cx: &mut WindowContext) {
 fn toggle_mute(_: &ToggleMute, cx: &mut AppContext) {
     let call = ActiveCall::global(cx).read(cx);
     if let Some(room) = call.room().cloned() {
-        let client = call.client();
         room.update(cx, |room, cx| {
             let operation = if room.is_muted() {
-                "enable microphone"
+                "Microphone Enabled"
             } else {
-                "disable microphone"
+                "Microphone Disabled"
             };
-            report_call_event_for_room(operation, room.id(), room.channel_id(), &client);
+            telemetry::event!(
+                operation,
+                room_id = room.id(),
+                channel_id = room.channel_id(),
+            );
 
             room.toggle_mute(cx)
         });
@@ -73,17 +73,17 @@ fn render_color_ribbon(color: Hsla) -> impl Element {
             let height = bounds.size.height;
             let horizontal_offset = height;
             let vertical_offset = px(height.0 / 2.0);
-            let mut path = Path::new(bounds.lower_left());
+            let mut path = Path::new(bounds.bottom_left());
             path.curve_to(
                 bounds.origin + point(horizontal_offset, vertical_offset),
                 bounds.origin + point(px(0.0), vertical_offset),
             );
-            path.line_to(bounds.upper_right() + point(-horizontal_offset, vertical_offset));
+            path.line_to(bounds.top_right() + point(-horizontal_offset, vertical_offset));
             path.curve_to(
-                bounds.lower_right(),
-                bounds.upper_right() + point(px(0.0), vertical_offset),
+                bounds.bottom_right(),
+                bounds.top_right() + point(px(0.0), vertical_offset),
             );
-            path.line_to(bounds.lower_left());
+            path.line_to(bounds.bottom_left());
             cx.paint_path(path, color);
         },
     )
@@ -381,7 +381,7 @@ impl TitleBar {
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
                 .toggle_state(is_muted)
-                .selected_style(ButtonStyle::Tinted(TintColor::Negative))
+                .selected_style(ButtonStyle::Tinted(TintColor::Error))
                 .on_click(move |_, cx| {
                     toggle_mute(&Default::default(), cx);
                 })
@@ -398,7 +398,7 @@ impl TitleBar {
                     },
                 )
                 .style(ButtonStyle::Subtle)
-                .selected_style(ButtonStyle::Tinted(TintColor::Negative))
+                .selected_style(ButtonStyle::Tinted(TintColor::Error))
                 .icon_size(IconSize::Small)
                 .toggle_state(is_deafened)
                 .tooltip(move |cx| {

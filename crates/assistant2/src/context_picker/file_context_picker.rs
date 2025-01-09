@@ -1,20 +1,17 @@
-use std::fmt::Write as _;
-use std::ops::RangeInclusive;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use fuzzy::PathMatch;
-use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakView};
+use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakModel, WeakView};
 use picker::{Picker, PickerDelegate};
-use project::{PathMatchCandidateSet, WorktreeId};
-use ui::{prelude::*, ListItem};
+use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
+use ui::{prelude::*, ListItem, Tooltip};
 use util::ResultExt as _;
 use workspace::Workspace;
 
-use crate::context::ContextKind;
-use crate::context_picker::ContextPicker;
-use crate::message_editor::MessageEditor;
+use crate::context_picker::{ConfirmBehavior, ContextPicker};
+use crate::context_store::{ContextStore, FileInclusion};
 
 pub struct FileContextPicker {
     picker: View<Picker<FileContextPickerDelegate>>,
@@ -24,10 +21,16 @@ impl FileContextPicker {
     pub fn new(
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
-        message_editor: WeakView<MessageEditor>,
+        context_store: WeakModel<ContextStore>,
+        confirm_behavior: ConfirmBehavior,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let delegate = FileContextPickerDelegate::new(context_picker, workspace, message_editor);
+        let delegate = FileContextPickerDelegate::new(
+            context_picker,
+            workspace,
+            context_store,
+            confirm_behavior,
+        );
         let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
 
         Self { picker }
@@ -49,7 +52,8 @@ impl Render for FileContextPicker {
 pub struct FileContextPickerDelegate {
     context_picker: WeakView<ContextPicker>,
     workspace: WeakView<Workspace>,
-    message_editor: WeakView<MessageEditor>,
+    context_store: WeakModel<ContextStore>,
+    confirm_behavior: ConfirmBehavior,
     matches: Vec<PathMatch>,
     selected_index: usize,
 }
@@ -58,12 +62,14 @@ impl FileContextPickerDelegate {
     pub fn new(
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
-        message_editor: WeakView<MessageEditor>,
+        context_store: WeakModel<ContextStore>,
+        confirm_behavior: ConfirmBehavior,
     ) -> Self {
         Self {
             context_picker,
             workspace,
-            message_editor,
+            context_store,
+            confirm_behavior,
             matches: Vec::new(),
             selected_index: 0,
         }
@@ -79,44 +85,37 @@ impl FileContextPickerDelegate {
         if query.is_empty() {
             let workspace = workspace.read(cx);
             let project = workspace.project().read(cx);
-            let entries = workspace.recent_navigation_history(Some(10), cx);
-
-            let entries = entries
+            let recent_matches = workspace
+                .recent_navigation_history(Some(10), cx)
                 .into_iter()
-                .map(|entries| entries.0)
-                .chain(project.worktrees(cx).flat_map(|worktree| {
-                    let worktree = worktree.read(cx);
-                    let id = worktree.id();
-                    worktree
-                        .child_entries(Path::new(""))
-                        .filter(|entry| entry.kind.is_file())
-                        .map(move |entry| project::ProjectPath {
-                            worktree_id: id,
-                            path: entry.path.clone(),
-                        })
-                }))
-                .collect::<Vec<_>>();
-
-            let path_prefix: Arc<str> = Arc::default();
-            Task::ready(
-                entries
-                    .into_iter()
-                    .filter_map(|entry| {
-                        let worktree = project.worktree_for_id(entry.worktree_id, cx)?;
-                        let mut full_path = PathBuf::from(worktree.read(cx).root_name());
-                        full_path.push(&entry.path);
-                        Some(PathMatch {
-                            score: 0.,
-                            positions: Vec::new(),
-                            worktree_id: entry.worktree_id.to_usize(),
-                            path: full_path.into(),
-                            path_prefix: path_prefix.clone(),
-                            distance_to_relative_ancestor: 0,
-                            is_dir: false,
-                        })
+                .filter_map(|(project_path, _)| {
+                    let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
+                    Some(PathMatch {
+                        score: 0.,
+                        positions: Vec::new(),
+                        worktree_id: project_path.worktree_id.to_usize(),
+                        path: project_path.path,
+                        path_prefix: worktree.read(cx).root_name().into(),
+                        distance_to_relative_ancestor: 0,
+                        is_dir: false,
                     })
-                    .collect(),
-            )
+                });
+
+            let file_matches = project.worktrees(cx).flat_map(|worktree| {
+                let worktree = worktree.read(cx);
+                let path_prefix: Arc<str> = worktree.root_name().into();
+                worktree.files(true, 0).map(move |entry| PathMatch {
+                    score: 0.,
+                    positions: Vec::new(),
+                    worktree_id: worktree.id().to_usize(),
+                    path: entry.path.clone(),
+                    path_prefix: path_prefix.clone(),
+                    distance_to_relative_ancestor: 0,
+                    is_dir: false,
+                })
+            });
+
+            Task::ready(recent_matches.chain(file_matches).collect())
         } else {
             let worktrees = workspace.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
             let candidate_sets = worktrees
@@ -190,49 +189,45 @@ impl PickerDelegate for FileContextPickerDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
-        let mat = &self.matches[self.selected_index];
+        let Some(mat) = self.matches.get(self.selected_index) else {
+            return;
+        };
 
-        let workspace = self.workspace.clone();
-        let Some(project) = workspace
-            .upgrade()
-            .map(|workspace| workspace.read(cx).project().clone())
+        let project_path = ProjectPath {
+            worktree_id: WorktreeId::from_usize(mat.worktree_id),
+            path: mat.path.clone(),
+        };
+
+        let Some(task) = self
+            .context_store
+            .update(cx, |context_store, cx| {
+                context_store.add_file(project_path, cx)
+            })
+            .ok()
         else {
             return;
         };
-        let path = mat.path.clone();
-        let worktree_id = WorktreeId::from_usize(mat.worktree_id);
+
+        let workspace = self.workspace.clone();
+        let confirm_behavior = self.confirm_behavior;
         cx.spawn(|this, mut cx| async move {
-            let Some(open_buffer_task) = project
-                .update(&mut cx, |project, cx| {
-                    project.open_buffer((worktree_id, path.clone()), cx)
-                })
-                .ok()
-            else {
-                return anyhow::Ok(());
-            };
+            match task.await {
+                Ok(()) => {
+                    this.update(&mut cx, |this, cx| match confirm_behavior {
+                        ConfirmBehavior::KeepOpen => {}
+                        ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                    })?;
+                }
+                Err(err) => {
+                    let Some(workspace) = workspace.upgrade() else {
+                        return anyhow::Ok(());
+                    };
 
-            let buffer = open_buffer_task.await?;
-
-            this.update(&mut cx, |this, cx| {
-                this.delegate
-                    .message_editor
-                    .update(cx, |message_editor, cx| {
-                        let mut text = String::new();
-                        text.push_str(&codeblock_fence_for_path(Some(&path), None));
-                        text.push_str(&buffer.read(cx).text());
-                        if !text.ends_with('\n') {
-                            text.push('\n');
-                        }
-
-                        text.push_str("```\n");
-
-                        message_editor.insert_context(
-                            ContextKind::File,
-                            path.to_string_lossy().to_string(),
-                            text,
-                        );
-                    })
-            })??;
+                    workspace.update(&mut cx, |workspace, cx| {
+                        workspace.show_error(&err, cx);
+                    })?;
+                }
+            }
 
             anyhow::Ok(())
         })
@@ -252,53 +247,81 @@ impl PickerDelegate for FileContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let path_match = &self.matches[ix];
-        let file_name = path_match
-            .path
-            .file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string();
-        let directory = path_match
-            .path
-            .parent()
-            .map(|directory| format!("{}/", directory.to_string_lossy()));
+
+        let (file_name, directory) = if path_match.path.as_ref() == Path::new("") {
+            (SharedString::from(path_match.path_prefix.clone()), None)
+        } else {
+            let file_name = path_match
+                .path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .to_string()
+                .into();
+
+            let mut directory = format!("{}/", path_match.path_prefix);
+            if let Some(parent) = path_match
+                .path
+                .parent()
+                .filter(|parent| parent != &Path::new(""))
+            {
+                directory.push_str(&parent.to_string_lossy());
+                directory.push('/');
+            }
+
+            (file_name, Some(directory))
+        };
+
+        let added = self.context_store.upgrade().and_then(|context_store| {
+            context_store
+                .read(cx)
+                .will_include_file_path(&path_match.path, cx)
+        });
 
         Some(
-            ListItem::new(ix).inset(true).toggle_state(selected).child(
-                h_flex()
-                    .gap_2()
-                    .child(Label::new(file_name))
-                    .children(directory.map(|directory| {
-                        Label::new(directory)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                    })),
-            ),
+            ListItem::new(ix)
+                .inset(true)
+                .toggle_state(selected)
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(Label::new(file_name))
+                        .children(directory.map(|directory| {
+                            Label::new(directory)
+                                .size(LabelSize::Small)
+                                .color(Color::Muted)
+                        })),
+                )
+                .when_some(added, |el, added| match added {
+                    FileInclusion::Direct(_) => el.end_slot(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Check)
+                                    .size(IconSize::Small)
+                                    .color(Color::Success),
+                            )
+                            .child(Label::new("Added").size(LabelSize::Small)),
+                    ),
+                    FileInclusion::InDirectory(dir_name) => {
+                        let dir_name = dir_name.to_string_lossy().into_owned();
+
+                        el.end_slot(
+                            h_flex()
+                                .gap_1()
+                                .child(
+                                    Icon::new(IconName::Check)
+                                        .size(IconSize::Small)
+                                        .color(Color::Success),
+                                )
+                                .child(Label::new("Included").size(LabelSize::Small)),
+                        )
+                        .tooltip(move |cx| Tooltip::text(format!("in {dir_name}"), cx))
+                    }
+                }),
         )
     }
-}
-
-fn codeblock_fence_for_path(path: Option<&Path>, row_range: Option<RangeInclusive<u32>>) -> String {
-    let mut text = String::new();
-    write!(text, "```").unwrap();
-
-    if let Some(path) = path {
-        if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
-            write!(text, "{} ", extension).unwrap();
-        }
-
-        write!(text, "{}", path.display()).unwrap();
-    } else {
-        write!(text, "untitled").unwrap();
-    }
-
-    if let Some(row_range) = row_range {
-        write!(text, ":{}-{}", row_range.start() + 1, row_range.end() + 1).unwrap();
-    }
-
-    text.push('\n');
-    text
 }

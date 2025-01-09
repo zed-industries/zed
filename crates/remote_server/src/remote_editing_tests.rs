@@ -20,6 +20,7 @@ use serde_json::json;
 use settings::{initial_server_settings_content, Settings, SettingsLocation, SettingsStore};
 use smol::stream::StreamExt;
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -1150,6 +1151,10 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let (project, headless_project) = init_test(&fs, cx, server_cx).await;
     let branches = ["main", "dev", "feature-1"];
+    let branches_set = branches
+        .iter()
+        .map(ToString::to_string)
+        .collect::<HashSet<_>>();
     fs.insert_branches(Path::new("/code/project1/.git"), &branches);
 
     let (worktree, _) = project
@@ -1173,10 +1178,10 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let remote_branches = remote_branches
         .into_iter()
-        .map(|branch| branch.name)
-        .collect::<Vec<_>>();
+        .map(|branch| branch.name.to_string())
+        .collect::<HashSet<_>>();
 
-    assert_eq!(&remote_branches, &branches);
+    assert_eq!(&remote_branches, &branches_set);
 
     cx.update(|cx| {
         project.update(cx, |project, cx| {

@@ -1,6 +1,7 @@
 mod persistence;
 pub mod terminal_element;
 pub mod terminal_panel;
+pub mod terminal_tab_tooltip;
 
 use collections::HashSet;
 use editor::{actions::SelectAll, scroll::Autoscroll, Editor};
@@ -9,12 +10,11 @@ use gpui::{
     anchored, deferred, div, impl_actions, AnyElement, AppContext, DismissEvent, EventEmitter,
     FocusHandle, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
     MouseDownEvent, Pixels, Render, ScrollWheelEvent, Styled, Subscription, Task, View,
-    VisualContext, WeakView,
+    VisualContext, WeakModel, WeakView,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
 use project::{search::SearchQuery, terminals::TerminalKind, Fs, Metadata, Project};
-use task::{NewCenterTask, RevealStrategy};
 use terminal::{
     alacritty_terminal::{
         index::Point,
@@ -27,11 +27,16 @@ use terminal::{
 };
 use terminal_element::{is_blank, TerminalElement};
 use terminal_panel::TerminalPanel;
+use terminal_tab_tooltip::TerminalTooltip;
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
-use util::{paths::PathWithPosition, ResultExt};
+use util::{
+    paths::{PathWithPosition, SanitizedPath},
+    ResultExt,
+};
 use workspace::{
-    item::{BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams},
-    notifications::NotifyResultExt,
+    item::{
+        BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
+    },
     register_serializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
     CloseActiveItem, NewCenterTerminal, NewTerminal, OpenVisible, ToolbarItemLocation, Workspace,
@@ -46,7 +51,7 @@ use zed_actions::InlineAssist;
 
 use std::{
     cmp,
-    ops::{ControlFlow, RangeInclusive},
+    ops::RangeInclusive,
     path::{Path, PathBuf},
     rc::Rc,
     sync::Arc,
@@ -81,7 +86,6 @@ pub fn init(cx: &mut AppContext) {
 
     cx.observe_new_views(|workspace: &mut Workspace, _cx| {
         workspace.register_action(TerminalView::deploy);
-        workspace.register_action(TerminalView::deploy_center_task);
     })
     .detach();
 }
@@ -100,6 +104,7 @@ pub struct BlockContext<'a, 'b> {
 pub struct TerminalView {
     terminal: Model<Terminal>,
     workspace: WeakView<Workspace>,
+    project: WeakModel<Project>,
     focus_handle: FocusHandle,
     //Currently using iTerm bell, show bell emoji in tab until input is received
     has_bell: bool,
@@ -129,61 +134,6 @@ impl FocusableView for TerminalView {
 }
 
 impl TerminalView {
-    pub fn deploy_center_task(
-        workspace: &mut Workspace,
-        task: &NewCenterTask,
-        cx: &mut ViewContext<Workspace>,
-    ) {
-        let reveal_strategy: RevealStrategy = task.action.reveal;
-        let mut spawn_task = task.action.clone();
-
-        let is_local = workspace.project().read(cx).is_local();
-
-        if let ControlFlow::Break(_) =
-            TerminalPanel::fill_command(is_local, &task.action, &mut spawn_task)
-        {
-            return;
-        }
-
-        let kind = TerminalKind::Task(spawn_task);
-
-        let project = workspace.project().clone();
-        let database_id = workspace.database_id();
-        cx.spawn(|workspace, mut cx| async move {
-            let terminal = cx
-                .update(|cx| {
-                    let window = cx.window_handle();
-                    project.update(cx, |project, cx| project.create_terminal(kind, window, cx))
-                })?
-                .await?;
-
-            let terminal_view = cx.new_view(|cx| {
-                TerminalView::new(terminal.clone(), workspace.clone(), database_id, cx)
-            })?;
-
-            cx.update(|cx| {
-                let focus_item = match reveal_strategy {
-                    RevealStrategy::Always => true,
-                    RevealStrategy::Never | RevealStrategy::NoFocus => false,
-                };
-
-                workspace.update(cx, |workspace, cx| {
-                    workspace.add_item_to_active_pane(
-                        Box::new(terminal_view),
-                        None,
-                        focus_item,
-                        cx,
-                    );
-                })?;
-
-                anyhow::Ok(())
-            })??;
-
-            anyhow::Ok(())
-        })
-        .detach_and_log_err(cx);
-    }
-
     ///Create a new Terminal in the current working directory or the user's home directory
     pub fn deploy(
         workspace: &mut Workspace,
@@ -191,44 +141,15 @@ impl TerminalView {
         cx: &mut ViewContext<Workspace>,
     ) {
         let working_directory = default_working_directory(workspace, cx);
-
-        let window = cx.window_handle();
-        let project = workspace.project().downgrade();
-        cx.spawn(move |workspace, mut cx| async move {
-            let terminal = project
-                .update(&mut cx, |project, cx| {
-                    project.create_terminal(TerminalKind::Shell(working_directory), window, cx)
-                })
-                .ok()?
-                .await;
-            let terminal = workspace
-                .update(&mut cx, |workspace, cx| terminal.notify_err(workspace, cx))
-                .ok()
-                .flatten()?;
-
-            workspace
-                .update(&mut cx, |workspace, cx| {
-                    let view = cx.new_view(|cx| {
-                        TerminalView::new(
-                            terminal,
-                            workspace.weak_handle(),
-                            workspace.database_id(),
-                            cx,
-                        )
-                    });
-                    workspace.add_item_to_active_pane(Box::new(view), None, true, cx);
-                })
-                .ok();
-
-            Some(())
-        })
-        .detach()
+        TerminalPanel::add_center_terminal(workspace, TerminalKind::Shell(working_directory), cx)
+            .detach_and_log_err(cx);
     }
 
     pub fn new(
         terminal: Model<Terminal>,
         workspace: WeakView<Workspace>,
         workspace_id: Option<WorkspaceId>,
+        project: WeakModel<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let workspace_handle = workspace.clone();
@@ -248,6 +169,7 @@ impl TerminalView {
         Self {
             terminal,
             workspace: workspace_handle,
+            project,
             has_bell: false,
             focus_handle,
             context_menu: None,
@@ -505,7 +427,7 @@ impl TerminalView {
         cx.notify();
     }
 
-    pub fn should_show_cursor(&self, focused: bool, cx: &mut gpui::ViewContext<Self>) -> bool {
+    pub fn should_show_cursor(&self, focused: bool, cx: &mut ViewContext<Self>) -> bool {
         //Don't blink the cursor when not focused, blinking is disabled, or paused
         if !focused
             || self.blinking_paused
@@ -691,7 +613,7 @@ impl TerminalView {
         dispatch_context
     }
 
-    fn set_terminal(&mut self, terminal: Model<Terminal>, cx: &mut ViewContext<'_, TerminalView>) {
+    fn set_terminal(&mut self, terminal: Model<Terminal>, cx: &mut ViewContext<TerminalView>) {
         self._terminal_subscriptions =
             subscribe_for_terminal_events(&terminal, self.workspace.clone(), cx);
         self.terminal = terminal;
@@ -701,7 +623,7 @@ impl TerminalView {
 fn subscribe_for_terminal_events(
     terminal: &Model<Terminal>,
     workspace: WeakView<Workspace>,
-    cx: &mut ViewContext<'_, TerminalView>,
+    cx: &mut ViewContext<TerminalView>,
 ) -> Vec<Subscription> {
     let terminal_subscription = cx.observe(terminal, |_, _, cx| cx.notify());
     let terminal_events_subscription =
@@ -865,9 +787,19 @@ fn possible_open_paths_metadata(
     cx: &mut ViewContext<TerminalView>,
 ) -> Task<Vec<(PathWithPosition, Metadata)>> {
     cx.background_executor().spawn(async move {
-        let mut paths_with_metadata = Vec::with_capacity(potential_paths.len());
+        let mut canonical_paths = HashSet::default();
+        for path in potential_paths {
+            if let Ok(canonical) = fs.canonicalize(&path).await {
+                let sanitized = SanitizedPath::from(canonical);
+                canonical_paths.insert(sanitized.as_path().to_path_buf());
+            } else {
+                canonical_paths.insert(path);
+            }
+        }
 
-        let mut fetch_metadata_tasks = potential_paths
+        let mut paths_with_metadata = Vec::with_capacity(canonical_paths.len());
+
+        let mut fetch_metadata_tasks = canonical_paths
             .into_iter()
             .map(|potential_path| async {
                 let metadata = fs.metadata(&potential_path).await.ok().flatten();
@@ -904,19 +836,19 @@ fn possible_open_targets(
     let column = path_position.column;
     let maybe_path = path_position.path;
 
-    let abs_path = if maybe_path.is_absolute() {
-        Some(maybe_path)
+    let potential_paths = if maybe_path.is_absolute() {
+        HashSet::from_iter([maybe_path])
     } else if maybe_path.starts_with("~") {
         maybe_path
             .strip_prefix("~")
             .ok()
             .and_then(|maybe_path| Some(dirs::home_dir()?.join(maybe_path)))
+            .map_or_else(HashSet::default, |p| HashSet::from_iter([p]))
     } else {
         let mut potential_cwd_and_workspace_paths = HashSet::default();
         if let Some(cwd) = cwd {
             let abs_path = Path::join(cwd, &maybe_path);
-            let canonicalized_path = abs_path.canonicalize().unwrap_or(abs_path);
-            potential_cwd_and_workspace_paths.insert(canonicalized_path);
+            potential_cwd_and_workspace_paths.insert(abs_path);
         }
         if let Some(workspace) = workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
@@ -941,25 +873,10 @@ fn possible_open_targets(
                 }
             });
         }
-
-        return possible_open_paths_metadata(
-            fs,
-            row,
-            column,
-            potential_cwd_and_workspace_paths,
-            cx,
-        );
+        potential_cwd_and_workspace_paths
     };
 
-    let canonicalized_paths = match abs_path {
-        Some(abs_path) => match abs_path.canonicalize() {
-            Ok(path) => HashSet::from_iter([path]),
-            Err(_) => HashSet::default(),
-        },
-        None => HashSet::default(),
-    };
-
-    possible_open_paths_metadata(fs, row, column, canonicalized_paths, cx)
+    possible_open_paths_metadata(fs, row, column, potential_paths, cx)
 }
 
 fn regex_to_literal(regex: &str) -> String {
@@ -1072,7 +989,7 @@ impl Render for TerminalView {
                 deferred(
                     anchored()
                         .position(*position)
-                        .anchor(gpui::AnchorCorner::TopLeft)
+                        .anchor(gpui::Corner::TopLeft)
                         .child(menu.clone()),
                 )
                 .with_priority(1)
@@ -1083,8 +1000,17 @@ impl Render for TerminalView {
 impl Item for TerminalView {
     type Event = ItemEvent;
 
-    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
-        Some(self.terminal().read(cx).title(false).into())
+    fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent> {
+        let terminal = self.terminal().read(cx);
+        let title = terminal.title(false);
+        let pid = terminal.pty_info.pid_getter().fallback_pid();
+
+        Some(TabTooltipContent::Custom(Box::new(
+            move |cx: &mut WindowContext| {
+                cx.new_view(|_| TerminalTooltip::new(title.clone(), pid))
+                    .into()
+            },
+        )))
     }
 
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
@@ -1163,21 +1089,37 @@ impl Item for TerminalView {
 
     fn clone_on_split(
         &self,
-        _workspace_id: Option<WorkspaceId>,
-        _cx: &mut ViewContext<Self>,
+        workspace_id: Option<WorkspaceId>,
+        cx: &mut ViewContext<Self>,
     ) -> Option<View<Self>> {
-        //From what I can tell, there's no  way to tell the current working
-        //Directory of the terminal from outside the shell. There might be
-        //solutions to this, but they are non-trivial and require more IPC
+        let window = cx.window_handle();
+        let terminal = self
+            .project
+            .update(cx, |project, cx| {
+                let terminal = self.terminal().read(cx);
+                let working_directory = terminal
+                    .working_directory()
+                    .or_else(|| Some(project.active_project_directory(cx)?.to_path_buf()));
+                let python_venv_directory = terminal.python_venv_directory.clone();
+                project.create_terminal_with_venv(
+                    TerminalKind::Shell(working_directory),
+                    python_venv_directory,
+                    window,
+                    cx,
+                )
+            })
+            .ok()?
+            .log_err()?;
 
-        // Some(TerminalContainer::new(
-        //     Err(anyhow::anyhow!("failed to instantiate terminal")),
-        //     workspace_id,
-        //     cx,
-        // ))
-
-        // TODO
-        None
+        Some(cx.new_view(|cx| {
+            TerminalView::new(
+                terminal,
+                self.workspace.clone(),
+                workspace_id,
+                self.project.clone(),
+                cx,
+            )
+        }))
     }
 
     fn is_dirty(&self, cx: &gpui::AppContext) -> bool {
@@ -1306,7 +1248,15 @@ impl SerializableItem for TerminalView {
                 })?
                 .await?;
             cx.update(|cx| {
-                cx.new_view(|cx| TerminalView::new(terminal, workspace, Some(workspace_id), cx))
+                cx.new_view(|cx| {
+                    TerminalView::new(
+                        terminal,
+                        workspace,
+                        Some(workspace_id),
+                        project.downgrade(),
+                        cx,
+                    )
+                })
             })
         })
     }

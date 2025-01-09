@@ -55,15 +55,16 @@ To
 
 ```json
 "lsp": {
-"json-language-server": {
-  "settings": {
-    "json": {
-      "schemas": [
-        {
-          "fileMatch": ["*/*.luarc.json"],
-          "url": "https://raw.githubusercontent.com/sumneko/vscode-lua/master/setting/schema.json"
-        }
-      ]
+  "json-language-server": {
+    "settings": {
+      "json": {
+        "schemas": [
+          {
+            "fileMatch": ["*/*.luarc.json"],
+            "url": "https://raw.githubusercontent.com/sumneko/vscode-lua/master/setting/schema.json"
+          }
+        ]
+      }
     }
   }
 }

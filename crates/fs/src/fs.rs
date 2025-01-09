@@ -1,8 +1,8 @@
 #[cfg(target_os = "macos")]
 mod mac_watcher;
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-pub mod linux_watcher;
+#[cfg(not(target_os = "macos"))]
+pub mod fs_watcher;
 
 use anyhow::{anyhow, Result};
 use git::GitHostingProviderRegistry;
@@ -10,7 +10,8 @@ use git::GitHostingProviderRegistry;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use ashpd::desktop::trash;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-use std::fs::File;
+use smol::process::Command;
+
 #[cfg(unix)]
 use std::os::fd::AsFd;
 #[cfg(unix)]
@@ -443,7 +444,13 @@ impl Fs for RealFs {
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        let file = File::open(path)?;
+        if let Ok(Some(metadata)) = self.metadata(path).await {
+            if metadata.is_symlink {
+                // TODO: trash_file does not support trashing symlinks yet - https://github.com/bilelmoussaoui/ashpd/issues/255
+                return self.remove_file(path, RemoveOptions::default()).await;
+            }
+        }
+        let file = smol::fs::File::open(path).await?;
         match trash::trash_file(&file.as_fd()).await {
             Ok(_) => Ok(()),
             Err(err) => Err(anyhow::Error::new(err)),
@@ -514,24 +521,7 @@ impl Fs for RealFs {
 
     async fn atomic_write(&self, path: PathBuf, data: String) -> Result<()> {
         smol::unblock(move || {
-            let mut tmp_file = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-                // Use the directory of the destination as temp dir to avoid
-                // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
-                // See https://github.com/zed-industries/zed/pull/8437 for more details.
-                NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
-            } else if cfg!(target_os = "windows") {
-                // If temp dir is set to a different drive than the destination,
-                // we receive error:
-                //
-                // failed to persist temporary file:
-                // The system cannot move the file to a different disk drive. (os error 17)
-                //
-                // So we use the directory of the destination as a temp dir to avoid it.
-                // https://github.com/zed-industries/zed/issues/16571
-                NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))
-            } else {
-                NamedTempFile::new()
-            }?;
+            let mut tmp_file = create_temp_file(&path)?;
             tmp_file.write_all(data.as_bytes())?;
             tmp_file.persist(path)?;
             Ok::<(), anyhow::Error>(())
@@ -546,13 +536,43 @@ impl Fs for RealFs {
         if let Some(path) = path.parent() {
             self.create_dir(path).await?;
         }
-        let file = smol::fs::File::create(path).await?;
-        let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
-        for chunk in chunks(text, line_ending) {
-            writer.write_all(chunk.as_bytes()).await?;
+        match smol::fs::File::create(path).await {
+            Ok(file) => {
+                let mut writer = smol::io::BufWriter::with_capacity(buffer_size, file);
+                for chunk in chunks(text, line_ending) {
+                    writer.write_all(chunk.as_bytes()).await?;
+                }
+                writer.flush().await?;
+                Ok(())
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+                    let target_path = path.to_path_buf();
+                    let temp_file = smol::unblock(move || create_temp_file(&target_path)).await?;
+
+                    let temp_path = temp_file.into_temp_path();
+                    let temp_path_for_write = temp_path.to_path_buf();
+
+                    let async_file = smol::fs::OpenOptions::new()
+                        .write(true)
+                        .open(&temp_path)
+                        .await?;
+
+                    let mut writer = smol::io::BufWriter::with_capacity(buffer_size, async_file);
+
+                    for chunk in chunks(text, line_ending) {
+                        writer.write_all(chunk.as_bytes()).await?;
+                    }
+                    writer.flush().await?;
+
+                    write_to_file_as_root(temp_path_for_write, path.to_path_buf()).await
+                } else {
+                    // Todo: Implement for Mac and Windows
+                    Err(e.into())
+                }
+            }
+            Err(e) => Err(e.into()),
         }
-        writer.flush().await?;
-        Ok(())
     }
 
     async fn canonicalize(&self, path: &Path) -> Result<PathBuf> {
@@ -680,7 +700,7 @@ impl Fs for RealFs {
         )
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(not(target_os = "macos"))]
     async fn watch(
         &self,
         path: &Path,
@@ -690,10 +710,11 @@ impl Fs for RealFs {
         Arc<dyn Watcher>,
     ) {
         use parking_lot::Mutex;
+        use util::paths::SanitizedPath;
 
         let (tx, rx) = smol::channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
-        let watcher = Arc::new(linux_watcher::LinuxWatcher::new(tx, pending_paths.clone()));
+        let watcher = Arc::new(fs_watcher::FsWatcher::new(tx, pending_paths.clone()));
 
         if watcher.add(path).is_err() {
             // If the path doesn't exist yet (e.g. settings.json), watch the parent dir to learn when it's created.
@@ -705,7 +726,16 @@ impl Fs for RealFs {
         }
 
         // Check if path is a symlink and follow the target parent
-        if let Some(target) = self.read_link(&path).await.ok() {
+        if let Some(mut target) = self.read_link(&path).await.ok() {
+            // Check if symlink target is relative path, if so make it absolute
+            if target.is_relative() {
+                if let Some(parent) = path.parent() {
+                    target = parent.join(target);
+                    if let Ok(canonical) = self.canonicalize(&target).await {
+                        target = SanitizedPath::from(canonical).as_path().to_path_buf();
+                    }
+                }
+            }
             watcher.add(&target).ok();
             if let Some(parent) = target.parent() {
                 watcher.add(parent).log_err();
@@ -726,56 +756,6 @@ impl Fs for RealFs {
                 }
             })),
             watcher,
-        )
-    }
-
-    #[cfg(target_os = "windows")]
-    async fn watch(
-        &self,
-        path: &Path,
-        _latency: Duration,
-    ) -> (
-        Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
-        Arc<dyn Watcher>,
-    ) {
-        use notify::{EventKind, Watcher};
-
-        let (tx, rx) = smol::channel::unbounded();
-
-        let mut file_watcher = notify::recommended_watcher({
-            let tx = tx.clone();
-            move |event: Result<notify::Event, _>| {
-                if let Some(event) = event.log_err() {
-                    let kind = match event.kind {
-                        EventKind::Create(_) => Some(PathEventKind::Created),
-                        EventKind::Modify(_) => Some(PathEventKind::Changed),
-                        EventKind::Remove(_) => Some(PathEventKind::Removed),
-                        _ => None,
-                    };
-
-                    tx.try_send(
-                        event
-                            .paths
-                            .into_iter()
-                            .map(|path| PathEvent { path, kind })
-                            .collect::<Vec<_>>(),
-                    )
-                    .ok();
-                }
-            }
-        })
-        .expect("Could not start file watcher");
-
-        file_watcher
-            .watch(path, notify::RecursiveMode::Recursive)
-            .log_err();
-
-        (
-            Box::pin(rx.chain(futures::stream::once(async move {
-                drop(file_watcher);
-                vec![]
-            }))),
-            Arc::new(RealWatcher {}),
         )
     }
 
@@ -1997,6 +1977,84 @@ fn chunks(rope: &Rope, line_ending: LineEnding) -> impl Iterator<Item = &str> {
             ending.into_iter().chain([line])
         })
     })
+}
+
+fn create_temp_file(path: &Path) -> Result<NamedTempFile> {
+    let temp_file = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
+        // Use the directory of the destination as temp dir to avoid
+        // invalid cross-device link error, and XDG_CACHE_DIR for fallback.
+        // See https://github.com/zed-industries/zed/pull/8437 for more details.
+        NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))?
+    } else if cfg!(target_os = "windows") {
+        // If temp dir is set to a different drive than the destination,
+        // we receive error:
+        //
+        // failed to persist temporary file:
+        // The system cannot move the file to a different disk drive. (os error 17)
+        //
+        // So we use the directory of the destination as a temp dir to avoid it.
+        // https://github.com/zed-industries/zed/issues/16571
+        NamedTempFile::new_in(path.parent().unwrap_or(paths::temp_dir()))?
+    } else {
+        NamedTempFile::new()?
+    };
+
+    Ok(temp_file)
+}
+
+#[cfg(target_os = "macos")]
+async fn write_to_file_as_root(_temp_file_path: PathBuf, _target_file_path: PathBuf) -> Result<()> {
+    unimplemented!("write_to_file_as_root is not implemented")
+}
+
+#[cfg(target_os = "windows")]
+async fn write_to_file_as_root(_temp_file_path: PathBuf, _target_file_path: PathBuf) -> Result<()> {
+    unimplemented!("write_to_file_as_root is not implemented")
+}
+
+#[cfg(any(target_os = "linux", target_os = "freebsd"))]
+async fn write_to_file_as_root(temp_file_path: PathBuf, target_file_path: PathBuf) -> Result<()> {
+    use shlex::try_quote;
+    use std::os::unix::fs::PermissionsExt;
+    use which::which;
+
+    let pkexec_path = smol::unblock(|| which("pkexec"))
+        .await
+        .map_err(|_| anyhow::anyhow!("pkexec not found in PATH"))?;
+
+    let script_file = smol::unblock(move || {
+        let script_file = tempfile::Builder::new()
+            .prefix("write-to-file-as-root-")
+            .tempfile_in(paths::temp_dir())?;
+
+        writeln!(
+            script_file.as_file(),
+            "#!/usr/bin/env sh\nset -eu\ncat \"{}\" > \"{}\"",
+            try_quote(&temp_file_path.to_string_lossy())?,
+            try_quote(&target_file_path.to_string_lossy())?
+        )?;
+
+        let mut perms = script_file.as_file().metadata()?.permissions();
+        perms.set_mode(0o700); // rwx------
+        script_file.as_file().set_permissions(perms)?;
+
+        Result::<_>::Ok(script_file)
+    })
+    .await?;
+
+    let script_path = script_file.into_temp_path();
+
+    let output = Command::new(&pkexec_path)
+        .arg("--disable-internal-agent")
+        .arg(&script_path)
+        .output()
+        .await?;
+
+    if !output.status.success() {
+        return Err(anyhow::anyhow!("Failed to write to file as root"));
+    }
+
+    Ok(())
 }
 
 pub fn normalize_path(path: &Path) -> PathBuf {

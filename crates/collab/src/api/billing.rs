@@ -12,8 +12,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::{str::FromStr, sync::Arc, time::Duration};
 use stripe::{
-    BillingPortalSession, CreateBillingPortalSession, CreateBillingPortalSessionFlowData,
-    CreateBillingPortalSessionFlowDataAfterCompletion,
+    BillingPortalSession, CancellationDetailsReason, CreateBillingPortalSession,
+    CreateBillingPortalSessionFlowData, CreateBillingPortalSessionFlowDataAfterCompletion,
     CreateBillingPortalSessionFlowDataAfterCompletionRedirect,
     CreateBillingPortalSessionFlowDataType, CreateCustomer, Customer, CustomerId, EventObject,
     EventType, Expandable, ListEvents, Subscription, SubscriptionId, SubscriptionStatus,
@@ -21,8 +21,10 @@ use stripe::{
 use util::ResultExt;
 
 use crate::api::events::SnowflakeRow;
+use crate::db::billing_subscription::{StripeCancellationReason, StripeSubscriptionStatus};
 use crate::llm::{DEFAULT_MAX_MONTHLY_SPEND, FREE_TIER_MONTHLY_SPENDING_LIMIT};
 use crate::rpc::{ResultExt as _, Server};
+use crate::{db::UserId, llm::db::LlmDatabase};
 use crate::{
     db::{
         billing_customer, BillingSubscriptionId, CreateBillingCustomerParams,
@@ -31,10 +33,6 @@ use crate::{
         UpdateBillingSubscriptionParams,
     },
     stripe_billing::StripeBilling,
-};
-use crate::{
-    db::{billing_subscription::StripeSubscriptionStatus, UserId},
-    llm::db::LlmDatabase,
 };
 use crate::{AppState, Cents, Error, Result};
 
@@ -248,6 +246,13 @@ async fn create_billing_subscription(
         return Err(Error::http(
             StatusCode::CONFLICT,
             "user already has an active subscription".into(),
+        ));
+    }
+
+    if app.db.has_overdue_billing_subscriptions(user.id).await? {
+        return Err(Error::http(
+            StatusCode::PAYMENT_REQUIRED,
+            "user has overdue billing subscriptions".into(),
         ));
     }
 
@@ -679,6 +684,12 @@ async fn handle_customer_subscription_event(
                             .and_then(|cancel_at| DateTime::from_timestamp(cancel_at, 0))
                             .map(|time| time.naive_utc()),
                     ),
+                    stripe_cancellation_reason: ActiveValue::set(
+                        subscription
+                            .cancellation_details
+                            .and_then(|details| details.reason)
+                            .map(|reason| reason.into()),
+                    ),
                 },
             )
             .await?;
@@ -715,6 +726,10 @@ async fn handle_customer_subscription_event(
                 billing_customer_id: billing_customer.id,
                 stripe_subscription_id: subscription.id.to_string(),
                 stripe_subscription_status: subscription.status.into(),
+                stripe_cancellation_reason: subscription
+                    .cancellation_details
+                    .and_then(|details| details.reason)
+                    .map(|reason| reason.into()),
             })
             .await?;
     }
@@ -787,6 +802,16 @@ impl From<SubscriptionStatus> for StripeSubscriptionStatus {
             SubscriptionStatus::Canceled => Self::Canceled,
             SubscriptionStatus::Unpaid => Self::Unpaid,
             SubscriptionStatus::Paused => Self::Paused,
+        }
+    }
+}
+
+impl From<CancellationDetailsReason> for StripeCancellationReason {
+    fn from(value: CancellationDetailsReason) -> Self {
+        match value {
+            CancellationDetailsReason::CancellationRequested => Self::CancellationRequested,
+            CancellationDetailsReason::PaymentDisputed => Self::PaymentDisputed,
+            CancellationDetailsReason::PaymentFailed => Self::PaymentFailed,
         }
     }
 }

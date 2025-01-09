@@ -109,7 +109,7 @@ impl Inventory {
     /// Pulls its task sources relevant to the worktree and the language given and resolves them with the [`TaskContext`] given.
     /// Joins the new resolutions with the resolved tasks that were used (spawned) before,
     /// orders them so that the most recently used come first, all equally used ones are ordered so that the most specific tasks come first.
-    /// Deduplicates the tasks by their labels and contenxt and splits the ordered list into two: used tasks and the rest, newly resolved tasks.
+    /// Deduplicates the tasks by their labels and context and splits the ordered list into two: used tasks and the rest, newly resolved tasks.
     pub fn used_and_current_resolved_tasks(
         &self,
         worktree: Option<WorktreeId>,
@@ -184,7 +184,7 @@ impl Inventory {
                 let id_base = kind.to_id_base();
                 Some((
                     kind,
-                    task.resolve_task(&id_base, Default::default(), task_context)?,
+                    task.resolve_task(&id_base, task_context)?,
                     not_used_score,
                 ))
             })
@@ -378,7 +378,7 @@ mod test_inventory {
 
     use crate::Inventory;
 
-    use super::{task_source_kind_preference, TaskSourceKind};
+    use super::TaskSourceKind;
 
     pub(super) fn task_template_names(
         inventory: &Model<Inventory>,
@@ -409,7 +409,7 @@ mod test_inventory {
             let id_base = task_source_kind.to_id_base();
             inventory.task_scheduled(
                 task_source_kind.clone(),
-                task.resolve_task(&id_base, Default::default(), &TaskContext::default())
+                task.resolve_task(&id_base, &TaskContext::default())
                     .unwrap_or_else(|| panic!("Failed to resolve task with name {task_name}")),
             );
         });
@@ -427,30 +427,11 @@ mod test_inventory {
                 .into_iter()
                 .filter_map(|(source_kind, task)| {
                     let id_base = source_kind.to_id_base();
-                    Some((
-                        source_kind,
-                        task.resolve_task(&id_base, Default::default(), task_context)?,
-                    ))
+                    Some((source_kind, task.resolve_task(&id_base, task_context)?))
                 })
                 .map(|(source_kind, resolved_task)| (source_kind, resolved_task.resolved_label))
                 .collect()
         })
-    }
-
-    pub(super) async fn list_tasks_sorted_by_last_used(
-        inventory: &Model<Inventory>,
-        worktree: Option<WorktreeId>,
-        cx: &mut TestAppContext,
-    ) -> Vec<(TaskSourceKind, String)> {
-        let (used, current) = inventory.update(cx, |inventory, cx| {
-            inventory.used_and_current_resolved_tasks(worktree, None, &TaskContext::default(), cx)
-        });
-        let mut all = used;
-        all.extend(current);
-        all.into_iter()
-            .map(|(source_kind, task)| (source_kind, task.resolved_label))
-            .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
-            .collect()
     }
 }
 
@@ -877,7 +858,7 @@ mod tests {
         TaskStore::init(None);
     }
 
-    pub(super) async fn resolved_task_names(
+    async fn resolved_task_names(
         inventory: &Model<Inventory>,
         worktree: Option<WorktreeId>,
         cx: &mut TestAppContext,
@@ -904,5 +885,21 @@ mod tests {
                 .collect::<Vec<_>>(),
         ))
         .unwrap()
+    }
+
+    async fn list_tasks_sorted_by_last_used(
+        inventory: &Model<Inventory>,
+        worktree: Option<WorktreeId>,
+        cx: &mut TestAppContext,
+    ) -> Vec<(TaskSourceKind, String)> {
+        let (used, current) = inventory.update(cx, |inventory, cx| {
+            inventory.used_and_current_resolved_tasks(worktree, None, &TaskContext::default(), cx)
+        });
+        let mut all = used;
+        all.extend(current);
+        all.into_iter()
+            .map(|(source_kind, task)| (source_kind, task.resolved_label))
+            .sorted_by_key(|(kind, label)| (task_source_kind_preference(kind), label.clone()))
+            .collect()
     }
 }

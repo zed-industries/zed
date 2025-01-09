@@ -6,11 +6,11 @@ use assistant::AssistantPanel;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, DuplicateLineDown, GoToDiagnostic, GoToHunk,
     GoToPrevDiagnostic, GoToPrevHunk, MoveLineDown, MoveLineUp, SelectAll, SelectLargerSyntaxNode,
-    SelectNext, SelectSmallerSyntaxNode, ToggleGoToLine, ToggleOutline,
+    SelectNext, SelectSmallerSyntaxNode, ToggleGoToLine,
 };
 use editor::{Editor, EditorSettings};
 use gpui::{
-    Action, AnchorCorner, ClickEvent, ElementId, EventEmitter, FocusHandle, FocusableView,
+    Action, ClickEvent, Corner, ElementId, EventEmitter, FocusHandle, FocusableView,
     InteractiveElement, ParentElement, Render, Styled, Subscription, View, ViewContext, WeakView,
 };
 use search::{buffer_search, BufferSearchBar};
@@ -23,7 +23,7 @@ use vim_mode_setting::VimModeSetting;
 use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
-use zed_actions::InlineAssist;
+use zed_actions::{outline::ToggleOutline, InlineAssist};
 
 pub struct QuickActionBar {
     _inlay_hints_enabled_subscription: Option<Subscription>,
@@ -94,6 +94,7 @@ impl Render for QuickActionBar {
             git_blame_inline_enabled,
             show_git_blame_gutter,
             auto_signature_help_enabled,
+            inline_completions_enabled,
         ) = {
             let editor = editor.read(cx);
             let selection_menu_enabled = editor.selection_menu_enabled(cx);
@@ -102,6 +103,7 @@ impl Render for QuickActionBar {
             let git_blame_inline_enabled = editor.git_blame_inline_enabled();
             let show_git_blame_gutter = editor.show_git_blame_gutter();
             let auto_signature_help_enabled = editor.auto_signature_help_enabled(cx);
+            let inline_completions_enabled = editor.inline_completions_enabled(cx);
 
             (
                 selection_menu_enabled,
@@ -110,6 +112,7 @@ impl Render for QuickActionBar {
                 git_blame_inline_enabled,
                 show_git_blame_gutter,
                 auto_signature_help_enabled,
+                inline_completions_enabled,
             )
         };
 
@@ -168,7 +171,7 @@ impl Render for QuickActionBar {
                         }),
                 )
                 .with_handle(self.toggle_selections_handle.clone())
-                .anchor(AnchorCorner::TopRight)
+                .anchor(Corner::TopRight)
                 .menu(move |cx| {
                     let focus = focus.clone();
                     let menu = ContextMenu::build(cx, move |menu, _| {
@@ -217,7 +220,7 @@ impl Render for QuickActionBar {
                             this.tooltip(|cx| Tooltip::text("Editor Controls", cx))
                         }),
                 )
-                .anchor(AnchorCorner::TopRight)
+                .anchor(Corner::TopRight)
                 .with_handle(self.toggle_settings_handle.clone())
                 .menu(move |cx| {
                     let menu = ContextMenu::build(cx, |mut menu, _| {
@@ -275,6 +278,26 @@ impl Render for QuickActionBar {
                                         .update(cx, |editor, cx| {
                                             editor.toggle_auto_signature_help_menu(
                                                 &editor::actions::ToggleAutoSignatureHelp,
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                }
+                            },
+                        );
+
+                        menu = menu.toggleable_entry(
+                            "Inline Completions",
+                            inline_completions_enabled,
+                            IconPosition::Start,
+                            Some(editor::actions::ToggleInlineCompletions.boxed_clone()),
+                            {
+                                let editor = editor.clone();
+                                move |cx| {
+                                    editor
+                                        .update(cx, |editor, cx| {
+                                            editor.toggle_inline_completions(
+                                                &editor::actions::ToggleInlineCompletions,
                                                 cx,
                                             );
                                         })
@@ -349,7 +372,7 @@ impl Render for QuickActionBar {
 
         h_flex()
             .id("quick action bar")
-            .gap(DynamicSpacing::Base06.rems(cx))
+            .gap(DynamicSpacing::Base04.rems(cx))
             .children(self.render_repl_menu(cx))
             .children(self.render_toggle_markdown_preview(self.workspace.clone(), cx))
             .children(search_button)

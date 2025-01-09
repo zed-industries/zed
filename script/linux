@@ -86,7 +86,7 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
   )
   # perl used for building openssl-sys crate. See: https://docs.rs/openssl/latest/openssl/
   # openbsd-netcat is unavailable in RHEL8/9 (and nmap-ncat doesn't support sockets)
-  if grep -qP '^ID="(fedora)' /etc/os-release; then
+  if grep -qP '^ID="?(fedora)' /etc/os-release; then
     deps+=(
       perl-FindBin
       perl-IPC-Cmd
@@ -95,20 +95,20 @@ if [[ -n $dnf ]] || [[ -n $yum ]]; then
       netcat
       mold
     )
-  elif grep -qP '^ID="(rhel|rocky|alma|centos|ol)' /etc/os-release; then
+  elif grep -qP '^ID="?(rhel|rocky|alma|centos|ol)' /etc/os-release; then
     deps+=( perl-interpreter )
   fi
 
   # gcc-c++ is g++ on RHEL8 and 8.x clones
-  if grep -qP '^ID="(rhel|rocky|alma|centos|ol)' /etc/os-release \
-      && grep -qP '^VERSION_ID="8' /etc/os-release; then
+  if grep -qP '^ID="?(rhel|rocky|alma|centos|ol)' /etc/os-release \
+      && grep -qP '^VERSION_ID="?(8)' /etc/os-release; then
     deps+=( gcc-c++ )
   else
     deps+=( g++ )
   fi
 
   # libxkbcommon-x11-devel is in a non-default repo on RHEL 8.x/9.x (except on AmazonLinux)
-  if grep -qP '^VERSION_ID="(8|9)' /etc/os-release && grep -qP '^ID="(rhel|rocky|centos|alma|ol)' /etc/os-release; then
+  if grep -qP '^VERSION_ID="?(8|9)' /etc/os-release && grep -qP '^ID="?(rhel|rocky|centos|alma|ol)' /etc/os-release; then
     $maysudo dnf install -y 'dnf-command(config-manager)'
     if grep -qP '^PRETTY_NAME="(AlmaLinux 8|Rocky Linux 8)' /etc/os-release; then
       $maysudo dnf config-manager --set-enabled powertools
