@@ -33,7 +33,7 @@ actions!(
         Close,
         // For now we don't bind ToggleFocus by default
         ToggleFocus,
-        OpenContextMenu,
+        // OpenContextMenu,
         OpenSelected,
         FocusEditor,
         FocusChanges
@@ -412,19 +412,97 @@ impl GitPanel {
         }
     }
 
-    fn open_entry(&self, entry: &GitListEntry) {
-        println!("Open {} triggered!", entry.repo_path);
+    fn focus_editor(&mut self, _: &FocusEditor, cx: &mut ViewContext<Self>) {
+        self.commit_editor.update(cx, |editor, cx| {
+            editor.focus(cx);
+        });
+        cx.notify();
+    }
+
+    fn focus_changes(&mut self, _: &FocusChanges, cx: &mut ViewContext<Self>) {
+        cx.focus_self();
+        cx.notify();
+    }
+
+    fn get_entry(&self, index: usize) -> Option<&GitListEntry> {
+        self.visible_entries.get(index)
+    }
+
+    fn get_selected_entry(&self) -> Option<&GitListEntry> {
+        self.selected_entry
+            .and_then(|i| self.visible_entries.get(i))
+    }
+
+    fn toggle_staged(&mut self, _: &menu::SecondaryConfirm, cx: &mut ViewContext<Self>) {
+        let state = self.git_state.clone();
+        let project = self.project.clone();
+        let selected_entry = self.get_selected_entry();
+        if let Some(selected_entry) = selected_entry {
+            // TODO: We probably should update this to not rewuire two calls
+            // into git_state?
+            let is_staged =
+                state
+                    .read(cx)
+                    .is_staged(selected_entry.repo_path.clone(), &project, cx);
+
+            if is_staged {
+                state.update(cx, |state, cx| {
+                    state.unstage_entry(selected_entry.repo_path.clone());
+                });
+            } else {
+                state.update(cx, |state, cx| {
+                    state.stage_entry(selected_entry.repo_path.clone());
+                });
+            }
+
+            cx.notify();
+        }
+    }
+
+    fn toggle_staged_for_entry(&self, entry: &GitListEntry, cx: &mut ViewContext<Self>) {
+        let state = self.git_state.clone();
+        let project = self.project.clone();
+        let is_staged = state
+            .read(cx)
+            .is_staged(entry.repo_path.clone(), &project, cx);
+
+        if is_staged {
+            state.update(cx, |state, cx| {
+                state.unstage_entry(entry.repo_path.clone());
+            });
+        } else {
+            state.update(cx, |state, cx| {
+                state.stage_entry(entry.repo_path.clone());
+            });
+        }
+    }
+
+    fn toggle_staged_for_selected(
+        &mut self,
+        _: &menu::SecondaryConfirm,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let selected_entry = self.get_selected_entry();
+
+        if let Some(selected_entry) = selected_entry {
+            self.toggle_staged_for_entry(&selected_entry, cx);
+        }
     }
 
     fn open_selected(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         println!("Open Selected triggered!");
-        let current_selection = self.selected_entry;
+        let selected_entry = self.selected_entry;
 
-        if let Some(entry) = current_selection.and_then(|i| self.visible_entries.get(i)) {
+        if let Some(entry) = selected_entry.and_then(|i| self.visible_entries.get(i)) {
             self.open_entry(entry);
 
             cx.notify();
         }
+    }
+
+    fn open_entry(&self, entry: &GitListEntry) {
+        // TODO: Open entry or entrie's changes.
+        println!("Open {} triggered!", entry.repo_path);
     }
 }
 
@@ -454,7 +532,7 @@ impl GitPanel {
     }
 
     /// Commit all staged changes
-    fn commit_staged_changes(&mut self, _: &CommitChanges, cx: &mut ViewContext<Self>) {
+    fn commit_changes(&mut self, _: &CommitChanges, cx: &mut ViewContext<Self>) {
         self.clear_message(cx);
 
         // TODO: Implement commit all staged
@@ -745,9 +823,9 @@ impl GitPanel {
                     cx,
                 )
             })
-            .on_click(cx.listener(|this, _: &ClickEvent, cx| {
-                this.commit_staged_changes(&CommitChanges, cx)
-            }));
+            .on_click(
+                cx.listener(|this, _: &ClickEvent, cx| this.commit_changes(&CommitChanges, cx)),
+            );
 
         let commit_all_button = self
             .panel_button("commit-all-changes", "Commit All")
@@ -999,7 +1077,7 @@ impl Render for GitPanel {
                     )
                     .on_action(cx.listener(|this, &RevertAll, cx| this.discard_all(&RevertAll, cx)))
                     .on_action(cx.listener(|this, &CommitChanges, cx| {
-                        this.commit_staged_changes(&CommitChanges, cx)
+                        this.commit_changes(&CommitChanges, cx)
                     }))
                     .on_action(cx.listener(|this, &CommitAllChanges, cx| {
                         this.commit_all_changes(&CommitAllChanges, cx)
@@ -1011,6 +1089,7 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::close_panel))
             .on_action(cx.listener(Self::open_selected))
+            .on_action(cx.listener(Self::toggle_staged_for_selected))
             // .on_action(cx.listener(|this, &OpenSelected, cx| this.open_selected(&OpenSelected, cx)))
             .on_hover(cx.listener(|this, hovered, cx| {
                 if *hovered {
