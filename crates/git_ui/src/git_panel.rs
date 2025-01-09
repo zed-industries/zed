@@ -450,18 +450,12 @@ impl GitPanel {
     ) {
         let visible_entries = &self.visible_entries;
 
-        let mut ix = 0;
-
-        for entry in visible_entries {
-            if ix >= range.end {
-                return;
-            }
-
-            if ix + visible_entries.len() <= range.start {
-                ix += visible_entries.len();
-                continue;
-            }
-
+        for (ix, entry) in visible_entries
+            .iter()
+            .enumerate()
+            .skip(range.start)
+            .take(range.end - range.start)
+        {
             let status = entry.status;
             let filename = entry
                 .repo_path
@@ -472,87 +466,12 @@ impl GitPanel {
             let details = GitListEntry {
                 repo_path: entry.repo_path.clone(),
                 status,
-                // use 0 for now until we are ready for tree view
                 depth: 0,
                 display_name: filename,
             };
 
             callback(ix, details, cx);
         }
-
-        // let mut ix = 0;
-        // for worktree_entries in &self.visible_entries {
-        //     if ix >= range.end {
-        //         return;
-        //     }
-
-        //     if ix + worktree_entries.visible_entries.len() <= range.start {
-        //         ix += worktree_entries.visible_entries.len();
-        //         continue;
-        //     }
-
-        //     let end_ix = range.end.min(ix + worktree_entries.visible_entries.len());
-        //     // let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
-        //     if let Some(worktree) = self
-        //         .project
-        //         .read(cx)
-        //         .worktree_for_id(worktree_entries.worktree_id, cx)
-        //     {
-        //         let snapshot = worktree.read(cx).snapshot();
-        //         let root_name = OsStr::new(snapshot.root_name());
-        //         // let expanded_entry_ids = self
-        //         //     .expanded_dir_ids
-        //         //     .get(&snapshot.id())
-        //         //     .map(Vec::as_slice)
-        //         //     .unwrap_or(&[]);
-
-        //         let entry_range = range.start.saturating_sub(ix)..end_ix - ix;
-        //         let entries = worktree_entries.paths();
-
-        //         let index_start = entry_range.start;
-        //         for (i, entry) in worktree_entries.visible_entries[entry_range]
-        //             .iter()
-        //             .enumerate()
-        //         {
-        //             let index = index_start + i;
-        //             let status = entry.status;
-        //             let is_expanded = true; //expanded_entry_ids.binary_search(&entry.id).is_ok();
-
-        //             let (depth, difference) = Self::calculate_depth_and_difference(entry, entries);
-
-        //             let filename = match difference {
-        //                 diff if diff > 1 => entry
-        //                     .repo_path
-        //                     .iter()
-        //                     .skip(entry.repo_path.components().count() - diff)
-        //                     .collect::<PathBuf>()
-        //                     .to_str()
-        //                     .unwrap_or_default()
-        //                     .to_string(),
-        //                 _ => entry
-        //                     .repo_path
-        //                     .file_name()
-        //                     .map(|name| name.to_string_lossy().into_owned())
-        //                     .unwrap_or_else(|| root_name.to_string_lossy().to_string()),
-        //             };
-
-        //             let details = EntryDetails {
-        //                 filename,
-        //                 display_name: entry.repo_path.to_string_lossy().into_owned(),
-        //                 // TODO get it from StatusEntry?
-        //                 kind: EntryKind::File,
-        //                 is_expanded,
-        //                 path: entry.repo_path.clone(),
-        //                 status: Some(status),
-        //                 hunks: entry.hunks.clone(),
-        //                 depth,
-        //                 index,
-        //             };
-        //             callback(ix, details, cx);
-        //         }
-        //     }
-        //     ix = end_ix;
-        // }
     }
 
     fn schedule_update(
@@ -898,7 +817,6 @@ impl GitPanel {
 
     fn render_entries(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let entry_count = self.entry_count();
-        let selected_entry = self.selected_entry;
         h_flex()
             .size_full()
             .overflow_hidden()
@@ -906,9 +824,8 @@ impl GitPanel {
                 uniform_list(cx.view().clone(), "entries", entry_count, {
                     move |git_panel, range, cx| {
                         let mut items = Vec::with_capacity(range.end - range.start);
-                        git_panel.for_each_visible_entry(range, cx, |id, details, cx| {
-                            let is_selected = selected_entry == Some(id);
-                            items.push(git_panel.render_entry(is_selected, details, cx));
+                        git_panel.for_each_visible_entry(range, cx, |ix, details, cx| {
+                            items.push(git_panel.render_entry(ix, details, cx));
                         });
                         items
                     }
@@ -924,7 +841,7 @@ impl GitPanel {
 
     fn render_entry(
         &self,
-        selected: bool,
+        ix: usize,
         entry_details: GitListEntry,
         cx: &ViewContext<Self>,
     ) -> impl IntoElement {
@@ -933,11 +850,14 @@ impl GitPanel {
         let is_staged = state
             .read(cx)
             .is_staged(repo_path.clone(), &self.project, cx);
+        let selected = self.selected_entry == Some(ix);
+
         let status = entry_details.status;
         let entry_id = ElementId::Name(format!("entry_{}", entry_details.display_name).into());
         let checkbox_id =
             ElementId::Name(format!("checkbox_{}", entry_details.display_name).into());
         let view_mode = state.read(cx).list_view_mode.clone();
+        let handle = cx.view().downgrade();
 
         let end_slot = h_flex()
             .invisible()
@@ -1006,22 +926,15 @@ impl GitPanel {
                     .child(entry_details.display_name.clone()),
             )
             .child(div().flex_1())
-            .child(end_slot);
-        // // TODO: Only fire this if the entry is not currently revealed, otherwise the ui flashes
-        // .on_click(move |e, cx| {
-        //     handle
-        //         .update(cx, |git_panel, cx| {
-        //             git_panel.selected_entry = Some(entry_details.index);
-        //             let change_focus = e.down.click_count > 1;
-        //             git_panel.reveal_entry_in_git_editor(
-        //                 entry_details.hunks.clone(),
-        //                 change_focus,
-        //                 None,
-        //                 cx,
-        //             );
-        //         })
-        //         .ok();
-        // });
+            .child(end_slot)
+            // TODO: Only fire this if the entry is not currently revealed, otherwise the ui flashes
+            .on_click(move |_, cx| {
+                handle
+                    .update(cx, |git_panel, _| {
+                        git_panel.selected_entry = Some(ix);
+                    })
+                    .ok();
+            });
 
         entry
     }
