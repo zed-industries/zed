@@ -283,7 +283,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         });
 
         let file_icon = FileIcons::get_icon(&path_match.path.clone(), cx)
-            .map(|icon_path| Icon::from_path(icon_path))
+            .map(Icon::from_path)
             .unwrap_or_else(|| Icon::new(IconName::File));
 
         Some(
