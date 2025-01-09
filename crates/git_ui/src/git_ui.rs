@@ -14,7 +14,6 @@ actions!(
     [
         StageFile,
         UnstageFile,
-        // not staged -> staged, partially staged -> staged, staged -> unstaged
         ToggleStaged,
         // Revert actions are currently in the editor crate:
         // editor::RevertFile,
