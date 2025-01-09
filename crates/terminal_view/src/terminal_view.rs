@@ -1003,12 +1003,36 @@ impl Item for TerminalView {
     fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent> {
         let terminal = self.terminal().read(cx);
         let title = terminal.title(false);
-        let pid = terminal.pty_info.pid_getter().fallback_pid();
+
+        let pid_info = Some(terminal.pty_info.pid_getter().fallback_pid())
+            .filter(|&pid| pid != 0)
+            .map(|pid| format!("Process ID (PID): {}", pid))
+            .unwrap_or_else(|| String::from("No Process ID available"));
+
+        let process_command_line = terminal
+            .pty_info
+            .current
+            .as_ref()
+            .map(|info| format!("Command line: {}", info.argv.join(" ")))
+            .unwrap_or_else(|| String::from("No process info available"));
+
+        let tty_info: String = terminal
+            .pty_info
+            .tty()
+            .unwrap_or_else(|| String::from("No TTY available"));
+        let tty_info_with_prefix = format!("TTY: {}", tty_info);
 
         Some(TabTooltipContent::Custom(Box::new(
             move |cx: &mut WindowContext| {
-                cx.new_view(|_| TerminalTooltip::new(title.clone(), pid))
-                    .into()
+                cx.new_view(|_| {
+                    TerminalTooltip::new(
+                        title.clone(),
+                        pid_info.clone(),
+                        process_command_line.clone(),
+                        tty_info_with_prefix.clone(),
+                    )
+                })
+                .into()
             },
         )))
     }
