@@ -3,7 +3,9 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use fuzzy::PathMatch;
-use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakModel, WeakView};
+use gpui::{
+    AppContext, DismissEvent, FocusHandle, FocusableView, Stateful, Task, View, WeakModel, WeakView,
+};
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use ui::{prelude::*, ListItem, Tooltip};
@@ -237,7 +239,7 @@ impl PickerDelegate for FileContextPickerDelegate {
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         self.context_picker
             .update(cx, |this, cx| {
-                this.reset_mode();
+                this.reset_mode(cx);
                 cx.emit(DismissEvent);
             })
             .ok();
@@ -251,25 +253,28 @@ impl PickerDelegate for FileContextPickerDelegate {
     ) -> Option<Self::ListItem> {
         let path_match = &self.matches[ix];
 
-        Some(render_file_context_entry(
-            self.context_store.clone(),
-            &path_match.path,
-            &path_match.path_prefix,
-            ix,
-            selected,
-            cx,
-        ))
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .toggle_state(selected)
+                .child(render_file_context_entry(
+                    ElementId::NamedInteger("file-ctx-picker".into(), ix),
+                    &path_match.path,
+                    &path_match.path_prefix,
+                    self.context_store.clone(),
+                    cx,
+                )),
+        )
     }
 }
 
 pub fn render_file_context_entry(
-    context_store: WeakModel<ContextStore>,
+    id: ElementId,
     path: &Path,
     path_prefix: &Arc<str>,
-    ix: usize,
-    selected: bool,
+    context_store: WeakModel<ContextStore>,
     cx: &WindowContext,
-) -> ListItem {
+) -> Stateful<Div> {
     let (file_name, directory) = if path == Path::new("") {
         (SharedString::from(path_prefix.clone()), None)
     } else {
@@ -294,9 +299,10 @@ pub fn render_file_context_entry(
         .upgrade()
         .and_then(|context_store| context_store.read(cx).included_file(path));
 
-    ListItem::new(ix)
-        .inset(true)
-        .toggle_state(selected)
+    h_flex()
+        .id(id)
+        .gap_1()
+        .w_full()
         .child(Icon::new(IconName::File).size(IconSize::Small))
         .child(
             h_flex()
@@ -308,8 +314,9 @@ pub fn render_file_context_entry(
                         .color(Color::Muted)
                 })),
         )
+        .child(div().w_full())
         .when_some(added, |el, added| match added {
-            IncludedFile::Direct(_) => el.end_slot(
+            IncludedFile::Direct(_) => el.child(
                 h_flex()
                     .gap_1()
                     .child(
@@ -322,7 +329,7 @@ pub fn render_file_context_entry(
             IncludedFile::InDirectory(dir_name) => {
                 let dir_name = dir_name.to_string_lossy().into_owned();
 
-                el.end_slot(
+                el.child(
                     h_flex()
                         .gap_1()
                         .child(

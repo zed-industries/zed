@@ -183,7 +183,7 @@ impl PickerDelegate for ThreadContextPickerDelegate {
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         self.context_picker
             .update(cx, |this, cx| {
-                this.reset_mode();
+                this.reset_mode(cx);
                 cx.emit(DismissEvent);
             })
             .ok();
@@ -197,34 +197,29 @@ impl PickerDelegate for ThreadContextPickerDelegate {
     ) -> Option<Self::ListItem> {
         let thread = &self.matches[ix];
 
-        Some(render_thread_context_entry(
-            self.context_store.clone(),
-            thread,
-            ix,
-            selected,
-            cx,
+        Some(ListItem::new(ix).inset(true).toggle_state(selected).child(
+            render_thread_context_entry(thread, self.context_store.clone(), cx),
         ))
     }
 }
 
 pub fn render_thread_context_entry(
-    context_store: WeakModel<ContextStore>,
     thread: &ThreadContextEntry,
-    ix: usize,
-    selected: bool,
+    context_store: WeakModel<ContextStore>,
     cx: &mut WindowContext,
-) -> ListItem {
+) -> Div {
     let added = context_store.upgrade().map_or(false, |ctx_store| {
         ctx_store.read(cx).included_thread(&thread.id).is_some()
     });
 
-    ListItem::new(ix)
-        .inset(true)
-        .toggle_state(selected)
+    h_flex()
+        .gap_1()
+        .w_full()
         .child(Icon::new(IconName::MessageCircle).size(IconSize::Small))
         .child(Label::new(thread.summary.clone()))
+        .child(div().w_full())
         .when(added, |el| {
-            el.end_slot(
+            el.child(
                 h_flex()
                     .gap_1()
                     .child(

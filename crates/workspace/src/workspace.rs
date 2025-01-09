@@ -1316,11 +1316,10 @@ impl Workspace {
         &self.project
     }
 
-    pub fn recent_navigation_history(
+    pub fn recent_navigation_history_iter(
         &self,
-        limit: Option<usize>,
         cx: &AppContext,
-    ) -> Vec<(ProjectPath, Option<PathBuf>)> {
+    ) -> impl Iterator<Item = (ProjectPath, Option<PathBuf>)> {
         let mut abs_paths_opened: HashMap<PathBuf, HashSet<ProjectPath>> = HashMap::default();
         let mut history: HashMap<ProjectPath, (Option<PathBuf>, usize)> = HashMap::default();
         for pane in &self.panes {
@@ -1353,7 +1352,7 @@ impl Workspace {
             .sorted_by_key(|(_, (_, timestamp))| *timestamp)
             .map(|(project_path, (fs_path, _))| (project_path, fs_path))
             .rev()
-            .filter(|(history_path, abs_path)| {
+            .filter(move |(history_path, abs_path)| {
                 let latest_project_path_opened = abs_path
                     .as_ref()
                     .and_then(|abs_path| abs_paths_opened.get(abs_path))
@@ -1368,6 +1367,14 @@ impl Workspace {
                     None => true,
                 }
             })
+    }
+
+    pub fn recent_navigation_history(
+        &self,
+        limit: Option<usize>,
+        cx: &AppContext,
+    ) -> Vec<(ProjectPath, Option<PathBuf>)> {
+        self.recent_navigation_history_iter(cx)
             .take(limit.unwrap_or(usize::MAX))
             .collect()
     }
