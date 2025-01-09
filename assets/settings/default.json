@@ -372,6 +372,8 @@
     "default_width": 240,
     // Where to dock the project panel. Can be 'left' or 'right'.
     "dock": "left",
+    // Spacing between worktree entries in the project panel. Can be 'comfortable' or 'standard'.
+    "entry_spacing": "comfortable",
     // Whether to show file icons in the project panel.
     "file_icons": true,
     // Whether to show folder icons or chevrons for directories in the project panel.
