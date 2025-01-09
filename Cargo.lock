@@ -6592,22 +6592,6 @@ dependencies = [
 
 [[package]]
 name = "jupyter-protocol"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "503458f8125fd9047ed0a9d95d7a93adc5eaf8bce48757c6d401e09f71ad3407"
-dependencies = [
- "anyhow",
- "async-trait",
- "bytes 1.9.0",
- "chrono",
- "futures 0.3.31",
- "serde",
- "serde_json",
- "uuid",
-]
-
-[[package]]
-name = "jupyter-protocol"
 version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c9ae6296f9476658b3550293c113996daf75fa542cd8d078abb4c60207bded14"
@@ -6624,15 +6608,15 @@ dependencies = [
 
 [[package]]
 name = "jupyter-websocket-client"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58d9afa5bc6eeafb78f710a2efc585f69099f8b6a99dc7eb826581e3773a6e31"
+checksum = "49c1ba895c5271ff8dcae51c347fd3588905ba0025a57e20955fd231fe1228cc"
 dependencies = [
  "anyhow",
  "async-trait",
  "async-tungstenite 0.28.2",
  "futures 0.3.31",
- "jupyter-protocol 0.5.0",
+ "jupyter-protocol",
  "serde",
  "serde_json",
  "url",
@@ -7801,7 +7785,7 @@ checksum = "244c1673f02b4d5f3c51b6f8ed28d57182cb166a50a6dbf651a3d53e23dc81c0"
 dependencies = [
  "anyhow",
  "chrono",
- "jupyter-protocol 0.6.0",
+ "jupyter-protocol",
  "serde",
  "serde_json",
  "thiserror 1.0.69",
@@ -10608,7 +10592,7 @@ dependencies = [
  "http_client",
  "image",
  "indoc",
- "jupyter-protocol 0.6.0",
+ "jupyter-protocol",
  "jupyter-websocket-client",
  "language",
  "languages",
@@ -10953,7 +10937,7 @@ dependencies = [
  "dirs 5.0.1",
  "futures 0.3.31",
  "glob",
- "jupyter-protocol 0.6.0",
+ "jupyter-protocol",
  "ring",
  "serde",
  "serde_json",
