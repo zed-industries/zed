@@ -73,7 +73,8 @@ message Envelope {
         ProjectEntryResponse project_entry_response = 50;
         ExpandProjectEntry expand_project_entry = 51;
         ExpandProjectEntryResponse expand_project_entry_response = 52;
-
+        ExpandAllForProjectEntry expand_all_for_project_entry = 291;
+        ExpandAllForProjectEntryResponse expand_all_for_project_entry_response = 292;
         UpdateDiagnosticSummary update_diagnostic_summary = 53;
         StartLanguageServer start_language_server = 54;
         UpdateLanguageServer update_language_server = 55;
@@ -627,6 +628,15 @@ message ExpandProjectEntry {
 }
 
 message ExpandProjectEntryResponse {
+    uint64 worktree_scan_id = 1;
+}
+
+message ExpandAllForProjectEntry {
+    uint64 project_id = 1;
+    uint64 entry_id = 2;
+}
+
+message ExpandAllForProjectEntryResponse {
     uint64 worktree_scan_id = 1;
 }
 
