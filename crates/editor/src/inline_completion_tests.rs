@@ -387,6 +387,10 @@ impl InlineCompletionProvider for FakeInlineCompletionProvider {
         true
     }
 
+    fn is_refreshing(&self) -> bool {
+        false
+    }
+
     fn refresh(
         &mut self,
         _buffer: gpui::Model<language::Buffer>,

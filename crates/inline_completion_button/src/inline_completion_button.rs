@@ -4,8 +4,9 @@ use editor::{scroll::Autoscroll, Editor};
 use feature_flags::{FeatureFlagAppExt, ZetaFeatureFlag};
 use fs::Fs;
 use gpui::{
-    actions, div, Action, AppContext, AsyncWindowContext, Corner, Entity, IntoElement,
-    ParentElement, Render, Subscription, View, ViewContext, WeakView, WindowContext,
+    actions, div, pulsating_between, Action, Animation, AnimationExt, AppContext,
+    AsyncWindowContext, Corner, Entity, IntoElement, ParentElement, Render, Subscription, View,
+    ViewContext, WeakView, WindowContext,
 };
 use language::{
     language_settings::{
@@ -14,7 +15,7 @@ use language::{
     File, Language,
 };
 use settings::{update_settings_file, Settings, SettingsStore};
-use std::{path::Path, sync::Arc};
+use std::{path::Path, sync::Arc, time::Duration};
 use supermaven::{AccountStatus, Supermaven};
 use workspace::{
     create_and_open_local_file,
@@ -39,6 +40,7 @@ pub struct InlineCompletionButton {
     editor_enabled: Option<bool>,
     language: Option<Arc<Language>>,
     file: Option<Arc<dyn File>>,
+    inline_completion_provider: Option<Arc<dyn inline_completion::InlineCompletionProviderHandle>>,
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
 }
@@ -205,17 +207,34 @@ impl Render for InlineCompletionButton {
                 }
 
                 let this = cx.view().clone();
-                div().child(
-                    PopoverMenu::new("zeta")
-                        .menu(move |cx| {
-                            Some(this.update(cx, |this, cx| this.build_zeta_context_menu(cx)))
-                        })
-                        .anchor(Corner::BottomRight)
-                        .trigger(
-                            IconButton::new("zeta", IconName::ZedPredict)
-                                .tooltip(|cx| Tooltip::text("Zed Predict", cx)),
+                let button = IconButton::new("zeta", IconName::ZedPredict)
+                    .tooltip(|cx| Tooltip::text("Zed Predict", cx));
+
+                let is_refreshing = self
+                    .inline_completion_provider
+                    .as_ref()
+                    .map_or(false, |provider| provider.is_refreshing(cx));
+
+                let mut popover_menu = PopoverMenu::new("zeta")
+                    .menu(move |cx| {
+                        Some(this.update(cx, |this, cx| this.build_zeta_context_menu(cx)))
+                    })
+                    .anchor(Corner::BottomRight);
+                if is_refreshing {
+                    popover_menu = popover_menu.trigger(
+                        button.with_animation(
+                            "pulsating-label",
+                            Animation::new(Duration::from_secs(2))
+                                .repeat()
+                                .with_easing(pulsating_between(0.2, 1.0)),
+                            |icon_button, delta| icon_button.alpha(delta),
                         ),
-                )
+                    );
+                } else {
+                    popover_menu = popover_menu.trigger(button);
+                }
+
+                div().child(popover_menu.into_any_element())
             }
         }
     }
@@ -239,6 +258,7 @@ impl InlineCompletionButton {
             editor_enabled: None,
             language: None,
             file: None,
+            inline_completion_provider: None,
             workspace,
             fs,
         }
@@ -390,6 +410,7 @@ impl InlineCompletionButton {
                     ),
             )
         };
+        self.inline_completion_provider = editor.inline_completion_provider();
         self.language = language.cloned();
         self.file = file;
 

@@ -6297,6 +6297,7 @@ dependencies = [
  "futures 0.3.31",
  "gpui",
  "indoc",
+ "inline_completion",
  "language",
  "lsp",
  "paths",
