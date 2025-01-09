@@ -1,18 +1,18 @@
-use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
 use collections::{BTreeMap, HashMap};
-use gpui::{AppContext, Model, ModelContext, SharedString, Task, WeakView};
+use gpui::{AppContext, AsyncAppContext, Model, ModelContext, SharedString, Task, WeakView};
 use language::Buffer;
 use project::{ProjectPath, Worktree};
+use rope::Rope;
 use text::BufferId;
 use workspace::Workspace;
 
 use crate::context::{
-    Context, ContextId, ContextKind, ContextSnapshot, DirectoryContext, FetchedUrlContext,
-    FileContext, ThreadContext,
+    Context, ContextBuffer, ContextId, ContextKind, ContextSnapshot, DirectoryContext,
+    FetchedUrlContext, FileContext, ThreadContext,
 };
 use crate::thread::{Thread, ThreadId};
 
@@ -61,12 +61,13 @@ impl ContextStore {
         self.fetched_urls.clear();
     }
 
-    pub fn add_file(
+    pub fn add_file_from_path(
         &mut self,
         project_path: ProjectPath,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let workspace = self.workspace.clone();
+
         let Some(project) = workspace
             .upgrade()
             .map(|workspace| workspace.read(cx).project().clone())
@@ -79,8 +80,8 @@ impl ContextStore {
                 project.open_buffer(project_path.clone(), cx)
             })?;
 
-            let buffer = open_buffer_task.await?;
-            let buffer_id = buffer.update(&mut cx, |buffer, _cx| buffer.remote_id())?;
+            let buffer_model = open_buffer_task.await?;
+            let buffer_id = this.update(&mut cx, |_, cx| buffer_model.read(cx).remote_id())?;
 
             let already_included = this.update(&mut cx, |this, _cx| {
                 match this.will_include_buffer(buffer_id, &project_path.path) {
@@ -97,30 +98,61 @@ impl ContextStore {
                 return anyhow::Ok(());
             }
 
-            this.update(&mut cx, |this, cx| {
-                this.insert_file(buffer, cx);
+            let (buffer_info, text_task) = this.update(&mut cx, |_, cx| {
+                let buffer = buffer_model.read(cx);
+                collect_buffer_info_and_text(
+                    project_path.path.clone(),
+                    buffer_model,
+                    buffer,
+                    &cx.to_async(),
+                )
+            })?;
+
+            let text = text_task.await;
+
+            this.update(&mut cx, |this, _cx| {
+                this.insert_file(make_context_buffer(buffer_info, text));
             })?;
 
             anyhow::Ok(())
         })
     }
 
-    pub fn insert_file(&mut self, buffer_model: Model<Buffer>, cx: &AppContext) {
-        let buffer = buffer_model.read(cx);
-        let Some(file) = buffer.file() else {
-            return;
-        };
+    pub fn add_file_from_buffer(
+        &mut self,
+        buffer_model: Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        cx.spawn(|this, mut cx| async move {
+            let (buffer_info, text_task) = this.update(&mut cx, |_, cx| {
+                let buffer = buffer_model.read(cx);
+                let Some(file) = buffer.file() else {
+                    return Err(anyhow!("Buffer has no path."));
+                };
+                Ok(collect_buffer_info_and_text(
+                    file.path().clone(),
+                    buffer_model,
+                    buffer,
+                    &cx.to_async(),
+                ))
+            })??;
 
-        let mut text = String::new();
-        push_fenced_codeblock(file.path(), buffer.text(), &mut text);
+            let text = text_task.await;
 
+            this.update(&mut cx, |this, _cx| {
+                this.insert_file(make_context_buffer(buffer_info, text))
+            })?;
+
+            anyhow::Ok(())
+        })
+    }
+
+    pub fn insert_file(&mut self, context_buffer: ContextBuffer) {
         let id = self.next_context_id.post_inc();
-        self.files.insert(buffer.remote_id(), id);
+        self.files.insert(context_buffer.id, id);
         self.context.push(Context::File(FileContext {
             id,
-            buffer: buffer_model,
-            version: buffer.version.clone(),
-            text: text.into(),
+            buffer: context_buffer,
         }));
     }
 
@@ -162,7 +194,7 @@ impl ContextStore {
 
             let open_buffer_tasks = project.update(&mut cx, |project, cx| {
                 files
-                    .into_iter()
+                    .iter()
                     .map(|file_path| {
                         project.open_buffer(
                             ProjectPath {
@@ -177,29 +209,36 @@ impl ContextStore {
 
             let buffers = futures::future::join_all(open_buffer_tasks).await;
 
-            this.update(&mut cx, |this, cx| {
-                let mut text = String::new();
-                let mut directory_buffers = BTreeMap::new();
-                for buffer_model in buffers {
+            let mut buffer_infos = Vec::new();
+            let mut text_tasks = Vec::new();
+            this.update(&mut cx, |_, cx| {
+                for (path, buffer_model) in files.into_iter().zip(buffers) {
                     let buffer_model = buffer_model?;
                     let buffer = buffer_model.read(cx);
-                    let path = buffer.file().map_or(&project_path.path, |file| file.path());
-                    push_fenced_codeblock(&path, buffer.text(), &mut text);
-                    directory_buffers
-                        .insert(buffer.remote_id(), (buffer_model, buffer.version.clone()));
+                    let (buffer_info, text_task) =
+                        collect_buffer_info_and_text(path, buffer_model, buffer, &cx.to_async());
+                    buffer_infos.push(buffer_info);
+                    text_tasks.push(text_task);
                 }
-
-                if directory_buffers.is_empty() {
-                    bail!(
-                        "could not read any text files from {}",
-                        &project_path.path.display()
-                    );
-                }
-
-                this.insert_directory(&project_path.path, directory_buffers, text);
-
                 anyhow::Ok(())
             })??;
+
+            let buffer_texts = futures::future::join_all(text_tasks).await;
+            let directory_buffers = buffer_infos
+                .into_iter()
+                .zip(buffer_texts.iter())
+                .map(|(info, text)| make_context_buffer(info, text.clone()))
+                .collect::<Vec<_>>();
+
+            if directory_buffers.is_empty() {
+                bail!("No text files found in {}", &project_path.path.display());
+            }
+
+            // TODO: include directory path in text?
+
+            this.update(&mut cx, |this, _| {
+                this.insert_directory(&project_path.path, directory_buffers, buffer_texts.into());
+            })?;
 
             anyhow::Ok(())
         })
@@ -208,8 +247,8 @@ impl ContextStore {
     pub fn insert_directory(
         &mut self,
         path: &Path,
-        buffers: BTreeMap<BufferId, (Model<Buffer>, clock::Global)>,
-        text: impl Into<SharedString>,
+        buffers: Vec<ContextBuffer>,
+        text: Box<[SharedString]>,
     ) {
         let id = self.next_context_id.post_inc();
         self.directories.insert(path.to_path_buf(), id);
@@ -235,7 +274,7 @@ impl ContextStore {
                 parent,
                 tooltip: Some(full_path),
                 kind: ContextKind::Directory,
-                text: text.into(),
+                text,
             },
         }));
     }
@@ -357,25 +396,80 @@ pub enum FileInclusion {
     InDirectory(PathBuf),
 }
 
-pub(crate) fn push_fenced_codeblock(path: &Path, content: String, buffer: &mut String) {
-    buffer.reserve(content.len() + 64);
+// ContextBuffer without text.
+struct BufferInfo {
+    buffer_model: Model<Buffer>,
+    id: BufferId,
+    version: clock::Global,
+}
 
-    write!(buffer, "```").unwrap();
-
-    if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
-        write!(buffer, "{} ", extension).unwrap();
+fn make_context_buffer(info: BufferInfo, text: SharedString) -> ContextBuffer {
+    ContextBuffer {
+        id: info.id,
+        buffer: info.buffer_model,
+        version: info.version,
+        text,
     }
+}
 
-    write!(buffer, "{}", path.display()).unwrap();
+fn collect_buffer_info_and_text(
+    path: Arc<Path>,
+    buffer_model: Model<Buffer>,
+    buffer: &Buffer,
+    cx: &AsyncAppContext,
+) -> (BufferInfo, Task<SharedString>) {
+    let buffer_info = BufferInfo {
+        id: buffer.remote_id(),
+        buffer_model,
+        version: buffer.version(),
+    };
+    // Important to collect version at the same time as content so that staleness logic is correct.
+    let content = buffer.as_rope().clone();
+    let text_task = cx
+        .background_executor()
+        .spawn(async move { to_fenced_codeblock(&path, content) });
+    (buffer_info, text_task)
+}
+
+fn to_fenced_codeblock(path: &Path, content: Rope) -> SharedString {
+    let path_extension = path.extension().and_then(|ext| ext.to_str());
+    let path_string = path.to_string_lossy();
+    let capacity = 3
+        + path_extension.map_or(0, |extension| extension.len() + 1)
+        + path_string.len()
+        + 1
+        + content.len()
+        + 5;
+    let mut buffer = String::with_capacity(capacity);
+
+    buffer.push_str("```");
+
+    if let Some(extension) = path_extension {
+        buffer.push_str(extension);
+        buffer.push(' ');
+    }
+    buffer.push_str(&path_string);
 
     buffer.push('\n');
-    buffer.push_str(&content);
+    for chunk in content.chunks() {
+        buffer.push_str(&chunk);
+    }
 
     if !buffer.ends_with('\n') {
         buffer.push('\n');
     }
 
     buffer.push_str("```\n");
+
+    if buffer.len() > capacity {
+        log::error!(
+            "to_fenced_codeblock calculated capacity {} but length was {}",
+            capacity,
+            buffer.len()
+        );
+    }
+
+    buffer.into()
 }
 
 fn collect_files_in_path(worktree: &Worktree, path: &Path) -> Vec<Arc<Path>> {

@@ -201,7 +201,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         let Some(task) = self
             .context_store
             .update(cx, |context_store, cx| {
-                context_store.add_file(project_path, cx)
+                context_store.add_file_from_path(project_path, cx)
             })
             .ok()
         else {

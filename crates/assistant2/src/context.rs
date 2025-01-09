@@ -2,7 +2,6 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use collections::BTreeMap;
 use gpui::{AppContext, Model, SharedString};
 use language::Buffer;
 use language_model::{LanguageModelRequestMessage, MessageContent};
@@ -29,8 +28,8 @@ pub struct ContextSnapshot {
     pub parent: Option<SharedString>,
     pub tooltip: Option<SharedString>,
     pub kind: ContextKind,
-    /// Text to send to the model. This is not refreshed by `snapshot`.
-    pub text: SharedString,
+    /// Concatenating these strings yields text to send to the model. Not refreshed by `snapshot`.
+    pub text: Box<[SharedString]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,27 +59,18 @@ impl Context {
     }
 }
 
-// TODO: Model<Buffer> holds onto the buffer even if the file is deleted and closed. Should remove
-// the context from the message editor in this case.
-
 #[derive(Debug)]
 pub struct FileContext {
     pub id: ContextId,
-    pub buffer: Model<Buffer>,
-    #[allow(unused)]
-    pub version: clock::Global,
-    pub text: SharedString,
+    pub buffer: ContextBuffer,
 }
 
 #[derive(Debug)]
 pub struct DirectoryContext {
     #[allow(unused)]
     pub path: Rc<Path>,
-    // TODO: The choice to make this a BTreeMap was a result of use in a version of
-    // ContextStore::will_include_buffer before I realized that the path logic should be used there
-    // too.
     #[allow(unused)]
-    pub buffers: BTreeMap<BufferId, (Model<Buffer>, clock::Global)>,
+    pub buffers: Vec<ContextBuffer>,
     pub snapshot: ContextSnapshot,
 }
 
@@ -101,6 +91,19 @@ pub struct ThreadContext {
     pub text: SharedString,
 }
 
+// TODO: Model<Buffer> holds onto the buffer even if the file is deleted and closed. Should remove
+// the context from the message editor in this case.
+
+#[derive(Debug)]
+pub struct ContextBuffer {
+    #[allow(unused)]
+    pub id: BufferId,
+    pub buffer: Model<Buffer>,
+    #[allow(unused)]
+    pub version: clock::Global,
+    pub text: SharedString,
+}
+
 impl Context {
     pub fn snapshot(&self, cx: &AppContext) -> Option<ContextSnapshot> {
         match &self {
@@ -114,7 +117,7 @@ impl Context {
 
 impl FileContext {
     pub fn path(&self, cx: &AppContext) -> Option<Arc<Path>> {
-        let buffer = self.buffer.read(cx);
+        let buffer = self.buffer.buffer.read(cx);
         if let Some(file) = buffer.file() {
             Some(file.path().clone())
         } else {
@@ -141,7 +144,7 @@ impl FileContext {
             parent,
             tooltip: Some(full_path),
             kind: ContextKind::File,
-            text: self.text.clone(),
+            text: Box::new([self.buffer.text.clone()]),
         })
     }
 }
@@ -160,7 +163,7 @@ impl FetchedUrlContext {
             parent: None,
             tooltip: None,
             kind: ContextKind::FetchedUrl,
-            text: self.text.clone(),
+            text: Box::new([self.text.clone()]),
         }
     }
 }
@@ -174,7 +177,7 @@ impl ThreadContext {
             parent: None,
             tooltip: None,
             kind: ContextKind::Thread,
-            text: self.text.clone(),
+            text: Box::new([self.text.clone()]),
         }
     }
 }
@@ -183,55 +186,64 @@ pub fn attach_context_to_message(
     message: &mut LanguageModelRequestMessage,
     contexts: impl Iterator<Item = ContextSnapshot>,
 ) {
-    let mut file_context = String::new();
-    let mut directory_context = String::new();
-    let mut fetch_context = String::new();
-    let mut thread_context = String::new();
+    let mut file_context = Vec::new();
+    let mut directory_context = Vec::new();
+    let mut fetch_context = Vec::new();
+    let mut thread_context = Vec::new();
 
     for context in contexts {
         match context.kind {
-            ContextKind::File => {
-                file_context.push_str(&context.text);
-                file_context.push('\n');
-            }
-            ContextKind::Directory => {
-                directory_context.push_str(&context.text);
-                directory_context.push('\n');
-            }
-            ContextKind::FetchedUrl => {
-                fetch_context.push_str(&context.name);
-                fetch_context.push('\n');
-                fetch_context.push_str(&context.text);
-                fetch_context.push('\n');
-            }
-            ContextKind::Thread { .. } => {
-                thread_context.push_str(&context.name);
-                thread_context.push('\n');
-                thread_context.push_str(&context.text);
-                thread_context.push('\n');
-            }
+            ContextKind::File => file_context.push(context),
+            ContextKind::Directory => directory_context.push(context),
+            ContextKind::FetchedUrl => fetch_context.push(context),
+            ContextKind::Thread => thread_context.push(context),
         }
     }
 
     let mut context_text = String::new();
+
     if !file_context.is_empty() {
         context_text.push_str("The following files are available:\n");
-        context_text.push_str(&file_context);
+        for context in file_context {
+            for chunk in context.text {
+                context_text.push_str(&chunk);
+            }
+            context_text.push('\n');
+        }
     }
 
     if !directory_context.is_empty() {
         context_text.push_str("The following directories are available:\n");
-        context_text.push_str(&directory_context);
+        for context in directory_context {
+            for chunk in context.text {
+                context_text.push_str(&chunk);
+            }
+            context_text.push('\n');
+        }
     }
 
     if !fetch_context.is_empty() {
         context_text.push_str("The following fetched results are available\n");
-        context_text.push_str(&fetch_context);
+        for context in fetch_context {
+            context_text.push_str(&context.name);
+            context_text.push('\n');
+            for chunk in context.text {
+                context_text.push_str(&chunk);
+            }
+            context_text.push('\n');
+        }
     }
 
     if !thread_context.is_empty() {
         context_text.push_str("The following previous conversation threads are available\n");
-        context_text.push_str(&thread_context);
+        for context in thread_context {
+            context_text.push_str(&context.name);
+            context_text.push('\n');
+            for chunk in context.text {
+                context_text.push_str(&chunk);
+            }
+            context_text.push('\n');
+        }
     }
 
     if !context_text.is_empty() {

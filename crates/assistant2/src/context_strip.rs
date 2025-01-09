@@ -1,10 +1,11 @@
 use std::rc::Rc;
 
+use anyhow::Result;
 use collections::HashSet;
 use editor::Editor;
 use gpui::{
-    AppContext, DismissEvent, EventEmitter, FocusHandle, Model, Subscription, View, WeakModel,
-    WeakView,
+    DismissEvent, EventEmitter, FocusHandle, Model, ModelContext, Subscription, Task, View,
+    WeakModel, WeakView,
 };
 use itertools::Itertools;
 use language::Buffer;
@@ -230,12 +231,32 @@ impl Render for ContextStrip {
                     suggested.kind(),
                     {
                         let context_store = self.context_store.clone();
-                        Rc::new(cx.listener(move |_this, _event, cx| {
-                            context_store.update(cx, |context_store, cx| {
-                                suggested.accept(context_store, cx);
+                        Rc::new(cx.listener(move |this, _event, cx| {
+                            let task = context_store.update(cx, |context_store, cx| {
+                                suggested.accept(context_store, cx)
                             });
 
-                            cx.notify();
+                            let workspace = this.workspace.clone();
+                            cx.spawn(|this, mut cx| async move {
+                                match task.await {
+                                    Ok(()) => {
+                                        if let Some(this) = this.upgrade() {
+                                            this.update(&mut cx, |_, cx| cx.notify())?;
+                                        }
+                                    }
+                                    Err(err) => {
+                                        let Some(workspace) = workspace.upgrade() else {
+                                            return anyhow::Ok(());
+                                        };
+
+                                        workspace.update(&mut cx, |workspace, cx| {
+                                            workspace.show_error(&err, cx);
+                                        })?;
+                                    }
+                                }
+                                anyhow::Ok(())
+                            })
+                            .detach_and_log_err(cx);
                         }))
                     },
                 ))
@@ -299,11 +320,15 @@ impl SuggestedContext {
         }
     }
 
-    pub fn accept(&self, context_store: &mut ContextStore, cx: &mut AppContext) {
+    pub fn accept(
+        &self,
+        context_store: &mut ContextStore,
+        cx: &mut ModelContext<ContextStore>,
+    ) -> Task<Result<()>> {
         match self {
             Self::File { buffer, name: _ } => {
                 if let Some(buffer) = buffer.upgrade() {
-                    context_store.insert_file(buffer, cx);
+                    return context_store.add_file_from_buffer(buffer, cx);
                 };
             }
             Self::Thread { thread, name: _ } => {
@@ -312,6 +337,7 @@ impl SuggestedContext {
                 };
             }
         }
+        Task::ready(Ok(()))
     }
 
     pub fn kind(&self) -> ContextKind {
