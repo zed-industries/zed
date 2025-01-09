@@ -1057,8 +1057,7 @@ impl OutlinePanel {
                                         FsEntry::Directory(..) => None,
                                     })
                                     .skip_while(|id| *id != buffer_id)
-                                    .skip(1)
-                                    .next();
+                                    .nth(1);
                                 if let Some(previous_buffer_id) = previous_buffer_id {
                                     if !active_editor.read(cx).buffer_folded(previous_buffer_id, cx)
                                     {
@@ -1093,8 +1092,7 @@ impl OutlinePanel {
                 .iter()
                 .map(|cached_entry| &cached_entry.entry)
                 .skip_while(|entry| entry != &selected_entry)
-                .skip(1)
-                .next()
+                .nth(1)
                 .cloned()
         }) {
             self.select_entry(entry_to_select, true, cx);
@@ -1113,8 +1111,7 @@ impl OutlinePanel {
                 .rev()
                 .map(|cached_entry| &cached_entry.entry)
                 .skip_while(|entry| entry != &selected_entry)
-                .skip(1)
-                .next()
+                .nth(1)
                 .cloned()
         }) {
             self.select_entry(entry_to_select, true, cx);
