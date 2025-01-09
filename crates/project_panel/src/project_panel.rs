@@ -319,7 +319,8 @@ impl ProjectPanel {
                     cx.notify();
                 }
                 project::Event::ExpandedAllForEntry(worktree_id, entry_id) => {
-                    if let Some((worktree, expanded_dir_ids)) = project.read(cx)
+                    if let Some((worktree, expanded_dir_ids)) = project
+                        .read(cx)
                         .worktree_for_id(*worktree_id, cx)
                         .zip(this.expanded_dir_ids.get_mut(&worktree_id))
                     {
@@ -340,7 +341,6 @@ impl ProjectPanel {
                                     if let Err(ix) = expanded_dir_ids.binary_search(&child.id) {
                                         expanded_dir_ids.insert(ix, child.id);
                                     }
-                    
                                 }
                             }
                         }
@@ -511,7 +511,7 @@ impl ProjectPanel {
                         }
                     }
                 }
-          
+
                 _ => {}
             }
         })
@@ -907,7 +907,7 @@ impl ProjectPanel {
                 cx.focus(&self.focus_handle);
                 cx.notify();
             }
-        }                      
+        }
     }
 
     fn expand_all_for_entry(
@@ -946,7 +946,12 @@ impl ProjectPanel {
         });
     }
 
-    fn collapse_all_for_entry(&mut self, worktree_id: WorktreeId, entry_id: ProjectEntryId, cx: &mut ViewContext<Self>) {
+    fn collapse_all_for_entry(
+        &mut self,
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.project.update(cx, |project, cx| {
             if let Some((worktree, expanded_dir_ids)) = project
                 .worktree_for_id(worktree_id, cx)
@@ -955,7 +960,7 @@ impl ProjectPanel {
                 let worktree = worktree.read(cx);
 
                 let mut dirs_to_collapse = vec![entry_id];
-                
+
                 while let Some(current_id) = dirs_to_collapse.pop() {
                     let Some(current_entry) = worktree.entry_for_id(current_id) else {
                         continue;
