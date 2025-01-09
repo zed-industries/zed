@@ -18,7 +18,7 @@ use gpui::{
     View, WeakView,
 };
 use project::dap_store::DapStore;
-use rpc::proto::{self, PeerId, SetDebuggerPanelItem, UpdateDebugAdapter};
+use rpc::proto::{self, DebuggerThreadStatus, PeerId, SetDebuggerPanelItem, UpdateDebugAdapter};
 use settings::Settings;
 use ui::{prelude::*, Indicator, Tooltip, WindowContext};
 use util::ResultExt as _;
@@ -238,6 +238,18 @@ impl DebugPanelItem {
     }
 
     pub(crate) fn from_proto(&mut self, state: &SetDebuggerPanelItem, cx: &mut ViewContext<Self>) {
+        self.thread_state.update(cx, |thread_state, _| {
+            let (status, stopped) = state
+                .thread_state
+                .as_ref()
+                .map_or((DebuggerThreadStatus::Stopped, true), |thread_state| {
+                    (thread_state.thread_status(), true)
+                });
+
+            thread_state.status = ThreadStatus::from_proto(status);
+            thread_state.stopped = stopped;
+        });
+
         self.active_thread_item = ThreadItem::from_proto(state.active_thread_item());
 
         if let Some(stack_frame_list) = state.stack_frame_list.as_ref() {
