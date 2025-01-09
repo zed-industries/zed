@@ -128,6 +128,15 @@ impl BranchListDelegate {
             branch_name_trailoff_after,
         })
     }
+
+    /// Get the number of matches that should be included in displayed counts
+    fn displayed_match_count(&self) -> usize {
+        // We only care about existing branches
+        self.matches
+            .iter()
+            .filter(|item| matches!(item, BranchEntry::Branch(_)))
+            .count()
+    }
 }
 
 impl PickerDelegate for BranchListDelegate {
@@ -307,9 +316,15 @@ impl PickerDelegate for BranchListDelegate {
                 .ml_3()
                 .into_any_element()
         } else {
+            // We use the "nominal" match count (which includes the new branch option) to determine if any label should be shown
             let match_label = self.matches.is_empty().not().then(|| {
-                let suffix = if self.matches.len() == 1 { "" } else { "es" };
-                Label::new(format!("{} match{}", self.matches.len(), suffix))
+                // We use the displayed match count (which excludes the new branch option) to determine the suffix and number
+                let suffix = if self.displayed_match_count() == 1 {
+                    ""
+                } else {
+                    "es"
+                };
+                Label::new(format!("{} match{}", self.displayed_match_count(), suffix))
                     .color(Color::Muted)
                     .size(LabelSize::Small)
             });
