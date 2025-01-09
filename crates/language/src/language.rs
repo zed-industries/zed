@@ -1273,23 +1273,45 @@ impl Language {
             .ok_or_else(|| anyhow!("cannot mutate grammar"))?;
         let query = Query::new(&grammar.ts_language, source)?;
         let mut language_capture_ix = None;
+        let mut injection_language_capture_ix = None;
         let mut content_capture_ix = None;
+        let mut injection_content_capture_ix = None;
         get_capture_indices(
             &query,
             &mut [
                 ("language", &mut language_capture_ix),
+                ("injection.language", &mut injection_language_capture_ix),
                 ("content", &mut content_capture_ix),
+                ("injection.content", &mut injection_content_capture_ix),
             ],
         );
+        language_capture_ix = match (language_capture_ix, injection_language_capture_ix) {
+            (None, Some(ix)) => Some(ix),
+            (Some(_), Some(_)) => {
+                return Err(anyhow!(
+                    "both language and injection.language captures are present"
+                ));
+            }
+            _ => language_capture_ix,
+        };
+        content_capture_ix = match (content_capture_ix, injection_content_capture_ix) {
+            (None, Some(ix)) => Some(ix),
+            (Some(_), Some(_)) => {
+                return Err(anyhow!(
+                    "both content and injection.content captures are present"
+                ));
+            }
+            _ => content_capture_ix,
+        };
         let patterns = (0..query.pattern_count())
             .map(|ix| {
                 let mut config = InjectionPatternConfig::default();
                 for setting in query.property_settings(ix) {
                     match setting.key.as_ref() {
-                        "language" => {
+                        "language" | "injection.language" => {
                             config.language.clone_from(&setting.value);
                         }
-                        "combined" => {
+                        "combined" | "injection.combined" => {
                             config.combined = true;
                         }
                         _ => {}
@@ -1849,10 +1871,18 @@ pub fn point_from_lsp(point: lsp::Position) -> Unclipped<PointUtf16> {
     Unclipped(PointUtf16::new(point.line, point.character))
 }
 
-pub fn range_to_lsp(range: Range<PointUtf16>) -> lsp::Range {
-    lsp::Range {
-        start: point_to_lsp(range.start),
-        end: point_to_lsp(range.end),
+pub fn range_to_lsp(range: Range<PointUtf16>) -> Result<lsp::Range> {
+    if range.start > range.end {
+        Err(anyhow!(
+            "Inverted range provided to an LSP request: {:?}-{:?}",
+            range.start,
+            range.end
+        ))
+    } else {
+        Ok(lsp::Range {
+            start: point_to_lsp(range.start),
+            end: point_to_lsp(range.end),
+        })
     }
 }
 
@@ -1860,6 +1890,7 @@ pub fn range_from_lsp(range: lsp::Range) -> Range<Unclipped<PointUtf16>> {
     let mut start = point_from_lsp(range.start);
     let mut end = point_from_lsp(range.end);
     if start > end {
+        log::warn!("range_from_lsp called with inverted range {start:?}-{end:?}");
         mem::swap(&mut start, &mut end);
     }
     start..end

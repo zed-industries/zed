@@ -41,6 +41,7 @@ actions!(
         NewThread,
         ToggleContextPicker,
         ToggleModelSelector,
+        RemoveAllContext,
         OpenHistory,
         Chat,
         CycleNextInlineAssist,

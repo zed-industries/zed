@@ -205,6 +205,8 @@ impl Zeta {
     }
 
     fn push_event(&mut self, event: Event) {
+        const MAX_EVENT_COUNT: usize = 20;
+
         if let Some(Event::BufferChange {
             new_snapshot: last_new_snapshot,
             timestamp: last_timestamp,
@@ -229,7 +231,7 @@ impl Zeta {
         }
 
         self.events.push_back(event);
-        if self.events.len() > 10 {
+        if self.events.len() > MAX_EVENT_COUNT {
             self.events.pop_front();
         }
     }
@@ -298,29 +300,35 @@ impl Zeta {
         cx.spawn(|this, mut cx| async move {
             let request_sent_at = Instant::now();
 
-            let input_events = cx
+            let (input_events, input_excerpt, input_outline) = cx
                 .background_executor()
-                .spawn(async move {
-                    let mut input_events = String::new();
-                    for event in events {
-                        if !input_events.is_empty() {
-                            input_events.push('\n');
-                            input_events.push('\n');
+                .spawn({
+                    let snapshot = snapshot.clone();
+                    let excerpt_range = excerpt_range.clone();
+                    async move {
+                        let mut input_events = String::new();
+                        for event in events {
+                            if !input_events.is_empty() {
+                                input_events.push('\n');
+                                input_events.push('\n');
+                            }
+                            input_events.push_str(&event.to_prompt());
                         }
-                        input_events.push_str(&event.to_prompt());
+
+                        let input_excerpt = prompt_for_excerpt(&snapshot, &excerpt_range, offset);
+                        let input_outline = prompt_for_outline(&snapshot);
+
+                        (input_events, input_excerpt, input_outline)
                     }
-                    input_events
                 })
                 .await;
-
-            let input_excerpt = prompt_for_excerpt(&snapshot, &excerpt_range, offset);
-            let input_outline = prompt_for_outline(&snapshot);
 
             log::debug!("Events:\n{}\nExcerpt:\n{}", input_events, input_excerpt);
 
             let body = PredictEditsParams {
                 input_events: input_events.clone(),
                 input_excerpt: input_excerpt.clone(),
+                outline: Some(input_outline.clone()),
             };
 
             let response = perform_predict_edits(client, llm_token, body).await?;
@@ -580,9 +588,34 @@ and then another
         cx.background_executor().spawn(async move {
             let content = output_excerpt.replace(CURSOR_MARKER, "");
 
-            let codefence_start = content
-                .find(EDITABLE_REGION_START_MARKER)
-                .context("could not find start marker")?;
+            let start_markers = content
+                .match_indices(EDITABLE_REGION_START_MARKER)
+                .collect::<Vec<_>>();
+            anyhow::ensure!(
+                start_markers.len() == 1,
+                "expected exactly one start marker, found {}",
+                start_markers.len()
+            );
+
+            let end_markers = content
+                .match_indices(EDITABLE_REGION_END_MARKER)
+                .collect::<Vec<_>>();
+            anyhow::ensure!(
+                end_markers.len() == 1,
+                "expected exactly one end marker, found {}",
+                end_markers.len()
+            );
+
+            let sof_markers = content
+                .match_indices(START_OF_FILE_MARKER)
+                .collect::<Vec<_>>();
+            anyhow::ensure!(
+                sof_markers.len() <= 1,
+                "expected at most one start-of-file marker, found {}",
+                sof_markers.len()
+            );
+
+            let codefence_start = start_markers[0].0;
             let content = &content[codefence_start..];
 
             let newline_ix = content.find('\n').context("could not find newline")?;
@@ -977,6 +1010,10 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         true
     }
 
+    fn show_completions_in_normal_mode() -> bool {
+        true
+    }
+
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,
@@ -988,6 +1025,10 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         let language = buffer.language_at(cursor_position);
         let settings = all_language_settings(file, cx);
         settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()), cx)
+    }
+
+    fn is_refreshing(&self) -> bool {
+        !self.pending_completions.is_empty()
     }
 
     fn refresh(

@@ -16,11 +16,11 @@ doctest = false
 editor.workspace = true
 gpui.workspace = true
 itertools.workspace = true
-outline.workspace = true
 theme.workspace = true
 ui.workspace = true
 settings.workspace = true
 workspace.workspace = true
+zed_actions.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

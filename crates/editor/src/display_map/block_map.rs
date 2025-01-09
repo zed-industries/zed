@@ -1757,6 +1757,7 @@ impl<'a> BlockChunks<'a> {
 pub struct StickyHeaderExcerpt<'a> {
     pub excerpt: &'a ExcerptInfo,
     pub next_excerpt_controls_present: bool,
+    // TODO az remove option
     pub next_buffer_row: Option<u32>,
 }
 
@@ -2747,7 +2748,7 @@ mod tests {
                 .iter()
                 .filter(|(_, block)| matches!(block, Block::FoldedBuffer { .. }))
                 .count(),
-            "Should have one folded block, prodicing a header of the second buffer"
+            "Should have one folded block, producing a header of the second buffer"
         );
         assert_eq!(
             blocks_snapshot.text(),
@@ -2993,7 +2994,7 @@ mod tests {
                     }
                 })
                 .count(),
-            "Should have one folded block, prodicing a header of the second buffer"
+            "Should have one folded block, producing a header of the second buffer"
         );
         assert_eq!(blocks_snapshot.text(), "\n");
         assert_eq!(

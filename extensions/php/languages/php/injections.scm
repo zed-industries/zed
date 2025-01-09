@@ -1,9 +1,9 @@
-((text) @content
- (#set! "language" "html")
- (#set! "combined"))
+((text) @injection.content
+ (#set! injection.language "html")
+ (#set! injection.combined))
 
-((comment) @content
-  (#match? @content "^/\\*\\*[^*]")
-  (#set! "language" "phpdoc"))
+((comment) @injection.content
+  (#match? @injection.content "^/\\*\\*[^*]")
+  (#set! injection.language "phpdoc"))
 
-((heredoc_body) (heredoc_end) @language) @content
+((heredoc_body) (heredoc_end) @injection.language) @injection.content

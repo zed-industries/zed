@@ -10,7 +10,7 @@ use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::LanguageModelSelector;
 use rope::Point;
 use settings::Settings;
-use theme::ThemeSettings;
+use theme::{get_ui_font_size, ThemeSettings};
 use ui::{
     prelude::*, ButtonLike, ElevationIndex, KeyBinding, PopoverMenu, PopoverMenuHandle,
     SwitchWithLabel,
@@ -20,10 +20,10 @@ use workspace::Workspace;
 use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
-use crate::context_strip::ContextStrip;
+use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
-use crate::{Chat, ToggleContextPicker, ToggleModelSelector};
+use crate::{Chat, RemoveAllContext, ToggleContextPicker, ToggleModelSelector};
 
 pub struct MessageEditor {
     thread: Model<Thread>,
@@ -47,18 +47,19 @@ impl MessageEditor {
         thread: Model<Thread>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let context_store = cx.new_model(|_cx| ContextStore::new());
+        let context_store = cx.new_model(|_cx| ContextStore::new(workspace.clone()));
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
         let editor = cx.new_view(|cx| {
             let mut editor = Editor::auto_height(10, cx);
-            editor.set_placeholder_text("Ask anything, @ to add context", cx);
+            editor.set_placeholder_text("Ask anything…", cx);
             editor.set_show_indent_guides(false, cx);
 
             editor
         });
+
         let inline_context_picker = cx.new_view(|cx| {
             ContextPicker::new(
                 workspace.clone(),
@@ -68,28 +69,33 @@ impl MessageEditor {
                 cx,
             )
         });
+
+        let context_strip = cx.new_view(|cx| {
+            ContextStrip::new(
+                context_store.clone(),
+                workspace.clone(),
+                Some(thread_store.clone()),
+                editor.focus_handle(cx),
+                context_picker_menu_handle.clone(),
+                SuggestContextKind::File,
+                cx,
+            )
+        });
+
         let subscriptions = vec![
             cx.subscribe(&editor, Self::handle_editor_event),
             cx.subscribe(
                 &inline_context_picker,
                 Self::handle_inline_context_picker_event,
             ),
+            cx.subscribe(&context_strip, Self::handle_context_strip_event),
         ];
 
         Self {
             thread,
             editor: editor.clone(),
-            context_store: context_store.clone(),
-            context_strip: cx.new_view(|cx| {
-                ContextStrip::new(
-                    context_store,
-                    workspace.clone(),
-                    Some(thread_store.clone()),
-                    editor.focus_handle(cx),
-                    context_picker_menu_handle.clone(),
-                    cx,
-                )
-            }),
+            context_store,
+            context_strip,
             context_picker_menu_handle,
             inline_context_picker,
             inline_context_picker_menu_handle,
@@ -108,6 +114,11 @@ impl MessageEditor {
 
     fn toggle_context_picker(&mut self, _: &ToggleContextPicker, cx: &mut ViewContext<Self>) {
         self.context_picker_menu_handle.toggle(cx);
+    }
+
+    pub fn remove_all_context(&mut self, _: &RemoveAllContext, cx: &mut ViewContext<Self>) {
+        self.context_store.update(cx, |store, _cx| store.clear());
+        cx.notify();
     }
 
     fn chat(&mut self, _: &Chat, cx: &mut ViewContext<Self>) {
@@ -136,9 +147,10 @@ impl MessageEditor {
             editor.clear(cx);
             text
         });
-        let context = self.context_store.update(cx, |this, _cx| this.drain());
 
-        self.thread.update(cx, |thread, cx| {
+        let thread = self.thread.clone();
+        thread.update(cx, |thread, cx| {
+            let context = self.context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
             thread.insert_user_message(user_message, context, cx);
             let mut request = thread.to_completion_request(request_kind, cx);
 
@@ -194,6 +206,16 @@ impl MessageEditor {
         let editor_focus_handle = self.editor.focus_handle(cx);
         cx.focus(&editor_focus_handle);
     }
+
+    fn handle_context_strip_event(
+        &mut self,
+        _context_strip: View<ContextStrip>,
+        ContextStripEvent::PickerDismissed: &ContextStripEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let editor_focus_handle = self.editor.focus_handle(cx);
+        cx.focus(&editor_focus_handle);
+    }
 }
 
 impl FocusableView for MessageEditor {
@@ -215,6 +237,7 @@ impl Render for MessageEditor {
             .on_action(cx.listener(Self::chat))
             .on_action(cx.listener(Self::toggle_model_selector))
             .on_action(cx.listener(Self::toggle_context_picker))
+            .on_action(cx.listener(Self::remove_all_context))
             .size_full()
             .gap_2()
             .p_2()
@@ -252,7 +275,7 @@ impl Render for MessageEditor {
                             .anchor(gpui::Corner::BottomLeft)
                             .offset(gpui::Point {
                                 x: px(0.0),
-                                y: px(-16.0),
+                                y: (-get_ui_font_size(cx) * 2) - px(4.0),
                             })
                             .with_handle(self.inline_context_picker_menu_handle.clone()),
                     )
@@ -261,7 +284,7 @@ impl Render for MessageEditor {
                             .justify_between()
                             .child(SwitchWithLabel::new(
                                 "use-tools",
-                                Label::new("Tools"),
+                                Label::new("Tools").size(LabelSize::Small),
                                 self.use_tools.into(),
                                 cx.listener(|this, selection, _cx| {
                                     this.use_tools = match selection {
@@ -277,7 +300,7 @@ impl Render for MessageEditor {
                                     ButtonLike::new("chat")
                                         .style(ButtonStyle::Filled)
                                         .layer(ElevationIndex::ModalSurface)
-                                        .child(Label::new("Submit"))
+                                        .child(Label::new("Submit").size(LabelSize::Small))
                                         .children(
                                             KeyBinding::for_action_in(&Chat, &focus_handle, cx)
                                                 .map(|binding| binding.into_any_element()),

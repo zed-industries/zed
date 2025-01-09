@@ -11,7 +11,6 @@ use picker::{Picker, PickerDelegate};
 use ui::{prelude::*, ListItem, ViewContext};
 use workspace::Workspace;
 
-use crate::context::ContextKind;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 
@@ -83,10 +82,12 @@ impl FetchContextPickerDelegate {
     }
 
     async fn build_message(http_client: Arc<HttpClientWithUrl>, url: &str) -> Result<String> {
-        let mut url = url.to_owned();
-        if !url.starts_with("https://") && !url.starts_with("http://") {
-            url = format!("https://{url}");
-        }
+        let prefixed_url = if !url.starts_with("https://") && !url.starts_with("http://") {
+            Some(format!("https://{url}"))
+        } else {
+            None
+        };
+        let url = prefixed_url.as_deref().unwrap_or(url);
 
         let mut response = http_client.get(&url, AsyncBody::default(), true).await?;
 
@@ -176,7 +177,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
 
     fn set_selected_index(&mut self, _ix: usize, _cx: &mut ViewContext<Picker<Self>>) {}
 
-    fn placeholder_text(&self, _cx: &mut ui::WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
         "Enter a URL…".into()
     }
 
@@ -201,7 +202,9 @@ impl PickerDelegate for FetchContextPickerDelegate {
                 this.delegate
                     .context_store
                     .update(cx, |context_store, _cx| {
-                        context_store.insert_context(ContextKind::FetchedUrl, url, text);
+                        if context_store.includes_url(&url).is_none() {
+                            context_store.insert_fetched_url(url, text);
+                        }
                     })?;
 
                 match confirm_behavior {
@@ -230,13 +233,29 @@ impl PickerDelegate for FetchContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
+        let added = self.context_store.upgrade().map_or(false, |context_store| {
+            context_store.read(cx).includes_url(&self.url).is_some()
+        });
+
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .toggle_state(selected)
-                .child(Label::new(self.url.clone())),
+                .child(Label::new(self.url.clone()))
+                .when(added, |child| {
+                    child.disabled(true).end_slot(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Check)
+                                    .size(IconSize::Small)
+                                    .color(Color::Success),
+                            )
+                            .child(Label::new("Added").size(LabelSize::Small)),
+                    )
+                }),
         )
     }
 }

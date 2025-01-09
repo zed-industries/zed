@@ -149,6 +149,7 @@ impl SlashCommandCompletionProvider {
                             server_id: LanguageServerId(0),
                             lsp_completion: Default::default(),
                             confirm,
+                            resolved: true,
                         })
                     })
                     .collect()
@@ -242,6 +243,7 @@ impl SlashCommandCompletionProvider {
                             server_id: LanguageServerId(0),
                             lsp_completion: Default::default(),
                             confirm,
+                            resolved: true,
                         }
                     })
                     .collect())
@@ -328,16 +330,6 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         _: &mut ViewContext<Editor>,
     ) -> Task<Result<bool>> {
         Task::ready(Ok(true))
-    }
-
-    fn apply_additional_edits_for_completion(
-        &self,
-        _: Model<Buffer>,
-        _: project::Completion,
-        _: bool,
-        _: &mut ViewContext<Editor>,
-    ) -> Task<Result<Option<language::Transaction>>> {
-        Task::ready(Ok(None))
     }
 
     fn is_completion_trigger(

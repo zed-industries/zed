@@ -203,19 +203,19 @@ Here's an example from an `injections.scm` file for Markdown:
 ```scheme
 (fenced_code_block
   (info_string
-    (language) @language)
-  (code_fence_content) @content)
+    (language) @injection.language)
+  (code_fence_content) @injection.content)
 
 ((inline) @content
- (#set! "language" "markdown-inline"))
+ (#set! injection.language "markdown-inline"))
 ```
 
 This query identifies fenced code blocks, capturing the language specified in the info string and the content within the block. It also captures inline content and sets its language to "markdown-inline".
 
-| Capture   | Description                                                |
-| --------- | ---------------------------------------------------------- |
-| @language | Captures the language identifier for a code block          |
-| @content  | Captures the content to be treated as a different language |
+| Capture             | Description                                                |
+| ------------------- | ---------------------------------------------------------- |
+| @injection.language | Captures the language identifier for a code block          |
+| @injection.content  | Captures the content to be treated as a different language |
 
 Note that we couldn't use JSON as an example here because it doesn't support language injections.
 

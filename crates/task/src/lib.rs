@@ -60,7 +60,7 @@ pub struct SpawnInTerminal {
     pub show_command: bool,
 }
 
-/// A final form of the [`TaskTemplate`], that got resolved with a particualar [`TaskContext`] and now is ready to spawn the actual task.
+/// A final form of the [`TaskTemplate`], that got resolved with a particular [`TaskContext`] and now is ready to spawn the actual task.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ResolvedTask {
     /// A way to distinguish tasks produced by the same template, but different contexts.

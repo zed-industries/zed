@@ -11,7 +11,7 @@ pub fn schedule_task(
     task_to_resolve: &TaskTemplate,
     task_cx: &TaskContext,
     omit_history: bool,
-    cx: &mut ViewContext<'_, Workspace>,
+    cx: &mut ViewContext<Workspace>,
 ) {
     match workspace.project.read(cx).ssh_connection_state(cx) {
         None | Some(ConnectionState::Connected) => {}
@@ -44,7 +44,7 @@ pub fn schedule_resolved_task(
     task_source_kind: TaskSourceKind,
     mut resolved_task: ResolvedTask,
     omit_history: bool,
-    cx: &mut ViewContext<'_, Workspace>,
+    cx: &mut ViewContext<Workspace>,
 ) {
     if let Some(spawn_in_terminal) = resolved_task.resolved.take() {
         if !omit_history {

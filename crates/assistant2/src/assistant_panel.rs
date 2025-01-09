@@ -19,7 +19,7 @@ use workspace::Workspace;
 use crate::active_thread::ActiveThread;
 use crate::assistant_settings::{AssistantDockPosition, AssistantSettings};
 use crate::message_editor::MessageEditor;
-use crate::thread::{ThreadError, ThreadId};
+use crate::thread::{Thread, ThreadError, ThreadId};
 use crate::thread_history::{PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
 use crate::{NewThread, OpenHistory, ToggleFocus};
@@ -206,6 +206,10 @@ impl AssistantPanel {
         self.message_editor.focus_handle(cx).focus(cx);
     }
 
+    pub(crate) fn active_thread(&self, cx: &AppContext) -> Model<Thread> {
+        self.thread.read(cx).thread.clone()
+    }
+
     pub(crate) fn delete_thread(&mut self, thread_id: &ThreadId, cx: &mut ViewContext<Self>) {
         self.thread_store
             .update(cx, |this, cx| this.delete_thread(thread_id, cx));
@@ -286,26 +290,40 @@ impl Panel for AssistantPanel {
     fn toggle_action(&self) -> Box<dyn Action> {
         Box::new(ToggleFocus)
     }
+
+    fn activation_priority(&self) -> u32 {
+        3
+    }
 }
 
 impl AssistantPanel {
     fn render_toolbar(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
+        let title = if self.thread.read(cx).is_empty() {
+            SharedString::from("New Thread")
+        } else {
+            self.thread
+                .read(cx)
+                .summary(cx)
+                .unwrap_or_else(|| SharedString::from("Loading Summary…"))
+        };
+
         h_flex()
             .id("assistant-toolbar")
+            .px(DynamicSpacing::Base08.rems(cx))
+            .h(Tab::container_height(cx))
+            .flex_none()
             .justify_between()
             .gap(DynamicSpacing::Base08.rems(cx))
-            .h(Tab::container_height(cx))
-            .px(DynamicSpacing::Base08.rems(cx))
             .bg(cx.theme().colors().tab_bar_background)
             .border_b_1()
             .border_color(cx.theme().colors().border)
-            .child(h_flex().children(self.thread.read(cx).summary(cx).map(Label::new)))
+            .child(h_flex().child(Label::new(title)))
             .child(
                 h_flex()
                     .h_full()
-                    .pl_1()
+                    .pl_1p5()
                     .border_l_1()
                     .border_color(cx.theme().colors().border)
                     .gap(DynamicSpacing::Base02.rems(cx))

@@ -256,8 +256,13 @@
     "search_results": true,
     // Whether to show selected symbol occurrences in the scrollbar.
     "selected_symbol": true,
-    // Whether to show diagnostic indicators in the scrollbar.
-    "diagnostics": true,
+    // Which diagnostic indicators to show in the scrollbar:
+    //  - "none" or false: do not show diagnostics
+    //  - "error": show only errors
+    //  - "warning": show only errors and warnings
+    //  - "information": show only errors, warnings, and information
+    //  - "all" or true: show all diagnostics
+    "diagnostics": "all",
     /// Forcefully enable or disable the scrollbar for each axis
     "axes": {
       /// When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
@@ -367,6 +372,8 @@
     "default_width": 240,
     // Where to dock the project panel. Can be 'left' or 'right'.
     "dock": "left",
+    // Spacing between worktree entries in the project panel. Can be 'comfortable' or 'standard'.
+    "entry_spacing": "comfortable",
     // Whether to show file icons in the project panel.
     "file_icons": true,
     // Whether to show folder icons or chevrons for directories in the project panel.
@@ -741,7 +748,7 @@
       // Delay is restarted with every cursor movement.
       // "delay_ms": 600
       //
-      // Whether or not do display the git commit summary on the same line.
+      // Whether or not to display the git commit summary on the same line.
       // "show_commit_summary": false
       //
       // The minimum column number to show the inline blame information at
@@ -1103,6 +1110,9 @@
       "prettier": {
         "allowed": true
       }
+    },
+    "Zig": {
+      "language_servers": ["zls", "..."]
     }
   },
   // Different settings for specific language models.

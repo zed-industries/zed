@@ -4,8 +4,8 @@ use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use gpui::{
     list, AbsoluteLength, AnyElement, AppContext, DefiniteLength, EdgesRefinement, Empty, Length,
-    ListAlignment, ListState, Model, StyleRefinement, Subscription, TextStyleRefinement, View,
-    WeakView,
+    ListAlignment, ListOffset, ListState, Model, StyleRefinement, Subscription,
+    TextStyleRefinement, UnderlineStyle, View, WeakView,
 };
 use language::LanguageRegistry;
 use language_model::Role;
@@ -22,7 +22,7 @@ pub struct ActiveThread {
     workspace: WeakView<Workspace>,
     language_registry: Arc<LanguageRegistry>,
     tools: Arc<ToolWorkingSet>,
-    thread: Model<Thread>,
+    pub(crate) thread: Model<Thread>,
     messages: Vec<MessageId>,
     list_state: ListState,
     rendered_messages_by_id: HashMap<MessageId, View<Markdown>>,
@@ -137,7 +137,16 @@ impl ActiveThread {
             inline_code: TextStyleRefinement {
                 font_family: Some(theme_settings.buffer_font.family.clone()),
                 font_size: Some(buffer_font_size.into()),
-                background_color: Some(colors.editor_foreground.opacity(0.01)),
+                background_color: Some(colors.editor_foreground.opacity(0.1)),
+                ..Default::default()
+            },
+            link: TextStyleRefinement {
+                background_color: Some(colors.editor_foreground.opacity(0.025)),
+                underline: Some(UnderlineStyle {
+                    color: Some(colors.text_accent.opacity(0.5)),
+                    thickness: px(1.),
+                    ..Default::default()
+                }),
                 ..Default::default()
             },
             ..Default::default()
@@ -153,6 +162,10 @@ impl ActiveThread {
             )
         });
         self.rendered_messages_by_id.insert(*id, markdown);
+        self.list_state.scroll_to(ListOffset {
+            item_ix: old_len,
+            offset_in_item: Pixels(0.0),
+        });
     }
 
     fn handle_thread_event(
@@ -270,12 +283,11 @@ impl ActiveThread {
                     .when_some(context, |parent, context| {
                         if !context.is_empty() {
                             parent.child(
-                                h_flex()
-                                    .flex_wrap()
-                                    .gap_1()
-                                    .px_1p5()
-                                    .pb_1p5()
-                                    .children(context.iter().map(|c| ContextPill::new(c.clone()))),
+                                h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
+                                    context.into_iter().map(|context| {
+                                        ContextPill::new_added(context, false, None)
+                                    }),
+                                ),
                             )
                         } else {
                             parent
