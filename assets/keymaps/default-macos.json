@@ -682,12 +682,12 @@
     }
   },
   {
-    "context": "GitPanel && !GitPanel > Editor",
+    "context": "GitPanel",
     "use_key_equivalents": true,
     "bindings": {
       "escape": "git_panel::Close",
       "enter": "menu::Confirm",
-      "space": "menu::SecondaryConfirm",
+      "space": "git::ToggleStaged",
       "cmd-shift-space": "git::StageAll",
       "ctrl-shift-space": "git::UnstageAll",
       // "cmd-.": "git_panel::OpenContextMenu",
@@ -699,6 +699,7 @@
     "context": "GitPanel > Editor",
     "use_key_equivalents": true,
     "bindings": {
+      "alt_up": "git_panel::FocusChanges",
       "escape": "git_panel::FocusChanges",
       "cmd-enter": "git::CommitChanges",
       "cmd-alt-enter": "git::CommitAllChanges",
