@@ -14,7 +14,7 @@ use std::{
 
 use collections::{HashMap, HashSet};
 use gpui::{AppContext, Context as _, Model, ModelContext, Subscription};
-use language::{CachedLspAdapter, LanguageName, LanguageRegistry};
+use language::{CachedLspAdapter, LanguageName, LanguageRegistry, LspAdapterDelegate};
 use lsp::LanguageServerName;
 use path_trie::{LabelPresence, RootPathTrie, TriePath};
 use settings::WorktreeId;
@@ -122,8 +122,10 @@ impl ProjectTree {
         &mut self,
         ProjectPath { worktree_id, path }: ProjectPath,
         language_name: &LanguageName,
+        delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut AppContext,
     ) -> BTreeMap<AdapterWrapper, ProjectPath> {
+        debug_assert_eq!(delegate.worktree_id(), worktree_id);
         let adapters = self.languages.lsp_adapters(&language_name);
         let mut roots = BTreeMap::from_iter(
             adapters
@@ -180,10 +182,7 @@ impl ProjectTree {
             if maybe_known_root.is_some() {
                 continue;
             }
-            let root = adapter
-                .0
-                .find_closest_project_root(worktree_id, path.clone());
-            dbg!(&root);
+            let root = adapter.0.find_project_root(&path, 0, &delegate);
             match root {
                 Some(known_root) => worktree_roots.update(cx, |this, _| {
                     let root = TriePath::from(&*known_root);

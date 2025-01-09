@@ -15,7 +15,7 @@ use std::{
 
 use collections::HashMap;
 use gpui::{AppContext, Context as _, Model};
-use language::{Attach, LanguageName};
+use language::{Attach, LanguageName, LspAdapterDelegate};
 use lsp::LanguageServerName;
 use settings::WorktreeId;
 
@@ -91,11 +91,12 @@ impl LanguageServerTree {
         &'a mut self,
         path: ProjectPath,
         language: LanguageName,
+        delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut AppContext,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
-        let roots = self
-            .project_tree
-            .update(cx, |this, cx| this.root_for_path(path, &language, cx));
+        let roots = self.project_tree.update(cx, |this, cx| {
+            this.root_for_path(path, &language, delegate, cx)
+        });
 
         roots.into_iter().map(|(adapter, root_path)| {
             let attach = self.attach_kind(&adapter);
@@ -113,9 +114,10 @@ impl LanguageServerTree {
         &'a mut self,
         path: ProjectPath,
         language: LanguageName,
+        delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut AppContext,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
-        self.get(path, language, cx)
+        self.get(path, language, delegate, cx)
             .filter(|node| node.server_id().is_some())
     }
 

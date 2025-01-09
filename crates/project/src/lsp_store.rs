@@ -140,6 +140,7 @@ impl FormatTrigger {
 }
 
 pub struct LocalLspStore {
+    weak: WeakModel<LspStore>,
     worktree_store: Model<WorktreeStore>,
     toolchain_store: Model<ToolchainStore>,
     http_client: Arc<dyn HttpClient>,
@@ -1049,8 +1050,16 @@ impl LocalLspStore {
                 worktree_id,
                 path: file.path().clone(),
             };
+            let Some(worktree) = self
+                .worktree_store
+                .read(cx)
+                .worktree_for_id(worktree_id, cx)
+            else {
+                return vec![];
+            };
+            let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
             let root = self.lsp_tree.update(cx, |this, cx| {
-                this.get(path, language.name(), cx)
+                this.get(path, language.name(), delegate, cx)
                     .filter_map(|node| node.server_id())
                     .collect::<Vec<_>>()
             });
@@ -1754,7 +1763,14 @@ impl LocalLspStore {
         let Some(language) = language else {
             return;
         };
-
+        let Some(worktree) = self
+            .worktree_store
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+        else {
+            return;
+        };
+        let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
         self.lsp_tree.update(cx, |this, cx| {
             let servers = this
                 .get(
@@ -1763,6 +1779,7 @@ impl LocalLspStore {
                         path: file.path.clone(),
                     },
                     language.name(),
+                    delegate,
                     cx,
                 )
                 .filter_map(|server_node| {
@@ -1808,6 +1825,14 @@ impl LocalLspStore {
             let ids = &self.language_server_ids;
 
             if let Some(language) = buffer.language().cloned() {
+                let Some(worktree) = self
+                    .worktree_store
+                    .read(cx)
+                    .worktree_for_id(worktree_id, cx)
+                else {
+                    return;
+                };
+                let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
                 let nodes = self.lsp_tree.update(cx, |this, cx| {
                     this.get_initialized(
                         ProjectPath {
@@ -1815,6 +1840,7 @@ impl LocalLspStore {
                             path: old_file.path().clone(),
                         },
                         language.name(),
+                        delegate,
                         cx,
                     )
                     .collect::<Vec<_>>()
@@ -3028,6 +3054,7 @@ impl LspStore {
         let project_tree = ProjectTree::new(languages.clone(), worktree_store.clone(), cx);
         Self {
             mode: LspStoreMode::Local(LocalLspStore {
+                weak: cx.weak_model(),
                 worktree_store: worktree_store.clone(),
                 toolchain_store: toolchain_store.clone(),
                 supplementary_language_servers: Default::default(),
@@ -3279,18 +3306,6 @@ impl LspStore {
 
         self.detect_language_for_buffer(buffer, cx);
         if let Some(local) = self.as_local_mut() {
-            local.lsp_tree.update(cx, |this, cx| {
-                maybe!({
-                    let buffs = this
-                        .get(
-                            buffer.read(cx).project_path(cx)?,
-                            buffer.read(cx).language()?.name(),
-                            cx,
-                        )
-                        .collect::<Vec<_>>();
-                    Some(())
-                });
-            });
             local.initialize_buffer(buffer, cx);
         }
 
@@ -8523,10 +8538,13 @@ impl LocalLspAdapterDelegate {
         worktree: &Model<Worktree>,
         http_client: Arc<dyn HttpClient>,
         fs: Arc<dyn Fs>,
-        cx: &mut ModelContext<LspStore>,
+        cx: &mut AppContext,
     ) -> Arc<Self> {
-        let worktree_id = worktree.read(cx).id();
-        let worktree_abs_path = worktree.read(cx).abs_path();
+        let (worktree_id, worktree_abs_path) = {
+            let worktree = worktree.read(cx);
+            (worktree.id(), worktree.abs_path())
+        };
+
         let load_shell_env_task = environment.update(cx, |env, cx| {
             env.get_environment(Some(worktree_id), Some(worktree_abs_path), cx)
         });
@@ -8539,6 +8557,22 @@ impl LocalLspAdapterDelegate {
             language_registry,
             load_shell_env_task,
         })
+    }
+
+    fn from_local_lsp(
+        local: &LocalLspStore,
+        worktree: &Model<Worktree>,
+        cx: &mut AppContext,
+    ) -> Arc<Self> {
+        Self::new(
+            local.languages.clone(),
+            &local.environment,
+            local.weak.clone(),
+            worktree,
+            local.http_client.clone(),
+            local.fs.clone(),
+            cx,
+        )
     }
 }
 
