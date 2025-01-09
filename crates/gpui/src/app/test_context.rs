@@ -191,7 +191,7 @@ impl TestAppContext {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |window, cx| cx.new_model(|cx| build_window(window, cx)),
+            |window, cx| window.new_view(cx, build_window),
         )
         .unwrap()
     }
@@ -206,7 +206,7 @@ impl TestAppContext {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |window, cx| cx.new_model(|_| Empty),
+                |window, cx| window.new_view(cx, |_, _| Empty),
             )
             .unwrap();
         drop(cx);
@@ -234,7 +234,7 @@ impl TestAppContext {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |window, cx| cx.new_model(|cx| build_root_view(window, cx)),
+                |window, cx| window.new_view(cx, build_root_view),
             )
             .unwrap();
         drop(cx);

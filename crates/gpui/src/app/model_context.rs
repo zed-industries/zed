@@ -8,8 +8,9 @@ use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use futures::FutureExt;
 use std::{
-    any::{Any, TypeId},
+    any::{type_name, Any, TypeId},
     borrow::{Borrow, BorrowMut},
+    fmt::Debug,
     future::Future,
     sync::Arc,
 };

@@ -857,20 +857,17 @@ impl Element for List {
         let height = bounds.size.height;
         let scroll_top = prepaint.layout.scroll_top;
         let hitbox_id = prepaint.hitbox.id;
-        window.on_mouse_event(
-            // todo! why do i need these type annotations
-            move |event: &ScrollWheelEvent, phase, window, cx| {
-                if phase == DispatchPhase::Bubble && hitbox_id.is_hovered(window) {
-                    list_state.0.borrow_mut().scroll(
-                        &scroll_top,
-                        height,
-                        event.delta.pixel_delta(px(20.)),
-                        window,
-                        cx,
-                    )
-                }
-            },
-        );
+        window.on_mouse_event(move |event: &ScrollWheelEvent, phase, window, cx| {
+            if phase == DispatchPhase::Bubble && hitbox_id.is_hovered(window) {
+                list_state.0.borrow_mut().scroll(
+                    &scroll_top,
+                    height,
+                    event.delta.pixel_delta(px(20.)),
+                    window,
+                    cx,
+                )
+            }
+        });
     }
 }
 
