@@ -4571,6 +4571,23 @@ impl Editor {
         _: &AcceptInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
+        let buffer = self.buffer.read(cx);
+        let snapshot = buffer.snapshot(cx);
+        let selection = self.selections.newest_adjusted(cx);
+        let cursor = selection.head();
+        let current_indent = snapshot.indent_size_for_line(MultiBufferRow(cursor.row));
+        let suggested_indents = snapshot.suggested_indents([cursor.row], cx);
+        if let Some(suggested_indent) = suggested_indents.get(&MultiBufferRow(cursor.row)).copied()
+        {
+            if cursor.column < suggested_indent.len
+                && cursor.column <= current_indent.len
+                && current_indent.len <= suggested_indent.len
+            {
+                self.tab(&Default::default(), cx);
+                return;
+            }
+        }
+
         if self.show_inline_completions_in_menu(cx) {
             self.hide_context_menu(cx);
         }
