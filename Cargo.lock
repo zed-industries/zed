@@ -434,7 +434,7 @@ dependencies = [
  "settings",
  "similar",
  "smallvec",
- "smol",
+ "smol 1.3.0",
  "strum",
  "telemetry_events",
  "terminal",
@@ -503,7 +503,7 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "similar",
- "smol",
+ "smol 1.3.0",
  "telemetry_events",
  "terminal",
  "terminal_view",
@@ -1112,7 +1112,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
+ "smol 1.3.0",
  "tempfile",
  "which 6.0.3",
  "workspace",
@@ -1133,7 +1133,7 @@ dependencies = [
  "release_channel",
  "serde",
  "serde_json",
- "smol",
+ "smol 1.3.0",
  "util",
  "workspace",
 ]
@@ -1724,7 +1724,7 @@ dependencies = [
  "bitflags 2.6.0",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.12.1",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -2153,7 +2153,7 @@ dependencies = [
  "cap-primitives",
  "cap-std",
  "io-lifetimes 2.0.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -2181,7 +2181,7 @@ dependencies = [
  "ipnet",
  "maybe-owned",
  "rustix 0.38.42",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
  "winx",
 ]
 
@@ -2535,7 +2535,7 @@ dependencies = [
  "serde_json",
  "settings",
  "sha2",
- "smol",
+ "smol 1.3.0",
  "telemetry",
  "telemetry_events",
  "text",
@@ -2929,7 +2929,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
+ "smol 1.3.0",
  "url",
  "util",
  "workspace",
@@ -2995,7 +2995,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
+ "smol 1.3.0",
  "strum",
  "task",
  "theme",
@@ -3605,7 +3605,7 @@ dependencies = [
  "log",
  "paths",
  "release_channel",
- "smol",
+ "smol 1.3.0",
  "sqlez",
  "sqlez_macros",
  "tempfile",
@@ -3926,7 +3926,7 @@ dependencies = [
  "settings",
  "similar",
  "smallvec",
- "smol",
+ "smol 1.3.0",
  "snippet",
  "sum_tree",
  "task",
@@ -4146,7 +4146,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "33d852cb9b869c2a9b3df2f71a3074817f01e1844f839a144f5fcef059a4eb5d"
 dependencies = [
  "libc",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -4214,7 +4214,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
+ "smol 1.3.0",
  "util",
 ]
 
@@ -4508,7 +4508,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
- "smol",
+ "smol 1.3.0",
  "sysinfo",
  "ui",
  "urlencoding",
@@ -4796,7 +4796,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shlex",
- "smol",
+ "smol 1.3.0",
  "tempfile",
  "text",
  "time",
@@ -4813,7 +4813,7 @@ checksum = "5e2e6123af26f0f2c51cc66869137080199406754903cc926a7690401ce09cb4"
 dependencies = [
  "io-lifetimes 2.0.4",
  "rustix 0.38.42",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -5131,7 +5131,7 @@ dependencies = [
  "rope",
  "serde",
  "serde_json",
- "smol",
+ "smol 1.3.0",
  "sum_tree",
  "text",
  "time",
@@ -5375,7 +5375,7 @@ dependencies = [
  "serde_json",
  "slotmap",
  "smallvec",
- "smol",
+ "smol 1.3.0",
  "strum",
  "sum_tree",
  "taffy",
@@ -6349,7 +6349,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui",
- "smol",
+ "smol 1.3.0",
  "util",
 ]
 
@@ -6380,7 +6380,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2285ddfe3054097ef4b2fe909ef8c3bcd1ea52a8f0d274416caebeef39f04a65"
 dependencies = [
  "io-lifetimes 2.0.4",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -6592,9 +6592,9 @@ dependencies = [
 
 [[package]]
 name = "jupyter-protocol"
-version = "0.5.0"
+version = "0.6.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "503458f8125fd9047ed0a9d95d7a93adc5eaf8bce48757c6d401e09f71ad3407"
+checksum = "c9ae6296f9476658b3550293c113996daf75fa542cd8d078abb4c60207bded14"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6608,9 +6608,9 @@ dependencies = [
 
 [[package]]
 name = "jupyter-websocket-client"
-version = "0.8.0"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "58d9afa5bc6eeafb78f710a2efc585f69099f8b6a99dc7eb826581e3773a6e31"
+checksum = "49c1ba895c5271ff8dcae51c347fd3588905ba0025a57e20955fd231fe1228cc"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6707,7 +6707,7 @@ dependencies = [
  "settings",
  "similar",
  "smallvec",
- "smol",
+ "smol 1.3.0",
  "strsim",
  "sum_tree",
  "task",
@@ -6766,7 +6766,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "smol",
+ "smol 1.3.0",
  "strum",
  "ui",
  "util",
@@ -6812,7 +6812,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
+ "smol 1.3.0",
  "strum",
  "telemetry_events",
  "theme",
@@ -6898,7 +6898,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
+ "smol 1.3.0",
  "task",
  "text",
  "theme",
@@ -6991,7 +6991,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -7334,7 +7334,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "smol",
+ "smol 1.3.0",
  "util",
 ]
 
@@ -7779,9 +7779,9 @@ dependencies = [
 
 [[package]]
 name = "nbformat"
-version = "0.9.0"
+version = "0.10.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "19835ad46507d80d9671e10a1c7c335655f4f3033aeb066fe025f14e070c2e66"
+checksum = "244c1673f02b4d5f3c51b6f8ed28d57182cb166a50a6dbf651a3d53e23dc81c0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -7858,7 +7858,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "smol",
+ "smol 1.3.0",
  "tempfile",
  "util",
  "walkdir",
@@ -8613,7 +8613,7 @@ dependencies = [
  "rope",
  "serde_json",
  "settings",
- "smol",
+ "smol 1.3.0",
  "theme",
  "tree-sitter-rust",
  "tree-sitter-typescript",
@@ -8647,7 +8647,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
- "smol",
+ "smol 1.3.0",
  "theme",
  "ui",
  "util",
@@ -9805,7 +9805,7 @@ dependencies = [
  "shellexpand 2.1.2",
  "shlex",
  "similar",
- "smol",
+ "smol 1.3.0",
  "snippet",
  "snippet_provider",
  "task",
@@ -10152,7 +10152,7 @@ dependencies = [
  "once_cell",
  "socket2 0.5.8",
  "tracing",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -10371,7 +10371,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
+ "smol 1.3.0",
  "task",
  "theme",
  "ui",
@@ -10506,7 +10506,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shlex",
- "smol",
+ "smol 1.3.0",
  "tempfile",
  "thiserror 1.0.69",
  "util",
@@ -10554,7 +10554,7 @@ dependencies = [
  "serde_json",
  "settings",
  "shellexpand 2.1.2",
- "smol",
+ "smol 1.3.0",
  "sysinfo",
  "telemetry_events",
  "toml 0.8.19",
@@ -10608,7 +10608,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
+ "smol 1.3.0",
  "telemetry",
  "terminal",
  "terminal_view",
@@ -10725,7 +10725,7 @@ dependencies = [
  "log",
  "reqwest 0.12.8",
  "serde",
- "smol",
+ "smol 1.3.0",
  "tokio",
 ]
 
@@ -10923,9 +10923,9 @@ dependencies = [
 
 [[package]]
 name = "runtimelib"
-version = "0.24.0"
+version = "0.25.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "445ff0ee3d5c832cdd27efadd004a741423db1f91bd1de593a14b21211ea084c"
+checksum = "9af6ed9fd10d7ee940676945510c197c2a472806bb652096a713985c44ffd643"
 dependencies = [
  "anyhow",
  "async-dispatcher",
@@ -10942,7 +10942,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shellexpand 3.1.0",
- "smol",
+ "smol 2.0.2",
  "uuid",
  "zeromq",
 ]
@@ -11051,7 +11051,7 @@ dependencies = [
  "libc",
  "linux-raw-sys 0.4.14",
  "once_cell",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -11395,7 +11395,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
+ "smol 1.3.0",
  "theme",
  "ui",
  "unindent",
@@ -11489,7 +11489,7 @@ dependencies = [
  "serde_json",
  "settings",
  "sha2",
- "smol",
+ "smol 1.3.0",
  "tempfile",
  "theme",
  "tree-sitter",
@@ -11956,6 +11956,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "smol"
+version = "2.0.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a33bd3e260892199c3ccfc487c88b2da2265080acb316cd920da72fdfd7c599f"
+dependencies = [
+ "async-channel 2.3.1",
+ "async-executor",
+ "async-fs 2.1.2",
+ "async-io 2.4.0",
+ "async-lock 3.4.0",
+ "async-net 2.0.0",
+ "async-process 2.3.0",
+ "blocking",
+ "futures-lite 2.5.0",
+]
+
+[[package]]
 name = "smol_str"
 version = "0.1.24"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -12087,7 +12104,7 @@ dependencies = [
  "indoc",
  "libsqlite3-sys",
  "parking_lot",
- "smol",
+ "smol 1.3.0",
  "sqlformat",
  "thread_local",
  "util",
@@ -12491,7 +12508,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol",
+ "smol 1.3.0",
  "supermaven_api",
  "text",
  "theme",
@@ -12510,7 +12527,7 @@ dependencies = [
  "paths",
  "serde",
  "serde_json",
- "smol",
+ "smol 1.3.0",
 ]
 
 [[package]]
@@ -12765,7 +12782,7 @@ dependencies = [
  "fd-lock",
  "io-lifetimes 2.0.4",
  "rustix 0.38.42",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
  "winx",
 ]
 
@@ -12898,7 +12915,7 @@ dependencies = [
  "getrandom 0.2.15",
  "once_cell",
  "rustix 0.38.42",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -12939,7 +12956,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "settings",
- "smol",
+ "smol 1.3.0",
  "sysinfo",
  "task",
  "theme",
@@ -12981,7 +12998,7 @@ dependencies = [
  "serde_json",
  "settings",
  "shellexpand 2.1.2",
- "smol",
+ "smol 1.3.0",
  "task",
  "terminal",
  "theme",
@@ -14203,7 +14220,7 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
- "smol",
+ "smol 1.3.0",
  "take-until",
  "tempfile",
  "tendril",
@@ -15201,7 +15218,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -15650,7 +15667,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3f3fd376f71958b862e7afb20cfe5a22830e1963462f3a17f49d82a6c1d1f42d"
 dependencies = [
  "bitflags 2.6.0",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -15857,7 +15874,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
- "smol",
+ "smol 1.3.0",
  "sum_tree",
  "text",
  "util",
@@ -16291,7 +16308,7 @@ dependencies = [
  "settings_ui",
  "shellexpand 2.1.2",
  "simplelog",
- "smol",
+ "smol 1.3.0",
  "snippet_provider",
  "snippets_ui",
  "supermaven",
@@ -16576,9 +16593,9 @@ dependencies = [
 
 [[package]]
 name = "zeromq"
-version = "0.4.1"
+version = "0.5.0-pre"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "6a4528179201f6eecf211961a7d3276faa61554c82651ecc66387f68fc3004bd"
+checksum = "a1fe92954d37e77bed5e2775cb0fed7dba5f6bc4be6f7f76172a4eb371dc6a9b"
 dependencies = [
  "async-dispatcher",
  "async-std",
@@ -16587,10 +16604,7 @@ dependencies = [
  "bytes 1.9.0",
  "crossbeam-queue",
  "dashmap 5.5.3",
- "futures-channel",
- "futures-io",
- "futures-task",
- "futures-util",
+ "futures 0.3.31",
  "log",
  "num-traits",
  "once_cell",
