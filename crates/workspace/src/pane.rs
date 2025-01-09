@@ -1,7 +1,7 @@
 use crate::{
     item::{
         ActivateOnClose, ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
-        ShowDiagnostics, TabContentParams, WeakItemHandle,
+        ShowDiagnostics, TabContentParams, TabTooltipContent, WeakItemHandle,
     },
     move_item,
     notifications::NotifyResultExt,
@@ -2149,8 +2149,11 @@ impl Pane {
                 this.drag_split_direction = None;
                 this.handle_external_paths_drop(paths, cx)
             }))
-            .when_some(item.tab_tooltip_text(cx), |tab, text| {
-                tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
+            .when_some(item.tab_tooltip_content(cx), |tab, content| match content {
+                TabTooltipContent::Text(text) => {
+                    tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
+                }
+                TabTooltipContent::Custom(element_fn) => tab.tooltip(move |cx| element_fn(cx)),
             })
             .start_slot::<Indicator>(indicator)
             .map(|this| {
