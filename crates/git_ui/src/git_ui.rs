@@ -10,14 +10,21 @@ pub mod git_panel;
 mod settings;
 
 actions!(
-    git_ui,
+    git,
     [
+        StageFile,
+        UnstageFile,
+        // not staged -> staged, partially staged -> staged, staged -> unstaged
+        ToggleStaged,
+        // Revert actions are currently in the editor crate:
+        // editor::RevertFile,
+        // editor::RevertSelectedHunks
         StageAll,
         UnstageAll,
         RevertAll,
-        CommitStagedChanges,
+        CommitChanges,
         CommitAllChanges,
-        ClearMessage
+        ClearCommitMessage
     ]
 );
 

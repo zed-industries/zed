@@ -1,6 +1,9 @@
+#![allow(unused)]
+use crate::first_worktree_repository;
 use crate::{
-    first_worktree_repository, git_status_icon, settings::GitPanelSettings, CommitAllChanges,
-    CommitStagedChanges, GitListEntry, GitState, GitViewMode, RevertAll, StageAll, UnstageAll,
+    git_status_icon, settings::GitPanelSettings, ClearCommitMessage, CommitAllChanges,
+    CommitChanges, GitListEntry, GitState, GitViewMode, RevertAll, StageAll, StageFile,
+    ToggleStaged, UnstageAll, UnstageFile,
 };
 use anyhow::{Context as _, Result};
 use db::kvp::KEY_VALUE_STORE;
@@ -24,7 +27,18 @@ use workspace::{
     Workspace,
 };
 
-actions!(git_panel, [ToggleFocus, OpenEntryMenu]);
+actions!(
+    git_panel,
+    [
+        Close,
+        // For now we don't bind ToggleFocus by default
+        ToggleFocus,
+        OpenContextMenu,
+        OpenSelected,
+        FocusEditor,
+        FocusChanges
+    ]
+);
 
 const GIT_PANEL_KEY: &str = "GitPanel";
 
@@ -238,12 +252,23 @@ impl GitPanel {
         );
     }
 
-    fn dispatch_context(&self) -> KeyContext {
+    fn dispatch_context(&self, cx: &ViewContext<Self>) -> KeyContext {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("GitPanel");
         dispatch_context.add("menu");
 
+        // let identifier = if self.commit_editor.focus_handle(cx).is_focused(cx) {
+        //     "editing"
+        // } else {
+        //     "not_editing"
+        // };
+
+        // dispatch_context.add(identifier);
         dispatch_context
+    }
+
+    fn close_panel(&mut self, _: &Close, cx: &mut ViewContext<Self>) {
+        cx.emit(PanelEvent::Close);
     }
 
     fn focus_in(&mut self, cx: &mut ViewContext<Self>) {
@@ -414,7 +439,7 @@ impl GitPanel {
     }
 
     /// Commit all staged changes
-    fn commit_staged_changes(&mut self, _: &CommitStagedChanges, cx: &mut ViewContext<Self>) {
+    fn commit_staged_changes(&mut self, _: &CommitChanges, cx: &mut ViewContext<Self>) {
         self.clear_message(cx);
 
         // TODO: Implement commit all staged
@@ -700,13 +725,13 @@ impl GitPanel {
                 let focus_handle = focus_handle_1.clone();
                 Tooltip::for_action_in(
                     "Commit all staged changes",
-                    &CommitStagedChanges,
+                    &CommitChanges,
                     &focus_handle,
                     cx,
                 )
             })
             .on_click(cx.listener(|this, _: &ClickEvent, cx| {
-                this.commit_staged_changes(&CommitStagedChanges, cx)
+                this.commit_staged_changes(&CommitChanges, cx)
             }));
 
         let commit_all_button = self
@@ -946,7 +971,7 @@ impl Render for GitPanel {
 
         v_flex()
             .id("git_panel")
-            .key_context(self.dispatch_context())
+            .key_context(self.dispatch_context(cx))
             .track_focus(&self.focus_handle)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .when(!project.is_read_only(cx), |this| {
@@ -955,8 +980,8 @@ impl Render for GitPanel {
                         cx.listener(|this, &UnstageAll, cx| this.unstage_all(&UnstageAll, cx)),
                     )
                     .on_action(cx.listener(|this, &RevertAll, cx| this.discard_all(&RevertAll, cx)))
-                    .on_action(cx.listener(|this, &CommitStagedChanges, cx| {
-                        this.commit_staged_changes(&CommitStagedChanges, cx)
+                    .on_action(cx.listener(|this, &CommitChanges, cx| {
+                        this.commit_staged_changes(&CommitChanges, cx)
                     }))
                     .on_action(cx.listener(|this, &CommitAllChanges, cx| {
                         this.commit_all_changes(&CommitAllChanges, cx)
@@ -966,6 +991,7 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_prev))
             .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::close_panel))
             .on_hover(cx.listener(|this, hovered, cx| {
                 if *hovered {
                     this.show_scrollbar = true;
