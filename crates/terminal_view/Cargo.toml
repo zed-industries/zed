@@ -8,6 +8,9 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[features]
+test-support = ["editor/test-support", "gpui/test-support"]
+
 [lib]
 path = "src/terminal_view.rs"
 doctest = false

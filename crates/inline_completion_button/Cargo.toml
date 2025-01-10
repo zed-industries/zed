@@ -19,6 +19,7 @@ editor.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
 gpui.workspace = true
+inline_completion.workspace = true
 language.workspace = true
 paths.workspace = true
 settings.workspace = true

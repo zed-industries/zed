@@ -30,6 +30,7 @@ use std::{
     time::{Duration, Instant},
 };
 use telemetry_events::InlineCompletionRating;
+use util::ResultExt;
 use uuid::Uuid;
 
 const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
@@ -205,6 +206,8 @@ impl Zeta {
     }
 
     fn push_event(&mut self, event: Event) {
+        const MAX_EVENT_COUNT: usize = 20;
+
         if let Some(Event::BufferChange {
             new_snapshot: last_new_snapshot,
             timestamp: last_timestamp,
@@ -229,7 +232,7 @@ impl Zeta {
         }
 
         self.events.push_back(event);
-        if self.events.len() > 10 {
+        if self.events.len() > MAX_EVENT_COUNT {
             self.events.pop_front();
         }
     }
@@ -298,29 +301,35 @@ impl Zeta {
         cx.spawn(|this, mut cx| async move {
             let request_sent_at = Instant::now();
 
-            let input_events = cx
+            let (input_events, input_excerpt, input_outline) = cx
                 .background_executor()
-                .spawn(async move {
-                    let mut input_events = String::new();
-                    for event in events {
-                        if !input_events.is_empty() {
-                            input_events.push('\n');
-                            input_events.push('\n');
+                .spawn({
+                    let snapshot = snapshot.clone();
+                    let excerpt_range = excerpt_range.clone();
+                    async move {
+                        let mut input_events = String::new();
+                        for event in events {
+                            if !input_events.is_empty() {
+                                input_events.push('\n');
+                                input_events.push('\n');
+                            }
+                            input_events.push_str(&event.to_prompt());
                         }
-                        input_events.push_str(&event.to_prompt());
+
+                        let input_excerpt = prompt_for_excerpt(&snapshot, &excerpt_range, offset);
+                        let input_outline = prompt_for_outline(&snapshot);
+
+                        (input_events, input_excerpt, input_outline)
                     }
-                    input_events
                 })
                 .await;
-
-            let input_excerpt = prompt_for_excerpt(&snapshot, &excerpt_range, offset);
-            let input_outline = prompt_for_outline(&snapshot);
 
             log::debug!("Events:\n{}\nExcerpt:\n{}", input_events, input_excerpt);
 
             let body = PredictEditsParams {
                 input_events: input_events.clone(),
                 input_excerpt: input_excerpt.clone(),
+                outline: Some(input_outline.clone()),
             };
 
             let response = perform_predict_edits(client, llm_token, body).await?;
@@ -580,9 +589,34 @@ and then another
         cx.background_executor().spawn(async move {
             let content = output_excerpt.replace(CURSOR_MARKER, "");
 
-            let codefence_start = content
-                .find(EDITABLE_REGION_START_MARKER)
-                .context("could not find start marker")?;
+            let start_markers = content
+                .match_indices(EDITABLE_REGION_START_MARKER)
+                .collect::<Vec<_>>();
+            anyhow::ensure!(
+                start_markers.len() == 1,
+                "expected exactly one start marker, found {}",
+                start_markers.len()
+            );
+
+            let end_markers = content
+                .match_indices(EDITABLE_REGION_END_MARKER)
+                .collect::<Vec<_>>();
+            anyhow::ensure!(
+                end_markers.len() == 1,
+                "expected exactly one end marker, found {}",
+                end_markers.len()
+            );
+
+            let sof_markers = content
+                .match_indices(START_OF_FILE_MARKER)
+                .collect::<Vec<_>>();
+            anyhow::ensure!(
+                sof_markers.len() <= 1,
+                "expected at most one start-of-file marker, found {}",
+                sof_markers.len()
+            );
+
+            let codefence_start = start_markers[0].0;
             let content = &content[codefence_start..];
 
             let newline_ix = content.find('\n').context("could not find newline")?;
@@ -700,6 +734,7 @@ and then another
         feedback: String,
         cx: &mut ModelContext<Self>,
     ) {
+        self.rated_completions.insert(completion.id);
         telemetry::event!(
             "Inline Completion Rated",
             rating,
@@ -941,7 +976,7 @@ impl CurrentInlineCompletion {
 
 struct PendingCompletion {
     id: usize,
-    _task: Task<Result<()>>,
+    _task: Task<()>,
 }
 
 pub struct ZetaInlineCompletionProvider {
@@ -977,6 +1012,10 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         true
     }
 
+    fn show_completions_in_normal_mode() -> bool {
+        true
+    }
+
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,
@@ -988,6 +1027,10 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         let language = buffer.language_at(cursor_position);
         let settings = all_language_settings(file, cx);
         settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()), cx)
+    }
+
+    fn is_refreshing(&self) -> bool {
+        !self.pending_completions.is_empty()
     }
 
     fn refresh(
@@ -1011,13 +1054,16 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                 })
             });
 
-            let mut completion = None;
-            if let Ok(completion_request) = completion_request {
-                completion = Some(CurrentInlineCompletion {
-                    buffer_id: buffer.entity_id(),
-                    completion: completion_request.await?,
-                });
-            }
+            let completion = match completion_request {
+                Ok(completion_request) => {
+                    let completion_request = completion_request.await;
+                    completion_request.map(|completion| CurrentInlineCompletion {
+                        buffer_id: buffer.entity_id(),
+                        completion,
+                    })
+                }
+                Err(error) => Err(error),
+            };
 
             this.update(&mut cx, |this, cx| {
                 if this.pending_completions[0].id == pending_completion_id {
@@ -1026,7 +1072,8 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                     this.pending_completions.clear();
                 }
 
-                if let Some(new_completion) = completion {
+                if let Some(new_completion) = completion.context("zeta prediction failed").log_err()
+                {
                     if let Some(old_completion) = this.current_completion.as_ref() {
                         let snapshot = buffer.read(cx).snapshot();
                         if new_completion.should_replace_completion(&old_completion, &snapshot) {
@@ -1041,12 +1088,11 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                         });
                         this.current_completion = Some(new_completion);
                     }
-                } else {
-                    this.current_completion = None;
                 }
 
                 cx.notify();
             })
+            .ok();
         });
 
         // We always maintain at most two pending completions. When we already

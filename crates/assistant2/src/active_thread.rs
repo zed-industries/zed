@@ -76,6 +76,10 @@ impl ActiveThread {
         self.thread.read(cx).summary()
     }
 
+    pub fn summary_or_default(&self, cx: &AppContext) -> SharedString {
+        self.thread.read(cx).summary_or_default()
+    }
+
     pub fn last_error(&self) -> Option<ThreadError> {
         self.last_error.clone()
     }
@@ -137,7 +141,7 @@ impl ActiveThread {
             inline_code: TextStyleRefinement {
                 font_family: Some(theme_settings.buffer_font.family.clone()),
                 font_size: Some(buffer_font_size.into()),
-                background_color: Some(colors.editor_foreground.opacity(0.01)),
+                background_color: Some(colors.editor_foreground.opacity(0.1)),
                 ..Default::default()
             },
             link: TextStyleRefinement {
@@ -284,9 +288,9 @@ impl ActiveThread {
                         if !context.is_empty() {
                             parent.child(
                                 h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
-                                    context
-                                        .iter()
-                                        .map(|context| ContextPill::new(context.clone())),
+                                    context.into_iter().map(|context| {
+                                        ContextPill::new_added(context, false, None)
+                                    }),
                                 ),
                             )
                         } else {

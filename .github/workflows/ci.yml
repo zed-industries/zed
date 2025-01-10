@@ -322,9 +322,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Generate license file
-        run: script/generate-licenses
-
       - name: Create macOS app bundle
         run: script/bundle-mac
 

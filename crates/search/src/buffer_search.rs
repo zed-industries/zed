@@ -212,7 +212,8 @@ impl Render for BufferSearchBar {
                 .min_w_32()
                 .w(input_width)
                 .h_8()
-                .px_2()
+                .pl_2()
+                .pr_1()
                 .py_1()
                 .border_1()
                 .border_color(editor_border)
@@ -227,31 +228,37 @@ impl Render for BufferSearchBar {
                     .track_scroll(&self.editor_scroll_handle)
                     .child(self.render_text_input(&self.query_editor, text_color.color(cx), cx))
                     .when(!hide_inline_icons, |div| {
-                        div.children(supported_options.case.then(|| {
-                            self.render_search_option_button(
-                                SearchOptions::CASE_SENSITIVE,
-                                focus_handle.clone(),
-                                cx.listener(|this, _, cx| {
-                                    this.toggle_case_sensitive(&ToggleCaseSensitive, cx)
-                                }),
-                            )
-                        }))
-                        .children(supported_options.word.then(|| {
-                            self.render_search_option_button(
-                                SearchOptions::WHOLE_WORD,
-                                focus_handle.clone(),
-                                cx.listener(|this, _, cx| {
-                                    this.toggle_whole_word(&ToggleWholeWord, cx)
-                                }),
-                            )
-                        }))
-                        .children(supported_options.regex.then(|| {
-                            self.render_search_option_button(
-                                SearchOptions::REGEX,
-                                focus_handle.clone(),
-                                cx.listener(|this, _, cx| this.toggle_regex(&ToggleRegex, cx)),
-                            )
-                        }))
+                        div.child(
+                            h_flex()
+                                .gap_1()
+                                .children(supported_options.case.then(|| {
+                                    self.render_search_option_button(
+                                        SearchOptions::CASE_SENSITIVE,
+                                        focus_handle.clone(),
+                                        cx.listener(|this, _, cx| {
+                                            this.toggle_case_sensitive(&ToggleCaseSensitive, cx)
+                                        }),
+                                    )
+                                }))
+                                .children(supported_options.word.then(|| {
+                                    self.render_search_option_button(
+                                        SearchOptions::WHOLE_WORD,
+                                        focus_handle.clone(),
+                                        cx.listener(|this, _, cx| {
+                                            this.toggle_whole_word(&ToggleWholeWord, cx)
+                                        }),
+                                    )
+                                }))
+                                .children(supported_options.regex.then(|| {
+                                    self.render_search_option_button(
+                                        SearchOptions::REGEX,
+                                        focus_handle.clone(),
+                                        cx.listener(|this, _, cx| {
+                                            this.toggle_regex(&ToggleRegex, cx)
+                                        }),
+                                    )
+                                })),
+                        )
                     }),
             )
             .child(
@@ -333,7 +340,7 @@ impl Render for BufferSearchBar {
                     .child(
                         h_flex()
                             .pl_2()
-                            .ml_2()
+                            .ml_1()
                             .border_l_1()
                             .border_color(cx.theme().colors().border_variant)
                             .child(render_nav_button(

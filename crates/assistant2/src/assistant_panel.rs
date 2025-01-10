@@ -279,7 +279,12 @@ impl Panel for AssistantPanel {
         Some(proto::PanelId::AssistantPanel)
     }
 
-    fn icon(&self, _cx: &WindowContext) -> Option<IconName> {
+    fn icon(&self, cx: &WindowContext) -> Option<IconName> {
+        let settings = AssistantSettings::get_global(cx);
+        if !settings.enabled || !settings.button {
+            return None;
+        }
+
         Some(IconName::ZedAssistant2)
     }
 
@@ -300,21 +305,23 @@ impl AssistantPanel {
     fn render_toolbar(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
-        let title = if self.thread.read(cx).is_empty() {
-            SharedString::from("New Thread")
+        let thread = self.thread.read(cx);
+
+        let title = if thread.is_empty() {
+            thread.summary_or_default(cx)
         } else {
-            self.thread
-                .read(cx)
+            thread
                 .summary(cx)
                 .unwrap_or_else(|| SharedString::from("Loading Summary…"))
         };
 
         h_flex()
             .id("assistant-toolbar")
+            .px(DynamicSpacing::Base08.rems(cx))
+            .h(Tab::container_height(cx))
+            .flex_none()
             .justify_between()
             .gap(DynamicSpacing::Base08.rems(cx))
-            .h(Tab::container_height(cx))
-            .px(DynamicSpacing::Base08.rems(cx))
             .bg(cx.theme().colors().tab_bar_background)
             .border_b_1()
             .border_color(cx.theme().colors().border)
@@ -322,7 +329,7 @@ impl AssistantPanel {
             .child(
                 h_flex()
                     .h_full()
-                    .pl_1()
+                    .pl_1p5()
                     .border_l_1()
                     .border_color(cx.theme().colors().border)
                     .gap(DynamicSpacing::Base02.rems(cx))

@@ -4411,7 +4411,7 @@ impl BackgroundScanner {
     }
 
     async fn forcibly_load_paths(&self, paths: &[Arc<Path>]) -> bool {
-        let (scan_job_tx, mut scan_job_rx) = channel::unbounded();
+        let (scan_job_tx, scan_job_rx) = channel::unbounded();
         {
             let mut state = self.state.lock();
             let root_path = state.snapshot.abs_path.clone();
@@ -4429,7 +4429,7 @@ impl BackgroundScanner {
             }
             drop(scan_job_tx);
         }
-        while let Some(job) = scan_job_rx.next().await {
+        while let Ok(job) = scan_job_rx.recv().await {
             self.scan_dir(&job).await.log_err();
         }
 

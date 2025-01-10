@@ -5,7 +5,6 @@ use gpui::{
     EventEmitter, Global, PromptLevel, Render, ScrollHandle, Task, View, ViewContext,
     VisualContext, WindowContext,
 };
-use language::DiagnosticSeverity;
 
 use std::{any::TypeId, ops::DerefMut, time::Duration};
 use ui::{prelude::*, Tooltip};
@@ -266,89 +265,57 @@ impl Render for LanguageServerPrompt {
             return div().id("language_server_prompt_notification");
         };
 
-        h_flex()
+        let (icon, color) = match request.level {
+            PromptLevel::Info => (IconName::Info, Color::Accent),
+            PromptLevel::Warning => (IconName::Warning, Color::Warning),
+            PromptLevel::Critical => (IconName::XCircle, Color::Error),
+        };
+
+        div()
             .id("language_server_prompt_notification")
+            .group("language_server_prompt_notification")
             .occlude()
-            .elevation_3(cx)
-            .items_start()
-            .justify_between()
-            .p_2()
-            .gap_2()
             .w_full()
             .max_h(vh(0.8, cx))
+            .elevation_3(cx)
             .overflow_y_scroll()
             .track_scroll(&self.scroll_handle)
-            .group("")
             .child(
                 v_flex()
-                    .w_full()
+                    .p_3()
                     .overflow_hidden()
                     .child(
                         h_flex()
-                            .w_full()
                             .justify_between()
                             .child(
                                 h_flex()
-                                    .flex_grow()
-                                    .children(
-                                        match request.level {
-                                            PromptLevel::Info => None,
-                                            PromptLevel::Warning => {
-                                                Some(DiagnosticSeverity::WARNING)
-                                            }
-                                            PromptLevel::Critical => {
-                                                Some(DiagnosticSeverity::ERROR)
-                                            }
-                                        }
-                                        .map(|severity| {
-                                            svg()
-                                                .size(cx.text_style().font_size)
-                                                .flex_none()
-                                                .mr_1()
-                                                .mt(px(-2.0))
-                                                .map(|icon| {
-                                                    if severity == DiagnosticSeverity::ERROR {
-                                                        icon.path(IconName::Warning.path())
-                                                            .text_color(Color::Error.color(cx))
-                                                    } else {
-                                                        icon.path(IconName::Warning.path())
-                                                            .text_color(Color::Warning.color(cx))
-                                                    }
-                                                })
-                                        }),
-                                    )
-                                    .child(
-                                        Label::new(request.lsp_name.clone())
-                                            .size(LabelSize::Default),
-                                    ),
+                                    .gap_2()
+                                    .child(Icon::new(icon).color(color))
+                                    .child(Label::new(request.lsp_name.clone())),
                             )
                             .child(
-                                ui::IconButton::new("close", ui::IconName::Close)
-                                    .on_click(cx.listener(|_, _, cx| cx.emit(gpui::DismissEvent))),
+                                h_flex()
+                                    .child(
+                                        IconButton::new("copy", IconName::Copy)
+                                            .on_click({
+                                                let message = request.message.clone();
+                                                move |_, cx| {
+                                                    cx.write_to_clipboard(
+                                                        ClipboardItem::new_string(message.clone()),
+                                                    )
+                                                }
+                                            })
+                                            .tooltip(|cx| Tooltip::text("Copy Description", cx)),
+                                    )
+                                    .child(IconButton::new("close", IconName::Close).on_click(
+                                        cx.listener(|_, _, cx| cx.emit(gpui::DismissEvent)),
+                                    )),
                             ),
                     )
-                    .child(
-                        v_flex()
-                            .child(
-                                h_flex().absolute().right_0().rounded_md().child(
-                                    ui::IconButton::new("copy", ui::IconName::Copy)
-                                        .on_click({
-                                            let message = request.message.clone();
-                                            move |_, cx| {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    message.clone(),
-                                                ))
-                                            }
-                                        })
-                                        .tooltip(|cx| Tooltip::text("Copy", cx))
-                                        .visible_on_hover(""),
-                                ),
-                            )
-                            .child(Label::new(request.message.to_string()).size(LabelSize::Small)),
-                    )
+                    .child(Label::new(request.message.to_string()).size(LabelSize::Small))
                     .children(request.actions.iter().enumerate().map(|(ix, action)| {
                         let this_handle = cx.view().clone();
-                        ui::Button::new(ix, action.title.clone())
+                        Button::new(ix, action.title.clone())
                             .size(ButtonSize::Large)
                             .on_click(move |_, cx| {
                                 let this_handle = this_handle.clone();
@@ -425,7 +392,10 @@ impl Render for ErrorMessagePrompt {
                     )
                     .child(
                         div()
+                            .id("error_message")
                             .max_w_80()
+                            .max_h_40()
+                            .overflow_y_scroll()
                             .child(Label::new(self.message.clone()).size(LabelSize::Small)),
                     )
                     .when_some(self.label_and_url_button.clone(), |elm, (label, url)| {
@@ -444,12 +414,10 @@ impl EventEmitter<DismissEvent> for ErrorMessagePrompt {}
 
 pub mod simple_message_notification {
     use gpui::{
-        div, DismissEvent, EventEmitter, InteractiveElement, ParentElement, Render, SharedString,
-        StatefulInteractiveElement, Styled, ViewContext,
+        div, DismissEvent, EventEmitter, ParentElement, Render, SharedString, Styled, ViewContext,
     };
     use std::sync::Arc;
     use ui::prelude::*;
-    use ui::{h_flex, v_flex, Button, Icon, IconName, Label, StyledExt};
 
     pub struct MessageNotification {
         message: SharedString,
@@ -515,36 +483,43 @@ pub mod simple_message_notification {
     impl Render for MessageNotification {
         fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
             v_flex()
+                .p_3()
+                .gap_2()
                 .elevation_3(cx)
-                .p_4()
                 .child(
                     h_flex()
+                        .gap_4()
                         .justify_between()
                         .child(div().max_w_80().child(Label::new(self.message.clone())))
                         .child(
-                            div()
-                                .id("cancel")
-                                .child(Icon::new(IconName::Close))
-                                .cursor_pointer()
+                            IconButton::new("close", IconName::Close)
                                 .on_click(cx.listener(|this, _, cx| this.dismiss(cx))),
                         ),
                 )
                 .child(
                     h_flex()
-                        .gap_3()
+                        .gap_2()
                         .children(self.click_message.iter().map(|message| {
-                            Button::new(message.clone(), message.clone()).on_click(cx.listener(
-                                |this, _, cx| {
+                            Button::new(message.clone(), message.clone())
+                                .label_size(LabelSize::Small)
+                                .icon(IconName::Check)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Success)
+                                .on_click(cx.listener(|this, _, cx| {
                                     if let Some(on_click) = this.on_click.as_ref() {
                                         (on_click)(cx)
                                     };
                                     this.dismiss(cx)
-                                },
-                            ))
+                                }))
                         }))
                         .children(self.secondary_click_message.iter().map(|message| {
                             Button::new(message.clone(), message.clone())
-                                .style(ButtonStyle::Filled)
+                                .label_size(LabelSize::Small)
+                                .icon(IconName::Close)
+                                .icon_position(IconPosition::Start)
+                                .icon_size(IconSize::Small)
+                                .icon_color(Color::Error)
                                 .on_click(cx.listener(|this, _, cx| {
                                     if let Some(on_click) = this.secondary_on_click.as_ref() {
                                         (on_click)(cx)

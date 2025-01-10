@@ -1,6 +1,5 @@
 use std::{
     env,
-    panic::AssertUnwindSafe,
     path::{Path, PathBuf},
     process::Command,
     rc::Rc,
@@ -18,7 +17,7 @@ use std::{
 use anyhow::{anyhow, Context as _};
 use async_task::Runnable;
 use calloop::{channel::Channel, LoopSignal};
-use futures::{channel::oneshot, future::FutureExt};
+use futures::channel::oneshot;
 use util::ResultExt as _;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
@@ -373,6 +372,11 @@ impl<P: LinuxClient + 'static> Platform for P {
         done_rx
     }
 
+    fn can_select_mixed_files_and_dirs(&self) -> bool {
+        // org.freedesktop.portal.FileChooser only supports "pick files" and "pick directories".
+        false
+    }
+
     fn reveal_path(&self, path: &Path) {
         self.reveal_path(path.to_owned());
     }
@@ -485,12 +489,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                     let username = attributes
                         .get("username")
                         .ok_or_else(|| anyhow!("Cannot find username in stored credentials"))?;
-                    // oo7 panics if the retrieved secret can't be decrypted due to
-                    // unexpected padding.
-                    let secret = AssertUnwindSafe(item.secret())
-                        .catch_unwind()
-                        .await
-                        .map_err(|_| anyhow!("oo7 panicked while trying to read credentials"))??;
+                    let secret = item.secret().await?;
 
                     // we lose the zeroizing capabilities at this boundary,
                     // a current limitation GPUI's credentials api
