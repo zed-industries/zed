@@ -76,6 +76,10 @@ impl ActiveThread {
         self.thread.read(cx).summary()
     }
 
+    pub fn summary_or_default(&self, cx: &AppContext) -> SharedString {
+        self.thread.read(cx).summary_or_default()
+    }
+
     pub fn last_error(&self) -> Option<ThreadError> {
         self.last_error.clone()
     }

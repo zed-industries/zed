@@ -43,6 +43,24 @@ pub enum ContextKind {
 }
 
 impl ContextKind {
+    pub fn all() -> &'static [ContextKind] {
+        &[
+            ContextKind::File,
+            ContextKind::Directory,
+            ContextKind::FetchedUrl,
+            ContextKind::Thread,
+        ]
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            ContextKind::File => "File",
+            ContextKind::Directory => "Folder",
+            ContextKind::FetchedUrl => "Fetch",
+            ContextKind::Thread => "Thread",
+        }
+    }
+
     pub fn icon(&self) -> IconName {
         match self {
             ContextKind::File => IconName::File,

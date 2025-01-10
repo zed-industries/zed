@@ -23,7 +23,7 @@ use crate::{AssistantPanel, RemoveAllContext, ToggleContextPicker};
 
 pub struct ContextStrip {
     context_store: Model<ContextStore>,
-    context_picker: View<ContextPicker>,
+    pub context_picker: View<ContextPicker>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     focus_handle: FocusHandle,
     suggest_context_kind: SuggestContextKind,
@@ -126,7 +126,7 @@ impl ContextStrip {
         }
 
         Some(SuggestedContext::Thread {
-            name: active_thread.summary().unwrap_or("New Thread".into()),
+            name: active_thread.summary_or_default(),
             thread: weak_active_thread,
         })
     }
@@ -168,7 +168,13 @@ impl Render for ContextStrip {
             .gap_1()
             .child(
                 PopoverMenu::new("context-picker")
-                    .menu(move |_cx| Some(context_picker.clone()))
+                    .menu(move |cx| {
+                        context_picker.update(cx, |this, cx| {
+                            this.reset_mode(cx);
+                        });
+
+                        Some(context_picker.clone())
+                    })
                     .trigger(
                         IconButton::new("add-context", IconName::Plus)
                             .icon_size(IconSize::Small)

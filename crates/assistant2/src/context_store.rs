@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{anyhow, bail, Result};
-use collections::{BTreeMap, HashMap};
+use collections::{BTreeMap, HashMap, HashSet};
 use futures::{self, future, Future, FutureExt};
 use gpui::{AppContext, AsyncAppContext, Model, ModelContext, SharedString, Task, WeakView};
 use language::Buffer;
@@ -371,6 +371,23 @@ impl ContextStore {
                 break;
             }
         }
+    }
+
+    pub fn file_paths(&self, cx: &AppContext) -> HashSet<PathBuf> {
+        self.context
+            .iter()
+            .filter_map(|context| match context {
+                Context::File(file) => {
+                    let buffer = file.context_buffer.buffer.read(cx);
+                    buffer_path_log_err(buffer).map(|p| p.to_path_buf())
+                }
+                Context::Directory(_) | Context::FetchedUrl(_) | Context::Thread(_) => None,
+            })
+            .collect()
+    }
+
+    pub fn thread_ids(&self) -> HashSet<ThreadId> {
+        self.threads.keys().cloned().collect()
     }
 }
 
