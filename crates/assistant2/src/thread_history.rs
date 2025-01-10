@@ -100,12 +100,8 @@ impl PastThread {
 impl RenderOnce for PastThread {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let (id, summary) = {
-            const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Thread");
             let thread = self.thread.read(cx);
-            (
-                thread.id().clone(),
-                thread.summary().unwrap_or(DEFAULT_SUMMARY),
-            )
+            (thread.id().clone(), thread.summary_or_default())
         };
 
         let thread_timestamp = time_format::format_localized_timestamp(

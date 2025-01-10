@@ -187,7 +187,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
     cx.run_until_parked();
 
     async fn do_search(project: &Model<Project>, mut cx: TestAppContext) -> Model<Buffer> {
-        let mut receiver = project.update(&mut cx, |project, cx| {
+        let receiver = project.update(&mut cx, |project, cx| {
             project.search(
                 SearchQuery::text(
                     "project",
@@ -203,7 +203,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
             )
         });
 
-        let first_response = receiver.next().await.unwrap();
+        let first_response = receiver.recv().await.unwrap();
         let SearchResult::Buffer { buffer, .. } = first_response else {
             panic!("incorrect result");
         };
@@ -214,7 +214,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
             )
         });
 
-        assert!(receiver.next().await.is_none());
+        assert!(receiver.recv().await.is_err());
         buffer
     }
 

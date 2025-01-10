@@ -1316,11 +1316,10 @@ impl Workspace {
         &self.project
     }
 
-    pub fn recent_navigation_history(
+    pub fn recent_navigation_history_iter(
         &self,
-        limit: Option<usize>,
         cx: &AppContext,
-    ) -> Vec<(ProjectPath, Option<PathBuf>)> {
+    ) -> impl Iterator<Item = (ProjectPath, Option<PathBuf>)> {
         let mut abs_paths_opened: HashMap<PathBuf, HashSet<ProjectPath>> = HashMap::default();
         let mut history: HashMap<ProjectPath, (Option<PathBuf>, usize)> = HashMap::default();
         for pane in &self.panes {
@@ -1353,7 +1352,7 @@ impl Workspace {
             .sorted_by_key(|(_, (_, timestamp))| *timestamp)
             .map(|(project_path, (fs_path, _))| (project_path, fs_path))
             .rev()
-            .filter(|(history_path, abs_path)| {
+            .filter(move |(history_path, abs_path)| {
                 let latest_project_path_opened = abs_path
                     .as_ref()
                     .and_then(|abs_path| abs_paths_opened.get(abs_path))
@@ -1368,6 +1367,14 @@ impl Workspace {
                     None => true,
                 }
             })
+    }
+
+    pub fn recent_navigation_history(
+        &self,
+        limit: Option<usize>,
+        cx: &AppContext,
+    ) -> Vec<(ProjectPath, Option<PathBuf>)> {
+        self.recent_navigation_history_iter(cx)
             .take(limit.unwrap_or(usize::MAX))
             .collect()
     }
@@ -3101,7 +3108,10 @@ impl Workspace {
             pane::Event::Remove { focus_on_pane } => {
                 self.remove_pane(pane, focus_on_pane.clone(), cx);
             }
-            pane::Event::ActivateItem { local } => {
+            pane::Event::ActivateItem {
+                local,
+                focus_changed,
+            } => {
                 cx.on_next_frame(|_, cx| {
                     cx.invalidate_character_coordinates();
                 });
@@ -3116,6 +3126,7 @@ impl Workspace {
                     self.active_item_path_changed(cx);
                     self.update_active_view_for_followers(cx);
                 }
+                serialize_workspace = *focus_changed || &pane != self.active_pane();
             }
             pane::Event::UserSavedItem { item, save_intent } => {
                 cx.emit(Event::UserSavedItem {

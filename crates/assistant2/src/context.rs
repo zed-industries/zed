@@ -1,16 +1,16 @@
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::Arc;
 
-use collections::BTreeMap;
+use file_icons::FileIcons;
 use gpui::{AppContext, Model, SharedString};
 use language::Buffer;
 use language_model::{LanguageModelRequestMessage, MessageContent};
 use serde::{Deserialize, Serialize};
 use text::BufferId;
+use ui::IconName;
 use util::post_inc;
 
-use crate::thread::Thread;
+use crate::{context_store::buffer_path_log_err, thread::Thread};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct ContextId(pub(crate) usize);
@@ -28,9 +28,10 @@ pub struct ContextSnapshot {
     pub name: SharedString,
     pub parent: Option<SharedString>,
     pub tooltip: Option<SharedString>,
+    pub icon_path: Option<SharedString>,
     pub kind: ContextKind,
-    /// Text to send to the model. This is not refreshed by `snapshot`.
-    pub text: SharedString,
+    /// Joining these strings separated by \n yields text for model. Not refreshed by `snapshot`.
+    pub text: Box<[SharedString]>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,6 +40,35 @@ pub enum ContextKind {
     Directory,
     FetchedUrl,
     Thread,
+}
+
+impl ContextKind {
+    pub fn all() -> &'static [ContextKind] {
+        &[
+            ContextKind::File,
+            ContextKind::Directory,
+            ContextKind::FetchedUrl,
+            ContextKind::Thread,
+        ]
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            ContextKind::File => "File",
+            ContextKind::Directory => "Folder",
+            ContextKind::FetchedUrl => "Fetch",
+            ContextKind::Thread => "Thread",
+        }
+    }
+
+    pub fn icon(&self) -> IconName {
+        match self {
+            ContextKind::File => IconName::File,
+            ContextKind::Directory => IconName::Folder,
+            ContextKind::FetchedUrl => IconName::Globe,
+            ContextKind::Thread => IconName::MessageCircle,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -60,27 +90,18 @@ impl Context {
     }
 }
 
-// TODO: Model<Buffer> holds onto the buffer even if the file is deleted and closed. Should remove
-// the context from the message editor in this case.
-
 #[derive(Debug)]
 pub struct FileContext {
     pub id: ContextId,
-    pub buffer: Model<Buffer>,
-    #[allow(unused)]
-    pub version: clock::Global,
-    pub text: SharedString,
+    pub context_buffer: ContextBuffer,
 }
 
 #[derive(Debug)]
 pub struct DirectoryContext {
     #[allow(unused)]
     pub path: Rc<Path>,
-    // TODO: The choice to make this a BTreeMap was a result of use in a version of
-    // ContextStore::will_include_buffer before I realized that the path logic should be used there
-    // too.
     #[allow(unused)]
-    pub buffers: BTreeMap<BufferId, (Model<Buffer>, clock::Global)>,
+    pub context_buffers: Vec<ContextBuffer>,
     pub snapshot: ContextSnapshot,
 }
 
@@ -101,63 +122,128 @@ pub struct ThreadContext {
     pub text: SharedString,
 }
 
+// TODO: Model<Buffer> holds onto the buffer even if the file is deleted and closed. Should remove
+// the context from the message editor in this case.
+
+#[derive(Debug, Clone)]
+pub struct ContextBuffer {
+    #[allow(unused)]
+    pub id: BufferId,
+    pub buffer: Model<Buffer>,
+    #[allow(unused)]
+    pub version: clock::Global,
+    pub text: SharedString,
+}
+
 impl Context {
     pub fn snapshot(&self, cx: &AppContext) -> Option<ContextSnapshot> {
         match &self {
-            Self::File(file_context) => {
-                let path = file_context.path(cx)?;
-                let full_path: SharedString = path.to_string_lossy().into_owned().into();
-                let name = match path.file_name() {
-                    Some(name) => name.to_string_lossy().into_owned().into(),
-                    None => full_path.clone(),
-                };
-                let parent = path
-                    .parent()
-                    .and_then(|p| p.file_name())
-                    .map(|p| p.to_string_lossy().into_owned().into());
-
-                Some(ContextSnapshot {
-                    id: self.id(),
-                    name,
-                    parent,
-                    tooltip: Some(full_path),
-                    kind: ContextKind::File,
-                    text: file_context.text.clone(),
-                })
-            }
-            Self::Directory(DirectoryContext { snapshot, .. }) => Some(snapshot.clone()),
-            Self::FetchedUrl(FetchedUrlContext { url, text, id }) => Some(ContextSnapshot {
-                id: *id,
-                name: url.clone(),
-                parent: None,
-                tooltip: None,
-                kind: ContextKind::FetchedUrl,
-                text: text.clone(),
-            }),
-            Self::Thread(thread_context) => {
-                let thread = thread_context.thread.read(cx);
-
-                Some(ContextSnapshot {
-                    id: self.id(),
-                    name: thread.summary().unwrap_or("New thread".into()),
-                    parent: None,
-                    tooltip: None,
-                    kind: ContextKind::Thread,
-                    text: thread_context.text.clone(),
-                })
-            }
+            Self::File(file_context) => file_context.snapshot(cx),
+            Self::Directory(directory_context) => Some(directory_context.snapshot()),
+            Self::FetchedUrl(fetched_url_context) => Some(fetched_url_context.snapshot()),
+            Self::Thread(thread_context) => Some(thread_context.snapshot(cx)),
         }
     }
 }
 
 impl FileContext {
-    pub fn path(&self, cx: &AppContext) -> Option<Arc<Path>> {
-        let buffer = self.buffer.read(cx);
-        if let Some(file) = buffer.file() {
-            Some(file.path().clone())
-        } else {
-            log::error!("Buffer that had a path unexpectedly no longer has a path.");
-            None
+    pub fn snapshot(&self, cx: &AppContext) -> Option<ContextSnapshot> {
+        let buffer = self.context_buffer.buffer.read(cx);
+        let path = buffer_path_log_err(buffer)?;
+        let full_path: SharedString = path.to_string_lossy().into_owned().into();
+        let name = match path.file_name() {
+            Some(name) => name.to_string_lossy().into_owned().into(),
+            None => full_path.clone(),
+        };
+        let parent = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|p| p.to_string_lossy().into_owned().into());
+
+        let icon_path = FileIcons::get_icon(&path, cx);
+
+        Some(ContextSnapshot {
+            id: self.id,
+            name,
+            parent,
+            tooltip: Some(full_path),
+            icon_path,
+            kind: ContextKind::File,
+            text: Box::new([self.context_buffer.text.clone()]),
+        })
+    }
+}
+
+impl DirectoryContext {
+    pub fn new(
+        id: ContextId,
+        path: &Path,
+        context_buffers: Vec<ContextBuffer>,
+    ) -> DirectoryContext {
+        let full_path: SharedString = path.to_string_lossy().into_owned().into();
+
+        let name = match path.file_name() {
+            Some(name) => name.to_string_lossy().into_owned().into(),
+            None => full_path.clone(),
+        };
+
+        let parent = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|p| p.to_string_lossy().into_owned().into());
+
+        // TODO: include directory path in text?
+        let text = context_buffers
+            .iter()
+            .map(|b| b.text.clone())
+            .collect::<Vec<_>>()
+            .into();
+
+        DirectoryContext {
+            path: path.into(),
+            context_buffers,
+            snapshot: ContextSnapshot {
+                id,
+                name,
+                parent,
+                tooltip: Some(full_path),
+                icon_path: None,
+                kind: ContextKind::Directory,
+                text,
+            },
+        }
+    }
+
+    pub fn snapshot(&self) -> ContextSnapshot {
+        self.snapshot.clone()
+    }
+}
+
+impl FetchedUrlContext {
+    pub fn snapshot(&self) -> ContextSnapshot {
+        ContextSnapshot {
+            id: self.id,
+            name: self.url.clone(),
+            parent: None,
+            tooltip: None,
+            icon_path: None,
+            kind: ContextKind::FetchedUrl,
+            text: Box::new([self.text.clone()]),
+        }
+    }
+}
+
+impl ThreadContext {
+    pub fn snapshot(&self, cx: &AppContext) -> ContextSnapshot {
+        let thread = self.thread.read(cx);
+        ContextSnapshot {
+            id: self.id,
+            name: thread.summary().unwrap_or("New thread".into()),
+            parent: None,
+            tooltip: None,
+            icon_path: None,
+            kind: ContextKind::Thread,
+            text: Box::new([self.text.clone()]),
         }
     }
 }
@@ -166,58 +252,87 @@ pub fn attach_context_to_message(
     message: &mut LanguageModelRequestMessage,
     contexts: impl Iterator<Item = ContextSnapshot>,
 ) {
-    let mut file_context = String::new();
-    let mut directory_context = String::new();
-    let mut fetch_context = String::new();
-    let mut thread_context = String::new();
+    let mut file_context = Vec::new();
+    let mut directory_context = Vec::new();
+    let mut fetch_context = Vec::new();
+    let mut thread_context = Vec::new();
 
+    let mut capacity = 0;
     for context in contexts {
+        capacity += context.text.len();
         match context.kind {
-            ContextKind::File => {
-                file_context.push_str(&context.text);
-                file_context.push('\n');
-            }
-            ContextKind::Directory => {
-                directory_context.push_str(&context.text);
-                directory_context.push('\n');
-            }
-            ContextKind::FetchedUrl => {
-                fetch_context.push_str(&context.name);
-                fetch_context.push('\n');
-                fetch_context.push_str(&context.text);
-                fetch_context.push('\n');
-            }
-            ContextKind::Thread { .. } => {
-                thread_context.push_str(&context.name);
-                thread_context.push('\n');
-                thread_context.push_str(&context.text);
-                thread_context.push('\n');
+            ContextKind::File => file_context.push(context),
+            ContextKind::Directory => directory_context.push(context),
+            ContextKind::FetchedUrl => fetch_context.push(context),
+            ContextKind::Thread => thread_context.push(context),
+        }
+    }
+    if !file_context.is_empty() {
+        capacity += 1;
+    }
+    if !directory_context.is_empty() {
+        capacity += 1;
+    }
+    if !fetch_context.is_empty() {
+        capacity += 1 + fetch_context.len();
+    }
+    if !thread_context.is_empty() {
+        capacity += 1 + thread_context.len();
+    }
+    if capacity == 0 {
+        return;
+    }
+
+    let mut context_chunks = Vec::with_capacity(capacity);
+
+    if !file_context.is_empty() {
+        context_chunks.push("The following files are available:\n");
+        for context in &file_context {
+            for chunk in &context.text {
+                context_chunks.push(&chunk);
             }
         }
     }
 
-    let mut context_text = String::new();
-    if !file_context.is_empty() {
-        context_text.push_str("The following files are available:\n");
-        context_text.push_str(&file_context);
-    }
-
     if !directory_context.is_empty() {
-        context_text.push_str("The following directories are available:\n");
-        context_text.push_str(&directory_context);
+        context_chunks.push("The following directories are available:\n");
+        for context in &directory_context {
+            for chunk in &context.text {
+                context_chunks.push(&chunk);
+            }
+        }
     }
 
     if !fetch_context.is_empty() {
-        context_text.push_str("The following fetched results are available\n");
-        context_text.push_str(&fetch_context);
+        context_chunks.push("The following fetched results are available:\n");
+        for context in &fetch_context {
+            context_chunks.push(&context.name);
+            for chunk in &context.text {
+                context_chunks.push(&chunk);
+            }
+        }
     }
 
     if !thread_context.is_empty() {
-        context_text.push_str("The following previous conversation threads are available\n");
-        context_text.push_str(&thread_context);
+        context_chunks.push("The following previous conversation threads are available:\n");
+        for context in &thread_context {
+            context_chunks.push(&context.name);
+            for chunk in &context.text {
+                context_chunks.push(&chunk);
+            }
+        }
     }
 
-    if !context_text.is_empty() {
-        message.content.push(MessageContent::Text(context_text));
+    debug_assert!(
+        context_chunks.len() == capacity,
+        "attach_context_message calculated capacity of {}, but length was {}",
+        capacity,
+        context_chunks.len()
+    );
+
+    if !context_chunks.is_empty() {
+        message
+            .content
+            .push(MessageContent::Text(context_chunks.join("\n")));
     }
 }

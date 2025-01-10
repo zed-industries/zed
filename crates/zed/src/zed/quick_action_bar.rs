@@ -94,6 +94,7 @@ impl Render for QuickActionBar {
             git_blame_inline_enabled,
             show_git_blame_gutter,
             auto_signature_help_enabled,
+            inline_completions_enabled,
         ) = editor.update(cx, |editor, cx| {
             (
                 editor.selection_menu_enabled(cx),
@@ -102,6 +103,7 @@ impl Render for QuickActionBar {
                 editor.git_blame_inline_enabled(),
                 editor.show_git_blame_gutter(),
                 editor.auto_signature_help_enabled(cx),
+                editor.inline_completions_enabled(cx),
             )
         });
 
@@ -267,6 +269,26 @@ impl Render for QuickActionBar {
                                         .update(cx, |editor, cx| {
                                             editor.toggle_auto_signature_help_menu(
                                                 &editor::actions::ToggleAutoSignatureHelp,
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                }
+                            },
+                        );
+
+                        menu = menu.toggleable_entry(
+                            "Inline Completions",
+                            inline_completions_enabled,
+                            IconPosition::Start,
+                            Some(editor::actions::ToggleInlineCompletions.boxed_clone()),
+                            {
+                                let editor = editor.clone();
+                                move |cx| {
+                                    editor
+                                        .update(cx, |editor, cx| {
+                                            editor.toggle_inline_completions(
+                                                &editor::actions::ToggleInlineCompletions,
                                                 cx,
                                             );
                                         })

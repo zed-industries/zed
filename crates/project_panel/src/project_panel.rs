@@ -54,8 +54,8 @@ use std::{
 use theme::ThemeSettings;
 use ui::{
     prelude::*, v_flex, ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind,
-    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, ListItem, Scrollbar, ScrollbarState,
-    Tooltip,
+    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, ListItem, ListItemSpacing, Scrollbar,
+    ScrollbarState, Tooltip,
 };
 use util::{maybe, paths::compare_paths, ResultExt, TakeUntilExt, TryFutureExt};
 use workspace::{
@@ -3447,6 +3447,12 @@ impl ProjectPanel {
                 ListItem::new(entry_id.to_proto() as usize)
                     .indent_level(depth)
                     .indent_step_size(px(settings.indent_size))
+                    .spacing(match settings.entry_spacing {
+                        project_panel_settings::EntrySpacing::Comfortable => ListItemSpacing::Dense,
+                        project_panel_settings::EntrySpacing::Standard => {
+                            ListItemSpacing::ExtraDense
+                        }
+                    })
                     .selectable(false)
                     .when_some(canonical_path, |this, path| {
                         this.end_slot::<AnyElement>(
