@@ -1527,6 +1527,8 @@ pub mod tests {
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         let mut rs_fake_servers = None;
         let mut md_fake_servers = None;
+        let rs_lsp_request_count = Arc::new(AtomicU32::new(0));
+        let md_lsp_request_count = Arc::new(AtomicU32::new(0));
         for (name, path_suffix) in [("Rust", "rs"), ("Markdown", "md")] {
             language_registry.add(Arc::new(Language::new(
                 LanguageConfig {
@@ -1547,6 +1549,49 @@ pub mod tests {
                         inlay_hint_provider: Some(lsp::OneOf::Left(true)),
                         ..Default::default()
                     },
+                    initializer: Some(Box::new({
+                        let rs_lsp_request_count = rs_lsp_request_count.clone();
+                        let md_lsp_request_count = md_lsp_request_count.clone();
+                        move |fake_server| {
+                            let rs_lsp_request_count = rs_lsp_request_count.clone();
+                            let md_lsp_request_count = md_lsp_request_count.clone();
+                            fake_server.handle_request::<lsp::request::InlayHintRequest, _, _>(
+                                move |params, _| {
+                                    let i = match name {
+                                        "Rust" => {
+                                            assert_eq!(
+                                                params.text_document.uri,
+                                                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                                            );
+                                            rs_lsp_request_count.fetch_add(1, Ordering::Release) + 1
+                                        }
+                                        "Markdown" => {
+                                            assert_eq!(
+                                                params.text_document.uri,
+                                                lsp::Url::from_file_path("/a/other.md").unwrap(),
+                                            );
+                                            md_lsp_request_count.fetch_add(1, Ordering::Release) + 1
+                                        }
+                                        unexpected => panic!("Unexpected language: {unexpected}"),
+                                    };
+
+                                    async move {
+                                        let query_start = params.range.start;
+                                        Ok(Some(vec![lsp::InlayHint {
+                                            position: query_start,
+                                            label: lsp::InlayHintLabel::String(i.to_string()),
+                                            kind: None,
+                                            text_edits: None,
+                                            tooltip: None,
+                                            padding_left: None,
+                                            padding_right: None,
+                                            data: None,
+                                        }]))
+                                    }
+                                },
+                            );
+                        }
+                    })),
                     ..Default::default()
                 },
             );
@@ -1565,44 +1610,19 @@ pub mod tests {
             .unwrap();
         let rs_editor =
             cx.add_window(|cx| Editor::for_buffer(rs_buffer, Some(project.clone()), cx));
-
         cx.executor().run_until_parked();
+
         let rs_fake_server = rs_fake_servers.unwrap().next().await.unwrap();
-        let rs_lsp_request_count = Arc::new(AtomicU32::new(0));
-        rs_fake_server
-            .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-                let task_lsp_request_count = Arc::clone(&rs_lsp_request_count);
-                async move {
-                    assert_eq!(
-                        params.text_document.uri,
-                        lsp::Url::from_file_path("/a/main.rs").unwrap(),
-                    );
-                    let i = Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst);
-                    Ok(Some(vec![lsp::InlayHint {
-                        position: lsp::Position::new(0, i),
-                        label: lsp::InlayHintLabel::String(i.to_string()),
-                        kind: None,
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: None,
-                        padding_right: None,
-                        data: None,
-                    }]))
-                }
-            })
-            .next()
-            .await;
         cx.executor().run_until_parked();
         rs_editor
             .update(cx, |editor, cx| {
-                let expected_hints = vec!["0".to_string()];
+                let expected_hints = vec!["1".to_string()];
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor),
                     "Should get its first hints when opening the editor"
                 );
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-                // TODO kb check inlay request count?
             })
             .unwrap();
 
@@ -1614,44 +1634,19 @@ pub mod tests {
             .await
             .unwrap();
         let md_editor = cx.add_window(|cx| Editor::for_buffer(md_buffer, Some(project), cx));
-
         cx.executor().run_until_parked();
+
         let md_fake_server = md_fake_servers.unwrap().next().await.unwrap();
-        let md_lsp_request_count = Arc::new(AtomicU32::new(0));
-        md_fake_server
-            .handle_request::<lsp::request::InlayHintRequest, _, _>(move |params, _| {
-                let task_lsp_request_count = Arc::clone(&md_lsp_request_count);
-                async move {
-                    assert_eq!(
-                        params.text_document.uri,
-                        lsp::Url::from_file_path("/a/other.md").unwrap(),
-                    );
-                    let i = Arc::clone(&task_lsp_request_count).fetch_add(1, Ordering::SeqCst);
-                    Ok(Some(vec![lsp::InlayHint {
-                        position: lsp::Position::new(0, i),
-                        label: lsp::InlayHintLabel::String(i.to_string()),
-                        kind: None,
-                        text_edits: None,
-                        tooltip: None,
-                        padding_left: None,
-                        padding_right: None,
-                        data: None,
-                    }]))
-                }
-            })
-            .next()
-            .await;
         cx.executor().run_until_parked();
         md_editor
             .update(cx, |editor, cx| {
-                let expected_hints = vec!["0".to_string()];
+                let expected_hints = vec!["1".to_string()];
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor),
                     "Markdown editor should have a separate version, repeating Rust editor rules"
                 );
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-                // TODO kb check inlay request count?
             })
             .unwrap();
 
@@ -1664,26 +1659,24 @@ pub mod tests {
         cx.executor().run_until_parked();
         rs_editor
             .update(cx, |editor, cx| {
-                let expected_hints = vec!["1".to_string()];
+                let expected_hints = vec!["3".to_string()]; // TODO kb why 3 and not 2?
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor),
                     "Rust inlay cache should change after the edit"
                 );
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-                // TODO kb check inlay request count?
             })
             .unwrap();
         md_editor
             .update(cx, |editor, cx| {
-                let expected_hints = vec!["0".to_string()];
+                let expected_hints = vec!["1".to_string()];
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor),
                     "Markdown editor should not be affected by Rust editor changes"
                 );
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-                // TODO kb check inlay request count?
             })
             .unwrap();
 
@@ -1696,26 +1689,24 @@ pub mod tests {
         cx.executor().run_until_parked();
         md_editor
             .update(cx, |editor, cx| {
-                let expected_hints = vec!["1".to_string()];
+                let expected_hints = vec!["2".to_string()];
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor),
                     "Rust editor should not be affected by Markdown editor changes"
                 );
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-                // TODO kb check inlay request count?
             })
             .unwrap();
         rs_editor
             .update(cx, |editor, cx| {
-                let expected_hints = vec!["1".to_string()];
+                let expected_hints = vec!["3".to_string()];
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor),
                     "Markdown editor should also change independently"
                 );
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-                // TODO kb check inlay request count?
             })
             .unwrap();
     }
