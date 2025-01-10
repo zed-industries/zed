@@ -79,6 +79,7 @@ pub struct ProjectPanel {
     /// Relevant only for auto-fold dirs, where a single project panel entry may actually consist of several
     /// project entries (and all non-leaf nodes are guaranteed to be directories).
     ancestors: HashMap<ProjectEntryId, FoldedAncestors>,
+    folded_directory_darg_target: Option<FoldedDirectoryDragTarget>,
     last_worktree_root_id: Option<ProjectEntryId>,
     last_selection_drag_over_entry: Option<ProjectEntryId>,
     last_external_paths_drag_over_entry: Option<ProjectEntryId>,
@@ -105,6 +106,14 @@ pub struct ProjectPanel {
     // in case a user clicks to open a file.
     mouse_down: bool,
     hover_expand_task: Option<Task<()>>,
+}
+
+#[derive(Copy, Clone, Debug)]
+struct FoldedDirectoryDragTarget {
+    entry_id: ProjectEntryId,
+    index: usize,
+    // True if dragging over the delimiter rather than the component itself
+    is_delimiter_target: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -382,6 +391,7 @@ impl ProjectPanel {
                 focus_handle,
                 visible_entries: Default::default(),
                 ancestors: Default::default(),
+                folded_directory_darg_target: None,
                 last_worktree_root_id: Default::default(),
                 last_external_paths_drag_over_entry: None,
                 last_selection_drag_over_entry: None,
@@ -3392,6 +3402,8 @@ impl ProjectPanel {
                 bg_hover_color
             };
 
+        let folded_directory_drag_target = self.folded_directory_darg_target;
+
         div()
             .id(entry_id.to_proto() as usize)
             .group(GROUP_NAME)
@@ -3509,7 +3521,12 @@ impl ProjectPanel {
                     })
                 },
             )
-            .drag_over::<DraggedSelection>(move |style, _, _, _| style.bg(item_colors.drag_over))
+            .drag_over::<DraggedSelection>(move |style, _, _, _| {
+                if  folded_directory_drag_target.is_some() {
+                    return style;
+                }
+                style.bg(item_colors.drag_over)
+            })
             .on_drop(
                 cx.listener(move |this, selections: &DraggedSelection, window, cx| {
                     this.hover_scroll_task.take();
@@ -3700,11 +3717,39 @@ impl ProjectPanel {
                                         SharedString::new_static(std::path::MAIN_SEPARATOR_STR);
                                     for (index, component) in components.into_iter().enumerate() {
                                         if index != 0 {
-                                            this = this.child(
-                                                Label::new(DELIMITER.clone())
-                                                    .single_line()
-                                                    .color(filename_text_color),
-                                            );
+                                                this = this.child(
+                                                    div()
+                                                    .on_drag_move(cx.listener(
+                                                        move |this, event: &DragMoveEvent<DraggedSelection>, _| {
+                                                            if event.bounds.contains(&event.event.position) {
+                                                                this.folded_directory_darg_target = Some(
+                                                                    FoldedDirectoryDragTarget {
+                                                                        entry_id,
+                                                                        index,
+                                                                        is_delimiter_target: true,
+                                                                    }
+                                                                );
+                                                            } else {
+                                                                let is_current_target = this.folded_directory_darg_target
+                                                                    .as_ref()
+                                                                    .map_or(false, |target|
+                                                                        target.entry_id == entry_id &&
+                                                                        target.index == index &&
+                                                                        target.is_delimiter_target
+                                                                    );
+                                                                if is_current_target {
+                                                                    this.folded_directory_darg_target = None;
+                                                                }
+                                                            }
+
+                                                        },
+                                                    ))
+                                                    .child(
+                                                        Label::new(DELIMITER.clone())
+                                                            .single_line()
+                                                            .color(filename_text_color)
+                                                    )
+                                                );
                                         }
                                         let id = SharedString::from(format!(
                                             "project_panel_path_component_{}_{index}",
@@ -3723,6 +3768,39 @@ impl ProjectPanel {
                                                     }
                                                 }
                                             }))
+                                            .when(index != components_len - 1, |div|{
+                                                div
+                                                .on_drag_move(cx.listener(
+                                                    move |this, event: &DragMoveEvent<DraggedSelection>, _| {
+                                                    if event.bounds.contains(&event.event.position) {
+                                                            this.folded_directory_darg_target = Some(
+                                                                FoldedDirectoryDragTarget {
+                                                                    entry_id,
+                                                                    index,
+                                                                    is_delimiter_target: false,
+                                                                }
+                                                            );
+                                                        } else {
+                                                            let is_current_target = this.folded_directory_darg_target
+                                                                .as_ref()
+                                                                .map_or(false, |target|
+                                                                    target.entry_id == entry_id &&
+                                                                    target.index == index &&
+                                                                    !target.is_delimiter_target
+                                                                );
+                                                            if is_current_target {
+                                                                this.folded_directory_darg_target = None;
+                                                            }
+                                                        }
+                                                    },
+                                                ))
+                                                .when(folded_directory_drag_target.as_ref().map_or(false, |target|
+                                                    target.entry_id == entry_id &&
+                                                    target.index == index
+                                                ), |this| {
+                                                    this.bg(item_colors.drag_over)
+                                                })
+                                            })
                                             .child(
                                                 Label::new(component)
                                                     .single_line()
