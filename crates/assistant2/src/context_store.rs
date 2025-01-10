@@ -15,6 +15,7 @@ use crate::context::{
     Context, ContextBuffer, ContextId, ContextSnapshot, DirectoryContext, FetchedUrlContext,
     FileContext, ThreadContext,
 };
+use crate::context_strip::SuggestedContext;
 use crate::thread::{Thread, ThreadId};
 
 pub struct ContextStore {
@@ -258,7 +259,7 @@ impl ContextStore {
         }
     }
 
-    pub fn insert_thread(&mut self, thread: Model<Thread>, cx: &AppContext) {
+    fn insert_thread(&mut self, thread: Model<Thread>, cx: &AppContext) {
         let id = self.next_context_id.post_inc();
         let text = thread.read(cx).text().into();
 
@@ -282,6 +283,30 @@ impl ContextStore {
             url: url.into(),
             text: text.into(),
         }));
+    }
+
+    pub fn accept_suggested_context(
+        &mut self,
+        suggested: &SuggestedContext,
+        cx: &mut ModelContext<ContextStore>,
+    ) -> Task<Result<()>> {
+        match suggested {
+            SuggestedContext::File {
+                buffer,
+                icon_path: _,
+                name: _,
+            } => {
+                if let Some(buffer) = buffer.upgrade() {
+                    return self.add_file_from_buffer(buffer, cx);
+                };
+            }
+            SuggestedContext::Thread { thread, name: _ } => {
+                if let Some(thread) = thread.upgrade() {
+                    self.insert_thread(thread, cx);
+                };
+            }
+        }
+        Task::ready(Ok(()))
     }
 
     pub fn remove_context(&mut self, id: ContextId) {
