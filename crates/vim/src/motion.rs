@@ -2266,8 +2266,7 @@ fn sneak(
     }
 
     if found {
-        *to.column_mut() -= first_target.len_utf8();
-        Some(to)
+        Some(movement::left(map, to))
     } else {
         None
     }
@@ -2299,8 +2298,7 @@ fn sneak_backward(
     }
 
     if found {
-        *to.column_mut() -= first_target.len_utf8();
-        Some(to)
+        Some(movement::left(map, to))
     } else {
         None
     }
