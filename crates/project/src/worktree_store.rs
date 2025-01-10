@@ -65,7 +65,6 @@ pub enum WorktreeStoreEvent {
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
     WorktreeUpdatedGitRepositories(WorktreeId),
     WorktreeDeletedEntry(WorktreeId, ProjectEntryId),
-    WorktreeExpandedAllForEntry(WorktreeId, ProjectEntryId),
 }
 
 impl EventEmitter<WorktreeStoreEvent> for WorktreeStore {}
@@ -1092,7 +1091,7 @@ impl WorktreeStore {
     }
 
     pub async fn handle_expand_all_for_project_entry(
-        this: Model<Self>,
+        this: Entity<Self>,
         envelope: TypedEnvelope<proto::ExpandAllForProjectEntry>,
         mut cx: AsyncAppContext,
     ) -> Result<proto::ExpandAllForProjectEntryResponse> {

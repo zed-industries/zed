@@ -329,19 +329,28 @@ impl ProjectPanel {
                         .zip(this.expanded_dir_ids.get_mut(&worktree_id))
                     {
                         let worktree = worktree.read(cx);
+
+                        let Some(entry) = worktree.entry_for_id(*entry_id) else {
+                            return;
+                        };
+                        let include_ignored_dirs = !entry.is_ignored;
+
                         let mut dirs_to_expand = vec![*entry_id];
                         while let Some(current_id) = dirs_to_expand.pop() {
                             let Some(current_entry) = worktree.entry_for_id(current_id) else {
                                 continue;
                             };
                             for child in worktree.child_entries(&current_entry.path) {
-                                if child.is_dir() && !child.is_ignored {
-                                    dirs_to_expand.push(child.id);
-                                    if let Err(ix) = expanded_dir_ids.binary_search(&child.id) {
-                                        expanded_dir_ids.insert(ix, child.id);
-                                    }
-                                    this.unfolded_dir_ids.insert(child.id);
+                                if !child.is_dir() || (include_ignored_dirs && child.is_ignored) {
+                                    continue;
                                 }
+
+                                dirs_to_expand.push(child.id);
+
+                                if let Err(ix) = expanded_dir_ids.binary_search(&child.id) {
+                                    expanded_dir_ids.insert(ix, child.id);
+                                }
+                                this.unfolded_dir_ids.insert(child.id);
                             }
                         }
                         this.update_visible_entries(None, cx);
@@ -920,14 +929,14 @@ impl ProjectPanel {
             if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree_id) {
                 match expanded_dir_ids.binary_search(&entry_id) {
                     Ok(_ix) => {
-                        self.collapse_all_for_entry(worktree_id, entry_id, window, cx);
+                        self.collapse_all_for_entry(worktree_id, entry_id, cx);
                     }
                     Err(_ix) => {
-                        self.expand_all_for_entry(worktree_id, entry_id, window, cx);
+                        self.expand_all_for_entry(worktree_id, entry_id, cx);
                     }
                 }
                 self.update_visible_entries(Some((worktree_id, entry_id)), cx);
-                cx.focus(&self.focus_handle);
+                window.focus(&self.focus_handle);
                 cx.notify();
             }
         }
@@ -937,7 +946,6 @@ impl ProjectPanel {
         &mut self,
         worktree_id: WorktreeId,
         entry_id: ProjectEntryId,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.project.update(cx, |project, cx| {
@@ -974,7 +982,6 @@ impl ProjectPanel {
         &mut self,
         worktree_id: WorktreeId,
         entry_id: ProjectEntryId,
-        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
         self.project.update(cx, |project, cx| {
@@ -3708,7 +3715,7 @@ impl ProjectPanel {
                     } else if kind.is_dir() {
                         this.marked_entries.clear();
                         if event.down.modifiers.alt {
-                            this.expand_all_for_entry(worktree_id, entry_id, window, cx);
+                            this.expand_all_for_entry(worktree_id, entry_id, cx);
                             this.update_visible_entries(Some((worktree_id, entry_id)), cx);
                             cx.notify();
                         } else {
@@ -8495,10 +8502,10 @@ mod tests {
         );
 
         let entry_id = find_project_entry(&panel, "root/dir1", cx).unwrap();
-        panel.update_in(cx, |panel, window, cx| {
+        panel.update(cx, |panel, cx| {
             let project = panel.project.read(cx);
             let worktree = project.worktrees(cx).next().unwrap().read(cx);
-            panel.expand_all_for_entry(worktree.id(), entry_id, window, cx);
+            panel.expand_all_for_entry(worktree.id(), entry_id, cx);
             panel.update_visible_entries(None, cx);
         });
         cx.run_until_parked();
@@ -8553,10 +8560,10 @@ mod tests {
         );
 
         let entry_id = find_project_entry(&panel, "root/dir1", cx).unwrap();
-        panel.update_in(cx, |panel, window, cx| {
+        panel.update(cx, |panel, cx| {
             let project = panel.project.read(cx);
             let worktree = project.worktrees(cx).next().unwrap().read(cx);
-            panel.expand_all_for_entry(worktree.id(), entry_id, window, cx);
+            panel.expand_all_for_entry(worktree.id(), entry_id, cx);
             panel.update_visible_entries(None, cx);
         });
         cx.run_until_parked();
@@ -8583,10 +8590,10 @@ mod tests {
 
         // Test 3: When explicitly called on ignored directory
         let ignored_dir_entry = find_project_entry(&panel, "root/dir1/ignored_dir", cx).unwrap();
-        panel.update_in(cx, |panel, window, cx| {
+        panel.update(cx, |panel, cx| {
             let project = panel.project.read(cx);
             let worktree = project.worktrees(cx).next().unwrap().read(cx);
-            panel.expand_all_for_entry(worktree.id(), ignored_dir_entry, window, cx);
+            panel.expand_all_for_entry(worktree.id(), ignored_dir_entry, cx);
             panel.update_visible_entries(None, cx);
         });
         cx.run_until_parked();
@@ -8601,7 +8608,8 @@ mod tests {
                 "                v empty3",
                 "                      file.txt",
                 "        v ignored_dir",
-                "            > subdir",
+                "            v subdir",
+                "                  deep_file.txt",
                 "        v subdir1",
                 "            > ignored_nested",
                 "              file1.txt",
@@ -8671,10 +8679,10 @@ mod tests {
             );
 
             let entry_id = find_project_entry(&panel, "root/dir1", cx).unwrap();
-            panel.update_in(cx, |panel, window, cx| {
+            panel.update(cx, |panel, cx| {
                 let project = panel.project.read(cx);
                 let worktree = project.worktrees(cx).next().unwrap().read(cx);
-                panel.collapse_all_for_entry(worktree.id(), entry_id, window, cx);
+                panel.collapse_all_for_entry(worktree.id(), entry_id, cx);
                 panel.update_visible_entries(None, cx);
             });
 
@@ -8719,10 +8727,10 @@ mod tests {
             );
 
             let entry_id = find_project_entry(&panel, "root/dir1", cx).unwrap();
-            panel.update_in(cx, |panel, window, cx| {
+            panel.update(cx, |panel, cx| {
                 let project = panel.project.read(cx);
                 let worktree = project.worktrees(cx).next().unwrap().read(cx);
-                panel.collapse_all_for_entry(worktree.id(), entry_id, window, cx);
+                panel.collapse_all_for_entry(worktree.id(), entry_id, cx);
             });
 
             toggle_expand_dir(&panel, "root/dir1", cx);
@@ -8775,10 +8783,10 @@ mod tests {
             );
 
             let entry_id = find_project_entry(&panel, "root/dir1", cx).unwrap();
-            panel.update_in(cx, |panel, window, cx| {
+            panel.update(cx, |panel, cx| {
                 let project = panel.project.read(cx);
                 let worktree = project.worktrees(cx).next().unwrap().read(cx);
-                panel.collapse_all_for_entry(worktree.id(), entry_id, window, cx);
+                panel.collapse_all_for_entry(worktree.id(), entry_id, cx);
             });
 
             toggle_expand_dir(&panel, "root/dir1", cx);

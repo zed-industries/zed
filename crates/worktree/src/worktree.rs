@@ -537,7 +537,6 @@ pub enum Event {
     UpdatedEntries(UpdatedEntriesSet),
     UpdatedGitRepositories(UpdatedGitRepositoriesSet),
     DeletedEntry(ProjectEntryId),
-    ExpandedAllForEntry(ProjectEntryId),
 }
 
 const EMPTY_PATH: &str = "";
@@ -2015,13 +2014,8 @@ impl LocalWorktree {
     ) -> Option<Task<Result<()>>> {
         let path = self.entry_for_id(entry_id).unwrap().path.clone();
         let mut rx = self.add_path_prefix_to_scan(path.clone());
-        Some(cx.spawn(|this, mut cx| async move {
-            cx.background_executor()
-                .spawn(async move { rx.next().await })
-                .await;
-            this.update(&mut cx, |_, cx| {
-                cx.emit(Event::ExpandedAllForEntry(entry_id));
-            })?;
+        Some(cx.background_executor().spawn(async move {
+            rx.next().await;
             Ok(())
         }))
     }

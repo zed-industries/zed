@@ -1585,9 +1585,16 @@ impl Project {
         cx: &mut Context<Self>,
     ) -> Option<Task<Result<()>>> {
         let worktree = self.worktree_for_id(worktree_id, cx)?;
-        worktree.update(cx, |worktree, cx| {
+        let task = worktree.update(cx, |worktree, cx| {
             worktree.expand_all_for_entry(entry_id, cx)
-        })
+        });
+        Some(cx.spawn(|this, mut cx| async move {
+            task.ok_or_else(|| anyhow!("no task"))?.await?;
+            this.update(&mut cx, |_, cx| {
+                cx.emit(Event::ExpandedAllForEntry(worktree_id, entry_id));
+            })?;
+            Ok(())
+        }))
     }
 
     pub fn shared(&mut self, project_id: u64, cx: &mut Context<Self>) -> Result<()> {
@@ -2332,9 +2339,6 @@ impl Project {
             }
             WorktreeStoreEvent::WorktreeDeletedEntry(worktree_id, id) => {
                 cx.emit(Event::DeletedEntry(*worktree_id, *id))
-            }
-            WorktreeStoreEvent::WorktreeExpandedAllForEntry(worktree_id, id) => {
-                cx.emit(Event::ExpandedAllForEntry(*worktree_id, *id))
             }
         }
     }
