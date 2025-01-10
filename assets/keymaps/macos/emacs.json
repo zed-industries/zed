@@ -55,7 +55,7 @@
   },
   // Extend selection with movement bindings
   {
-    "context": "Editor && selection",
+    "context": "Editor && (mode == full) && selection",
     "bindings": {
       "right": "editor::SelectRight",
       "left": "editor::SelectLeft",
@@ -82,7 +82,7 @@
   },
   // Emacs set-mark-command emulation (ctrl-space + movement bindings)
   {
-    "context": "Editor && !selection",
+    "context": "Editor && (mode == full) && !selection",
     "bindings": {
       "ctrl-space right": "editor::SelectRight",
       "ctrl-space left": "editor::SelectLeft",
