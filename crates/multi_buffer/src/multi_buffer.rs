@@ -211,7 +211,7 @@ pub enum DiffTransform {
         summary: TextSummary,
         buffer_id: BufferId,
         base_text_byte_range: Range<usize>,
-        needs_newline: bool,
+        has_trailing_newline: bool,
     },
 }
 
@@ -2683,10 +2683,10 @@ impl MultiBuffer {
                                     let mut base_text_summary = text_cursor
                                         .summary::<TextSummary>(hunk.diff_base_byte_range.end);
 
-                                    let mut needs_newline = false;
+                                    let mut has_trailing_newline = false;
                                     if base_text_summary.last_line_chars > 0 {
                                         base_text_summary += TextSummary::newline();
-                                        needs_newline = true;
+                                        has_trailing_newline = true;
                                     }
 
                                     if !was_previously_expanded
@@ -2712,7 +2712,7 @@ impl MultiBuffer {
                                             base_text_byte_range: hunk.diff_base_byte_range.clone(),
                                             summary: base_text_summary,
                                             buffer_id: excerpt.buffer_id,
-                                            needs_newline,
+                                            has_trailing_newline,
                                         },
                                         &(),
                                     );
@@ -3968,7 +3968,7 @@ impl MultiBufferSnapshot {
             DiffTransform::DeletedHunk {
                 buffer_id,
                 base_text_byte_range,
-                needs_newline,
+                has_trailing_newline,
                 ..
             } => {
                 let buffer_start = base_text_byte_range.start + start_overshoot;
@@ -3977,8 +3977,9 @@ impl MultiBufferSnapshot {
                     panic!("{:?} is in non-existent deleted hunk", range.start)
                 };
 
-                let spans_extra_newline = *needs_newline && range.end >= diff_transform_end;
-                if spans_extra_newline {
+                let include_trailing_newline =
+                    *has_trailing_newline && range.end >= diff_transform_end;
+                if include_trailing_newline {
                     buffer_end -= 1;
                 }
 
@@ -3986,7 +3987,7 @@ impl MultiBufferSnapshot {
                     .base_text
                     .text_summary_for_range::<D, _>(buffer_start..buffer_end);
 
-                if spans_extra_newline {
+                if include_trailing_newline {
                     summary.add_assign(&D::from_text_summary(&TextSummary::newline()))
                 }
 
@@ -4017,7 +4018,7 @@ impl MultiBufferSnapshot {
             DiffTransform::DeletedHunk {
                 base_text_byte_range,
                 buffer_id,
-                needs_newline,
+                has_trailing_newline,
                 ..
             } => {
                 let buffer_end = base_text_byte_range.start + overshoot;
@@ -4028,7 +4029,7 @@ impl MultiBufferSnapshot {
                 let mut suffix = buffer_diff
                     .base_text
                     .text_summary_for_range::<D, _>(base_text_byte_range.start..buffer_end);
-                if *needs_newline && buffer_end == base_text_byte_range.end + 1 {
+                if *has_trailing_newline && buffer_end == base_text_byte_range.end + 1 {
                     suffix.add_assign(&D::from_text_summary(&TextSummary::newline()))
                 }
                 suffix
@@ -5467,7 +5468,7 @@ where
         if let Some(DiffTransform::DeletedHunk {
             buffer_id,
             base_text_byte_range,
-            needs_newline,
+            has_trailing_newline,
             ..
         }) = self.diff_transforms.item()
         {
@@ -5480,11 +5481,10 @@ where
             buffer_end.add_assign(&buffer_range_len);
             let start = self.diff_transforms.start().0 .0;
             let end = self.diff_transforms.end(&()).0 .0;
-            let has_trailing_newline = *needs_newline;
             Some(MultiBufferRegion {
                 buffer,
                 excerpt,
-                has_trailing_newline,
+                has_trailing_newline: *has_trailing_newline,
                 is_main_buffer: false,
                 buffer_range: buffer_start..buffer_end,
                 range: start..end,
@@ -6548,7 +6548,7 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
             DiffTransform::DeletedHunk {
                 buffer_id,
                 base_text_byte_range,
-                needs_newline,
+                has_trailing_newline,
                 ..
             } => {
                 let hunk_start_offset = self.diff_transforms.start().0;
@@ -6581,7 +6581,7 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                     self.diff_base_chunks = Some((*buffer_id, chunks));
                     chunk
                 } else {
-                    debug_assert!(needs_newline);
+                    debug_assert!(has_trailing_newline);
                     self.range.start += "\n".len();
                     Chunk {
                         text: "\n",
