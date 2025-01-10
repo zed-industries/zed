@@ -3437,54 +3437,58 @@ impl MultiBufferSnapshot {
                     &excerpt.buffer,
                 );
                 while let Some(hunk) = hunks.next() {
-                    if hunk
-                        .buffer_range
-                        .end
-                        .cmp(&buffer_end, &excerpt.buffer)
-                        .is_lt()
-                    {
-                        let buffer_start = Point::new(hunk.row_range.start, 0);
-                        let buffer_end = Point::new(hunk.row_range.end, 0);
-
-                        cursor.seek(&DimensionPair {
-                            key: hunk.buffer_range.start.to_offset(&excerpt.buffer),
-                            value: None,
-                        });
-
-                        let region = cursor.region()?;
-                        let start = if region.is_main_buffer {
-                            region.range.start.value.unwrap()
-                                + (buffer_start
-                                    .saturating_sub(region.buffer_range.start.value.unwrap()))
-                        } else {
-                            region.range.start.value.unwrap()
-                        };
-
-                        while let Some(region) = cursor.region() {
-                            if !region.is_main_buffer
-                                || region.buffer_range.end.value.unwrap() <= buffer_end
-                            {
-                                cursor.next();
-                            } else {
-                                break;
-                            }
+                    let buffer_end_row = buffer_end.to_point(&excerpt.buffer).row;
+                    if buffer_end_row < hunk.row_range.end {
+                        continue;
+                    } else if buffer_end_row == hunk.row_range.end {
+                        cursor.prev();
+                        if !cursor.region().is_some_and(|region| !region.is_main_buffer) {
+                            continue;
                         }
-
-                        let end = if let Some(region) = cursor.region() {
-                            debug_assert!(region.is_main_buffer);
-                            region.range.start.value.unwrap()
-                                + (buffer_end - region.buffer_range.start.value.unwrap())
-                        } else {
-                            self.max_point()
-                        };
-
-                        return Some(MultiBufferDiffHunk {
-                            row_range: MultiBufferRow(start.row)..MultiBufferRow(end.row),
-                            buffer_id: excerpt.buffer_id,
-                            buffer_range: hunk.buffer_range.clone(),
-                            diff_base_byte_range: hunk.diff_base_byte_range.clone(),
-                        });
+                        cursor.next();
                     }
+                    let buffer_start = Point::new(hunk.row_range.start, 0);
+                    let buffer_end = Point::new(hunk.row_range.end, 0);
+
+                    cursor.seek(&DimensionPair {
+                        // todo!() this seems like the wrong coordinate system
+                        key: hunk.buffer_range.start.to_offset(&excerpt.buffer),
+                        value: None,
+                    });
+
+                    let region = cursor.region()?;
+                    let start = if region.is_main_buffer {
+                        region.range.start.value.unwrap()
+                            + (buffer_start
+                                .saturating_sub(region.buffer_range.start.value.unwrap()))
+                    } else {
+                        region.range.start.value.unwrap()
+                    };
+
+                    while let Some(region) = cursor.region() {
+                        if !region.is_main_buffer
+                            || region.buffer_range.end.value.unwrap() <= buffer_end
+                        {
+                            cursor.next();
+                        } else {
+                            break;
+                        }
+                    }
+
+                    let end = if let Some(region) = cursor.region() {
+                        debug_assert!(region.is_main_buffer);
+                        region.range.start.value.unwrap()
+                            + (buffer_end - region.buffer_range.start.value.unwrap())
+                    } else {
+                        self.max_point()
+                    };
+
+                    return Some(MultiBufferDiffHunk {
+                        row_range: MultiBufferRow(start.row)..MultiBufferRow(end.row),
+                        buffer_id: excerpt.buffer_id,
+                        buffer_range: hunk.buffer_range.clone(),
+                        diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+                    });
                 }
             }
 
