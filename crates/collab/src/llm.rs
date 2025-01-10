@@ -470,16 +470,16 @@ async fn predict_edits(
         .replace("<outline>", &outline_prefix)
         .replace("<events>", &params.input_events)
         .replace("<excerpt>", &params.input_excerpt);
-    let mut response = open_ai::complete_text(
+    let mut response = fireworks::complete(
         &state.http_client,
         api_url,
         api_key,
-        open_ai::CompletionRequest {
+        fireworks::CompletionRequest {
             model: model.to_string(),
             prompt: prompt.clone(),
             max_tokens: 2048,
             temperature: 0.,
-            prediction: Some(open_ai::Prediction::Content {
+            prediction: Some(fireworks::Prediction::Content {
                 content: params.input_excerpt,
             }),
             rewrite_speculation: Some(true),
@@ -487,6 +487,7 @@ async fn predict_edits(
     )
     .await?;
     let choice = response
+        .completion
         .choices
         .pop()
         .context("no output from completion response")?;
