@@ -260,10 +260,9 @@ impl ContextStore {
 
     pub fn insert_thread(&mut self, thread: Model<Thread>, cx: &AppContext) {
         let id = self.next_context_id.post_inc();
-        let thread_ref = thread.read(cx);
-        let text = thread_ref.text().into();
+        let text = thread.read(cx).text().into();
 
-        self.threads.insert(thread_ref.id().clone(), id);
+        self.threads.insert(thread.read(cx).id().clone(), id);
         self.context
             .push(Context::Thread(ThreadContext { id, thread, text }));
     }
@@ -499,8 +498,7 @@ pub fn refresh_context_store_text(
     cx: &AppContext,
 ) -> impl Future<Output = ()> {
     let mut tasks = Vec::new();
-    let context_store_ref = context_store.read(cx);
-    for context in &context_store_ref.context {
+    for context in &context_store.read(cx).context {
         match context {
             Context::File(file_context) => {
                 let context_store = context_store.clone();
