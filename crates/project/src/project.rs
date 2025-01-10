@@ -59,6 +59,7 @@ use lsp::{
     LanguageServerId, LanguageServerName, MessageActionItem,
 };
 use lsp_command::*;
+use lsp_store::LspFormatTarget;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
@@ -2632,13 +2633,13 @@ impl Project {
     pub fn format(
         &mut self,
         buffers: HashSet<Model<Buffer>>,
+        target: LspFormatTarget,
         push_to_history: bool,
         trigger: lsp_store::FormatTrigger,
-        target: lsp_store::FormatTarget,
         cx: &mut ModelContext<Project>,
     ) -> Task<anyhow::Result<ProjectTransaction>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.format(buffers, push_to_history, trigger, target, cx)
+            lsp_store.format(buffers, target, push_to_history, trigger, cx)
         })
     }
 
