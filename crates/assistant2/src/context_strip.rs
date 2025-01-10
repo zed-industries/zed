@@ -151,7 +151,7 @@ impl ContextStrip {
 
     fn handle_focus(&mut self, cx: &mut ViewContext<Self>) {
         // TODO az check if any
-        self.focused_index = Some(0);
+        self.focused_index = Some(self.last_index(cx));
         cx.notify();
     }
 
@@ -160,10 +160,14 @@ impl ContextStrip {
         cx.notify();
     }
 
+    fn last_index(&self, cx: &AppContext) -> usize {
+        self.context_store.read(cx).len().saturating_sub(1)
+    }
+
     fn focus_left(&mut self, _: &FocusLeft, cx: &mut ViewContext<Self>) {
         self.focused_index = match self.focused_index {
             Some(index) if index > 0 => Some(index - 1),
-            _ => Some(self.context_store.read(cx).len().saturating_sub(1)),
+            _ => Some(self.last_index(cx)),
         };
 
         cx.notify();
