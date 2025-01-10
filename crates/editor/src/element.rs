@@ -17,11 +17,12 @@ use crate::{
     scroll::{axis_pair, scroll_amount::ScrollAmount, AxisPair},
     BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
     DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
-    EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
-    HalfPageUp, HandleInput, HoveredCursor, InlineCompletion, JumpData, LineDown, LineUp,
-    OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
-    ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
-    GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GoToHunk, GoToPrevHunk,
+    GutterDimensions, HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, InlineCompletion,
+    JumpData, LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, RevertSelectedHunks, RowExt,
+    RowRangeExt, SelectPhase, Selection, SoftWrap, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR,
+    FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
+    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -68,7 +69,7 @@ use std::{
 };
 use sum_tree::Bias;
 use theme::{ActiveTheme, Appearance, PlayerColor};
-use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, Tooltip};
+use ui::{h_flex, ButtonLike, ButtonStyle, ContextMenu, IconButtonShape, Tooltip};
 use ui::{prelude::*, POPOVER_Y_PADDING};
 use unicode_segmentation::UnicodeSegmentation;
 use util::RangeExt;
@@ -3447,6 +3448,76 @@ impl EditorElement {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn layout_diff_hunk_controls(
+        &self,
+        row_range: Range<DisplayRow>,
+        row_infos: &[RowInfo],
+        text_hitbox: &Hitbox,
+        position_map: &PositionMap,
+        newest_cursor_position: Option<DisplayPoint>,
+        line_height: Pixels,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        display_hunks: &[(DisplayDiffHunk, Option<Hitbox>)],
+        editor: View<Editor>,
+        cx: &mut WindowContext,
+    ) -> Vec<AnyElement> {
+        let point_for_position =
+            position_map.point_for_position(text_hitbox.bounds, cx.mouse_position());
+
+        let mut controls = vec![];
+
+        let active_positions = [
+            Some(point_for_position.previous_valid),
+            newest_cursor_position,
+        ];
+
+        for (hunk, _) in display_hunks {
+            if let DisplayDiffHunk::Unfolded {
+                display_row_range,
+                multi_buffer_range,
+                status,
+                ..
+            } = &hunk
+            {
+                if display_row_range.start < row_range.start
+                    || display_row_range.end >= row_range.end
+                {
+                    continue;
+                }
+                let row_ix = (display_row_range.start - row_range.start).0 as usize;
+                if row_infos[row_ix].diff_status.is_none() {
+                    continue;
+                }
+                if row_infos[row_ix].diff_status == Some(DiffHunkStatus::Added)
+                    && *status != DiffHunkStatus::Added
+                {
+                    continue;
+                }
+                if active_positions
+                    .iter()
+                    .any(|p| p.map_or(false, |p| display_row_range.contains(&p.row())))
+                {
+                    let y = display_row_range.start.as_f32() * line_height
+                        + text_hitbox.bounds.top()
+                        - scroll_pixel_position.y;
+                    let x = text_hitbox.bounds.right() - px(120.);
+
+                    let mut element =
+                        diff_hunk_controls(multi_buffer_range.clone(), line_height, &editor, cx);
+                    element.prepaint_as_root(
+                        gpui::Point::new(x, y),
+                        size(px(100.0), line_height).into(),
+                        cx,
+                    );
+                    controls.push(element);
+                }
+            }
+        }
+
+        controls
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn layout_signature_help(
         &self,
         hitbox: &Hitbox,
@@ -4008,6 +4079,7 @@ impl EditorElement {
                 self.paint_redactions(layout, cx);
                 self.paint_cursors(layout, cx);
                 self.paint_inline_blame(layout, cx);
+                self.paint_diff_hunk_controls(layout, cx);
                 cx.with_element_namespace("crease_trailers", |cx| {
                     for trailer in layout.crease_trailers.iter_mut().flatten() {
                         trailer.element.paint(cx);
@@ -4659,6 +4731,12 @@ impl EditorElement {
             cx.paint_layer(layout.text_hitbox.bounds, |cx| {
                 inline_blame.paint(cx);
             })
+        }
+    }
+
+    fn paint_diff_hunk_controls(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
+        for mut diff_hunk_control in layout.diff_hunk_controls.drain(..) {
+            diff_hunk_control.paint(cx);
         }
     }
 
@@ -6457,18 +6535,35 @@ impl Element for EditorElement {
                         )
                         .unwrap();
 
+                    let mode = snapshot.mode;
+
+                    let position_map = Rc::new(PositionMap {
+                        size: bounds.size,
+                        scroll_pixel_position,
+                        scroll_max,
+                        line_layouts,
+                        line_height,
+                        em_width,
+                        em_advance,
+                        snapshot,
+                    });
+
+                    let hunk_controls = self.layout_diff_hunk_controls(
+                        start_row..end_row,
+                        &row_infos,
+                        &text_hitbox,
+                        &position_map,
+                        newest_selection_head,
+                        line_height,
+                        scroll_pixel_position,
+                        &display_hunks,
+                        self.editor.clone(),
+                        cx,
+                    );
+
                     EditorLayout {
-                        mode: snapshot.mode,
-                        position_map: Rc::new(PositionMap {
-                            size: bounds.size,
-                            scroll_pixel_position,
-                            scroll_max,
-                            line_layouts,
-                            line_height,
-                            em_width,
-                            em_advance,
-                            snapshot,
-                        }),
+                        mode,
+                        position_map,
                         visible_display_row_range: start_row..end_row,
                         wrap_guides,
                         indent_guides,
@@ -6493,6 +6588,7 @@ impl Element for EditorElement {
                         visible_cursors,
                         selections,
                         inline_completion_popover,
+                        diff_hunk_controls: hunk_controls,
                         mouse_context_menu,
                         test_indicators,
                         code_actions_indicator,
@@ -6657,6 +6753,7 @@ pub struct EditorLayout {
     code_actions_indicator: Option<AnyElement>,
     test_indicators: Vec<AnyElement>,
     crease_toggles: Vec<Option<AnyElement>>,
+    diff_hunk_controls: Vec<AnyElement>,
     crease_trailers: Vec<Option<CreaseTrailerLayout>>,
     inline_completion_popover: Option<AnyElement>,
     mouse_context_menu: Option<AnyElement>,
@@ -7767,4 +7864,91 @@ mod tests {
             .cloned()
             .collect()
     }
+}
+
+fn diff_hunk_controls(
+    hunk_range: Range<Anchor>,
+    line_height: Pixels,
+    editor: &View<Editor>,
+    cx: &mut WindowContext,
+) -> AnyElement {
+    h_flex()
+        .h(line_height)
+        .gap_1()
+        .px_1()
+        .pb_1()
+        .border_b_1()
+        .border_color(cx.theme().colors().border_variant)
+        .rounded_b_lg()
+        .bg(cx.theme().colors().editor_background)
+        .gap_1()
+        .child(
+            IconButton::new("next-hunk", IconName::ArrowDown)
+                .shape(IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                // .disabled(!has_multiple_hunks)
+                .tooltip({
+                    let focus_handle = editor.focus_handle(cx);
+                    move |cx| Tooltip::for_action_in("Next Hunk", &GoToHunk, &focus_handle, cx)
+                })
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, cx| {
+                        editor.update(cx, |editor, cx| {
+                            let snapshot = editor.snapshot(cx);
+                            let position = hunk_range.end.to_point(&snapshot.buffer_snapshot);
+                            editor.go_to_hunk_after_position(&snapshot, position, cx);
+                        });
+                    }
+                }),
+        )
+        .child(
+            IconButton::new("prev-hunk", IconName::ArrowUp)
+                .shape(IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                // .disabled(!has_multiple_hunks)
+                .tooltip({
+                    let focus_handle = editor.focus_handle(cx);
+                    move |cx| {
+                        Tooltip::for_action_in("Previous Hunk", &GoToPrevHunk, &focus_handle, cx)
+                    }
+                })
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, cx| {
+                        editor.update(cx, |editor, cx| {
+                            let snapshot = editor.snapshot(cx);
+                            let point = hunk_range.start.to_point(&snapshot.buffer_snapshot);
+                            editor.go_to_hunk_before_position(&snapshot, point, cx);
+                        });
+                    }
+                }),
+        )
+        .child(
+            IconButton::new("discard", IconName::Undo)
+                .shape(IconButtonShape::Square)
+                .icon_size(IconSize::Small)
+                .tooltip({
+                    let focus_handle = editor.focus_handle(cx);
+                    move |cx| {
+                        Tooltip::for_action_in(
+                            "Discard Hunk",
+                            &RevertSelectedHunks,
+                            &focus_handle,
+                            cx,
+                        )
+                    }
+                })
+                .on_click({
+                    let editor = editor.clone();
+                    move |_event, cx| {
+                        editor.update(cx, |editor, cx| {
+                            let snapshot = editor.snapshot(cx);
+                            let point = hunk_range.start.to_point(&snapshot.buffer_snapshot);
+                            editor.revert_hunks_in_ranges([point..point].into_iter(), cx);
+                        });
+                    }
+                }),
+        )
+        .into_any_element()
 }
