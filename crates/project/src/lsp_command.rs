@@ -3213,8 +3213,8 @@ impl GetDocumentDiagnostics {
             None
         };
 
-        lsp::Diagnostic {
-            range: language::range_to_lsp(range),
+        Ok(lsp::Diagnostic {
+            range: language::range_to_lsp(range)?,
             severity: match proto::lsp_diagnostic::Severity::from_i32(diagnostic.severity).unwrap()
             {
                 proto::lsp_diagnostic::Severity::Error => Some(lsp::DiagnosticSeverity::ERROR),
@@ -3286,7 +3286,7 @@ impl LspCommand for GetDocumentDiagnostics {
         _: &Buffer,
         language_server: &Arc<LanguageServer>,
         _: &AppContext,
-    ) -> lsp::DocumentDiagnosticParams {
+    ) -> Result<lsp::DocumentDiagnosticParams> {
         let identifier = match language_server.capabilities().diagnostic_provider {
             Some(lsp::DiagnosticServerCapabilities::Options(options)) => options.identifier.clone(),
             Some(lsp::DiagnosticServerCapabilities::RegistrationOptions(options)) => {
@@ -3295,7 +3295,7 @@ impl LspCommand for GetDocumentDiagnostics {
             None => None,
         };
 
-        lsp::DocumentDiagnosticParams {
+        Ok(lsp::DocumentDiagnosticParams {
             text_document: lsp::TextDocumentIdentifier {
                 uri: lsp::Url::from_file_path(path).unwrap(),
             },
@@ -3303,7 +3303,7 @@ impl LspCommand for GetDocumentDiagnostics {
             previous_result_id: None,
             partial_result_params: Default::default(),
             work_done_progress_params: Default::default(),
-        }
+        })
     }
 
     async fn response_from_lsp(
