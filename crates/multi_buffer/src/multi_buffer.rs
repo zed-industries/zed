@@ -2177,7 +2177,7 @@ impl MultiBuffer {
         );
     }
 
-    pub fn diff_base_for(&self, buffer_id: BufferId) -> Option<Model<BufferChangeSet>> {
+    pub fn change_set_for(&self, buffer_id: BufferId) -> Option<Model<BufferChangeSet>> {
         self.diff_bases
             .get(&buffer_id)
             .map(|state| state.change_set.clone())

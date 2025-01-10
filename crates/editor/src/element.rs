@@ -12,16 +12,15 @@ use crate::{
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
-    hunk_diff::DisplayDiffHunk,
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::{axis_pair, scroll_amount::ScrollAmount, AxisPair},
     BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
     DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
     EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
-    HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, InlineCompletion, JumpData, LineDown,
-    LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection,
-    SoftWrap, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
+    HalfPageUp, HandleInput, HoveredCursor, InlineCompletion, JumpData, LineDown, LineUp,
+    OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection, SoftWrap,
+    ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
     GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
@@ -75,6 +74,20 @@ use unicode_segmentation::UnicodeSegmentation;
 use util::RangeExt;
 use util::ResultExt;
 use workspace::{item::Item, Workspace};
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum DisplayDiffHunk {
+    Folded {
+        display_row: DisplayRow,
+    },
+
+    Unfolded {
+        diff_base_byte_range: Range<usize>,
+        display_row_range: Range<DisplayRow>,
+        multi_buffer_range: Range<Anchor>,
+        status: DiffHunkStatus,
+    },
+}
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -506,7 +519,7 @@ impl EditorElement {
     fn mouse_left_down(
         editor: &mut Editor,
         event: &MouseDownEvent,
-        hovered_hunk: Option<HoveredHunk>,
+        hovered_hunk: Option<Range<Anchor>>,
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
         gutter_hitbox: &Hitbox,
@@ -520,7 +533,7 @@ impl EditorElement {
         let mut modifiers = event.modifiers;
 
         if let Some(hovered_hunk) = hovered_hunk {
-            // editor.toggle_hovered_hunk(&hovered_hunk, cx);
+            editor.toggle_diff_hunks_in_ranges(vec![hovered_hunk], cx);
             cx.notify();
             return;
         } else if gutter_hitbox.is_hovered(cx) {
@@ -1435,11 +1448,9 @@ impl EditorElement {
         line_height: Pixels,
         gutter_hitbox: &Hitbox,
         display_rows: Range<DisplayRow>,
-        anchor_range: Range<Anchor>,
         snapshot: &EditorSnapshot,
         cx: &mut WindowContext,
     ) -> Vec<(DisplayDiffHunk, Option<Hitbox>)> {
-        let buffer_snapshot = &snapshot.buffer_snapshot;
         let buffer_start = DisplayPoint::new(display_rows.start, 0).to_point(snapshot);
         let buffer_end = DisplayPoint::new(display_rows.end, 0).to_point(snapshot);
 
@@ -4736,12 +4747,7 @@ impl EditorElement {
         });
     }
 
-    fn paint_mouse_listeners(
-        &mut self,
-        layout: &EditorLayout,
-        hovered_hunk: Option<HoveredHunk>,
-        cx: &mut WindowContext,
-    ) {
+    fn paint_mouse_listeners(&mut self, layout: &EditorLayout, cx: &mut WindowContext) {
         self.paint_scroll_wheel_listener(layout, cx);
 
         cx.on_mouse_event({
@@ -4749,6 +4755,26 @@ impl EditorElement {
             let editor = self.editor.clone();
             let text_hitbox = layout.text_hitbox.clone();
             let gutter_hitbox = layout.gutter_hitbox.clone();
+            let hovered_hunk =
+                layout
+                    .display_hunks
+                    .iter()
+                    .find_map(|(hunk, hunk_hitbox)| match hunk {
+                        DisplayDiffHunk::Folded { .. } => None,
+                        DisplayDiffHunk::Unfolded {
+                            multi_buffer_range, ..
+                        } => {
+                            if hunk_hitbox
+                                .as_ref()
+                                .map(|hitbox| hitbox.is_hovered(cx))
+                                .unwrap_or(false)
+                            {
+                                Some(multi_buffer_range.clone())
+                            } else {
+                                None
+                            }
+                        }
+                    });
 
             move |event: &MouseDownEvent, phase, cx| {
                 if phase == DispatchPhase::Bubble {
@@ -6009,7 +6035,6 @@ impl Element for EditorElement {
                         line_height,
                         &gutter_hitbox,
                         start_row..end_row,
-                        start_anchor..end_anchor,
                         &snapshot,
                         cx,
                     );
@@ -6504,37 +6529,11 @@ impl Element for EditorElement {
             line_height: Some(self.style.text.line_height),
             ..Default::default()
         };
-        let hovered_hunk = layout
-            .display_hunks
-            .iter()
-            .find_map(|(hunk, hunk_hitbox)| match hunk {
-                DisplayDiffHunk::Folded { .. } => None,
-                DisplayDiffHunk::Unfolded {
-                    diff_base_byte_range,
-                    multi_buffer_range,
-                    status,
-                    ..
-                } => {
-                    if hunk_hitbox
-                        .as_ref()
-                        .map(|hitbox| hitbox.is_hovered(cx))
-                        .unwrap_or(false)
-                    {
-                        Some(HoveredHunk {
-                            status: *status,
-                            multi_buffer_range: multi_buffer_range.clone(),
-                            diff_base_byte_range: diff_base_byte_range.clone(),
-                        })
-                    } else {
-                        None
-                    }
-                }
-            });
         let rem_size = self.rem_size(cx);
         cx.with_rem_size(rem_size, |cx| {
             cx.with_text_style(Some(text_style), |cx| {
                 cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
-                    self.paint_mouse_listeners(layout, hovered_hunk, cx);
+                    self.paint_mouse_listeners(layout, cx);
                     self.paint_background(layout, cx);
                     self.paint_indent_guides(layout, cx);
 

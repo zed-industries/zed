@@ -324,7 +324,6 @@ impl SelectionsCollection {
             .collect()
     }
 
-    #[cfg(any(test, feature = "test-support"))]
     pub fn ranges<D: TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug>(
         &self,
         cx: &mut AppContext,

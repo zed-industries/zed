@@ -1820,7 +1820,7 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
                     for buffer in multibuffer.all_buffers() {
                         let snapshot = buffer.read(cx).snapshot();
                         let _ = multibuffer
-                            .diff_base_for(snapshot.remote_id())
+                            .change_set_for(snapshot.remote_id())
                             .unwrap()
                             .update(cx, |change_set, cx| {
                                 log::info!(

@@ -25,7 +25,6 @@ mod git;
 mod highlight_matching_bracket;
 mod hover_links;
 mod hover_popover;
-mod hunk_diff;
 mod indent_guides;
 mod inlay_hint_cache;
 pub mod items;
@@ -88,8 +87,6 @@ use gpui::{
 };
 use highlight_matching_bracket::refresh_matching_bracket_highlights;
 use hover_popover::{hide_hover, HoverState};
-use hunk_diff::DiffMap;
-pub(crate) use hunk_diff::HoveredHunk;
 use indent_guides::ActiveIndentGuidesState;
 use inlay_hint_cache::{InlayHintCache, InlaySplice, InvalidationStrategy};
 pub use inline_completion::Direction;
@@ -165,7 +162,7 @@ use theme::{
 };
 use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize,
-    PopoverMenuHandle, Tooltip,
+    Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
 use workspace::item::{ItemHandle, PreviewTabsSettings};
@@ -271,7 +268,6 @@ impl InlayId {
     }
 }
 
-enum DiffRowHighlight {}
 enum DocumentHighlightRead {}
 enum DocumentHighlightWrite {}
 enum InputComposition {}
@@ -622,7 +618,6 @@ pub struct Editor {
     nav_history: Option<ItemNavHistory>,
     context_menu: RefCell<Option<CodeContextMenu>>,
     mouse_context_menu: Option<MouseContextMenu>,
-    hunk_controls_menu_handle: PopoverMenuHandle<ui::ContextMenu>,
     completion_tasks: Vec<(CompletionId, Task<Option<()>>)>,
     signature_help_state: SignatureHelpState,
     auto_signature_help: Option<bool>,
@@ -656,7 +651,6 @@ pub struct Editor {
     enable_inline_completions: bool,
     show_inline_completions_override: Option<bool>,
     inlay_hint_cache: InlayHintCache,
-    diff_map: DiffMap,
     next_inlay_id: usize,
     _subscriptions: Vec<Subscription>,
     pixel_position_of_newest_cursor: Option<gpui::Point<Pixels>>,
@@ -1258,7 +1252,6 @@ impl Editor {
             nav_history: None,
             context_menu: RefCell::new(None),
             mouse_context_menu: None,
-            hunk_controls_menu_handle: PopoverMenuHandle::default(),
             completion_tasks: Default::default(),
             signature_help_state: SignatureHelpState::default(),
             auto_signature_help: None,
@@ -1292,7 +1285,7 @@ impl Editor {
             inline_completion_provider: None,
             active_inline_completion: None,
             inlay_hint_cache: InlayHintCache::new(inlay_hint_settings),
-            diff_map: DiffMap::default(),
+
             gutter_hovered: false,
             pixel_position_of_newest_cursor: None,
             last_bounds: None,
@@ -5969,11 +5962,6 @@ impl Editor {
         self.revert_hunks_in_ranges(selections, cx);
     }
 
-    fn revert_hunk(&mut self, hunk: HoveredHunk, cx: &mut ViewContext<Editor>) {
-        let snapshot = self.buffer.read(cx).read(cx);
-        todo!();
-    }
-
     fn revert_hunks_in_ranges(
         &mut self,
         ranges: impl Iterator<Item = Range<Point>>,
@@ -6015,7 +6003,7 @@ impl Editor {
         cx: &mut WindowContext,
     ) -> Option<()> {
         let buffer = self.buffer.read(cx);
-        let change_set = buffer.diff_base_for(hunk.buffer_id)?;
+        let change_set = buffer.change_set_for(hunk.buffer_id)?;
         let buffer = buffer.buffer(hunk.buffer_id)?;
         let buffer = buffer.read(cx);
         let original_text = change_set
@@ -10927,6 +10915,26 @@ impl Editor {
 
     pub fn toggle_hunk_diff(&mut self, _: &ToggleHunkDiff, cx: &mut ViewContext<Self>) {
         let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
+        self.toggle_diff_hunks_in_ranges(ranges, cx);
+    }
+
+    pub fn clear_expanded_diff_hunks(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        self.buffer.update(cx, |buffer, cx| {
+            let ranges = vec![Anchor::min()..Anchor::max()];
+            if buffer.has_expanded_diff_hunks_in_ranges(&ranges, cx) {
+                buffer.collapse_diff_hunks(ranges, cx);
+                true
+            } else {
+                false
+            }
+        })
+    }
+
+    fn toggle_diff_hunks_in_ranges(
+        &mut self,
+        ranges: Vec<Range<Anchor>>,
+        cx: &mut ViewContext<'_, Editor>,
+    ) {
         self.buffer.update(cx, |buffer, cx| {
             if buffer.has_expanded_diff_hunks_in_ranges(&ranges, cx) {
                 buffer.collapse_diff_hunks(ranges, cx)
@@ -10934,6 +10942,53 @@ impl Editor {
                 buffer.expand_diff_hunks(ranges, cx)
             }
         })
+    }
+
+    pub(crate) fn apply_all_diff_hunks(
+        &mut self,
+        _: &ApplyAllDiffHunks,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let buffers = self.buffer.read(cx).all_buffers();
+        for branch_buffer in buffers {
+            branch_buffer.update(cx, |branch_buffer, cx| {
+                branch_buffer.merge_into_base(Vec::new(), cx);
+            });
+        }
+
+        if let Some(project) = self.project.clone() {
+            self.save(true, project, cx).detach_and_log_err(cx);
+        }
+    }
+
+    pub(crate) fn apply_selected_diff_hunks(
+        &mut self,
+        _: &ApplyDiffHunk,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let snapshot = self.snapshot(cx);
+        let hunks = snapshot.hunks_for_ranges(self.selections.ranges(cx).into_iter());
+        let mut ranges_by_buffer = HashMap::default();
+        self.transact(cx, |editor, cx| {
+            for hunk in hunks {
+                if let Some(buffer) = editor.buffer.read(cx).buffer(hunk.buffer_id) {
+                    ranges_by_buffer
+                        .entry(buffer.clone())
+                        .or_insert_with(Vec::new)
+                        .push(hunk.buffer_range.to_offset(buffer.read(cx)));
+                }
+            }
+
+            for (buffer, ranges) in ranges_by_buffer {
+                buffer.update(cx, |buffer, cx| {
+                    buffer.merge_into_base(ranges, cx);
+                });
+            }
+        });
+
+        if let Some(project) = self.project.clone() {
+            self.save(true, project, cx).detach_and_log_err(cx);
+        }
     }
 
     pub fn set_gutter_hovered(&mut self, hovered: bool, cx: &mut ViewContext<Self>) {
@@ -12237,7 +12292,7 @@ impl Editor {
             } => {
                 self.tasks_update_task = Some(self.refresh_runnables(cx));
                 let buffer_id = buffer.read(cx).remote_id();
-                if !self.diff_map.diff_bases.contains_key(&buffer_id) {
+                if self.buffer.read(cx).change_set_for(buffer_id).is_none() {
                     if let Some(project) = &self.project {
                         get_unstaged_changes_for_buffers(
                             project,
