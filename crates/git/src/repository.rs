@@ -442,7 +442,7 @@ fn check_path_to_repo_path_errors(relative_file_path: &Path) -> Result<()> {
 pub enum GitFileStatus {
     Added,
     Modified,
-    // FIXME remove this (?)
+    // TODO conflicts should be represented by the GitStatusPair
     Conflict,
     Deleted,
     Untracked,
