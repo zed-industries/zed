@@ -470,23 +470,48 @@ async fn predict_edits(
         .replace("<outline>", &outline_prefix)
         .replace("<events>", &params.input_events)
         .replace("<excerpt>", &params.input_excerpt);
-    let mut response = open_ai::complete_text(
+    let mut response = fireworks::complete(
         &state.http_client,
         api_url,
         api_key,
-        open_ai::CompletionRequest {
+        fireworks::CompletionRequest {
             model: model.to_string(),
             prompt: prompt.clone(),
             max_tokens: 2048,
             temperature: 0.,
-            prediction: Some(open_ai::Prediction::Content {
+            prediction: Some(fireworks::Prediction::Content {
                 content: params.input_excerpt,
             }),
             rewrite_speculation: Some(true),
         },
     )
     .await?;
+
+    state.executor.spawn_detached({
+        let kinesis_client = state.kinesis_client.clone();
+        let kinesis_stream = state.config.kinesis_stream.clone();
+        let headers = response.headers.clone();
+        let model = model.clone();
+
+        async move {
+            SnowflakeRow::new(
+                "Fireworks Completion Requested",
+                claims.metrics_id,
+                claims.is_staff,
+                claims.system_id.clone(),
+                json!({
+                    "model": model.to_string(),
+                    "headers": headers,
+                }),
+            )
+            .write(&kinesis_client, &kinesis_stream)
+            .await
+            .log_err();
+        }
+    });
+
     let choice = response
+        .completion
         .choices
         .pop()
         .context("no output from completion response")?;
