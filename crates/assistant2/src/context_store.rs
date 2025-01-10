@@ -191,22 +191,20 @@ impl ContextStore {
                 collect_files_in_path(worktree, &project_path.path)
             })?;
 
-            let open_buffer_tasks = project.update(&mut cx, |project, cx| {
-                files
-                    .iter()
-                    .map(|file_path| {
-                        project.open_buffer(
-                            ProjectPath {
-                                worktree_id,
-                                path: file_path.clone(),
-                            },
-                            cx,
-                        )
-                    })
-                    .collect::<Vec<_>>()
+            let open_buffers_task = project.update(&mut cx, |project, cx| {
+                let tasks = files.iter().map(|file_path| {
+                    project.open_buffer(
+                        ProjectPath {
+                            worktree_id,
+                            path: file_path.clone(),
+                        },
+                        cx,
+                    )
+                });
+                future::join_all(tasks)
             })?;
 
-            let buffers = future::join_all(open_buffer_tasks).await;
+            let buffers = open_buffers_task.await;
 
             let mut buffer_infos = Vec::new();
             let mut text_tasks = Vec::new();
