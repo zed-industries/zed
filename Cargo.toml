@@ -379,7 +379,7 @@ fork = "0.2.0"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"
-git2 = { version = "0.19", default-features = false }
+git2 = { version = "0.20", default-features = false }
 globset = "0.4"
 handlebars = "4.3"
 heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
