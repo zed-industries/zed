@@ -24,20 +24,6 @@ impl GitStatusPair {
     pub fn combined(&self) -> GitFileStatus {
         self.index_status.or(self.worktree_status).unwrap()
     }
-
-    pub fn stage(&mut self) {
-        // FIXME need to handle the mixed case
-        if let Some(status) = self.worktree_status.take() {
-            self.index_status = Some(status);
-        }
-    }
-
-    pub fn unstage(&mut self) {
-        // FIXME need to handle the mixed case
-        if let Some(status) = self.index_status.take() {
-            self.worktree_status = Some(status);
-        }
-    }
 }
 
 #[derive(Clone)]

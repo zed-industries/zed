@@ -13,7 +13,7 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use ui::{Color, Icon, IconName, IntoElement, SharedString};
+use ui::{Color, Icon, IconName, IntoElement, SharedString, ToggleState};
 use worktree::RepositoryEntry;
 
 pub mod git_panel;
@@ -50,14 +50,6 @@ pub enum GitViewMode {
     #[default]
     List,
     Tree,
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct GitListEntry {
-    depth: usize,
-    display_name: String,
-    repo_path: RepoPath,
-    status: GitStatusPair,
 }
 
 struct GlobalGitState(Model<GitState>);

@@ -1,12 +1,13 @@
 use crate::first_worktree_repository;
 use crate::{
-    git_status_icon, settings::GitPanelSettings, CommitAllChanges, CommitChanges, GitListEntry,
-    GitState, GitViewMode, RevertAll, StageAll, ToggleStaged, UnstageAll,
+    git_status_icon, settings::GitPanelSettings, CommitAllChanges, CommitChanges, GitState,
+    GitViewMode, RevertAll, StageAll, ToggleStaged, UnstageAll,
 };
 use anyhow::{Context as _, Result};
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use git::repository::{GitFileStatus, RepoPath};
+use git::status::GitStatusPair;
 use gpui::*;
 use language::Buffer;
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
@@ -62,6 +63,15 @@ struct SerializedGitPanel {
     width: Option<Pixels>,
 }
 
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub struct GitListEntry {
+    depth: usize,
+    display_name: String,
+    repo_path: RepoPath,
+    status: GitStatusPair,
+    toggle_state: ToggleState,
+}
+
 pub struct GitPanel {
     current_modifiers: Modifiers,
     focus_handle: FocusHandle,
@@ -83,6 +93,14 @@ pub struct GitPanel {
     visible_entries: Vec<GitListEntry>,
     width: Option<Pixels>,
     reveal_in_editor: Task<()>,
+}
+
+fn status_to_toggle_state(status: &GitStatusPair) -> ToggleState {
+    match status.is_staged() {
+        Some(true) => ToggleState::Selected,
+        Some(false) => ToggleState::Unselected,
+        None => ToggleState::Indeterminate,
+    }
 }
 
 impl GitPanel {
@@ -564,6 +582,7 @@ impl GitPanel {
                 status,
                 depth: 0,
                 display_name: filename,
+                toggle_state: entry.toggle_state,
             };
 
             callback(ix, details, cx);
@@ -593,6 +612,7 @@ impl GitPanel {
         for entry in repo.status() {
             let (depth, difference) =
                 Self::calculate_depth_and_difference(&entry.repo_path, &path_set);
+            let toggle_state = status_to_toggle_state(&entry.status);
 
             let display_name = if difference > 1 {
                 // Show partial path for deeply nested files
@@ -618,6 +638,7 @@ impl GitPanel {
                 display_name,
                 repo_path: entry.repo_path,
                 status: entry.status,
+                toggle_state,
             };
 
             self.visible_entries.push(entry);
@@ -882,7 +903,6 @@ impl GitPanel {
     ) -> impl IntoElement {
         let state = self.git_state.clone();
         let repo_path = entry_details.repo_path.clone();
-        let is_staged = entry_details.status.is_staged();
         let selected = self.selected_entry == Some(ix);
 
         // TODO revisit, maybe use a different status here?
@@ -931,14 +951,9 @@ impl GitPanel {
             entry = entry.bg(cx.theme().status().info_background);
         }
 
-        let toggle = match is_staged {
-            None => ToggleState::Indeterminate,
-            Some(true) => ToggleState::Selected,
-            Some(false) => ToggleState::Unselected,
-        };
         entry = entry
             .child(
-                Checkbox::new(checkbox_id, toggle)
+                Checkbox::new(checkbox_id, entry_details.toggle_state)
                     .fill()
                     .elevation(ElevationIndex::Surface)
                     .on_click({
@@ -948,6 +963,9 @@ impl GitPanel {
                             let Some(this) = handle.upgrade() else {
                                 return;
                             };
+                            this.update(cx, |this, _| {
+                                this.visible_entries[ix].toggle_state = *toggle;
+                            });
                             state.update(cx, {
                                 let repo_path = repo_path.clone();
                                 move |state, _| match toggle {
@@ -955,14 +973,6 @@ impl GitPanel {
                                         state.stage_entry(repo_path);
                                     }
                                     ToggleState::Unselected => state.unstage_entry(repo_path),
-                                }
-                            });
-                            this.update(cx, |this, _| match toggle {
-                                ToggleState::Selected | ToggleState::Indeterminate => {
-                                    this.visible_entries[ix].status.stage();
-                                }
-                                ToggleState::Unselected => {
-                                    this.visible_entries[ix].status.unstage()
                                 }
                             });
                         }
