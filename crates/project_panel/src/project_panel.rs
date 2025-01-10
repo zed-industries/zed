@@ -325,19 +325,28 @@ impl ProjectPanel {
                         .zip(this.expanded_dir_ids.get_mut(&worktree_id))
                     {
                         let worktree = worktree.read(cx);
+
+                        let Some(entry) = worktree.entry_for_id(*entry_id) else {
+                            return;
+                        };
+                        let include_ignored_dirs = !entry.is_ignored;
+
                         let mut dirs_to_expand = vec![*entry_id];
                         while let Some(current_id) = dirs_to_expand.pop() {
                             let Some(current_entry) = worktree.entry_for_id(current_id) else {
                                 continue;
                             };
                             for child in worktree.child_entries(&current_entry.path) {
-                                if child.is_dir() && !child.is_ignored {
-                                    dirs_to_expand.push(child.id);
-                                    if let Err(ix) = expanded_dir_ids.binary_search(&child.id) {
-                                        expanded_dir_ids.insert(ix, child.id);
-                                    }
-                                    this.unfolded_dir_ids.insert(child.id);
+                                if !child.is_dir() || (include_ignored_dirs && child.is_ignored) {
+                                    continue;
                                 }
+
+                                dirs_to_expand.push(child.id);
+
+                                if let Err(ix) = expanded_dir_ids.binary_search(&child.id) {
+                                    expanded_dir_ids.insert(ix, child.id);
+                                }
+                                this.unfolded_dir_ids.insert(child.id);
                             }
                         }
                         this.update_visible_entries(None, cx);
@@ -8356,7 +8365,8 @@ mod tests {
                 "                v empty3",
                 "                      file.txt",
                 "        v ignored_dir",
-                "            > subdir",
+                "            v subdir",
+                "                  deep_file.txt",
                 "        v subdir1",
                 "            > ignored_nested",
                 "              file1.txt",
