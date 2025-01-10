@@ -3174,12 +3174,6 @@ impl MultiBuffer {
 
 impl EventEmitter<Event> for MultiBuffer {}
 
-struct BufferRegion<'a> {
-    snapshot: &'a BufferSnapshot,
-    range: Range<usize>,
-    multi_buffer_start: usize,
-}
-
 impl MultiBufferSnapshot {
     pub fn text(&self) -> String {
         self.chunks(0..self.len(), false)
@@ -3288,7 +3282,7 @@ impl MultiBufferSnapshot {
         &'a self,
         range: Range<usize>,
         reversed: bool,
-    ) -> impl Iterator<Item = BufferRegion<'a>> {
+    ) -> impl Iterator<Item = MultiBufferRegion<'a, usize>> {
         let mut cursor = self.cursor::<usize>();
 
         if reversed {
@@ -3298,7 +3292,7 @@ impl MultiBufferSnapshot {
         }
 
         iter::from_fn(move || loop {
-            let region = cursor.region()?;
+            let mut region = cursor.region()?;
             if reversed {
                 cursor.prev()
             } else {
@@ -3314,13 +3308,12 @@ impl MultiBufferSnapshot {
 
             let start_overshoot = range.start.saturating_sub(region.range.start);
             let end_undershoot = region.range.end.saturating_sub(range.end);
+            region.range.start += start_overshoot;
+            region.buffer_range.start += start_overshoot;
+            region.range.end -= end_undershoot;
+            region.buffer_range.end -= end_undershoot;
 
-            return Some(BufferRegion {
-                snapshot: region.buffer,
-                range: region.buffer_range.start + start_overshoot
-                    ..region.buffer_range.end - end_undershoot,
-                multi_buffer_start: region.range.start + start_overshoot,
-            });
+            return Some(region);
         })
     }
 
@@ -5069,16 +5062,16 @@ impl MultiBufferSnapshot {
         self.buffer_regions_in_range(range, reversed)
             .flat_map(move |region| {
                 region
-                    .snapshot
+                    .buffer
                     .diagnostics_in_range::<_, usize>(
                         region.range.start..region.range.end,
                         reversed,
                     )
                     .map(move |entry| {
-                        let start = entry.range.start.saturating_sub(region.range.start)
-                            + region.multi_buffer_start;
-                        let end = entry.range.end.saturating_sub(region.range.start)
-                            + region.multi_buffer_start;
+                        let start = entry.range.start.saturating_sub(region.buffer_range.start)
+                            + region.range.start;
+                        let end = entry.range.end.saturating_sub(region.buffer_range.start)
+                            + region.range.start;
 
                         let multibuffer_start = self.text_summary_for_range(0..start);
                         let multibuffer_end = self.text_summary_for_range(0..end);
