@@ -120,6 +120,8 @@ pub struct MultiBufferDiffHunk {
     pub buffer_id: BufferId,
     /// The range of the underlying buffer that this hunk corresponds to.
     pub buffer_range: Range<text::Anchor>,
+    /// The excerpt that contains the diff hunk.
+    pub excerpt_id: ExcerptId,
     /// The range within the buffer's diff base that this hunk corresponds to.
     pub diff_base_byte_range: Range<usize>,
 }
@@ -3273,9 +3275,10 @@ impl MultiBufferSnapshot {
                     }),
             )
         })
-        .map(|(hunk, buffer, range)| MultiBufferDiffHunk {
+        .map(|(hunk, excerpt, range)| MultiBufferDiffHunk {
             row_range: MultiBufferRow(range.start.row)..MultiBufferRow(range.end.row),
-            buffer_id: buffer.remote_id(),
+            buffer_id: excerpt.buffer_id,
+            excerpt_id: excerpt.id,
             buffer_range: hunk.buffer_range.clone(),
             diff_base_byte_range: hunk.diff_base_byte_range.clone(),
         })
@@ -3334,7 +3337,7 @@ impl MultiBufferSnapshot {
         &'a self,
         range: Range<usize>,
         get_buffer_metadata: fn(&'a Self, &'a BufferSnapshot, Range<usize>) -> Option<I>,
-    ) -> impl Iterator<Item = (M, &'a BufferSnapshot, Range<D>)> + 'a
+    ) -> impl Iterator<Item = (M, &'a Excerpt, Range<D>)> + 'a
     where
         I: Iterator<Item = (M, Range<D>)> + 'a,
         D: TextDimension + Ord + Copy + Sub<D, Output = D> + std::fmt::Debug,
@@ -3450,7 +3453,7 @@ impl MultiBufferSnapshot {
                     }
                 }
 
-                return Some((metadata, &excerpt.buffer, start..end));
+                return Some((metadata, excerpt, start..end));
             }
             // When there are no more metadata items for this excerpt, move to the next excerpt.
             else {
@@ -3540,6 +3543,7 @@ impl MultiBufferSnapshot {
                     return Some(MultiBufferDiffHunk {
                         row_range: MultiBufferRow(start.row)..MultiBufferRow(end.row),
                         buffer_id: excerpt.buffer_id,
+                        excerpt_id: excerpt.id,
                         buffer_range: hunk.buffer_range.clone(),
                         diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                     });
@@ -5073,7 +5077,7 @@ impl MultiBufferSnapshot {
                 region
                     .buffer
                     .diagnostics_in_range::<_, usize>(
-                        region.range.start..region.range.end,
+                        region.buffer_range.start..region.buffer_range.end,
                         reversed,
                     )
                     .map(move |entry| {

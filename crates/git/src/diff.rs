@@ -144,7 +144,7 @@ impl BufferDiff {
             Some(DiffHunk {
                 row_range: start_point.row..end_point.row,
                 diff_base_byte_range: start_base..end_base,
-                buffer_range: buffer.anchor_before(start_point)..buffer.anchor_after(end_point),
+                buffer_range: buffer.anchor_before(start_point)..buffer.anchor_before(end_point),
             })
         })
     }

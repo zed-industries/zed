@@ -5966,27 +5966,28 @@ impl Editor {
 
     pub fn revert_selected_hunks(&mut self, _: &RevertSelectedHunks, cx: &mut ViewContext<Self>) {
         let selections = self.selections.all(cx).into_iter().map(|s| s.range());
+        self.revert_hunks_in_ranges(selections, cx);
+    }
+
+    fn revert_hunk(&mut self, hunk: HoveredHunk, cx: &mut ViewContext<Editor>) {
+        let snapshot = self.buffer.read(cx).read(cx);
+        todo!();
+    }
+
+    fn revert_hunks_in_ranges(
+        &mut self,
+        ranges: impl Iterator<Item = Range<Point>>,
+        cx: &mut ViewContext<Editor>,
+    ) {
         let mut revert_changes = HashMap::default();
         let snapshot = self.snapshot(cx);
-        for hunk in &snapshot.hunks_for_ranges(selections) {
+        for hunk in &snapshot.hunks_for_ranges(ranges) {
             self.prepare_revert_change(&mut revert_changes, &hunk, cx);
         }
         if !revert_changes.is_empty() {
             self.transact(cx, |editor, cx| {
                 editor.revert(revert_changes, cx);
             });
-        }
-    }
-
-    fn revert_hunk(&mut self, hunk: HoveredHunk, cx: &mut ViewContext<Editor>) {
-        let snapshot = self.buffer.read(cx).read(cx);
-        if let Some(hunk) = crate::hunk_diff::to_diff_hunk(&hunk, &snapshot) {
-            drop(snapshot);
-            let mut revert_changes = HashMap::default();
-            self.prepare_revert_change(&mut revert_changes, &hunk, cx);
-            if !revert_changes.is_empty() {
-                self.revert(revert_changes, cx)
-            }
         }
     }
 

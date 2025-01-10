@@ -12,7 +12,7 @@ use crate::{
     hover_popover::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
-    hunk_diff::{diff_hunk_to_display, DisplayDiffHunk},
+    hunk_diff::DisplayDiffHunk,
     hunk_status,
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
@@ -521,7 +521,7 @@ impl EditorElement {
         let mut modifiers = event.modifiers;
 
         if let Some(hovered_hunk) = hovered_hunk {
-            editor.toggle_hovered_hunk(&hovered_hunk, cx);
+            // editor.toggle_hovered_hunk(&hovered_hunk, cx);
             cx.notify();
             return;
         } else if gutter_hitbox.is_hovered(cx) {
@@ -1450,79 +1450,67 @@ impl EditorElement {
             .unwrap_or_default();
 
         self.editor.update(cx, |editor, cx| {
-            let expanded_hunks = &editor.diff_map.hunks;
-            let expanded_hunks_start_ix = expanded_hunks
-                .binary_search_by(|hunk| {
-                    hunk.hunk_range
-                        .end
-                        .cmp(&anchor_range.start, &buffer_snapshot)
-                        .then(Ordering::Less)
-                })
-                .unwrap_err();
-            let mut expanded_hunks = expanded_hunks[expanded_hunks_start_ix..].iter().peekable();
+            let mut display_hunks = Vec::<(DisplayDiffHunk, Option<Hitbox>)>::new();
 
-            let mut display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)> = snapshot
+            for hunk in snapshot
                 .buffer_snapshot
                 .diff_hunks_in_range(buffer_start..buffer_end)
-                .filter_map(|hunk| {
-                    let display_hunk = diff_hunk_to_display(&hunk, snapshot);
+            {
+                let hunk_start_point = Point::new(hunk.row_range.start.0, 0);
+                let hunk_end_point = Point::new(hunk.row_range.end.0, 0);
 
-                    if let DisplayDiffHunk::Unfolded {
-                        multi_buffer_range,
-                        status,
-                        ..
-                    } = &display_hunk
-                    {
-                        let mut is_expanded = false;
-                        while let Some(expanded_hunk) = expanded_hunks.peek() {
-                            match expanded_hunk
-                                .hunk_range
-                                .start
-                                .cmp(&multi_buffer_range.start, &buffer_snapshot)
-                            {
-                                Ordering::Less => {
-                                    expanded_hunks.next();
-                                }
-                                Ordering::Equal => {
-                                    is_expanded = true;
-                                    break;
-                                }
-                                Ordering::Greater => {
-                                    break;
-                                }
-                            }
-                        }
-                        match status {
-                            DiffHunkStatus::Added => {}
-                            DiffHunkStatus::Modified => {}
-                            DiffHunkStatus::Removed => {
-                                if is_expanded {
-                                    return None;
-                                }
-                            }
-                        }
-                    }
+                let hunk_display_start =
+                    snapshot.point_to_display_point(hunk_start_point, Bias::Left);
+                let hunk_display_end = snapshot.point_to_display_point(hunk_end_point, Bias::Right);
 
-                    Some(display_hunk)
-                })
-                .dedup()
-                .map(|hunk| (hunk, None))
-                .collect();
+                let (display_hunk, hitbox) =
+                    if hunk_display_start.column() != 0 || hunk_display_end.column() != 0 {
+                        (
+                            DisplayDiffHunk::Folded {
+                                display_row: hunk_display_start.row(),
+                            },
+                            None,
+                        )
+                    } else {
+                        let hunk = DisplayDiffHunk::Unfolded {
+                            status: if hunk.buffer_range.start == hunk.buffer_range.end {
+                                DiffHunkStatus::Removed
+                            } else if hunk.diff_base_byte_range.is_empty() {
+                                DiffHunkStatus::Added
+                            } else {
+                                DiffHunkStatus::Modified
+                            },
+                            diff_base_byte_range: hunk.diff_base_byte_range,
+                            display_row_range: hunk_display_start.row()..hunk_display_end.row(),
+                            multi_buffer_range: Anchor {
+                                buffer_id: Some(hunk.buffer_id),
+                                excerpt_id: hunk.excerpt_id,
+                                text_anchor: hunk.buffer_range.start,
+                                diff_base_anchor: None,
+                            }..Anchor {
+                                buffer_id: Some(hunk.buffer_id),
+                                excerpt_id: hunk.excerpt_id,
+                                text_anchor: hunk.buffer_range.end,
+                                diff_base_anchor: None,
+                            },
+                        };
 
-            if let GitGutterSetting::TrackedFiles = git_gutter_setting {
-                for (hunk, hitbox) in &mut display_hunks {
-                    if let DisplayDiffHunk::Unfolded { .. } = hunk {
-                        let hunk_bounds = Self::diff_hunk_bounds(
-                            snapshot,
-                            line_height,
-                            gutter_hitbox.bounds,
-                            &hunk,
-                        );
-                        *hitbox = Some(cx.insert_hitbox(hunk_bounds, true));
+                        let hitbox = if let GitGutterSetting::TrackedFiles = git_gutter_setting {
+                            let hunk_bounds = Self::diff_hunk_bounds(
+                                snapshot,
+                                line_height,
+                                gutter_hitbox.bounds,
+                                &hunk,
+                            );
+                            Some(cx.insert_hitbox(hunk_bounds, true))
+                        } else {
+                            None
+                        };
+
+                        (hunk, hitbox)
                     };
-                }
+                display_hunks.push((display_hunk, hitbox));
             }
-
             display_hunks
         })
     }
@@ -3797,31 +3785,38 @@ impl EditorElement {
                             Corners::all(px(0.)),
                         ))
                     }
-                    DisplayDiffHunk::Unfolded { status, .. } => {
-                        hitbox.as_ref().map(|hunk_hitbox| match status {
-                            DiffHunkStatus::Added => (
-                                hunk_hitbox.bounds,
-                                cx.theme().status().created,
-                                Corners::all(px(0.)),
-                            ),
-                            DiffHunkStatus::Modified => (
-                                hunk_hitbox.bounds,
-                                cx.theme().status().modified,
-                                Corners::all(px(0.)),
-                            ),
-                            DiffHunkStatus::Removed => (
-                                Bounds::new(
-                                    point(
-                                        hunk_hitbox.origin.x - hunk_hitbox.size.width,
-                                        hunk_hitbox.origin.y,
-                                    ),
-                                    size(hunk_hitbox.size.width * px(2.), hunk_hitbox.size.height),
+                    DisplayDiffHunk::Unfolded {
+                        status,
+                        display_row_range,
+                        ..
+                    } => hitbox.as_ref().map(|hunk_hitbox| match status {
+                        DiffHunkStatus::Added => (
+                            hunk_hitbox.bounds,
+                            cx.theme().status().created,
+                            Corners::all(px(0.)),
+                        ),
+                        DiffHunkStatus::Modified => (
+                            hunk_hitbox.bounds,
+                            cx.theme().status().modified,
+                            Corners::all(px(0.)),
+                        ),
+                        DiffHunkStatus::Removed if !display_row_range.is_empty() => (
+                            hunk_hitbox.bounds,
+                            cx.theme().status().deleted,
+                            Corners::all(px(0.)),
+                        ),
+                        DiffHunkStatus::Removed => (
+                            Bounds::new(
+                                point(
+                                    hunk_hitbox.origin.x - hunk_hitbox.size.width,
+                                    hunk_hitbox.origin.y,
                                 ),
-                                cx.theme().status().deleted,
-                                Corners::all(1. * line_height),
+                                size(hunk_hitbox.size.width * px(2.), hunk_hitbox.size.height),
                             ),
-                        })
-                    }
+                            cx.theme().status().deleted,
+                            Corners::all(1. * line_height),
+                        ),
+                    }),
                 };
 
                 if let Some((hunk_bounds, background_color, corner_radii)) = hunk_to_paint {
@@ -3860,8 +3855,19 @@ impl EditorElement {
                 display_row_range,
                 status,
                 ..
-            } => match status {
-                DiffHunkStatus::Added | DiffHunkStatus::Modified => {
+            } => {
+                if *status == DiffHunkStatus::Removed && display_row_range.is_empty() {
+                    let row = display_row_range.start;
+
+                    let offset = line_height / 2.;
+                    let start_y = row.as_f32() * line_height - offset - scroll_top;
+                    let end_y = start_y + line_height;
+
+                    let width = (0.35 * line_height).floor();
+                    let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
+                    let highlight_size = size(width, end_y - start_y);
+                    Bounds::new(highlight_origin, highlight_size)
+                } else {
                     let start_row = display_row_range.start;
                     let end_row = display_row_range.end;
                     // If we're in a multibuffer, row range span might include an
@@ -3889,19 +3895,7 @@ impl EditorElement {
                     let highlight_size = size(width, end_y - start_y);
                     Bounds::new(highlight_origin, highlight_size)
                 }
-                DiffHunkStatus::Removed => {
-                    let row = display_row_range.start;
-
-                    let offset = line_height / 2.;
-                    let start_y = row.as_f32() * line_height - offset - scroll_top;
-                    let end_y = start_y + line_height;
-
-                    let width = (0.35 * line_height).floor();
-                    let highlight_origin = gutter_bounds.origin + point(px(0.), start_y);
-                    let highlight_size = size(width, end_y - start_y);
-                    Bounds::new(highlight_origin, highlight_size)
-                }
-            },
+            }
         }
     }
 

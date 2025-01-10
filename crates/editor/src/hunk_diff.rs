@@ -5,8 +5,7 @@ use gpui::{
 };
 use language::{Buffer, BufferId, Point};
 use multi_buffer::{
-    Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferDiffHunk, MultiBufferRow,
-    MultiBufferSnapshot, ToPoint,
+    Anchor, AnchorRangeExt, ExcerptRange, MultiBuffer, MultiBufferDiffHunk, ToPoint,
 };
 use project::buffer_store::BufferChangeSet;
 use std::{ops::Range, sync::Arc};
@@ -70,18 +69,6 @@ pub enum DisplayDiffHunk {
 }
 
 impl Editor {
-    pub(super) fn toggle_hovered_hunk(
-        &mut self,
-        hovered_hunk: &HoveredHunk,
-        cx: &mut ViewContext<Editor>,
-    ) {
-        let editor_snapshot = self.snapshot(cx);
-        if let Some(diff_hunk) = to_diff_hunk(hovered_hunk, &editor_snapshot.buffer_snapshot) {
-            self.toggle_hunks_expanded(vec![diff_hunk], cx);
-            self.change_selections(None, cx, |selections| selections.refresh());
-        }
-    }
-
     fn toggle_hunks_expanded(
         &mut self,
         hunks_to_toggle: Vec<MultiBufferDiffHunk>,
@@ -408,9 +395,9 @@ impl Editor {
                                     let editor = editor.clone();
                                     let hunk = hunk.clone();
                                     move |_event, cx| {
-                                        editor.update(cx, |editor, cx| {
-                                            editor.toggle_hovered_hunk(&hunk, cx);
-                                        });
+                                        // editor.update(cx, |editor, cx| {
+                                        //     editor.toggle_hovered_hunk(&hunk, cx);
+                                        // });
                                     }
                                 }),
                         )
@@ -610,9 +597,9 @@ impl Editor {
                                                 let editor = editor.clone();
                                                 let hunk = hunk.clone();
                                                 move |_event, cx| {
-                                                    editor.update(cx, |editor, cx| {
-                                                        editor.toggle_hovered_hunk(&hunk, cx);
-                                                    });
+                                                    // editor.update(cx, |editor, cx| {
+                                                    //     editor.toggle_hovered_hunk(&hunk, cx);
+                                                    // });
                                                 }
                                             }),
                                     )
@@ -678,9 +665,9 @@ impl Editor {
                                         let editor = editor.clone();
                                         let hunk = hunk.clone();
                                         move |_event, cx| {
-                                            editor.update(cx, |editor, cx| {
-                                                editor.toggle_hovered_hunk(&hunk, cx);
-                                            });
+                                            // editor.update(cx, |editor, cx| {
+                                            //     editor.toggle_hovered_hunk(&hunk, cx);
+                                            // });
                                         }
                                     }),
                             ),
@@ -915,28 +902,6 @@ impl Editor {
     }
 }
 
-pub(crate) fn to_diff_hunk(
-    hovered_hunk: &HoveredHunk,
-    multi_buffer_snapshot: &MultiBufferSnapshot,
-) -> Option<MultiBufferDiffHunk> {
-    let buffer_id = hovered_hunk
-        .multi_buffer_range
-        .start
-        .buffer_id
-        .or(hovered_hunk.multi_buffer_range.end.buffer_id)?;
-    let buffer_range = hovered_hunk.multi_buffer_range.start.text_anchor
-        ..hovered_hunk.multi_buffer_range.end.text_anchor;
-    let point_range = hovered_hunk
-        .multi_buffer_range
-        .to_point(multi_buffer_snapshot);
-    Some(MultiBufferDiffHunk {
-        row_range: MultiBufferRow(point_range.start.row)..MultiBufferRow(point_range.end.row),
-        buffer_id,
-        buffer_range,
-        diff_base_byte_range: hovered_hunk.diff_base_byte_range.clone(),
-    })
-}
-
 fn added_hunk_color(cx: &AppContext) -> Hsla {
     let mut created_color = cx.theme().status().git().created;
     created_color.fade_out(0.7);
@@ -1009,11 +974,11 @@ fn editor_with_deleted_text(
             .register_action::<ToggleHunkDiff>({
                 let hunk = hunk.clone();
                 move |_, cx| {
-                    parent_editor
-                        .update(cx, |editor, cx| {
-                            editor.toggle_hovered_hunk(&hunk, cx);
-                        })
-                        .ok();
+                    // parent_editor
+                    //     .update(cx, |editor, cx| {
+                    //         editor.toggle_hovered_hunk(&hunk, cx);
+                    //     })
+                    //     .ok();
                 }
             })
             .detach();
