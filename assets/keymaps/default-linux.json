@@ -574,9 +574,7 @@
       "ctrl-shift-h": "assistant2::OpenHistory",
       "ctrl-shift-m": "assistant2::ToggleModelSelector",
       "ctrl-shift-a": "assistant2::ToggleContextPicker",
-      "ctrl-alt-e": "assistant2::RemoveAllContext",
-      "cmd-alt-left": "assistant2::FocusPrevContext",
-      "cmd-alt-right": "assistant2::FocusNextContext"
+      "ctrl-alt-e": "assistant2::RemoveAllContext"
     }
   },
   {
@@ -587,13 +585,21 @@
     }
   },
   {
+    "context": "ContextStrip",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "assistant2::FocusUp",
+      "right": "assistant2::FocusRight",
+      "left": "assistant2::FocusLeft",
+      "down": "assistant2::FocusDown"
+    }
+  },
+  {
     "context": "PromptEditor",
     "bindings": {
       "ctrl-[": "assistant::CyclePreviousInlineAssist",
       "ctrl-]": "assistant::CycleNextInlineAssist",
-      "ctrl-alt-e": "assistant2::RemoveAllContext",
-      "cmd-alt-left": "assistant2::FocusPrevContext",
-      "cmd-alt-right": "assistant2::FocusNextContext"
+      "ctrl-alt-e": "assistant2::RemoveAllContext"
     }
   },
   {

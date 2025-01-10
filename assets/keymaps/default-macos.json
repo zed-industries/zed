@@ -228,9 +228,7 @@
       "cmd-shift-h": "assistant2::OpenHistory",
       "cmd-shift-m": "assistant2::ToggleModelSelector",
       "cmd-shift-a": "assistant2::ToggleContextPicker",
-      "cmd-alt-e": "assistant2::RemoveAllContext",
-      "cmd-alt-left": "assistant2::FocusPrevContext",
-      "cmd-alt-right": "assistant2::FocusNextContext"
+      "cmd-alt-e": "assistant2::RemoveAllContext"
     }
   },
   {
@@ -238,6 +236,16 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "assistant2::Chat"
+    }
+  },
+  {
+    "context": "ContextStrip",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "assistant2::FocusUp",
+      "right": "assistant2::FocusRight",
+      "left": "assistant2::FocusLeft",
+      "down": "assistant2::FocusDown"
     }
   },
   {
@@ -620,9 +628,7 @@
       "cmd-shift-a": "assistant2::ToggleContextPicker",
       "cmd-alt-e": "assistant2::RemoveAllContext",
       "ctrl-[": "assistant::CyclePreviousInlineAssist",
-      "ctrl-]": "assistant::CycleNextInlineAssist",
-      "cmd-alt-left": "assistant2::FocusPrevContext",
-      "cmd-alt-right": "assistant2::FocusNextContext"
+      "ctrl-]": "assistant::CycleNextInlineAssist"
     }
   },
   {

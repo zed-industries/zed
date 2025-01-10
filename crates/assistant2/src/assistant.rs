@@ -46,8 +46,10 @@ actions!(
         Chat,
         CycleNextInlineAssist,
         CyclePreviousInlineAssist,
-        FocusNextContext,
-        FocusPrevContext
+        FocusUp,
+        FocusDown,
+        FocusLeft,
+        FocusRight
     ]
 );
 

@@ -5,8 +5,8 @@ use collections::HashSet;
 use editor::Editor;
 use file_icons::FileIcons;
 use gpui::{
-    DismissEvent, EventEmitter, FocusHandle, Model, ModelContext, Subscription, Task, View,
-    WeakModel, WeakView,
+    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, ModelContext,
+    Subscription, Task, View, WeakModel, WeakView,
 };
 use itertools::Itertools;
 use language::Buffer;
@@ -19,7 +19,10 @@ use crate::context_store::ContextStore;
 use crate::thread::Thread;
 use crate::thread_store::ThreadStore;
 use crate::ui::ContextPill;
-use crate::{AssistantPanel, RemoveAllContext, ToggleContextPicker};
+use crate::{
+    AssistantPanel, FocusDown, FocusLeft, FocusRight, FocusUp, RemoveAllContext,
+    ToggleContextPicker,
+};
 
 pub struct ContextStrip {
     context_store: Model<ContextStore>,
@@ -28,7 +31,7 @@ pub struct ContextStrip {
     focus_handle: FocusHandle,
     suggest_context_kind: SuggestContextKind,
     workspace: WeakView<Workspace>,
-    _context_picker_subscription: Subscription,
+    _subscriptions: Vec<Subscription>,
     focused_index: Option<usize>,
 }
 
@@ -37,7 +40,6 @@ impl ContextStrip {
         context_store: Model<ContextStore>,
         workspace: WeakView<Workspace>,
         thread_store: Option<WeakModel<ThreadStore>>,
-        focus_handle: FocusHandle,
         context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
         suggest_context_kind: SuggestContextKind,
         cx: &mut ViewContext<Self>,
@@ -52,8 +54,13 @@ impl ContextStrip {
             )
         });
 
-        let context_picker_subscription =
-            cx.subscribe(&context_picker, Self::handle_context_picker_event);
+        let focus_handle = cx.focus_handle();
+
+        let subscriptions = vec![
+            cx.subscribe(&context_picker, Self::handle_context_picker_event),
+            cx.on_focus(&focus_handle, Self::handle_focus),
+            cx.on_blur(&focus_handle, Self::handle_blur),
+        ];
 
         Self {
             context_store: context_store.clone(),
@@ -62,7 +69,7 @@ impl ContextStrip {
             focus_handle,
             suggest_context_kind,
             workspace,
-            _context_picker_subscription: context_picker_subscription,
+            _subscriptions: subscriptions,
             focused_index: None,
         }
     }
@@ -142,16 +149,28 @@ impl ContextStrip {
         cx.emit(ContextStripEvent::PickerDismissed);
     }
 
-    pub fn focus_prev(&mut self, cx: &mut ViewContext<Self>) {
+    fn handle_focus(&mut self, cx: &mut ViewContext<Self>) {
+        // TODO az check if any
+        self.focused_index = Some(0);
+        cx.notify();
+    }
+
+    fn handle_blur(&mut self, cx: &mut ViewContext<Self>) {
+        self.focused_index = None;
+        cx.notify();
+    }
+
+    fn focus_left(&mut self, _: &FocusLeft, cx: &mut ViewContext<Self>) {
         self.focused_index = match self.focused_index {
             Some(index) if index > 0 => Some(index - 1),
+            // TODO az check bounds
             _ => Some(self.context_store.read(cx).len() - 1),
         };
 
         cx.notify();
     }
 
-    pub fn focus_next(&mut self, cx: &mut ViewContext<Self>) {
+    fn focus_right(&mut self, _: &FocusRight, cx: &mut ViewContext<Self>) {
         let count = self.context_store.read(cx).len();
 
         self.focused_index = match self.focused_index {
@@ -160,6 +179,20 @@ impl ContextStrip {
         };
 
         cx.notify();
+    }
+
+    fn focus_up(&mut self, _: &FocusUp, cx: &mut ViewContext<Self>) {
+        cx.emit(ContextStripEvent::BlurredUp);
+    }
+
+    fn focus_down(&mut self, _: &FocusDown, cx: &mut ViewContext<Self>) {
+        cx.emit(ContextStripEvent::BlurredDown);
+    }
+}
+
+impl FocusableView for ContextStrip {
+    fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
+        self.focus_handle.clone()
     }
 }
 
@@ -188,6 +221,12 @@ impl Render for ContextStrip {
         h_flex()
             .flex_wrap()
             .gap_1()
+            .track_focus(&focus_handle)
+            .key_context("ContextStrip")
+            .on_action(cx.listener(Self::focus_up))
+            .on_action(cx.listener(Self::focus_right))
+            .on_action(cx.listener(Self::focus_down))
+            .on_action(cx.listener(Self::focus_left))
             .child(
                 PopoverMenu::new("context-picker")
                     .menu(move |_cx| Some(context_picker.clone()))
@@ -319,6 +358,8 @@ impl Render for ContextStrip {
 
 pub enum ContextStripEvent {
     PickerDismissed,
+    BlurredDown,
+    BlurredUp,
 }
 
 impl EventEmitter<ContextStripEvent> for ContextStrip {}
