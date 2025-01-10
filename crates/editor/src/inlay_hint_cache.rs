@@ -1053,7 +1053,6 @@ fn calculate_hint_updates(
                         cached_excerpt_hints.hints_by_id[probe]
                             .position
                             .cmp(&new_hint.position, buffer_snapshot)
-                            .then(cmp::Ordering::Less)
                     }) {
                     Ok(ix) => {
                         let mut missing_from_cache = true;
@@ -1176,7 +1175,6 @@ fn apply_hint_update(
                 cached_excerpt_hints.hints_by_id[probe]
                     .position
                     .cmp(&new_hint.position, &buffer_snapshot)
-                    .then(cmp::Ordering::Less)
             }) {
             Ok(i) => {
                 let mut insert_position = Some(i);
@@ -1192,9 +1190,11 @@ fn apply_hint_update(
                     if cached_hint.text() == new_hint.text() {
                         insert_position = None;
                         break;
+                    } else {
+                        insert_position = insert_position.map(|i| i + 1);
                     }
                 }
-                insert_position
+                insert_position.map(|i| i + 1)
             }
             Err(i) => Some(i),
         };
@@ -1216,9 +1216,14 @@ fn apply_hint_update(
             }
             let new_id = InlayId::Hint(new_inlay_id);
             cached_excerpt_hints.hints_by_id.insert(new_id, new_hint);
-            cached_excerpt_hints
-                .ordered_hints
-                .insert(insert_position, new_id);
+            if cached_excerpt_hints.ordered_hints.len() <= insert_position {
+                cached_excerpt_hints.ordered_hints.push(new_id);
+            } else {
+                cached_excerpt_hints
+                    .ordered_hints
+                    .insert(insert_position, new_id);
+            }
+
             cached_inlays_changed = true;
         }
     }
@@ -2634,8 +2639,8 @@ pub mod tests {
                                 lsp::InlayHint {
                                     position,
                                     label: lsp::InlayHintLabel::String(format!(
-                                        "{hint_text}{} #{i}",
-                                        if edited { "(edited)" } else { "" },
+                                        "{hint_text}{E} #{i}",
+                                        E = if edited { "(edited)" } else { "" },
                                     )),
                                     kind: None,
                                     text_edits: None,
@@ -2653,7 +2658,8 @@ pub mod tests {
             .await;
         cx.executor().run_until_parked();
 
-        editor.update(cx, |editor, cx| {
+        editor
+            .update(cx, |editor, cx| {
                 let expected_hints = vec![
                     "main hint #0".to_string(),
                     "main hint #1".to_string(),
@@ -2664,11 +2670,12 @@ pub mod tests {
                 ];
                 assert_eq!(
                     expected_hints,
-                    cached_hint_labels(editor),
+                    sorted_cached_hint_labels(editor),
                     "When scroll is at the edge of a multibuffer, its visible excerpts only should be queried for inlay hints"
                 );
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-            }).unwrap();
+            })
+            .unwrap();
 
         editor
             .update(cx, |editor, cx| {
@@ -2684,7 +2691,8 @@ pub mod tests {
             })
             .unwrap();
         cx.executor().run_until_parked();
-        editor.update(cx, |editor, cx| {
+        editor
+            .update(cx, |editor, cx| {
                 let expected_hints = vec![
                     "main hint #0".to_string(),
                     "main hint #1".to_string(),
@@ -2696,10 +2704,11 @@ pub mod tests {
                     "other hint #1".to_string(),
                     "other hint #2".to_string(),
                 ];
-                assert_eq!(expected_hints, cached_hint_labels(editor),
+                assert_eq!(expected_hints, sorted_cached_hint_labels(editor),
                     "With more scrolls of the multibuffer, more hints should be added into the cache and nothing invalidated without edits");
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-            }).unwrap();
+            })
+            .unwrap();
 
         editor
             .update(cx, |editor, cx| {
@@ -2712,7 +2721,8 @@ pub mod tests {
             INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
         ));
         cx.executor().run_until_parked();
-        editor.update(cx, |editor, cx| {
+        editor
+            .update(cx, |editor, cx| {
                 let expected_hints = vec![
                     "main hint #0".to_string(),
                     "main hint #1".to_string(),
@@ -2727,10 +2737,11 @@ pub mod tests {
                     "other hint #4".to_string(),
                     "other hint #5".to_string(),
                 ];
-                assert_eq!(expected_hints, cached_hint_labels(editor),
+                assert_eq!(expected_hints, sorted_cached_hint_labels(editor),
                     "After multibuffer was scrolled to the end, all hints for all excerpts should be fetched");
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-            }).unwrap();
+            })
+            .unwrap();
 
         editor
             .update(cx, |editor, cx| {
@@ -2743,7 +2754,8 @@ pub mod tests {
             INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
         ));
         cx.executor().run_until_parked();
-        editor.update(cx, |editor, cx| {
+        editor
+            .update(cx, |editor, cx| {
                 let expected_hints = vec![
                     "main hint #0".to_string(),
                     "main hint #1".to_string(),
@@ -2758,10 +2770,11 @@ pub mod tests {
                     "other hint #4".to_string(),
                     "other hint #5".to_string(),
                 ];
-                assert_eq!(expected_hints, cached_hint_labels(editor),
+                assert_eq!(expected_hints, sorted_cached_hint_labels(editor),
                     "After multibuffer was scrolled to the end, further scrolls up should not bring more hints");
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-            }).unwrap();
+            })
+            .unwrap();
 
         editor_edited.store(true, Ordering::Release);
         editor
@@ -2788,9 +2801,9 @@ pub mod tests {
                 ];
                 assert_eq!(
                     expected_hints,
-                    cached_hint_labels(editor),
+                    sorted_cached_hint_labels(editor),
                     "After multibuffer edit, editor gets scrolled back to the last selection; \
-    all hints should be invalidated and required for all of its visible excerpts"
+                all hints should be invalidated and required for all of its visible excerpts"
                 );
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
             })
@@ -3434,6 +3447,14 @@ pub mod tests {
         cx.executor().run_until_parked();
         let fake_server = fake_servers.next().await.unwrap();
         (file_path, editor, fake_server)
+    }
+
+    // Inlay hints in the cache are stored per excerpt as a key, and those keys are guaranteed to be ordered same as in the multi buffer.
+    // Ensure a stable order for testing.
+    fn sorted_cached_hint_labels(editor: &Editor) -> Vec<String> {
+        let mut labels = cached_hint_labels(editor);
+        labels.sort();
+        labels
     }
 
     pub fn cached_hint_labels(editor: &Editor) -> Vec<String> {
