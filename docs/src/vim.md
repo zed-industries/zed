@@ -413,19 +413,12 @@ The [Sneak motion](https://github.com/justinmk/vim-sneak) feature allows for qui
 ```json
 [
   {
-    "context": "vim_mode == visual",
+    "context": "vim_mode == normal || vim_mode == visual",
     "bindings": {
       "s": ["vim::PushOperator", { "Sneak": {} }],
       "S": ["vim::PushOperator", { "SneakBackward": {} }]
     }
   },
-  {
-    "context": "vim_mode == normal",
-    "bindings": {
-      "s": ["vim::PushOperator", { "Sneak": {} }],
-      "S": ["vim::PushOperator", { "SneakBackward": {} }]
-    }
-  }
 ]
 ```
 
