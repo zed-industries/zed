@@ -14,7 +14,6 @@ path = "src/git.rs"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
-clock.workspace = true
 collections.workspace = true
 derive_more.workspace = true
 git2.workspace = true
@@ -22,6 +21,7 @@ gpui.workspace = true
 http_client.workspace = true
 log.workspace = true
 parking_lot.workspace = true
+regex.workspace = true
 rope.workspace = true
 serde.workspace = true
 smol.workspace = true
@@ -30,10 +30,6 @@ text.workspace = true
 time.workspace = true
 url.workspace = true
 util.workspace = true
-
-[target.'cfg(target_os = "windows")'.dependencies]
-windows.workspace = true
-
 
 [dev-dependencies]
 unindent.workspace = true

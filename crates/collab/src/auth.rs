@@ -1,5 +1,5 @@
 use crate::{
-    db::{self, dev_server, AccessTokenId, Database, DevServerId, UserId},
+    db::{self, AccessTokenId, Database, UserId},
     rpc::Principal,
     AppState, Error, Result,
 };
@@ -44,19 +44,10 @@ pub async fn validate_header<B>(mut req: Request<B>, next: Next<B>) -> impl Into
 
     let first = auth_header.next().unwrap_or("");
     if first == "dev-server-token" {
-        let dev_server_token = auth_header.next().ok_or_else(|| {
-            Error::http(
-                StatusCode::BAD_REQUEST,
-                "missing dev-server-token token in authorization header".to_string(),
-            )
-        })?;
-        let dev_server = verify_dev_server_token(dev_server_token, &state.db)
-            .await
-            .map_err(|e| Error::http(StatusCode::UNAUTHORIZED, format!("{}", e)))?;
-
-        req.extensions_mut()
-            .insert(Principal::DevServer(dev_server));
-        return Ok::<_, Error>(next.run(req).await);
+        Err(Error::http(
+            StatusCode::UNAUTHORIZED,
+            "Dev servers were removed in Zed 0.157 please upgrade to SSH remoting".to_string(),
+        ))?;
     }
 
     let user_id = UserId(first.parse().map_err(|_| {
@@ -238,41 +229,6 @@ pub async fn verify_access_token(
             None
         },
     })
-}
-
-pub fn generate_dev_server_token(id: usize, access_token: String) -> String {
-    format!("{}.{}", id, access_token)
-}
-
-pub async fn verify_dev_server_token(
-    dev_server_token: &str,
-    db: &Arc<Database>,
-) -> anyhow::Result<dev_server::Model> {
-    let (id, token) = split_dev_server_token(dev_server_token)?;
-    let token_hash = hash_access_token(token);
-    let server = db.get_dev_server(id).await?;
-
-    if server
-        .hashed_token
-        .as_bytes()
-        .ct_eq(token_hash.as_ref())
-        .into()
-    {
-        Ok(server)
-    } else {
-        Err(anyhow!("wrong token for dev server"))
-    }
-}
-
-// a dev_server_token has the format <id>.<base64>. This is to make them
-// relatively easy to copy/paste around.
-pub fn split_dev_server_token(dev_server_token: &str) -> anyhow::Result<(DevServerId, &str)> {
-    let mut parts = dev_server_token.splitn(2, '.');
-    let id = DevServerId(parts.next().unwrap_or_default().parse()?);
-    let token = parts
-        .next()
-        .ok_or_else(|| anyhow!("invalid dev server token format"))?;
-    Ok((id, token))
 }
 
 #[cfg(test)]

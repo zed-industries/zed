@@ -23,7 +23,7 @@ jobs:
       - test
     steps:
       - name: Checkout repo
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
           fetch-depth: 0
@@ -44,7 +44,7 @@ jobs:
     needs: style
     steps:
       - name: Checkout repo
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
 
@@ -70,12 +70,12 @@ jobs:
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
     steps:
       - name: Install Node
-        uses: actions/setup-node@0a44ba7841725637a19e28fa30b79a866c81b0a6 # v4
+        uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4
         with:
           node-version: "18"
 
       - name: Checkout repo
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
 
@@ -100,7 +100,7 @@ jobs:
     name: Create a Linux *.tar.gz bundle for x86
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - buildjet-16vcpu-ubuntu-2204
+      - buildjet-16vcpu-ubuntu-2004
     needs: tests
     env:
       DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
@@ -109,7 +109,7 @@ jobs:
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
     steps:
       - name: Checkout repo
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
 
@@ -117,7 +117,7 @@ jobs:
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
 
       - name: Install Linux dependencies
-        run: ./script/linux
+        run: ./script/linux && ./script/install-mold 2.34.0
 
       - name: Limit target directory size
         run: script/clear-target-dir-if-larger-than 100
@@ -140,7 +140,7 @@ jobs:
     name: Create a Linux *.tar.gz bundle for ARM
     if: github.repository_owner == 'zed-industries'
     runs-on:
-      - hosted-linux-arm-1
+      - buildjet-16vcpu-ubuntu-2204-arm
     needs: tests
     env:
       DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
@@ -149,7 +149,7 @@ jobs:
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
     steps:
       - name: Checkout repo
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
 
@@ -182,7 +182,7 @@ jobs:
       - bundle-linux-arm
     steps:
       - name: Checkout repo
-        uses: actions/checkout@692973e3d937129bcbf40652eb9f2f61becf3332 # v4
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           fetch-depth: 0
 

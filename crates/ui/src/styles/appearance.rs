@@ -1,14 +1,8 @@
 use crate::prelude::*;
 use gpui::{WindowBackgroundAppearance, WindowContext};
-use theme::Appearance;
-
-/// Returns the current [Appearance].
-pub fn appearance(cx: &WindowContext) -> Appearance {
-    cx.theme().appearance
-}
 
 /// Returns the [WindowBackgroundAppearance].
-pub fn window_appearance(cx: &WindowContext) -> WindowBackgroundAppearance {
+fn window_appearance(cx: &WindowContext) -> WindowBackgroundAppearance {
     cx.theme().styles.window_background_appearance
 }
 

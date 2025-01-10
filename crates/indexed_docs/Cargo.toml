@@ -17,6 +17,7 @@ async-trait.workspace = true
 cargo_metadata.workspace = true
 collections.workspace = true
 derive_more.workspace = true
+extension.workspace = true
 fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true

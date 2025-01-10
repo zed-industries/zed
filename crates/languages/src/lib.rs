@@ -2,8 +2,9 @@ use anyhow::Context;
 use gpui::{AppContext, UpdateGlobal};
 use json::json_task_context;
 pub use language::*;
+use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
-use python::PythonContextProvider;
+use python::{PythonContextProvider, PythonToolchainProvider};
 use rust_embed::RustEmbed;
 use settings::SettingsStore;
 use smol::stream::StreamExt;
@@ -37,6 +38,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
         ("c", tree_sitter_c::LANGUAGE),
         ("cpp", tree_sitter_cpp::LANGUAGE),
         ("css", tree_sitter_css::LANGUAGE),
+        ("diff", tree_sitter_diff::LANGUAGE),
         ("go", tree_sitter_go::LANGUAGE),
         ("gomod", tree_sitter_go_mod::LANGUAGE),
         ("gowork", tree_sitter_gowork::LANGUAGE),
@@ -45,7 +47,6 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
         ("jsonc", tree_sitter_json::LANGUAGE),
         ("markdown", tree_sitter_md::LANGUAGE),
         ("markdown-inline", tree_sitter_md::INLINE_LANGUAGE),
-        ("proto", protols_tree_sitter_proto::LANGUAGE),
         ("python", tree_sitter_python::LANGUAGE),
         ("regex", tree_sitter_regex::LANGUAGE),
         ("rust", tree_sitter_rust::LANGUAGE),
@@ -61,7 +62,15 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                move || Ok((config.clone(), load_queries($name), None)),
+                config.hidden,
+                Arc::new(move || {
+                    Ok(LoadedLanguage {
+                        config: config.clone(),
+                        queries: load_queries($name),
+                        context_provider: None,
+                        toolchain_provider: None,
+                    })
+                }),
             );
         };
         ($name:literal, $adapters:expr) => {
@@ -75,7 +84,15 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                move || Ok((config.clone(), load_queries($name), None)),
+                config.hidden,
+                Arc::new(move || {
+                    Ok(LoadedLanguage {
+                        config: config.clone(),
+                        queries: load_queries($name),
+                        context_provider: None,
+                        toolchain_provider: None,
+                    })
+                }),
             );
         };
         ($name:literal, $adapters:expr, $context_provider:expr) => {
@@ -89,13 +106,37 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
                 config.name.clone(),
                 config.grammar.clone(),
                 config.matcher.clone(),
-                move || {
-                    Ok((
-                        config.clone(),
-                        load_queries($name),
-                        Some(Arc::new($context_provider)),
-                    ))
-                },
+                config.hidden,
+                Arc::new(move || {
+                    Ok(LoadedLanguage {
+                        config: config.clone(),
+                        queries: load_queries($name),
+                        context_provider: Some(Arc::new($context_provider)),
+                        toolchain_provider: None,
+                    })
+                }),
+            );
+        };
+        ($name:literal, $adapters:expr, $context_provider:expr, $toolchain_provider:expr) => {
+            let config = load_config($name);
+            // typeck helper
+            let adapters: Vec<Arc<dyn LspAdapter>> = $adapters;
+            for adapter in adapters {
+                languages.register_lsp_adapter(config.name.clone(), adapter);
+            }
+            languages.register_language(
+                config.name.clone(),
+                config.grammar.clone(),
+                config.matcher.clone(),
+                config.hidden,
+                Arc::new(move || {
+                    Ok(LoadedLanguage {
+                        config: config.clone(),
+                        queries: load_queries($name),
+                        context_provider: Some(Arc::new($context_provider)),
+                        toolchain_provider: Some($toolchain_provider),
+                    })
+                }),
             );
         };
     }
@@ -106,6 +147,7 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
         "css",
         vec![Arc::new(css::CssLspAdapter::new(node_runtime.clone())),]
     );
+    language!("diff");
     language!("go", vec![Arc::new(go::GoLspAdapter)], GoContextProvider);
     language!("gomod", vec![Arc::new(go::GoLspAdapter)], GoContextProvider);
     language!(
@@ -137,10 +179,12 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
     language!("markdown-inline");
     language!(
         "python",
-        vec![Arc::new(python::PythonLspAdapter::new(
-            node_runtime.clone(),
-        ))],
-        PythonContextProvider
+        vec![
+            Arc::new(python::PythonLspAdapter::new(node_runtime.clone(),)),
+            Arc::new(python::PyLspAdapter::new())
+        ],
+        PythonContextProvider,
+        Arc::new(PythonToolchainProvider::default()) as Arc<dyn ToolchainLister>
     );
     language!(
         "rust",
@@ -183,7 +227,6 @@ pub fn init(languages: Arc<LanguageRegistry>, node_runtime: NodeRuntime, cx: &mu
         "yaml",
         vec![Arc::new(yaml::YamlLspAdapter::new(node_runtime.clone()))]
     );
-    language!("proto");
 
     // Register globally available language servers.
     //
@@ -277,7 +320,7 @@ pub fn language(name: &str, grammar: tree_sitter::Language) -> Arc<Language> {
 fn load_config(name: &str) -> LanguageConfig {
     let config_toml = String::from_utf8(
         LanguageDir::get(&format!("{}/config.toml", name))
-            .unwrap()
+            .unwrap_or_else(|| panic!("missing config for language {:?}", name))
             .data
             .to_vec(),
     )
@@ -288,7 +331,7 @@ fn load_config(name: &str) -> LanguageConfig {
         .with_context(|| format!("failed to load config.toml for language {name:?}"))
         .unwrap();
 
-    #[cfg(not(feature = "load-grammars"))]
+    #[cfg(not(any(feature = "load-grammars", test)))]
     {
         config = LanguageConfig {
             name: config.name,

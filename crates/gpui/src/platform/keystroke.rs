@@ -12,14 +12,15 @@ pub struct Keystroke {
     /// e.g. for option-s, key is "s"
     pub key: String,
 
-    /// ime_key is the character inserted by the IME engine when that key was pressed.
-    /// e.g. for option-s, ime_key is "ß"
-    pub ime_key: Option<String>,
+    /// key_char is the character that could have been typed when
+    /// this binding was pressed.
+    /// e.g. for s this is "s", for option-s "ß", and cmd-s None
+    pub key_char: Option<String>,
 }
 
 impl Keystroke {
     /// When matching a key we cannot know whether the user intended to type
-    /// the ime_key or the key itself. On some non-US keyboards keys we use in our
+    /// the key_char or the key itself. On some non-US keyboards keys we use in our
     /// bindings are behind option (for example `$` is typed `alt-ç` on a Czech keyboard),
     /// and on some keyboards the IME handler converts a sequence of keys into a
     /// specific character (for example `"` is typed as `" space` on a brazilian keyboard).
@@ -27,17 +28,18 @@ impl Keystroke {
     /// This method assumes that `self` was typed and `target' is in the keymap, and checks
     /// both possibilities for self against the target.
     pub(crate) fn should_match(&self, target: &Keystroke) -> bool {
-        if let Some(ime_key) = self
-            .ime_key
+        if let Some(key_char) = self
+            .key_char
             .as_ref()
-            .filter(|ime_key| ime_key != &&self.key)
+            .filter(|key_char| key_char != &&self.key)
         {
             let ime_modifiers = Modifiers {
                 control: self.modifiers.control,
+                platform: self.modifiers.platform,
                 ..Default::default()
             };
 
-            if &target.key == ime_key && target.modifiers == ime_modifiers {
+            if &target.key == key_char && target.modifiers == ime_modifiers {
                 return true;
             }
         }
@@ -46,9 +48,9 @@ impl Keystroke {
     }
 
     /// key syntax is:
-    /// [ctrl-][alt-][shift-][cmd-][fn-]key[->ime_key]
-    /// ime_key syntax is only used for generating test events,
-    /// when matching a key with an ime_key set will be matched without it.
+    /// [ctrl-][alt-][shift-][cmd-][fn-]key[->key_char]
+    /// key_char syntax is only used for generating test events,
+    /// when matching a key with an key_char set will be matched without it.
     pub fn parse(source: &str) -> anyhow::Result<Self> {
         let mut control = false;
         let mut alt = false;
@@ -56,7 +58,7 @@ impl Keystroke {
         let mut platform = false;
         let mut function = false;
         let mut key = None;
-        let mut ime_key = None;
+        let mut key_char = None;
 
         let mut components = source.split('-').peekable();
         while let Some(component) = components.next() {
@@ -73,7 +75,7 @@ impl Keystroke {
                             break;
                         } else if next.len() > 1 && next.starts_with('>') {
                             key = Some(String::from(component));
-                            ime_key = Some(String::from(&next[1..]));
+                            key_char = Some(String::from(&next[1..]));
                             components.next();
                         } else {
                             return Err(anyhow!("Invalid keystroke `{}`", source));
@@ -117,14 +119,43 @@ impl Keystroke {
                 function,
             },
             key,
-            ime_key,
+            key_char: key_char,
         })
+    }
+
+    /// Produces a representation of this key that Parse can understand.
+    pub fn unparse(&self) -> String {
+        let mut str = String::new();
+        if self.modifiers.function {
+            str.push_str("fn-");
+        }
+        if self.modifiers.control {
+            str.push_str("ctrl-");
+        }
+        if self.modifiers.alt {
+            str.push_str("alt-");
+        }
+        if self.modifiers.platform {
+            #[cfg(target_os = "macos")]
+            str.push_str("cmd-");
+
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+            str.push_str("super-");
+
+            #[cfg(target_os = "windows")]
+            str.push_str("win-");
+        }
+        if self.modifiers.shift {
+            str.push_str("shift-");
+        }
+        str.push_str(&self.key);
+        str
     }
 
     /// Returns true if this keystroke left
     /// the ime system in an incomplete state.
     pub fn is_ime_in_progress(&self) -> bool {
-        self.ime_key.is_none()
+        self.key_char.is_none()
             && (is_printable_key(&self.key) || self.key.is_empty())
             && !(self.modifiers.platform
                 || self.modifiers.control
@@ -132,21 +163,21 @@ impl Keystroke {
                 || self.modifiers.alt)
     }
 
-    /// Returns a new keystroke with the ime_key filled.
+    /// Returns a new keystroke with the key_char filled.
     /// This is used for dispatch_keystroke where we want users to
     /// be able to simulate typing "space", etc.
     pub fn with_simulated_ime(mut self) -> Self {
-        if self.ime_key.is_none()
+        if self.key_char.is_none()
             && !self.modifiers.platform
             && !self.modifiers.control
             && !self.modifiers.function
             && !self.modifiers.alt
         {
-            self.ime_key = match self.key.as_str() {
+            self.key_char = match self.key.as_str() {
                 "space" => Some(" ".into()),
                 "tab" => Some("\t".into()),
                 "enter" => Some("\n".into()),
-                key if !is_printable_key(key) => None,
+                key if !is_printable_key(key) || key.is_empty() => None,
                 key => {
                     if self.modifiers.shift {
                         Some(key.to_uppercase())
@@ -192,6 +223,8 @@ fn is_printable_key(key: &str) -> bool {
             | "insert"
             | "home"
             | "end"
+            | "back"
+            | "forward"
             | "escape"
     )
 }
@@ -208,7 +241,7 @@ impl std::fmt::Display for Keystroke {
             #[cfg(target_os = "macos")]
             f.write_char('⌘')?;
 
-            #[cfg(target_os = "linux")]
+            #[cfg(any(target_os = "linux", target_os = "freebsd"))]
             f.write_char('❖')?;
 
             #[cfg(target_os = "windows")]

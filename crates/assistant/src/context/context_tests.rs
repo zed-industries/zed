@@ -1,20 +1,27 @@
-use super::{MessageCacheMetadata, WorkflowStepEdit};
+use super::{AssistantEdit, MessageCacheMetadata};
+use crate::slash_command_working_set::SlashCommandWorkingSet;
 use crate::{
-    assistant_panel, prompt_library, slash_command::file_command, CacheStatus, Context,
-    ContextEvent, ContextId, ContextOperation, MessageId, MessageStatus, PromptBuilder,
-    WorkflowStepEditKind,
+    assistant_panel, prompt_library, slash_command::file_command, AssistantEditKind, CacheStatus,
+    Context, ContextEvent, ContextId, ContextOperation, InvokedSlashCommandId, MessageId,
+    MessageStatus, PromptBuilder,
 };
 use anyhow::Result;
 use assistant_slash_command::{
-    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
-    SlashCommandRegistry,
+    ArgumentCompletion, SlashCommand, SlashCommandContent, SlashCommandEvent, SlashCommandOutput,
+    SlashCommandOutputSection, SlashCommandRegistry, SlashCommandResult,
 };
-use collections::HashSet;
+use assistant_tool::ToolWorkingSet;
+use collections::{HashMap, HashSet};
 use fs::FakeFs;
-use gpui::{AppContext, Model, SharedString, Task, TestAppContext, WeakView};
+use futures::{
+    channel::mpsc,
+    stream::{self, StreamExt},
+};
+use gpui::{prelude::*, AppContext, Model, SharedString, Task, TestAppContext, WeakView};
 use language::{Buffer, BufferSnapshot, LanguageRegistry, LspAdapterDelegate};
 use language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Role};
 use parking_lot::Mutex;
+use pretty_assertions::assert_eq;
 use project::Project;
 use rand::prelude::*;
 use serde_json::json;
@@ -27,8 +34,8 @@ use std::{
     rc::Rc,
     sync::{atomic::AtomicBool, Arc},
 };
-use text::{network::Network, OffsetRangeExt as _, ReplicaId};
-use ui::{Context as _, WindowContext};
+use text::{network::Network, OffsetRangeExt as _, ReplicaId, ToOffset};
+use ui::{IconName, WindowContext};
 use unindent::Unindent;
 use util::{
     test::{generate_marked_text, marked_text_ranges},
@@ -44,8 +51,17 @@ fn test_inserting_and_removing_messages(cx: &mut AppContext) {
     assistant_panel::init(cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context =
-        cx.new_model(|cx| Context::local(registry, None, None, prompt_builder.clone(), cx));
+    let context = cx.new_model(|cx| {
+        Context::local(
+            registry,
+            None,
+            None,
+            prompt_builder.clone(),
+            Arc::new(SlashCommandWorkingSet::default()),
+            Arc::new(ToolWorkingSet::default()),
+            cx,
+        )
+    });
     let buffer = context.read(cx).buffer.clone();
 
     let message_1 = context.read(cx).message_anchors[0].clone();
@@ -177,8 +193,17 @@ fn test_message_splitting(cx: &mut AppContext) {
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
 
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context =
-        cx.new_model(|cx| Context::local(registry, None, None, prompt_builder.clone(), cx));
+    let context = cx.new_model(|cx| {
+        Context::local(
+            registry.clone(),
+            None,
+            None,
+            prompt_builder.clone(),
+            Arc::new(SlashCommandWorkingSet::default()),
+            Arc::new(ToolWorkingSet::default()),
+            cx,
+        )
+    });
     let buffer = context.read(cx).buffer.clone();
 
     let message_1 = context.read(cx).message_anchors[0].clone();
@@ -272,8 +297,17 @@ fn test_messages_for_offsets(cx: &mut AppContext) {
     assistant_panel::init(cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context =
-        cx.new_model(|cx| Context::local(registry, None, None, prompt_builder.clone(), cx));
+    let context = cx.new_model(|cx| {
+        Context::local(
+            registry,
+            None,
+            None,
+            prompt_builder.clone(),
+            Arc::new(SlashCommandWorkingSet::default()),
+            Arc::new(ToolWorkingSet::default()),
+            cx,
+        )
+    });
     let buffer = context.read(cx).buffer.clone();
 
     let message_1 = context.read(cx).message_anchors[0].clone();
@@ -378,23 +412,53 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
 
     let registry = Arc::new(LanguageRegistry::test(cx.executor()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context =
-        cx.new_model(|cx| Context::local(registry.clone(), None, None, prompt_builder.clone(), cx));
+    let context = cx.new_model(|cx| {
+        Context::local(
+            registry.clone(),
+            None,
+            None,
+            prompt_builder.clone(),
+            Arc::new(SlashCommandWorkingSet::default()),
+            Arc::new(ToolWorkingSet::default()),
+            cx,
+        )
+    });
 
-    let output_ranges = Rc::new(RefCell::new(HashSet::default()));
+    #[derive(Default)]
+    struct ContextRanges {
+        parsed_commands: HashSet<Range<language::Anchor>>,
+        command_outputs: HashMap<InvokedSlashCommandId, Range<language::Anchor>>,
+        output_sections: HashSet<Range<language::Anchor>>,
+    }
+
+    let context_ranges = Rc::new(RefCell::new(ContextRanges::default()));
     context.update(cx, |_, cx| {
         cx.subscribe(&context, {
-            let ranges = output_ranges.clone();
-            move |_, _, event, _| match event {
-                ContextEvent::PendingSlashCommandsUpdated { removed, updated } => {
-                    for range in removed {
-                        ranges.borrow_mut().remove(range);
+            let context_ranges = context_ranges.clone();
+            move |context, _, event, _| {
+                let mut context_ranges = context_ranges.borrow_mut();
+                match event {
+                    ContextEvent::InvokedSlashCommandChanged { command_id } => {
+                        let command = context.invoked_slash_command(command_id).unwrap();
+                        context_ranges
+                            .command_outputs
+                            .insert(*command_id, command.range.clone());
                     }
-                    for command in updated {
-                        ranges.borrow_mut().insert(command.source_range.clone());
+                    ContextEvent::ParsedSlashCommandsUpdated { removed, updated } => {
+                        for range in removed {
+                            context_ranges.parsed_commands.remove(range);
+                        }
+                        for command in updated {
+                            context_ranges
+                                .parsed_commands
+                                .insert(command.source_range.clone());
+                        }
                     }
+                    ContextEvent::SlashCommandOutputSectionAdded { section } => {
+                        context_ranges.output_sections.insert(section.range.clone());
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
         })
         .detach();
@@ -406,14 +470,12 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     buffer.update(cx, |buffer, cx| {
         buffer.edit([(0..0, "/file src/lib.rs")], None, cx);
     });
-    assert_text_and_output_ranges(
+    assert_text_and_context_ranges(
         &buffer,
-        &output_ranges.borrow(),
-        "
-        «/file src/lib.rs»
-        "
-        .unindent()
-        .trim_end(),
+        &context_ranges,
+        &"
+        «/file src/lib.rs»"
+            .unindent(),
         cx,
     );
 
@@ -422,14 +484,12 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
         let edit_offset = buffer.text().find("lib.rs").unwrap();
         buffer.edit([(edit_offset..edit_offset + "lib".len(), "main")], None, cx);
     });
-    assert_text_and_output_ranges(
+    assert_text_and_context_ranges(
         &buffer,
-        &output_ranges.borrow(),
-        "
-        «/file src/main.rs»
-        "
-        .unindent()
-        .trim_end(),
+        &context_ranges,
+        &"
+        «/file src/main.rs»"
+            .unindent(),
         cx,
     );
 
@@ -442,43 +502,195 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
             cx,
         );
     });
-    assert_text_and_output_ranges(
+    assert_text_and_context_ranges(
         &buffer,
-        &output_ranges.borrow(),
+        &context_ranges,
+        &"
+        /unknown src/main.rs"
+            .unindent(),
+        cx,
+    );
+
+    // Undoing the insertion of an non-existent slash command resorts the previous one.
+    buffer.update(cx, |buffer, cx| buffer.undo(cx));
+    assert_text_and_context_ranges(
+        &buffer,
+        &context_ranges,
+        &"
+        «/file src/main.rs»"
+            .unindent(),
+        cx,
+    );
+
+    let (command_output_tx, command_output_rx) = mpsc::unbounded();
+    context.update(cx, |context, cx| {
+        let command_source_range = context.parsed_slash_commands[0].source_range.clone();
+        context.insert_command_output(
+            command_source_range,
+            "file",
+            Task::ready(Ok(command_output_rx.boxed())),
+            true,
+            cx,
+        );
+    });
+    assert_text_and_context_ranges(
+        &buffer,
+        &context_ranges,
+        &"
+        ⟦«/file src/main.rs»
+        …⟧
         "
-        /unknown src/main.rs
+        .unindent(),
+        cx,
+    );
+
+    command_output_tx
+        .unbounded_send(Ok(SlashCommandEvent::StartSection {
+            icon: IconName::Ai,
+            label: "src/main.rs".into(),
+            metadata: None,
+        }))
+        .unwrap();
+    command_output_tx
+        .unbounded_send(Ok(SlashCommandEvent::Content("src/main.rs".into())))
+        .unwrap();
+    cx.run_until_parked();
+    assert_text_and_context_ranges(
+        &buffer,
+        &context_ranges,
+        &"
+        ⟦«/file src/main.rs»
+        src/main.rs…⟧
         "
-        .unindent()
-        .trim_end(),
+        .unindent(),
+        cx,
+    );
+
+    command_output_tx
+        .unbounded_send(Ok(SlashCommandEvent::Content("\nfn main() {}".into())))
+        .unwrap();
+    cx.run_until_parked();
+    assert_text_and_context_ranges(
+        &buffer,
+        &context_ranges,
+        &"
+        ⟦«/file src/main.rs»
+        src/main.rs
+        fn main() {}…⟧
+        "
+        .unindent(),
+        cx,
+    );
+
+    command_output_tx
+        .unbounded_send(Ok(SlashCommandEvent::EndSection))
+        .unwrap();
+    cx.run_until_parked();
+    assert_text_and_context_ranges(
+        &buffer,
+        &context_ranges,
+        &"
+        ⟦«/file src/main.rs»
+        ⟪src/main.rs
+        fn main() {}⟫…⟧
+        "
+        .unindent(),
+        cx,
+    );
+
+    drop(command_output_tx);
+    cx.run_until_parked();
+    assert_text_and_context_ranges(
+        &buffer,
+        &context_ranges,
+        &"
+        ⟦⟪src/main.rs
+        fn main() {}⟫⟧
+        "
+        .unindent(),
         cx,
     );
 
     #[track_caller]
-    fn assert_text_and_output_ranges(
+    fn assert_text_and_context_ranges(
         buffer: &Model<Buffer>,
-        ranges: &HashSet<Range<language::Anchor>>,
+        ranges: &RefCell<ContextRanges>,
         expected_marked_text: &str,
         cx: &mut TestAppContext,
     ) {
-        let (expected_text, expected_ranges) = marked_text_ranges(expected_marked_text, false);
-        let (actual_text, actual_ranges) = buffer.update(cx, |buffer, _| {
-            let mut ranges = ranges
-                .iter()
-                .map(|range| range.to_offset(buffer))
-                .collect::<Vec<_>>();
-            ranges.sort_by_key(|a| a.start);
-            (buffer.text(), ranges)
+        let mut actual_marked_text = String::new();
+        buffer.update(cx, |buffer, _| {
+            struct Endpoint {
+                offset: usize,
+                marker: char,
+            }
+
+            let ranges = ranges.borrow();
+            let mut endpoints = Vec::new();
+            for range in ranges.command_outputs.values() {
+                endpoints.push(Endpoint {
+                    offset: range.start.to_offset(buffer),
+                    marker: '⟦',
+                });
+            }
+            for range in ranges.parsed_commands.iter() {
+                endpoints.push(Endpoint {
+                    offset: range.start.to_offset(buffer),
+                    marker: '«',
+                });
+            }
+            for range in ranges.output_sections.iter() {
+                endpoints.push(Endpoint {
+                    offset: range.start.to_offset(buffer),
+                    marker: '⟪',
+                });
+            }
+
+            for range in ranges.output_sections.iter() {
+                endpoints.push(Endpoint {
+                    offset: range.end.to_offset(buffer),
+                    marker: '⟫',
+                });
+            }
+            for range in ranges.parsed_commands.iter() {
+                endpoints.push(Endpoint {
+                    offset: range.end.to_offset(buffer),
+                    marker: '»',
+                });
+            }
+            for range in ranges.command_outputs.values() {
+                endpoints.push(Endpoint {
+                    offset: range.end.to_offset(buffer),
+                    marker: '⟧',
+                });
+            }
+
+            endpoints.sort_by_key(|endpoint| endpoint.offset);
+            let mut offset = 0;
+            for endpoint in endpoints {
+                actual_marked_text.extend(buffer.text_for_range(offset..endpoint.offset));
+                actual_marked_text.push(endpoint.marker);
+                offset = endpoint.offset;
+            }
+            actual_marked_text.extend(buffer.text_for_range(offset..buffer.len()));
         });
 
-        assert_eq!(actual_text, expected_text);
-        assert_eq!(actual_ranges, expected_ranges);
+        assert_eq!(actual_marked_text, expected_marked_text);
     }
 }
 
 #[gpui::test]
 async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     cx.update(prompt_library::init);
-    let settings_store = cx.update(SettingsStore::test);
+    let mut settings_store = cx.update(SettingsStore::test);
+    cx.update(|cx| {
+        settings_store
+            .set_user_settings(
+                r#"{ "assistant": { "enable_experimental_live_diffs": true } }"#,
+                cx,
+            )
+            .unwrap()
+    });
     cx.set_global(settings_store);
     cx.update(language::init);
     cx.update(Project::init_settings);
@@ -497,6 +709,8 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
             Some(project),
             None,
             prompt_builder.clone(),
+            Arc::new(SlashCommandWorkingSet::default()),
+            Arc::new(ToolWorkingSet::default()),
             cx,
         )
     });
@@ -520,7 +734,7 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         »",
         cx,
     );
-    expect_steps(
+    expect_patches(
         &context,
         "
 
@@ -539,17 +753,17 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         one
         two
         «
-        <step»",
+        <patch»",
         cx,
     );
-    expect_steps(
+    expect_patches(
         &context,
         "
 
         one
         two
 
-        <step",
+        <patch",
         &[],
         cx,
     );
@@ -563,36 +777,24 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         one
         two
 
-        <step«>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        <patch«>
         <edit>»",
         cx,
     );
-    expect_steps(
+    expect_patches(
         &context,
         "
 
         one
         two
 
-        «<step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        «<patch>
         <edit>»",
         &[&[]],
         cx,
     );
 
-    // The full suggestion is added
+    // The full patch is added
     edit(
         &context,
         "
@@ -600,52 +802,47 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         one
         two
 
-        <step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        <patch>
         <edit>«
+        <description>add a `two` function</description>
         <path>src/lib.rs</path>
         <operation>insert_after</operation>
-        <search>fn one</search>
-        <description>add a `two` function</description>
+        <old_text>fn one</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
         </edit>
-        </step>
+        </patch>
 
         also,»",
         cx,
     );
-    expect_steps(
+    expect_patches(
         &context,
         "
 
         one
         two
 
-        «<step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        «<patch>
         <edit>
+        <description>add a `two` function</description>
         <path>src/lib.rs</path>
         <operation>insert_after</operation>
-        <search>fn one</search>
-        <description>add a `two` function</description>
+        <old_text>fn one</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
         </edit>
-        </step>»
-
+        </patch>
+        »
         also,",
-        &[&[WorkflowStepEdit {
+        &[&[AssistantEdit {
             path: "src/lib.rs".into(),
-            kind: WorkflowStepEditKind::InsertAfter {
-                search: "fn one".into(),
-                description: "add a `two` function".into(),
+            kind: AssistantEditKind::InsertAfter {
+                old_text: "fn one".into(),
+                new_text: "fn two() {}".into(),
+                description: Some("add a `two` function".into()),
             },
         }]],
         cx,
@@ -659,52 +856,47 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         one
         two
 
-        <step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        <patch>
         <edit>
+        <description>add a `two` function</description>
         <path>src/lib.rs</path>
         <operation>insert_after</operation>
-        <search>«fn zero»</search>
-        <description>add a `two` function</description>
+        <old_text>«fn zero»</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
         </edit>
-        </step>
+        </patch>
 
         also,",
         cx,
     );
-    expect_steps(
+    expect_patches(
         &context,
         "
 
         one
         two
 
-        «<step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        «<patch>
         <edit>
+        <description>add a `two` function</description>
         <path>src/lib.rs</path>
         <operation>insert_after</operation>
-        <search>fn zero</search>
-        <description>add a `two` function</description>
+        <old_text>fn zero</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
         </edit>
-        </step>»
-
+        </patch>
+        »
         also,",
-        &[&[WorkflowStepEdit {
+        &[&[AssistantEdit {
             path: "src/lib.rs".into(),
-            kind: WorkflowStepEditKind::InsertAfter {
-                search: "fn zero".into(),
-                description: "add a `two` function".into(),
+            kind: AssistantEditKind::InsertAfter {
+                old_text: "fn zero".into(),
+                new_text: "fn two() {}".into(),
+                description: Some("add a `two` function".into()),
             },
         }]],
         cx,
@@ -715,27 +907,24 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         context.cycle_message_roles(HashSet::from_iter([assistant_message_id]), cx);
         context.cycle_message_roles(HashSet::from_iter([assistant_message_id]), cx);
     });
-    expect_steps(
+    expect_patches(
         &context,
         "
 
         one
         two
 
-        <step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        <patch>
         <edit>
+        <description>add a `two` function</description>
         <path>src/lib.rs</path>
         <operation>insert_after</operation>
-        <search>fn zero</search>
-        <description>add a `two` function</description>
+        <old_text>fn zero</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
         </edit>
-        </step>
+        </patch>
 
         also,",
         &[],
@@ -746,34 +935,32 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
     context.update(cx, |context, cx| {
         context.cycle_message_roles(HashSet::from_iter([assistant_message_id]), cx);
     });
-    expect_steps(
+    expect_patches(
         &context,
         "
 
         one
         two
 
-        «<step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        «<patch>
         <edit>
+        <description>add a `two` function</description>
         <path>src/lib.rs</path>
         <operation>insert_after</operation>
-        <search>fn zero</search>
-        <description>add a `two` function</description>
+        <old_text>fn zero</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
         </edit>
-        </step>»
-
+        </patch>
+        »
         also,",
-        &[&[WorkflowStepEdit {
+        &[&[AssistantEdit {
             path: "src/lib.rs".into(),
-            kind: WorkflowStepEditKind::InsertAfter {
-                search: "fn zero".into(),
-                description: "add a `two` function".into(),
+            kind: AssistantEditKind::InsertAfter {
+                old_text: "fn zero".into(),
+                new_text: "fn two() {}".into(),
+                description: Some("add a `two` function".into()),
             },
         }]],
         cx,
@@ -787,39 +974,39 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
             Default::default(),
             registry.clone(),
             prompt_builder.clone(),
+            Arc::new(SlashCommandWorkingSet::default()),
+            Arc::new(ToolWorkingSet::default()),
             None,
             None,
             cx,
         )
     });
-    expect_steps(
+    expect_patches(
         &deserialized_context,
         "
 
         one
         two
 
-        «<step>
-        Add a second function
-
-        ```rust
-        fn two() {}
-        ```
-
+        «<patch>
         <edit>
+        <description>add a `two` function</description>
         <path>src/lib.rs</path>
         <operation>insert_after</operation>
-        <search>fn zero</search>
-        <description>add a `two` function</description>
+        <old_text>fn zero</old_text>
+        <new_text>
+        fn two() {}
+        </new_text>
         </edit>
-        </step>»
-
+        </patch>
+        »
         also,",
-        &[&[WorkflowStepEdit {
+        &[&[AssistantEdit {
             path: "src/lib.rs".into(),
-            kind: WorkflowStepEditKind::InsertAfter {
-                search: "fn zero".into(),
-                description: "add a `two` function".into(),
+            kind: AssistantEditKind::InsertAfter {
+                old_text: "fn zero".into(),
+                new_text: "fn two() {}".into(),
+                description: Some("add a `two` function".into()),
             },
         }]],
         cx,
@@ -834,48 +1021,58 @@ async fn test_workflow_step_parsing(cx: &mut TestAppContext) {
         cx.executor().run_until_parked();
     }
 
-    fn expect_steps(
+    #[track_caller]
+    fn expect_patches(
         context: &Model<Context>,
         expected_marked_text: &str,
-        expected_suggestions: &[&[WorkflowStepEdit]],
+        expected_suggestions: &[&[AssistantEdit]],
         cx: &mut TestAppContext,
     ) {
-        context.update(cx, |context, cx| {
-            let expected_marked_text = expected_marked_text.unindent();
-            let (expected_text, expected_ranges) = marked_text_ranges(&expected_marked_text, false);
+        let expected_marked_text = expected_marked_text.unindent();
+        let (expected_text, _) = marked_text_ranges(&expected_marked_text, false);
+
+        let (buffer_text, ranges, patches) = context.update(cx, |context, cx| {
             context.buffer.read_with(cx, |buffer, _| {
-                assert_eq!(buffer.text(), expected_text);
                 let ranges = context
-                    .workflow_steps
+                    .patches
                     .iter()
                     .map(|entry| entry.range.to_offset(buffer))
                     .collect::<Vec<_>>();
-                let marked = generate_marked_text(&expected_text, &ranges, false);
-                assert_eq!(
-                    marked,
-                    expected_marked_text,
-                    "unexpected suggestion ranges. actual: {ranges:?}, expected: {expected_ranges:?}"
-                );
-                let suggestions = context
-                    .workflow_steps
-                    .iter()
-                    .map(|step| {
-                        step.edits
-                            .iter()
-                            .map(|edit| {
-                                let edit = edit.as_ref().unwrap();
-                                WorkflowStepEdit {
-                                    path: edit.path.clone(),
-                                    kind: edit.kind.clone(),
-                                }
-                            })
-                            .collect::<Vec<_>>()
-                    })
-                    .collect::<Vec<_>>();
-
-                assert_eq!(suggestions, expected_suggestions);
-            });
+                (
+                    buffer.text(),
+                    ranges,
+                    context
+                        .patches
+                        .iter()
+                        .map(|step| step.edits.clone())
+                        .collect::<Vec<_>>(),
+                )
+            })
         });
+
+        assert_eq!(buffer_text, expected_text);
+
+        let actual_marked_text = generate_marked_text(&expected_text, &ranges, false);
+        assert_eq!(actual_marked_text, expected_marked_text);
+
+        assert_eq!(
+            patches
+                .iter()
+                .map(|patch| {
+                    patch
+                        .iter()
+                        .map(|edit| {
+                            let edit = edit.as_ref().unwrap();
+                            AssistantEdit {
+                                path: edit.path.clone(),
+                                kind: edit.kind.clone(),
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                })
+                .collect::<Vec<_>>(),
+            expected_suggestions
+        );
     }
 }
 
@@ -887,8 +1084,17 @@ async fn test_serialization(cx: &mut TestAppContext) {
     cx.update(assistant_panel::init);
     let registry = Arc::new(LanguageRegistry::test(cx.executor()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context =
-        cx.new_model(|cx| Context::local(registry.clone(), None, None, prompt_builder.clone(), cx));
+    let context = cx.new_model(|cx| {
+        Context::local(
+            registry.clone(),
+            None,
+            None,
+            prompt_builder.clone(),
+            Arc::new(SlashCommandWorkingSet::default()),
+            Arc::new(ToolWorkingSet::default()),
+            cx,
+        )
+    });
     let buffer = context.read_with(cx, |context, _| context.buffer.clone());
     let message_0 = context.read_with(cx, |context, _| context.message_anchors[0].id);
     let message_1 = context.update(cx, |context, cx| {
@@ -928,6 +1134,8 @@ async fn test_serialization(cx: &mut TestAppContext) {
             Default::default(),
             registry.clone(),
             prompt_builder.clone(),
+            Arc::new(SlashCommandWorkingSet::default()),
+            Arc::new(ToolWorkingSet::default()),
             None,
             None,
             cx,
@@ -986,6 +1194,8 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                 language::Capability::ReadWrite,
                 registry.clone(),
                 prompt_builder.clone(),
+                Arc::new(SlashCommandWorkingSet::default()),
+                Arc::new(ToolWorkingSet::default()),
                 None,
                 None,
                 cx,
@@ -1074,43 +1284,57 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
                         offset + 1..offset + 1 + command_text.len()
                     });
 
-                    let output_len = rng.gen_range(1..=10);
                     let output_text = RandomCharIter::new(&mut rng)
                         .filter(|c| *c != '\r')
-                        .take(output_len)
+                        .take(10)
                         .collect::<String>();
 
+                    let mut events = vec![Ok(SlashCommandEvent::StartMessage {
+                        role: Role::User,
+                        merge_same_roles: true,
+                    })];
+
                     let num_sections = rng.gen_range(0..=3);
-                    let mut sections = Vec::with_capacity(num_sections);
+                    let mut section_start = 0;
                     for _ in 0..num_sections {
-                        let section_start = rng.gen_range(0..output_len);
-                        let section_end = rng.gen_range(section_start..=output_len);
-                        sections.push(SlashCommandOutputSection {
-                            range: section_start..section_end,
-                            icon: ui::IconName::Ai,
+                        let mut section_end = rng.gen_range(section_start..=output_text.len());
+                        while !output_text.is_char_boundary(section_end) {
+                            section_end += 1;
+                        }
+                        events.push(Ok(SlashCommandEvent::StartSection {
+                            icon: IconName::Ai,
                             label: "section".into(),
                             metadata: None,
-                        });
+                        }));
+                        events.push(Ok(SlashCommandEvent::Content(SlashCommandContent::Text {
+                            text: output_text[section_start..section_end].to_string(),
+                            run_commands_in_text: false,
+                        })));
+                        events.push(Ok(SlashCommandEvent::EndSection));
+                        section_start = section_end;
+                    }
+
+                    if section_start < output_text.len() {
+                        events.push(Ok(SlashCommandEvent::Content(SlashCommandContent::Text {
+                            text: output_text[section_start..].to_string(),
+                            run_commands_in_text: false,
+                        })));
                     }
 
                     log::info!(
-                        "Context {}: insert slash command output at {:?} with {:?}",
+                        "Context {}: insert slash command output at {:?} with {:?} events",
                         context_index,
                         command_range,
-                        sections
+                        events.len()
                     );
 
                     let command_range = context.buffer.read(cx).anchor_after(command_range.start)
                         ..context.buffer.read(cx).anchor_after(command_range.end);
                     context.insert_command_output(
                         command_range,
-                        Task::ready(Ok(SlashCommandOutput {
-                            text: output_text,
-                            sections,
-                            run_commands_in_text: false,
-                        })),
+                        "/command",
+                        Task::ready(Ok(stream::iter(events).boxed())),
                         true,
-                        false,
                         cx,
                     );
                 });
@@ -1188,7 +1412,7 @@ async fn test_random_context_collaboration(cx: &mut TestAppContext, mut rng: Std
         let first_context = contexts[0].read(cx);
         for context in &contexts[1..] {
             let context = context.read(cx);
-            assert!(context.pending_ops.is_empty());
+            assert!(context.pending_ops.is_empty(), "pending ops: {:?}", context.pending_ops);
             assert_eq!(
                 context.buffer.read(cx).text(),
                 first_context.buffer.read(cx).text(),
@@ -1225,8 +1449,17 @@ fn test_mark_cache_anchors(cx: &mut AppContext) {
     assistant_panel::init(cx);
     let registry = Arc::new(LanguageRegistry::test(cx.background_executor().clone()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());
-    let context =
-        cx.new_model(|cx| Context::local(registry, None, None, prompt_builder.clone(), cx));
+    let context = cx.new_model(|cx| {
+        Context::local(
+            registry,
+            None,
+            None,
+            prompt_builder.clone(),
+            Arc::new(SlashCommandWorkingSet::default()),
+            Arc::new(ToolWorkingSet::default()),
+            cx,
+        )
+    });
     let buffer = context.read(cx).buffer.clone();
 
     // Create a test cache configuration
@@ -1427,11 +1660,12 @@ impl SlashCommand for FakeSlashCommand {
         _workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         _cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         Task::ready(Ok(SlashCommandOutput {
             text: format!("Executed fake command: {}", self.0),
             sections: vec![],
             run_commands_in_text: false,
-        }))
+        }
+        .to_event_stream()))
     }
 }

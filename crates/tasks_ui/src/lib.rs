@@ -1,8 +1,9 @@
 use ::settings::Settings;
 use editor::{tasks::task_context, Editor};
 use gpui::{AppContext, Task as AsyncTask, ViewContext, WindowContext};
-use modal::TasksModal;
+use modal::{TaskOverrides, TasksModal};
 use project::{Location, WorktreeId};
+use task::{RevealTarget, TaskId};
 use workspace::tasks::schedule_task;
 use workspace::{tasks::schedule_resolved_task, Workspace};
 
@@ -18,12 +19,20 @@ pub fn init(cx: &mut AppContext) {
             workspace
                 .register_action(spawn_task_or_modal)
                 .register_action(move |workspace, action: &modal::Rerun, cx| {
-                    if let Some((task_source_kind, mut last_scheduled_task)) =
-                        workspace.project().update(cx, |project, cx| {
-                            project
-                                .task_inventory()
-                                .read(cx)
-                                .last_scheduled_task(action.task_id.as_ref())
+                    if let Some((task_source_kind, mut last_scheduled_task)) = workspace
+                        .project()
+                        .read(cx)
+                        .task_store()
+                        .read(cx)
+                        .task_inventory()
+                        .and_then(|inventory| {
+                            inventory.read(cx).last_scheduled_task(
+                                action
+                                    .task_id
+                                    .as_ref()
+                                    .map(|id| TaskId(id.clone()))
+                                    .as_ref(),
+                            )
                         })
                     {
                         if action.reevaluate_context {
@@ -70,7 +79,7 @@ pub fn init(cx: &mut AppContext) {
                             );
                         }
                     } else {
-                        toggle_modal(workspace, cx).detach();
+                        toggle_modal(workspace, None, cx).detach();
                     };
                 });
         },
@@ -79,53 +88,99 @@ pub fn init(cx: &mut AppContext) {
 }
 
 fn spawn_task_or_modal(workspace: &mut Workspace, action: &Spawn, cx: &mut ViewContext<Workspace>) {
-    match &action.task_name {
-        Some(name) => spawn_task_with_name(name.clone(), cx).detach_and_log_err(cx),
-        None => toggle_modal(workspace, cx).detach(),
+    match action {
+        Spawn::ByName {
+            task_name,
+            reveal_target,
+        } => {
+            let overrides = reveal_target.map(|reveal_target| TaskOverrides {
+                reveal_target: Some(reveal_target),
+            });
+            spawn_task_with_name(task_name.clone(), overrides, cx).detach_and_log_err(cx)
+        }
+        Spawn::ViaModal { reveal_target } => toggle_modal(workspace, *reveal_target, cx).detach(),
     }
 }
 
-fn toggle_modal(workspace: &mut Workspace, cx: &mut ViewContext<'_, Workspace>) -> AsyncTask<()> {
-    let project = workspace.project().clone();
+fn toggle_modal(
+    workspace: &mut Workspace,
+    reveal_target: Option<RevealTarget>,
+    cx: &mut ViewContext<Workspace>,
+) -> AsyncTask<()> {
+    let task_store = workspace.project().read(cx).task_store().clone();
     let workspace_handle = workspace.weak_handle();
-    let context_task = task_context(workspace, cx);
-    cx.spawn(|workspace, mut cx| async move {
-        let task_context = context_task.await;
-        workspace
-            .update(&mut cx, |workspace, cx| {
-                if workspace.project().update(cx, |project, cx| {
-                    project.is_local() || project.ssh_connection_string(cx).is_some()
-                }) {
+    let can_open_modal = workspace.project().update(cx, |project, cx| {
+        project.is_local() || project.ssh_connection_string(cx).is_some() || project.is_via_ssh()
+    });
+    if can_open_modal {
+        let context_task = task_context(workspace, cx);
+        cx.spawn(|workspace, mut cx| async move {
+            let task_context = context_task.await;
+            workspace
+                .update(&mut cx, |workspace, cx| {
                     workspace.toggle_modal(cx, |cx| {
-                        TasksModal::new(project, task_context, workspace_handle, cx)
+                        TasksModal::new(
+                            task_store.clone(),
+                            task_context,
+                            reveal_target.map(|target| TaskOverrides {
+                                reveal_target: Some(target),
+                            }),
+                            workspace_handle,
+                            cx,
+                        )
                     })
-                }
-            })
-            .ok();
-    })
+                })
+                .ok();
+        })
+    } else {
+        AsyncTask::ready(())
+    }
 }
 
 fn spawn_task_with_name(
     name: String,
+    overrides: Option<TaskOverrides>,
     cx: &mut ViewContext<Workspace>,
 ) -> AsyncTask<anyhow::Result<()>> {
     cx.spawn(|workspace, mut cx| async move {
         let context_task =
             workspace.update(&mut cx, |workspace, cx| task_context(workspace, cx))?;
         let task_context = context_task.await;
-        let tasks = workspace
-            .update(&mut cx, |workspace, cx| {
-                let (worktree, location) = active_item_selection_properties(workspace, cx);
-                workspace.project().update(cx, |project, cx| {
-                    project.task_templates(worktree, location, cx)
+        let tasks = workspace.update(&mut cx, |workspace, cx| {
+            let Some(task_inventory) = workspace
+                .project()
+                .read(cx)
+                .task_store()
+                .read(cx)
+                .task_inventory()
+                .cloned()
+            else {
+                return Vec::new();
+            };
+            let (worktree, location) = active_item_selection_properties(workspace, cx);
+            let (file, language) = location
+                .map(|location| {
+                    let buffer = location.buffer.read(cx);
+                    (
+                        buffer.file().cloned(),
+                        buffer.language_at(location.range.start),
+                    )
                 })
-            })?
-            .await?;
+                .unwrap_or_default();
+            task_inventory
+                .read(cx)
+                .list_tasks(file, language, worktree, cx)
+        })?;
 
         let did_spawn = workspace
             .update(&mut cx, |workspace, cx| {
-                let (task_source_kind, target_task) =
+                let (task_source_kind, mut target_task) =
                     tasks.into_iter().find(|(_, task)| task.label == name)?;
+                if let Some(overrides) = &overrides {
+                    if let Some(target_override) = overrides.reveal_target {
+                        target_task.reveal_target = target_override;
+                    }
+                }
                 schedule_task(
                     workspace,
                     task_source_kind,
@@ -140,7 +195,13 @@ fn spawn_task_with_name(
         if !did_spawn {
             workspace
                 .update(&mut cx, |workspace, cx| {
-                    spawn_task_or_modal(workspace, &Spawn::default(), cx);
+                    spawn_task_or_modal(
+                        workspace,
+                        &Spawn::ViaModal {
+                            reveal_target: overrides.and_then(|overrides| overrides.reveal_target),
+                        },
+                        cx,
+                    );
                 })
                 .ok();
         }
@@ -185,7 +246,7 @@ mod tests {
     use editor::Editor;
     use gpui::{Entity, TestAppContext};
     use language::{Language, LanguageConfig};
-    use project::{BasicContextProvider, FakeFs, Project};
+    use project::{task_store::TaskStore, BasicContextProvider, FakeFs, Project};
     use serde_json::json;
     use task::{TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
@@ -223,6 +284,7 @@ mod tests {
         )
         .await;
         let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let worktree_store = project.update(cx, |project, _| project.worktree_store().clone());
         let rust_language = Arc::new(
             Language::new(
                 LanguageConfig::default(),
@@ -234,7 +296,9 @@ mod tests {
             name: (_) @name) @item"#,
             )
             .unwrap()
-            .with_context_provider(Some(Arc::new(BasicContextProvider::new(project.clone())))),
+            .with_context_provider(Some(Arc::new(BasicContextProvider::new(
+                worktree_store.clone(),
+            )))),
         );
 
         let typescript_language = Arc::new(
@@ -252,7 +316,9 @@ mod tests {
                       ")" @context)) @item"#,
             )
             .unwrap()
-            .with_context_provider(Some(Arc::new(BasicContextProvider::new(project.clone())))),
+            .with_context_provider(Some(Arc::new(BasicContextProvider::new(
+                worktree_store.clone(),
+            )))),
         );
 
         let worktree_id = project.update(cx, |project, cx| {
@@ -373,6 +439,7 @@ mod tests {
             editor::init(cx);
             workspace::init_settings(cx);
             Project::init_settings(cx);
+            TaskStore::init(None);
             state
         })
     }

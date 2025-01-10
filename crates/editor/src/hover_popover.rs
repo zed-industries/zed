@@ -1,13 +1,13 @@
 use crate::{
-    display_map::{InlayOffset, ToDisplayPoint},
+    display_map::{invisibles::is_invisible, InlayOffset, ToDisplayPoint},
     hover_links::{InlayHighlight, RangeInEditor},
     scroll::ScrollAmount,
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
-    Hover, RangeToAnchorExt,
+    Hover,
 };
 use gpui::{
     div, px, AnyElement, AsyncWindowContext, FontWeight, Hsla, InteractiveElement, IntoElement,
-    MouseButton, ParentElement, Pixels, ScrollHandle, Size, StatefulInteractiveElement,
+    MouseButton, ParentElement, Pixels, ScrollHandle, Size, Stateful, StatefulInteractiveElement,
     StyleRefinement, Styled, Task, TextStyleRefinement, View, ViewContext,
 };
 use itertools::Itertools;
@@ -15,15 +15,14 @@ use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::ToOffset;
-use project::{HoverBlock, InlayHintLabelPart};
+use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
 use std::rc::Rc;
 use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
 use theme::ThemeSettings;
-use ui::{prelude::*, window_is_transparent};
+use ui::{prelude::*, window_is_transparent, Scrollbar, ScrollbarState};
 use util::TryFutureExt;
-pub const HOVER_DELAY_MILLIS: u64 = 350;
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
 pub const MIN_POPOVER_CHARACTER_WIDTH: f32 = 20.;
@@ -131,10 +130,12 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
             hide_hover(editor, cx);
         }
 
+        let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
+
         let task = cx.spawn(|this, mut cx| {
             async move {
                 cx.background_executor()
-                    .timer(Duration::from_millis(HOVER_DELAY_MILLIS))
+                    .timer(Duration::from_millis(hover_popover_delay))
                     .await;
                 this.update(&mut cx, |this, _| {
                     this.hover_state.diagnostic_popover = None;
@@ -144,10 +145,12 @@ pub fn hover_at_inlay(editor: &mut Editor, inlay_hover: InlayHover, cx: &mut Vie
                 let blocks = vec![inlay_hover.tooltip];
                 let parsed_content = parse_blocks(&blocks, &language_registry, None, &mut cx).await;
 
+                let scroll_handle = ScrollHandle::new();
                 let hover_popover = InfoPopover {
                     symbol_range: RangeInEditor::Inlay(inlay_hover.range.clone()),
                     parsed_content,
-                    scroll_handle: ScrollHandle::new(),
+                    scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
+                    scroll_handle,
                     keyboard_grace: Rc::new(RefCell::new(false)),
                     anchor: None,
                 };
@@ -195,32 +198,22 @@ fn show_hover(
     anchor: Anchor,
     ignore_timeout: bool,
     cx: &mut ViewContext<Editor>,
-) {
+) -> Option<()> {
     if editor.pending_rename.is_some() {
-        return;
+        return None;
     }
 
     let snapshot = editor.snapshot(cx);
 
-    let (buffer, buffer_position) =
-        if let Some(output) = editor.buffer.read(cx).text_anchor_for_position(anchor, cx) {
-            output
-        } else {
-            return;
-        };
+    let (buffer, buffer_position) = editor
+        .buffer
+        .read(cx)
+        .text_anchor_for_position(anchor, cx)?;
 
-    let excerpt_id =
-        if let Some((excerpt_id, _, _)) = editor.buffer().read(cx).excerpt_containing(anchor, cx) {
-            excerpt_id
-        } else {
-            return;
-        };
+    let (excerpt_id, _, _) = editor.buffer().read(cx).excerpt_containing(anchor, cx)?;
 
-    let project = if let Some(project) = editor.project.clone() {
-        project
-    } else {
-        return;
-    };
+    let language_registry = editor.project.as_ref()?.read(cx).languages().clone();
+    let provider = editor.semantics_provider.clone()?;
 
     if !ignore_timeout {
         if same_info_hover(editor, &snapshot, anchor)
@@ -228,7 +221,7 @@ fn show_hover(
             || editor.hover_state.diagnostic_popover.is_some()
         {
             // Hover triggered from same location as last time. Don't show again.
-            return;
+            return None;
         } else {
             hide_hover(editor, cx);
         }
@@ -240,9 +233,11 @@ fn show_hover(
             .cmp(&anchor, &snapshot.buffer_snapshot)
             .is_eq()
         {
-            return;
+            return None;
         }
     }
+
+    let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
 
     let task = cx.spawn(|this, mut cx| {
         async move {
@@ -253,7 +248,7 @@ fn show_hover(
                 // Construct delay task to wait for later
                 let total_delay = Some(
                     cx.background_executor()
-                        .timer(Duration::from_millis(HOVER_DELAY_MILLIS)),
+                        .timer(Duration::from_millis(hover_popover_delay)),
                 );
 
                 cx.background_executor()
@@ -262,39 +257,20 @@ fn show_hover(
                 total_delay
             };
 
-            // query the LSP for hover info
-            let hover_request = cx.update(|cx| {
-                project.update(cx, |project, cx| {
-                    project.hover(&buffer, buffer_position, cx)
-                })
-            })?;
+            let hover_request = cx.update(|cx| provider.hover(&buffer, buffer_position, cx))?;
 
             if let Some(delay) = delay {
                 delay.await;
             }
 
-            // If there's a diagnostic, assign it on the hover state and notify
             let local_diagnostic = snapshot
                 .buffer_snapshot
-                .diagnostics_in_range::<_, usize>(anchor..anchor, false)
+                .diagnostics_in_range(anchor..anchor, false)
                 // Find the entry with the most specific range
-                .min_by_key(|entry| entry.range.end - entry.range.start)
-                .map(|entry| DiagnosticEntry {
-                    diagnostic: entry.diagnostic,
-                    range: entry.range.to_anchors(&snapshot.buffer_snapshot),
+                .min_by_key(|entry| {
+                    let range = entry.range.to_offset(&snapshot.buffer_snapshot);
+                    range.end - range.start
                 });
-
-            // Pull the primary diagnostic out so we can jump to it if the popover is clicked
-            let primary_diagnostic = local_diagnostic.as_ref().and_then(|local_diagnostic| {
-                snapshot
-                    .buffer_snapshot
-                    .diagnostic_group::<usize>(local_diagnostic.diagnostic.group_id)
-                    .find(|diagnostic| diagnostic.diagnostic.is_primary)
-                    .map(|entry| DiagnosticEntry {
-                        diagnostic: entry.diagnostic,
-                        range: entry.range.to_anchors(&snapshot.buffer_snapshot),
-                    })
-            });
 
             let diagnostic_popover = if let Some(local_diagnostic) = local_diagnostic {
                 let text = match local_diagnostic.diagnostic.source {
@@ -337,6 +313,7 @@ fn show_hover(
                         let mut base_text_style = cx.text_style();
                         base_text_style.refine(&TextStyleRefinement {
                             font_family: Some(settings.ui_font.family.clone()),
+                            font_fallbacks: settings.ui_font.fallbacks.clone(),
                             font_size: Some(settings.ui_font_size.into()),
                             color: Some(cx.theme().colors().editor_foreground),
                             background_color: Some(gpui::transparent_black()),
@@ -356,13 +333,12 @@ fn show_hover(
                             },
                             ..Default::default()
                         };
-                        Markdown::new_text(text, markdown_style.clone(), None, cx, None)
+                        Markdown::new_text(text, markdown_style.clone(), None, None, cx)
                     })
                     .ok();
 
                 Some(DiagnosticPopover {
                     local_diagnostic,
-                    primary_diagnostic,
                     parsed_content,
                     border_color,
                     background_color,
@@ -377,12 +353,58 @@ fn show_hover(
                 this.hover_state.diagnostic_popover = diagnostic_popover;
             })?;
 
-            let hovers_response = hover_request.await;
-            let language_registry = project.update(&mut cx, |p, _| p.languages().clone())?;
+            let invisible_char = if let Some(invisible) = snapshot
+                .buffer_snapshot
+                .chars_at(anchor)
+                .next()
+                .filter(|&c| is_invisible(c))
+            {
+                let after = snapshot.buffer_snapshot.anchor_after(
+                    anchor.to_offset(&snapshot.buffer_snapshot) + invisible.len_utf8(),
+                );
+                Some((invisible, anchor..after))
+            } else if let Some(invisible) = snapshot
+                .buffer_snapshot
+                .reversed_chars_at(anchor)
+                .next()
+                .filter(|&c| is_invisible(c))
+            {
+                let before = snapshot.buffer_snapshot.anchor_before(
+                    anchor.to_offset(&snapshot.buffer_snapshot) - invisible.len_utf8(),
+                );
+
+                Some((invisible, before..anchor))
+            } else {
+                None
+            };
+
+            let hovers_response = if let Some(hover_request) = hover_request {
+                hover_request.await
+            } else {
+                Vec::new()
+            };
             let snapshot = this.update(&mut cx, |this, cx| this.snapshot(cx))?;
             let mut hover_highlights = Vec::with_capacity(hovers_response.len());
-            let mut info_popovers = Vec::with_capacity(hovers_response.len());
-            let mut info_popover_tasks = Vec::with_capacity(hovers_response.len());
+            let mut info_popovers = Vec::with_capacity(
+                hovers_response.len() + if invisible_char.is_some() { 1 } else { 0 },
+            );
+
+            if let Some((invisible, range)) = invisible_char {
+                let blocks = vec![HoverBlock {
+                    text: format!("Unicode character U+{:02X}", invisible as u32),
+                    kind: HoverBlockKind::PlainText,
+                }];
+                let parsed_content = parse_blocks(&blocks, &language_registry, None, &mut cx).await;
+                let scroll_handle = ScrollHandle::new();
+                info_popovers.push(InfoPopover {
+                    symbol_range: RangeInEditor::Text(range),
+                    parsed_content,
+                    scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
+                    scroll_handle,
+                    keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
+                    anchor: Some(anchor),
+                })
+            }
 
             for hover_result in hovers_response {
                 // Create symbol range of anchors for highlighting and filtering of future requests.
@@ -395,12 +417,11 @@ fn show_hover(
                         let end = snapshot
                             .buffer_snapshot
                             .anchor_in_excerpt(excerpt_id, range.end)?;
-
                         Some(start..end)
                     })
                     .or_else(|| {
                         let snapshot = &snapshot.buffer_snapshot;
-                        let offset_range = snapshot.range_for_syntax_ancestor(anchor..anchor)?;
+                        let offset_range = snapshot.syntax_ancestor(anchor..anchor)?.1;
                         Some(
                             snapshot.anchor_before(offset_range.start)
                                 ..snapshot.anchor_after(offset_range.end),
@@ -412,20 +433,16 @@ fn show_hover(
                 let language = hover_result.language;
                 let parsed_content =
                     parse_blocks(&blocks, &language_registry, language, &mut cx).await;
-                info_popover_tasks.push((
-                    range.clone(),
-                    InfoPopover {
-                        symbol_range: RangeInEditor::Text(range),
-                        parsed_content,
-                        scroll_handle: ScrollHandle::new(),
-                        keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
-                        anchor: Some(anchor),
-                    },
-                ));
-            }
-            for (highlight_range, info_popover) in info_popover_tasks {
-                hover_highlights.push(highlight_range);
-                info_popovers.push(info_popover);
+                let scroll_handle = ScrollHandle::new();
+                hover_highlights.push(range.clone());
+                info_popovers.push(InfoPopover {
+                    symbol_range: RangeInEditor::Text(range),
+                    parsed_content,
+                    scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
+                    scroll_handle,
+                    keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
+                    anchor: Some(anchor),
+                });
             }
 
             this.update(&mut cx, |editor, cx| {
@@ -451,6 +468,7 @@ fn show_hover(
     });
 
     editor.hover_state.info_task = Some(task);
+    None
 }
 
 fn same_info_hover(editor: &Editor, snapshot: &EditorSnapshot, anchor: Anchor) -> bool {
@@ -519,11 +537,14 @@ async fn parse_blocks(
         .new_view(|cx| {
             let settings = ThemeSettings::get_global(cx);
             let ui_font_family = settings.ui_font.family.clone();
+            let ui_font_fallbacks = settings.ui_font.fallbacks.clone();
             let buffer_font_family = settings.buffer_font.family.clone();
+            let buffer_font_fallbacks = settings.buffer_font.fallbacks.clone();
 
             let mut base_text_style = cx.text_style();
             base_text_style.refine(&TextStyleRefinement {
                 font_family: Some(ui_font_family.clone()),
+                font_fallbacks: ui_font_fallbacks,
                 color: Some(cx.theme().colors().editor_foreground),
                 ..Default::default()
             });
@@ -534,9 +555,10 @@ async fn parse_blocks(
                 inline_code: TextStyleRefinement {
                     background_color: Some(cx.theme().colors().background),
                     font_family: Some(buffer_font_family),
+                    font_fallbacks: buffer_font_fallbacks,
                     ..Default::default()
                 },
-                rule_color: Color::Muted.color(cx),
+                rule_color: cx.theme().colors().border,
                 block_quote_border_color: Color::Muted.color(cx),
                 block_quote: TextStyleRefinement {
                     color: Some(Color::Muted.color(cx)),
@@ -565,8 +587,8 @@ async fn parse_blocks(
                 combined_text,
                 markdown_style.clone(),
                 Some(language_registry.clone()),
-                cx,
                 fallback_language_name,
+                cx,
             )
         })
         .ok();
@@ -587,7 +609,7 @@ impl HoverState {
         !self.info_popovers.is_empty() || self.diagnostic_popover.is_some()
     }
 
-    pub fn render(
+    pub(crate) fn render(
         &mut self,
         snapshot: &EditorSnapshot,
         visible_rows: Range<DisplayRow>,
@@ -656,25 +678,25 @@ impl HoverState {
 }
 
 #[derive(Debug, Clone)]
-
-pub struct InfoPopover {
-    pub symbol_range: RangeInEditor,
-    pub parsed_content: Option<View<Markdown>>,
-    pub scroll_handle: ScrollHandle,
-    pub keyboard_grace: Rc<RefCell<bool>>,
-    pub anchor: Option<Anchor>,
+pub(crate) struct InfoPopover {
+    pub(crate) symbol_range: RangeInEditor,
+    pub(crate) parsed_content: Option<View<Markdown>>,
+    pub(crate) scroll_handle: ScrollHandle,
+    pub(crate) scrollbar_state: ScrollbarState,
+    pub(crate) keyboard_grace: Rc<RefCell<bool>>,
+    pub(crate) anchor: Option<Anchor>,
 }
 
 impl InfoPopover {
-    pub fn render(&mut self, max_size: Size<Pixels>, cx: &mut ViewContext<Editor>) -> AnyElement {
+    pub(crate) fn render(
+        &mut self,
+        max_size: Size<Pixels>,
+        cx: &mut ViewContext<Editor>,
+    ) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         let mut d = div()
             .id("info_popover")
             .elevation_2(cx)
-            .overflow_y_scroll()
-            .track_scroll(&self.scroll_handle)
-            .max_w(max_size.width)
-            .max_h(max_size.height)
             // Prevent a mouse down/move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
             .on_mouse_move(|_, cx| cx.stop_propagation())
@@ -682,11 +704,21 @@ impl InfoPopover {
                 let mut keyboard_grace = keyboard_grace.borrow_mut();
                 *keyboard_grace = false;
                 cx.stop_propagation();
-            })
-            .p_2();
+            });
 
         if let Some(markdown) = &self.parsed_content {
-            d = d.child(markdown.clone());
+            d = d
+                .child(
+                    div()
+                        .id("info-md-container")
+                        .overflow_y_scroll()
+                        .max_w(max_size.width)
+                        .max_h(max_size.height)
+                        .p_2()
+                        .track_scroll(&self.scroll_handle)
+                        .child(markdown.clone()),
+                )
+                .child(self.render_vertical_scrollbar(cx));
         }
         d.into_any_element()
     }
@@ -700,12 +732,44 @@ impl InfoPopover {
         cx.notify();
         self.scroll_handle.set_offset(current);
     }
+
+    fn render_vertical_scrollbar(&self, cx: &mut ViewContext<Editor>) -> Stateful<Div> {
+        div()
+            .occlude()
+            .id("info-popover-vertical-scroll")
+            .on_mouse_move(cx.listener(|_, _, cx| {
+                cx.notify();
+                cx.stop_propagation()
+            }))
+            .on_hover(|_, cx| {
+                cx.stop_propagation();
+            })
+            .on_any_mouse_down(|_, cx| {
+                cx.stop_propagation();
+            })
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|_, _, cx| {
+                    cx.stop_propagation();
+                }),
+            )
+            .on_scroll_wheel(cx.listener(|_, _, cx| {
+                cx.notify();
+            }))
+            .h_full()
+            .absolute()
+            .right_1()
+            .top_1()
+            .bottom_0()
+            .w(px(12.))
+            .cursor_default()
+            .children(Scrollbar::vertical(self.scrollbar_state.clone()))
+    }
 }
 
 #[derive(Debug, Clone)]
 pub struct DiagnosticPopover {
     local_diagnostic: DiagnosticEntry<Anchor>,
-    primary_diagnostic: Option<DiagnosticEntry<Anchor>>,
     parsed_content: Option<View<Markdown>>,
     border_color: Option<Hsla>,
     background_color: Option<Hsla>,
@@ -759,13 +823,8 @@ impl DiagnosticPopover {
         diagnostic_div.into_any_element()
     }
 
-    pub fn activation_info(&self) -> (usize, Anchor) {
-        let entry = self
-            .primary_diagnostic
-            .as_ref()
-            .unwrap_or(&self.local_diagnostic);
-
-        (entry.diagnostic.group_id, entry.range.start)
+    pub fn group_id(&self) -> usize {
+        self.local_diagnostic.diagnostic.group_id
     }
 }
 
@@ -781,6 +840,7 @@ mod tests {
         InlayId, PointForPosition,
     };
     use collections::BTreeSet;
+    use gpui::AppContext;
     use indoc::indoc;
     use language::{language_settings::InlayHintSettings, Diagnostic, DiagnosticSet};
     use lsp::LanguageServerId;
@@ -789,6 +849,10 @@ mod tests {
     use std::sync::atomic;
     use std::sync::atomic::AtomicUsize;
     use text::Bias;
+
+    fn get_hover_popover_delay(cx: &gpui::TestAppContext) -> u64 {
+        cx.read(|cx: &AppContext| -> u64 { EditorSettings::get_global(cx).hover_popover_delay })
+    }
 
     impl InfoPopover {
         fn get_rendered_text(&self, cx: &gpui::AppContext) -> String {
@@ -814,7 +878,6 @@ mod tests {
         cx: &mut gpui::TestAppContext,
     ) {
         init_test(cx, |_| {});
-        const HOVER_DELAY_MILLIS: u64 = 350;
 
         let mut cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
@@ -888,7 +951,7 @@ mod tests {
                 }))
             });
         cx.background_executor
-            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
         requests.next().await;
 
         cx.editor(|editor, cx| {
@@ -967,7 +1030,7 @@ mod tests {
             hover_at(editor, Some(anchor), cx)
         });
         cx.background_executor
-            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
         request.next().await;
 
         // verify that the information popover is no longer visible
@@ -1021,7 +1084,7 @@ mod tests {
                 }))
             });
         cx.background_executor
-            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
         requests.next().await;
 
         cx.editor(|editor, cx| {
@@ -1057,7 +1120,7 @@ mod tests {
             hover_at(editor, Some(anchor), cx)
         });
         cx.background_executor
-            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
         request.next().await;
         cx.editor(|editor, _| {
             assert!(!editor.hover_state.visible());
@@ -1319,11 +1382,66 @@ mod tests {
             }))
         });
         cx.background_executor
-            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
 
         cx.background_executor.run_until_parked();
         cx.editor(|Editor { hover_state, .. }, _| {
             hover_state.diagnostic_popover.is_some() && hover_state.info_task.is_some()
+        });
+    }
+
+    #[gpui::test]
+    // https://github.com/zed-industries/zed/issues/15498
+    async fn test_info_hover_with_hrs(cx: &mut gpui::TestAppContext) {
+        init_test(cx, |_| {});
+
+        let mut cx = EditorLspTestContext::new_rust(
+            lsp::ServerCapabilities {
+                hover_provider: Some(lsp::HoverProviderCapability::Simple(true)),
+                ..Default::default()
+            },
+            cx,
+        )
+        .await;
+
+        cx.set_state(indoc! {"
+            fn fuˇnc(abc def: i32) -> u32 {
+            }
+        "});
+
+        cx.lsp.handle_request::<lsp::request::HoverRequest, _, _>({
+            |_, _| async move {
+                Ok(Some(lsp::Hover {
+                    contents: lsp::HoverContents::Markup(lsp::MarkupContent {
+                        kind: lsp::MarkupKind::Markdown,
+                        value: indoc!(
+                            r#"
+                    ### function `errands_data_read`
+
+                    ---
+                    → `char *`
+                    Function to read a file into a string
+
+                    ---
+                    ```cpp
+                    static char *errands_data_read()
+                    ```
+                    "#
+                        )
+                        .to_string(),
+                    }),
+                    range: None,
+                }))
+            }
+        });
+        cx.update_editor(|editor, cx| hover(editor, &Default::default(), cx));
+        cx.run_until_parked();
+
+        cx.update_editor(|editor, cx| {
+            let popover = editor.hover_state.info_popovers.first().unwrap();
+            let content = popover.get_rendered_text(cx);
+
+            assert!(content.contains("Function to read a file"));
         });
     }
 
@@ -1552,7 +1670,7 @@ mod tests {
             );
         });
         cx.background_executor
-            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
         cx.background_executor.run_until_parked();
         cx.update_editor(|editor, cx| {
             let hover_state = &editor.hover_state;
@@ -1606,7 +1724,7 @@ mod tests {
             );
         });
         cx.background_executor
-            .advance_clock(Duration::from_millis(HOVER_DELAY_MILLIS + 100));
+            .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
         cx.background_executor.run_until_parked();
         cx.update_editor(|editor, cx| {
             let hover_state = &editor.hover_state;

@@ -1,3 +1,4 @@
+use crate::SlashCommandWorkingSet;
 use crate::{slash_command::SlashCommandCompletionProvider, AssistantPanel, InlineAssistant};
 use anyhow::{anyhow, Result};
 use chrono::{DateTime, Utc};
@@ -10,8 +11,8 @@ use futures::{
 use fuzzy::StringMatchCandidate;
 use gpui::{
     actions, point, size, transparent_black, Action, AppContext, BackgroundExecutor, Bounds,
-    EventEmitter, Global, HighlightStyle, PromptLevel, ReadGlobal, Subscription, Task, TextStyle,
-    TitlebarOptions, UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
+    EventEmitter, Global, PromptLevel, ReadGlobal, Subscription, Task, TextStyle, TitlebarOptions,
+    UpdateGlobal, View, WindowBounds, WindowHandle, WindowOptions,
 };
 use heed::{
     types::{SerdeBincode, SerdeJson, Str},
@@ -231,13 +232,13 @@ impl PickerDelegate for PromptPickerDelegate {
         let element = ListItem::new(ix)
             .inset(true)
             .spacing(ListItemSpacing::Sparse)
-            .selected(selected)
+            .toggle_state(selected)
             .child(h_flex().h_5().line_height(relative(1.)).child(Label::new(
                 prompt.title.clone().unwrap_or("Untitled".into()),
             )))
             .end_slot::<IconButton>(default.then(|| {
                 IconButton::new("toggle-default-prompt", IconName::SparkleFilled)
-                    .selected(true)
+                    .toggle_state(true)
                     .icon_color(Color::Accent)
                     .shape(IconButtonShape::Square)
                     .tooltip(move |cx| Tooltip::text("Remove from Default Prompt", cx))
@@ -273,7 +274,7 @@ impl PickerDelegate for PromptPickerDelegate {
                     })
                     .child(
                         IconButton::new("toggle-default-prompt", IconName::Sparkle)
-                            .selected(default)
+                            .toggle_state(default)
                             .selected_icon(IconName::SparkleFilled)
                             .icon_color(if default { Color::Accent } else { Color::Muted })
                             .shape(IconButtonShape::Square)
@@ -521,9 +522,13 @@ impl PromptLibrary {
                             editor.set_show_indent_guides(false, cx);
                             editor.set_use_modal_editing(false);
                             editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
-                            editor.set_completion_provider(Box::new(
-                                SlashCommandCompletionProvider::new(None, None),
-                            ));
+                            editor.set_completion_provider(Some(Box::new(
+                                SlashCommandCompletionProvider::new(
+                                    Arc::new(SlashCommandWorkingSet::default()),
+                                    None,
+                                    None,
+                                ),
+                            )));
                             if focus {
                                 editor.focus(cx);
                             }
@@ -825,7 +830,7 @@ impl PromptLibrary {
             .overflow_x_hidden()
             .child(
                 h_flex()
-                    .p(Spacing::Small.rems(cx))
+                    .p(DynamicSpacing::Base04.rems(cx))
                     .h_9()
                     .w_full()
                     .flex_none()
@@ -866,17 +871,17 @@ impl PromptLibrary {
                         .size_full()
                         .relative()
                         .overflow_hidden()
-                        .pl(Spacing::XXLarge.rems(cx))
-                        .pt(Spacing::Large.rems(cx))
+                        .pl(DynamicSpacing::Base16.rems(cx))
+                        .pt(DynamicSpacing::Base08.rems(cx))
                         .on_click(cx.listener(move |_, _, cx| {
                             cx.focus(&focus_handle);
                         }))
                         .child(
                             h_flex()
                                 .group("active-editor-header")
-                                .pr(Spacing::XXLarge.rems(cx))
-                                .pt(Spacing::XSmall.rems(cx))
-                                .pb(Spacing::Large.rems(cx))
+                                .pr(DynamicSpacing::Base16.rems(cx))
+                                .pt(DynamicSpacing::Base02.rems(cx))
+                                .pb(DynamicSpacing::Base08.rems(cx))
                                 .justify_between()
                                 .child(
                                     h_flex().gap_1().child(
@@ -910,7 +915,7 @@ impl PromptLibrary {
                                                             .features
                                                             .clone(),
                                                         font_size: HeadlineSize::Large
-                                                            .size()
+                                                            .rems()
                                                             .into(),
                                                         font_weight: settings.ui_font.weight,
                                                         line_height: relative(
@@ -923,10 +928,8 @@ impl PromptLibrary {
                                                     status: cx.theme().status().clone(),
                                                     inlay_hints_style:
                                                         editor::make_inlay_hints_style(cx),
-                                                    suggestions_style: HighlightStyle {
-                                                        color: Some(cx.theme().status().predictive),
-                                                        ..HighlightStyle::default()
-                                                    },
+                                                    inline_completion_styles:
+                                                        editor::make_suggestion_styles(cx),
                                                     ..EditorStyle::default()
                                                 },
                                             )),
@@ -938,13 +941,13 @@ impl PromptLibrary {
                                         .child(
                                             h_flex()
                                                 .h_full()
-                                                .gap(Spacing::XXLarge.rems(cx))
+                                                .gap(DynamicSpacing::Base16.rems(cx))
                                                 .child(div()),
                                         )
                                         .child(
                                             h_flex()
                                                 .h_full()
-                                                .gap(Spacing::XXLarge.rems(cx))
+                                                .gap(DynamicSpacing::Base16.rems(cx))
                                                 .children(prompt_editor.token_count.map(
                                                     |token_count| {
                                                         let token_count: SharedString =
@@ -1050,7 +1053,7 @@ impl PromptLibrary {
                                                         IconName::Sparkle,
                                                     )
                                                     .style(ButtonStyle::Transparent)
-                                                    .selected(prompt_metadata.default)
+                                                    .toggle_state(prompt_metadata.default)
                                                     .selected_icon(IconName::SparkleFilled)
                                                     .icon_color(if prompt_metadata.default {
                                                         Color::Accent
@@ -1436,10 +1439,7 @@ impl PromptStore {
                     .iter()
                     .enumerate()
                     .filter_map(|(ix, metadata)| {
-                        Some(StringMatchCandidate::new(
-                            ix,
-                            metadata.title.as_ref()?.to_string(),
-                        ))
+                        Some(StringMatchCandidate::new(ix, metadata.title.as_ref()?))
                     })
                     .collect::<Vec<_>>();
                 let matches = fuzzy::match_strings(

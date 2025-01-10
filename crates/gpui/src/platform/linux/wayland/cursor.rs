@@ -9,9 +9,9 @@ use wayland_cursor::{CursorImageBuffer, CursorTheme};
 pub(crate) struct Cursor {
     theme: Option<CursorTheme>,
     theme_name: Option<String>,
+    theme_size: u32,
     surface: WlSurface,
     size: u32,
-    scale: u32,
     shm: WlShm,
     connection: Connection,
 }
@@ -24,42 +24,38 @@ impl Drop for Cursor {
 }
 
 impl Cursor {
-    pub fn new(connection: &Connection, globals: &Globals, size: u32, scale: u32) -> Self {
+    pub fn new(connection: &Connection, globals: &Globals, size: u32) -> Self {
         Self {
             theme: CursorTheme::load(&connection, globals.shm.clone(), size).log_err(),
             theme_name: None,
+            theme_size: size,
             surface: globals.compositor.create_surface(&globals.qh, ()),
             shm: globals.shm.clone(),
             connection: connection.clone(),
             size,
-            scale,
         }
     }
 
-    pub fn set_theme(&mut self, theme_name: &str, size: Option<u32>) {
-        if let Some(size) = size {
-            self.size = size;
-        }
+    pub fn set_theme(&mut self, theme_name: &str) {
         if let Some(theme) = CursorTheme::load_from_name(
             &self.connection,
             self.shm.clone(),
             theme_name,
-            self.size * self.scale,
+            self.theme_size,
         )
         .log_err()
         {
             self.theme = Some(theme);
             self.theme_name = Some(theme_name.to_string());
         } else if let Some(theme) =
-            CursorTheme::load(&self.connection, self.shm.clone(), self.size * self.scale).log_err()
+            CursorTheme::load(&self.connection, self.shm.clone(), self.theme_size).log_err()
         {
             self.theme = Some(theme);
             self.theme_name = None;
         }
     }
 
-    pub fn set_size(&mut self, size: u32) {
-        self.size = size;
+    fn set_theme_size(&mut self, theme_size: u32) {
         self.theme = self
             .theme_name
             .as_ref()
@@ -68,14 +64,29 @@ impl Cursor {
                     &self.connection,
                     self.shm.clone(),
                     name.as_str(),
-                    self.size,
+                    theme_size,
                 )
                 .log_err()
             })
-            .or_else(|| CursorTheme::load(&self.connection, self.shm.clone(), self.size).log_err());
+            .or_else(|| {
+                CursorTheme::load(&self.connection, self.shm.clone(), theme_size).log_err()
+            });
     }
 
-    pub fn set_icon(&mut self, wl_pointer: &WlPointer, serial_id: u32, mut cursor_icon_name: &str) {
+    pub fn set_size(&mut self, size: u32) {
+        self.size = size;
+        self.set_theme_size(size);
+    }
+
+    pub fn set_icon(
+        &mut self,
+        wl_pointer: &WlPointer,
+        serial_id: u32,
+        mut cursor_icon_name: &str,
+        scale: i32,
+    ) {
+        self.set_theme_size(self.size * scale as u32);
+
         if let Some(theme) = &mut self.theme {
             let mut buffer: Option<&CursorImageBuffer>;
 
@@ -97,22 +108,17 @@ impl Cursor {
                 let (width, height) = buffer.dimensions();
                 let (hot_x, hot_y) = buffer.hotspot();
 
-                let scaled_width = width / self.scale;
-                let scaled_height = height / self.scale;
-                let scaled_hot_x = hot_x / self.scale;
-                let scaled_hot_y = hot_y / self.scale;
-
-                self.surface.set_buffer_scale(self.scale as i32);
+                self.surface.set_buffer_scale(scale);
 
                 wl_pointer.set_cursor(
                     serial_id,
                     Some(&self.surface),
-                    scaled_hot_x as i32,
-                    scaled_hot_y as i32,
+                    hot_x as i32 / scale,
+                    hot_y as i32 / scale,
                 );
+
                 self.surface.attach(Some(&buffer), 0, 0);
-                self.surface
-                    .damage(0, 0, scaled_width as i32, scaled_height as i32);
+                self.surface.damage(0, 0, width as i32, height as i32);
                 self.surface.commit();
             }
         } else {

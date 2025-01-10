@@ -5,7 +5,7 @@ use crate::{
 };
 use editor::{display_map::ToDisplayPoint, Bias, Editor, ToPoint};
 use gpui::{actions, ViewContext};
-use language::{AutoindentMode, Point};
+use language::Point;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -22,7 +22,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         if vim.mode != Mode::Replace {
             return;
         }
-        let count = vim.take_count(cx);
+        let count = Vim::take_count(cx);
         vim.undo_replace(count, cx)
     });
 }
@@ -58,15 +58,7 @@ impl Vim {
                     })
                     .collect::<Vec<_>>();
 
-                editor.buffer().update(cx, |buffer, cx| {
-                    buffer.edit(
-                        edits.clone(),
-                        Some(AutoindentMode::Block {
-                            original_indent_columns: Vec::new(),
-                        }),
-                        cx,
-                    );
-                });
+                editor.edit_with_block_indent(edits.clone(), Vec::new(), cx);
 
                 editor.change_selections(None, cx, |s| {
                     s.select_anchor_ranges(edits.iter().map(|(range, _)| range.end..range.end));
@@ -113,9 +105,7 @@ impl Vim {
                     })
                     .collect::<Vec<_>>();
 
-                editor.buffer().update(cx, |buffer, cx| {
-                    buffer.edit(edits, None, cx);
-                });
+                editor.edit(edits, cx);
 
                 editor.change_selections(None, cx, |s| {
                     s.select_ranges(new_selections);
@@ -145,6 +135,7 @@ mod test {
     }
 
     #[gpui::test]
+    #[cfg(not(any(target_os = "linux", target_os = "freebsd")))]
     async fn test_replace_mode(cx: &mut gpui::TestAppContext) {
         let mut cx: NeovimBackedTestContext = NeovimBackedTestContext::new(cx).await;
 

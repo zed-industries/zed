@@ -1,10 +1,11 @@
-use super::create_label_for_command;
-use super::{SlashCommand, SlashCommandOutput};
 use anyhow::{anyhow, Result};
-use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
+};
 use feature_flags::FeatureFlag;
 use futures::StreamExt;
-use gpui::{AppContext, AsyncAppContext, Task, WeakView};
+use gpui::{AppContext, AsyncAppContext, AsyncWindowContext, Task, WeakView, WindowContext};
 use language::{CodeLabel, LspAdapterDelegate};
 use language_model::{
     LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
@@ -13,9 +14,11 @@ use language_model::{
 use semantic_index::{FileSummary, SemanticDb};
 use smol::channel;
 use std::sync::{atomic::AtomicBool, Arc};
-use ui::{BorrowAppContext, WindowContext};
+use ui::{prelude::*, BorrowAppContext};
 use util::ResultExt;
 use workspace::Workspace;
+
+use crate::slash_command::create_label_for_command;
 
 pub struct AutoSlashCommandFeatureFlag;
 
@@ -31,11 +34,15 @@ impl SlashCommand for AutoCommand {
     }
 
     fn description(&self) -> String {
-        "Automatically infer what context to add, based on your prompt".into()
+        "Automatically infer what context to add".into()
+    }
+
+    fn icon(&self) -> IconName {
+        IconName::Wand
     }
 
     fn menu_text(&self) -> String {
-        "Automatically Infer Context".into()
+        self.description()
     }
 
     fn label(&self, cx: &AppContext) -> CodeLabel {
@@ -92,7 +99,7 @@ impl SlashCommand for AutoCommand {
         workspace: WeakView<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
         cx: &mut WindowContext,
-    ) -> Task<Result<SlashCommandOutput>> {
+    ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
         };
@@ -108,7 +115,7 @@ impl SlashCommand for AutoCommand {
             return Task::ready(Err(anyhow!("no project indexer")));
         };
 
-        let task = cx.spawn(|cx: gpui::AsyncWindowContext| async move {
+        let task = cx.spawn(|cx: AsyncWindowContext| async move {
             let summaries = project_index
                 .read_with(&cx, |project_index, cx| project_index.all_summaries(cx))?
                 .await?;
@@ -144,7 +151,8 @@ impl SlashCommand for AutoCommand {
                 text: prompt,
                 sections: Vec::new(),
                 run_commands_in_text: true,
-            })
+            }
+            .to_event_stream())
         })
     }
 }

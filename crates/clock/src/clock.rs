@@ -216,10 +216,11 @@ impl fmt::Debug for Global {
             if timestamp.replica_id > 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{}: {}", timestamp.replica_id, timestamp.value)?;
-        }
-        if self.local_branch_value > 0 {
-            write!(f, "<branch>: {}", self.local_branch_value)?;
+            if timestamp.replica_id == LOCAL_BRANCH_REPLICA_ID {
+                write!(f, "<branch>: {}", timestamp.value)?;
+            } else {
+                write!(f, "{}: {}", timestamp.replica_id, timestamp.value)?;
+            }
         }
         write!(f, "}}")
     }

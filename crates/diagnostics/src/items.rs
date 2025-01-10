@@ -1,9 +1,11 @@
-use editor::Editor;
+use std::time::Duration;
+
+use editor::{AnchorRangeExt, Editor};
 use gpui::{
-    rems, EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription, View,
+    EventEmitter, IntoElement, ParentElement, Render, Styled, Subscription, Task, View,
     ViewContext, WeakView,
 };
-use language::Diagnostic;
+use language::{Diagnostic, DiagnosticEntry};
 use ui::{h_flex, prelude::*, Button, ButtonLike, Color, Icon, IconName, Label, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, ToolbarItemEvent, Workspace};
 
@@ -15,6 +17,7 @@ pub struct DiagnosticIndicator {
     workspace: WeakView<Workspace>,
     current_diagnostic: Option<Diagnostic>,
     _observe_active_editor: Option<Subscription>,
+    diagnostics_update: Task<()>,
 }
 
 impl Render for DiagnosticIndicator {
@@ -77,8 +80,10 @@ impl Render for DiagnosticIndicator {
         };
 
         h_flex()
-            .h(rems(1.375))
             .gap_2()
+            .pl_1()
+            .border_l_1()
+            .border_color(cx.theme().colors().border)
             .child(
                 ButtonLike::new("diagnostic-indicator")
                     .child(diagnostic_indicator)
@@ -124,6 +129,7 @@ impl DiagnosticIndicator {
             workspace: workspace.weak_handle(),
             current_diagnostic: None,
             _observe_active_editor: None,
+            diagnostics_update: Task::ready(()),
         }
     }
 
@@ -136,18 +142,32 @@ impl DiagnosticIndicator {
     }
 
     fn update(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
-        let editor = editor.read(cx);
-        let buffer = editor.buffer().read(cx);
-        let cursor_position = editor.selections.newest::<usize>(cx).head();
+        let (buffer, cursor_position) = editor.update(cx, |editor, cx| {
+            let buffer = editor.buffer().read(cx).snapshot(cx);
+            let cursor_position = editor.selections.newest::<usize>(cx).head();
+            (buffer, cursor_position)
+        });
         let new_diagnostic = buffer
-            .snapshot(cx)
-            .diagnostics_in_range::<_, usize>(cursor_position..cursor_position, false)
+            .diagnostics_in_range(cursor_position..cursor_position, false)
+            .map(|DiagnosticEntry { diagnostic, range }| DiagnosticEntry {
+                diagnostic,
+                range: range.to_offset(&buffer),
+            })
             .filter(|entry| !entry.range.is_empty())
             .min_by_key(|entry| (entry.diagnostic.severity, entry.range.len()))
             .map(|entry| entry.diagnostic);
         if new_diagnostic != self.current_diagnostic {
-            self.current_diagnostic = new_diagnostic;
-            cx.notify();
+            self.diagnostics_update = cx.spawn(|diagnostics_indicator, mut cx| async move {
+                cx.background_executor()
+                    .timer(Duration::from_millis(50))
+                    .await;
+                diagnostics_indicator
+                    .update(&mut cx, |diagnostics_indicator, cx| {
+                        diagnostics_indicator.current_diagnostic = new_diagnostic;
+                        cx.notify();
+                    })
+                    .ok();
+            });
         }
     }
 }

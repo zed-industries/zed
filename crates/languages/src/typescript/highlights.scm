@@ -115,15 +115,6 @@
 ; Tokens
 
 [
-  ";"
-  "?."
-  "."
-  ","
-  ":"
-  "?"
-] @punctuation.delimiter
-
-[
   "..."
   "-"
   "--"
@@ -170,6 +161,22 @@
   "||="
   "??="
 ] @operator
+
+(ternary_expression
+  [
+    "?"
+    ":"
+  ] @operator
+)
+
+[
+  ";"
+  "?."
+  "."
+  ","
+  ":"
+  "?"
+] @punctuation.delimiter
 
 [
   "("

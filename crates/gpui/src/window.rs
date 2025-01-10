@@ -1,9 +1,9 @@
 use crate::{
     point, prelude::*, px, size, transparent_black, Action, AnyDrag, AnyElement, AnyTooltip,
-    AnyView, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Bounds, BoxShadow,
-    Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
+    AnyView, AppContext, Arena, Asset, AsyncWindowContext, AvailableSpace, Background, Bounds,
+    BoxShadow, Context, Corners, CursorStyle, Decorations, DevicePixels, DispatchActionListener,
     DispatchNodeId, DispatchTree, DisplayId, Edges, Effect, Entity, EntityId, EventEmitter,
-    FileDropEvent, Flatten, FontId, GPUSpecs, Global, GlobalElementId, GlyphId, Hsla, InputHandler,
+    FileDropEvent, Flatten, FontId, Global, GlobalElementId, GlyphId, GpuSpecs, Hsla, InputHandler,
     IsZero, KeyBinding, KeyContext, KeyDownEvent, KeyEvent, Keystroke, KeystrokeEvent,
     KeystrokeObserver, LayoutId, LineLayoutIndex, Model, ModelContext, Modifiers,
     ModifiersChangedEvent, MonochromeSprite, MouseButton, MouseEvent, MouseMoveEvent, MouseUpEvent,
@@ -531,7 +531,6 @@ pub struct Window {
     pub(crate) tooltip_bounds: Option<TooltipBounds>,
     next_frame_callbacks: Rc<RefCell<Vec<FrameCallback>>>,
     pub(crate) dirty_views: FxHashSet<EntityId>,
-    pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
     focus_listeners: SubscriberSet<(), AnyWindowFocusListener>,
     focus_lost_listeners: SubscriberSet<(), AnyObserver>,
     default_prevented: bool,
@@ -681,7 +680,7 @@ impl Window {
             let needs_present = needs_present.clone();
             let next_frame_callbacks = next_frame_callbacks.clone();
             let last_input_timestamp = last_input_timestamp.clone();
-            move || {
+            move |request_frame_options| {
                 let next_frame_callbacks = next_frame_callbacks.take();
                 if !next_frame_callbacks.is_empty() {
                     handle
@@ -695,7 +694,8 @@ impl Window {
 
                 // Keep presenting the current scene for 1 extra second since the
                 // last input to prevent the display from underclocking the refresh rate.
-                let needs_present = needs_present.get()
+                let needs_present = request_frame_options.require_presentation
+                    || needs_present.get()
                     || (active.get()
                         && last_input_timestamp.get().elapsed() < Duration::from_secs(1));
 
@@ -808,7 +808,6 @@ impl Window {
             next_tooltip_id: TooltipId::default(),
             tooltip_bounds: None,
             dirty_views: FxHashSet::default(),
-            focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
             focus_listeners: SubscriberSet::new(),
             focus_lost_listeners: SubscriberSet::new(),
             default_prevented: true,
@@ -835,10 +834,7 @@ impl Window {
             prompt: None,
         })
     }
-    fn new_focus_listener(
-        &mut self,
-        value: AnyWindowFocusListener,
-    ) -> (Subscription, impl FnOnce()) {
+    fn new_focus_listener(&self, value: AnyWindowFocusListener) -> (Subscription, impl FnOnce()) {
         self.focus_listeners.insert((), value)
     }
 }
@@ -902,7 +898,13 @@ impl<'a> WindowContext<'a> {
 
     /// Indicate that this view has changed, which will invoke any observers and also mark the window as dirty.
     /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
-    pub fn notify(&mut self, view_id: EntityId) {
+    /// Note that this method will always cause a redraw, the entire window is refreshed if view_id is None.
+    pub fn notify(&mut self, view_id: Option<EntityId>) {
+        let Some(view_id) = view_id else {
+            self.refresh();
+            return;
+        };
+
         for view_id in self
             .window
             .rendered_frame
@@ -927,17 +929,11 @@ impl<'a> WindowContext<'a> {
         self.window.removed = true;
     }
 
-    /// Obtain a new [`FocusHandle`], which allows you to track and manipulate the keyboard focus
-    /// for elements rendered within this window.
-    pub fn focus_handle(&mut self) -> FocusHandle {
-        FocusHandle::new(&self.window.focus_handles)
-    }
-
     /// Obtain the currently focused [`FocusHandle`]. If no elements are focused, returns `None`.
     pub fn focused(&self) -> Option<FocusHandle> {
         self.window
             .focus
-            .and_then(|id| FocusHandle::for_id(id, &self.window.focus_handles))
+            .and_then(|id| FocusHandle::for_id(id, &self.app.focus_handles))
     }
 
     /// Move focus to the element associated with the given [`FocusHandle`].
@@ -1001,6 +997,11 @@ impl<'a> WindowContext<'a> {
     /// after it has been closed
     pub fn window_bounds(&self) -> WindowBounds {
         self.window.platform_window.window_bounds()
+    }
+
+    /// Return the `WindowBounds` excluding insets (Wayland and X11)
+    pub fn inner_window_bounds(&self) -> WindowBounds {
+        self.window.platform_window.inner_window_bounds()
     }
 
     /// Dispatch the given action on the currently focused element.
@@ -1127,7 +1128,7 @@ impl<'a> WindowContext<'a> {
 
     /// Register a callback to be invoked when the given Model or View is released.
     pub fn observe_release<E, T>(
-        &mut self,
+        &self,
         entity: &E,
         mut on_release: impl FnOnce(&mut T, &mut WindowContext) + 'static,
     ) -> Subscription
@@ -1155,7 +1156,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Schedule the given closure to be run directly after the current frame is rendered.
-    pub fn on_next_frame(&mut self, callback: impl FnOnce(&mut WindowContext) + 'static) {
+    pub fn on_next_frame(&self, callback: impl FnOnce(&mut WindowContext) + 'static) {
         RefCell::borrow_mut(&self.window.next_frame_callbacks).push(Box::new(callback));
     }
 
@@ -1165,21 +1166,15 @@ impl<'a> WindowContext<'a> {
     /// It will cause the window to redraw on the next frame, even if no other changes have occurred.
     ///
     /// If called from within a view, it will notify that view on the next frame. Otherwise, it will refresh the entire window.
-    pub fn request_animation_frame(&mut self) {
+    pub fn request_animation_frame(&self) {
         let parent_id = self.parent_view_id();
-        self.on_next_frame(move |cx| {
-            if let Some(parent_id) = parent_id {
-                cx.notify(parent_id)
-            } else {
-                cx.refresh()
-            }
-        });
+        self.on_next_frame(move |cx| cx.notify(parent_id));
     }
 
     /// Spawn the future returned by the given closure on the application thread pool.
     /// The closure is provided a handle to the current window and an `AsyncWindowContext` for
     /// use within your future.
-    pub fn spawn<Fut, R>(&mut self, f: impl FnOnce(AsyncWindowContext) -> Fut) -> Task<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(AsyncWindowContext) -> Fut) -> Task<R>
     where
         R: 'static,
         Fut: Future<Output = R> + 'static,
@@ -1243,7 +1238,11 @@ impl<'a> WindowContext<'a> {
     /// that currently owns the mouse cursor.
     /// On mac, this is equivalent to `is_window_active`.
     pub fn is_window_hovered(&self) -> bool {
-        if cfg!(target_os = "linux") {
+        if cfg!(any(
+            target_os = "windows",
+            target_os = "linux",
+            target_os = "freebsd"
+        )) {
             self.window.hovered.get()
         } else {
             self.is_window_active()
@@ -1587,6 +1586,19 @@ impl<'a> WindowContext<'a> {
             }
         }
 
+        // Element's parent can get hidden (e.g. via the `visible_on_hover` method),
+        // and element's `paint` won't be called (ergo, mouse listeners also won't be active) to detect that the tooltip has to be removed.
+        // Ensure it's not stuck around in such cases.
+        let invalidate_tooltip = !tooltip_request
+            .tooltip
+            .origin_bounds
+            .contains(&self.mouse_position())
+            && (!tooltip_request.tooltip.hoverable
+                || !tooltip_bounds.contains(&self.mouse_position()));
+        if invalidate_tooltip {
+            return None;
+        }
+
         self.with_absolute_element_offset(tooltip_bounds.origin, |cx| element.prepaint(cx));
 
         self.window.tooltip_bounds = Some(TooltipBounds {
@@ -1760,6 +1772,7 @@ impl<'a> WindowContext<'a> {
                 .iter()
                 .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
         );
+
         window
             .text_system
             .reuse_layouts(range.start.line_layout_index..range.end.line_layout_index);
@@ -1984,9 +1997,7 @@ impl<'a> WindowContext<'a> {
     ///
     /// Note that the multiple calls to this method will only result in one `Asset::load` call at a
     /// time.
-    ///
-    /// This asset will not be cached by default, see [Self::use_cached_asset]
-    pub fn use_asset<A: Asset + 'static>(&mut self, source: &A::Source) -> Option<A::Output> {
+    pub fn use_asset<A: Asset>(&mut self, source: &A::Source) -> Option<A::Output> {
         let (task, is_first) = self.fetch_asset::<A>(source);
         task.clone().now_or_never().or_else(|| {
             if is_first {
@@ -1996,13 +2007,7 @@ impl<'a> WindowContext<'a> {
                     |mut cx| async move {
                         task.await;
 
-                        cx.on_next_frame(move |cx| {
-                            if let Some(parent_id) = parent_id {
-                                cx.notify(parent_id)
-                            } else {
-                                cx.refresh()
-                            }
-                        });
+                        cx.on_next_frame(move |cx| cx.notify(parent_id));
                     }
                 })
                 .detach();
@@ -2165,6 +2170,9 @@ impl<'a> WindowContext<'a> {
     /// A variant of `with_element_state` that allows the element's id to be optional. This is a convenience
     /// method for elements where the element id may or may not be assigned. Prefer using `with_element_state`
     /// when the element is guaranteed to have an id.
+    ///
+    /// The first option means 'no ID provided'
+    /// The second option means 'not yet initialized'
     pub fn with_optional_element_state<S, R>(
         &mut self,
         global_id: Option<&GlobalElementId>,
@@ -2278,9 +2286,7 @@ impl<'a> WindowContext<'a> {
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
         for shadow in shadows {
-            let mut shadow_bounds = bounds;
-            shadow_bounds.origin += shadow.offset;
-            shadow_bounds.dilate(shadow.spread_radius);
+            let shadow_bounds = (bounds + shadow.offset).dilate(shadow.spread_radius);
             self.window.next_frame.scene.insert_primitive(Shadow {
                 order: 0,
                 blur_radius: shadow.blur_radius.scale(scale_factor),
@@ -2322,7 +2328,7 @@ impl<'a> WindowContext<'a> {
     /// Paint the given `Path` into the scene for the next frame at the current z-index.
     ///
     /// This method should only be called as part of the paint phase of element drawing.
-    pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Hsla>) {
+    pub fn paint_path(&mut self, mut path: Path<Pixels>, color: impl Into<Background>) {
         debug_assert_eq!(
             self.window.draw_phase,
             DrawPhase::Paint,
@@ -2333,7 +2339,8 @@ impl<'a> WindowContext<'a> {
         let content_mask = self.content_mask();
         let opacity = self.element_opacity();
         path.content_mask = content_mask;
-        path.color = color.into().opacity(opacity);
+        let color: Background = color.into();
+        path.color = color.opacity(opacity);
         self.window
             .next_frame
             .scene
@@ -2692,6 +2699,20 @@ impl<'a> WindowContext<'a> {
         });
     }
 
+    /// Removes an image from the sprite atlas.
+    pub fn drop_image(&mut self, data: Arc<RenderImage>) -> Result<()> {
+        for frame_index in 0..data.frame_count() {
+            let params = RenderImageParams {
+                image_id: data.id,
+                frame_index,
+            };
+
+            self.window.sprite_atlas.remove(&params.clone().into());
+        }
+
+        Ok(())
+    }
+
     #[must_use]
     /// Add a node to the layout tree for the current frame. Takes the `Style` of the element for which
     /// layout is being requested, along with the layout ids of any children. This method is called during
@@ -2865,7 +2886,7 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Get the last view id for the current element
-    pub fn parent_view_id(&mut self) -> Option<EntityId> {
+    pub fn parent_view_id(&self) -> Option<EntityId> {
         self.window.next_frame.dispatch_tree.parent_view_id()
     }
 
@@ -3005,7 +3026,7 @@ impl<'a> WindowContext<'a> {
                         let event = FocusOutEvent {
                             blurred: WeakFocusHandle {
                                 id: blurred_id,
-                                handles: Arc::downgrade(&cx.window.focus_handles),
+                                handles: Arc::downgrade(&cx.app.focus_handles),
                             },
                         };
                         listener(event, cx)
@@ -3045,7 +3066,7 @@ impl<'a> WindowContext<'a> {
             return true;
         }
 
-        if let Some(input) = keystroke.ime_key {
+        if let Some(input) = keystroke.key_char {
             if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
                 input_handler.dispatch_input(&input, self);
                 self.window.platform_window.set_input_handler(input_handler);
@@ -3119,7 +3140,7 @@ impl<'a> WindowContext<'a> {
                     self.window.mouse_position = position;
                     if self.active_drag.is_none() {
                         self.active_drag = Some(AnyDrag {
-                            value: Box::new(paths.clone()),
+                            value: Arc::new(paths.clone()),
                             view: self.new_view(|_| paths).into(),
                             cursor_offset: position,
                         });
@@ -3254,7 +3275,7 @@ impl<'a> WindowContext<'a> {
                 if let Some(key) = key {
                     keystroke = Some(Keystroke {
                         key: key.to_string(),
-                        ime_key: None,
+                        key_char: None,
                         modifiers: Modifiers::default(),
                     });
                 }
@@ -3327,17 +3348,18 @@ impl<'a> WindowContext<'a> {
             return;
         }
 
-        self.pending_input_changed();
         self.propagate_event = true;
         for binding in match_result.bindings {
             self.dispatch_action_on_node(node_id, binding.action.as_ref());
             if !self.propagate_event {
                 self.dispatch_keystroke_observers(event, Some(binding.action));
+                self.pending_input_changed();
                 return;
             }
         }
 
-        self.finish_dispatch_key_event(event, dispatch_path)
+        self.finish_dispatch_key_event(event, dispatch_path);
+        self.pending_input_changed();
     }
 
     fn finish_dispatch_key_event(
@@ -3468,7 +3490,7 @@ impl<'a> WindowContext<'a> {
             if !self.propagate_event {
                 continue 'replay;
             }
-            if let Some(input) = replay.keystroke.ime_key.as_ref().cloned() {
+            if let Some(input) = replay.keystroke.key_char.as_ref().cloned() {
                 if let Some(mut input_handler) = self.window.platform_window.take_input_handler() {
                     input_handler.dispatch_input(&input, self);
                     self.window.platform_window.set_input_handler(input_handler)
@@ -3606,11 +3628,13 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Updates the IME panel position suggestions for languages like japanese, chinese.
-    pub fn invalidate_character_coordinates(&mut self) {
+    pub fn invalidate_character_coordinates(&self) {
         self.on_next_frame(|cx| {
             if let Some(mut input_handler) = cx.window.platform_window.take_input_handler() {
                 if let Some(bounds) = input_handler.selected_bounds(cx) {
-                    cx.window.platform_window.update_ime_position(bounds);
+                    cx.window
+                        .platform_window
+                        .update_ime_position(bounds.scale(cx.scale_factor()));
                 }
                 cx.window.platform_window.set_input_handler(input_handler);
             }
@@ -3665,6 +3689,22 @@ impl<'a> WindowContext<'a> {
         receiver
     }
 
+    /// Returns the current context stack.
+    pub fn context_stack(&self) -> Vec<KeyContext> {
+        let dispatch_tree = &self.window.rendered_frame.dispatch_tree;
+        let node_id = self
+            .window
+            .focus
+            .and_then(|focus_id| dispatch_tree.focusable_node_id(focus_id))
+            .unwrap_or_else(|| dispatch_tree.root_node_id());
+
+        dispatch_tree
+            .dispatch_path(node_id)
+            .iter()
+            .filter_map(move |&node_id| dispatch_tree.node(node_id).context.clone())
+            .collect()
+    }
+
     /// Returns all available actions for the focused element.
     pub fn available_actions(&self) -> Vec<Box<dyn Action>> {
         let node_id = self
@@ -3703,6 +3743,11 @@ impl<'a> WindowContext<'a> {
                 action,
                 &self.window.rendered_frame.dispatch_tree.context_stack,
             )
+    }
+
+    /// Returns key bindings that invoke the given action on the currently focused element.
+    pub fn all_bindings_for_input(&self, input: &[Keystroke]) -> Vec<KeyBinding> {
+        RefCell::borrow(&self.keymap).all_bindings_for_input(input)
     }
 
     /// Returns any bindings that would invoke the given action on the given focus handle if it were focused.
@@ -3750,7 +3795,7 @@ impl<'a> WindowContext<'a> {
 
     /// Register a callback that can interrupt the closing of the current window based the returned boolean.
     /// If the callback returns false, the window won't be closed.
-    pub fn on_window_should_close(&mut self, f: impl Fn(&mut WindowContext) -> bool + 'static) {
+    pub fn on_window_should_close(&self, f: impl Fn(&mut WindowContext) -> bool + 'static) {
         let mut this = self.to_async();
         self.window
             .platform_window
@@ -3776,7 +3821,7 @@ impl<'a> WindowContext<'a> {
 
     /// Read information about the GPU backing this window.
     /// Currently returns None on Mac and Windows.
-    pub fn gpu_specs(&self) -> Option<GPUSpecs> {
+    pub fn gpu_specs(&self) -> Option<GpuSpecs> {
         self.window.platform_window.gpu_specs()
     }
 }
@@ -4068,7 +4113,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     }
 
     /// Sets a given callback to be run on the next frame.
-    pub fn on_next_frame(&mut self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + 'static)
+    pub fn on_next_frame(&self, f: impl FnOnce(&mut V, &mut ViewContext<V>) + 'static)
     where
         V: 'static,
     {
@@ -4160,7 +4205,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// The callback receives a handle to the view's window. This handle may be
     /// invalid, if the window was closed before the view was released.
     pub fn on_release(
-        &mut self,
+        &self,
         on_release: impl FnOnce(&mut V, AnyWindowHandle, &mut AppContext) + 'static,
     ) -> Subscription {
         let window_handle = self.window.handle;
@@ -4177,7 +4222,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     /// Register a callback to be invoked when the given Model or View is released.
     pub fn observe_release<V2, E>(
-        &mut self,
+        &self,
         entity: &E,
         mut on_release: impl FnMut(&mut V, &mut V2, &mut ViewContext<'_, V>) + 'static,
     ) -> Subscription
@@ -4205,12 +4250,12 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// Indicate that this view has changed, which will invoke any observers and also mark the window as dirty.
     /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
     pub fn notify(&mut self) {
-        self.window_cx.notify(self.view.entity_id());
+        self.window_cx.notify(Some(self.view.entity_id()));
     }
 
     /// Register a callback to be invoked when the window is resized.
     pub fn observe_window_bounds(
-        &mut self,
+        &self,
         mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
@@ -4224,7 +4269,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     /// Register a callback to be invoked when the window is activated or deactivated.
     pub fn observe_window_activation(
-        &mut self,
+        &self,
         mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
@@ -4238,7 +4283,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     /// Registers a callback to be invoked when the window appearance changes.
     pub fn observe_window_appearance(
-        &mut self,
+        &self,
         mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
@@ -4258,7 +4303,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
         mut f: impl FnMut(&mut V, &KeystrokeEvent, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         fn inner(
-            keystroke_observers: &mut SubscriberSet<(), KeystrokeObserver>,
+            keystroke_observers: &SubscriberSet<(), KeystrokeObserver>,
             handler: KeystrokeObserver,
         ) -> Subscription {
             let (subscription, activate) = keystroke_observers.insert((), handler);
@@ -4282,7 +4327,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
 
     /// Register a callback to be invoked when the window's pending input changes.
     pub fn observe_pending_input(
-        &mut self,
+        &self,
         mut callback: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
@@ -4370,7 +4415,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// and this callback lets you chose a default place to restore the users focus.
     /// Returns a subscription and persists until the subscription is dropped.
     pub fn on_focus_lost(
-        &mut self,
+        &self,
         mut listener: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
     ) -> Subscription {
         let view = self.view.downgrade();
@@ -4399,7 +4444,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
                             let event = FocusOutEvent {
                                 blurred: WeakFocusHandle {
                                     id: blurred_id,
-                                    handles: Arc::downgrade(&cx.window.focus_handles),
+                                    handles: Arc::downgrade(&cx.app.focus_handles),
                                 },
                             };
                             listener(view, event, cx)
@@ -4416,10 +4461,7 @@ impl<'a, V: 'static> ViewContext<'a, V> {
     /// The given callback is invoked with a [`WeakView<V>`] to avoid leaking the view for a long-running process.
     /// It's also given an [`AsyncWindowContext`], which can be used to access the state of the view across await points.
     /// The returned future will be polled on the main thread.
-    pub fn spawn<Fut, R>(
-        &mut self,
-        f: impl FnOnce(WeakView<V>, AsyncWindowContext) -> Fut,
-    ) -> Task<R>
+    pub fn spawn<Fut, R>(&self, f: impl FnOnce(WeakView<V>, AsyncWindowContext) -> Fut) -> Task<R>
     where
         R: 'static,
         Fut: Future<Output = R> + 'static,
@@ -4838,6 +4880,8 @@ pub enum ElementId {
     FocusHandle(FocusId),
     /// A combination of a name and an integer.
     NamedInteger(SharedString, usize),
+    /// A path
+    Path(Arc<std::path::Path>),
 }
 
 impl Display for ElementId {
@@ -4849,6 +4893,7 @@ impl Display for ElementId {
             ElementId::FocusHandle(_) => write!(f, "FocusHandle")?,
             ElementId::NamedInteger(s, i) => write!(f, "{}-{}", s, i)?,
             ElementId::Uuid(uuid) => write!(f, "{}", uuid)?,
+            ElementId::Path(path) => write!(f, "{}", path.display())?,
         }
 
         Ok(())
@@ -4885,6 +4930,12 @@ impl From<SharedString> for ElementId {
     }
 }
 
+impl From<Arc<std::path::Path>> for ElementId {
+    fn from(path: Arc<std::path::Path>) -> Self {
+        ElementId::Path(path)
+    }
+}
+
 impl From<&'static str> for ElementId {
     fn from(name: &'static str) -> Self {
         ElementId::Name(name.into())
@@ -4906,6 +4957,12 @@ impl From<(&'static str, EntityId)> for ElementId {
 impl From<(&'static str, usize)> for ElementId {
     fn from((name, id): (&'static str, usize)) -> Self {
         ElementId::NamedInteger(name.into(), id)
+    }
+}
+
+impl From<(SharedString, usize)> for ElementId {
+    fn from((name, id): (SharedString, usize)) -> Self {
+        ElementId::NamedInteger(name, id)
     }
 }
 
@@ -4936,7 +4993,7 @@ pub struct PaintQuad {
     /// The radii of the quad's corners.
     pub corner_radii: Corners<Pixels>,
     /// The background color of the quad.
-    pub background: Hsla,
+    pub background: Background,
     /// The widths of the quad's borders.
     pub border_widths: Edges<Pixels>,
     /// The color of the quad's borders.
@@ -4969,7 +5026,7 @@ impl PaintQuad {
     }
 
     /// Sets the background color of the quad.
-    pub fn background(self, background: impl Into<Hsla>) -> Self {
+    pub fn background(self, background: impl Into<Background>) -> Self {
         PaintQuad {
             background: background.into(),
             ..self
@@ -4981,7 +5038,7 @@ impl PaintQuad {
 pub fn quad(
     bounds: Bounds<Pixels>,
     corner_radii: impl Into<Corners<Pixels>>,
-    background: impl Into<Hsla>,
+    background: impl Into<Background>,
     border_widths: impl Into<Edges<Pixels>>,
     border_color: impl Into<Hsla>,
 ) -> PaintQuad {
@@ -4995,7 +5052,7 @@ pub fn quad(
 }
 
 /// Creates a filled quad with the given bounds and background color.
-pub fn fill(bounds: impl Into<Bounds<Pixels>>, background: impl Into<Hsla>) -> PaintQuad {
+pub fn fill(bounds: impl Into<Bounds<Pixels>>, background: impl Into<Background>) -> PaintQuad {
     PaintQuad {
         bounds: bounds.into(),
         corner_radii: (0.).into(),
@@ -5010,7 +5067,7 @@ pub fn outline(bounds: impl Into<Bounds<Pixels>>, border_color: impl Into<Hsla>)
     PaintQuad {
         bounds: bounds.into(),
         corner_radii: (0.).into(),
-        background: transparent_black(),
+        background: transparent_black().into(),
         border_widths: (1.).into(),
         border_color: border_color.into(),
     }

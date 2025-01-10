@@ -2,8 +2,8 @@
 #![cfg_attr(windows, allow(dead_code))]
 
 use crate::{
-    bounds_tree::BoundsTree, point, AtlasTextureId, AtlasTile, Bounds, ContentMask, Corners, Edges,
-    Hsla, Pixels, Point, Radians, ScaledPixels, Size,
+    bounds_tree::BoundsTree, point, AtlasTextureId, AtlasTile, Background, Bounds, ContentMask,
+    Corners, Edges, Hsla, Pixels, Point, Radians, ScaledPixels, Size,
 };
 use std::{fmt::Debug, iter::Peekable, ops::Range, slice};
 
@@ -40,6 +40,13 @@ impl Scene {
         self.surfaces.clear();
     }
 
+    #[cfg_attr(
+        all(
+            any(target_os = "linux", target_os = "freebsd"),
+            not(any(feature = "x11", feature = "wayland"))
+        ),
+        allow(dead_code)
+    )]
     pub fn paths(&self) -> &[Path<ScaledPixels>] {
         &self.paths
     }
@@ -121,15 +128,24 @@ impl Scene {
     }
 
     pub fn finish(&mut self) {
-        self.shadows.sort();
-        self.quads.sort();
-        self.paths.sort();
-        self.underlines.sort();
-        self.monochrome_sprites.sort();
-        self.polychrome_sprites.sort();
-        self.surfaces.sort();
+        self.shadows.sort_by_key(|shadow| shadow.order);
+        self.quads.sort_by_key(|quad| quad.order);
+        self.paths.sort_by_key(|path| path.order);
+        self.underlines.sort_by_key(|underline| underline.order);
+        self.monochrome_sprites
+            .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
+        self.polychrome_sprites
+            .sort_by_key(|sprite| (sprite.order, sprite.tile.tile_id));
+        self.surfaces.sort_by_key(|surface| surface.order);
     }
 
+    #[cfg_attr(
+        all(
+            any(target_os = "linux", target_os = "freebsd"),
+            not(any(feature = "x11", feature = "wayland"))
+        ),
+        allow(dead_code)
+    )]
     pub(crate) fn batches(&self) -> impl Iterator<Item = PrimitiveBatch> {
         BatchIterator {
             shadows: &self.shadows,
@@ -158,6 +174,13 @@ impl Scene {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Default)]
+#[cfg_attr(
+    all(
+        any(target_os = "linux", target_os = "freebsd"),
+        not(any(feature = "x11", feature = "wayland"))
+    ),
+    allow(dead_code)
+)]
 pub(crate) enum PrimitiveKind {
     Shadow,
     #[default]
@@ -175,7 +198,7 @@ pub(crate) enum PaintOperation {
     EndLayer,
 }
 
-#[derive(Clone, Ord, PartialOrd, Eq, PartialEq)]
+#[derive(Clone)]
 pub(crate) enum Primitive {
     Shadow(Shadow),
     Quad(Quad),
@@ -212,6 +235,13 @@ impl Primitive {
     }
 }
 
+#[cfg_attr(
+    all(
+        any(target_os = "linux", target_os = "freebsd"),
+        not(any(feature = "x11", feature = "wayland"))
+    ),
+    allow(dead_code)
+)]
 struct BatchIterator<'a> {
     shadows: &'a [Shadow],
     shadows_start: usize,
@@ -398,6 +428,13 @@ impl<'a> Iterator for BatchIterator<'a> {
 }
 
 #[derive(Debug)]
+#[cfg_attr(
+    all(
+        any(target_os = "linux", target_os = "freebsd"),
+        not(any(feature = "x11", feature = "wayland"))
+    ),
+    allow(dead_code)
+)]
 pub(crate) enum PrimitiveBatch<'a> {
     Shadows(&'a [Shadow]),
     Quads(&'a [Quad]),
@@ -414,29 +451,17 @@ pub(crate) enum PrimitiveBatch<'a> {
     Surfaces(&'a [PaintSurface]),
 }
 
-#[derive(Default, Debug, Clone, Eq, PartialEq)]
+#[derive(Default, Debug, Clone)]
 #[repr(C)]
 pub(crate) struct Quad {
     pub order: DrawOrder,
     pub pad: u32, // align to 8 bytes
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
-    pub background: Hsla,
+    pub background: Background,
     pub border_color: Hsla,
     pub corner_radii: Corners<ScaledPixels>,
     pub border_widths: Edges<ScaledPixels>,
-}
-
-impl Ord for Quad {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.order.cmp(&other.order)
-    }
-}
-
-impl PartialOrd for Quad {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
 }
 
 impl From<Quad> for Primitive {
@@ -445,7 +470,7 @@ impl From<Quad> for Primitive {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone)]
 #[repr(C)]
 pub(crate) struct Underline {
     pub order: DrawOrder,
@@ -457,25 +482,13 @@ pub(crate) struct Underline {
     pub wavy: bool,
 }
 
-impl Ord for Underline {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.order.cmp(&other.order)
-    }
-}
-
-impl PartialOrd for Underline {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
 impl From<Underline> for Primitive {
     fn from(underline: Underline) -> Self {
         Primitive::Underline(underline)
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone)]
 #[repr(C)]
 pub(crate) struct Shadow {
     pub order: DrawOrder,
@@ -484,18 +497,6 @@ pub(crate) struct Shadow {
     pub corner_radii: Corners<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     pub color: Hsla,
-}
-
-impl Ord for Shadow {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.order.cmp(&other.order)
-    }
-}
-
-impl PartialOrd for Shadow {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
 }
 
 impl From<Shadow> for Primitive {
@@ -607,7 +608,7 @@ impl Default for TransformationMatrix {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 #[repr(C)]
 pub(crate) struct MonochromeSprite {
     pub order: DrawOrder,
@@ -619,28 +620,13 @@ pub(crate) struct MonochromeSprite {
     pub transformation: TransformationMatrix,
 }
 
-impl Ord for MonochromeSprite {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match self.order.cmp(&other.order) {
-            std::cmp::Ordering::Equal => self.tile.tile_id.cmp(&other.tile.tile_id),
-            order => order,
-        }
-    }
-}
-
-impl PartialOrd for MonochromeSprite {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
 impl From<MonochromeSprite> for Primitive {
     fn from(sprite: MonochromeSprite) -> Self {
         Primitive::MonochromeSprite(sprite)
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug)]
 #[repr(C)]
 pub(crate) struct PolychromeSprite {
     pub order: DrawOrder,
@@ -652,22 +638,6 @@ pub(crate) struct PolychromeSprite {
     pub corner_radii: Corners<ScaledPixels>,
     pub tile: AtlasTile,
 }
-impl Eq for PolychromeSprite {}
-
-impl Ord for PolychromeSprite {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        match self.order.cmp(&other.order) {
-            std::cmp::Ordering::Equal => self.tile.tile_id.cmp(&other.tile.tile_id),
-            order => order,
-        }
-    }
-}
-
-impl PartialOrd for PolychromeSprite {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
 
 impl From<PolychromeSprite> for Primitive {
     fn from(sprite: PolychromeSprite) -> Self {
@@ -675,25 +645,13 @@ impl From<PolychromeSprite> for Primitive {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug)]
 pub(crate) struct PaintSurface {
     pub order: DrawOrder,
     pub bounds: Bounds<ScaledPixels>,
     pub content_mask: ContentMask<ScaledPixels>,
     #[cfg(target_os = "macos")]
     pub image_buffer: media::core_video::CVImageBuffer,
-}
-
-impl Ord for PaintSurface {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.order.cmp(&other.order)
-    }
-}
-
-impl PartialOrd for PaintSurface {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
 }
 
 impl From<PaintSurface> for Primitive {
@@ -713,7 +671,7 @@ pub struct Path<P: Clone + Default + Debug> {
     pub(crate) bounds: Bounds<P>,
     pub(crate) content_mask: ContentMask<P>,
     pub(crate) vertices: Vec<PathVertex<P>>,
-    pub(crate) color: Hsla,
+    pub(crate) color: Background,
     start: Point<P>,
     current: Point<P>,
     contour_count: usize,
@@ -821,26 +779,6 @@ impl Path<Pixels> {
             st_position: st.2,
             content_mask: Default::default(),
         });
-    }
-}
-
-impl Eq for Path<ScaledPixels> {}
-
-impl PartialEq for Path<ScaledPixels> {
-    fn eq(&self, other: &Self) -> bool {
-        self.order == other.order
-    }
-}
-
-impl Ord for Path<ScaledPixels> {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.order.cmp(&other.order)
-    }
-}
-
-impl PartialOrd for Path<ScaledPixels> {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
     }
 }
 

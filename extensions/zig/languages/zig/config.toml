@@ -1,7 +1,7 @@
 name = "Zig"
 grammar = "zig"
 path_suffixes = ["zig", "zon"]
-line_comments = ["// "]
+line_comments = ["// ", "/// ", "//! "]
 autoclose_before = ";:.,=}])"
 brackets = [
     { start = "{", end = "}", close = true, newline = true },

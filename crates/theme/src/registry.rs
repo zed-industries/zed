@@ -6,20 +6,20 @@ use collections::HashMap;
 use derive_more::{Deref, DerefMut};
 use fs::Fs;
 use futures::StreamExt;
-use gpui::{AppContext, AssetSource, Global, HighlightStyle, SharedString};
+use gpui::{AppContext, AssetSource, Global, SharedString};
 use parking_lot::RwLock;
-use refineable::Refineable;
 use util::ResultExt;
 
 use crate::{
-    try_parse_color, AccentColors, Appearance, AppearanceContent, PlayerColors, StatusColors,
-    SyntaxTheme, SystemColors, Theme, ThemeColors, ThemeContent, ThemeFamily, ThemeFamilyContent,
-    ThemeStyles,
+    read_user_theme, refine_theme_family, Appearance, Theme, ThemeFamily, ThemeFamilyContent,
 };
 
+/// The metadata for a theme.
 #[derive(Debug, Clone)]
 pub struct ThemeMeta {
+    /// The name of the theme.
     pub name: SharedString,
+    /// The appearance of the theme.
     pub appearance: Appearance,
 }
 
@@ -38,6 +38,7 @@ struct ThemeRegistryState {
     themes: HashMap<SharedString, Arc<Theme>>,
 }
 
+/// The registry for themes.
 pub struct ThemeRegistry {
     state: RwLock<ThemeRegistryState>,
     assets: Box<dyn AssetSource>,
@@ -61,6 +62,7 @@ impl ThemeRegistry {
         cx.set_global(GlobalThemeRegistry(Arc::new(ThemeRegistry::new(assets))));
     }
 
+    /// Creates a new [`ThemeRegistry`] with the given [`AssetSource`].
     pub fn new(assets: Box<dyn AssetSource>) -> Self {
         let registry = Self {
             state: RwLock::new(ThemeRegistryState {
@@ -69,12 +71,9 @@ impl ThemeRegistry {
             assets,
         };
 
-        // We're loading our new versions of the One themes by default, as
-        // we need them to be loaded for tests.
-        //
-        // These themes will get overwritten when `load_user_themes` is called
-        // when Zed starts, so the One variants used will be the ones ported from Zed1.
-        registry.insert_theme_families([crate::one_themes::one_family()]);
+        // We're loading the Zed default theme, as we need a theme to be loaded
+        // for tests.
+        registry.insert_theme_families([crate::fallback_themes::zed_default_themes()]);
 
         registry
     }
@@ -95,86 +94,10 @@ impl ThemeRegistry {
     #[allow(unused)]
     fn insert_user_theme_families(&self, families: impl IntoIterator<Item = ThemeFamilyContent>) {
         for family in families.into_iter() {
-            self.insert_user_themes(family.themes);
+            let refined_family = refine_theme_family(family);
+
+            self.insert_themes(refined_family.themes);
         }
-    }
-
-    pub fn insert_user_themes(&self, themes: impl IntoIterator<Item = ThemeContent>) {
-        self.insert_themes(themes.into_iter().map(|user_theme| {
-            let mut theme_colors = match user_theme.appearance {
-                AppearanceContent::Light => ThemeColors::light(),
-                AppearanceContent::Dark => ThemeColors::dark(),
-            };
-            theme_colors.refine(&user_theme.style.theme_colors_refinement());
-
-            let mut status_colors = match user_theme.appearance {
-                AppearanceContent::Light => StatusColors::light(),
-                AppearanceContent::Dark => StatusColors::dark(),
-            };
-            status_colors.refine(&user_theme.style.status_colors_refinement());
-
-            let mut player_colors = match user_theme.appearance {
-                AppearanceContent::Light => PlayerColors::light(),
-                AppearanceContent::Dark => PlayerColors::dark(),
-            };
-            player_colors.merge(&user_theme.style.players);
-
-            let mut accent_colors = match user_theme.appearance {
-                AppearanceContent::Light => AccentColors::light(),
-                AppearanceContent::Dark => AccentColors::dark(),
-            };
-            accent_colors.merge(&user_theme.style.accents);
-
-            let syntax_highlights = user_theme
-                .style
-                .syntax
-                .iter()
-                .map(|(syntax_token, highlight)| {
-                    (
-                        syntax_token.clone(),
-                        HighlightStyle {
-                            color: highlight
-                                .color
-                                .as_ref()
-                                .and_then(|color| try_parse_color(color).ok()),
-                            background_color: highlight
-                                .background_color
-                                .as_ref()
-                                .and_then(|color| try_parse_color(color).ok()),
-                            font_style: highlight.font_style.map(Into::into),
-                            font_weight: highlight.font_weight.map(Into::into),
-                            ..Default::default()
-                        },
-                    )
-                })
-                .collect::<Vec<_>>();
-            let syntax_theme =
-                SyntaxTheme::merge(Arc::new(SyntaxTheme::default()), syntax_highlights);
-
-            let window_background_appearance = user_theme
-                .style
-                .window_background_appearance
-                .map(Into::into)
-                .unwrap_or_default();
-
-            Theme {
-                id: uuid::Uuid::new_v4().to_string(),
-                name: user_theme.name.into(),
-                appearance: match user_theme.appearance {
-                    AppearanceContent::Light => Appearance::Light,
-                    AppearanceContent::Dark => Appearance::Dark,
-                },
-                styles: ThemeStyles {
-                    system: SystemColors::default(),
-                    window_background_appearance,
-                    accents: accent_colors,
-                    colors: theme_colors,
-                    status: status_colors,
-                    player: player_colors,
-                    syntax: syntax_theme,
-                },
-            }
-        }));
     }
 
     /// Removes the themes with the given names from the registry.
@@ -185,17 +108,20 @@ impl ThemeRegistry {
             .retain(|name, _| !themes_to_remove.contains(name))
     }
 
-    pub fn clear(&mut self) {
+    /// Removes all themes from the registry.
+    pub fn clear(&self) {
         self.state.write().themes.clear();
     }
 
-    pub fn list_names(&self, _staff: bool) -> Vec<SharedString> {
+    /// Returns the names of all themes in the registry.
+    pub fn list_names(&self) -> Vec<SharedString> {
         let mut names = self.state.read().themes.keys().cloned().collect::<Vec<_>>();
         names.sort();
         names
     }
 
-    pub fn list(&self, _staff: bool) -> Vec<ThemeMeta> {
+    /// Returns the metadata of all themes in the registry.
+    pub fn list(&self) -> Vec<ThemeMeta> {
         self.state
             .read()
             .themes
@@ -207,6 +133,7 @@ impl ThemeRegistry {
             .collect()
     }
 
+    /// Returns the theme with the given name.
     pub fn get(&self, name: &str) -> Result<Arc<Theme>> {
         self.state
             .read()
@@ -261,30 +188,9 @@ impl ThemeRegistry {
         Ok(())
     }
 
-    pub async fn read_user_theme(theme_path: &Path, fs: Arc<dyn Fs>) -> Result<ThemeFamilyContent> {
-        let reader = fs.open_sync(theme_path).await?;
-        let theme_family: ThemeFamilyContent = serde_json_lenient::from_reader(reader)?;
-
-        for theme in &theme_family.themes {
-            if theme
-                .style
-                .colors
-                .deprecated_scrollbar_thumb_background
-                .is_some()
-            {
-                log::warn!(
-                    r#"Theme "{theme_name}" is using a deprecated style property: scrollbar_thumb.background. Use `scrollbar.thumb.background` instead."#,
-                    theme_name = theme.name
-                )
-            }
-        }
-
-        Ok(theme_family)
-    }
-
     /// Loads the user theme from the specified path and adds it to the registry.
     pub async fn load_user_theme(&self, theme_path: &Path, fs: Arc<dyn Fs>) -> Result<()> {
-        let theme = Self::read_user_theme(theme_path, fs).await?;
+        let theme = read_user_theme(theme_path, fs).await?;
 
         self.insert_user_theme_families([theme]);
 

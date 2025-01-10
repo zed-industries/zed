@@ -1,12 +1,11 @@
 mod authorization;
 pub mod db;
-mod telemetry;
 mod token;
 
-use crate::{
-    api::CloudflareIpCountryHeader, build_clickhouse_client, db::UserId, executor::Executor,
-    Config, Error, Result,
-};
+use crate::api::events::SnowflakeRow;
+use crate::api::CloudflareIpCountryHeader;
+use crate::build_kinesis_client;
+use crate::{db::UserId, executor::Executor, Cents, Config, Error, Result};
 use anyhow::{anyhow, Context as _};
 use authorization::authorize_access_to_language_model;
 use axum::routing::get;
@@ -20,20 +19,24 @@ use axum::{
 };
 use chrono::{DateTime, Duration, Utc};
 use collections::HashMap;
+use db::TokenUsage;
 use db::{usage_measure::UsageMeasure, ActiveUserCount, LlmDatabase};
 use futures::{Stream, StreamExt as _};
-use isahc_http_client::IsahcHttpClient;
-use rpc::ListModelsResponse;
+use reqwest_client::ReqwestClient;
 use rpc::{
     proto::Plan, LanguageModelProvider, PerformCompletionParams, EXPIRED_LLM_TOKEN_HEADER_NAME,
 };
+use rpc::{
+    ListModelsResponse, PredictEditsParams, PredictEditsResponse,
+    MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME,
+};
+use serde_json::json;
 use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
 use strum::IntoEnumIterator;
-use telemetry::{report_llm_rate_limit, report_llm_usage, LlmRateLimitEventRow, LlmUsageEventRow};
 use tokio::sync::RwLock;
 use util::ResultExt;
 
@@ -43,8 +46,8 @@ pub struct LlmState {
     pub config: Config,
     pub executor: Executor,
     pub db: Arc<LlmDatabase>,
-    pub http_client: IsahcHttpClient,
-    pub clickhouse_client: Option<clickhouse::Client>,
+    pub http_client: ReqwestClient,
+    pub kinesis_client: Option<aws_sdk_kinesis::Client>,
     active_user_count_by_model:
         RwLock<HashMap<(LanguageModelProvider, String), (DateTime<Utc>, ActiveUserCount)>>,
 }
@@ -69,20 +72,18 @@ impl LlmState {
         let db = Arc::new(db);
 
         let user_agent = format!("Zed Server/{}", env!("CARGO_PKG_VERSION"));
-        let http_client = IsahcHttpClient::builder()
-            .default_header("User-Agent", user_agent)
-            .build()
-            .map(IsahcHttpClient::from)
-            .context("failed to construct http client")?;
+        let http_client =
+            ReqwestClient::user_agent(&user_agent).context("failed to construct http client")?;
 
         let this = Self {
             executor,
             db,
             http_client,
-            clickhouse_client: config
-                .clickhouse_url
-                .as_ref()
-                .and_then(|_| build_clickhouse_client(&config).log_err()),
+            kinesis_client: if config.kinesis_access_key.is_some() {
+                build_kinesis_client(&config).await.log_err()
+            } else {
+                None
+            },
             active_user_count_by_model: RwLock::new(HashMap::default()),
             config,
         };
@@ -119,6 +120,7 @@ pub fn routes() -> Router<(), Body> {
     Router::new()
         .route("/models", get(list_models))
         .route("/completion", post(perform_completion))
+        .route("/predict_edits", post(predict_edits))
         .layer(middleware::from_fn(validate_api_token))
 }
 
@@ -269,7 +271,6 @@ async fn perform_completion(
                 anthropic::ANTHROPIC_API_URL,
                 api_key,
                 request,
-                None,
             )
             .await
             .map_err(|err| match err {
@@ -320,22 +321,31 @@ async fn perform_completion(
             chunks
                 .map(move |event| {
                     let chunk = event?;
-                    let (input_tokens, output_tokens) = match &chunk {
+                    let (
+                        input_tokens,
+                        output_tokens,
+                        cache_creation_input_tokens,
+                        cache_read_input_tokens,
+                    ) = match &chunk {
                         anthropic::Event::MessageStart {
                             message: anthropic::Response { usage, .. },
                         }
                         | anthropic::Event::MessageDelta { usage, .. } => (
                             usage.input_tokens.unwrap_or(0) as usize,
                             usage.output_tokens.unwrap_or(0) as usize,
+                            usage.cache_creation_input_tokens.unwrap_or(0) as usize,
+                            usage.cache_read_input_tokens.unwrap_or(0) as usize,
                         ),
-                        _ => (0, 0),
+                        _ => (0, 0, 0, 0),
                     };
 
-                    anyhow::Ok((
-                        serde_json::to_vec(&chunk).unwrap(),
+                    anyhow::Ok(CompletionChunk {
+                        bytes: serde_json::to_vec(&chunk).unwrap(),
                         input_tokens,
                         output_tokens,
-                    ))
+                        cache_creation_input_tokens,
+                        cache_read_input_tokens,
+                    })
                 })
                 .boxed()
         }
@@ -350,7 +360,6 @@ async fn perform_completion(
                 open_ai::OPEN_AI_API_URL,
                 api_key,
                 serde_json::from_str(params.provider_request.get())?,
-                None,
             )
             .await?;
 
@@ -361,11 +370,13 @@ async fn perform_completion(
                             chunk.usage.as_ref().map_or(0, |u| u.prompt_tokens) as usize;
                         let output_tokens =
                             chunk.usage.as_ref().map_or(0, |u| u.completion_tokens) as usize;
-                        (
-                            serde_json::to_vec(&chunk).unwrap(),
+                        CompletionChunk {
+                            bytes: serde_json::to_vec(&chunk).unwrap(),
                             input_tokens,
                             output_tokens,
-                        )
+                            cache_creation_input_tokens: 0,
+                            cache_read_input_tokens: 0,
+                        }
                     })
                 })
                 .boxed()
@@ -381,7 +392,6 @@ async fn perform_completion(
                 google_ai::API_URL,
                 api_key,
                 serde_json::from_str(params.provider_request.get())?,
-                None,
             )
             .await?;
 
@@ -389,13 +399,13 @@ async fn perform_completion(
                 .map(|event| {
                     event.map(|chunk| {
                         // TODO - implement token counting for Google AI
-                        let input_tokens = 0;
-                        let output_tokens = 0;
-                        (
-                            serde_json::to_vec(&chunk).unwrap(),
-                            input_tokens,
-                            output_tokens,
-                        )
+                        CompletionChunk {
+                            bytes: serde_json::to_vec(&chunk).unwrap(),
+                            input_tokens: 0,
+                            output_tokens: 0,
+                            cache_creation_input_tokens: 0,
+                            cache_read_input_tokens: 0,
+                        }
                     })
                 })
                 .boxed()
@@ -407,8 +417,7 @@ async fn perform_completion(
         claims,
         provider: params.provider,
         model,
-        input_tokens: 0,
-        output_tokens: 0,
+        tokens: TokenUsage::default(),
         inner_stream: stream,
     })))
 }
@@ -425,10 +434,68 @@ fn normalize_model_name(known_models: Vec<String>, name: String) -> String {
     }
 }
 
-/// The maximum lifetime spending an individual user can reach before being cut off.
+async fn predict_edits(
+    Extension(state): Extension<Arc<LlmState>>,
+    Extension(claims): Extension<LlmTokenClaims>,
+    _country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
+    Json(params): Json<PredictEditsParams>,
+) -> Result<impl IntoResponse> {
+    if !claims.is_staff {
+        return Err(anyhow!("not found"))?;
+    }
+
+    let api_url = state
+        .config
+        .prediction_api_url
+        .as_ref()
+        .context("no PREDICTION_API_URL configured on the server")?;
+    let api_key = state
+        .config
+        .prediction_api_key
+        .as_ref()
+        .context("no PREDICTION_API_KEY configured on the server")?;
+    let model = state
+        .config
+        .prediction_model
+        .as_ref()
+        .context("no PREDICTION_MODEL configured on the server")?;
+    let prompt = include_str!("./llm/prediction_prompt.md")
+        .replace("<events>", &params.input_events)
+        .replace("<excerpt>", &params.input_excerpt);
+    let mut response = open_ai::complete_text(
+        &state.http_client,
+        api_url,
+        api_key,
+        open_ai::CompletionRequest {
+            model: model.to_string(),
+            prompt: prompt.clone(),
+            max_tokens: 1024,
+            temperature: 0.,
+            prediction: Some(open_ai::Prediction::Content {
+                content: params.input_excerpt,
+            }),
+            rewrite_speculation: Some(true),
+        },
+    )
+    .await?;
+    let choice = response
+        .choices
+        .pop()
+        .context("no output from completion response")?;
+    Ok(Json(PredictEditsResponse {
+        output_excerpt: choice.text,
+    }))
+}
+
+/// The maximum monthly spending an individual user can reach on the free tier
+/// before they have to pay.
+pub const FREE_TIER_MONTHLY_SPENDING_LIMIT: Cents = Cents::from_dollars(10);
+
+/// The default value to use for maximum spend per month if the user did not
+/// explicitly set a maximum spend.
 ///
-/// Represented in cents.
-const LIFETIME_SPENDING_LIMIT_IN_CENTS: usize = 1_000 * 100;
+/// Used to prevent surprise bills.
+pub const DEFAULT_MAX_MONTHLY_SPEND: Cents = Cents::from_dollars(10);
 
 async fn check_usage_limit(
     state: &Arc<LlmState>,
@@ -436,6 +503,10 @@ async fn check_usage_limit(
     model_name: &str,
     claims: &LlmTokenClaims,
 ) -> Result<()> {
+    if claims.is_staff {
+        return Ok(());
+    }
+
     let model = state.db.model(provider, model_name)?;
     let usage = state
         .db
@@ -446,12 +517,28 @@ async fn check_usage_limit(
             Utc::now(),
         )
         .await?;
+    let free_tier = claims.free_tier_monthly_spending_limit();
 
-    if usage.lifetime_spending >= LIFETIME_SPENDING_LIMIT_IN_CENTS {
-        return Err(Error::http(
-            StatusCode::FORBIDDEN,
-            "Maximum spending limit reached.".to_string(),
-        ));
+    if usage.spending_this_month >= free_tier {
+        if !claims.has_llm_subscription {
+            return Err(Error::http(
+                StatusCode::PAYMENT_REQUIRED,
+                "Maximum spending limit reached for this month.".to_string(),
+            ));
+        }
+
+        if (usage.spending_this_month - free_tier) >= Cents(claims.max_monthly_spend_in_cents) {
+            return Err(Error::Http(
+                StatusCode::FORBIDDEN,
+                "Maximum spending limit reached for this month.".to_string(),
+                [(
+                    HeaderName::from_static(MAX_LLM_MONTHLY_SPEND_REACHED_HEADER_NAME),
+                    HeaderValue::from_static("true"),
+                )]
+                .into_iter()
+                .collect(),
+            ));
+        }
     }
 
     let active_users = state.get_active_user_count(provider, model_name).await?;
@@ -484,64 +571,55 @@ async fn check_usage_limit(
     ];
 
     for (used, limit, usage_measure) in checks {
-        // Temporarily bypass rate-limiting for staff members.
-        if claims.is_staff {
-            continue;
-        }
-
         if used > limit {
             let resource = match usage_measure {
                 UsageMeasure::RequestsPerMinute => "requests_per_minute",
                 UsageMeasure::TokensPerMinute => "tokens_per_minute",
                 UsageMeasure::TokensPerDay => "tokens_per_day",
-                _ => "",
             };
 
-            if let Some(client) = state.clickhouse_client.as_ref() {
-                tracing::info!(
-                    target: "user rate limit",
-                    user_id = claims.user_id,
-                    login = claims.github_user_login,
-                    authn.jti = claims.jti,
-                    is_staff = claims.is_staff,
-                    provider = provider.to_string(),
-                    model = model.name,
-                    requests_this_minute = usage.requests_this_minute,
-                    tokens_this_minute = usage.tokens_this_minute,
-                    tokens_this_day = usage.tokens_this_day,
-                    users_in_recent_minutes = users_in_recent_minutes,
-                    users_in_recent_days = users_in_recent_days,
-                    max_requests_per_minute = per_user_max_requests_per_minute,
-                    max_tokens_per_minute = per_user_max_tokens_per_minute,
-                    max_tokens_per_day = per_user_max_tokens_per_day,
-                );
+            tracing::info!(
+                target: "user rate limit",
+                user_id = claims.user_id,
+                login = claims.github_user_login,
+                authn.jti = claims.jti,
+                is_staff = claims.is_staff,
+                provider = provider.to_string(),
+                model = model.name,
+                requests_this_minute = usage.requests_this_minute,
+                tokens_this_minute = usage.tokens_this_minute,
+                tokens_this_day = usage.tokens_this_day,
+                users_in_recent_minutes = users_in_recent_minutes,
+                users_in_recent_days = users_in_recent_days,
+                max_requests_per_minute = per_user_max_requests_per_minute,
+                max_tokens_per_minute = per_user_max_tokens_per_minute,
+                max_tokens_per_day = per_user_max_tokens_per_day,
+            );
 
-                report_llm_rate_limit(
-                    client,
-                    LlmRateLimitEventRow {
-                        time: Utc::now().timestamp_millis(),
-                        user_id: claims.user_id as i32,
-                        is_staff: claims.is_staff,
-                        plan: match claims.plan {
-                            Plan::Free => "free".to_string(),
-                            Plan::ZedPro => "zed_pro".to_string(),
-                        },
-                        model: model.name.clone(),
-                        provider: provider.to_string(),
-                        usage_measure: resource.to_string(),
-                        requests_this_minute: usage.requests_this_minute as u64,
-                        tokens_this_minute: usage.tokens_this_minute as u64,
-                        tokens_this_day: usage.tokens_this_day as u64,
-                        users_in_recent_minutes: users_in_recent_minutes as u64,
-                        users_in_recent_days: users_in_recent_days as u64,
-                        max_requests_per_minute: per_user_max_requests_per_minute as u64,
-                        max_tokens_per_minute: per_user_max_tokens_per_minute as u64,
-                        max_tokens_per_day: per_user_max_tokens_per_day as u64,
+            SnowflakeRow::new(
+                "Language Model Rate Limited",
+                claims.metrics_id,
+                claims.is_staff,
+                claims.system_id.clone(),
+                json!({
+                    "usage": usage,
+                    "users_in_recent_minutes": users_in_recent_minutes,
+                    "users_in_recent_days": users_in_recent_days,
+                    "max_requests_per_minute": per_user_max_requests_per_minute,
+                    "max_tokens_per_minute": per_user_max_tokens_per_minute,
+                    "max_tokens_per_day": per_user_max_tokens_per_day,
+                    "plan": match claims.plan {
+                        Plan::Free => "free".to_string(),
+                        Plan::ZedPro => "zed_pro".to_string(),
                     },
-                )
-                .await
-                .log_err();
-            }
+                    "model": model.name.clone(),
+                    "provider": provider.to_string(),
+                    "usage_measure": resource.to_string(),
+                }),
+            )
+            .write(&state.kinesis_client, &state.config.kinesis_stream)
+            .await
+            .log_err();
 
             return Err(Error::http(
                 StatusCode::TOO_MANY_REQUESTS,
@@ -553,29 +631,38 @@ async fn check_usage_limit(
     Ok(())
 }
 
+struct CompletionChunk {
+    bytes: Vec<u8>,
+    input_tokens: usize,
+    output_tokens: usize,
+    cache_creation_input_tokens: usize,
+    cache_read_input_tokens: usize,
+}
+
 struct TokenCountingStream<S> {
     state: Arc<LlmState>,
     claims: LlmTokenClaims,
     provider: LanguageModelProvider,
     model: String,
-    input_tokens: usize,
-    output_tokens: usize,
+    tokens: TokenUsage,
     inner_stream: S,
 }
 
 impl<S> Stream for TokenCountingStream<S>
 where
-    S: Stream<Item = Result<(Vec<u8>, usize, usize), anyhow::Error>> + Unpin,
+    S: Stream<Item = Result<CompletionChunk, anyhow::Error>> + Unpin,
 {
     type Item = Result<Vec<u8>, anyhow::Error>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         match Pin::new(&mut self.inner_stream).poll_next(cx) {
-            Poll::Ready(Some(Ok((mut bytes, input_tokens, output_tokens)))) => {
-                bytes.push(b'\n');
-                self.input_tokens += input_tokens;
-                self.output_tokens += output_tokens;
-                Poll::Ready(Some(Ok(bytes)))
+            Poll::Ready(Some(Ok(mut chunk))) => {
+                chunk.bytes.push(b'\n');
+                self.tokens.input += chunk.input_tokens;
+                self.tokens.output += chunk.output_tokens;
+                self.tokens.input_cache_creation += chunk.cache_creation_input_tokens;
+                self.tokens.input_cache_read += chunk.cache_read_input_tokens;
+                Poll::Ready(Some(Ok(chunk.bytes)))
             }
             Poll::Ready(Some(Err(e))) => Poll::Ready(Some(Err(e))),
             Poll::Ready(None) => Poll::Ready(None),
@@ -590,8 +677,7 @@ impl<S> Drop for TokenCountingStream<S> {
         let claims = self.claims.clone();
         let provider = self.provider;
         let model = std::mem::take(&mut self.model);
-        let input_token_count = self.input_tokens;
-        let output_token_count = self.output_tokens;
+        let tokens = self.tokens;
         self.state.executor.spawn_detached(async move {
             let usage = state
                 .db
@@ -600,8 +686,10 @@ impl<S> Drop for TokenCountingStream<S> {
                     claims.is_staff,
                     provider,
                     &model,
-                    input_token_count,
-                    output_token_count,
+                    tokens,
+                    claims.has_llm_subscription,
+                    Cents(claims.max_monthly_spend_in_cents),
+                    claims.free_tier_monthly_spending_limit(),
                     Utc::now(),
                 )
                 .await
@@ -618,33 +706,28 @@ impl<S> Drop for TokenCountingStream<S> {
                     tokens_this_minute = usage.tokens_this_minute,
                 );
 
-                if let Some(clickhouse_client) = state.clickhouse_client.as_ref() {
-                    report_llm_usage(
-                        clickhouse_client,
-                        LlmUsageEventRow {
-                            time: Utc::now().timestamp_millis(),
-                            user_id: claims.user_id as i32,
-                            is_staff: claims.is_staff,
-                            plan: match claims.plan {
-                                Plan::Free => "free".to_string(),
-                                Plan::ZedPro => "zed_pro".to_string(),
-                            },
-                            model,
-                            provider: provider.to_string(),
-                            input_token_count: input_token_count as u64,
-                            output_token_count: output_token_count as u64,
-                            requests_this_minute: usage.requests_this_minute as u64,
-                            tokens_this_minute: usage.tokens_this_minute as u64,
-                            tokens_this_day: usage.tokens_this_day as u64,
-                            input_tokens_this_month: usage.input_tokens_this_month as u64,
-                            output_tokens_this_month: usage.output_tokens_this_month as u64,
-                            spending_this_month: usage.spending_this_month as u64,
-                            lifetime_spending: usage.lifetime_spending as u64,
-                        },
-                    )
-                    .await
-                    .log_err();
-                }
+                let properties = json!({
+                    "has_llm_subscription": claims.has_llm_subscription,
+                    "max_monthly_spend_in_cents": claims.max_monthly_spend_in_cents,
+                    "plan": match claims.plan {
+                        Plan::Free => "free".to_string(),
+                        Plan::ZedPro => "zed_pro".to_string(),
+                    },
+                    "model": model,
+                    "provider": provider,
+                    "usage": usage,
+                    "tokens": tokens
+                });
+                SnowflakeRow::new(
+                    "Language Model Used",
+                    claims.metrics_id,
+                    claims.is_staff,
+                    claims.system_id.clone(),
+                    properties,
+                )
+                .write(&state.kinesis_client, &state.config.kinesis_stream)
+                .await
+                .log_err();
             }
         })
     }

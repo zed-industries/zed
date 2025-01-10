@@ -17,7 +17,21 @@ The `OmniSharp` binary can be configured in a Zed settings file with:
     "omnisharp": {
       "binary": {
         "path": "/path/to/OmniSharp",
-        "args": ["optional", "additional", "args", "-lsp"]
+        "arguments": ["optional", "additional", "args", "-lsp"]
+      }
+    }
+  }
+}
+```
+
+If you want to disable Zed looking for a `omnisharp` binary, you can set `ignore_system_version` to `true`:
+
+```json
+{
+  "lsp": {
+    "omnisharp": {
+      "binary": {
+        "ignore_system_version": true
       }
     }
   }

@@ -103,11 +103,11 @@ impl Database {
         &self,
         user_id: UserId,
         connection: ConnectionId,
-        live_kit_room: &str,
+        livekit_room: &str,
     ) -> Result<proto::Room> {
         self.transaction(|tx| async move {
             let room = room::ActiveModel {
-                live_kit_room: ActiveValue::set(live_kit_room.into()),
+                live_kit_room: ActiveValue::set(livekit_room.into()),
                 ..Default::default()
             }
             .insert(&*tx)
@@ -659,10 +659,9 @@ impl Database {
                                 seconds: db_entry.mtime_seconds as u64,
                                 nanos: db_entry.mtime_nanos as u32,
                             }),
-                            is_symlink: db_entry.is_symlink,
+                            canonical_path: db_entry.canonical_path,
                             is_ignored: db_entry.is_ignored,
                             is_external: db_entry.is_external,
-                            git_status: db_entry.git_status.map(|status| status as i32),
                             // This is only used in the summarization backlog, so if it's None,
                             // that just means we won't be able to detect when to resummarize
                             // based on total number of backlogged bytes - instead, we'd go
@@ -682,26 +681,69 @@ impl Database {
                     worktree_repository::Column::IsDeleted.eq(false)
                 };
 
-                let mut db_repositories = worktree_repository::Entity::find()
+                let db_repositories = worktree_repository::Entity::find()
                     .filter(
                         Condition::all()
                             .add(worktree_repository::Column::ProjectId.eq(project.id))
                             .add(worktree_repository::Column::WorktreeId.eq(worktree.id))
                             .add(repository_entry_filter),
                     )
-                    .stream(tx)
+                    .all(tx)
                     .await?;
 
-                while let Some(db_repository) = db_repositories.next().await {
-                    let db_repository = db_repository?;
+                for db_repository in db_repositories.into_iter() {
                     if db_repository.is_deleted {
                         worktree
                             .removed_repositories
                             .push(db_repository.work_directory_id as u64);
                     } else {
+                        let status_entry_filter = if let Some(rejoined_worktree) = rejoined_worktree
+                        {
+                            worktree_repository_statuses::Column::ScanId
+                                .gt(rejoined_worktree.scan_id)
+                        } else {
+                            worktree_repository_statuses::Column::IsDeleted.eq(false)
+                        };
+
+                        let mut db_statuses = worktree_repository_statuses::Entity::find()
+                            .filter(
+                                Condition::all()
+                                    .add(
+                                        worktree_repository_statuses::Column::ProjectId
+                                            .eq(project.id),
+                                    )
+                                    .add(
+                                        worktree_repository_statuses::Column::WorktreeId
+                                            .eq(worktree.id),
+                                    )
+                                    .add(
+                                        worktree_repository_statuses::Column::WorkDirectoryId
+                                            .eq(db_repository.work_directory_id),
+                                    )
+                                    .add(status_entry_filter),
+                            )
+                            .stream(tx)
+                            .await?;
+                        let mut removed_statuses = Vec::new();
+                        let mut updated_statuses = Vec::new();
+
+                        while let Some(db_status) = db_statuses.next().await {
+                            let db_status: worktree_repository_statuses::Model = db_status?;
+                            if db_status.is_deleted {
+                                removed_statuses.push(db_status.repo_path);
+                            } else {
+                                updated_statuses.push(proto::StatusEntry {
+                                    repo_path: db_status.repo_path,
+                                    status: db_status.status as i32,
+                                });
+                            }
+                        }
+
                         worktree.updated_repositories.push(proto::RepositoryEntry {
                             work_directory_id: db_repository.work_directory_id as u64,
                             branch: db_repository.branch,
+                            updated_statuses,
+                            removed_statuses,
                         });
                     }
                 }
@@ -718,6 +760,7 @@ impl Database {
             .map(|language_server| proto::LanguageServer {
                 id: language_server.id as u64,
                 name: language_server.name,
+                worktree_id: None,
             })
             .collect::<Vec<_>>();
 
@@ -735,6 +778,7 @@ impl Database {
                     worktree.settings_files.push(WorktreeSettingsFile {
                         path: db_settings_file.path,
                         content: db_settings_file.content,
+                        kind: db_settings_file.kind,
                     });
                 }
             }
@@ -856,25 +900,6 @@ impl Database {
                     .all(&*tx)
                     .await?;
 
-                // if any project in the room has a remote-project-id that belongs to a dev server that this user owns.
-                let dev_server_projects_for_user = self
-                    .dev_server_project_ids_for_user(leaving_participant.user_id, &tx)
-                    .await?;
-
-                let dev_server_projects_to_unshare = project::Entity::find()
-                    .filter(
-                        Condition::all()
-                            .add(project::Column::RoomId.eq(room_id))
-                            .add(
-                                project::Column::DevServerProjectId
-                                    .is_in(dev_server_projects_for_user.clone()),
-                            ),
-                    )
-                    .all(&*tx)
-                    .await?
-                    .into_iter()
-                    .map(|project| project.id)
-                    .collect::<HashSet<_>>();
                 let mut left_projects = HashMap::default();
                 let mut collaborators = project_collaborator::Entity::find()
                     .filter(project_collaborator::Column::ProjectId.is_in(project_ids))
@@ -897,9 +922,7 @@ impl Database {
                         left_project.connection_ids.push(collaborator_connection_id);
                     }
 
-                    if (collaborator.is_host && collaborator.connection() == connection)
-                        || dev_server_projects_to_unshare.contains(&collaborator.project_id)
-                    {
+                    if collaborator.is_host && collaborator.connection() == connection {
                         left_project.should_unshare = true;
                     }
                 }
@@ -941,17 +964,6 @@ impl Database {
                     )
                     .exec(&*tx)
                     .await?;
-
-                if !dev_server_projects_to_unshare.is_empty() {
-                    project::Entity::update_many()
-                        .filter(project::Column::Id.is_in(dev_server_projects_to_unshare))
-                        .set(project::ActiveModel {
-                            room_id: ActiveValue::Set(None),
-                            ..Default::default()
-                        })
-                        .exec(&*tx)
-                        .await?;
-                }
 
                 let (channel, room) = self.get_channel_room(room_id, &tx).await?;
                 let deleted = if room.participants.is_empty() {
@@ -1321,26 +1333,6 @@ impl Database {
                         project.worktree_root_names.push(db_worktree.root_name);
                     }
                 }
-            } else if let Some(dev_server_project_id) = db_project.dev_server_project_id {
-                let host = self
-                    .owner_for_dev_server_project(dev_server_project_id, tx)
-                    .await?;
-                if let Some((_, participant)) = participants
-                    .iter_mut()
-                    .find(|(_, v)| v.user_id == host.to_proto())
-                {
-                    participant.projects.push(proto::ParticipantProject {
-                        id: db_project.id.to_proto(),
-                        worktree_root_names: Default::default(),
-                    });
-                    let project = participant.projects.last_mut().unwrap();
-
-                    for db_worktree in db_worktrees {
-                        if db_worktree.visible {
-                            project.worktree_root_names.push(db_worktree.root_name);
-                        }
-                    }
-                }
             }
         }
 
@@ -1366,7 +1358,7 @@ impl Database {
             channel,
             proto::Room {
                 id: db_room.id.to_proto(),
-                live_kit_room: db_room.live_kit_room,
+                livekit_room: db_room.live_kit_room,
                 participants: participants.into_values().collect(),
                 pending_participants,
                 followers,

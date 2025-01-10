@@ -1,12 +1,16 @@
-use std::cell::{RefCell, RefMut};
-use std::hash::Hash;
-use std::os::fd::{AsRawFd, BorrowedFd};
-use std::path::PathBuf;
-use std::rc::{Rc, Weak};
-use std::time::{Duration, Instant};
+use std::{
+    cell::{RefCell, RefMut},
+    hash::Hash,
+    os::fd::{AsRawFd, BorrowedFd},
+    path::PathBuf,
+    rc::{Rc, Weak},
+    time::{Duration, Instant},
+};
 
-use calloop::timer::{TimeoutAction, Timer};
-use calloop::{EventLoop, LoopHandle};
+use calloop::{
+    timer::{TimeoutAction, Timer},
+    EventLoop, LoopHandle,
+};
 use calloop_wayland_source::WaylandSource;
 use collections::HashMap;
 use filedescriptor::Pipe;
@@ -64,30 +68,28 @@ use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
 use super::display::WaylandDisplay;
 use super::window::{ImeInput, WaylandWindowStatePtr};
-use crate::platform::linux::wayland::clipboard::{
-    Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE,
-};
-use crate::platform::linux::wayland::cursor::Cursor;
-use crate::platform::linux::wayland::serial::{SerialKind, SerialTracker};
-use crate::platform::linux::wayland::window::WaylandWindow;
-use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSource};
-use crate::platform::linux::LinuxClient;
+
 use crate::platform::linux::{
     get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
     reveal_path_internal,
+    wayland::{
+        clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE},
+        cursor::Cursor,
+        serial::{SerialKind, SerialTracker},
+        window::WaylandWindow,
+    },
+    xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
+    LinuxClient,
 };
-use crate::platform::PlatformWindow;
+use crate::platform::{blade::BladeContext, PlatformWindow};
 use crate::{
-    point, px, size, Bounds, DevicePixels, FileDropEvent, ForegroundExecutor, MouseExitEvent, Size,
-    DOUBLE_CLICK_INTERVAL, SCROLL_LINES,
+    point, px, size, AnyWindowHandle, Bounds, CursorStyle, DevicePixels, DisplayId, FileDropEvent,
+    ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScaledPixels,
+    ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowParams, DOUBLE_CLICK_INTERVAL,
+    SCROLL_LINES,
 };
-use crate::{
-    AnyWindowHandle, CursorStyle, DisplayId, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScrollDelta,
-    ScrollWheelEvent, TouchPhase,
-};
-use crate::{LinuxCommon, WindowParams};
 
 /// Used to convert evdev scancode to xkb scancode
 const MIN_KEYCODE: u32 = 8;
@@ -186,6 +188,7 @@ pub struct Output {
 pub(crate) struct WaylandClientState {
     serial_tracker: SerialTracker,
     globals: Globals,
+    gpu_context: BladeContext,
     wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
     wl_keyboard: Option<wl_keyboard::WlKeyboard>,
@@ -236,6 +239,7 @@ pub struct DragState {
 }
 
 pub struct ClickState {
+    last_mouse_button: Option<MouseButton>,
     last_click: Instant,
     last_location: Point<Pixels>,
     current_count: usize,
@@ -313,7 +317,7 @@ impl WaylandClientStatePtr {
         }
     }
 
-    pub fn update_ime_position(&self, bounds: Bounds<Pixels>) {
+    pub fn update_ime_position(&self, bounds: Bounds<ScaledPixels>) {
         let client = self.get_client();
         let mut state = client.borrow_mut();
         if state.composing || state.text_input.is_none() || state.pre_edit_text.is_some() {
@@ -458,6 +462,8 @@ impl WaylandClient {
             })
             .unwrap();
 
+        let gpu_context = BladeContext::new().expect("Unable to init GPU context");
+
         let seat = seat.unwrap();
         let globals = Globals::new(
             globals,
@@ -476,8 +482,7 @@ impl WaylandClient {
             .as_ref()
             .map(|primary_selection_manager| primary_selection_manager.get_device(&seat, &qh, ()));
 
-        // FIXME: Determine the scaling factor dynamically by the compositor
-        let mut cursor = Cursor::new(&conn, &globals, 24, 2);
+        let mut cursor = Cursor::new(&conn, &globals, 24);
 
         handle
             .insert_source(XDPEventSource::new(&common.background_executor), {
@@ -496,7 +501,7 @@ impl WaylandClient {
                     XDPEvent::CursorTheme(theme) => {
                         if let Some(client) = client.0.upgrade() {
                             let mut client = client.borrow_mut();
-                            client.cursor.set_theme(theme.as_str(), None);
+                            client.cursor.set_theme(theme.as_str());
                         }
                     }
                     XDPEvent::CursorSize(size) => {
@@ -512,6 +517,7 @@ impl WaylandClient {
         let mut state = Rc::new(RefCell::new(WaylandClientState {
             serial_tracker: SerialTracker::new(),
             globals,
+            gpu_context,
             wl_seat: seat,
             wl_pointer: None,
             wl_keyboard: None,
@@ -535,6 +541,7 @@ impl WaylandClient {
             },
             click: ClickState {
                 last_click: Instant::now(),
+                last_mouse_button: None,
                 last_location: Point::default(),
                 current_count: 0,
             },
@@ -581,6 +588,19 @@ impl WaylandClient {
 }
 
 impl LinuxClient for WaylandClient {
+    fn keyboard_layout(&self) -> String {
+        let state = self.0.borrow();
+        if let Some(keymap_state) = &state.keymap_state {
+            let layout_idx = keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
+            keymap_state
+                .get_keymap()
+                .layout_get_name(layout_idx)
+                .to_string()
+        } else {
+            "unknown".to_string()
+        }
+    }
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         self.0
             .borrow()
@@ -626,6 +646,7 @@ impl LinuxClient for WaylandClient {
         let (window, surface_id) = WaylandWindow::new(
             handle,
             state.globals.clone(),
+            &state.gpu_context,
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
             params,
             state.common.appearance,
@@ -648,15 +669,16 @@ impl LinuxClient for WaylandClient {
 
             if let Some(cursor_shape_device) = &state.cursor_shape_device {
                 cursor_shape_device.set_shape(serial, style.to_shape());
-            } else if state.mouse_focused_window.is_some() {
+            } else if let Some(focused_window) = &state.mouse_focused_window {
                 // cursor-shape-v1 isn't supported, set the cursor using a surface.
                 let wl_pointer = state
                     .wl_pointer
                     .clone()
                     .expect("window is focused by pointer");
+                let scale = focused_window.primary_output_scale();
                 state
                     .cursor
-                    .set_icon(&wl_pointer, serial, &style.to_icon_name());
+                    .set_icon(&wl_pointer, serial, &style.to_icon_name(), scale);
             }
         }
     }
@@ -1130,6 +1152,13 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 };
                 state.keymap_state = Some(xkb::State::new(&keymap));
                 state.compose_state = get_xkb_compose_state(&xkb_context);
+
+                if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take() {
+                    drop(state);
+                    callback();
+                    state = client.borrow_mut();
+                    state.common.callbacks.keyboard_layout_change = Some(callback);
+                }
             }
             wl_keyboard::Event::Enter { surface, .. } => {
                 state.keyboard_focused_window = get_window(&mut state, &surface.id());
@@ -1167,8 +1196,20 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 let focused_window = state.keyboard_focused_window.clone();
 
                 let keymap_state = state.keymap_state.as_mut().unwrap();
+                let old_layout =
+                    keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
                 keymap_state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
                 state.modifiers = Modifiers::from_xkb(keymap_state);
+
+                if group != old_layout {
+                    if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take()
+                    {
+                        drop(state);
+                        callback();
+                        state = client.borrow_mut();
+                        state.common.callbacks.keyboard_layout_change = Some(callback);
+                    }
+                }
 
                 let Some(focused_window) = focused_window else {
                     return;
@@ -1207,7 +1248,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                             compose.feed(keysym);
                             match compose.status() {
                                 xkb::Status::Composing => {
-                                    keystroke.ime_key = None;
+                                    keystroke.key_char = None;
                                     state.pre_edit_text =
                                         compose.utf8().or(Keystroke::underlying_dead_key(keysym));
                                     let pre_edit =
@@ -1219,7 +1260,7 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
 
                                 xkb::Status::Composed => {
                                     state.pre_edit_text.take();
-                                    keystroke.ime_key = compose.utf8();
+                                    keystroke.key_char = compose.utf8();
                                     if let Some(keysym) = compose.keysym() {
                                         keystroke.key = xkb::keysym_get_name(keysym);
                                     }
@@ -1339,7 +1380,7 @@ impl Dispatch<zwp_text_input_v3::ZwpTextInputV3, ()> for WaylandClientStatePtr {
                             keystroke: Keystroke {
                                 modifiers: Modifiers::default(),
                                 key: commit_text.clone(),
-                                ime_key: Some(commit_text),
+                                key_char: Some(commit_text),
                             },
                             is_held: false,
                         }));
@@ -1438,9 +1479,13 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         if let Some(cursor_shape_device) = &state.cursor_shape_device {
                             cursor_shape_device.set_shape(serial, style.to_shape());
                         } else {
-                            state
-                                .cursor
-                                .set_icon(&wl_pointer, serial, &style.to_icon_name());
+                            let scale = window.primary_output_scale();
+                            state.cursor.set_icon(
+                                &wl_pointer,
+                                serial,
+                                &style.to_icon_name(),
+                                scale,
+                            );
                         }
                     }
                     drop(state);
@@ -1524,6 +1569,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         let click_elapsed = state.click.last_click.elapsed();
 
                         if click_elapsed < DOUBLE_CLICK_INTERVAL
+                            && state
+                                .click
+                                .last_mouse_button
+                                .is_some_and(|prev_button| prev_button == button)
                             && is_within_click_distance(
                                 state.click.last_location,
                                 state.mouse_location.unwrap(),
@@ -1535,6 +1584,7 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                         }
 
                         state.click.last_click = Instant::now();
+                        state.click.last_mouse_button = Some(button);
                         state.click.last_location = state.mouse_location.unwrap();
 
                         state.button_pressed = Some(button);
@@ -1627,10 +1677,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 let scroll_delta = state.discrete_scroll_delta.get_or_insert(point(0.0, 0.0));
                 match axis {
                     wl_pointer::Axis::VerticalScroll => {
-                        scroll_delta.y += discrete as f32 * axis_modifier * SCROLL_LINES as f32;
+                        scroll_delta.y += discrete as f32 * axis_modifier * SCROLL_LINES;
                     }
                     wl_pointer::Axis::HorizontalScroll => {
-                        scroll_delta.x += discrete as f32 * axis_modifier * SCROLL_LINES as f32;
+                        scroll_delta.x += discrete as f32 * axis_modifier * SCROLL_LINES;
                     }
                     _ => unreachable!(),
                 }
@@ -1655,10 +1705,10 @@ impl Dispatch<wl_pointer::WlPointer, ()> for WaylandClientStatePtr {
                 let wheel_percent = value120 as f32 / 120.0;
                 match axis {
                     wl_pointer::Axis::VerticalScroll => {
-                        scroll_delta.y += wheel_percent * axis_modifier * SCROLL_LINES as f32;
+                        scroll_delta.y += wheel_percent * axis_modifier * SCROLL_LINES;
                     }
                     wl_pointer::Axis::HorizontalScroll => {
-                        scroll_delta.x += wheel_percent * axis_modifier * SCROLL_LINES as f32;
+                        scroll_delta.x += wheel_percent * axis_modifier * SCROLL_LINES;
                     }
                     _ => unreachable!(),
                 }
@@ -1799,10 +1849,11 @@ impl Dispatch<wl_data_device::WlDataDevice, ()> for WaylandClientStatePtr {
                     let fd = pipe.read;
                     drop(pipe.write);
 
-                    let read_task = state
-                        .common
-                        .background_executor
-                        .spawn(async { unsafe { read_fd(fd) } });
+                    let read_task = state.common.background_executor.spawn(async {
+                        let buffer = unsafe { read_fd(fd)? };
+                        let text = String::from_utf8(buffer)?;
+                        anyhow::Ok(text)
+                    });
 
                     let this = this.clone();
                     state

@@ -55,7 +55,16 @@ impl Connection {
                 .exec_bound("INSERT INTO migrations (domain, step, migration) VALUES (?, ?, ?)")?;
 
             for (index, migration) in migrations.iter().enumerate() {
+                let migration =
+                    sqlformat::format(migration, &sqlformat::QueryParams::None, Default::default());
                 if let Some((_, _, completed_migration)) = completed_migrations.get(index) {
+                    // Reformat completed migrations with the current `sqlformat` version, so that past migrations stored
+                    // conform to the new formatting rules.
+                    let completed_migration = sqlformat::format(
+                        completed_migration,
+                        &sqlformat::QueryParams::None,
+                        Default::default(),
+                    );
                     if completed_migration == migration {
                         // Migration already run. Continue
                         continue;
@@ -71,8 +80,8 @@ impl Connection {
                     }
                 }
 
-                self.eager_exec(migration)?;
-                store_completed_migration((domain, index, *migration))?;
+                self.eager_exec(&migration)?;
+                store_completed_migration((domain, index, migration))?;
             }
 
             Ok(())
@@ -108,11 +117,7 @@ mod test {
                 .select::<String>("SELECT (migration) FROM migrations")
                 .unwrap()()
             .unwrap()[..],
-            &[indoc! {"
-                CREATE TABLE test1 (
-                    a TEXT,
-                    b TEXT
-                )"}],
+            &[indoc! {"CREATE TABLE test1 (a TEXT, b TEXT)"}],
         );
 
         // Add another step to the migration and run it again
@@ -141,16 +146,8 @@ mod test {
                 .unwrap()()
             .unwrap()[..],
             &[
-                indoc! {"
-                    CREATE TABLE test1 (
-                        a TEXT,
-                        b TEXT
-                    )"},
-                indoc! {"
-                    CREATE TABLE test2 (
-                        c TEXT,
-                        d TEXT
-                    )"},
+                indoc! {"CREATE TABLE test1 (a TEXT, b TEXT)"},
+                indoc! {"CREATE TABLE test2 (c TEXT, d TEXT)"},
             ],
         );
     }

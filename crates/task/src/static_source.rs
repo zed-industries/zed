@@ -27,7 +27,7 @@ impl<T: PartialEq + 'static + Sync> TrackedFile<T> {
     pub fn new(
         mut tracker: UnboundedReceiver<String>,
         notification_outlet: UnboundedSender<()>,
-        cx: &mut AppContext,
+        cx: &AppContext,
     ) -> Self
     where
         T: for<'a> Deserialize<'a> + Default + Send,
@@ -69,7 +69,7 @@ impl<T: PartialEq + 'static + Sync> TrackedFile<T> {
     pub fn new_convertible<U: for<'a> Deserialize<'a> + TryInto<T, Error = anyhow::Error>>(
         mut tracker: UnboundedReceiver<String>,
         notification_outlet: UnboundedSender<()>,
-        cx: &mut AppContext,
+        cx: &AppContext,
     ) -> Self
     where
         T: Default + Send,

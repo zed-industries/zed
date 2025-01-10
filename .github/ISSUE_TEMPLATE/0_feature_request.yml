@@ -16,6 +16,16 @@ body:
     validations:
       required: true
   - type: textarea
+    id: environment
+    attributes:
+      label: Zed Version and System Specs
+      description: Zed version, release channel, architecture (x86_64 or aarch64), OS (macOS version / Linux distro and version) and RAM amount.
+      placeholder: |
+        <!-- In Zed run `copy system specs into clipboard` from the Zed command palette and paste here. -->
+        <!-- Alternatively spawn `request feature` and this field will be autopopulated -->
+    validations:
+      required: true
+  - type: textarea
     attributes:
       label: |
         If applicable, add mockups / screenshots to help present your vision of the feature

@@ -1,3 +1,4 @@
+mod extension_snippet;
 mod format;
 mod registry;
 
@@ -18,6 +19,7 @@ use util::ResultExt;
 
 pub fn init(cx: &mut AppContext) {
     SnippetRegistry::init_global(cx);
+    extension_snippet::init(cx);
 }
 
 // Is `None` if the snippet file is global.
@@ -179,7 +181,7 @@ impl SnippetProvider {
     }
 
     /// Add directory to be watched for content changes
-    fn watch_directory(&mut self, path: &Path, cx: &mut ModelContext<Self>) {
+    fn watch_directory(&mut self, path: &Path, cx: &ModelContext<Self>) {
         let path: Arc<Path> = Arc::from(path);
 
         self.watch_tasks.push(cx.spawn(|this, mut cx| async move {

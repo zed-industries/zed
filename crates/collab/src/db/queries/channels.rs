@@ -154,9 +154,9 @@ impl Database {
             }
             let role = role.unwrap();
 
-            let live_kit_room = format!("channel-{}", nanoid::nanoid!(30));
+            let livekit_room = format!("channel-{}", nanoid::nanoid!(30));
             let room_id = self
-                .get_or_create_channel_room(channel_id, &live_kit_room, &tx)
+                .get_or_create_channel_room(channel_id, &livekit_room, &tx)
                 .await?;
 
             self.join_channel_room_internal(room_id, user_id, connection, role, &tx)
@@ -615,15 +615,10 @@ impl Database {
             .observed_channel_messages(&channel_ids, user_id, tx)
             .await?;
 
-        let hosted_projects = self
-            .get_hosted_projects(&channel_ids, &roles_by_channel_id, tx)
-            .await?;
-
         Ok(ChannelsForUser {
             channel_memberships,
             channels,
             invited_channels,
-            hosted_projects,
             channel_participants,
             latest_buffer_versions,
             latest_channel_messages,
@@ -901,7 +896,7 @@ impl Database {
     pub(crate) async fn get_or_create_channel_room(
         &self,
         channel_id: ChannelId,
-        live_kit_room: &str,
+        livekit_room: &str,
         tx: &DatabaseTransaction,
     ) -> Result<RoomId> {
         let room = room::Entity::find()
@@ -914,7 +909,7 @@ impl Database {
         } else {
             let result = room::Entity::insert(room::ActiveModel {
                 channel_id: ActiveValue::Set(Some(channel_id)),
-                live_kit_room: ActiveValue::Set(live_kit_room.to_string()),
+                live_kit_room: ActiveValue::Set(livekit_room.to_string()),
                 ..Default::default()
             })
             .exec(tx)

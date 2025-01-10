@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use std::ops::Range;
 
 use gpui::{FontWeight, HighlightStyle, StyledText};
@@ -61,6 +63,16 @@ impl LabelCommon for HighlightedLabel {
 
     fn underline(mut self, underline: bool) -> Self {
         self.base = self.base.underline(underline);
+        self
+    }
+
+    fn text_ellipsis(mut self) -> Self {
+        self.base = self.base.text_ellipsis();
+        self
+    }
+
+    fn single_line(mut self) -> Self {
+        self.base = self.base.single_line();
         self
     }
 }

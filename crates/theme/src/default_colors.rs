@@ -8,12 +8,13 @@ pub(crate) fn neutral() -> ColorScaleSet {
     sand()
 }
 
-// Note: We aren't currently making use of the default colors, as all of the
-// themes have a value set for each color.
-//
-// We'll need to revisit these once we're ready to launch user themes, which may
-// not specify a value for each color (and thus should fall back to the defaults).
+/// The default colors for the theme.
+///
+/// Themes that do not specify all colors are refined off of these defaults.
 impl ThemeColors {
+    /// Returns the default colors for light themes.
+    ///
+    /// Themes that do not specify all colors are refined off of these defaults.
     pub fn light() -> Self {
         let system = SystemColors::default();
 
@@ -57,7 +58,10 @@ impl ThemeColors {
             tab_active_background: neutral().light().step_1(),
             search_match_background: neutral().light().step_5(),
             panel_background: neutral().light().step_2(),
-            panel_focused_border: blue().light().step_5(),
+            panel_focused_border: blue().light().step_10(),
+            panel_indent_guide: neutral().light_alpha().step_5(),
+            panel_indent_guide_hover: neutral().light_alpha().step_6(),
+            panel_indent_guide_active: neutral().light_alpha().step_6(),
             pane_focused_border: blue().light().step_5(),
             pane_group_border: neutral().light().step_6(),
             scrollbar_thumb_background: neutral().light_alpha().step_3(),
@@ -114,6 +118,9 @@ impl ThemeColors {
         }
     }
 
+    /// Returns the default colors for dark themes.
+    ///
+    /// Themes that do not specify all colors are refined off of these defaults.
     pub fn dark() -> Self {
         let system = SystemColors::default();
 
@@ -157,7 +164,10 @@ impl ThemeColors {
             tab_active_background: neutral().dark().step_1(),
             search_match_background: neutral().dark().step_5(),
             panel_background: neutral().dark().step_2(),
-            panel_focused_border: blue().dark().step_5(),
+            panel_focused_border: blue().dark().step_12(),
+            panel_indent_guide: neutral().dark_alpha().step_4(),
+            panel_indent_guide_hover: neutral().dark_alpha().step_6(),
+            panel_indent_guide_active: neutral().dark_alpha().step_6(),
             pane_focused_border: blue().dark().step_5(),
             pane_group_border: neutral().dark().step_6(),
             scrollbar_thumb_background: neutral().dark_alpha().step_3(),
@@ -247,6 +257,7 @@ impl TryFrom<StaticColorScaleSet> for ColorScaleSet {
     }
 }
 
+/// Color scales used to build the default themes.
 pub fn default_color_scales() -> ColorScales {
     ColorScales {
         gray: gray(),

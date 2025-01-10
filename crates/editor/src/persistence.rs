@@ -1,8 +1,8 @@
 use anyhow::Result;
 use db::sqlez::bindable::{Bind, Column, StaticColumnCount};
 use db::sqlez::statement::Statement;
+use fs::MTime;
 use std::path::PathBuf;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use db::sqlez_macros::sql;
 use db::{define_connection, query};
@@ -11,10 +11,10 @@ use workspace::{ItemId, WorkspaceDb, WorkspaceId};
 
 #[derive(Clone, Debug, PartialEq, Default)]
 pub(crate) struct SerializedEditor {
-    pub(crate) path: Option<PathBuf>,
+    pub(crate) abs_path: Option<PathBuf>,
     pub(crate) contents: Option<String>,
     pub(crate) language: Option<String>,
-    pub(crate) mtime: Option<SystemTime>,
+    pub(crate) mtime: Option<MTime>,
 }
 
 impl StaticColumnCount for SerializedEditor {
@@ -25,20 +25,17 @@ impl StaticColumnCount for SerializedEditor {
 
 impl Bind for SerializedEditor {
     fn bind(&self, statement: &Statement, start_index: i32) -> Result<i32> {
-        let start_index = statement.bind(&self.path, start_index)?;
+        let start_index = statement.bind(&self.abs_path, start_index)?;
         let start_index = statement.bind(&self.contents, start_index)?;
         let start_index = statement.bind(&self.language, start_index)?;
 
-        let mtime = self.mtime.and_then(|mtime| {
-            mtime
-                .duration_since(UNIX_EPOCH)
-                .ok()
-                .map(|duration| (duration.as_secs() as i64, duration.subsec_nanos() as i32))
-        });
-        let start_index = match mtime {
+        let start_index = match self
+            .mtime
+            .and_then(|mtime| mtime.to_seconds_and_nanos_for_persistence())
+        {
             Some((seconds, nanos)) => {
-                let start_index = statement.bind(&seconds, start_index)?;
-                statement.bind(&nanos, start_index)?
+                let start_index = statement.bind(&(seconds as i64), start_index)?;
+                statement.bind(&(nanos as i32), start_index)?
             }
             None => {
                 let start_index = statement.bind::<Option<i64>>(&None, start_index)?;
@@ -51,7 +48,8 @@ impl Bind for SerializedEditor {
 
 impl Column for SerializedEditor {
     fn column(statement: &mut Statement, start_index: i32) -> Result<(Self, i32)> {
-        let (path, start_index): (Option<PathBuf>, i32) = Column::column(statement, start_index)?;
+        let (abs_path, start_index): (Option<PathBuf>, i32) =
+            Column::column(statement, start_index)?;
         let (contents, start_index): (Option<String>, i32) =
             Column::column(statement, start_index)?;
         let (language, start_index): (Option<String>, i32) =
@@ -63,10 +61,10 @@ impl Column for SerializedEditor {
 
         let mtime = mtime_seconds
             .zip(mtime_nanos)
-            .map(|(seconds, nanos)| UNIX_EPOCH + Duration::new(seconds as u64, nanos as u32));
+            .map(|(seconds, nanos)| MTime::from_seconds_and_nanos(seconds as u64, nanos as u32));
 
         let editor = Self {
-            path,
+            abs_path,
             contents,
             language,
             mtime,
@@ -226,7 +224,7 @@ mod tests {
         let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
         let serialized_editor = SerializedEditor {
-            path: Some(PathBuf::from("testing.txt")),
+            abs_path: Some(PathBuf::from("testing.txt")),
             contents: None,
             language: None,
             mtime: None,
@@ -244,7 +242,7 @@ mod tests {
 
         // Now update contents and language
         let serialized_editor = SerializedEditor {
-            path: Some(PathBuf::from("testing.txt")),
+            abs_path: Some(PathBuf::from("testing.txt")),
             contents: Some("Test".to_owned()),
             language: Some("Go".to_owned()),
             mtime: None,
@@ -262,7 +260,7 @@ mod tests {
 
         // Now set all the fields to NULL
         let serialized_editor = SerializedEditor {
-            path: None,
+            abs_path: None,
             contents: None,
             language: None,
             mtime: None,
@@ -279,12 +277,11 @@ mod tests {
         assert_eq!(have, serialized_editor);
 
         // Storing and retrieving mtime
-        let now = SystemTime::now();
         let serialized_editor = SerializedEditor {
-            path: None,
+            abs_path: None,
             contents: None,
             language: None,
-            mtime: Some(now),
+            mtime: Some(MTime::from_seconds_and_nanos(100, 42)),
         };
 
         DB.save_serialized_editor(1234, workspace_id, serialized_editor.clone())

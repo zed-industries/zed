@@ -19,6 +19,9 @@ pub fn init(cx: &mut AppContext) {
 pub struct CommandPaletteFilter {
     hidden_namespaces: HashSet<&'static str>,
     hidden_action_types: HashSet<TypeId>,
+    /// Actions that have explicitly been shown. These should be shown even if
+    /// they are in a hidden namespace.
+    shown_action_types: HashSet<TypeId>,
 }
 
 #[derive(Deref, DerefMut, Default)]
@@ -39,17 +42,24 @@ impl CommandPaletteFilter {
     }
 
     /// Updates the global [`CommandPaletteFilter`] using the given closure.
-    pub fn update_global<F, R>(cx: &mut AppContext, update: F) -> R
+    pub fn update_global<F>(cx: &mut AppContext, update: F)
     where
-        F: FnOnce(&mut Self, &mut AppContext) -> R,
+        F: FnOnce(&mut Self, &mut AppContext),
     {
-        cx.update_global(|this: &mut GlobalCommandPaletteFilter, cx| update(&mut this.0, cx))
+        if cx.has_global::<GlobalCommandPaletteFilter>() {
+            cx.update_global(|this: &mut GlobalCommandPaletteFilter, cx| update(&mut this.0, cx))
+        }
     }
 
     /// Returns whether the given [`Action`] is hidden by the filter.
     pub fn is_hidden(&self, action: &dyn Action) -> bool {
         let name = action.name();
         let namespace = name.split("::").next().unwrap_or("malformed action name");
+
+        // If this action has specifically been shown then it should be visible.
+        if self.shown_action_types.contains(&action.type_id()) {
+            return false;
+        }
 
         self.hidden_namespaces.contains(namespace)
             || self.hidden_action_types.contains(&action.type_id())
@@ -67,12 +77,16 @@ impl CommandPaletteFilter {
 
     /// Hides all actions with the given types.
     pub fn hide_action_types(&mut self, action_types: &[TypeId]) {
-        self.hidden_action_types.extend(action_types);
+        for action_type in action_types {
+            self.hidden_action_types.insert(*action_type);
+            self.shown_action_types.remove(action_type);
+        }
     }
 
     /// Shows all actions with the given types.
     pub fn show_action_types<'a>(&mut self, action_types: impl Iterator<Item = &'a TypeId>) {
         for action_type in action_types {
+            self.shown_action_types.insert(*action_type);
             self.hidden_action_types.remove(action_type);
         }
     }

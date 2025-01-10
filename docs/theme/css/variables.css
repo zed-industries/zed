@@ -26,6 +26,8 @@
   --border-light: hsl(220, 13%, 90%);
   --border-hover: hsl(220, 13%, 70%);
 
+  --media-bg: hsl(50, 25%, 92%);
+
   --sidebar-fg: hsl(0, 0%, 0%);
   --sidebar-non-existant: #aaaaaa;
   --sidebar-active: hsl(220, 93%, 42%);
@@ -97,6 +99,8 @@
   --border: hsl(220, 13%, 20%);
   --border-light: hsl(220, 13%, 90%);
   --border-hover: hsl(220, 13%, 40%);
+
+  --media-bg: hsl(220, 13%, 8%);
 
   --sidebar-bg: hsl(220, 13%, 10%);
   --sidebar-fg: hsl(220, 14%, 71%);

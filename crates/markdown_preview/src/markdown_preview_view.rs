@@ -192,11 +192,16 @@ impl MarkdownPreviewView {
                                 .group("markdown-block")
                                 .on_click(cx.listener(move |this, event: &ClickEvent, cx| {
                                     if event.down.click_count == 2 {
-                                        if let Some(block) =
-                                            this.contents.as_ref().and_then(|c| c.children.get(ix))
+                                        if let Some(source_range) = this
+                                            .contents
+                                            .as_ref()
+                                            .and_then(|c| c.children.get(ix))
+                                            .and_then(|block| block.source_range())
                                         {
-                                            let start = block.source_range().start;
-                                            this.move_cursor_to_block(cx, start..start);
+                                            this.move_cursor_to_block(
+                                                cx,
+                                                source_range.start..source_range.start,
+                                            );
                                         }
                                     }
                                 }))
@@ -297,12 +302,12 @@ impl MarkdownPreviewView {
 
         let subscription = cx.subscribe(&editor, |this, editor, event: &EditorEvent, cx| {
             match event {
-                EditorEvent::Edited { .. } => {
+                EditorEvent::Edited { .. } | EditorEvent::DirtyChanged => {
                     this.parse_markdown_from_active_editor(true, cx);
                 }
                 EditorEvent::SelectionsChanged { .. } => {
-                    let editor = editor.read(cx);
-                    let selection_range = editor.selections.last::<usize>(cx).range();
+                    let selection_range =
+                        editor.update(cx, |editor, cx| editor.selections.last::<usize>(cx).range());
                     this.selected_block = this.get_block_index_under_cursor(selection_range);
                     this.list_state.scroll_to_reveal_item(this.selected_block);
                     cx.notify();
@@ -410,7 +415,9 @@ impl MarkdownPreviewView {
         let mut last_end = 0;
         if let Some(content) = &self.contents {
             for (i, block) in content.children.iter().enumerate() {
-                let Range { start, end } = block.source_range();
+                let Some(Range { start, end }) = block.source_range() else {
+                    continue;
+                };
 
                 // Check if the cursor is between the last block and the current block
                 if last_end <= cursor && cursor < start {
@@ -479,7 +486,7 @@ impl Render for MarkdownPreviewView {
         v_flex()
             .id("MarkdownPreview")
             .key_context("MarkdownPreview")
-            .track_focus(&self.focus_handle)
+            .track_focus(&self.focus_handle(cx))
             .size_full()
             .bg(cx.theme().colors().editor_background)
             .p_4()

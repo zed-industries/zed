@@ -2,6 +2,10 @@
 (field_identifier) @property
 (namespace_identifier) @namespace
 
+(concept_definition
+    (identifier) @concept)
+
+
 (call_expression
   function: (qualified_identifier
     name: (identifier) @function))
@@ -64,6 +68,14 @@
 
 (auto) @type
 (type_identifier) @type
+type :(primitive_type) @type.primitive
+
+(requires_clause
+    constraint: (template_type
+        name: (type_identifier) @concept))
+
+(attribute
+    name: (identifier) @keyword)
 
 ((identifier) @constant
  (#match? @constant "^_*[A-Z][A-Z\\d_]*$"))
@@ -119,7 +131,6 @@
   "using"
   "virtual"
   "while"
-  (primitive_type)
   (sized_type_specifier)
   (storage_class_specifier)
   (type_qualifier)

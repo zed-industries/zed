@@ -10,7 +10,7 @@ pub(crate) struct RenderSvgParams {
 }
 
 #[derive(Clone)]
-pub(crate) struct SvgRenderer {
+pub struct SvgRenderer {
     asset_source: Arc<dyn AssetSource>,
 }
 
@@ -24,7 +24,7 @@ impl SvgRenderer {
         Self { asset_source }
     }
 
-    pub fn render(&self, params: &RenderSvgParams) -> Result<Option<Vec<u8>>> {
+    pub(crate) fn render(&self, params: &RenderSvgParams) -> Result<Option<Vec<u8>>> {
         if params.size.is_zero() {
             return Err(anyhow!("can't render at a zero size"));
         }
@@ -60,10 +60,8 @@ impl SvgRenderer {
         let mut pixmap = resvg::tiny_skia::Pixmap::new(size.width.into(), size.height.into())
             .ok_or(usvg::Error::InvalidSize)?;
 
-        let transform = tree.view_box().to_transform(
-            resvg::tiny_skia::Size::from_wh(size.width.0 as f32, size.height.0 as f32)
-                .ok_or(usvg::Error::InvalidSize)?,
-        );
+        let scale = size.width.0 as f32 / tree.size().width();
+        let transform = resvg::tiny_skia::Transform::from_scale(scale, scale);
 
         resvg::render(&tree, transform, &mut pixmap.as_mut());
 

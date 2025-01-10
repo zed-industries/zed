@@ -27,7 +27,7 @@ use windows::{
     },
 };
 
-use crate::platform::blade::BladeRenderer;
+use crate::platform::blade::{BladeContext, BladeRenderer};
 use crate::*;
 
 pub(crate) struct WindowsWindow(pub Rc<WindowsWindowStatePtr>);
@@ -38,10 +38,12 @@ pub struct WindowsWindowState {
     pub fullscreen_restore_bounds: Bounds<Pixels>,
     pub border_offset: WindowBorderOffset,
     pub scale_factor: f32,
+    pub restore_from_minimized: Option<Box<dyn FnMut(RequestFrameOptions)>>,
 
     pub callbacks: Callbacks,
     pub input_handler: Option<PlatformInputHandler>,
     pub system_key_handled: bool,
+    pub hovered: bool,
 
     pub renderer: BladeRenderer,
 
@@ -52,11 +54,13 @@ pub struct WindowsWindowState {
 
     pub display: WindowsDisplay,
     fullscreen: Option<StyleAndBounds>,
+    initial_placement: Option<WindowOpenStatus>,
     hwnd: HWND,
 }
 
 pub(crate) struct WindowsWindowStatePtr {
     hwnd: HWND,
+    this: Weak<Self>,
     pub(crate) state: RefCell<WindowsWindowState>,
     pub(crate) handle: AnyWindowHandle,
     pub(crate) hide_title_bar: bool,
@@ -74,6 +78,7 @@ impl WindowsWindowState {
         cs: &CREATESTRUCTW,
         current_cursor: HCURSOR,
         display: WindowsDisplay,
+        gpu_context: &BladeContext,
     ) -> Result<Self> {
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
@@ -89,14 +94,17 @@ impl WindowsWindowState {
             size: logical_size,
         };
         let border_offset = WindowBorderOffset::default();
-        let renderer = windows_renderer::windows_renderer(hwnd, transparent)?;
+        let restore_from_minimized = None;
+        let renderer = windows_renderer::init(gpu_context, hwnd, transparent)?;
         let callbacks = Callbacks::default();
         let input_handler = None;
         let system_key_handled = false;
+        let hovered = false;
         let click_state = ClickState::new();
         let system_settings = WindowsSystemSettings::new(display);
         let nc_button_pressed = None;
         let fullscreen = None;
+        let initial_placement = None;
 
         Ok(Self {
             origin,
@@ -104,9 +112,11 @@ impl WindowsWindowState {
             fullscreen_restore_bounds,
             border_offset,
             scale_factor,
+            restore_from_minimized,
             callbacks,
             input_handler,
             system_key_handled,
+            hovered,
             renderer,
             click_state,
             system_settings,
@@ -114,6 +124,7 @@ impl WindowsWindowState {
             nc_button_pressed,
             display,
             fullscreen,
+            initial_placement,
             hwnd,
         })
     }
@@ -217,11 +228,13 @@ impl WindowsWindowStatePtr {
             cs,
             context.current_cursor,
             context.display,
+            context.gpu_context,
         )?);
 
-        Ok(Rc::new(Self {
-            state,
+        Ok(Rc::new_cyclic(|this| Self {
             hwnd,
+            this: this.clone(),
+            state,
             handle: context.handle,
             hide_title_bar: context.hide_title_bar,
             is_movable: context.is_movable,
@@ -231,13 +244,97 @@ impl WindowsWindowStatePtr {
             main_receiver: context.main_receiver.clone(),
         }))
     }
+
+    fn toggle_fullscreen(&self) {
+        let Some(state_ptr) = self.this.upgrade() else {
+            log::error!("Unable to toggle fullscreen: window has been dropped");
+            return;
+        };
+        self.executor
+            .spawn(async move {
+                let mut lock = state_ptr.state.borrow_mut();
+                let StyleAndBounds {
+                    style,
+                    x,
+                    y,
+                    cx,
+                    cy,
+                } = if let Some(state) = lock.fullscreen.take() {
+                    state
+                } else {
+                    let (window_bounds, _) = lock.calculate_window_bounds();
+                    lock.fullscreen_restore_bounds = window_bounds;
+                    let style =
+                        WINDOW_STYLE(unsafe { get_window_long(state_ptr.hwnd, GWL_STYLE) } as _);
+                    let mut rc = RECT::default();
+                    unsafe { GetWindowRect(state_ptr.hwnd, &mut rc) }.log_err();
+                    let _ = lock.fullscreen.insert(StyleAndBounds {
+                        style,
+                        x: rc.left,
+                        y: rc.top,
+                        cx: rc.right - rc.left,
+                        cy: rc.bottom - rc.top,
+                    });
+                    let style = style
+                        & !(WS_THICKFRAME
+                            | WS_SYSMENU
+                            | WS_MAXIMIZEBOX
+                            | WS_MINIMIZEBOX
+                            | WS_CAPTION);
+                    let physical_bounds = lock.display.physical_bounds();
+                    StyleAndBounds {
+                        style,
+                        x: physical_bounds.left().0,
+                        y: physical_bounds.top().0,
+                        cx: physical_bounds.size.width.0,
+                        cy: physical_bounds.size.height.0,
+                    }
+                };
+                drop(lock);
+                unsafe { set_window_long(state_ptr.hwnd, GWL_STYLE, style.0 as isize) };
+                unsafe {
+                    SetWindowPos(
+                        state_ptr.hwnd,
+                        HWND::default(),
+                        x,
+                        y,
+                        cx,
+                        cy,
+                        SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER,
+                    )
+                }
+                .log_err();
+            })
+            .detach();
+    }
+
+    fn set_window_placement(&self) -> Result<()> {
+        let Some(open_status) = self.state.borrow_mut().initial_placement.take() else {
+            return Ok(());
+        };
+        match open_status.state {
+            WindowOpenState::Maximized => unsafe {
+                SetWindowPlacement(self.hwnd, &open_status.placement)?;
+                ShowWindowAsync(self.hwnd, SW_MAXIMIZE).ok()?;
+            },
+            WindowOpenState::Fullscreen => {
+                unsafe { SetWindowPlacement(self.hwnd, &open_status.placement)? };
+                self.toggle_fullscreen();
+            }
+            WindowOpenState::Windowed => unsafe {
+                SetWindowPlacement(self.hwnd, &open_status.placement)?;
+            },
+        }
+        Ok(())
+    }
 }
 
 #[derive(Default)]
 pub(crate) struct Callbacks {
-    pub(crate) request_frame: Option<Box<dyn FnMut()>>,
+    pub(crate) request_frame: Option<Box<dyn FnMut(RequestFrameOptions)>>,
     pub(crate) input: Option<Box<dyn FnMut(crate::PlatformInput) -> DispatchEventResult>>,
     pub(crate) active_status_change: Option<Box<dyn FnMut(bool)>>,
+    pub(crate) hovered_status_change: Option<Box<dyn FnMut(bool)>>,
     pub(crate) resize: Option<Box<dyn FnMut(Size<Pixels>, f32)>>,
     pub(crate) moved: Option<Box<dyn FnMut()>>,
     pub(crate) should_close: Option<Box<dyn FnMut() -> bool>>,
@@ -245,7 +342,7 @@ pub(crate) struct Callbacks {
     pub(crate) appearance_changed: Option<Box<dyn FnMut()>>,
 }
 
-struct WindowCreateContext {
+struct WindowCreateContext<'a> {
     inner: Option<Result<Rc<WindowsWindowStatePtr>>>,
     handle: AnyWindowHandle,
     hide_title_bar: bool,
@@ -257,6 +354,7 @@ struct WindowCreateContext {
     windows_version: WindowsVersion,
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
+    gpu_context: &'a BladeContext,
 }
 
 impl WindowsWindow {
@@ -264,6 +362,7 @@ impl WindowsWindow {
         handle: AnyWindowHandle,
         params: WindowParams,
         creation_info: WindowCreationInfo,
+        gpu_context: &BladeContext,
     ) -> Result<Self> {
         let WindowCreationInfo {
             icon,
@@ -287,7 +386,7 @@ impl WindowsWindow {
                 .map(|title| title.as_ref())
                 .unwrap_or(""),
         );
-        let (dwexstyle, dwstyle) = if params.kind == WindowKind::PopUp {
+        let (dwexstyle, mut dwstyle) = if params.kind == WindowKind::PopUp {
             (WS_EX_TOOLWINDOW, WINDOW_STYLE(0x0))
         } else {
             (
@@ -295,6 +394,7 @@ impl WindowsWindow {
                 WS_THICKFRAME | WS_SYSMENU | WS_MAXIMIZEBOX | WS_MINIMIZEBOX,
             )
         };
+
         let hinstance = get_module_handle();
         let display = if let Some(display_id) = params.display_id {
             // if we obtain a display_id, then this ID must be valid.
@@ -314,6 +414,7 @@ impl WindowsWindow {
             windows_version,
             validation_number,
             main_receiver,
+            gpu_context,
         };
         let lpparam = Some(&context as *const _ as *const _);
         let creation_result = unsafe {
@@ -332,32 +433,28 @@ impl WindowsWindow {
                 lpparam,
             )
         };
-        // We should call `?` on state_ptr first, then call `?` on raw_hwnd.
+        // We should call `?` on state_ptr first, then call `?` on hwnd.
         // Or, we will lose the error info reported by `WindowsWindowState::new`
         let state_ptr = context.inner.take().unwrap()?;
-        let raw_hwnd = creation_result?;
+        let hwnd = creation_result?;
         register_drag_drop(state_ptr.clone())?;
 
-        unsafe {
-            let mut placement = WINDOWPLACEMENT {
-                length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
-                ..Default::default()
-            };
-            GetWindowPlacement(raw_hwnd, &mut placement)?;
-            // the bounds may be not inside the display
-            let bounds = if display.check_given_bounds(params.bounds) {
-                params.bounds
-            } else {
-                display.default_bounds()
-            };
-            let mut lock = state_ptr.state.borrow_mut();
-            let bounds = bounds.to_device_pixels(lock.scale_factor);
-            lock.border_offset.update(raw_hwnd)?;
-            placement.rcNormalPosition = calculate_window_rect(bounds, lock.border_offset);
-            drop(lock);
-            SetWindowPlacement(raw_hwnd, &placement)?;
+        state_ptr.state.borrow_mut().border_offset.update(hwnd)?;
+        let placement = retrieve_window_placement(
+            hwnd,
+            display,
+            params.bounds,
+            state_ptr.state.borrow().scale_factor,
+            state_ptr.state.borrow().border_offset,
+        )?;
+        if params.show {
+            unsafe { SetWindowPlacement(hwnd, &placement)? };
+        } else {
+            state_ptr.state.borrow_mut().initial_placement = Some(WindowOpenStatus {
+                placement,
+                state: WindowOpenState::Windowed,
+            });
         }
-        unsafe { ShowWindow(raw_hwnd, SW_SHOW).ok()? };
 
         Ok(Self(state_ptr))
     }
@@ -532,20 +629,26 @@ impl PlatformWindow for WindowsWindow {
 
     fn activate(&self) {
         let hwnd = self.0.hwnd;
-        unsafe { SetActiveWindow(hwnd).log_err() };
-        unsafe { SetFocus(hwnd).log_err() };
-        // todo(windows)
-        // crate `windows 0.56` reports true as Err
-        unsafe { SetForegroundWindow(hwnd).as_bool() };
+        let this = self.0.clone();
+        self.0
+            .executor
+            .spawn(async move {
+                this.set_window_placement().log_err();
+                unsafe { SetActiveWindow(hwnd).log_err() };
+                unsafe { SetFocus(hwnd).log_err() };
+                // todo(windows)
+                // crate `windows 0.56` reports true as Err
+                unsafe { SetForegroundWindow(hwnd).as_bool() };
+            })
+            .detach();
     }
 
     fn is_active(&self) -> bool {
         self.0.hwnd == unsafe { GetActiveWindow() }
     }
 
-    // is_hovered is unused on Windows. See WindowContext::is_window_hovered.
     fn is_hovered(&self) -> bool {
-        false
+        self.0.state.borrow().hovered
     }
 
     fn set_title(&mut self, title: &str) {
@@ -555,11 +658,47 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn set_background_appearance(&self, background_appearance: WindowBackgroundAppearance) {
-        self.0
-            .state
-            .borrow_mut()
+        let mut window_state = self.0.state.borrow_mut();
+        window_state
             .renderer
             .update_transparency(background_appearance != WindowBackgroundAppearance::Opaque);
+        let mut version = unsafe { std::mem::zeroed() };
+        let status = unsafe { windows::Wdk::System::SystemServices::RtlGetVersion(&mut version) };
+        if status.is_ok() {
+            if background_appearance == WindowBackgroundAppearance::Blurred {
+                if version.dwBuildNumber >= 17763 {
+                    set_window_composition_attribute(window_state.hwnd, Some((0, 0, 0, 10)), 4);
+                }
+            } else {
+                if version.dwBuildNumber >= 17763 {
+                    set_window_composition_attribute(window_state.hwnd, None, 0);
+                }
+            }
+            //Transparent effect might cause some flickering and performance issues due `WS_EX_COMPOSITED` is enabled
+            //if `WS_EX_COMPOSITED` is removed the window instance won't initiate
+            if background_appearance == WindowBackgroundAppearance::Transparent {
+                unsafe {
+                    let current_style = GetWindowLongW(window_state.hwnd, GWL_EXSTYLE);
+                    SetWindowLongW(
+                        window_state.hwnd,
+                        GWL_EXSTYLE,
+                        current_style | WS_EX_LAYERED.0 as i32 | WS_EX_COMPOSITED.0 as i32,
+                    );
+                    SetLayeredWindowAttributes(window_state.hwnd, COLORREF(0), 225, LWA_ALPHA)
+                        .inspect_err(|e| log::error!("Unable to set window to transparent: {e}"))
+                        .ok();
+                };
+            } else {
+                unsafe {
+                    let current_style = GetWindowLongW(window_state.hwnd, GWL_EXSTYLE);
+                    SetWindowLongW(
+                        window_state.hwnd,
+                        GWL_EXSTYLE,
+                        current_style & !WS_EX_LAYERED.0 as i32 & !WS_EX_COMPOSITED.0 as i32,
+                    );
+                }
+            }
+        }
     }
 
     fn minimize(&self) {
@@ -567,75 +706,28 @@ impl PlatformWindow for WindowsWindow {
     }
 
     fn zoom(&self) {
-        unsafe { ShowWindowAsync(self.0.hwnd, SW_MAXIMIZE).ok().log_err() };
+        unsafe {
+            if IsWindowVisible(self.0.hwnd).as_bool() {
+                ShowWindowAsync(self.0.hwnd, SW_MAXIMIZE).ok().log_err();
+            } else if let Some(status) = self.0.state.borrow_mut().initial_placement.as_mut() {
+                status.state = WindowOpenState::Maximized;
+            }
+        }
     }
 
     fn toggle_fullscreen(&self) {
-        let state_ptr = self.0.clone();
-        self.0
-            .executor
-            .spawn(async move {
-                let mut lock = state_ptr.state.borrow_mut();
-                let StyleAndBounds {
-                    style,
-                    x,
-                    y,
-                    cx,
-                    cy,
-                } = if let Some(state) = lock.fullscreen.take() {
-                    state
-                } else {
-                    let (window_bounds, _) = lock.calculate_window_bounds();
-                    lock.fullscreen_restore_bounds = window_bounds;
-                    let style =
-                        WINDOW_STYLE(unsafe { get_window_long(state_ptr.hwnd, GWL_STYLE) } as _);
-                    let mut rc = RECT::default();
-                    unsafe { GetWindowRect(state_ptr.hwnd, &mut rc) }.log_err();
-                    let _ = lock.fullscreen.insert(StyleAndBounds {
-                        style,
-                        x: rc.left,
-                        y: rc.top,
-                        cx: rc.right - rc.left,
-                        cy: rc.bottom - rc.top,
-                    });
-                    let style = style
-                        & !(WS_THICKFRAME
-                            | WS_SYSMENU
-                            | WS_MAXIMIZEBOX
-                            | WS_MINIMIZEBOX
-                            | WS_CAPTION);
-                    let physical_bounds = lock.display.physical_bounds();
-                    StyleAndBounds {
-                        style,
-                        x: physical_bounds.left().0,
-                        y: physical_bounds.top().0,
-                        cx: physical_bounds.size.width.0,
-                        cy: physical_bounds.size.height.0,
-                    }
-                };
-                drop(lock);
-                unsafe { set_window_long(state_ptr.hwnd, GWL_STYLE, style.0 as isize) };
-                unsafe {
-                    SetWindowPos(
-                        state_ptr.hwnd,
-                        HWND::default(),
-                        x,
-                        y,
-                        cx,
-                        cy,
-                        SWP_FRAMECHANGED | SWP_NOACTIVATE | SWP_NOZORDER,
-                    )
-                }
-                .log_err();
-            })
-            .detach();
+        if unsafe { IsWindowVisible(self.0.hwnd).as_bool() } {
+            self.0.toggle_fullscreen();
+        } else if let Some(status) = self.0.state.borrow_mut().initial_placement.as_mut() {
+            status.state = WindowOpenState::Fullscreen;
+        }
     }
 
     fn is_fullscreen(&self) -> bool {
         self.0.state.borrow().is_fullscreen()
     }
 
-    fn on_request_frame(&self, callback: Box<dyn FnMut()>) {
+    fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
         self.0.state.borrow_mut().callbacks.request_frame = Some(callback);
     }
 
@@ -647,7 +739,9 @@ impl PlatformWindow for WindowsWindow {
         self.0.state.borrow_mut().callbacks.active_status_change = Some(callback);
     }
 
-    fn on_hover_status_change(&self, _: Box<dyn FnMut(bool)>) {}
+    fn on_hover_status_change(&self, callback: Box<dyn FnMut(bool)>) {
+        self.0.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
+    }
 
     fn on_resize(&self, callback: Box<dyn FnMut(Size<Pixels>, f32)>) {
         self.0.state.borrow_mut().callbacks.resize = Some(callback);
@@ -681,11 +775,11 @@ impl PlatformWindow for WindowsWindow {
         self.0.hwnd
     }
 
-    fn gpu_specs(&self) -> Option<GPUSpecs> {
+    fn gpu_specs(&self) -> Option<GpuSpecs> {
         Some(self.0.state.borrow().renderer.gpu_specs())
     }
 
-    fn update_ime_position(&self, _bounds: Bounds<Pixels>) {
+    fn update_ime_position(&self, _bounds: Bounds<ScaledPixels>) {
         // todo(windows)
     }
 }
@@ -735,23 +829,11 @@ impl IDropTarget_Impl for WindowsDragDropHandler_Impl {
                 }
                 let hdrop = idata.u.hGlobal.0 as *mut HDROP;
                 let mut paths = SmallVec::<[PathBuf; 2]>::new();
-                let file_count = DragQueryFileW(*hdrop, DRAGDROP_GET_FILES_COUNT, None);
-                for file_index in 0..file_count {
-                    let filename_length = DragQueryFileW(*hdrop, file_index, None) as usize;
-                    let mut buffer = vec![0u16; filename_length + 1];
-                    let ret = DragQueryFileW(*hdrop, file_index, Some(buffer.as_mut_slice()));
-                    if ret == 0 {
-                        log::error!("unable to read file name");
-                        continue;
+                with_file_names(*hdrop, |file_name| {
+                    if let Some(path) = PathBuf::from_str(&file_name).log_err() {
+                        paths.push(path);
                     }
-                    if let Some(file_name) =
-                        String::from_utf16(&buffer[0..filename_length]).log_err()
-                    {
-                        if let Some(path) = PathBuf::from_str(&file_name).log_err() {
-                            paths.push(path);
-                        }
-                    }
-                }
+                });
                 ReleaseStgMedium(&mut idata);
                 let mut cursor_position = POINT { x: pt.x, y: pt.y };
                 ScreenToClient(self.0.hwnd, &mut cursor_position)
@@ -899,6 +981,23 @@ struct StyleAndBounds {
     cy: i32,
 }
 
+#[repr(C)]
+struct WINDOWCOMPOSITIONATTRIBDATA {
+    attrib: u32,
+    pv_data: *mut std::ffi::c_void,
+    cb_data: usize,
+}
+
+#[repr(C)]
+struct AccentPolicy {
+    accent_state: u32,
+    accent_flags: u32,
+    gradient_color: u32,
+    animation_id: u32,
+}
+
+type Color = (u8, u8, u8, u8);
+
 #[derive(Debug, Default, Clone, Copy)]
 pub(crate) struct WindowBorderOffset {
     width_offset: i32,
@@ -923,6 +1022,17 @@ impl WindowBorderOffset {
             (window_rect.bottom - window_rect.top) - (client_rect.bottom - client_rect.top);
         Ok(())
     }
+}
+
+struct WindowOpenStatus {
+    placement: WINDOWPLACEMENT,
+    state: WindowOpenState,
+}
+
+enum WindowOpenState {
+    Maximized,
+    Fullscreen,
+    Windowed,
 }
 
 fn register_wnd_class(icon_handle: HICON) -> PCWSTR {
@@ -963,7 +1073,7 @@ unsafe extern "system" fn wnd_proc(
         let weak = Box::new(Rc::downgrade(creation_result.as_ref().unwrap()));
         unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
         ctx.inner = Some(creation_result);
-        return LRESULT(1);
+        return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
     }
     let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Weak<WindowsWindowStatePtr>;
     if ptr.is_null() {
@@ -1069,42 +1179,86 @@ fn calculate_client_rect(
     }
 }
 
-// https://learn.microsoft.com/en-us/windows/win32/api/shellapi/nf-shellapi-dragqueryfilew
-const DRAGDROP_GET_FILES_COUNT: u32 = 0xFFFFFFFF;
+fn retrieve_window_placement(
+    hwnd: HWND,
+    display: WindowsDisplay,
+    initial_bounds: Bounds<Pixels>,
+    scale_factor: f32,
+    border_offset: WindowBorderOffset,
+) -> Result<WINDOWPLACEMENT> {
+    let mut placement = WINDOWPLACEMENT {
+        length: std::mem::size_of::<WINDOWPLACEMENT>() as u32,
+        ..Default::default()
+    };
+    unsafe { GetWindowPlacement(hwnd, &mut placement)? };
+    // the bounds may be not inside the display
+    let bounds = if display.check_given_bounds(initial_bounds) {
+        initial_bounds
+    } else {
+        display.default_bounds()
+    };
+    let bounds = bounds.to_device_pixels(scale_factor);
+    placement.rcNormalPosition = calculate_window_rect(bounds, border_offset);
+    Ok(placement)
+}
+
+fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32) {
+    unsafe {
+        type SetWindowCompositionAttributeType =
+            unsafe extern "system" fn(HWND, *mut WINDOWCOMPOSITIONATTRIBDATA) -> BOOL;
+        let module_name = PCSTR::from_raw("user32.dll\0".as_ptr());
+        let user32 = GetModuleHandleA(module_name);
+        if user32.is_ok() {
+            let func_name = PCSTR::from_raw("SetWindowCompositionAttribute\0".as_ptr());
+            let set_window_composition_attribute: SetWindowCompositionAttributeType =
+                std::mem::transmute(GetProcAddress(user32.unwrap(), func_name));
+            let mut color = color.unwrap_or_default();
+            let is_acrylic = state == 4;
+            if is_acrylic && color.3 == 0 {
+                color.3 = 1;
+            }
+            let accent = AccentPolicy {
+                accent_state: state,
+                accent_flags: if is_acrylic { 0 } else { 2 },
+                gradient_color: (color.0 as u32)
+                    | ((color.1 as u32) << 8)
+                    | ((color.2 as u32) << 16)
+                    | (color.3 as u32) << 24,
+                animation_id: 0,
+            };
+            let mut data = WINDOWCOMPOSITIONATTRIBDATA {
+                attrib: 0x13,
+                pv_data: &accent as *const _ as *mut _,
+                cb_data: std::mem::size_of::<AccentPolicy>(),
+            };
+            let _ = set_window_composition_attribute(hwnd, &mut data as *mut _ as _);
+        } else {
+            let _ = user32
+                .inspect_err(|e| log::error!("Error getting module: {e}"))
+                .ok();
+        }
+    }
+}
 
 mod windows_renderer {
-    use std::{num::NonZeroIsize, sync::Arc};
-
-    use blade_graphics as gpu;
+    use crate::platform::blade::{BladeContext, BladeRenderer, BladeSurfaceConfig};
     use raw_window_handle as rwh;
+    use std::num::NonZeroIsize;
     use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::GWLP_HINSTANCE};
 
-    use crate::{
-        get_window_long,
-        platform::blade::{BladeRenderer, BladeSurfaceConfig},
-    };
+    use crate::get_window_long;
 
-    pub(super) fn windows_renderer(hwnd: HWND, transparent: bool) -> anyhow::Result<BladeRenderer> {
+    pub(super) fn init(
+        context: &BladeContext,
+        hwnd: HWND,
+        transparent: bool,
+    ) -> anyhow::Result<BladeRenderer> {
         let raw = RawWindow { hwnd };
-        let gpu: Arc<gpu::Context> = Arc::new(
-            unsafe {
-                gpu::Context::init_windowed(
-                    &raw,
-                    gpu::ContextDesc {
-                        validation: false,
-                        capture: false,
-                        overlay: false,
-                    },
-                )
-            }
-            .map_err(|e| anyhow::anyhow!("{:?}", e))?,
-        );
         let config = BladeSurfaceConfig {
-            size: gpu::Extent::default(),
+            size: Default::default(),
             transparent,
         };
-
-        Ok(BladeRenderer::new(gpu, config))
+        BladeRenderer::new(context, &raw, config)
     }
 
     struct RawWindow {

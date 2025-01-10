@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use crate::prelude::*;
 use crate::{h_flex, Icon, IconName, IconSize, Label};
 
@@ -30,8 +32,8 @@ impl ListSubHeader {
     }
 }
 
-impl Selectable for ListSubHeader {
-    fn selected(mut self, selected: bool) -> Self {
+impl Toggleable for ListSubHeader {
+    fn toggle_state(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
@@ -43,8 +45,8 @@ impl RenderOnce for ListSubHeader {
             .flex_1()
             .w_full()
             .relative()
-            .pb(Spacing::Small.rems(cx))
-            .px(Spacing::XSmall.rems(cx))
+            .pb(DynamicSpacing::Base04.rems(cx))
+            .px(DynamicSpacing::Base02.rems(cx))
             .child(
                 div()
                     .h_6()

@@ -6,7 +6,6 @@ use crate::Buffer;
 use clock::ReplicaId;
 use collections::BTreeMap;
 use futures::FutureExt as _;
-use git::diff::assert_hunks;
 use gpui::{AppContext, BorrowAppContext, Model};
 use gpui::{Context, TestAppContext};
 use indoc::indoc;
@@ -20,6 +19,7 @@ use std::{
     sync::LazyLock,
     time::{Duration, Instant},
 };
+use syntax_map::TreeSitterOptions;
 use text::network::Network;
 use text::{BufferId, LineEnding, LineIndent};
 use text::{Point, ToPoint};
@@ -916,6 +916,39 @@ async fn test_symbols_containing(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+fn test_text_objects(cx: &mut AppContext) {
+    let (text, ranges) = marked_text_ranges(
+        indoc! {r#"
+            impl Hello {
+                fn say() -> u8 { return /* ˇhi */ 1 }
+            }"#
+        },
+        false,
+    );
+
+    let buffer =
+        cx.new_model(|cx| Buffer::local(text.clone(), cx).with_language(Arc::new(rust_lang()), cx));
+    let snapshot = buffer.update(cx, |buffer, _| buffer.snapshot());
+
+    let matches = snapshot
+        .text_object_ranges(ranges[0].clone(), TreeSitterOptions::default())
+        .map(|(range, text_object)| (&text[range], text_object))
+        .collect::<Vec<_>>();
+
+    assert_eq!(
+        matches,
+        &[
+            ("/* hi */", TextObject::AroundComment),
+            ("return /* hi */ 1", TextObject::InsideFunction),
+            (
+                "fn say() -> u8 { return /* hi */ 1 }",
+                TextObject::AroundFunction
+            ),
+        ],
+    )
+}
+
+#[gpui::test]
 fn test_enclosing_bracket_ranges(cx: &mut AppContext) {
     let mut assert = |selection_text, range_markers| {
         assert_bracket_pairs(selection_text, range_markers, rust_lang(), cx)
@@ -1071,20 +1104,32 @@ fn test_range_for_syntax_ancestor(cx: &mut AppContext) {
         let snapshot = buffer.snapshot();
 
         assert_eq!(
-            snapshot.range_for_syntax_ancestor(empty_range_at(text, "|")),
-            Some(range_of(text, "|"))
+            snapshot
+                .syntax_ancestor(empty_range_at(text, "|"))
+                .unwrap()
+                .byte_range(),
+            range_of(text, "|")
         );
         assert_eq!(
-            snapshot.range_for_syntax_ancestor(range_of(text, "|")),
-            Some(range_of(text, "|c|"))
+            snapshot
+                .syntax_ancestor(range_of(text, "|"))
+                .unwrap()
+                .byte_range(),
+            range_of(text, "|c|")
         );
         assert_eq!(
-            snapshot.range_for_syntax_ancestor(range_of(text, "|c|")),
-            Some(range_of(text, "|c| {}"))
+            snapshot
+                .syntax_ancestor(range_of(text, "|c|"))
+                .unwrap()
+                .byte_range(),
+            range_of(text, "|c| {}")
         );
         assert_eq!(
-            snapshot.range_for_syntax_ancestor(range_of(text, "|c| {}")),
-            Some(range_of(text, "(|c| {})"))
+            snapshot
+                .syntax_ancestor(range_of(text, "|c| {}"))
+                .unwrap()
+                .byte_range(),
+            range_of(text, "(|c| {})")
         );
 
         buffer
@@ -1241,7 +1286,6 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut AppC
             Some(AutoindentMode::EachLine),
             cx,
         );
-
         assert_eq!(
             buffer.text(),
             "
@@ -1256,6 +1300,74 @@ fn test_autoindent_does_not_adjust_lines_with_unchanged_suggestion(cx: &mut AppC
             "
             .unindent()
         );
+
+        // Insert a newline after the open brace. It is auto-indented
+        buffer.edit_via_marked_text(
+            &"
+            fn a() {«
+            »
+            c
+                .f
+                .g();
+            d
+                .f
+                .g();
+            }
+            "
+            .unindent(),
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
+        assert_eq!(
+            buffer.text(),
+            "
+            fn a() {
+                ˇ
+            c
+                .f
+                .g();
+            d
+                .f
+                .g();
+            }
+            "
+            .unindent()
+            .replace("ˇ", "")
+        );
+
+        // Manually outdent the line. It stays outdented.
+        buffer.edit_via_marked_text(
+            &"
+            fn a() {
+            «»
+            c
+                .f
+                .g();
+            d
+                .f
+                .g();
+            }
+            "
+            .unindent(),
+            Some(AutoindentMode::EachLine),
+            cx,
+        );
+        assert_eq!(
+            buffer.text(),
+            "
+            fn a() {
+
+            c
+                .f
+                .g();
+            d
+                .f
+                .g();
+            }
+            "
+            .unindent()
+        );
+
         buffer
     });
 
@@ -1659,6 +1771,69 @@ fn test_autoindent_block_mode_without_original_indent_columns(cx: &mut AppContex
 }
 
 #[gpui::test]
+fn test_autoindent_block_mode_multiple_adjacent_ranges(cx: &mut AppContext) {
+    init_settings(cx, |_| {});
+
+    cx.new_model(|cx| {
+        let (text, ranges_to_replace) = marked_text_ranges(
+            &"
+            mod numbers {
+                «fn one() {
+                    1
+                }
+            »
+                «fn two() {
+                    2
+                }
+            »
+                «fn three() {
+                    3
+                }
+            »}
+            "
+            .unindent(),
+            false,
+        );
+
+        let mut buffer = Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx);
+
+        buffer.edit(
+            [
+                (ranges_to_replace[0].clone(), "fn one() {\n    101\n}\n"),
+                (ranges_to_replace[1].clone(), "fn two() {\n    102\n}\n"),
+                (ranges_to_replace[2].clone(), "fn three() {\n    103\n}\n"),
+            ],
+            Some(AutoindentMode::Block {
+                original_indent_columns: vec![0, 0, 0],
+            }),
+            cx,
+        );
+
+        pretty_assertions::assert_eq!(
+            buffer.text(),
+            "
+            mod numbers {
+                fn one() {
+                    101
+                }
+
+                fn two() {
+                    102
+                }
+
+                fn three() {
+                    103
+                }
+            }
+            "
+            .unindent()
+        );
+
+        buffer
+    });
+}
+
+#[gpui::test]
 fn test_autoindent_language_without_indents_query(cx: &mut AppContext) {
     init_settings(cx, |_| {});
 
@@ -1990,8 +2165,8 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
                         },
                     ],
                     disabled_scopes_by_bracket_ix: vec![
-                        Vec::new(), //
-                        vec!["string".into()],
+                        Vec::new(),                              //
+                        vec!["string".into(), "comment".into()], // single quotes disabled
                     ],
                 },
                 overrides: [(
@@ -2012,6 +2187,7 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
             r#"
                 (jsx_element) @element
                 (string) @string
+                (comment) @comment.inclusive
                 [
                     (jsx_opening_element)
                     (jsx_closing_element)
@@ -2025,7 +2201,7 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
             a["b"] = <C d="e">
                 <F></F>
                 { g() }
-            </C>;
+            </C>; // a comment
         "#
         .unindent();
 
@@ -2038,6 +2214,14 @@ fn test_language_scope_at_with_javascript(cx: &mut AppContext) {
         assert_eq!(
             config.brackets().map(|e| e.1).collect::<Vec<_>>(),
             &[true, true]
+        );
+
+        let comment_config = snapshot
+            .language_scope_at(text.find("comment").unwrap() + "comment".len())
+            .unwrap();
+        assert_eq!(
+            comment_config.brackets().map(|e| e.1).collect::<Vec<_>>(),
+            &[true, false]
         );
 
         let string_config = snapshot
@@ -2381,20 +2565,14 @@ async fn test_find_matching_indent(cx: &mut TestAppContext) {
 fn test_branch_and_merge(cx: &mut TestAppContext) {
     cx.update(|cx| init_settings(cx, |_| {}));
 
-    let base_buffer = cx.new_model(|cx| Buffer::local("one\ntwo\nthree\n", cx));
+    let base = cx.new_model(|cx| Buffer::local("one\ntwo\nthree\n", cx));
 
     // Create a remote replica of the base buffer.
-    let base_buffer_replica = cx.new_model(|cx| {
-        Buffer::from_proto(
-            1,
-            Capability::ReadWrite,
-            base_buffer.read(cx).to_proto(cx),
-            None,
-        )
-        .unwrap()
+    let base_replica = cx.new_model(|cx| {
+        Buffer::from_proto(1, Capability::ReadWrite, base.read(cx).to_proto(cx), None).unwrap()
     });
-    base_buffer.update(cx, |_buffer, cx| {
-        cx.subscribe(&base_buffer_replica, |this, _, event, cx| {
+    base.update(cx, |_buffer, cx| {
+        cx.subscribe(&base_replica, |this, _, event, cx| {
             if let BufferEvent::Operation {
                 operation,
                 is_local: true,
@@ -2407,14 +2585,14 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
     });
 
     // Create a branch, which initially has the same state as the base buffer.
-    let branch_buffer = base_buffer.update(cx, |buffer, cx| buffer.branch(cx));
-    branch_buffer.read_with(cx, |buffer, _| {
+    let branch = base.update(cx, |buffer, cx| buffer.branch(cx));
+    branch.read_with(cx, |buffer, _| {
         assert_eq!(buffer.text(), "one\ntwo\nthree\n");
     });
 
     // Edits to the branch are not applied to the base.
-    branch_buffer.update(cx, |branch_buffer, cx| {
-        branch_buffer.edit(
+    branch.update(cx, |buffer, cx| {
+        buffer.edit(
             [
                 (Point::new(1, 0)..Point::new(1, 0), "1.5\n"),
                 (Point::new(2, 0)..Point::new(2, 5), "THREE"),
@@ -2423,88 +2601,121 @@ fn test_branch_and_merge(cx: &mut TestAppContext) {
             cx,
         )
     });
-    branch_buffer.read_with(cx, |branch_buffer, cx| {
-        assert_eq!(base_buffer.read(cx).text(), "one\ntwo\nthree\n");
-        assert_eq!(branch_buffer.text(), "one\n1.5\ntwo\nTHREE\n");
+    branch.read_with(cx, |buffer, cx| {
+        assert_eq!(base.read(cx).text(), "one\ntwo\nthree\n");
+        assert_eq!(buffer.text(), "one\n1.5\ntwo\nTHREE\n");
     });
 
-    // The branch buffer maintains a diff with respect to its base buffer.
-    start_recalculating_diff(&branch_buffer, cx);
-    cx.run_until_parked();
-    assert_diff_hunks(
-        &branch_buffer,
-        cx,
-        &[(1..2, "", "1.5\n"), (3..4, "three\n", "THREE\n")],
-    );
+    // Convert from branch buffer ranges to the corresoponing ranges in the
+    // base buffer.
+    branch.read_with(cx, |buffer, cx| {
+        assert_eq!(
+            buffer.range_to_version(4..7, &base.read(cx).version()),
+            4..4
+        );
+        assert_eq!(
+            buffer.range_to_version(2..9, &base.read(cx).version()),
+            2..5
+        );
+    });
 
     // Edits to the base are applied to the branch.
-    base_buffer.update(cx, |buffer, cx| {
+    base.update(cx, |buffer, cx| {
         buffer.edit([(Point::new(0, 0)..Point::new(0, 0), "ZERO\n")], None, cx)
     });
-    branch_buffer.read_with(cx, |branch_buffer, cx| {
-        assert_eq!(base_buffer.read(cx).text(), "ZERO\none\ntwo\nthree\n");
-        assert_eq!(branch_buffer.text(), "ZERO\none\n1.5\ntwo\nTHREE\n");
+    branch.read_with(cx, |buffer, cx| {
+        assert_eq!(base.read(cx).text(), "ZERO\none\ntwo\nthree\n");
+        assert_eq!(buffer.text(), "ZERO\none\n1.5\ntwo\nTHREE\n");
     });
-
-    // Until the git diff recalculation is complete, the git diff references
-    // the previous content of the base buffer, so that it stays in sync.
-    start_recalculating_diff(&branch_buffer, cx);
-    assert_diff_hunks(
-        &branch_buffer,
-        cx,
-        &[(2..3, "", "1.5\n"), (4..5, "three\n", "THREE\n")],
-    );
-    cx.run_until_parked();
-    assert_diff_hunks(
-        &branch_buffer,
-        cx,
-        &[(2..3, "", "1.5\n"), (4..5, "three\n", "THREE\n")],
-    );
 
     // Edits to any replica of the base are applied to the branch.
-    base_buffer_replica.update(cx, |buffer, cx| {
+    base_replica.update(cx, |buffer, cx| {
         buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "2.5\n")], None, cx)
     });
-    branch_buffer.read_with(cx, |branch_buffer, cx| {
-        assert_eq!(base_buffer.read(cx).text(), "ZERO\none\ntwo\n2.5\nthree\n");
-        assert_eq!(branch_buffer.text(), "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n");
+    branch.read_with(cx, |buffer, cx| {
+        assert_eq!(base.read(cx).text(), "ZERO\none\ntwo\n2.5\nthree\n");
+        assert_eq!(buffer.text(), "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n");
     });
 
     // Merging the branch applies all of its changes to the base.
-    base_buffer.update(cx, |base_buffer, cx| {
-        base_buffer.merge(&branch_buffer, None, cx);
+    branch.update(cx, |buffer, cx| {
+        buffer.merge_into_base(Vec::new(), cx);
     });
 
-    branch_buffer.update(cx, |branch_buffer, cx| {
-        assert_eq!(
-            base_buffer.read(cx).text(),
-            "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n"
-        );
-        assert_eq!(branch_buffer.text(), "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n");
+    branch.update(cx, |buffer, cx| {
+        assert_eq!(base.read(cx).text(), "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n");
+        assert_eq!(buffer.text(), "ZERO\none\n1.5\ntwo\n2.5\nTHREE\n");
     });
 }
 
-fn start_recalculating_diff(buffer: &Model<Buffer>, cx: &mut TestAppContext) {
-    buffer
-        .update(cx, |buffer, cx| buffer.recalculate_diff(cx).unwrap())
-        .detach();
+#[gpui::test]
+fn test_merge_into_base(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let base = cx.new_model(|cx| Buffer::local("abcdefghijk", cx));
+    let branch = base.update(cx, |buffer, cx| buffer.branch(cx));
+
+    // Make 3 edits, merge one into the base.
+    branch.update(cx, |branch, cx| {
+        branch.edit([(0..3, "ABC"), (7..9, "HI"), (11..11, "LMN")], None, cx);
+        branch.merge_into_base(vec![5..8], cx);
+    });
+
+    branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefgHIjkLMN"));
+    base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefgHIjk"));
+
+    // Undo the one already-merged edit. Merge that into the base.
+    branch.update(cx, |branch, cx| {
+        branch.edit([(7..9, "hi")], None, cx);
+        branch.merge_into_base(vec![5..8], cx);
+    });
+    base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefghijk"));
+
+    // Merge an insertion into the base.
+    branch.update(cx, |branch, cx| {
+        branch.merge_into_base(vec![11..11], cx);
+    });
+
+    branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefghijkLMN"));
+    base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefghijkLMN"));
+
+    // Deleted the inserted text and merge that into the base.
+    branch.update(cx, |branch, cx| {
+        branch.edit([(11..14, "")], None, cx);
+        branch.merge_into_base(vec![10..11], cx);
+    });
+
+    base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefghijk"));
 }
 
-#[track_caller]
-fn assert_diff_hunks(
-    buffer: &Model<Buffer>,
-    cx: &mut TestAppContext,
-    expected_hunks: &[(Range<u32>, &str, &str)],
-) {
-    let (snapshot, diff_base) = buffer.read_with(cx, |buffer, _| {
-        (buffer.snapshot(), buffer.diff_base().unwrap().to_string())
+#[gpui::test]
+fn test_undo_after_merge_into_base(cx: &mut TestAppContext) {
+    cx.update(|cx| init_settings(cx, |_| {}));
+
+    let base = cx.new_model(|cx| Buffer::local("abcdefghijk", cx));
+    let branch = base.update(cx, |buffer, cx| buffer.branch(cx));
+
+    // Make 2 edits, merge one into the base.
+    branch.update(cx, |branch, cx| {
+        branch.edit([(0..3, "ABC"), (7..9, "HI")], None, cx);
+        branch.merge_into_base(vec![7..7], cx);
     });
-    assert_hunks(
-        snapshot.git_diff_hunks_intersecting_range(Anchor::MIN..Anchor::MAX),
-        &snapshot,
-        &diff_base,
-        expected_hunks,
-    );
+    base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefgHIjk"));
+    branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefgHIjk"));
+
+    // Undo the merge in the base buffer.
+    base.update(cx, |base, cx| {
+        base.undo(cx);
+    });
+    base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefghijk"));
+    branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefgHIjk"));
+
+    // Merge that operation into the base again.
+    branch.update(cx, |branch, cx| {
+        branch.merge_into_base(vec![7..7], cx);
+    });
+    base.read_with(cx, |base, _| assert_eq!(base.text(), "abcdefgHIjk"));
+    branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefgHIjk"));
 }
 
 #[gpui::test(iterations = 100)]
@@ -2966,6 +3177,20 @@ fn rust_lang() -> Language {
     .with_brackets_query(
         r#"
         ("{" @open "}" @close)
+        "#,
+    )
+    .unwrap()
+    .with_text_object_query(
+        r#"
+        (function_item
+            body: (_
+                "{"
+                (_)* @function.inside
+                "}" )) @function.around
+
+        (line_comment)+ @comment.around
+
+        (block_comment) @comment.around
         "#,
     )
     .unwrap()

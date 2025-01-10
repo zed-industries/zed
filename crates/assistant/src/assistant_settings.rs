@@ -2,19 +2,13 @@ use std::sync::Arc;
 
 use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
-use fs::Fs;
+use feature_flags::FeatureFlagAppExt;
 use gpui::{AppContext, Pixels};
-use language_model::provider::open_ai;
-use language_model::settings::{
-    AnthropicSettingsContent, AnthropicSettingsContentV1, OllamaSettingsContent,
-    OpenAiSettingsContent, OpenAiSettingsContentV1, VersionedAnthropicSettingsContent,
-    VersionedOpenAiSettingsContent,
-};
-use language_model::{settings::AllLanguageModelSettings, CloudModel, LanguageModel};
+use language_model::{CloudModel, LanguageModel};
 use ollama::Model as OllamaModel;
 use schemars::{schema::Schema, JsonSchema};
 use serde::{Deserialize, Serialize};
-use settings::{update_settings_file, Settings, SettingsSources};
+use settings::{Settings, SettingsSources};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -34,20 +28,17 @@ pub enum AssistantProviderContentV1 {
     OpenAi {
         default_model: Option<OpenAiModel>,
         api_url: Option<String>,
-        low_speed_timeout_in_seconds: Option<u64>,
         available_models: Option<Vec<OpenAiModel>>,
     },
     #[serde(rename = "anthropic")]
     Anthropic {
         default_model: Option<AnthropicModel>,
         api_url: Option<String>,
-        low_speed_timeout_in_seconds: Option<u64>,
     },
     #[serde(rename = "ollama")]
     Ollama {
         default_model: Option<OllamaModel>,
         api_url: Option<String>,
-        low_speed_timeout_in_seconds: Option<u64>,
     },
 }
 
@@ -61,6 +52,13 @@ pub struct AssistantSettings {
     pub default_model: LanguageModelSelection,
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
+    pub enable_experimental_live_diffs: bool,
+}
+
+impl AssistantSettings {
+    pub fn are_live_diffs_enabled(&self, cx: &AppContext) -> bool {
+        cx.is_staff() || self.enable_experimental_live_diffs
+    }
 }
 
 /// Assistant panel settings
@@ -102,103 +100,6 @@ impl AssistantSettingsContent {
         }
     }
 
-    pub fn update_file(&mut self, fs: Arc<dyn Fs>, cx: &AppContext) {
-        if let AssistantSettingsContent::Versioned(settings) = self {
-            if let VersionedAssistantSettingsContent::V1(settings) = settings {
-                if let Some(provider) = settings.provider.clone() {
-                    match provider {
-                        AssistantProviderContentV1::Anthropic {
-                            api_url,
-                            low_speed_timeout_in_seconds,
-                            ..
-                        } => update_settings_file::<AllLanguageModelSettings>(
-                            fs,
-                            cx,
-                            move |content, _| {
-                                if content.anthropic.is_none() {
-                                    content.anthropic = Some(AnthropicSettingsContent::Versioned(
-                                        VersionedAnthropicSettingsContent::V1(
-                                            AnthropicSettingsContentV1 {
-                                                api_url,
-                                                low_speed_timeout_in_seconds,
-                                                available_models: None,
-                                            },
-                                        ),
-                                    ));
-                                }
-                            },
-                        ),
-                        AssistantProviderContentV1::Ollama {
-                            api_url,
-                            low_speed_timeout_in_seconds,
-                            ..
-                        } => update_settings_file::<AllLanguageModelSettings>(
-                            fs,
-                            cx,
-                            move |content, _| {
-                                if content.ollama.is_none() {
-                                    content.ollama = Some(OllamaSettingsContent {
-                                        api_url,
-                                        low_speed_timeout_in_seconds,
-                                        available_models: None,
-                                    });
-                                }
-                            },
-                        ),
-                        AssistantProviderContentV1::OpenAi {
-                            api_url,
-                            low_speed_timeout_in_seconds,
-                            available_models,
-                            ..
-                        } => update_settings_file::<AllLanguageModelSettings>(
-                            fs,
-                            cx,
-                            move |content, _| {
-                                if content.openai.is_none() {
-                                    let available_models = available_models.map(|models| {
-                                        models
-                                            .into_iter()
-                                            .filter_map(|model| match model {
-                                                OpenAiModel::Custom {
-                                                    name,
-                                                    display_name,
-                                                    max_tokens,
-                                                    max_output_tokens,
-                                                    max_completion_tokens: None,
-                                                } => Some(open_ai::AvailableModel {
-                                                    name,
-                                                    display_name,
-                                                    max_tokens,
-                                                    max_output_tokens,
-                                                    max_completion_tokens: None,
-                                                }),
-                                                _ => None,
-                                            })
-                                            .collect::<Vec<_>>()
-                                    });
-                                    content.openai = Some(OpenAiSettingsContent::Versioned(
-                                        VersionedOpenAiSettingsContent::V1(
-                                            OpenAiSettingsContentV1 {
-                                                api_url,
-                                                low_speed_timeout_in_seconds,
-                                                available_models,
-                                            },
-                                        ),
-                                    ));
-                                }
-                            },
-                        ),
-                        _ => {}
-                    }
-                }
-            }
-        }
-
-        *self = AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(
-            self.upgrade(),
-        ));
-    }
-
     fn upgrade(&self) -> AssistantSettingsContentV2 {
         match self {
             AssistantSettingsContent::Versioned(settings) => match settings {
@@ -238,6 +139,7 @@ impl AssistantSettingsContent {
                             }
                         }),
                     inline_alternatives: None,
+                    enable_experimental_live_diffs: None,
                 },
                 VersionedAssistantSettingsContent::V2(settings) => settings.clone(),
             },
@@ -257,6 +159,7 @@ impl AssistantSettingsContent {
                         .to_string(),
                 }),
                 inline_alternatives: None,
+                enable_experimental_live_diffs: None,
             },
         }
     }
@@ -288,54 +191,41 @@ impl AssistantSettingsContent {
                         log::warn!("attempted to set zed.dev model on outdated settings");
                     }
                     "anthropic" => {
-                        let (api_url, low_speed_timeout_in_seconds) = match &settings.provider {
-                            Some(AssistantProviderContentV1::Anthropic {
-                                api_url,
-                                low_speed_timeout_in_seconds,
-                                ..
-                            }) => (api_url.clone(), *low_speed_timeout_in_seconds),
-                            _ => (None, None),
+                        let api_url = match &settings.provider {
+                            Some(AssistantProviderContentV1::Anthropic { api_url, .. }) => {
+                                api_url.clone()
+                            }
+                            _ => None,
                         };
                         settings.provider = Some(AssistantProviderContentV1::Anthropic {
                             default_model: AnthropicModel::from_id(&model).ok(),
                             api_url,
-                            low_speed_timeout_in_seconds,
                         });
                     }
                     "ollama" => {
-                        let (api_url, low_speed_timeout_in_seconds) = match &settings.provider {
-                            Some(AssistantProviderContentV1::Ollama {
-                                api_url,
-                                low_speed_timeout_in_seconds,
-                                ..
-                            }) => (api_url.clone(), *low_speed_timeout_in_seconds),
-                            _ => (None, None),
+                        let api_url = match &settings.provider {
+                            Some(AssistantProviderContentV1::Ollama { api_url, .. }) => {
+                                api_url.clone()
+                            }
+                            _ => None,
                         };
                         settings.provider = Some(AssistantProviderContentV1::Ollama {
                             default_model: Some(ollama::Model::new(&model, None, None)),
                             api_url,
-                            low_speed_timeout_in_seconds,
                         });
                     }
                     "openai" => {
-                        let (api_url, low_speed_timeout_in_seconds, available_models) =
-                            match &settings.provider {
-                                Some(AssistantProviderContentV1::OpenAi {
-                                    api_url,
-                                    low_speed_timeout_in_seconds,
-                                    available_models,
-                                    ..
-                                }) => (
-                                    api_url.clone(),
-                                    *low_speed_timeout_in_seconds,
-                                    available_models.clone(),
-                                ),
-                                _ => (None, None, None),
-                            };
+                        let (api_url, available_models) = match &settings.provider {
+                            Some(AssistantProviderContentV1::OpenAi {
+                                api_url,
+                                available_models,
+                                ..
+                            }) => (api_url.clone(), available_models.clone()),
+                            _ => (None, None),
+                        };
                         settings.provider = Some(AssistantProviderContentV1::OpenAi {
                             default_model: OpenAiModel::from_id(&model).ok(),
                             api_url,
-                            low_speed_timeout_in_seconds,
                             available_models,
                         });
                     }
@@ -373,6 +263,7 @@ impl Default for VersionedAssistantSettingsContent {
             default_height: None,
             default_model: None,
             inline_alternatives: None,
+            enable_experimental_live_diffs: None,
         })
     }
 }
@@ -399,10 +290,14 @@ pub struct AssistantSettingsContentV2 {
     ///
     /// Default: 320
     default_height: Option<f32>,
-    /// The default model to use when creating new contexts.
+    /// The default model to use when creating new chats.
     default_model: Option<LanguageModelSelection>,
     /// Additional models with which to generate alternatives when performing inline assists.
     inline_alternatives: Option<Vec<LanguageModelSelection>>,
+    /// Enable experimental live diffs in the assistant panel.
+    ///
+    /// Default: false
+    enable_experimental_live_diffs: Option<bool>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq)]
@@ -483,11 +378,11 @@ pub struct LegacyAssistantSettingsContent {
     ///
     /// Default: 320
     pub default_height: Option<f32>,
-    /// The default OpenAI model to use when creating new contexts.
+    /// The default OpenAI model to use when creating new chats.
     ///
     /// Default: gpt-4-1106-preview
     pub default_open_ai_model: Option<OpenAiModel>,
-    /// OpenAI API base URL to use when creating new contexts.
+    /// OpenAI API base URL to use when creating new chats.
     ///
     /// Default: https://api.openai.com/v1
     pub openai_api_url: Option<String>,
@@ -525,7 +420,10 @@ impl Settings for AssistantSettings {
             );
             merge(&mut settings.default_model, value.default_model);
             merge(&mut settings.inline_alternatives, value.inline_alternatives);
-            // merge(&mut settings.infer_context, value.infer_context); TODO re-enable this once we ship context inference
+            merge(
+                &mut settings.enable_experimental_live_diffs,
+                value.enable_experimental_live_diffs,
+            );
         }
 
         Ok(settings)
@@ -540,6 +438,7 @@ fn merge<T>(target: &mut T, value: Option<T>) {
 
 #[cfg(test)]
 mod tests {
+    use fs::Fs;
     use gpui::{ReadGlobal, TestAppContext};
 
     use super::*;
@@ -584,6 +483,7 @@ mod tests {
                             dock: None,
                             default_width: None,
                             default_height: None,
+                            enable_experimental_live_diffs: None,
                         }),
                     )
                 },

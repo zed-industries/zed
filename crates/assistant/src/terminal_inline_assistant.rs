@@ -1,6 +1,7 @@
+use crate::assistant_settings::AssistantSettings;
 use crate::{
-    humanize_token_count, prompts::PromptBuilder, AssistantPanel, AssistantPanelEvent,
-    ModelSelector, DEFAULT_CONTEXT_LINES,
+    humanize_token_count, prompts::PromptBuilder, AssistantPanel, AssistantPanelEvent, RequestType,
+    DEFAULT_CONTEXT_LINES,
 };
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
@@ -19,16 +20,19 @@ use language::Buffer;
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
-use settings::Settings;
+use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
+use language_models::report_assistant_event;
+use settings::{update_settings_file, Settings};
 use std::{
     cmp,
     sync::Arc,
     time::{Duration, Instant},
 };
+use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal::Terminal;
 use terminal_view::TerminalView;
 use theme::ThemeSettings;
-use ui::{prelude::*, IconButtonShape, Tooltip};
+use ui::{prelude::*, text_for_action, IconButtonShape, Tooltip};
 use util::ResultExt;
 use workspace::{notifications::NotificationId, Toast, Workspace};
 
@@ -250,7 +254,7 @@ impl TerminalInlineAssistant {
                         .read(cx)
                         .active_context(cx)?
                         .read(cx)
-                        .to_completion_request(cx),
+                        .to_completion_request(RequestType::Chat, cx),
                 )
             })
         } else {
@@ -305,6 +309,33 @@ impl TerminalInlineAssistant {
                     this.focus_handle(cx).focus(cx);
                 })
                 .log_err();
+
+            if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
+                let codegen = assist.codegen.read(cx);
+                let executor = cx.background_executor().clone();
+                report_assistant_event(
+                    AssistantEvent {
+                        conversation_id: None,
+                        kind: AssistantKind::InlineTerminal,
+                        message_id: codegen.message_id.clone(),
+                        phase: if undo {
+                            AssistantPhase::Rejected
+                        } else {
+                            AssistantPhase::Accepted
+                        },
+                        model: model.telemetry_id(),
+                        model_provider: model.provider_id().to_string(),
+                        response_latency: None,
+                        error_message: None,
+                        language_name: None,
+                    },
+                    codegen.telemetry.clone(),
+                    cx.http_client(),
+                    model.api_key(cx),
+                    &executor,
+                );
+            }
+
             assist.codegen.update(cx, |codegen, cx| {
                 if undo {
                     codegen.undo(cx);
@@ -413,7 +444,7 @@ impl TerminalInlineAssist {
                                             struct InlineAssistantError;
 
                                             let id =
-                                                NotificationId::identified::<InlineAssistantError>(
+                                                NotificationId::composite::<InlineAssistantError>(
                                                     assist_id.0,
                                                 );
 
@@ -445,9 +476,9 @@ enum PromptEditorEvent {
 
 struct PromptEditor {
     id: TerminalInlineAssistId,
-    fs: Arc<dyn Fs>,
     height_in_lines: u8,
     editor: View<Editor>,
+    language_model_selector: View<LanguageModelSelector>,
     edited_since_done: bool,
     prompt_history: VecDeque<String>,
     prompt_history_ix: Option<usize>,
@@ -583,8 +614,8 @@ impl Render for PromptEditor {
                     .w_12()
                     .justify_center()
                     .gap_2()
-                    .child(ModelSelector::new(
-                        self.fs.clone(),
+                    .child(LanguageModelSelectorPopoverMenu::new(
+                        self.language_model_selector.clone(),
                         IconButton::new("context", IconName::SettingsAlt)
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::Small)
@@ -664,7 +695,7 @@ impl PromptEditor {
                 cx,
             );
             editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
-            editor.set_placeholder_text("Add a prompt…", cx);
+            editor.set_placeholder_text(Self::placeholder_text(cx), cx);
             editor
         });
 
@@ -678,6 +709,19 @@ impl PromptEditor {
             id,
             height_in_lines: 1,
             editor: prompt_editor,
+            language_model_selector: cx.new_view(|cx| {
+                let fs = fs.clone();
+                LanguageModelSelector::new(
+                    move |model, cx| {
+                        update_settings_file::<AssistantSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _| settings.set_model(model.clone()),
+                        );
+                    },
+                    cx,
+                )
+            }),
             edited_since_done: false,
             prompt_history,
             prompt_history_ix: None,
@@ -685,7 +729,6 @@ impl PromptEditor {
             _codegen_subscription: cx.observe(&codegen, Self::handle_codegen_changed),
             editor_subscriptions: Vec::new(),
             codegen,
-            fs,
             pending_token_count: Task::ready(Ok(())),
             token_count: None,
             _token_count_subscriptions: token_count_subscriptions,
@@ -695,6 +738,14 @@ impl PromptEditor {
         this.count_tokens(cx);
         this.subscribe_to_editor(cx);
         this
+    }
+
+    fn placeholder_text(cx: &WindowContext) -> String {
+        let context_keybinding = text_for_action(&crate::ToggleFocus, cx)
+            .map(|keybinding| format!(" • {keybinding} for context"))
+            .unwrap_or_default();
+
+        format!("Generate…{context_keybinding} • ↓↑ for history")
     }
 
     fn subscribe_to_editor(&mut self, cx: &mut ViewContext<Self>) {
@@ -1015,6 +1066,7 @@ pub struct Codegen {
     telemetry: Option<Arc<Telemetry>>,
     terminal: Model<Terminal>,
     generation: Task<()>,
+    message_id: Option<String>,
     transaction: Option<TerminalTransaction>,
 }
 
@@ -1025,6 +1077,7 @@ impl Codegen {
             telemetry,
             status: CodegenStatus::Idle,
             generation: Task::ready(()),
+            message_id: None,
             transaction: None,
         }
     }
@@ -1034,48 +1087,71 @@ impl Codegen {
             return;
         };
 
+        let model_api_key = model.api_key(cx);
+        let http_client = cx.http_client();
         let telemetry = self.telemetry.clone();
         self.status = CodegenStatus::Pending;
         self.transaction = Some(TerminalTransaction::start(self.terminal.clone()));
         self.generation = cx.spawn(|this, mut cx| async move {
             let model_telemetry_id = model.telemetry_id();
+            let model_provider_id = model.provider_id();
             let response = model.stream_completion_text(prompt, &cx).await;
             let generate = async {
+                let message_id = response
+                    .as_ref()
+                    .ok()
+                    .and_then(|response| response.message_id.clone());
+
                 let (mut hunks_tx, mut hunks_rx) = mpsc::channel(1);
 
-                let task = cx.background_executor().spawn(async move {
-                    let mut response_latency = None;
-                    let request_start = Instant::now();
-                    let task = async {
-                        let mut chunks = response?;
-                        while let Some(chunk) = chunks.next().await {
-                            if response_latency.is_none() {
-                                response_latency = Some(request_start.elapsed());
+                let task = cx.background_executor().spawn({
+                    let message_id = message_id.clone();
+                    let executor = cx.background_executor().clone();
+                    async move {
+                        let mut response_latency = None;
+                        let request_start = Instant::now();
+                        let task = async {
+                            let mut chunks = response?.stream;
+                            while let Some(chunk) = chunks.next().await {
+                                if response_latency.is_none() {
+                                    response_latency = Some(request_start.elapsed());
+                                }
+                                let chunk = chunk?;
+                                hunks_tx.send(chunk).await?;
                             }
-                            let chunk = chunk?;
-                            hunks_tx.send(chunk).await?;
-                        }
 
-                        anyhow::Ok(())
-                    };
+                            anyhow::Ok(())
+                        };
 
-                    let result = task.await;
+                        let result = task.await;
 
-                    let error_message = result.as_ref().err().map(|error| error.to_string());
-                    if let Some(telemetry) = telemetry {
-                        telemetry.report_assistant_event(
-                            None,
-                            telemetry_events::AssistantKind::Inline,
-                            telemetry_events::AssistantPhase::Response,
-                            model_telemetry_id,
-                            response_latency,
-                            error_message,
+                        let error_message = result.as_ref().err().map(|error| error.to_string());
+                        report_assistant_event(
+                            AssistantEvent {
+                                conversation_id: None,
+                                kind: AssistantKind::InlineTerminal,
+                                message_id,
+                                phase: AssistantPhase::Response,
+                                model: model_telemetry_id,
+                                model_provider: model_provider_id.to_string(),
+                                response_latency,
+                                error_message,
+                                language_name: None,
+                            },
+                            telemetry,
+                            http_client,
+                            model_api_key,
+                            &executor,
                         );
-                    }
 
-                    result?;
-                    anyhow::Ok(())
+                        result?;
+                        anyhow::Ok(())
+                    }
                 });
+
+                this.update(&mut cx, |this, _| {
+                    this.message_id = message_id;
+                })?;
 
                 while let Some(hunk) = hunks_rx.next().await {
                     this.update(&mut cx, |this, cx| {

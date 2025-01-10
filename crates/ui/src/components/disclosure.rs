@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 use std::sync::Arc;
 
 use gpui::{ClickEvent, CursorStyle};
@@ -33,8 +34,8 @@ impl Disclosure {
     }
 }
 
-impl Selectable for Disclosure {
-    fn selected(mut self, selected: bool) -> Self {
+impl Toggleable for Disclosure {
+    fn toggle_state(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
@@ -64,7 +65,7 @@ impl RenderOnce for Disclosure {
         .shape(IconButtonShape::Square)
         .icon_color(Color::Muted)
         .icon_size(IconSize::Small)
-        .selected(self.selected)
+        .toggle_state(self.selected)
         .when_some(self.on_toggle, move |this, on_toggle| {
             this.on_click(move |event, cx| on_toggle(event, cx))
         })

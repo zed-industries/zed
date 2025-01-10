@@ -69,7 +69,7 @@ pub trait GitHostingProvider {
     /// Returns a formatted range of line numbers to be placed in a permalink URL.
     fn format_line_numbers(&self, start_line: u32, end_line: u32) -> String;
 
-    fn parse_remote_url<'a>(&self, url: &'a str) -> Option<ParsedGitRemote<'a>>;
+    fn parse_remote_url(&self, url: &str) -> Option<ParsedGitRemote>;
 
     fn extract_pull_request(
         &self,
@@ -109,6 +109,12 @@ impl GitHostingProviderRegistry {
     /// Returns the global [`GitHostingProviderRegistry`].
     pub fn global(cx: &AppContext) -> Arc<Self> {
         cx.global::<GlobalGitHostingProviderRegistry>().0.clone()
+    }
+
+    /// Returns the global [`GitHostingProviderRegistry`], if one is set.
+    pub fn try_global(cx: &AppContext) -> Option<Arc<Self>> {
+        cx.try_global::<GlobalGitHostingProviderRegistry>()
+            .map(|registry| registry.0.clone())
     }
 
     /// Returns the global [`GitHostingProviderRegistry`].
@@ -153,10 +159,10 @@ impl GitHostingProviderRegistry {
     }
 }
 
-#[derive(Debug)]
-pub struct ParsedGitRemote<'a> {
-    pub owner: &'a str,
-    pub repo: &'a str,
+#[derive(Debug, PartialEq)]
+pub struct ParsedGitRemote {
+    pub owner: Arc<str>,
+    pub repo: Arc<str>,
 }
 
 pub fn parse_git_remote_url(

@@ -1,9 +1,14 @@
+use std::fs;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use gpui::*;
-use std::fs;
+use anyhow::Result;
+use gpui::{
+    actions, div, img, prelude::*, px, rgb, size, App, AppContext, AssetSource, Bounds,
+    ImageSource, KeyBinding, Menu, MenuItem, Point, SharedString, SharedUri, TitlebarOptions,
+    ViewContext, WindowBounds, WindowContext, WindowOptions,
+};
 
 struct Assets {
     base: PathBuf,
@@ -55,13 +60,13 @@ impl RenderOnce for ImageContainer {
                 .size_full()
                 .gap_4()
                 .child(self.text)
-                .child(img(self.src).w(px(256.0)).h(px(256.0))),
+                .child(img(self.src).size(px(256.0))),
         )
     }
 }
 
 struct ImageShowcase {
-    local_resource: Arc<PathBuf>,
+    local_resource: Arc<std::path::Path>,
     remote_resource: SharedUri,
     asset_resource: SharedString,
 }
@@ -69,25 +74,51 @@ struct ImageShowcase {
 impl Render for ImageShowcase {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
-            .flex()
-            .flex_row()
             .size_full()
+            .flex()
+            .flex_col()
             .justify_center()
             .items_center()
             .gap_8()
-            .bg(rgb(0xFFFFFF))
-            .child(ImageContainer::new(
-                "Image loaded from a local file",
-                self.local_resource.clone(),
-            ))
-            .child(ImageContainer::new(
-                "Image loaded from a remote resource",
-                self.remote_resource.clone(),
-            ))
-            .child(ImageContainer::new(
-                "Image loaded from an asset",
-                self.asset_resource.clone(),
-            ))
+            .bg(rgb(0xffffff))
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .justify_center()
+                    .items_center()
+                    .gap_8()
+                    .child(ImageContainer::new(
+                        "Image loaded from a local file",
+                        self.local_resource.clone(),
+                    ))
+                    .child(ImageContainer::new(
+                        "Image loaded from a remote resource",
+                        self.remote_resource.clone(),
+                    ))
+                    .child(ImageContainer::new(
+                        "Image loaded from an asset",
+                        self.asset_resource.clone(),
+                    )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .flex_row()
+                    .gap_8()
+                    .child(
+                        div()
+                            .flex_col()
+                            .child("Auto Width")
+                            .child(img("https://picsum.photos/800/400").h(px(180.))),
+                    )
+                    .child(
+                        div()
+                            .flex_col()
+                            .child("Auto Height")
+                            .child(img("https://picsum.photos/480/640").w(px(180.))),
+                    ),
+            )
     }
 }
 
@@ -127,9 +158,10 @@ fn main() {
             cx.open_window(window_options, |cx| {
                 cx.new_view(|_cx| ImageShowcase {
                     // Relative path to your root project path
-                    local_resource: Arc::new(
-                        PathBuf::from_str("crates/gpui/examples/image/app-icon.png").unwrap(),
-                    ),
+                    local_resource: PathBuf::from_str("crates/gpui/examples/image/app-icon.png")
+                        .unwrap()
+                        .into(),
+
                     remote_resource: "https://picsum.photos/512/512".into(),
 
                     asset_resource: "image/color.svg".into(),

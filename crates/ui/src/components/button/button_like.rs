@@ -1,11 +1,12 @@
+#![allow(missing_docs)]
 use gpui::{relative, CursorStyle, DefiniteLength, MouseButton};
 use gpui::{transparent_black, AnyElement, AnyView, ClickEvent, Hsla, Rems};
 use smallvec::SmallVec;
 
-use crate::{prelude::*, Elevation, ElevationIndex, Spacing};
+use crate::{prelude::*, DynamicSpacing, ElevationIndex};
 
 /// A trait for buttons that can be Selected. Enables setting the [`ButtonStyle`] of a button when it is selected.
-pub trait SelectableButton: Selectable {
+pub trait SelectableButton: Toggleable {
     fn selected_style(self, style: ButtonStyle) -> Self;
 }
 
@@ -145,20 +146,12 @@ pub(crate) struct ButtonLikeStyles {
     pub icon_color: Hsla,
 }
 
-fn element_bg_from_elevation(elevation: Option<Elevation>, cx: &mut WindowContext) -> Hsla {
+fn element_bg_from_elevation(elevation: Option<ElevationIndex>, cx: &mut WindowContext) -> Hsla {
     match elevation {
-        Some(Elevation::ElevationIndex(ElevationIndex::Background)) => {
-            cx.theme().colors().element_background
-        }
-        Some(Elevation::ElevationIndex(ElevationIndex::ElevatedSurface)) => {
-            cx.theme().colors().surface_background
-        }
-        Some(Elevation::ElevationIndex(ElevationIndex::Surface)) => {
-            cx.theme().colors().elevated_surface_background
-        }
-        Some(Elevation::ElevationIndex(ElevationIndex::ModalSurface)) => {
-            cx.theme().colors().background
-        }
+        Some(ElevationIndex::Background) => cx.theme().colors().element_background,
+        Some(ElevationIndex::ElevatedSurface) => cx.theme().colors().elevated_surface_background,
+        Some(ElevationIndex::Surface) => cx.theme().colors().surface_background,
+        Some(ElevationIndex::ModalSurface) => cx.theme().colors().background,
         _ => cx.theme().colors().element_background,
     }
 }
@@ -166,14 +159,12 @@ fn element_bg_from_elevation(elevation: Option<Elevation>, cx: &mut WindowContex
 impl ButtonStyle {
     pub(crate) fn enabled(
         self,
-        elevation: Option<Elevation>,
+        elevation: Option<ElevationIndex>,
         cx: &mut WindowContext,
     ) -> ButtonLikeStyles {
-        let filled_background = element_bg_from_elevation(elevation, cx);
-
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
-                background: filled_background,
+                background: element_bg_from_elevation(elevation, cx),
                 border_color: transparent_black(),
                 label_color: Color::Default.color(cx),
                 icon_color: Color::Default.color(cx),
@@ -196,20 +187,27 @@ impl ButtonStyle {
 
     pub(crate) fn hovered(
         self,
-        elevation: Option<Elevation>,
+        elevation: Option<ElevationIndex>,
         cx: &mut WindowContext,
     ) -> ButtonLikeStyles {
-        let mut filled_background = element_bg_from_elevation(elevation, cx);
-        filled_background.fade_out(0.92);
-
         match self {
-            ButtonStyle::Filled => ButtonLikeStyles {
-                background: filled_background,
-                border_color: transparent_black(),
-                label_color: Color::Default.color(cx),
-                icon_color: Color::Default.color(cx),
-            },
-            ButtonStyle::Tinted(tint) => tint.button_like_style(cx),
+            ButtonStyle::Filled => {
+                let mut filled_background = element_bg_from_elevation(elevation, cx);
+                filled_background.fade_out(0.92);
+
+                ButtonLikeStyles {
+                    background: filled_background,
+                    border_color: transparent_black(),
+                    label_color: Color::Default.color(cx),
+                    icon_color: Color::Default.color(cx),
+                }
+            }
+            ButtonStyle::Tinted(tint) => {
+                let mut styles = tint.button_like_style(cx);
+                let theme = cx.theme();
+                styles.background = theme.darken(styles.background, 0.05, 0.2);
+                styles
+            }
             ButtonStyle::Subtle => ButtonLikeStyles {
                 background: cx.theme().colors().ghost_element_hover,
                 border_color: transparent_black(),
@@ -281,11 +279,9 @@ impl ButtonStyle {
     #[allow(unused)]
     pub(crate) fn disabled(
         self,
-        elevation: Option<Elevation>,
+        elevation: Option<ElevationIndex>,
         cx: &mut WindowContext,
     ) -> ButtonLikeStyles {
-        element_bg_from_elevation(elevation, cx).fade_out(0.82);
-
         match self {
             ButtonStyle::Filled => ButtonLikeStyles {
                 background: cx.theme().colors().element_disabled,
@@ -348,7 +344,7 @@ pub struct ButtonLike {
     pub(super) selected_style: Option<ButtonStyle>,
     pub(super) width: Option<DefiniteLength>,
     pub(super) height: Option<DefiniteLength>,
-    pub(super) layer: Option<Elevation>,
+    pub(super) layer: Option<ElevationIndex>,
     size: ButtonSize,
     rounding: Option<ButtonLikeRounding>,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
@@ -404,8 +400,8 @@ impl Disableable for ButtonLike {
     }
 }
 
-impl Selectable for ButtonLike {
-    fn selected(mut self, selected: bool) -> Self {
+impl Toggleable for ButtonLike {
+    fn toggle_state(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
@@ -463,7 +459,7 @@ impl ButtonCommon for ButtonLike {
     }
 
     fn layer(mut self, elevation: ElevationIndex) -> Self {
-        self.layer = Some(elevation.into());
+        self.layer = Some(elevation);
         self
     }
 }
@@ -500,10 +496,12 @@ impl RenderOnce for ButtonLike {
                 ButtonLikeRounding::Left => this.rounded_l_md(),
                 ButtonLikeRounding::Right => this.rounded_r_md(),
             })
-            .gap(Spacing::Small.rems(cx))
+            .gap(DynamicSpacing::Base04.rems(cx))
             .map(|this| match self.size {
-                ButtonSize::Large => this.px(Spacing::Medium.rems(cx)),
-                ButtonSize::Default | ButtonSize::Compact => this.px(Spacing::Small.rems(cx)),
+                ButtonSize::Large => this.px(DynamicSpacing::Base06.rems(cx)),
+                ButtonSize::Default | ButtonSize::Compact => {
+                    this.px(DynamicSpacing::Base04.rems(cx))
+                }
                 ButtonSize::None => this,
             })
             .bg(style.enabled(self.layer, cx).background)

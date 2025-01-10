@@ -1,3 +1,4 @@
+#![allow(missing_docs)]
 use gpui::{AppContext, Hsla, SharedString};
 
 use crate::{ActiveTheme, Appearance};

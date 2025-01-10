@@ -6,7 +6,8 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
 ## Dependencies
 
-- Install [Rust](https://www.rust-lang.org/tools/install)
+- Install [rustup](https://www.rust-lang.org/tools/install)
+
 - Install [Xcode](https://apps.apple.com/us/app/xcode/id497799835?mt=12) from the macOS App Store, or from the [Apple Developer](https://developer.apple.com/download/all/) website. Note this requires a developer account.
 
 > Ensure you launch Xcode after installing, and install the macOS components, which is the default option.
@@ -21,12 +22,7 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
   ```sh
   sudo xcode-select --switch /Applications/Xcode.app/Contents/Developer
-  ```
-
-- Install the Rust wasm toolchain:
-
-  ```sh
-  rustup target add wasm32-wasip1
+  sudo xcodebuild -license accept
   ```
 
 - Install `cmake` (required by [a dependency](https://docs.rs/wasmtime-c-api-impl/latest/wasmtime_c_api/))

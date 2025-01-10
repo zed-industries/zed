@@ -200,7 +200,7 @@ mod tests {
 
     #[test]
     fn can_deserialize_ts_tasks() {
-        static TYPESCRIPT_TASKS: &str = include_str!("../test_data/typescript.json");
+        const TYPESCRIPT_TASKS: &str = include_str!("../test_data/typescript.json");
         let vscode_definitions: VsCodeTaskFile =
             serde_json_lenient::from_str(TYPESCRIPT_TASKS).unwrap();
 
@@ -290,7 +290,7 @@ mod tests {
 
     #[test]
     fn can_deserialize_rust_analyzer_tasks() {
-        static RUST_ANALYZER_TASKS: &str = include_str!("../test_data/rust-analyzer.json");
+        const RUST_ANALYZER_TASKS: &str = include_str!("../test_data/rust-analyzer.json");
         let vscode_definitions: VsCodeTaskFile =
             serde_json_lenient::from_str(RUST_ANALYZER_TASKS).unwrap();
         let expected = vec![

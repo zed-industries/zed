@@ -16,7 +16,7 @@ pub(crate) enum Head {
 impl Head {
     pub fn editor<V: 'static>(
         placeholder_text: Arc<str>,
-        edit_handler: impl FnMut(&mut V, View<Editor>, &EditorEvent, &mut ViewContext<'_, V>) + 'static,
+        edit_handler: impl FnMut(&mut V, View<Editor>, &EditorEvent, &mut ViewContext<V>) + 'static,
         cx: &mut ViewContext<V>,
     ) -> Self {
         let editor = cx.new_view(|cx| {
@@ -29,7 +29,7 @@ impl Head {
     }
 
     pub fn empty<V: 'static>(
-        blur_handler: impl FnMut(&mut V, &mut ViewContext<'_, V>) + 'static,
+        blur_handler: impl FnMut(&mut V, &mut ViewContext<V>) + 'static,
         cx: &mut ViewContext<V>,
     ) -> Self {
         let head = cx.new_view(EmptyHead::new);
@@ -52,8 +52,8 @@ impl EmptyHead {
 }
 
 impl Render for EmptyHead {
-    fn render(&mut self, _: &mut ViewContext<Self>) -> impl IntoElement {
-        div().track_focus(&self.focus_handle)
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        div().track_focus(&self.focus_handle(cx))
     }
 }
 

@@ -7,6 +7,7 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use refineable::Refineable;
+use std::mem;
 use std::{
     any::{type_name, TypeId},
     fmt,
@@ -68,7 +69,7 @@ impl<V: 'static> View<V> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        f: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
+        f: impl FnOnce(&mut V, &mut ViewContext<V>) -> R,
     ) -> C::Result<R>
     where
         C: VisualContext,
@@ -182,7 +183,7 @@ impl<V: 'static> WeakView<V> {
     pub fn update<C, R>(
         &self,
         cx: &mut C,
-        f: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
+        f: impl FnOnce(&mut V, &mut ViewContext<V>) -> R,
     ) -> Result<R>
     where
         C: VisualContext,
@@ -341,11 +342,13 @@ impl Element for AnyView {
                     }
                 }
 
+                let refreshing = mem::replace(&mut cx.window.refreshing, true);
                 let prepaint_start = cx.prepaint_index();
                 let mut element = (self.render)(self, cx);
                 element.layout_as_root(bounds.size.into(), cx);
                 element.prepaint_at(bounds.origin, cx);
                 let prepaint_end = cx.prepaint_index();
+                cx.window.refreshing = refreshing;
 
                 (
                     Some(element),
@@ -382,7 +385,9 @@ impl Element for AnyView {
                 let paint_start = cx.paint_index();
 
                 if let Some(element) = element {
+                    let refreshing = mem::replace(&mut cx.window.refreshing, true);
                     element.paint(cx);
+                    cx.window.refreshing = refreshing;
                 } else {
                     cx.reuse_paint(element_state.paint_range.clone());
                 }

@@ -43,9 +43,8 @@ use undo_map::UndoMap;
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
 
-static LINE_SEPARATORS_REGEX: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"\r\n|\r|\u{2028}|\u{2029}").expect("Failed to create LINE_SEPARATORS_REGEX")
-});
+static LINE_SEPARATORS_REGEX: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"\r\n|\r").expect("Failed to create LINE_SEPARATORS_REGEX"));
 
 pub type TransactionId = clock::Lamport;
 
@@ -228,7 +227,7 @@ impl History {
         if let Some(mut entry) = entries.next_back() {
             while let Some(prev_entry) = entries.next_back() {
                 if !prev_entry.suppress_grouping
-                    && entry.first_edit_at - prev_entry.last_edit_at <= self.group_interval
+                    && entry.first_edit_at - prev_entry.last_edit_at < self.group_interval
                 {
                     entry = prev_entry;
                     count += 1;
@@ -1427,19 +1426,25 @@ impl Buffer {
     fn undo_or_redo(&mut self, transaction: Transaction) -> Operation {
         let mut counts = HashMap::default();
         for edit_id in transaction.edit_ids {
-            counts.insert(edit_id, self.undo_map.undo_count(edit_id) + 1);
+            counts.insert(edit_id, self.undo_map.undo_count(edit_id).saturating_add(1));
         }
 
+        let operation = self.undo_operations(counts);
+        self.history.push(operation.clone());
+        operation
+    }
+
+    pub fn undo_operations(&mut self, counts: HashMap<clock::Lamport, u32>) -> Operation {
+        let timestamp = self.lamport_clock.tick();
+        let version = self.version();
+        self.snapshot.version.observe(timestamp);
         let undo = UndoOperation {
-            timestamp: self.lamport_clock.tick(),
-            version: self.version(),
+            timestamp,
+            version,
             counts,
         };
         self.apply_undo(&undo);
-        self.snapshot.version.observe(undo.timestamp);
-        let operation = Operation::Undo(undo);
-        self.history.push(operation.clone());
-        operation
+        Operation::Undo(undo)
     }
 
     pub fn push_transaction(&mut self, transaction: Transaction, now: Instant) {
@@ -2433,6 +2438,42 @@ impl BufferSnapshot {
         }
         false
     }
+
+    pub fn range_to_version(&self, range: Range<usize>, version: &clock::Global) -> Range<usize> {
+        let mut offsets = self.offsets_to_version([range.start, range.end], version);
+        offsets.next().unwrap()..offsets.next().unwrap()
+    }
+
+    /// Converts the given sequence of offsets into their corresponding offsets
+    /// at a prior version of this buffer.
+    pub fn offsets_to_version<'a>(
+        &'a self,
+        offsets: impl 'a + IntoIterator<Item = usize>,
+        version: &'a clock::Global,
+    ) -> impl 'a + Iterator<Item = usize> {
+        let mut edits = self.edits_since(version).peekable();
+        let mut last_old_end = 0;
+        let mut last_new_end = 0;
+        offsets.into_iter().map(move |new_offset| {
+            while let Some(edit) = edits.peek() {
+                if edit.new.start > new_offset {
+                    break;
+                }
+
+                if edit.new.end <= new_offset {
+                    last_new_end = edit.new.end;
+                    last_old_end = edit.old.end;
+                    edits.next();
+                    continue;
+                }
+
+                let overshoot = new_offset - edit.new.start;
+                return (edit.old.start + overshoot).min(edit.old.end);
+            }
+
+            last_old_end + new_offset.saturating_sub(last_new_end)
+        })
+    }
 }
 
 struct RopeBuilder<'a> {
@@ -3004,6 +3045,12 @@ impl ToOffsetUtf16 for OffsetUtf16 {
 
 pub trait FromAnchor {
     fn from_anchor(anchor: &Anchor, snapshot: &BufferSnapshot) -> Self;
+}
+
+impl FromAnchor for Anchor {
+    fn from_anchor(anchor: &Anchor, _snapshot: &BufferSnapshot) -> Self {
+        *anchor
+    }
 }
 
 impl FromAnchor for Point {

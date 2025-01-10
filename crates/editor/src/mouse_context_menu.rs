@@ -1,5 +1,4 @@
-use std::ops::Range;
-
+use crate::actions::FormatSelections;
 use crate::{
     actions::Format, selections_collection::SelectionsCollection, Copy, CopyPermalinkToLine, Cut,
     DisplayPoint, DisplaySnapshot, Editor, EditorMode, FindAllReferences, GoToDeclaration,
@@ -8,6 +7,8 @@ use crate::{
 };
 use gpui::prelude::FluentBuilder;
 use gpui::{DismissEvent, Pixels, Point, Subscription, View, ViewContext};
+use std::ops::Range;
+use text::PointUtf16;
 use workspace::OpenInTerminal;
 
 #[derive(Debug)]
@@ -19,8 +20,7 @@ pub enum MenuPosition {
     /// Disappears when the position is no longer visible.
     PinnedToEditor {
         source: multi_buffer::Anchor,
-        offset_x: Pixels,
-        offset_y: Pixels,
+        offset: Point<Pixels>,
     },
 }
 
@@ -47,36 +47,22 @@ impl MouseContextMenu {
         context_menu: View<ui::ContextMenu>,
         cx: &mut ViewContext<Editor>,
     ) -> Option<Self> {
-        let context_menu_focus = context_menu.focus_handle(cx);
-        cx.focus(&context_menu_focus);
-
-        let _subscription = cx.subscribe(
-            &context_menu,
-            move |editor, _, _event: &DismissEvent, cx| {
-                editor.mouse_context_menu.take();
-                if context_menu_focus.contains_focused(cx) {
-                    editor.focus(cx);
-                }
-            },
-        );
-
         let editor_snapshot = editor.snapshot(cx);
-        let source_point = editor.to_pixel_point(source, &editor_snapshot, cx)?;
-        let offset = position - source_point;
-
-        Some(Self {
-            position: MenuPosition::PinnedToEditor {
-                source,
-                offset_x: offset.x,
-                offset_y: offset.y,
-            },
-            context_menu,
-            _subscription,
-        })
+        let content_origin = editor.last_bounds?.origin
+            + Point {
+                x: editor.gutter_dimensions.width,
+                y: Pixels(0.0),
+            };
+        let source_position = editor.to_pixel_point(source, &editor_snapshot, cx)?;
+        let menu_position = MenuPosition::PinnedToEditor {
+            source,
+            offset: position - (source_position + content_origin),
+        };
+        return Some(MouseContextMenu::new(menu_position, context_menu, cx));
     }
 
-    pub(crate) fn pinned_to_screen(
-        position: Point<Pixels>,
+    pub(crate) fn new(
+        position: MenuPosition,
         context_menu: View<ui::ContextMenu>,
         cx: &mut ViewContext<Editor>,
     ) -> Self {
@@ -94,7 +80,7 @@ impl MouseContextMenu {
         );
 
         Self {
-            position: MenuPosition::PinnedToScreen(position),
+            position,
             context_menu,
             _subscription,
         }
@@ -118,7 +104,7 @@ fn display_ranges<'a>(
 
 pub fn deploy_context_menu(
     editor: &mut Editor,
-    position: Point<Pixels>,
+    position: Option<Point<Pixels>>,
     point: DisplayPoint,
     cx: &mut ViewContext<Editor>,
 ) {
@@ -158,6 +144,18 @@ pub fn deploy_context_menu(
         }
 
         let focus = cx.focused();
+        let has_reveal_target = editor.target_file(cx).is_some();
+        let reveal_in_finder_label = if cfg!(target_os = "macos") {
+            "Reveal in Finder"
+        } else {
+            "Reveal in File Manager"
+        };
+        let has_selections = editor
+            .selections
+            .all::<PointUtf16>(cx)
+            .into_iter()
+            .any(|s| !s.is_empty());
+
         ui::ContextMenu::build(cx, |menu, _cx| {
             let builder = menu
                 .on_blur_subscription(Subscription::new(|| {}))
@@ -169,6 +167,9 @@ pub fn deploy_context_menu(
                 .separator()
                 .action("Rename Symbol", Box::new(Rename))
                 .action("Format Buffer", Box::new(Format))
+                .when(has_selections, |cx| {
+                    cx.action("Format Selections", Box::new(FormatSelections))
+                })
                 .action(
                     "Code Actions",
                     Box::new(ToggleCodeActions {
@@ -180,11 +181,13 @@ pub fn deploy_context_menu(
                 .action("Copy", Box::new(Copy))
                 .action("Paste", Box::new(Paste))
                 .separator()
-                .when(cfg!(target_os = "macos"), |builder| {
-                    builder.action("Reveal in Finder", Box::new(RevealInFileManager))
-                })
-                .when(cfg!(not(target_os = "macos")), |builder| {
-                    builder.action("Reveal in File Manager", Box::new(RevealInFileManager))
+                .map(|builder| {
+                    if has_reveal_target {
+                        builder.action(reveal_in_finder_label, Box::new(RevealInFileManager))
+                    } else {
+                        builder
+                            .disabled_action(reveal_in_finder_label, Box::new(RevealInFileManager))
+                    }
                 })
                 .action("Open in Terminal", Box::new(OpenInTerminal))
                 .action("Copy Permalink", Box::new(CopyPermalinkToLine));
@@ -195,8 +198,18 @@ pub fn deploy_context_menu(
         })
     };
 
-    editor.mouse_context_menu =
-        MouseContextMenu::pinned_to_editor(editor, source_anchor, position, context_menu, cx);
+    editor.mouse_context_menu = match position {
+        Some(position) => {
+            MouseContextMenu::pinned_to_editor(editor, source_anchor, position, context_menu, cx)
+        }
+        None => {
+            let menu_position = MenuPosition::PinnedToEditor {
+                source: source_anchor,
+                offset: editor.character_size(cx),
+            };
+            Some(MouseContextMenu::new(menu_position, context_menu, cx))
+        }
+    };
     cx.notify();
 }
 
@@ -230,7 +243,9 @@ mod tests {
             }
         "});
         cx.editor(|editor, _app| assert!(editor.mouse_context_menu.is_none()));
-        cx.update_editor(|editor, cx| deploy_context_menu(editor, Default::default(), point, cx));
+        cx.update_editor(|editor, cx| {
+            deploy_context_menu(editor, Some(Default::default()), point, cx)
+        });
 
         cx.assert_editor_state(indoc! {"
             fn test() {

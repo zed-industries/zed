@@ -57,6 +57,7 @@ pub trait UpdateGlobal {
 }
 
 impl<T: Global> UpdateGlobal for T {
+    #[track_caller]
     fn update_global<C, F, R>(cx: &mut C, update: F) -> R
     where
         C: BorrowAppContext,

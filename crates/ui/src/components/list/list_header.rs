@@ -1,3 +1,5 @@
+#![allow(missing_docs)]
+
 use std::sync::Arc;
 
 use crate::{h_flex, prelude::*, Disclosure, Label};
@@ -71,8 +73,8 @@ impl ListHeader {
     }
 }
 
-impl Selectable for ListHeader {
-    fn selected(mut self, selected: bool) -> Self {
+impl Toggleable for ListHeader {
+    fn toggle_state(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
@@ -102,10 +104,10 @@ impl RenderOnce for ListHeader {
                     .items_center()
                     .justify_between()
                     .w_full()
-                    .gap(Spacing::Small.rems(cx))
+                    .gap(DynamicSpacing::Base04.rems(cx))
                     .child(
                         h_flex()
-                            .gap(Spacing::Small.rems(cx))
+                            .gap(DynamicSpacing::Base04.rems(cx))
                             .children(self.toggle.map(|is_open| {
                                 Disclosure::new("toggle", is_open).on_toggle(self.on_toggle.clone())
                             }))
@@ -113,7 +115,7 @@ impl RenderOnce for ListHeader {
                                 div()
                                     .id("label_container")
                                     .flex()
-                                    .gap(Spacing::Small.rems(cx))
+                                    .gap(DynamicSpacing::Base04.rems(cx))
                                     .items_center()
                                     .children(self.start_slot)
                                     .child(Label::new(self.label.clone()).color(Color::Muted))

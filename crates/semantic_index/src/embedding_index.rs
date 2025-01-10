@@ -5,7 +5,9 @@ use crate::{
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::Bound;
+use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
+use fs::MTime;
 use futures::stream::StreamExt;
 use futures_batch::ChunksTimeoutStreamExt;
 use gpui::{AppContext, Model, Task};
@@ -15,14 +17,8 @@ use log;
 use project::{Entry, UpdatedEntriesSet, Worktree};
 use serde::{Deserialize, Serialize};
 use smol::channel;
-use std::{
-    cmp::Ordering,
-    future::Future,
-    iter,
-    path::Path,
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use smol::future::FutureExt;
+use std::{cmp::Ordering, future::Future, iter, path::Path, sync::Arc, time::Duration};
 use util::ResultExt;
 use worktree::Snapshot;
 
@@ -65,6 +61,10 @@ impl EmbeddingIndex {
         &self,
         cx: &AppContext,
     ) -> impl Future<Output = Result<()>> {
+        if !cx.is_staff() {
+            return async move { Ok(()) }.boxed();
+        }
+
         let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
         let scan = self.scan_entries(worktree, cx);
@@ -75,6 +75,7 @@ impl EmbeddingIndex {
             futures::try_join!(scan.task, chunk.task, embed.task, persist)?;
             Ok(())
         }
+        .boxed()
     }
 
     pub fn index_updated_entries(
@@ -82,6 +83,10 @@ impl EmbeddingIndex {
         updated_entries: UpdatedEntriesSet,
         cx: &AppContext,
     ) -> impl Future<Output = Result<()>> {
+        if !cx.is_staff() {
+            return async move { Ok(()) }.boxed();
+        }
+
         let worktree = self.worktree.read(cx).snapshot();
         let worktree_abs_path = worktree.abs_path().clone();
         let scan = self.scan_updated_entries(worktree, updated_entries.clone(), cx);
@@ -92,6 +97,7 @@ impl EmbeddingIndex {
             futures::try_join!(scan.task, chunk.task, embed.task, persist)?;
             Ok(())
         }
+        .boxed()
     }
 
     fn scan_entries(&self, worktree: Snapshot, cx: &AppContext) -> ScanEntries {
@@ -439,7 +445,7 @@ struct ChunkFiles {
 
 pub struct ChunkedFile {
     pub path: Arc<Path>,
-    pub mtime: Option<SystemTime>,
+    pub mtime: Option<MTime>,
     pub handle: IndexingEntryHandle,
     pub text: String,
     pub chunks: Vec<Chunk>,
@@ -453,7 +459,7 @@ pub struct EmbedFiles {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct EmbeddedFile {
     pub path: Arc<Path>,
-    pub mtime: Option<SystemTime>,
+    pub mtime: Option<MTime>,
     pub chunks: Vec<EmbeddedChunk>,
 }
 

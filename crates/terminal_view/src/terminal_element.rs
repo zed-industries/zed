@@ -793,7 +793,7 @@ impl Element for TerminalElement {
                             let (shape, text) = match cursor.shape {
                                 AlacCursorShape::Block if !focused => (CursorShape::Hollow, None),
                                 AlacCursorShape::Block => (CursorShape::Block, Some(cursor_text)),
-                                AlacCursorShape::Underline => (CursorShape::Underscore, None),
+                                AlacCursorShape::Underline => (CursorShape::Underline, None),
                                 AlacCursorShape::Beam => (CursorShape::Bar, None),
                                 AlacCursorShape::HollowBlock => (CursorShape::Hollow, None),
                                 //This case is handled in the if wrapping the whole cursor layout
@@ -867,7 +867,7 @@ impl Element for TerminalElement {
         bounds: Bounds<Pixels>,
         _: &mut Self::RequestLayoutState,
         layout: &mut Self::PrepaintState,
-        cx: &mut WindowContext<'_>,
+        cx: &mut WindowContext,
     ) {
         cx.with_content_mask(Some(ContentMask { bounds }), |cx| {
             let scroll_top = self.terminal_view.read(cx).scroll_top;
@@ -1001,6 +1001,7 @@ impl InputHandler for TerminalInputHandler {
     fn text_for_range(
         &mut self,
         _: std::ops::Range<usize>,
+        _: &mut Option<std::ops::Range<usize>>,
         _: &mut WindowContext,
     ) -> Option<String> {
         None
@@ -1019,9 +1020,9 @@ impl InputHandler for TerminalInputHandler {
         self.workspace
             .update(cx, |this, cx| {
                 cx.invalidate_character_coordinates();
-
-                let telemetry = this.project().read(cx).client().telemetry().clone();
-                telemetry.log_edit_event("terminal");
+                let project = this.project().read(cx);
+                let telemetry = project.client().telemetry().clone();
+                telemetry.log_edit_event("terminal", project.is_via_ssh());
             })
             .ok();
     }
@@ -1043,6 +1044,10 @@ impl InputHandler for TerminalInputHandler {
         _: &mut WindowContext,
     ) -> Option<Bounds<Pixels>> {
         self.cursor_bounds
+    }
+
+    fn apple_press_and_hold_enabled(&mut self) -> bool {
+        false
     }
 }
 

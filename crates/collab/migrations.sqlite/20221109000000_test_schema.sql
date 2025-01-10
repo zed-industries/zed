@@ -11,7 +11,8 @@ CREATE TABLE "users" (
     "metrics_id" TEXT,
     "github_user_id" INTEGER NOT NULL,
     "accepted_tos_at" TIMESTAMP WITHOUT TIME ZONE,
-    "github_user_created_at" TIMESTAMP WITHOUT TIME ZONE
+    "github_user_created_at" TIMESTAMP WITHOUT TIME ZONE,
+    "custom_llm_monthly_allowance_in_cents" INTEGER
 );
 CREATE UNIQUE INDEX "index_users_github_login" ON "users" ("github_login");
 CREATE UNIQUE INDEX "index_invite_code_users" ON "users" ("invite_code");
@@ -51,9 +52,7 @@ CREATE TABLE "projects" (
     "host_user_id" INTEGER REFERENCES users (id),
     "host_connection_id" INTEGER,
     "host_connection_server_id" INTEGER REFERENCES servers (id) ON DELETE CASCADE,
-    "unregistered" BOOLEAN NOT NULL DEFAULT FALSE,
-    "hosted_project_id" INTEGER REFERENCES hosted_projects (id),
-    "dev_server_project_id" INTEGER REFERENCES dev_server_projects(id)
+    "unregistered" BOOLEAN NOT NULL DEFAULT FALSE
 );
 CREATE INDEX "index_projects_on_host_connection_server_id" ON "projects" ("host_connection_server_id");
 CREATE INDEX "index_projects_on_host_connection_id_and_host_connection_server_id" ON "projects" ("host_connection_id", "host_connection_server_id");
@@ -78,10 +77,10 @@ CREATE TABLE "worktree_entries" (
     "id" INTEGER NOT NULL,
     "is_dir" BOOL NOT NULL,
     "path" VARCHAR NOT NULL,
+    "canonical_path" TEXT,
     "inode" INTEGER NOT NULL,
     "mtime_seconds" INTEGER NOT NULL,
     "mtime_nanos" INTEGER NOT NULL,
-    "is_symlink" BOOL NOT NULL,
     "is_external" BOOL NOT NULL,
     "is_ignored" BOOL NOT NULL,
     "is_deleted" BOOL NOT NULL,
@@ -107,11 +106,28 @@ CREATE TABLE "worktree_repositories" (
 CREATE INDEX "index_worktree_repositories_on_project_id" ON "worktree_repositories" ("project_id");
 CREATE INDEX "index_worktree_repositories_on_project_id_and_worktree_id" ON "worktree_repositories" ("project_id", "worktree_id");
 
+CREATE TABLE "worktree_repository_statuses" (
+    "project_id" INTEGER NOT NULL,
+    "worktree_id" INT8 NOT NULL,
+    "work_directory_id" INT8 NOT NULL,
+    "repo_path" VARCHAR NOT NULL,
+    "status" INT8 NOT NULL,
+    "scan_id" INT8 NOT NULL,
+    "is_deleted" BOOL NOT NULL,
+    PRIMARY KEY(project_id, worktree_id, work_directory_id, repo_path),
+    FOREIGN KEY(project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE,
+    FOREIGN KEY(project_id, worktree_id, work_directory_id) REFERENCES worktree_entries (project_id, worktree_id, id) ON DELETE CASCADE
+);
+CREATE INDEX "index_wt_repos_statuses_on_project_id" ON "worktree_repository_statuses" ("project_id");
+CREATE INDEX "index_wt_repos_statuses_on_project_id_and_wt_id" ON "worktree_repository_statuses" ("project_id", "worktree_id");
+CREATE INDEX "index_wt_repos_statuses_on_project_id_and_wt_id_and_wd_id" ON "worktree_repository_statuses" ("project_id", "worktree_id", "work_directory_id");
+
 CREATE TABLE "worktree_settings_files" (
     "project_id" INTEGER NOT NULL,
     "worktree_id" INTEGER NOT NULL,
     "path" VARCHAR NOT NULL,
     "content" TEXT,
+    "kind" VARCHAR,
     PRIMARY KEY(project_id, worktree_id, path),
     FOREIGN KEY(project_id, worktree_id) REFERENCES worktrees (project_id, id) ON DELETE CASCADE
 );
@@ -397,29 +413,14 @@ CREATE TABLE rate_buckets (
 );
 CREATE INDEX idx_user_id_rate_limit ON rate_buckets (user_id, rate_limit_name);
 
-CREATE TABLE hosted_projects (
+CREATE TABLE IF NOT EXISTS billing_preferences (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    channel_id INTEGER NOT NULL REFERENCES channels(id),
-    name TEXT NOT NULL,
-    visibility TEXT NOT NULL,
-    deleted_at TIMESTAMP NULL
-);
-CREATE INDEX idx_hosted_projects_on_channel_id ON hosted_projects (channel_id);
-CREATE UNIQUE INDEX uix_hosted_projects_on_channel_id_and_name ON hosted_projects (channel_id, name) WHERE (deleted_at IS NULL);
-
-CREATE TABLE dev_servers (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     user_id INTEGER NOT NULL REFERENCES users(id),
-    name TEXT NOT NULL,
-    ssh_connection_string TEXT,
-    hashed_token TEXT NOT NULL
+    max_monthly_llm_usage_spending_in_cents INTEGER NOT NULL
 );
 
-CREATE TABLE dev_server_projects (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    dev_server_id INTEGER NOT NULL REFERENCES dev_servers(id),
-    paths TEXT NOT NULL
-);
+CREATE UNIQUE INDEX "uix_billing_preferences_on_user_id" ON billing_preferences (user_id);
 
 CREATE TABLE IF NOT EXISTS billing_customers (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -1,4 +1,4 @@
-use crate::db::{DevServerProjectId, HostedProjectId, ProjectId, Result, RoomId, ServerId, UserId};
+use crate::db::{ProjectId, Result, RoomId, ServerId, UserId};
 use anyhow::anyhow;
 use rpc::ConnectionId;
 use sea_orm::entity::prelude::*;
@@ -12,8 +12,6 @@ pub struct Model {
     pub host_user_id: Option<UserId>,
     pub host_connection_id: Option<i32>,
     pub host_connection_server_id: Option<ServerId>,
-    pub hosted_project_id: Option<HostedProjectId>,
-    pub dev_server_project_id: Option<DevServerProjectId>,
 }
 
 impl Model {
@@ -51,18 +49,6 @@ pub enum Relation {
     Collaborators,
     #[sea_orm(has_many = "super::language_server::Entity")]
     LanguageServers,
-    #[sea_orm(
-        belongs_to = "super::hosted_project::Entity",
-        from = "Column::HostedProjectId",
-        to = "super::hosted_project::Column::Id"
-    )]
-    HostedProject,
-    #[sea_orm(
-        belongs_to = "super::dev_server_project::Entity",
-        from = "Column::DevServerProjectId",
-        to = "super::dev_server_project::Column::Id"
-    )]
-    RemoteProject,
 }
 
 impl Related<super::user::Entity> for Entity {
@@ -92,18 +78,6 @@ impl Related<super::project_collaborator::Entity> for Entity {
 impl Related<super::language_server::Entity> for Entity {
     fn to() -> RelationDef {
         Relation::LanguageServers.def()
-    }
-}
-
-impl Related<super::hosted_project::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::HostedProject.def()
-    }
-}
-
-impl Related<super::dev_server_project::Entity> for Entity {
-    fn to() -> RelationDef {
-        Relation::RemoteProject.def()
     }
 }
 

@@ -64,7 +64,7 @@ pub struct AppSession {
 }
 
 impl AppSession {
-    pub fn new(session: Session, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(session: Session, cx: &ModelContext<Self>) -> Self {
         let _subscriptions = vec![cx.on_app_quit(Self::app_will_quit)];
 
         let _serialization_task = Some(cx.spawn(|_, cx| async move {

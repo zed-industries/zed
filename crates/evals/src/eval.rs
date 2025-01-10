@@ -12,6 +12,7 @@ use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
 use open_ai::OpenAiEmbeddingModel;
 use project::Project;
+use reqwest_client::ReqwestClient;
 use semantic_index::{
     EmbeddingProvider, OpenAiEmbeddingProvider, ProjectIndex, SemanticDb, Status,
 };
@@ -26,7 +27,7 @@ use std::time::Duration;
 use std::{
     fs,
     path::Path,
-    process::{exit, Command, Stdio},
+    process::{exit, Stdio},
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc,
@@ -100,7 +101,7 @@ fn main() -> Result<()> {
 
     gpui::App::headless().run(move |cx| {
         let executor = cx.background_executor().clone();
-        let client = isahc_http_client::IsahcHttpClient::new(None, None);
+        let client = Arc::new(ReqwestClient::user_agent("Zed LLM evals").unwrap());
         cx.set_http_client(client.clone());
         match cli.command {
             Commands::Fetch {} => {
@@ -666,7 +667,7 @@ async fn fetch_eval_repo(
         return;
     }
     if !repo_dir.join(".git").exists() {
-        let init_output = Command::new("git")
+        let init_output = util::command::new_std_command("git")
             .current_dir(&repo_dir)
             .args(&["init"])
             .output()
@@ -681,13 +682,13 @@ async fn fetch_eval_repo(
         }
     }
     let url = format!("https://github.com/{}.git", repo);
-    Command::new("git")
+    util::command::new_std_command("git")
         .current_dir(&repo_dir)
         .args(&["remote", "add", "-f", "origin", &url])
         .stdin(Stdio::null())
         .output()
         .unwrap();
-    let fetch_output = Command::new("git")
+    let fetch_output = util::command::new_std_command("git")
         .current_dir(&repo_dir)
         .args(&["fetch", "--depth", "1", "origin", &sha])
         .stdin(Stdio::null())
@@ -702,7 +703,7 @@ async fn fetch_eval_repo(
         );
         return;
     }
-    let checkout_output = Command::new("git")
+    let checkout_output = util::command::new_std_command("git")
         .current_dir(&repo_dir)
         .args(&["checkout", &sha])
         .output()

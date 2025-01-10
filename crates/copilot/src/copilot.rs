@@ -14,14 +14,14 @@ use gpui::{
     actions, AppContext, AsyncAppContext, Context, Entity, EntityId, EventEmitter, Global, Model,
     ModelContext, Task, WeakModel,
 };
-use http_client::github::latest_github_release;
+use http_client::github::get_release_by_tag_name;
 use http_client::HttpClient;
 use language::{
     language_settings::{all_language_settings, language_settings, InlineCompletionProvider},
     point_from_lsp, point_to_lsp, Anchor, Bias, Buffer, BufferSnapshot, Language, PointUtf16,
     ToPointUtf16,
 };
-use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId};
+use lsp::{LanguageServer, LanguageServerBinary, LanguageServerId, LanguageServerName};
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 use request::StatusNotification;
@@ -38,8 +38,8 @@ use std::{
 };
 use util::{fs::remove_matching, maybe, ResultExt};
 
-pub use copilot_completion_provider::CopilotCompletionProvider;
-pub use sign_in::CopilotCodeVerification;
+pub use crate::copilot_completion_provider::CopilotCompletionProvider;
+pub use crate::sign_in::{initiate_sign_in, CopilotCodeVerification};
 
 actions!(
     copilot,
@@ -446,9 +446,11 @@ impl Copilot {
                 Path::new("/")
             };
 
+            let server_name = LanguageServerName("copilot".into());
             let server = LanguageServer::new(
                 Arc::new(Mutex::new(None)),
                 new_server_id,
+                server_name,
                 binary,
                 root_path,
                 None,
@@ -864,7 +866,11 @@ impl Copilot {
         let buffer = buffer.read(cx);
         let uri = registered_buffer.uri.clone();
         let position = position.to_point_utf16(buffer);
-        let settings = language_settings(buffer.language_at(position).as_ref(), buffer.file(), cx);
+        let settings = language_settings(
+            buffer.language_at(position).map(|l| l.name()),
+            buffer.file(),
+            cx,
+        );
         let tab_size = settings.tab_size;
         let hard_tabs = settings.hard_tabs;
         let relative_path = buffer
@@ -983,12 +989,12 @@ async fn clear_copilot_dir() {
 }
 
 async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
-    const SERVER_PATH: &str = "dist/agent.js";
+    const SERVER_PATH: &str = "dist/language-server.js";
 
     ///Check for the latest copilot language server and download it if we haven't already
     async fn fetch_latest(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
         let release =
-            latest_github_release("zed-industries/copilot", true, false, http.clone()).await?;
+            get_release_by_tag_name("zed-industries/copilot", "v0.7.0", http.clone()).await?;
 
         let version_dir = &paths::copilot_dir().join(format!("copilot-{}", release.tag_name));
 
@@ -1223,8 +1229,10 @@ mod tests {
             Some(self)
         }
 
-        fn mtime(&self) -> Option<std::time::SystemTime> {
-            unimplemented!()
+        fn disk_state(&self) -> language::DiskState {
+            language::DiskState::Present {
+                mtime: ::fs::MTime::from_seconds_and_nanos(100, 42),
+            }
         }
 
         fn path(&self) -> &Arc<Path> {
@@ -1236,10 +1244,6 @@ mod tests {
         }
 
         fn file_name<'a>(&'a self, _: &'a AppContext) -> &'a std::ffi::OsStr {
-            unimplemented!()
-        }
-
-        fn is_deleted(&self) -> bool {
             unimplemented!()
         }
 
@@ -1266,6 +1270,10 @@ mod tests {
         }
 
         fn load(&self, _: &AppContext) -> Task<Result<String>> {
+            unimplemented!()
+        }
+
+        fn load_bytes(&self, _cx: &AppContext) -> Task<Result<Vec<u8>>> {
             unimplemented!()
         }
     }

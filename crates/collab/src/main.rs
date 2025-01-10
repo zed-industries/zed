@@ -6,6 +6,7 @@ use axum::{
     routing::get,
     Extension, Router,
 };
+use collab::api::billing::sync_llm_usage_with_stripe_periodically;
 use collab::api::CloudflareIpCountryHeader;
 use collab::llm::{db::LlmDatabase, log_usage_periodically};
 use collab::migrations::run_database_migrations;
@@ -29,7 +30,7 @@ use tower_http::trace::TraceLayer;
 use tracing_subscriber::{
     filter::EnvFilter, fmt::format::JsonFields, util::SubscriberInitExt, Layer,
 };
-use util::ResultExt as _;
+use util::{maybe, ResultExt as _};
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const REVISION: Option<&'static str> = option_env!("GITHUB_SHA");
@@ -83,6 +84,8 @@ async fn main() -> Result<()> {
 
             let config = envy::from_env::<Config>().expect("error loading config");
             init_tracing(&config);
+            init_panic_hook();
+
             let mut app = Router::new()
                 .route("/", get(handle_root))
                 .route("/healthz", get(handle_liveness_probe))
@@ -110,6 +113,13 @@ async fn main() -> Result<()> {
 
                 let state = AppState::new(config, Executor::Production).await?;
 
+                if let Some(stripe_billing) = state.stripe_billing.clone() {
+                    let executor = state.executor.clone();
+                    executor.spawn_detached(async move {
+                        stripe_billing.initialize().await.trace_err();
+                    });
+                }
+
                 if mode.is_collab() {
                     state.db.purge_old_embeddings().await.trace_err();
                     RateLimiter::save_periodically(
@@ -124,6 +134,8 @@ async fn main() -> Result<()> {
                     let rpc_server = collab::rpc::Server::new(epoch, state.clone());
                     rpc_server.start().await?;
 
+                    poll_stripe_events_periodically(state.clone(), rpc_server.clone());
+
                     app = app
                         .merge(collab::api::routes(rpc_server.clone()))
                         .merge(collab::rpc::routes(rpc_server.clone()));
@@ -132,9 +144,31 @@ async fn main() -> Result<()> {
                 }
 
                 if mode.is_api() {
-                    poll_stripe_events_periodically(state.clone());
                     fetch_extensions_from_blob_store_periodically(state.clone());
                     spawn_user_backfiller(state.clone());
+
+                    let llm_db = maybe!(async {
+                        let database_url = state
+                            .config
+                            .llm_database_url
+                            .as_ref()
+                            .ok_or_else(|| anyhow!("missing LLM_DATABASE_URL"))?;
+                        let max_connections = state
+                            .config
+                            .llm_database_max_connections
+                            .ok_or_else(|| anyhow!("missing LLM_DATABASE_MAX_CONNECTIONS"))?;
+
+                        let mut db_options = db::ConnectOptions::new(database_url);
+                        db_options.max_connections(max_connections);
+                        LlmDatabase::new(db_options, state.executor.clone()).await
+                    })
+                    .await
+                    .trace_err();
+
+                    if let Some(mut llm_db) = llm_db {
+                        llm_db.initialize().await?;
+                        sync_llm_usage_with_stripe_periodically(state.clone());
+                    }
 
                     app = app
                         .merge(collab::api::events::router())
@@ -345,4 +379,21 @@ pub fn init_tracing(config: &Config) -> Option<()> {
         .init();
 
     None
+}
+
+fn init_panic_hook() {
+    std::panic::set_hook(Box::new(move |panic_info| {
+        let panic_message = match panic_info.payload().downcast_ref::<&'static str>() {
+            Some(message) => *message,
+            None => match panic_info.payload().downcast_ref::<String>() {
+                Some(message) => message.as_str(),
+                None => "Box<Any>",
+            },
+        };
+        let backtrace = std::backtrace::Backtrace::force_capture();
+        let location = panic_info
+            .location()
+            .map(|loc| format!("{}:{}", loc.file(), loc.line()));
+        tracing::error!(panic = true, ?location, %panic_message, %backtrace, "Server Panic");
+    }));
 }

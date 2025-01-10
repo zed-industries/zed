@@ -45,15 +45,6 @@ pub struct ProjectSlashCommandPromptContext {
     pub context_buffer: String,
 }
 
-/// Context required to generate a workflow step resolution prompt.
-#[derive(Debug, Serialize)]
-pub struct StepResolutionContext {
-    /// The full context, including <step>...</step> tags
-    pub workflow_context: String,
-    /// The text of the specific step from the context to resolve
-    pub step_to_resolve: String,
-}
-
 pub struct PromptLoadingParams<'a> {
     pub fs: Arc<dyn Fs>,
     pub repo_path: Option<PathBuf>,
@@ -158,7 +149,7 @@ impl PromptBuilder {
                             if file_path.to_string_lossy().ends_with(".hbs") {
                                 if let Ok(content) = params.fs.load(&file_path).await {
                                     let file_name = file_path.file_stem().unwrap().to_string_lossy();
-                                    log::info!("Registering prompt template override: {}", file_name);
+                                    log::debug!("Registering prompt template override: {}", file_name);
                                     handlebars.lock().register_template_string(&file_name, content).log_err();
                                 }
                             }
@@ -203,7 +194,7 @@ impl PromptBuilder {
         for path in Assets.list("prompts")? {
             if let Some(id) = path.split('/').last().and_then(|s| s.strip_suffix(".hbs")) {
                 if let Some(prompt) = Assets.load(path.as_ref()).log_err().flatten() {
-                    log::info!("Registering built-in prompt template: {}", id);
+                    log::debug!("Registering built-in prompt template: {}", id);
                     let prompt = String::from_utf8_lossy(prompt.as_ref());
                     handlebars.register_template_string(id, LineEnding::normalize_cow(prompt))?
                 }
@@ -213,7 +204,7 @@ impl PromptBuilder {
         Ok(())
     }
 
-    pub fn generate_content_prompt(
+    pub fn generate_inline_transformation_prompt(
         &self,
         user_prompt: String,
         language_name: Option<&LanguageName>,
@@ -319,8 +310,8 @@ impl PromptBuilder {
             .render("terminal_assistant_prompt", &context)
     }
 
-    pub fn generate_workflow_prompt(&self) -> Result<String, RenderError> {
-        self.handlebars.lock().render("edit_workflow", &())
+    pub fn generate_suggest_edits_prompt(&self) -> Result<String, RenderError> {
+        self.handlebars.lock().render("suggest_edits", &())
     }
 
     pub fn generate_project_slash_command_prompt(

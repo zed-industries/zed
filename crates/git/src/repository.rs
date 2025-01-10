@@ -1,11 +1,14 @@
 use crate::GitHostingProviderRegistry;
 use crate::{blame::Blame, status::GitStatus};
 use anyhow::{Context, Result};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use git2::BranchType;
+use gpui::SharedString;
 use parking_lot::Mutex;
 use rope::Rope;
 use serde::{Deserialize, Serialize};
+use std::borrow::Borrow;
+use std::sync::LazyLock;
 use std::{
     cmp::Ordering,
     path::{Component, Path, PathBuf},
@@ -17,7 +20,7 @@ use util::ResultExt;
 #[derive(Clone, Debug, Hash, PartialEq)]
 pub struct Branch {
     pub is_head: bool,
-    pub name: Box<str>,
+    pub name: SharedString,
     /// Timestamp of most recent commit, normalized to Unix Epoch format.
     pub unix_timestamp: Option<i64>,
 }
@@ -36,13 +39,18 @@ pub trait GitRepository: Send + Sync {
     /// Returns the SHA of the current HEAD.
     fn head_sha(&self) -> Option<String>;
 
-    fn status(&self, path_prefixes: &[PathBuf]) -> Result<GitStatus>;
+    /// Returns the list of git statuses, sorted by path
+    fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus>;
 
     fn branches(&self) -> Result<Vec<Branch>>;
     fn change_branch(&self, _: &str) -> Result<()>;
     fn create_branch(&self, _: &str) -> Result<()>;
+    fn branch_exits(&self, _: &str) -> Result<bool>;
 
     fn blame(&self, path: &Path, content: Rope) -> Result<crate::blame::Blame>;
+
+    /// Returns the path to the repository, typically the `.git` folder.
+    fn dot_git_dir(&self) -> PathBuf;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -79,6 +87,11 @@ impl GitRepository for RealGitRepository {
         if let Ok(mut index) = self.repository.lock().index() {
             _ = index.read(false);
         }
+    }
+
+    fn dot_git_dir(&self) -> PathBuf {
+        let repo = self.repository.lock();
+        repo.path().into()
     }
 
     fn load_index_text(&self, relative_file_path: &Path) -> Option<String> {
@@ -122,7 +135,7 @@ impl GitRepository for RealGitRepository {
         Some(self.repository.lock().head().ok()?.target()?.to_string())
     }
 
-    fn status(&self, path_prefixes: &[PathBuf]) -> Result<GitStatus> {
+    fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
         let working_directory = self
             .repository
             .lock()
@@ -132,6 +145,18 @@ impl GitRepository for RealGitRepository {
         GitStatus::new(&self.git_binary_path, &working_directory, path_prefixes)
     }
 
+    fn branch_exits(&self, name: &str) -> Result<bool> {
+        let repo = self.repository.lock();
+        let branch = repo.find_branch(name, BranchType::Local);
+        match branch {
+            Ok(_) => Ok(true),
+            Err(e) => match e.code() {
+                git2::ErrorCode::NotFound => Ok(false),
+                _ => Err(anyhow::anyhow!(e)),
+            },
+        }
+    }
+
     fn branches(&self) -> Result<Vec<Branch>> {
         let repo = self.repository.lock();
         let local_branches = repo.branches(Some(BranchType::Local))?;
@@ -139,7 +164,11 @@ impl GitRepository for RealGitRepository {
             .filter_map(|branch| {
                 branch.ok().and_then(|(branch, _)| {
                     let is_head = branch.is_head();
-                    let name = branch.name().ok().flatten().map(Box::from)?;
+                    let name = branch
+                        .name()
+                        .ok()
+                        .flatten()
+                        .map(|name| name.to_string().into())?;
                     let timestamp = branch.get().peel_to_commit().ok()?.time();
                     let unix_timestamp = timestamp.seconds();
                     let timezone_offset = timestamp.offset_minutes();
@@ -201,22 +230,39 @@ impl GitRepository for RealGitRepository {
     }
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct FakeGitRepository {
     state: Arc<Mutex<FakeGitRepositoryState>>,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct FakeGitRepositoryState {
+    pub dot_git_dir: PathBuf,
+    pub event_emitter: smol::channel::Sender<PathBuf>,
     pub index_contents: HashMap<PathBuf, String>,
     pub blames: HashMap<PathBuf, Blame>,
     pub worktree_statuses: HashMap<RepoPath, GitFileStatus>,
-    pub branch_name: Option<String>,
+    pub current_branch_name: Option<String>,
+    pub branches: HashSet<String>,
 }
 
 impl FakeGitRepository {
     pub fn open(state: Arc<Mutex<FakeGitRepositoryState>>) -> Arc<dyn GitRepository> {
         Arc::new(FakeGitRepository { state })
+    }
+}
+
+impl FakeGitRepositoryState {
+    pub fn new(dot_git_dir: PathBuf, event_emitter: smol::channel::Sender<PathBuf>) -> Self {
+        FakeGitRepositoryState {
+            dot_git_dir,
+            event_emitter,
+            index_contents: Default::default(),
+            blames: Default::default(),
+            worktree_statuses: Default::default(),
+            current_branch_name: Default::default(),
+            branches: Default::default(),
+        }
     }
 }
 
@@ -234,15 +280,21 @@ impl GitRepository for FakeGitRepository {
 
     fn branch_name(&self) -> Option<String> {
         let state = self.state.lock();
-        state.branch_name.clone()
+        state.current_branch_name.clone()
     }
 
     fn head_sha(&self) -> Option<String> {
         None
     }
 
-    fn status(&self, path_prefixes: &[PathBuf]) -> Result<GitStatus> {
+    fn dot_git_dir(&self) -> PathBuf {
         let state = self.state.lock();
+        state.dot_git_dir.clone()
+    }
+
+    fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
+        let state = self.state.lock();
+
         let mut entries = state
             .worktree_statuses
             .iter()
@@ -258,24 +310,48 @@ impl GitRepository for FakeGitRepository {
             })
             .collect::<Vec<_>>();
         entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+
         Ok(GitStatus {
             entries: entries.into(),
         })
     }
 
     fn branches(&self) -> Result<Vec<Branch>> {
-        Ok(vec![])
+        let state = self.state.lock();
+        let current_branch = &state.current_branch_name;
+        Ok(state
+            .branches
+            .iter()
+            .map(|branch_name| Branch {
+                is_head: Some(branch_name) == current_branch.as_ref(),
+                name: branch_name.into(),
+                unix_timestamp: None,
+            })
+            .collect())
+    }
+
+    fn branch_exits(&self, name: &str) -> Result<bool> {
+        let state = self.state.lock();
+        Ok(state.branches.contains(name))
     }
 
     fn change_branch(&self, name: &str) -> Result<()> {
         let mut state = self.state.lock();
-        state.branch_name = Some(name.to_owned());
+        state.current_branch_name = Some(name.to_owned());
+        state
+            .event_emitter
+            .try_send(state.dot_git_dir.clone())
+            .expect("Dropped repo change event");
         Ok(())
     }
 
     fn create_branch(&self, name: &str) -> Result<()> {
         let mut state = self.state.lock();
-        state.branch_name = Some(name.to_owned());
+        state.branches.insert(name.to_owned());
+        state
+            .event_emitter
+            .try_send(state.dot_git_dir.clone())
+            .expect("Dropped repo change event");
         Ok(())
     }
 
@@ -323,6 +399,8 @@ pub enum GitFileStatus {
     Added,
     Modified,
     Conflict,
+    Deleted,
+    Untracked,
 }
 
 impl GitFileStatus {
@@ -350,20 +428,34 @@ impl GitFileStatus {
     }
 }
 
+pub static WORK_DIRECTORY_REPO_PATH: LazyLock<RepoPath> =
+    LazyLock::new(|| RepoPath(Path::new("").into()));
+
 #[derive(Clone, Debug, Ord, Hash, PartialOrd, Eq, PartialEq)]
-pub struct RepoPath(pub PathBuf);
+pub struct RepoPath(pub Arc<Path>);
 
 impl RepoPath {
     pub fn new(path: PathBuf) -> Self {
         debug_assert!(path.is_relative(), "Repo paths must be relative");
 
-        RepoPath(path)
+        RepoPath(path.into())
+    }
+
+    pub fn from_str(path: &str) -> Self {
+        let path = Path::new(path);
+        debug_assert!(path.is_relative(), "Repo paths must be relative");
+
+        RepoPath(path.into())
+    }
+
+    pub fn to_proto(&self) -> String {
+        self.0.to_string_lossy().to_string()
     }
 }
 
 impl From<&Path> for RepoPath {
     fn from(value: &Path) -> Self {
-        RepoPath::new(value.to_path_buf())
+        RepoPath::new(value.into())
     }
 }
 
@@ -373,9 +465,15 @@ impl From<PathBuf> for RepoPath {
     }
 }
 
+impl From<&str> for RepoPath {
+    fn from(value: &str) -> Self {
+        Self::from_str(value)
+    }
+}
+
 impl Default for RepoPath {
     fn default() -> Self {
-        RepoPath(PathBuf::new())
+        RepoPath(Path::new("").into())
     }
 }
 
@@ -386,10 +484,16 @@ impl AsRef<Path> for RepoPath {
 }
 
 impl std::ops::Deref for RepoPath {
-    type Target = PathBuf;
+    type Target = Path;
 
     fn deref(&self) -> &Self::Target {
         &self.0
+    }
+}
+
+impl Borrow<Path> for RepoPath {
+    fn borrow(&self) -> &Path {
+        self.0.as_ref()
     }
 }
 

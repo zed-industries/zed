@@ -1,6 +1,11 @@
-use std::{borrow::Cow, io::Read, pin::Pin, task::Poll};
+use std::{
+    io::{Cursor, Read},
+    pin::Pin,
+    task::Poll,
+};
 
-use futures::{AsyncRead, AsyncReadExt};
+use bytes::Bytes;
+use futures::AsyncRead;
 
 /// Based on the implementation of AsyncBody in
 /// https://github.com/sagebind/isahc/blob/5c533f1ef4d6bdf1fd291b5103c22110f41d0bf0/src/body/mod.rs
@@ -11,7 +16,7 @@ pub enum Inner {
     Empty,
 
     /// A body stored in memory.
-    SyncReader(std::io::Cursor<Cow<'static, [u8]>>),
+    Bytes(std::io::Cursor<Bytes>),
 
     /// An asynchronous reader.
     AsyncReader(Pin<Box<dyn futures::AsyncRead + Send + Sync>>),
@@ -32,6 +37,10 @@ impl AsyncBody {
     {
         Self(Inner::AsyncReader(Box::pin(read)))
     }
+
+    pub fn from_bytes(bytes: Bytes) -> Self {
+        Self(Inner::Bytes(Cursor::new(bytes.clone())))
+    }
 }
 
 impl Default for AsyncBody {
@@ -46,27 +55,35 @@ impl From<()> for AsyncBody {
     }
 }
 
-impl From<Vec<u8>> for AsyncBody {
-    fn from(body: Vec<u8>) -> Self {
-        Self(Inner::SyncReader(std::io::Cursor::new(Cow::Owned(body))))
+impl From<Bytes> for AsyncBody {
+    fn from(bytes: Bytes) -> Self {
+        Self::from_bytes(bytes)
     }
 }
 
-impl From<&'_ [u8]> for AsyncBody {
-    fn from(body: &[u8]) -> Self {
-        body.to_vec().into()
+impl From<Vec<u8>> for AsyncBody {
+    fn from(body: Vec<u8>) -> Self {
+        Self::from_bytes(body.into())
     }
 }
 
 impl From<String> for AsyncBody {
     fn from(body: String) -> Self {
-        body.into_bytes().into()
+        Self::from_bytes(body.into())
     }
 }
 
-impl From<&'_ str> for AsyncBody {
-    fn from(body: &str) -> Self {
-        body.as_bytes().into()
+impl From<&'static [u8]> for AsyncBody {
+    #[inline]
+    fn from(s: &'static [u8]) -> Self {
+        Self::from_bytes(Bytes::from_static(s))
+    }
+}
+
+impl From<&'static str> for AsyncBody {
+    #[inline]
+    fn from(s: &'static str) -> Self {
+        Self::from_bytes(Bytes::from_static(s.as_bytes()))
     }
 }
 
@@ -74,17 +91,7 @@ impl<T: Into<Self>> From<Option<T>> for AsyncBody {
     fn from(body: Option<T>) -> Self {
         match body {
             Some(body) => body.into(),
-            None => Self(Inner::Empty),
-        }
-    }
-}
-
-impl std::io::Read for AsyncBody {
-    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
-        match &mut self.0 {
-            Inner::Empty => Ok(0),
-            Inner::SyncReader(cursor) => cursor.read(buf),
-            Inner::AsyncReader(async_reader) => smol::block_on(async_reader.read(buf)),
+            None => Self::empty(),
         }
     }
 }
@@ -100,7 +107,7 @@ impl futures::AsyncRead for AsyncBody {
         match inner {
             Inner::Empty => Poll::Ready(Ok(0)),
             // Blocking call is over an in-memory buffer
-            Inner::SyncReader(cursor) => Poll::Ready(cursor.read(buf)),
+            Inner::Bytes(cursor) => Poll::Ready(cursor.read(buf)),
             Inner::AsyncReader(async_reader) => {
                 AsyncRead::poll_read(async_reader.as_mut(), cx, buf)
             }

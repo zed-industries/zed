@@ -16,30 +16,27 @@ pub fn init(cx: &mut AppContext) {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub struct NotificationId {
-    /// A [`TypeId`] used to uniquely identify this notification.
-    type_id: TypeId,
-    /// A supplementary ID used to distinguish between multiple
-    /// notifications that have the same [`type_id`](Self::type_id);
-    id: Option<ElementId>,
+pub enum NotificationId {
+    Unique(TypeId),
+    Composite(TypeId, ElementId),
+    Named(SharedString),
 }
 
 impl NotificationId {
     /// Returns a unique [`NotificationId`] for the given type.
     pub fn unique<T: 'static>() -> Self {
-        Self {
-            type_id: TypeId::of::<T>(),
-            id: None,
-        }
+        Self::Unique(TypeId::of::<T>())
     }
 
     /// Returns a [`NotificationId`] for the given type that is also identified
     /// by the provided ID.
-    pub fn identified<T: 'static>(id: impl Into<ElementId>) -> Self {
-        Self {
-            type_id: TypeId::of::<T>(),
-            id: Some(id.into()),
-        }
+    pub fn composite<T: 'static>(id: impl Into<ElementId>) -> Self {
+        Self::Composite(TypeId::of::<T>(), id.into())
+    }
+
+    /// Builds a `NotificationId` out of the given string.
+    pub fn named(id: SharedString) -> Self {
+        Self::Named(id)
     }
 }
 

@@ -16,6 +16,7 @@ doctest = false
 anyhow.workspace = true
 copilot.workspace = true
 editor.workspace = true
+feature_flags.workspace = true
 fs.workspace = true
 gpui.workspace = true
 language.workspace = true
@@ -23,9 +24,9 @@ paths.workspace = true
 settings.workspace = true
 supermaven.workspace = true
 ui.workspace = true
-util.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
+zeta.workspace = true
 
 [dev-dependencies]
 copilot = { workspace = true, features = ["test-support"] }

@@ -5,7 +5,7 @@ use gpui::{Action, AppContext, KeyBinding, SharedString};
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},
     schema::{InstanceType, Schema, SchemaObject, SingleOrVec, SubschemaValidation},
-    JsonSchema,
+    JsonSchema, Map,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -19,6 +19,8 @@ pub struct KeymapFile(Vec<KeymapBlock>);
 pub struct KeymapBlock {
     #[serde(default)]
     context: Option<String>,
+    #[serde(default)]
+    use_key_equivalents: Option<bool>,
     bindings: BTreeMap<String, KeymapAction>,
 }
 
@@ -74,7 +76,14 @@ impl KeymapFile {
     }
 
     pub fn add_to_cx(self, cx: &mut AppContext) -> Result<()> {
-        for KeymapBlock { context, bindings } in self.0 {
+        let key_equivalents = crate::key_equivalents::get_key_equivalents(&cx.keyboard_layout());
+
+        for KeymapBlock {
+            context,
+            use_key_equivalents,
+            bindings,
+        } in self.0
+        {
             let bindings = bindings
                 .into_iter()
                 .filter_map(|(keystroke, action)| {
@@ -110,7 +119,18 @@ impl KeymapFile {
                         )
                     })
                     .log_err()
-                    .map(|action| KeyBinding::load(&keystroke, action, context.as_deref()))
+                    .map(|action| {
+                        KeyBinding::load(
+                            &keystroke,
+                            action,
+                            context.as_deref(),
+                            if use_key_equivalents.unwrap_or_default() {
+                                key_equivalents.as_ref()
+                            } else {
+                                None
+                            },
+                        )
+                    })
                 })
                 .collect::<Result<Vec<_>>>()?;
 
@@ -119,34 +139,51 @@ impl KeymapFile {
         Ok(())
     }
 
-    pub fn generate_json_schema(action_names: &[SharedString]) -> serde_json::Value {
+    pub fn generate_json_schema(
+        action_names: &[SharedString],
+        deprecations: &[(SharedString, SharedString)],
+    ) -> serde_json::Value {
         let mut root_schema = SchemaSettings::draft07()
             .with(|settings| settings.option_add_null_type = false)
             .into_generator()
             .into_root_schema_for::<KeymapFile>();
 
+        let mut alternatives = vec![
+            Schema::Object(SchemaObject {
+                instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
+                enum_values: Some(
+                    action_names
+                        .iter()
+                        .map(|name| Value::String(name.to_string()))
+                        .collect(),
+                ),
+                ..Default::default()
+            }),
+            Schema::Object(SchemaObject {
+                instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Array))),
+                ..Default::default()
+            }),
+            Schema::Object(SchemaObject {
+                instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Null))),
+                ..Default::default()
+            }),
+        ];
+        for (old, new) in deprecations {
+            alternatives.push(Schema::Object(SchemaObject {
+                instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
+                const_value: Some(Value::String(old.to_string())),
+                extensions: Map::from_iter([(
+                    // deprecationMessage is not part of the JSON Schema spec,
+                    // but json-language-server recognizes it.
+                    "deprecationMessage".to_owned(),
+                    format!("Deprecated, use {new}").into(),
+                )]),
+                ..Default::default()
+            }));
+        }
         let action_schema = Schema::Object(SchemaObject {
             subschemas: Some(Box::new(SubschemaValidation {
-                one_of: Some(vec![
-                    Schema::Object(SchemaObject {
-                        instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
-                        enum_values: Some(
-                            action_names
-                                .iter()
-                                .map(|name| Value::String(name.to_string()))
-                                .collect(),
-                        ),
-                        ..Default::default()
-                    }),
-                    Schema::Object(SchemaObject {
-                        instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Array))),
-                        ..Default::default()
-                    }),
-                    Schema::Object(SchemaObject {
-                        instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Null))),
-                        ..Default::default()
-                    }),
-                ]),
+                one_of: Some(alternatives),
                 ..Default::default()
             })),
             ..Default::default()

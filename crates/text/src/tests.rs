@@ -608,6 +608,7 @@ fn test_history() {
 fn test_finalize_last_transaction() {
     let now = Instant::now();
     let mut buffer = Buffer::new(0, BufferId::new(1).unwrap(), "123456".into());
+    buffer.history.group_interval = Duration::from_millis(1);
 
     buffer.start_transaction_at(now);
     buffer.edit([(2..4, "cd")]);

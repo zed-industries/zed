@@ -20,6 +20,7 @@
     "bashrc": "terminal",
     "bmp": "image",
     "c": "c",
+    "c++": "cpp",
     "cc": "cpp",
     "cjs": "javascript",
     "coffee": "coffeescript",
@@ -27,11 +28,13 @@
     "cpp": "cpp",
     "css": "css",
     "csv": "storage",
+    "cxx": "cpp",
     "cts": "typescript",
     "dart": "dart",
     "dat": "storage",
     "db": "storage",
     "dbf": "storage",
+    "diff": "diff",
     "dll": "storage",
     "doc": "document",
     "docx": "document",
@@ -56,6 +59,12 @@
     "gitignore": "vcs",
     "gitkeep": "vcs",
     "gitmodules": "vcs",
+    "TAG_EDITMSG": "vcs",
+    "MERGE_MSG": "vcs",
+    "COMMIT_EDITMSG": "vcs",
+    "NOTES_EDITMSG": "vcs",
+    "EDIT_DESCRIPTION": "vcs",
+    "gleam": "gleam",
     "go": "go",
     "gql": "graphql",
     "graphql": "graphql",
@@ -63,14 +72,17 @@
     "h": "c",
     "handlebars": "code",
     "hbs": "template",
+    "hcl": "hcl",
     "heex": "elixir",
     "heic": "image",
     "heif": "image",
+    "hh": "cpp",
     "hpp": "cpp",
     "hrl": "erlang",
     "hs": "haskell",
     "htm": "template",
     "html": "template",
+    "hxx": "cpp",
     "ib": "storage",
     "ico": "image",
     "ini": "settings",
@@ -78,6 +90,7 @@
     "j2k": "image",
     "java": "java",
     "jfif": "image",
+    "jl": "julia",
     "jp2": "image",
     "jpeg": "image",
     "jpg": "image",
@@ -100,11 +113,13 @@
     "mdf": "storage",
     "mdx": "document",
     "metadata": "code",
+    "metal": "metal",
     "mjs": "javascript",
     "mka": "audio",
     "mkv": "video",
     "ml": "ocaml",
     "mli": "ocaml",
+    "mod": "go",
     "mov": "video",
     "mp3": "audio",
     "mp4": "video",
@@ -112,6 +127,7 @@
     "myd": "storage",
     "myi": "storage",
     "nim": "nim",
+    "nix": "nix",
     "nu": "terminal",
     "odp": "document",
     "ods": "document",
@@ -119,11 +135,13 @@
     "ogg": "audio",
     "opus": "audio",
     "otf": "font",
+    "pcss": "css",
     "pdb": "storage",
     "pdf": "document",
     "php": "php",
     "plist": "template",
     "png": "image",
+    "postcss": "css",
     "ppt": "document",
     "pptx": "document",
     "prettierignore": "prettier",
@@ -138,12 +156,15 @@
     "rb": "ruby",
     "rebar.config": "erlang",
     "rkt": "code",
+    "roc": "roc",
     "rs": "rust",
     "rtf": "document",
+    "sass": "sass",
     "sav": "storage",
     "sc": "scala",
     "scala": "scala",
     "scm": "code",
+    "scss": "sass",
     "sdf": "storage",
     "sh": "terminal",
     "sql": "storage",
@@ -161,6 +182,9 @@
     "tsx": "react",
     "ttf": "font",
     "txt": "document",
+    "v": "v",
+    "vsh": "v",
+    "vv": "v",
     "vue": "vue",
     "wav": "audio",
     "webm": "video",
@@ -169,6 +193,7 @@
     "wmv": "video",
     "woff": "font",
     "woff2": "font",
+    "work": "go",
     "wv": "audio",
     "xls": "document",
     "xlsx": "document",
@@ -177,6 +202,7 @@
     "yaml": "settings",
     "yml": "settings",
     "yrl": "erlang",
+    "zig": "zig",
     "zlogin": "terminal",
     "zsh": "terminal",
     "zsh_aliases": "terminal",
@@ -222,6 +248,9 @@
     "default": {
       "icon": "icons/file_icons/file.svg"
     },
+    "diff": {
+      "icon": "icons/file_icons/diff.svg"
+    },
     "docker": {
       "icon": "icons/file_icons/docker.svg"
     },
@@ -252,6 +281,9 @@
     "fsharp": {
       "icon": "icons/file_icons/fsharp.svg"
     },
+    "gleam": {
+      "icon": "icons/file_icons/gleam.svg"
+    },
     "go": {
       "icon": "icons/file_icons/go.svg"
     },
@@ -260,6 +292,9 @@
     },
     "haskell": {
       "icon": "icons/file_icons/haskell.svg"
+    },
+    "hcl": {
+      "icon": "icons/file_icons/hcl.svg"
     },
     "heroku": {
       "icon": "icons/file_icons/heroku.svg"
@@ -273,6 +308,9 @@
     "javascript": {
       "icon": "icons/file_icons/javascript.svg"
     },
+    "julia": {
+      "icon": "icons/file_icons/julia.svg"
+    },
     "kotlin": {
       "icon": "icons/file_icons/kotlin.svg"
     },
@@ -285,8 +323,14 @@
     "lua": {
       "icon": "icons/file_icons/lua.svg"
     },
+    "metal": {
+      "icon": "icons/file_icons/metal.svg"
+    },
     "nim": {
       "icon": "icons/file_icons/nim.svg"
+    },
+    "nix": {
+      "icon": "icons/file_icons/nix.svg"
     },
     "ocaml": {
       "icon": "icons/file_icons/ocaml.svg"
@@ -312,11 +356,17 @@
     "react": {
       "icon": "icons/file_icons/react.svg"
     },
+    "roc": {
+      "icon": "icons/file_icons/roc.svg"
+    },
     "ruby": {
       "icon": "icons/file_icons/ruby.svg"
     },
     "rust": {
       "icon": "icons/file_icons/rust.svg"
+    },
+    "sass": {
+      "icon": "icons/file_icons/sass.svg"
     },
     "scala": {
       "icon": "icons/file_icons/scala.svg"
@@ -348,6 +398,9 @@
     "typescript": {
       "icon": "icons/file_icons/typescript.svg"
     },
+    "v": {
+      "icon": "icons/file_icons/v.svg"
+    },
     "vcs": {
       "icon": "icons/file_icons/git.svg"
     },
@@ -356,6 +409,9 @@
     },
     "vue": {
       "icon": "icons/file_icons/vue.svg"
+    },
+    "zig": {
+      "icon": "icons/file_icons/zig.svg"
     }
   }
 }

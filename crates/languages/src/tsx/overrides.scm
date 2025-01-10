@@ -1,4 +1,4 @@
-(comment) @comment
+(comment) @comment.inclusive
 
 [
   (string)
