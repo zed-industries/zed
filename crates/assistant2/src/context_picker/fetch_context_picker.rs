@@ -204,9 +204,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
                 this.delegate
                     .context_store
                     .update(cx, |context_store, _cx| {
-                        if context_store.includes_url(&url).is_none() {
-                            context_store.insert_fetched_url(url, text);
-                        }
+                        context_store.add_fetched_url(url, text);
                     })?;
 
                 match confirm_behavior {
