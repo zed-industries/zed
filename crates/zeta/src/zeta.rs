@@ -30,6 +30,7 @@ use std::{
     time::{Duration, Instant},
 };
 use telemetry_events::InlineCompletionRating;
+use util::ResultExt;
 use uuid::Uuid;
 
 const CURSOR_MARKER: &'static str = "<|user_cursor_is_here|>";
@@ -975,7 +976,7 @@ impl CurrentInlineCompletion {
 
 struct PendingCompletion {
     id: usize,
-    _task: Task<Result<()>>,
+    _task: Task<()>,
 }
 
 pub struct ZetaInlineCompletionProvider {
@@ -1053,13 +1054,16 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                 })
             });
 
-            let mut completion = None;
-            if let Ok(completion_request) = completion_request {
-                completion = Some(CurrentInlineCompletion {
-                    buffer_id: buffer.entity_id(),
-                    completion: completion_request.await?,
-                });
-            }
+            let completion = match completion_request {
+                Ok(completion_request) => {
+                    let completion_request = completion_request.await;
+                    completion_request.map(|completion| CurrentInlineCompletion {
+                        buffer_id: buffer.entity_id(),
+                        completion,
+                    })
+                }
+                Err(error) => Err(error),
+            };
 
             this.update(&mut cx, |this, cx| {
                 if this.pending_completions[0].id == pending_completion_id {
@@ -1068,7 +1072,8 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                     this.pending_completions.clear();
                 }
 
-                if let Some(new_completion) = completion {
+                if let Some(new_completion) = completion.context("zeta prediction failed").log_err()
+                {
                     if let Some(old_completion) = this.current_completion.as_ref() {
                         let snapshot = buffer.read(cx).snapshot();
                         if new_completion.should_replace_completion(&old_completion, &snapshot) {
@@ -1083,12 +1088,11 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                         });
                         this.current_completion = Some(new_completion);
                     }
-                } else {
-                    this.current_completion = None;
                 }
 
                 cx.notify();
             })
+            .ok();
         });
 
         // We always maintain at most two pending completions. When we already
