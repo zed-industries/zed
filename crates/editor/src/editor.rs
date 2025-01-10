@@ -129,7 +129,7 @@ use multi_buffer::{
 };
 use project::{
     buffer_store::BufferChangeSet,
-    lsp_store::{FormatTarget, FormatTrigger, OpenLspBufferHandle},
+    lsp_store::{FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Location, LocationLink,
     LspStore, Project, ProjectItem, ProjectTransaction, TaskSourceKind,
@@ -984,6 +984,11 @@ impl InlayHintRefreshReason {
             Self::ExcerptsRemoved(_) => "excerpts removed",
         }
     }
+}
+
+pub enum FormatTarget {
+    Buffers,
+    Ranges(Vec<Range<MultiBufferPoint>>),
 }
 
 pub(crate) struct FocusedBlock {
@@ -2554,7 +2559,7 @@ impl Editor {
             if start_offset > buffer_snapshot.len() || end_offset > buffer_snapshot.len() {
                 continue;
             }
-            if self.selections.disjoint_anchor_ranges().iter().any(|s| {
+            if self.selections.disjoint_anchor_ranges().any(|s| {
                 if s.start.buffer_id != selection.start.buffer_id
                     || s.end.buffer_id != selection.end.buffer_id
                 {
@@ -10237,7 +10242,7 @@ impl Editor {
             None => return None,
         };
 
-        Some(self.perform_format(project, FormatTrigger::Manual, FormatTarget::Buffer, cx))
+        Some(self.perform_format(project, FormatTrigger::Manual, FormatTarget::Buffers, cx))
     }
 
     fn format_selections(
@@ -10250,17 +10255,17 @@ impl Editor {
             None => return None,
         };
 
-        let selections = self
+        let ranges = self
             .selections
             .all_adjusted(cx)
             .into_iter()
-            .filter(|s| !s.is_empty())
+            .map(|selection| selection.range())
             .collect_vec();
 
         Some(self.perform_format(
             project,
             FormatTrigger::Manual,
-            FormatTarget::Ranges(selections),
+            FormatTarget::Ranges(ranges),
             cx,
         ))
     }
@@ -10272,15 +10277,41 @@ impl Editor {
         target: FormatTarget,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        let buffer = self.buffer().clone();
-        let mut buffers = buffer.read(cx).all_buffers();
-        if trigger == FormatTrigger::Save {
-            buffers.retain(|buffer| buffer.read(cx).is_dirty());
-        }
+        let buffer = self.buffer.clone();
+        let (buffers, target) = match target {
+            FormatTarget::Buffers => {
+                let mut buffers = buffer.read(cx).all_buffers();
+                if trigger == FormatTrigger::Save {
+                    buffers.retain(|buffer| buffer.read(cx).is_dirty());
+                }
+                (buffers, LspFormatTarget::Buffers)
+            }
+            FormatTarget::Ranges(selection_ranges) => {
+                let multi_buffer = buffer.read(cx);
+                let snapshot = multi_buffer.read(cx);
+                let mut buffers = HashSet::default();
+                let mut buffer_id_to_ranges: BTreeMap<BufferId, Vec<Range<text::Anchor>>> =
+                    BTreeMap::new();
+                for selection_range in selection_ranges {
+                    for (excerpt, buffer_range) in snapshot.range_to_buffer_ranges(selection_range)
+                    {
+                        let buffer_id = excerpt.buffer_id();
+                        let start = excerpt.buffer().anchor_before(buffer_range.start);
+                        let end = excerpt.buffer().anchor_after(buffer_range.end);
+                        buffers.insert(multi_buffer.buffer(buffer_id).unwrap());
+                        buffer_id_to_ranges
+                            .entry(buffer_id)
+                            .and_modify(|buffer_ranges| buffer_ranges.push(start..end))
+                            .or_insert_with(|| vec![start..end]);
+                    }
+                }
+                (buffers, LspFormatTarget::Ranges(buffer_id_to_ranges))
+            }
+        };
 
         let mut timeout = cx.background_executor().timer(FORMAT_TIMEOUT).fuse();
         let format = project.update(cx, |project, cx| {
-            project.format(buffers, true, trigger, target, cx)
+            project.format(buffers, target, true, trigger, cx)
         });
 
         cx.spawn(|_, mut cx| async move {
@@ -10536,12 +10567,9 @@ impl Editor {
         } else {
             let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
             let mut toggled_buffers = HashSet::default();
-            for (_, buffer_snapshot, _) in multi_buffer_snapshot.excerpts_in_ranges(
-                self.selections
-                    .disjoint_anchors()
-                    .into_iter()
-                    .map(|selection| selection.range()),
-            ) {
+            for (_, buffer_snapshot, _) in
+                multi_buffer_snapshot.excerpts_in_ranges(self.selections.disjoint_anchor_ranges())
+            {
                 let buffer_id = buffer_snapshot.remote_id();
                 if toggled_buffers.insert(buffer_id) {
                     if self.buffer_folded(buffer_id, cx) {
@@ -10622,12 +10650,9 @@ impl Editor {
         } else {
             let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
             let mut folded_buffers = HashSet::default();
-            for (_, buffer_snapshot, _) in multi_buffer_snapshot.excerpts_in_ranges(
-                self.selections
-                    .disjoint_anchors()
-                    .into_iter()
-                    .map(|selection| selection.range()),
-            ) {
+            for (_, buffer_snapshot, _) in
+                multi_buffer_snapshot.excerpts_in_ranges(self.selections.disjoint_anchor_ranges())
+            {
                 let buffer_id = buffer_snapshot.remote_id();
                 if folded_buffers.insert(buffer_id) {
                     self.fold_buffer(buffer_id, cx);
@@ -10788,12 +10813,9 @@ impl Editor {
         } else {
             let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
             let mut unfolded_buffers = HashSet::default();
-            for (_, buffer_snapshot, _) in multi_buffer_snapshot.excerpts_in_ranges(
-                self.selections
-                    .disjoint_anchors()
-                    .into_iter()
-                    .map(|selection| selection.range()),
-            ) {
+            for (_, buffer_snapshot, _) in
+                multi_buffer_snapshot.excerpts_in_ranges(self.selections.disjoint_anchor_ranges())
+            {
                 let buffer_id = buffer_snapshot.remote_id();
                 if unfolded_buffers.insert(buffer_id) {
                     self.unfold_buffer(buffer_id, cx);

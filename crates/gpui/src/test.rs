@@ -32,6 +32,7 @@ use smol::channel;
 use std::{
     env,
     panic::{self, RefUnwindSafe},
+    pin::Pin,
 };
 
 /// Run the given test function with the configured parameters.
@@ -85,7 +86,7 @@ pub fn run_test(
 
 /// A test struct for converting an observation callback into a stream.
 pub struct Observation<T> {
-    rx: channel::Receiver<T>,
+    rx: Pin<Box<channel::Receiver<T>>>,
     _subscription: Subscription,
 }
 
@@ -108,6 +109,7 @@ pub fn observe<T: 'static>(entity: &impl Entity<T>, cx: &mut TestAppContext) -> 
             let _ = smol::block_on(tx.send(()));
         })
     });
+    let rx = Box::pin(rx);
 
     Observation { rx, _subscription }
 }

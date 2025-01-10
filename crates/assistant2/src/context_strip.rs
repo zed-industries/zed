@@ -1,10 +1,12 @@
 use std::rc::Rc;
 
+use anyhow::Result;
 use collections::HashSet;
 use editor::Editor;
+use file_icons::FileIcons;
 use gpui::{
-    AppContext, DismissEvent, EventEmitter, FocusHandle, Model, Subscription, View, WeakModel,
-    WeakView,
+    DismissEvent, EventEmitter, FocusHandle, Model, ModelContext, Subscription, Task, View,
+    WeakModel, WeakView,
 };
 use itertools::Itertools;
 use language::Buffer;
@@ -21,7 +23,7 @@ use crate::{AssistantPanel, RemoveAllContext, ToggleContextPicker};
 
 pub struct ContextStrip {
     context_store: Model<ContextStore>,
-    context_picker: View<ContextPicker>,
+    pub context_picker: View<ContextPicker>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     focus_handle: FocusHandle,
     suggest_context_kind: SuggestContextKind,
@@ -94,9 +96,12 @@ impl ContextStrip {
             None => path.to_string_lossy().into_owned().into(),
         };
 
+        let icon_path = FileIcons::get_icon(path, cx);
+
         Some(SuggestedContext::File {
             name,
             buffer: active_buffer_model.downgrade(),
+            icon_path,
         })
     }
 
@@ -121,7 +126,7 @@ impl ContextStrip {
         }
 
         Some(SuggestedContext::Thread {
-            name: active_thread.summary().unwrap_or("New Thread".into()),
+            name: active_thread.summary_or_default(),
             thread: weak_active_thread,
         })
     }
@@ -163,7 +168,13 @@ impl Render for ContextStrip {
             .gap_1()
             .child(
                 PopoverMenu::new("context-picker")
-                    .menu(move |_cx| Some(context_picker.clone()))
+                    .menu(move |cx| {
+                        context_picker.update(cx, |this, cx| {
+                            this.reset_mode(cx);
+                        });
+
+                        Some(context_picker.clone())
+                    })
                     .trigger(
                         IconButton::new("add-context", IconName::Plus)
                             .icon_size(IconSize::Small)
@@ -185,7 +196,7 @@ impl Render for ContextStrip {
                     .anchor(gpui::Corner::BottomLeft)
                     .offset(gpui::Point {
                         x: px(0.0),
-                        y: px(-16.0),
+                        y: px(-2.0),
                     })
                     .with_handle(self.context_picker_menu_handle.clone()),
             )
@@ -227,15 +238,36 @@ impl Render for ContextStrip {
             .when_some(suggested_context, |el, suggested| {
                 el.child(ContextPill::new_suggested(
                     suggested.name().clone(),
+                    suggested.icon_path(),
                     suggested.kind(),
                     {
                         let context_store = self.context_store.clone();
-                        Rc::new(cx.listener(move |_this, _event, cx| {
-                            context_store.update(cx, |context_store, cx| {
-                                suggested.accept(context_store, cx);
+                        Rc::new(cx.listener(move |this, _event, cx| {
+                            let task = context_store.update(cx, |context_store, cx| {
+                                suggested.accept(context_store, cx)
                             });
 
-                            cx.notify();
+                            let workspace = this.workspace.clone();
+                            cx.spawn(|this, mut cx| async move {
+                                match task.await {
+                                    Ok(()) => {
+                                        if let Some(this) = this.upgrade() {
+                                            this.update(&mut cx, |_, cx| cx.notify())?;
+                                        }
+                                    }
+                                    Err(err) => {
+                                        let Some(workspace) = workspace.upgrade() else {
+                                            return anyhow::Ok(());
+                                        };
+
+                                        workspace.update(&mut cx, |workspace, cx| {
+                                            workspace.show_error(&err, cx);
+                                        })?;
+                                    }
+                                }
+                                anyhow::Ok(())
+                            })
+                            .detach_and_log_err(cx);
                         }))
                     },
                 ))
@@ -283,6 +315,7 @@ pub enum SuggestContextKind {
 pub enum SuggestedContext {
     File {
         name: SharedString,
+        icon_path: Option<SharedString>,
         buffer: WeakModel<Buffer>,
     },
     Thread {
@@ -299,11 +332,26 @@ impl SuggestedContext {
         }
     }
 
-    pub fn accept(&self, context_store: &mut ContextStore, cx: &mut AppContext) {
+    pub fn icon_path(&self) -> Option<SharedString> {
         match self {
-            Self::File { buffer, name: _ } => {
+            Self::File { icon_path, .. } => icon_path.clone(),
+            Self::Thread { .. } => None,
+        }
+    }
+
+    pub fn accept(
+        &self,
+        context_store: &mut ContextStore,
+        cx: &mut ModelContext<ContextStore>,
+    ) -> Task<Result<()>> {
+        match self {
+            Self::File {
+                buffer,
+                icon_path: _,
+                name: _,
+            } => {
                 if let Some(buffer) = buffer.upgrade() {
-                    context_store.insert_file(buffer, cx);
+                    return context_store.add_file_from_buffer(buffer, cx);
                 };
             }
             Self::Thread { thread, name: _ } => {
@@ -312,6 +360,7 @@ impl SuggestedContext {
                 };
             }
         }
+        Task::ready(Ok(()))
     }
 
     pub fn kind(&self) -> ContextKind {

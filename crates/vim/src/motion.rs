@@ -91,6 +91,16 @@ pub enum Motion {
         mode: FindRange,
         smartcase: bool,
     },
+    Sneak {
+        first_char: char,
+        second_char: char,
+        smartcase: bool,
+    },
+    SneakBackward {
+        first_char: char,
+        second_char: char,
+        smartcase: bool,
+    },
     RepeatFind {
         last_find: Box<Motion>,
     },
@@ -538,8 +548,10 @@ impl Vim {
     }
 
     pub(crate) fn motion(&mut self, motion: Motion, cx: &mut ViewContext<Self>) {
-        if let Some(Operator::FindForward { .. }) | Some(Operator::FindBackward { .. }) =
-            self.active_operator()
+        if let Some(Operator::FindForward { .. })
+        | Some(Operator::Sneak { .. })
+        | Some(Operator::SneakBackward { .. })
+        | Some(Operator::FindBackward { .. }) = self.active_operator()
         {
             self.pop_operator(cx);
         }
@@ -625,6 +637,8 @@ impl Motion {
             | PreviousSubwordEnd { .. }
             | FirstNonWhitespace { .. }
             | FindBackward { .. }
+            | Sneak { .. }
+            | SneakBackward { .. }
             | RepeatFind { .. }
             | RepeatFindReversed { .. }
             | Jump { line: false, .. }
@@ -666,6 +680,8 @@ impl Motion {
             | PreviousSubwordEnd { .. }
             | FirstNonWhitespace { .. }
             | FindBackward { .. }
+            | Sneak { .. }
+            | SneakBackward { .. }
             | RepeatFindReversed { .. }
             | WindowTop
             | WindowMiddle
@@ -727,6 +743,8 @@ impl Motion {
             | PreviousSubwordStart { .. }
             | FirstNonWhitespace { .. }
             | FindBackward { .. }
+            | Sneak { .. }
+            | SneakBackward { .. }
             | Jump { .. }
             | NextSectionStart
             | NextSectionEnd
@@ -862,6 +880,22 @@ impl Motion {
                 find_backward(map, point, *after, *char, times, *mode, *smartcase),
                 SelectionGoal::None,
             ),
+            Sneak {
+                first_char,
+                second_char,
+                smartcase,
+            } => {
+                return sneak(map, point, *first_char, *second_char, times, *smartcase)
+                    .map(|new_point| (new_point, SelectionGoal::None));
+            }
+            SneakBackward {
+                first_char,
+                second_char,
+                smartcase,
+            } => {
+                return sneak_backward(map, point, *first_char, *second_char, times, *smartcase)
+                    .map(|new_point| (new_point, SelectionGoal::None));
+            }
             // ; -- repeat the last find done with t, f, T, F
             RepeatFind { last_find } => match **last_find {
                 Motion::FindForward {
@@ -895,9 +929,44 @@ impl Motion {
 
                     (new_point, SelectionGoal::None)
                 }
+                Motion::Sneak {
+                    first_char,
+                    second_char,
+                    smartcase,
+                } => {
+                    let mut new_point =
+                        sneak(map, point, first_char, second_char, times, smartcase);
+                    if new_point == Some(point) {
+                        new_point =
+                            sneak(map, point, first_char, second_char, times + 1, smartcase);
+                    }
+
+                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                }
+
+                Motion::SneakBackward {
+                    first_char,
+                    second_char,
+                    smartcase,
+                } => {
+                    let mut new_point =
+                        sneak_backward(map, point, first_char, second_char, times, smartcase);
+                    if new_point == Some(point) {
+                        new_point = sneak_backward(
+                            map,
+                            point,
+                            first_char,
+                            second_char,
+                            times + 1,
+                            smartcase,
+                        );
+                    }
+
+                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                }
                 _ => return None,
             },
-            // , -- repeat the last find done with t, f, T, F, in opposite direction
+            // , -- repeat the last find done with t, f, T, F, s, S, in opposite direction
             RepeatFindReversed { last_find } => match **last_find {
                 Motion::FindForward {
                     before,
@@ -926,6 +995,42 @@ impl Motion {
                     if new_point == Some(point) {
                         new_point =
                             find_forward(map, point, after, char, times + 1, mode, smartcase);
+                    }
+
+                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                }
+
+                Motion::Sneak {
+                    first_char,
+                    second_char,
+                    smartcase,
+                } => {
+                    let mut new_point =
+                        sneak_backward(map, point, first_char, second_char, times, smartcase);
+                    if new_point == Some(point) {
+                        new_point = sneak_backward(
+                            map,
+                            point,
+                            first_char,
+                            second_char,
+                            times + 1,
+                            smartcase,
+                        );
+                    }
+
+                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                }
+
+                Motion::SneakBackward {
+                    first_char,
+                    second_char,
+                    smartcase,
+                } => {
+                    let mut new_point =
+                        sneak(map, point, first_char, second_char, times, smartcase);
+                    if new_point == Some(point) {
+                        new_point =
+                            sneak(map, point, first_char, second_char, times + 1, smartcase);
                     }
 
                     return new_point.map(|new_point| (new_point, SelectionGoal::None));
@@ -2131,6 +2236,74 @@ fn is_character_match(target: char, other: char, smartcase: bool) -> bool {
         }
     } else {
         target == other
+    }
+}
+
+fn sneak(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    first_target: char,
+    second_target: char,
+    times: usize,
+    smartcase: bool,
+) -> Option<DisplayPoint> {
+    let mut to = from;
+    let mut found = false;
+
+    for _ in 0..times {
+        found = false;
+        let new_to = find_boundary(
+            map,
+            movement::right(map, to),
+            FindRange::MultiLine,
+            |left, right| {
+                found = is_character_match(first_target, left, smartcase)
+                    && is_character_match(second_target, right, smartcase);
+                found
+            },
+        );
+        if to == new_to {
+            break;
+        }
+        to = new_to;
+    }
+
+    if found {
+        Some(movement::left(map, to))
+    } else {
+        None
+    }
+}
+
+fn sneak_backward(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    first_target: char,
+    second_target: char,
+    times: usize,
+    smartcase: bool,
+) -> Option<DisplayPoint> {
+    let mut to = from;
+    let mut found = false;
+
+    for _ in 0..times {
+        found = false;
+        let new_to =
+            find_preceding_boundary_display_point(map, to, FindRange::MultiLine, |left, right| {
+                found = is_character_match(first_target, left, smartcase)
+                    && is_character_match(second_target, right, smartcase);
+                found
+            });
+        if to == new_to {
+            break;
+        }
+        to = new_to;
+    }
+
+    if found {
+        Some(movement::left(map, to))
+    } else {
+        None
     }
 }
 

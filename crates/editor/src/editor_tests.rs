@@ -7380,7 +7380,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
             editor.perform_format(
                 project.clone(),
                 FormatTrigger::Manual,
-                FormatTarget::Buffer,
+                FormatTarget::Buffers,
                 cx,
             )
         })
@@ -7418,7 +7418,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     });
     let format = editor
         .update(cx, |editor, cx| {
-            editor.perform_format(project, FormatTrigger::Manual, FormatTarget::Buffer, cx)
+            editor.perform_format(project, FormatTrigger::Manual, FormatTarget::Buffers, cx)
         })
         .unwrap();
     cx.executor().advance_clock(super::FORMAT_TIMEOUT);
@@ -11293,7 +11293,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
             editor.perform_format(
                 project.clone(),
                 FormatTrigger::Manual,
-                FormatTarget::Buffer,
+                FormatTarget::Buffers,
                 cx,
             )
         })
@@ -11312,7 +11312,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
         editor.perform_format(
             project.clone(),
             FormatTrigger::Manual,
-            FormatTarget::Buffer,
+            FormatTarget::Buffers,
             cx,
         )
     });

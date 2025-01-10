@@ -118,7 +118,7 @@ util = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 unicode-segmentation.workspace = true
 
-[build-dependencies]
+[target.'cfg(target_os = "windows")'.build-dependencies]
 embed-resource = "3.0"
 
 [target.'cfg(target_os = "macos")'.build-dependencies]

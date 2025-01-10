@@ -1396,10 +1396,8 @@ impl FakeLanguageServer {
     pub async fn try_receive_notification<T: notification::Notification>(
         &mut self,
     ) -> Option<T::Params> {
-        use futures::StreamExt as _;
-
         loop {
-            let (method, params) = self.notifications_rx.next().await?;
+            let (method, params) = self.notifications_rx.recv().await.ok()?;
             if method == T::METHOD {
                 return Some(serde_json::from_str::<T::Params>(&params).unwrap());
             } else {

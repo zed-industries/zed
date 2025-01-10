@@ -392,7 +392,10 @@ impl Render for ErrorMessagePrompt {
                     )
                     .child(
                         div()
+                            .id("error_message")
                             .max_w_80()
+                            .max_h_40()
+                            .overflow_y_scroll()
                             .child(Label::new(self.message.clone()).size(LabelSize::Small)),
                     )
                     .when_some(self.label_and_url_button.clone(), |elm, (label, url)| {

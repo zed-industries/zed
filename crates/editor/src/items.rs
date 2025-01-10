@@ -2,8 +2,8 @@ use crate::{
     editor_settings::SeedQuerySetting,
     persistence::{SerializedEditor, DB},
     scroll::ScrollAnchor,
-    Anchor, Autoscroll, Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, MultiBuffer,
-    MultiBufferSnapshot, NavigationData, SearchWithinRange, ToPoint as _,
+    Anchor, Autoscroll, Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, FormatTarget,
+    MultiBuffer, MultiBufferSnapshot, NavigationData, SearchWithinRange, ToPoint as _,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashSet;
@@ -29,7 +29,6 @@ use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
 use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 
-use project::lsp_store::FormatTarget;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -756,7 +755,7 @@ impl Item for Editor {
                     editor.perform_format(
                         project.clone(),
                         FormatTrigger::Save,
-                        FormatTarget::Buffer,
+                        FormatTarget::Buffers,
                         cx,
                     )
                 })?
@@ -1261,8 +1260,8 @@ impl SearchableItem for Editor {
             return;
         }
 
-        let ranges = self.selections.disjoint_anchor_ranges();
-        if ranges.iter().any(|range| range.start != range.end) {
+        let ranges = self.selections.disjoint_anchor_ranges().collect::<Vec<_>>();
+        if ranges.iter().any(|s| s.start != s.end) {
             self.set_search_within_ranges(&ranges, cx);
         } else if let Some(previous_search_ranges) = self.previous_search_ranges.take() {
             self.set_search_within_ranges(&previous_search_ranges, cx)
