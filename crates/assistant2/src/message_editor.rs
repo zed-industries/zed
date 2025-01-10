@@ -19,7 +19,7 @@ use workspace::Workspace;
 
 use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
-use crate::context_store::ContextStore;
+use crate::context_store::{refresh_context_store_text, ContextStore};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
@@ -125,22 +125,20 @@ impl MessageEditor {
         self.send_to_model(RequestKind::Chat, cx);
     }
 
-    fn send_to_model(
-        &mut self,
-        request_kind: RequestKind,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<()> {
+    fn send_to_model(&mut self, request_kind: RequestKind, cx: &mut ViewContext<Self>) {
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
         if provider
             .as_ref()
             .map_or(false, |provider| provider.must_accept_terms(cx))
         {
             cx.notify();
-            return None;
+            return;
         }
 
         let model_registry = LanguageModelRegistry::read_global(cx);
-        let model = model_registry.active_model()?;
+        let Some(model) = model_registry.active_model() else {
+            return;
+        };
 
         let user_message = self.editor.update(cx, |editor, cx| {
             let text = editor.text(cx);
@@ -148,29 +146,37 @@ impl MessageEditor {
             text
         });
 
+        let refresh_task = refresh_context_store_text(self.context_store.clone(), cx);
+
         let thread = self.thread.clone();
-        thread.update(cx, |thread, cx| {
-            let context = self.context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
-            thread.insert_user_message(user_message, context, cx);
-            let mut request = thread.to_completion_request(request_kind, cx);
+        let context_store = self.context_store.clone();
+        let use_tools = self.use_tools;
+        cx.spawn(move |_, mut cx| async move {
+            refresh_task.await;
+            thread
+                .update(&mut cx, |thread, cx| {
+                    let context = context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
+                    thread.insert_user_message(user_message, context, cx);
+                    let mut request = thread.to_completion_request(request_kind, cx);
 
-            if self.use_tools {
-                request.tools = thread
-                    .tools()
-                    .tools(cx)
-                    .into_iter()
-                    .map(|tool| LanguageModelRequestTool {
-                        name: tool.name(),
-                        description: tool.description(),
-                        input_schema: tool.input_schema(),
-                    })
-                    .collect();
-            }
+                    if use_tools {
+                        request.tools = thread
+                            .tools()
+                            .tools(cx)
+                            .into_iter()
+                            .map(|tool| LanguageModelRequestTool {
+                                name: tool.name(),
+                                description: tool.description(),
+                                input_schema: tool.input_schema(),
+                            })
+                            .collect();
+                    }
 
-            thread.stream_completion(request, model, cx)
-        });
-
-        None
+                    thread.stream_completion(request, model, cx)
+                })
+                .ok();
+        })
+        .detach();
     }
 
     fn handle_editor_event(

@@ -1,6 +1,5 @@
 use std::path::Path;
 use std::rc::Rc;
-use std::sync::Arc;
 
 use file_icons::FileIcons;
 use gpui::{AppContext, Model, SharedString};
@@ -11,7 +10,7 @@ use text::BufferId;
 use ui::IconName;
 use util::post_inc;
 
-use crate::thread::Thread;
+use crate::{context_store::buffer_path_log_err, thread::Thread};
 
 #[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Clone, Copy, Serialize, Deserialize)]
 pub struct ContextId(pub(crate) usize);
@@ -76,7 +75,7 @@ impl Context {
 #[derive(Debug)]
 pub struct FileContext {
     pub id: ContextId,
-    pub buffer: ContextBuffer,
+    pub context_buffer: ContextBuffer,
 }
 
 #[derive(Debug)]
@@ -84,7 +83,7 @@ pub struct DirectoryContext {
     #[allow(unused)]
     pub path: Rc<Path>,
     #[allow(unused)]
-    pub buffers: Vec<ContextBuffer>,
+    pub context_buffers: Vec<ContextBuffer>,
     pub snapshot: ContextSnapshot,
 }
 
@@ -108,7 +107,7 @@ pub struct ThreadContext {
 // TODO: Model<Buffer> holds onto the buffer even if the file is deleted and closed. Should remove
 // the context from the message editor in this case.
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct ContextBuffer {
     #[allow(unused)]
     pub id: BufferId,
@@ -130,18 +129,9 @@ impl Context {
 }
 
 impl FileContext {
-    pub fn path(&self, cx: &AppContext) -> Option<Arc<Path>> {
-        let buffer = self.buffer.buffer.read(cx);
-        if let Some(file) = buffer.file() {
-            Some(file.path().clone())
-        } else {
-            log::error!("Buffer that had a path unexpectedly no longer has a path.");
-            None
-        }
-    }
-
     pub fn snapshot(&self, cx: &AppContext) -> Option<ContextSnapshot> {
-        let path = self.path(cx)?;
+        let buffer = self.context_buffer.buffer.read(cx);
+        let path = buffer_path_log_err(buffer)?;
         let full_path: SharedString = path.to_string_lossy().into_owned().into();
         let name = match path.file_name() {
             Some(name) => name.to_string_lossy().into_owned().into(),
@@ -161,12 +151,51 @@ impl FileContext {
             tooltip: Some(full_path),
             icon_path,
             kind: ContextKind::File,
-            text: Box::new([self.buffer.text.clone()]),
+            text: Box::new([self.context_buffer.text.clone()]),
         })
     }
 }
 
 impl DirectoryContext {
+    pub fn new(
+        id: ContextId,
+        path: &Path,
+        context_buffers: Vec<ContextBuffer>,
+    ) -> DirectoryContext {
+        let full_path: SharedString = path.to_string_lossy().into_owned().into();
+
+        let name = match path.file_name() {
+            Some(name) => name.to_string_lossy().into_owned().into(),
+            None => full_path.clone(),
+        };
+
+        let parent = path
+            .parent()
+            .and_then(|p| p.file_name())
+            .map(|p| p.to_string_lossy().into_owned().into());
+
+        // TODO: include directory path in text?
+        let text = context_buffers
+            .iter()
+            .map(|b| b.text.clone())
+            .collect::<Vec<_>>()
+            .into();
+
+        DirectoryContext {
+            path: path.into(),
+            context_buffers,
+            snapshot: ContextSnapshot {
+                id,
+                name,
+                parent,
+                tooltip: Some(full_path),
+                icon_path: None,
+                kind: ContextKind::Directory,
+                text,
+            },
+        }
+    }
+
     pub fn snapshot(&self) -> ContextSnapshot {
         self.snapshot.clone()
     }
