@@ -16517,6 +16517,7 @@ dependencies = [
  "tree-sitter-go",
  "tree-sitter-rust",
  "ui",
+ "util",
  "uuid",
  "workspace",
  "worktree",
