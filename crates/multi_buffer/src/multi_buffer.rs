@@ -3255,6 +3255,7 @@ impl MultiBufferSnapshot {
         &'a self,
         range: Range<T>,
     ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
+        dbg!("-------------------------------------------");
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         self.lift_buffer_metadata(range.clone(), |this, buffer, buffer_range| {
             let diff = this.diffs.get(&buffer.remote_id())?;
@@ -3407,7 +3408,9 @@ impl MultiBufferSnapshot {
                 // the metadata item's range.
                 if range.start > D::default() {
                     while let Some(region) = cursor.region() {
-                        if region.buffer_range.end.value.unwrap() < range.start {
+                        if region.buffer.remote_id() == excerpt.buffer_id
+                            && region.buffer_range.end.value.unwrap() < range.start
+                        {
                             cursor.next();
                         } else {
                             break;
@@ -3416,14 +3419,18 @@ impl MultiBufferSnapshot {
                 }
                 let start_region = cursor.region()?;
                 while let Some(region) = cursor.region() {
-                    if !region.is_main_buffer || region.buffer_range.end.value.unwrap() <= range.end
+                    if !region.is_main_buffer
+                        || region.buffer.remote_id() == excerpt.buffer_id
+                            && region.buffer_range.end.value.unwrap() <= range.end
                     {
                         cursor.next();
                     } else {
                         break;
                     }
                 }
-                let end_region = cursor.region();
+                let end_region = cursor
+                    .region()
+                    .filter(|region| region.buffer.remote_id() == excerpt.buffer_id);
 
                 // Convert the metadata item's range into multibuffer coordinates.
                 let mut start = start_region.range.start.value.unwrap();
