@@ -49,7 +49,8 @@ actions!(
         FocusUp,
         FocusDown,
         FocusLeft,
-        FocusRight
+        FocusRight,
+        RemoveFocusedContext
     ]
 );
 

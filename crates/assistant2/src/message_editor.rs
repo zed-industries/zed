@@ -220,7 +220,9 @@ impl MessageEditor {
         cx: &mut ViewContext<Self>,
     ) {
         match event {
-            ContextStripEvent::PickerDismissed | ContextStripEvent::BlurredDown => {
+            ContextStripEvent::PickerDismissed
+            | ContextStripEvent::BlurredEmpty
+            | ContextStripEvent::BlurredDown => {
                 let editor_focus_handle = self.editor.focus_handle(cx);
                 cx.focus(&editor_focus_handle);
             }

@@ -591,7 +591,8 @@
       "up": "assistant2::FocusUp",
       "right": "assistant2::FocusRight",
       "left": "assistant2::FocusLeft",
-      "down": "assistant2::FocusDown"
+      "down": "assistant2::FocusDown",
+      "backspace": "assistant2::RemoveFocusedContext"
     }
   },
   {

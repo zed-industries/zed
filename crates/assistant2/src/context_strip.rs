@@ -21,7 +21,7 @@ use crate::thread_store::ThreadStore;
 use crate::ui::ContextPill;
 use crate::{
     AssistantPanel, FocusDown, FocusLeft, FocusRight, FocusUp, RemoveAllContext,
-    ToggleContextPicker,
+    RemoveFocusedContext, ToggleContextPicker,
 };
 
 pub struct ContextStrip {
@@ -163,8 +163,7 @@ impl ContextStrip {
     fn focus_left(&mut self, _: &FocusLeft, cx: &mut ViewContext<Self>) {
         self.focused_index = match self.focused_index {
             Some(index) if index > 0 => Some(index - 1),
-            // TODO az check bounds
-            _ => Some(self.context_store.read(cx).len() - 1),
+            _ => Some(self.context_store.read(cx).len().saturating_sub(1)),
         };
 
         cx.notify();
@@ -187,6 +186,27 @@ impl ContextStrip {
 
     fn focus_down(&mut self, _: &FocusDown, cx: &mut ViewContext<Self>) {
         cx.emit(ContextStripEvent::BlurredDown);
+    }
+
+    fn remove_focused_context(&mut self, _: &RemoveFocusedContext, cx: &mut ViewContext<Self>) {
+        if let Some(index) = self.focused_index {
+            let mut is_empty = false;
+
+            self.context_store.update(cx, |this, _cx| {
+                if let Some(item) = this.context().get(index) {
+                    this.remove_context(item.id());
+                }
+
+                is_empty = this.context().is_empty();
+            });
+
+            if is_empty {
+                cx.emit(ContextStripEvent::BlurredEmpty);
+            } else {
+                self.focused_index = Some(index.saturating_sub(1));
+                cx.notify();
+            }
+        }
     }
 }
 
@@ -227,6 +247,7 @@ impl Render for ContextStrip {
             .on_action(cx.listener(Self::focus_right))
             .on_action(cx.listener(Self::focus_down))
             .on_action(cx.listener(Self::focus_left))
+            .on_action(cx.listener(Self::remove_focused_context))
             .child(
                 PopoverMenu::new("context-picker")
                     .menu(move |_cx| Some(context_picker.clone()))
@@ -358,6 +379,7 @@ impl Render for ContextStrip {
 
 pub enum ContextStripEvent {
     PickerDismissed,
+    BlurredEmpty,
     BlurredDown,
     BlurredUp,
 }
