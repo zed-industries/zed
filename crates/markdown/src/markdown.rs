@@ -61,7 +61,13 @@ pub struct Markdown {
     focus_handle: FocusHandle,
     language_registry: Option<Arc<LanguageRegistry>>,
     fallback_code_block_language: Option<String>,
+    options: Options,
+}
+
+#[derive(Debug)]
+struct Options {
     parse_links_only: bool,
+    copy_code_block_buttons: bool,
 }
 
 actions!(markdown, [Copy]);
@@ -87,7 +93,10 @@ impl Markdown {
             focus_handle,
             language_registry,
             fallback_code_block_language,
-            parse_links_only: false,
+            options: Options {
+                parse_links_only: false,
+                copy_code_block_buttons: true,
+            },
         };
         this.parse(cx);
         this
@@ -113,7 +122,10 @@ impl Markdown {
             focus_handle,
             language_registry,
             fallback_code_block_language,
-            parse_links_only: true,
+            options: Options {
+                parse_links_only: true,
+                copy_code_block_buttons: true,
+            },
         };
         this.parse(cx);
         this
@@ -164,7 +176,7 @@ impl Markdown {
         }
 
         let text = self.source.clone();
-        let parse_text_only = self.parse_links_only;
+        let parse_text_only = self.options.parse_links_only;
         let parsed = cx.background_executor().spawn(async move {
             let text = SharedString::from(text);
             let events = match parse_text_only {
@@ -194,6 +206,11 @@ impl Markdown {
             }
             .log_err()
         }));
+    }
+
+    pub fn copy_code_block_buttons(mut self, should_copy: bool) -> Self {
+        self.options.copy_code_block_buttons = should_copy;
+        self
     }
 }
 
@@ -667,31 +684,35 @@ impl Element for MarkdownElement {
                     }
                     MarkdownTagEnd::CodeBlock => {
                         builder.trim_trailing_newline();
-                        builder.flush_text();
-                        builder.modify_current_div(|el| {
-                            let id =
-                                ElementId::NamedInteger("copy-markdown-code".into(), range.end);
-                            let copy_button = div().absolute().top_1().right_1().w_5().child(
-                                IconButton::new(id, IconName::Copy)
-                                    .icon_color(Color::Muted)
-                                    .shape(ui::IconButtonShape::Square)
-                                    .tooltip(|cx| Tooltip::text("Copy Code Block", cx))
-                                    .on_click({
-                                        let code = without_fences(
-                                            parsed_markdown.source()[range.clone()].trim(),
-                                        )
-                                        .to_string();
 
-                                        move |_, cx| {
-                                            cx.write_to_clipboard(ClipboardItem::new_string(
-                                                code.clone(),
-                                            ))
-                                        }
-                                    }),
-                            );
+                        if self.markdown.read(cx).options.copy_code_block_buttons {
+                            builder.flush_text();
+                            builder.modify_current_div(|el| {
+                                let id =
+                                    ElementId::NamedInteger("copy-markdown-code".into(), range.end);
+                                let copy_button = div().absolute().top_1().right_1().w_5().child(
+                                    IconButton::new(id, IconName::Copy)
+                                        .icon_color(Color::Muted)
+                                        .shape(ui::IconButtonShape::Square)
+                                        .tooltip(|cx| Tooltip::text("Copy Code Block", cx))
+                                        .on_click({
+                                            let code = without_fences(
+                                                parsed_markdown.source()[range.clone()].trim(),
+                                            )
+                                            .to_string();
 
-                            el.child(copy_button)
-                        });
+                                            move |_, cx| {
+                                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                                    code.clone(),
+                                                ))
+                                            }
+                                        }),
+                                );
+
+                                el.child(copy_button)
+                            });
+                        }
+
                         builder.pop_div();
                         builder.pop_code_block();
                         if self.style.code_block.text.is_some() {
@@ -1033,7 +1054,7 @@ impl MarkdownElementBuilder {
         }
     }
 
-    pub fn flush_text(&mut self) {
+    fn flush_text(&mut self) {
         let line = mem::take(&mut self.pending_line);
         if line.text.is_empty() {
             return;
