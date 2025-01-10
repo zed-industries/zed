@@ -1,7 +1,7 @@
-use crate::status::GitStatusItem;
+use crate::status::GitStatusPair;
 use crate::GitHostingProviderRegistry;
 use crate::{blame::Blame, status::GitStatus};
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use collections::{HashMap, HashSet};
 use git2::BranchType;
 use gpui::SharedString;
@@ -16,6 +16,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::MapSeekTarget;
+use util::command::new_std_command;
 use util::ResultExt;
 
 #[derive(Clone, Debug, Hash, PartialEq)]
@@ -155,7 +156,7 @@ impl GitRepository for RealGitRepository {
             Ok(_) => Ok(true),
             Err(e) => match e.code() {
                 git2::ErrorCode::NotFound => Ok(false),
-                _ => Err(anyhow::anyhow!(e)),
+                _ => Err(anyhow!(e)),
             },
         }
     }
@@ -199,7 +200,7 @@ impl GitRepository for RealGitRepository {
         repo.set_head(
             revision
                 .name()
-                .ok_or_else(|| anyhow::anyhow!("Branch name could not be retrieved"))?,
+                .ok_or_else(|| anyhow!("Branch name could not be retrieved"))?,
         )?;
         Ok(())
     }
@@ -233,7 +234,32 @@ impl GitRepository for RealGitRepository {
     }
 
     fn update_index(&self, stage: &[RepoPath], unstage: &[RepoPath]) -> Result<()> {
-        eprintln!("got an update: {stage:?} and {unstage:?}");
+        let working_directory = self
+            .repository
+            .lock()
+            .workdir()
+            .context("failed to read git work directory")?
+            .to_path_buf();
+        if !stage.is_empty() {
+            let add = new_std_command(&self.git_binary_path)
+                .current_dir(&working_directory)
+                .args(["add", "--"])
+                .args(stage.iter().map(|p| p.as_ref()))
+                .status()?;
+            if !add.success() {
+                return Err(anyhow!("Failed to stage files: {add}"));
+            }
+        }
+        if !unstage.is_empty() {
+            let rm = new_std_command(&self.git_binary_path)
+                .current_dir(&working_directory)
+                .args(["restore", "--staged", "--"])
+                .args(unstage.iter().map(|p| p.as_ref()))
+                .status()?;
+            if !rm.success() {
+                return Err(anyhow!("Failed to unstage files: {rm}"));
+            }
+        }
         Ok(())
     }
 }
@@ -303,7 +329,7 @@ impl GitRepository for FakeGitRepository {
     fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
         let state = self.state.lock();
 
-        let mut items = state
+        let mut entries = state
             .worktree_statuses
             .iter()
             .filter_map(|(repo_path, status_worktree)| {
@@ -311,20 +337,22 @@ impl GitRepository for FakeGitRepository {
                     .iter()
                     .any(|path_prefix| repo_path.0.starts_with(path_prefix))
                 {
-                    Some(GitStatusItem {
-                        path: repo_path.to_owned(),
-                        index_status: None,
-                        worktree_status: Some(*status_worktree),
-                    })
+                    Some((
+                        repo_path.to_owned(),
+                        GitStatusPair {
+                            index_status: None,
+                            worktree_status: Some(*status_worktree),
+                        },
+                    ))
                 } else {
                     None
                 }
             })
             .collect::<Vec<_>>();
-        items.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+        entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(&b));
 
         Ok(GitStatus {
-            items: items.into(),
+            entries: entries.into(),
         })
     }
 
@@ -376,7 +404,7 @@ impl GitRepository for FakeGitRepository {
             .cloned()
     }
 
-    fn update_index(&self, stage: &[RepoPath], unstage: &[RepoPath]) -> Result<()> {
+    fn update_index(&self, _stage: &[RepoPath], _unstage: &[RepoPath]) -> Result<()> {
         todo!()
     }
 }
