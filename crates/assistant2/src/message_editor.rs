@@ -100,7 +100,12 @@ impl MessageEditor {
             inline_context_picker,
             inline_context_picker_menu_handle,
             model_selector: cx.new_view(|cx| {
-                AssistantModelSelector::new(fs, model_selector_menu_handle.clone(), cx)
+                AssistantModelSelector::new(
+                    fs,
+                    model_selector_menu_handle.clone(),
+                    editor.focus_handle(cx),
+                    cx,
+                )
             }),
             model_selector_menu_handle,
             use_tools: false,

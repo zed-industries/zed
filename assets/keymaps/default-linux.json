@@ -175,7 +175,7 @@
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-g": "search::SelectNextMatch",
       "ctrl-shift-g": "search::SelectPrevMatch",
-      "ctrl-shift-m": "assistant::ToggleModelSelector",
+      "ctrl-alt-/": "assistant::ToggleModelSelector",
       "ctrl-k h": "assistant::DeployHistory",
       "ctrl-k l": "assistant::DeployPromptLibrary",
       "ctrl-n": "assistant::NewContext"
@@ -572,7 +572,7 @@
     "bindings": {
       "ctrl-n": "assistant2::NewThread",
       "ctrl-shift-h": "assistant2::OpenHistory",
-      "ctrl-shift-m": "assistant2::ToggleModelSelector",
+      "ctrl-alt-/": "assistant2::ToggleModelSelector",
       "ctrl-shift-a": "assistant2::ToggleContextPicker",
       "ctrl-alt-e": "assistant2::RemoveAllContext"
     }
