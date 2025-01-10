@@ -486,6 +486,30 @@ async fn predict_edits(
         },
     )
     .await?;
+
+    state.executor.spawn_detached({
+        let kinesis_client = state.kinesis_client.clone();
+        let kinesis_stream = state.config.kinesis_stream.clone();
+        let headers = response.headers.clone();
+        let model = model.clone();
+
+        async move {
+            SnowflakeRow::new(
+                "Fireworks Completion Requested",
+                claims.metrics_id,
+                claims.is_staff,
+                claims.system_id.clone(),
+                json!({
+                    "model": model.to_string(),
+                    "headers": headers,
+                }),
+            )
+            .write(&kinesis_client, &kinesis_stream)
+            .await
+            .log_err();
+        }
+    });
+
     let choice = response
         .completion
         .choices

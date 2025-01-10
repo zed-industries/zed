@@ -51,7 +51,7 @@ pub struct Usage {
     pub total_tokens: u32,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug, Clone, Default, Serialize)]
 pub struct Headers {
     pub server_processing_time: Option<f64>,
     pub request_id: Option<String>,
