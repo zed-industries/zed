@@ -185,9 +185,12 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
 
         let previous_selections = vim
             .update_editor(cx, |_, editor, cx| {
-                let selections = action
-                    .restore_selection
-                    .then(|| editor.selections.disjoint_anchor_ranges());
+                let selections = action.restore_selection.then(|| {
+                    editor
+                        .selections
+                        .disjoint_anchor_ranges()
+                        .collect::<Vec<_>>()
+                });
                 editor.change_selections(None, cx, |s| {
                     let end = Point::new(range.end.0, s.buffer().line_len(range.end));
                     s.select_ranges([end..Point::new(range.start.0, 0)]);

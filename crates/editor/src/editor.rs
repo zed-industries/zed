@@ -2559,7 +2559,7 @@ impl Editor {
             if start_offset > buffer_snapshot.len() || end_offset > buffer_snapshot.len() {
                 continue;
             }
-            if self.selections.disjoint_anchor_ranges().iter().any(|s| {
+            if self.selections.disjoint_anchor_ranges().any(|s| {
                 if s.start.buffer_id != selection.start.buffer_id
                     || s.end.buffer_id != selection.end.buffer_id
                 {
@@ -10567,12 +10567,9 @@ impl Editor {
         } else {
             let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
             let mut toggled_buffers = HashSet::default();
-            for (_, buffer_snapshot, _) in multi_buffer_snapshot.excerpts_in_ranges(
-                self.selections
-                    .disjoint_anchors()
-                    .into_iter()
-                    .map(|selection| selection.range()),
-            ) {
+            for (_, buffer_snapshot, _) in
+                multi_buffer_snapshot.excerpts_in_ranges(self.selections.disjoint_anchor_ranges())
+            {
                 let buffer_id = buffer_snapshot.remote_id();
                 if toggled_buffers.insert(buffer_id) {
                     if self.buffer_folded(buffer_id, cx) {
@@ -10653,12 +10650,9 @@ impl Editor {
         } else {
             let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
             let mut folded_buffers = HashSet::default();
-            for (_, buffer_snapshot, _) in multi_buffer_snapshot.excerpts_in_ranges(
-                self.selections
-                    .disjoint_anchors()
-                    .into_iter()
-                    .map(|selection| selection.range()),
-            ) {
+            for (_, buffer_snapshot, _) in
+                multi_buffer_snapshot.excerpts_in_ranges(self.selections.disjoint_anchor_ranges())
+            {
                 let buffer_id = buffer_snapshot.remote_id();
                 if folded_buffers.insert(buffer_id) {
                     self.fold_buffer(buffer_id, cx);
@@ -10819,12 +10813,9 @@ impl Editor {
         } else {
             let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
             let mut unfolded_buffers = HashSet::default();
-            for (_, buffer_snapshot, _) in multi_buffer_snapshot.excerpts_in_ranges(
-                self.selections
-                    .disjoint_anchors()
-                    .into_iter()
-                    .map(|selection| selection.range()),
-            ) {
+            for (_, buffer_snapshot, _) in
+                multi_buffer_snapshot.excerpts_in_ranges(self.selections.disjoint_anchor_ranges())
+            {
                 let buffer_id = buffer_snapshot.remote_id();
                 if unfolded_buffers.insert(buffer_id) {
                     self.unfold_buffer(buffer_id, cx);
