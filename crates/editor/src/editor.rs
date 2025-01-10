@@ -5969,7 +5969,6 @@ impl Editor {
         let mut revert_changes = HashMap::default();
         let snapshot = self.snapshot(cx);
         for hunk in &snapshot.hunks_for_ranges(selections) {
-            dbg!(&hunk);
             self.prepare_revert_change(&mut revert_changes, &hunk, cx);
         }
         if !revert_changes.is_empty() {

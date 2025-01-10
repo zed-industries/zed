@@ -2609,11 +2609,14 @@ impl MultiBuffer {
                                 );
                             let hunk_excerpt_end = excerpt_start
                                 + ExcerptOffset::new(hunk_buffer_range.end - excerpt_buffer_start);
+                            let hunk_excerpt_old_start = ExcerptOffset::new(
+                                (hunk_excerpt_start.value as isize - delta) as usize,
+                            );
 
                             // Record edits for any hunks which are no longer present.
-                            while cursor.end(&()).0 < hunk_excerpt_start
-                                || (cursor.end(&()).0 == hunk_excerpt_start
-                                    && cursor.start().0 < hunk_excerpt_start)
+                            while cursor.end(&()).0 < hunk_excerpt_old_start
+                                || (cursor.end(&()).0 == hunk_excerpt_old_start
+                                    && cursor.start().0 < hunk_excerpt_old_start)
                             {
                                 let Some(item) = cursor.item() else {
                                     break;
@@ -2642,7 +2645,7 @@ impl MultiBuffer {
                             // and if it should currently be expanded.
                             let mut was_previously_expanded = false;
                             let mut previous_expanded_summary = TextSummary::default();
-                            if cursor.start().0 == hunk_excerpt_start {
+                            if cursor.start().0 == hunk_excerpt_old_start {
                                 match cursor.item() {
                                     Some(DiffTransform::DeletedHunk {
                                         summary: summary_including_newline,
@@ -3255,7 +3258,6 @@ impl MultiBufferSnapshot {
         &'a self,
         range: Range<T>,
     ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
-        dbg!("-------------------------------------------");
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         self.lift_buffer_metadata(range.clone(), |this, buffer, buffer_range| {
             let diff = this.diffs.get(&buffer.remote_id())?;
