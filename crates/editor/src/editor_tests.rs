@@ -12825,6 +12825,70 @@ async fn test_edits_around_expanded_deletion_hunks(
 }
 
 #[gpui::test]
+async fn test_backspace_after_deletion_hunk(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let base_text = r#"
+        one
+        two
+        three
+        four
+        five
+    "#
+    .unindent();
+    executor.run_until_parked();
+    cx.set_state(
+        &r#"
+        one
+        two
+        fˇour
+        five
+        "#
+        .unindent(),
+    );
+
+    cx.set_diff_base(&base_text);
+    executor.run_until_parked();
+
+    cx.update_editor(|editor, cx| {
+        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, cx);
+    });
+    executor.run_until_parked();
+
+    cx.assert_state_with_diff(
+        r#"
+          one
+          two
+        - three
+          fˇour
+          five
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| {
+        editor.backspace(&Backspace, cx);
+        editor.backspace(&Backspace, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_state_with_diff(
+        r#"
+          one
+          two
+        - threeˇ
+          our
+          five
+        "#
+        .unindent(),
+    );
+}
+
+#[gpui::test]
 async fn test_edit_after_expanded_modification_hunk(
     executor: BackgroundExecutor,
     cx: &mut gpui::TestAppContext,
