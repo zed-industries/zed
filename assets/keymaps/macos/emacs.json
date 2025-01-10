@@ -57,6 +57,16 @@
   {
     "context": "Editor && selection",
     "bindings": {
+      "right": "editor::SelectRight",
+      "left": "editor::SelectLeft",
+      "down": "editor::SelectDown",
+      "up": "editor::SelectUp",
+      "home": "editor::SelectToBeginningOfLine",
+      "end": "editor::SelectToEndOfLine",
+      "alt-left": "editor::SelectToPreviousWordStart",
+      "alt-right": "editor::SelectToNextWordEnd",
+      "pagedown": "editor::SelectPageDown",
+      "pageup": "editor::SelectPageUp",
       "ctrl-f": "editor::SelectRight",
       "ctrl-b": "editor::SelectLeft",
       "ctrl-n": "editor::SelectDown",
@@ -74,6 +84,16 @@
   {
     "context": "Editor && !selection",
     "bindings": {
+      "ctrl-space right": "editor::SelectRight",
+      "ctrl-space left": "editor::SelectLeft",
+      "ctrl-space down": "editor::SelectDown",
+      "ctrl-space up": "editor::SelectUp",
+      "ctrl-space home": "editor::SelectToBeginningOfLine",
+      "ctrl-space end": "editor::SelectToEndOfLine",
+      "ctrl-space alt-left": "editor::SelectToPreviousWordStart",
+      "ctrl-space alt-right": "editor::SelectToNextWordEnd",
+      "ctrl-space pagedown": "editor::SelectPageDown",
+      "ctrl-space pageup": "editor::SelectPageUp",
       "ctrl-space ctrl-f": "editor::SelectRight",
       "ctrl-space ctrl-b": "editor::SelectLeft",
       "ctrl-space ctrl-n": "editor::SelectDown",
