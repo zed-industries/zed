@@ -837,7 +837,7 @@ pub fn diff_hunk_to_display(
         0,
     );
 
-    let status = hunk_status(hunk);
+    let status = hunk.status();
     let is_removal = status == DiffHunkStatus::Removed;
 
     let folds_start = Point::new(hunk.row_range.start.0.saturating_sub(2), 0);
