@@ -944,6 +944,7 @@ impl GitPanel {
                     .elevation(ElevationIndex::Surface)
                     .on_click({
                         let handle = handle.clone();
+                        let repo_path = repo_path.clone();
                         move |toggle, cx| {
                             let Some(this) = handle.upgrade() else {
                                 return;
@@ -971,12 +972,23 @@ impl GitPanel {
             .child(git_status_icon(status))
             .child(
                 h_flex()
-                    .gap_1p5()
                     .when(status == GitFileStatus::Deleted, |this| {
                         this.text_color(cx.theme().colors().text_disabled)
                             .line_through()
                     })
-                    .child(entry_details.display_name.clone()),
+                    .when_some(repo_path.parent(), |this, parent| {
+                        let parent_str = parent.to_string_lossy();
+                        if !parent_str.is_empty() {
+                            this.child(
+                                div()
+                                    .text_color(cx.theme().colors().text_muted)
+                                    .child(format!("{}/", parent_str)),
+                            )
+                        } else {
+                            this
+                        }
+                    })
+                    .child(div().child(entry_details.display_name.clone())),
             )
             .child(div().flex_1())
             .child(end_slot)
@@ -1114,14 +1126,3 @@ impl Panel for GitPanel {
         2
     }
 }
-
-// fn diff_display_editor(cx: &mut WindowContext) -> View<Editor> {
-//     cx.new_view(|cx| {
-//         let multi_buffer = cx.new_model(|_| {
-//             MultiBuffer::new(language::Capability::ReadWrite).with_title("Project diff".to_string())
-//         });
-//         let mut editor = Editor::for_multibuffer(multi_buffer, None, true, cx);
-//         editor.set_expand_all_diff_hunks();
-//         editor
-//     })
-// }
