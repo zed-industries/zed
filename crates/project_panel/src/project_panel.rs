@@ -3720,15 +3720,24 @@ impl ProjectPanel {
                                         SharedString::new_static(std::path::MAIN_SEPARATOR_STR);
                                     for (index, component) in components.into_iter().enumerate() {
                                         if index != 0 {
+                                                let delimiter_target_index = index - 1;
+                                                let target_entry_id = folded_ancestors.ancestors.get(components_len - 1 - delimiter_target_index).cloned();
                                                 this = this.child(
                                                     div()
+                                                    .on_drop(cx.listener(move |this, selections: &DraggedSelection, cx| {
+                                                        this.hover_scroll_task.take();
+                                                        this.folded_directory_drag_target = None;
+                                                        if let Some(target_entry_id) = target_entry_id {
+                                                            this.drag_onto(selections, target_entry_id, kind.is_file(), cx);
+                                                        }
+                                                    }))
                                                     .on_drag_move(cx.listener(
                                                         move |this, event: &DragMoveEvent<DraggedSelection>, _| {
                                                             if event.bounds.contains(&event.event.position) {
                                                                 this.folded_directory_drag_target = Some(
                                                                     FoldedDirectoryDragTarget {
                                                                         entry_id,
-                                                                        index,
+                                                                        index: delimiter_target_index,
                                                                         is_delimiter_target: true,
                                                                     }
                                                                 );
@@ -3736,7 +3745,7 @@ impl ProjectPanel {
                                                                 let is_current_target = this.folded_directory_drag_target
                                                                     .map_or(false, |target|
                                                                         target.entry_id == entry_id &&
-                                                                        target.index == index &&
+                                                                        target.index == delimiter_target_index &&
                                                                         target.is_delimiter_target
                                                                     );
                                                                 if is_current_target {
