@@ -13,8 +13,6 @@ actions!(
     zeta,
     [
         RateCompletions,
-        ThumbsUp,
-        ThumbsDown,
         ThumbsUpActiveCompletion,
         ThumbsDownActiveCompletion,
         NextEdit,
@@ -71,6 +69,7 @@ impl RateCompletionModal {
 
     pub fn new(zeta: Model<Zeta>, cx: &mut ViewContext<Self>) -> Self {
         let subscription = cx.observe(&zeta, |_, _, cx| cx.notify());
+
         Self {
             zeta,
             selected_index: 0,
@@ -148,7 +147,7 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    pub fn thumbs_up_active(&mut self, _: &ThumbsUpActiveCompletion, cx: &mut ViewContext<Self>) {
+    fn thumbs_up_active(&mut self, _: &ThumbsUpActiveCompletion, cx: &mut ViewContext<Self>) {
         self.zeta.update(cx, |zeta, cx| {
             if let Some(active) = &self.active_completion {
                 zeta.rate_completion(
@@ -368,6 +367,7 @@ impl RateCompletionModal {
     fn render_active_completion(&mut self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
         let active_completion = self.active_completion.as_ref()?;
         let completion_id = active_completion.completion.id;
+        let focus_handle = &self.focus_handle(cx);
 
         let border_color = cx.theme().colors().border;
         let bg_color = cx.theme().colors().editor_background;
@@ -468,12 +468,6 @@ impl RateCompletionModal {
                                 .gap_1()
                                 .child(
                                     Button::new("bad", "Bad Completion")
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &ThumbsDown,
-                                            &self.focus_handle(cx),
-                                            cx,
-                                        ))
-                                        .style(ButtonStyle::Filled)
                                         .icon(IconName::ThumbsDown)
                                         .icon_size(IconSize::Small)
                                         .icon_position(IconPosition::Start)
@@ -483,6 +477,11 @@ impl RateCompletionModal {
                                                 Tooltip::text("Explain what's bad about it before reporting it", cx)
                                             })
                                         })
+                                        .key_binding(KeyBinding::for_action_in(
+                                            &ThumbsDownActiveCompletion,
+                                            focus_handle,
+                                            cx,
+                                        ))
                                         .on_click(cx.listener(move |this, _, cx| {
                                             this.thumbs_down_active(
                                                 &ThumbsDownActiveCompletion,
@@ -492,16 +491,15 @@ impl RateCompletionModal {
                                 )
                                 .child(
                                     Button::new("good", "Good Completion")
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &ThumbsUp,
-                                            &self.focus_handle(cx),
-                                            cx,
-                                        ))
-                                        .style(ButtonStyle::Filled)
                                         .icon(IconName::ThumbsUp)
                                         .icon_size(IconSize::Small)
                                         .icon_position(IconPosition::Start)
                                         .disabled(rated)
+                                        .key_binding(KeyBinding::for_action_in(
+                                            &ThumbsUpActiveCompletion,
+                                            focus_handle,
+                                            cx,
+                                        ))
                                         .on_click(cx.listener(move |this, _, cx| {
                                             this.thumbs_up_active(&ThumbsUpActiveCompletion, cx);
                                         })),
