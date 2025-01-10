@@ -1,26 +1,20 @@
-#![allow(unused)]
 use crate::first_worktree_repository;
 use crate::{
-    git_status_icon, settings::GitPanelSettings, ClearCommitMessage, CommitAllChanges,
-    CommitChanges, GitListEntry, GitState, GitViewMode, RevertAll, StageAll, StageFile,
-    ToggleStaged, UnstageAll, UnstageFile,
+    git_status_icon, settings::GitPanelSettings, CommitAllChanges, CommitChanges, GitListEntry,
+    GitState, GitViewMode, RevertAll, StageAll, ToggleStaged, UnstageAll,
 };
 use anyhow::{Context as _, Result};
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
-use futures::future::{BoxFuture, OptionFuture};
 use git::repository::{GitFileStatus, RepoPath};
 use gpui::*;
 use language::Buffer;
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
-use project::{Fs, Project, ProjectEntryId, WorktreeId};
+use project::{Fs, Project};
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::{
-    collections::HashSet, future::pending, ops::Range, path::PathBuf, sync::Arc, time::Duration,
-    usize,
-};
+use std::{collections::HashSet, ops::Range, path::PathBuf, sync::Arc, time::Duration, usize};
 use theme::ThemeSettings;
 use ui::{
     prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, Scrollbar, ScrollbarState, Tooltip,
@@ -35,9 +29,8 @@ actions!(
     git_panel,
     [
         Close,
-        // For now we don't bind ToggleFocus by default
         ToggleFocus,
-        // OpenContextMenu,
+        OpenMenu,
         OpenSelected,
         FocusEditor,
         FocusChanges
@@ -121,12 +114,11 @@ impl GitPanel {
                 // TODO: Don't get another git_state here
                 // was running into a borrow issue
                 let git_state = GitState::get_global(cx);
-                let active_repo = git_state.read(cx).active_repository();
 
                 match event {
                     project::Event::WorktreeRemoved(_) | project::Event::WorktreeOrderChanged => {
                         // TODO pick a new worktree if ours was removed
-                        this.schedule_update(cx);
+                        this.schedule_update();
                     }
                     project::Event::WorktreeUpdatedEntries(id, _)
                     | project::Event::WorktreeAdded(id)
@@ -139,7 +131,7 @@ impl GitPanel {
                                 state.activate_repository(first_repo, git_repo)
                             });
                         }
-                        this.schedule_update(cx);
+                        this.schedule_update();
                     }
                     project::Event::Closed => {
                         this.reveal_in_editor = Task::ready(());
@@ -253,7 +245,7 @@ impl GitPanel {
                 reveal_in_editor: Task::ready(()),
                 project,
             };
-            git_panel.schedule_update(cx);
+            git_panel.schedule_update();
             git_panel
         });
 
@@ -458,54 +450,23 @@ impl GitPanel {
         cx.notify();
     }
 
-    fn get_entry(&self, index: usize) -> Option<&GitListEntry> {
-        self.visible_entries.get(index)
-    }
-
     fn get_selected_entry(&self) -> Option<&GitListEntry> {
         self.selected_entry
             .and_then(|i| self.visible_entries.get(i))
     }
 
-    fn toggle_staged(&mut self, _: &menu::SecondaryConfirm, cx: &mut ViewContext<Self>) {
-        let state = self.git_state.clone();
-        let project = self.project.clone();
-        let selected_entry = self.get_selected_entry();
-        if let Some(selected_entry) = selected_entry {
-            if selected_entry.status.is_staged().unwrap_or(false) {
-                state.update(cx, |state, cx| {
-                    state.unstage_entry(selected_entry.repo_path.clone());
-                });
-            } else {
-                state.update(cx, |state, cx| {
-                    state.stage_entry(selected_entry.repo_path.clone());
-                });
-            }
-
-            cx.notify();
-        }
-    }
-
     fn toggle_staged_for_entry(&self, entry: &GitListEntry, cx: &mut ViewContext<Self>) {
-        let state = self.git_state.clone();
-        let project = self.project.clone();
-        if entry.status.is_staged().unwrap_or(false) {
-            state.update(cx, |state, cx| {
-                state.unstage_entry(entry.repo_path.clone());
+        self.git_state
+            .clone()
+            .update(cx, |state, _| match entry.status.is_staged() {
+                Some(true) | None => state.unstage_entry(entry.repo_path.clone()),
+                Some(false) => state.stage_entry(entry.repo_path.clone()),
             });
-        } else {
-            state.update(cx, |state, cx| {
-                state.stage_entry(entry.repo_path.clone());
-            });
-        }
-
         cx.notify();
     }
 
     fn toggle_staged_for_selected(&mut self, _: &ToggleStaged, cx: &mut ViewContext<Self>) {
-        let selected_entry = self.get_selected_entry();
-
-        if let Some(selected_entry) = selected_entry {
+        if let Some(selected_entry) = self.get_selected_entry() {
             self.toggle_staged_for_entry(&selected_entry, cx);
         }
     }
@@ -522,7 +483,7 @@ impl GitPanel {
     }
 
     fn open_entry(&self, entry: &GitListEntry) {
-        // TODO: Open entry or entrie's changes.
+        // TODO: Open entry or entry's changes.
         println!("Open {} triggered!", entry.repo_path);
     }
 }
@@ -544,8 +505,8 @@ impl GitPanel {
     }
 
     fn clear_message(&mut self, cx: &mut ViewContext<Self>) {
-        let git_state = self.git_state.clone();
-        git_state.update(cx, |state, _cx| state.clear_commit_message());
+        self.git_state
+            .update(cx, |state, _cx| state.clear_commit_message());
         self.commit_editor
             .update(cx, |editor, cx| editor.set_text("", cx));
     }
@@ -611,18 +572,17 @@ impl GitPanel {
         }
     }
 
-    fn schedule_update(&mut self, cx: &mut ViewContext<Self>) {
+    fn schedule_update(&mut self) {
         self.rebuild_requested.store(true, Ordering::Relaxed);
     }
 
     #[track_caller]
     fn update_visible_entries(&mut self, cx: &mut ViewContext<Self>) {
-        let project = self.project.read(cx);
         let git_state = self.git_state.read(cx);
 
         self.visible_entries.clear();
 
-        let Some((repo, git_repo)) = git_state.active_repository().as_ref() else {
+        let Some((repo, _)) = git_state.active_repository().as_ref() else {
             // Just clear entries if no repository is active.
             cx.notify();
             return;
@@ -983,7 +943,6 @@ impl GitPanel {
                     .fill()
                     .elevation(ElevationIndex::Surface)
                     .on_click({
-                        let project = self.project.clone();
                         let handle = handle.clone();
                         move |toggle, cx| {
                             let Some(this) = handle.upgrade() else {
@@ -991,15 +950,14 @@ impl GitPanel {
                             };
                             state.update(cx, {
                                 let repo_path = repo_path.clone();
-                                let project = project.clone();
-                                move |state, cx| match toggle {
+                                move |state, _| match toggle {
                                     ToggleState::Selected | ToggleState::Indeterminate => {
                                         state.stage_entry(repo_path);
                                     }
                                     ToggleState::Unselected => state.unstage_entry(repo_path),
                                 }
                             });
-                            this.update(cx, |this, cx| match toggle {
+                            this.update(cx, |this, _| match toggle {
                                 ToggleState::Selected | ToggleState::Indeterminate => {
                                     this.visible_entries[ix].status.stage();
                                 }
@@ -1022,7 +980,6 @@ impl GitPanel {
             )
             .child(div().flex_1())
             .child(end_slot)
-            // TODO: Only fire this if the entry is not currently revealed, otherwise the ui flashes
             .on_click(move |_, cx| {
                 // TODO: add `select_entry` method then do after that
                 cx.dispatch_action(Box::new(OpenSelected));
