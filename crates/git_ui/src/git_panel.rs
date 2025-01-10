@@ -486,9 +486,7 @@ impl GitPanel {
         // TODO: Open entry or entry's changes.
         println!("Open {} triggered!", entry.repo_path);
     }
-}
 
-impl GitPanel {
     fn stage_all(&mut self, _: &StageAll, cx: &mut ViewContext<Self>) {
         self.git_state.update(cx, |state, _| state.stage_all());
     }
@@ -649,6 +647,7 @@ impl GitPanel {
     }
 }
 
+// GitPanel –– Render
 impl GitPanel {
     pub fn panel_button(
         &self,
@@ -981,7 +980,9 @@ impl GitPanel {
                         if !parent_str.is_empty() {
                             this.child(
                                 div()
-                                    .text_color(cx.theme().colors().text_muted)
+                                    .when(status != GitFileStatus::Deleted, |this| {
+                                        this.text_color(cx.theme().colors().text_muted)
+                                    })
                                     .child(format!("{}/", parent_str)),
                             )
                         } else {
