@@ -14694,7 +14694,7 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
 #[track_caller]
 fn assert_hunk_revert(
     not_reverted_text_with_selections: &str,
-    expected_not_reverted_hunk_statuses: Vec<DiffHunkStatus>,
+    expected_hunk_statuses_before: Vec<DiffHunkStatus>,
     expected_reverted_text_with_selections: &str,
     base_text: &str,
     cx: &mut EditorLspTestContext,
@@ -14703,12 +14703,12 @@ fn assert_hunk_revert(
     cx.set_diff_base(base_text);
     cx.executor().run_until_parked();
 
-    let reverted_hunk_statuses = cx.update_editor(|editor, cx| {
+    let actual_hunk_statuses_before = cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let reverted_hunk_statuses = snapshot
             .buffer_snapshot
             .diff_hunks_in_range(0..snapshot.buffer_snapshot.len())
-            .map(|hunk| hunk_status(&hunk))
+            .map(|hunk| hunk.status())
             .collect::<Vec<_>>();
 
         editor.revert_selected_hunks(&RevertSelectedHunks, cx);
@@ -14716,5 +14716,5 @@ fn assert_hunk_revert(
     });
     cx.executor().run_until_parked();
     cx.assert_editor_state(expected_reverted_text_with_selections);
-    assert_eq!(reverted_hunk_statuses, expected_not_reverted_hunk_statuses);
+    assert_eq!(actual_hunk_statuses_before, expected_hunk_statuses_before);
 }

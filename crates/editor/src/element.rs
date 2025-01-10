@@ -13,7 +13,6 @@ use crate::{
         self, hover_at, HOVER_POPOVER_GAP, MIN_POPOVER_CHARACTER_WIDTH, MIN_POPOVER_LINE_HEIGHT,
     },
     hunk_diff::DisplayDiffHunk,
-    hunk_status,
     items::BufferSearchHighlights,
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::{axis_pair, scroll_amount::ScrollAmount, AxisPair},
@@ -1449,70 +1448,58 @@ impl EditorElement {
             .git_gutter
             .unwrap_or_default();
 
-        self.editor.update(cx, |editor, cx| {
-            let mut display_hunks = Vec::<(DisplayDiffHunk, Option<Hitbox>)>::new();
+        let mut display_hunks = Vec::<(DisplayDiffHunk, Option<Hitbox>)>::new();
 
-            for hunk in snapshot
-                .buffer_snapshot
-                .diff_hunks_in_range(buffer_start..buffer_end)
+        for hunk in snapshot
+            .buffer_snapshot
+            .diff_hunks_in_range(buffer_start..buffer_end)
+        {
+            let hunk_start_point = Point::new(hunk.row_range.start.0, 0);
+            let hunk_end_point = Point::new(hunk.row_range.end.0, 0);
+
+            let hunk_display_start = snapshot.point_to_display_point(hunk_start_point, Bias::Left);
+            let hunk_display_end = snapshot.point_to_display_point(hunk_end_point, Bias::Right);
+
+            let (display_hunk, hitbox) = if hunk_display_start.column() != 0
+                || hunk_display_end.column() != 0
             {
-                let hunk_start_point = Point::new(hunk.row_range.start.0, 0);
-                let hunk_end_point = Point::new(hunk.row_range.end.0, 0);
+                (
+                    DisplayDiffHunk::Folded {
+                        display_row: hunk_display_start.row(),
+                    },
+                    None,
+                )
+            } else {
+                let hunk = DisplayDiffHunk::Unfolded {
+                    status: hunk.status(),
+                    diff_base_byte_range: hunk.diff_base_byte_range,
+                    display_row_range: hunk_display_start.row()..hunk_display_end.row(),
+                    multi_buffer_range: Anchor {
+                        buffer_id: Some(hunk.buffer_id),
+                        excerpt_id: hunk.excerpt_id,
+                        text_anchor: hunk.buffer_range.start,
+                        diff_base_anchor: None,
+                    }..Anchor {
+                        buffer_id: Some(hunk.buffer_id),
+                        excerpt_id: hunk.excerpt_id,
+                        text_anchor: hunk.buffer_range.end,
+                        diff_base_anchor: None,
+                    },
+                };
 
-                let hunk_display_start =
-                    snapshot.point_to_display_point(hunk_start_point, Bias::Left);
-                let hunk_display_end = snapshot.point_to_display_point(hunk_end_point, Bias::Right);
+                let hitbox = if let GitGutterSetting::TrackedFiles = git_gutter_setting {
+                    let hunk_bounds =
+                        Self::diff_hunk_bounds(snapshot, line_height, gutter_hitbox.bounds, &hunk);
+                    Some(cx.insert_hitbox(hunk_bounds, true))
+                } else {
+                    None
+                };
 
-                let (display_hunk, hitbox) =
-                    if hunk_display_start.column() != 0 || hunk_display_end.column() != 0 {
-                        (
-                            DisplayDiffHunk::Folded {
-                                display_row: hunk_display_start.row(),
-                            },
-                            None,
-                        )
-                    } else {
-                        let hunk = DisplayDiffHunk::Unfolded {
-                            status: if hunk.buffer_range.start == hunk.buffer_range.end {
-                                DiffHunkStatus::Removed
-                            } else if hunk.diff_base_byte_range.is_empty() {
-                                DiffHunkStatus::Added
-                            } else {
-                                DiffHunkStatus::Modified
-                            },
-                            diff_base_byte_range: hunk.diff_base_byte_range,
-                            display_row_range: hunk_display_start.row()..hunk_display_end.row(),
-                            multi_buffer_range: Anchor {
-                                buffer_id: Some(hunk.buffer_id),
-                                excerpt_id: hunk.excerpt_id,
-                                text_anchor: hunk.buffer_range.start,
-                                diff_base_anchor: None,
-                            }..Anchor {
-                                buffer_id: Some(hunk.buffer_id),
-                                excerpt_id: hunk.excerpt_id,
-                                text_anchor: hunk.buffer_range.end,
-                                diff_base_anchor: None,
-                            },
-                        };
-
-                        let hitbox = if let GitGutterSetting::TrackedFiles = git_gutter_setting {
-                            let hunk_bounds = Self::diff_hunk_bounds(
-                                snapshot,
-                                line_height,
-                                gutter_hitbox.bounds,
-                                &hunk,
-                            );
-                            Some(cx.insert_hitbox(hunk_bounds, true))
-                        } else {
-                            None
-                        };
-
-                        (hunk, hitbox)
-                    };
-                display_hunks.push((display_hunk, hitbox));
-            }
-            display_hunks
-        })
+                (hunk, hitbox)
+            };
+            display_hunks.push((display_hunk, hitbox));
+        }
+        display_hunks
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4490,7 +4477,7 @@ impl EditorElement {
                                         if end_display_row != start_display_row {
                                             end_display_row.0 -= 1;
                                         }
-                                        let color = match hunk_status(&hunk) {
+                                        let color = match &hunk.status() {
                                             DiffHunkStatus::Added => theme.status().created,
                                             DiffHunkStatus::Modified => theme.status().modified,
                                             DiffHunkStatus::Removed => theme.status().deleted,

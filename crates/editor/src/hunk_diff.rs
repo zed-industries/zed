@@ -18,10 +18,10 @@ use util::RangeExt;
 use workspace::Item;
 
 use crate::{
-    editor_settings::CurrentLineHighlight, hunk_status, ApplyAllDiffHunks, ApplyDiffHunk,
-    BlockPlacement, BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight, DisplayRow,
-    DisplaySnapshot, Editor, EditorElement, GoToHunk, GoToPrevHunk, RevertFile,
-    RevertSelectedHunks, ToDisplayPoint, ToggleHunkDiff,
+    editor_settings::CurrentLineHighlight, ApplyAllDiffHunks, ApplyDiffHunk, BlockPlacement,
+    BlockProperties, BlockStyle, CustomBlockId, DiffRowHighlight, DisplayRow, DisplaySnapshot,
+    Editor, EditorElement, GoToHunk, GoToPrevHunk, RevertFile, RevertSelectedHunks, ToDisplayPoint,
+    ToggleHunkDiff,
 };
 
 #[derive(Debug, Clone)]
@@ -155,7 +155,7 @@ impl Editor {
                             .anchor_in_excerpt(hunk_start.excerpt_id, hunk.buffer_range.end)
                             .unwrap();
                         hunks_to_expand.push(HoveredHunk {
-                            status: hunk_status(&hunk),
+                            status: hunk.status(),
                             multi_buffer_range: hunk_start..hunk_end,
                             diff_base_byte_range: hunk.diff_base_byte_range.clone(),
                         });
@@ -390,16 +390,15 @@ impl Editor {
                                 .w(EditorElement::diff_hunk_strip_width(cx.line_height()))
                                 .h_full()
                                 .bg(gutter_color)
-                                .cursor(CursorStyle::PointingHand)
-                                .on_click({
-                                    let editor = editor.clone();
-                                    let hunk = hunk.clone();
-                                    move |_event, cx| {
-                                        // editor.update(cx, |editor, cx| {
-                                        //     editor.toggle_hovered_hunk(&hunk, cx);
-                                        // });
-                                    }
-                                }),
+                                .cursor(CursorStyle::PointingHand), // .on_click({
+                                                                    //     let editor = editor.clone();
+                                                                    //     let hunk = hunk.clone();
+                                                                    //     move |_event, cx| {
+                                                                    //         // editor.update(cx, |editor, cx| {
+                                                                    //         //     editor.toggle_hovered_hunk(&hunk, cx);
+                                                                    //         // });
+                                                                    //     }
+                                                                    // }),
                         )
                         .child(
                             h_flex()
@@ -690,172 +689,6 @@ impl Editor {
         })
     }
 
-    pub(super) fn sync_expanded_diff_hunks(
-        diff_map: &mut DiffMap,
-        buffer_id: BufferId,
-        cx: &mut ViewContext<'_, Self>,
-    ) {
-        let diff_base_state = diff_map.diff_bases.get_mut(&buffer_id);
-        let mut diff_base_buffer = None;
-        let mut diff_base_buffer_unchanged = true;
-        if let Some(diff_base_state) = diff_base_state {
-            diff_base_state.change_set.update(cx, |change_set, _| {
-                if diff_base_state.last_version != Some(change_set.base_text_version) {
-                    diff_base_state.last_version = Some(change_set.base_text_version);
-                    diff_base_buffer_unchanged = false;
-                }
-                diff_base_buffer = change_set.base_text.clone();
-            })
-        }
-
-        diff_map.hunk_update_tasks.remove(&Some(buffer_id));
-
-        let new_sync_task = cx.spawn(move |editor, mut cx| async move {
-            editor
-                .update(&mut cx, |editor, cx| {
-                    let snapshot = editor.snapshot(cx);
-                    let mut recalculated_hunks = snapshot
-                        .buffer_snapshot
-                        .diff_hunks()
-                        .filter(|hunk| hunk.buffer_id == buffer_id)
-                        .fuse()
-                        .peekable();
-                    let mut highlights_to_remove = Vec::with_capacity(editor.diff_map.hunks.len());
-                    let mut blocks_to_remove = HashSet::default();
-                    let mut hunks_to_reexpand = Vec::with_capacity(editor.diff_map.hunks.len());
-                    editor.diff_map.hunks.retain_mut(|expanded_hunk| {
-                        if expanded_hunk.hunk_range.start.buffer_id != Some(buffer_id) {
-                            return true;
-                        };
-
-                        let mut retain = false;
-                        if diff_base_buffer_unchanged {
-                            let expanded_hunk_display_range = expanded_hunk
-                                .hunk_range
-                                .start
-                                .to_display_point(&snapshot)
-                                .row()
-                                ..expanded_hunk
-                                    .hunk_range
-                                    .end
-                                    .to_display_point(&snapshot)
-                                    .row();
-                            while let Some(buffer_hunk) = recalculated_hunks.peek() {
-                                match diff_hunk_to_display(buffer_hunk, &snapshot) {
-                                    DisplayDiffHunk::Folded { display_row } => {
-                                        recalculated_hunks.next();
-                                        if !expanded_hunk.folded
-                                            && expanded_hunk_display_range
-                                                .to_inclusive()
-                                                .contains(&display_row)
-                                        {
-                                            retain = true;
-                                            expanded_hunk.folded = true;
-                                            highlights_to_remove
-                                                .push(expanded_hunk.hunk_range.clone());
-                                            for block in expanded_hunk.blocks.drain(..) {
-                                                blocks_to_remove.insert(block);
-                                            }
-                                            break;
-                                        } else {
-                                            continue;
-                                        }
-                                    }
-                                    DisplayDiffHunk::Unfolded {
-                                        diff_base_byte_range,
-                                        display_row_range,
-                                        multi_buffer_range,
-                                        status,
-                                    } => {
-                                        let hunk_display_range = display_row_range;
-
-                                        if expanded_hunk_display_range.start
-                                            > hunk_display_range.end
-                                        {
-                                            recalculated_hunks.next();
-                                            if editor.diff_map.expand_all {
-                                                hunks_to_reexpand.push(HoveredHunk {
-                                                    status,
-                                                    multi_buffer_range,
-                                                    diff_base_byte_range,
-                                                });
-                                            }
-                                            continue;
-                                        }
-
-                                        if expanded_hunk_display_range.end
-                                            < hunk_display_range.start
-                                        {
-                                            break;
-                                        }
-
-                                        if !expanded_hunk.folded
-                                            && expanded_hunk_display_range == hunk_display_range
-                                            && expanded_hunk.status == hunk_status(buffer_hunk)
-                                            && expanded_hunk.diff_base_byte_range
-                                                == buffer_hunk.diff_base_byte_range
-                                        {
-                                            recalculated_hunks.next();
-                                            retain = true;
-                                        } else {
-                                            hunks_to_reexpand.push(HoveredHunk {
-                                                status,
-                                                multi_buffer_range,
-                                                diff_base_byte_range,
-                                            });
-                                        }
-                                        break;
-                                    }
-                                }
-                            }
-                        }
-                        if !retain {
-                            blocks_to_remove.extend(expanded_hunk.blocks.drain(..));
-                            highlights_to_remove.push(expanded_hunk.hunk_range.clone());
-                        }
-                        retain
-                    });
-
-                    if editor.diff_map.expand_all {
-                        for hunk in recalculated_hunks {
-                            match diff_hunk_to_display(&hunk, &snapshot) {
-                                DisplayDiffHunk::Folded { .. } => {}
-                                DisplayDiffHunk::Unfolded {
-                                    diff_base_byte_range,
-                                    multi_buffer_range,
-                                    status,
-                                    ..
-                                } => {
-                                    hunks_to_reexpand.push(HoveredHunk {
-                                        status,
-                                        multi_buffer_range,
-                                        diff_base_byte_range,
-                                    });
-                                }
-                            }
-                        }
-                    } else {
-                        drop(recalculated_hunks);
-                    }
-
-                    editor.remove_highlighted_rows::<DiffRowHighlight>(highlights_to_remove, cx);
-                    editor.remove_blocks(blocks_to_remove, None, cx);
-
-                    if let Some(diff_base_buffer) = &diff_base_buffer {
-                        for hunk in hunks_to_reexpand {
-                            editor.expand_diff_hunk(Some(diff_base_buffer.clone()), &hunk, cx);
-                        }
-                    }
-                })
-                .ok();
-        });
-
-        diff_map.hunk_update_tasks.insert(
-            Some(buffer_id),
-            cx.background_executor().spawn(new_sync_task),
-        );
-    }
-
     fn go_to_subsequent_hunk(&mut self, position: Anchor, cx: &mut ViewContext<Self>) {
         let snapshot = self.snapshot(cx);
         let position = position.to_point(&snapshot.buffer_snapshot);
@@ -870,7 +703,7 @@ impl Editor {
                 None,
                 &HoveredHunk {
                     multi_buffer_range: multi_buffer_start..multi_buffer_end,
-                    status: hunk_status(&hunk),
+                    status: hunk.status(),
                     diff_base_byte_range: hunk.diff_base_byte_range,
                 },
                 cx,
@@ -893,7 +726,7 @@ impl Editor {
                 None,
                 &HoveredHunk {
                     multi_buffer_range: multi_buffer_start..multi_buffer_end,
-                    status: hunk_status(&hunk),
+                    status: hunk.status(),
                     diff_base_byte_range: hunk.diff_base_byte_range,
                 },
                 cx,
@@ -1044,215 +877,5 @@ pub fn diff_hunk_to_display(
             status,
             diff_base_byte_range: hunk.diff_base_byte_range.clone(),
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::{editor_tests::init_test, hunk_status};
-    use gpui::{Context, TestAppContext};
-    use language::Capability::ReadWrite;
-    use multi_buffer::{ExcerptRange, MultiBuffer, MultiBufferRow};
-    use project::{FakeFs, Project};
-    use unindent::Unindent as _;
-
-    #[gpui::test]
-    async fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
-        use git::diff::DiffHunkStatus;
-        init_test(cx, |_| {});
-
-        let fs = FakeFs::new(cx.background_executor.clone());
-        let project = Project::test(fs, [], cx).await;
-
-        // buffer has two modified hunks with two rows each
-        let diff_base_1 = "
-            1.zero
-            1.one
-            1.two
-            1.three
-            1.four
-            1.five
-            1.six
-        "
-        .unindent();
-
-        let text_1 = "
-            1.zero
-            1.ONE
-            1.TWO
-            1.three
-            1.FOUR
-            1.FIVE
-            1.six
-        "
-        .unindent();
-
-        // buffer has a deletion hunk and an insertion hunk
-        let diff_base_2 = "
-            2.zero
-            2.one
-            2.one-and-a-half
-            2.two
-            2.three
-            2.four
-            2.six
-        "
-        .unindent();
-
-        let text_2 = "
-            2.zero
-            2.one
-            2.two
-            2.three
-            2.four
-            2.five
-            2.six
-        "
-        .unindent();
-
-        let buffer_1 = project.update(cx, |project, cx| {
-            project.create_local_buffer(text_1.as_str(), None, cx)
-        });
-        let buffer_2 = project.update(cx, |project, cx| {
-            project.create_local_buffer(text_2.as_str(), None, cx)
-        });
-
-        let multibuffer = cx.new_model(|cx| {
-            let mut multibuffer = MultiBuffer::new(ReadWrite);
-            multibuffer.push_excerpts(
-                buffer_1.clone(),
-                [
-                    // excerpt ends in the middle of a modified hunk
-                    ExcerptRange {
-                        context: Point::new(0, 0)..Point::new(1, 5),
-                        primary: Default::default(),
-                    },
-                    // excerpt begins in the middle of a modified hunk
-                    ExcerptRange {
-                        context: Point::new(5, 0)..Point::new(6, 5),
-                        primary: Default::default(),
-                    },
-                ],
-                cx,
-            );
-            multibuffer.push_excerpts(
-                buffer_2.clone(),
-                [
-                    // excerpt ends at a deletion
-                    ExcerptRange {
-                        context: Point::new(0, 0)..Point::new(1, 5),
-                        primary: Default::default(),
-                    },
-                    // excerpt starts at a deletion
-                    ExcerptRange {
-                        context: Point::new(2, 0)..Point::new(2, 5),
-                        primary: Default::default(),
-                    },
-                    // excerpt fully contains a deletion hunk
-                    ExcerptRange {
-                        context: Point::new(1, 0)..Point::new(2, 5),
-                        primary: Default::default(),
-                    },
-                    // excerpt fully contains an insertion hunk
-                    ExcerptRange {
-                        context: Point::new(4, 0)..Point::new(6, 5),
-                        primary: Default::default(),
-                    },
-                ],
-                cx,
-            );
-            multibuffer
-        });
-
-        let editor = cx.add_window(|cx| Editor::for_multibuffer(multibuffer, None, false, cx));
-        editor
-            .update(cx, |editor, cx| {
-                for (buffer, diff_base) in [
-                    (buffer_1.clone(), diff_base_1),
-                    (buffer_2.clone(), diff_base_2),
-                ] {
-                    let change_set = cx.new_model(|cx| {
-                        BufferChangeSet::new_with_base_text(
-                            diff_base.to_string(),
-                            buffer.read(cx).text_snapshot(),
-                            cx,
-                        )
-                    });
-                    editor
-                        .buffer
-                        .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx));
-                }
-            })
-            .unwrap();
-        cx.background_executor.run_until_parked();
-
-        let snapshot = editor.update(cx, |editor, cx| editor.snapshot(cx)).unwrap();
-
-        assert_eq!(
-            snapshot.buffer_snapshot.text(),
-            "
-                1.zero
-                1.ONE
-                1.FIVE
-                1.six
-                2.zero
-                2.one
-                2.two
-                2.one
-                2.two
-                2.four
-                2.five
-                2.six"
-                .unindent()
-        );
-
-        let expected = [
-            (
-                DiffHunkStatus::Modified,
-                MultiBufferRow(1)..MultiBufferRow(2),
-            ),
-            (
-                DiffHunkStatus::Modified,
-                MultiBufferRow(2)..MultiBufferRow(3),
-            ),
-            //TODO: Define better when and where removed hunks show up at range extremities
-            (
-                DiffHunkStatus::Removed,
-                MultiBufferRow(6)..MultiBufferRow(6),
-            ),
-            (
-                DiffHunkStatus::Removed,
-                MultiBufferRow(8)..MultiBufferRow(8),
-            ),
-            (
-                DiffHunkStatus::Added,
-                MultiBufferRow(10)..MultiBufferRow(11),
-            ),
-        ];
-
-        assert_eq!(
-            snapshot
-                .buffer_snapshot
-                .diff_hunks_in_range(Point::zero()..Point::new(12, 0))
-                .map(|hunk| (hunk_status(&hunk), hunk.row_range))
-                .collect::<Vec<_>>(),
-            &expected,
-        );
-
-        assert_eq!(
-            snapshot
-                .buffer_snapshot
-                .diff_hunk_before(Point::new(3, 0))
-                .map(|hunk| (hunk_status(&hunk), hunk.row_range)),
-            Some(expected[2].clone()),
-        );
-        assert_eq!(
-            snapshot
-                .buffer_snapshot
-                .diff_hunk_before(Point::new(7, 0))
-                .map(|hunk| (hunk_status(&hunk), hunk.row_range)),
-            Some(expected[3].clone()),
-        );
     }
 }

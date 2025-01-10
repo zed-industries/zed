@@ -10797,10 +10797,6 @@ impl Editor {
             self.request_autoscroll(Autoscroll::fit(), cx);
         }
 
-        for buffer_id in buffers_affected {
-            Self::sync_expanded_diff_hunks(&mut self.diff_map, buffer_id, cx);
-        }
-
         cx.notify();
 
         if let Some(active_diagnostics) = self.active_diagnostics.take() {
@@ -10906,10 +10902,6 @@ impl Editor {
 
         if auto_scroll {
             self.request_autoscroll(Autoscroll::fit(), cx);
-        }
-
-        for buffer_id in buffers_affected {
-            Self::sync_expanded_diff_hunks(&mut self.diff_map, buffer_id, cx);
         }
 
         cx.notify();
@@ -13826,7 +13818,7 @@ impl EditorSnapshot {
             ) {
                 // Deleted hunk is an empty row range, no caret can be placed there and Zed allows to revert it
                 // when the caret is just above or just below the deleted hunk.
-                let allow_adjacent = hunk_status(&hunk) == DiffHunkStatus::Removed;
+                let allow_adjacent = hunk.status() == DiffHunkStatus::Removed;
                 let related_to_selection = if allow_adjacent {
                     hunk.row_range.overlaps(&query_rows)
                         || hunk.row_range.start == query_rows.end
@@ -14910,16 +14902,6 @@ impl RowRangeExt for Range<DisplayRow> {
 
     fn iter_rows(&self) -> impl DoubleEndedIterator<Item = DisplayRow> {
         (self.start.0..self.end.0).map(DisplayRow)
-    }
-}
-
-fn hunk_status(hunk: &MultiBufferDiffHunk) -> DiffHunkStatus {
-    if hunk.diff_base_byte_range.is_empty() {
-        DiffHunkStatus::Added
-    } else if hunk.row_range.is_empty() {
-        DiffHunkStatus::Removed
-    } else {
-        DiffHunkStatus::Modified
     }
 }
 

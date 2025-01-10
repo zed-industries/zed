@@ -126,6 +126,18 @@ pub struct MultiBufferDiffHunk {
     pub diff_base_byte_range: Range<usize>,
 }
 
+impl MultiBufferDiffHunk {
+    pub fn status(&self) -> DiffHunkStatus {
+        if self.buffer_range.start == self.buffer_range.end {
+            DiffHunkStatus::Removed
+        } else if self.diff_base_byte_range.is_empty() {
+            DiffHunkStatus::Added
+        } else {
+            DiffHunkStatus::Modified
+        }
+    }
+}
+
 pub type MultiBufferPoint = Point;
 type ExcerptOffset = TypedOffset<Excerpt>;
 type ExcerptPoint = TypedPoint<Excerpt>;
