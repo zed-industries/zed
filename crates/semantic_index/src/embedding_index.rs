@@ -8,7 +8,7 @@ use collections::Bound;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use fs::MTime;
-use futures::stream::StreamExt;
+use futures::{stream::StreamExt, FutureExt as _};
 use futures_batch::ChunksTimeoutStreamExt;
 use gpui::{AppContext, Model, Task};
 use heed::types::{SerdeBincode, Str};
@@ -17,8 +17,7 @@ use log;
 use project::{Entry, UpdatedEntriesSet, Worktree};
 use serde::{Deserialize, Serialize};
 use smol::channel;
-use smol::future::FutureExt;
-use std::{cmp::Ordering, future::Future, iter, path::Path, sync::Arc, time::Duration};
+use std::{cmp::Ordering, future::Future, iter, path::Path, pin::pin, sync::Arc, time::Duration};
 use util::ResultExt;
 use worktree::Snapshot;
 
@@ -284,7 +283,7 @@ impl EmbeddingIndex {
         let (embedded_files_tx, embedded_files_rx) = channel::bounded(512);
         let task = cx.background_executor().spawn(async move {
             let mut chunked_file_batches =
-                chunked_files.chunks_timeout(512, Duration::from_secs(2));
+                pin!(chunked_files.chunks_timeout(512, Duration::from_secs(2)));
             while let Some(chunked_files) = chunked_file_batches.next().await {
                 // View the batch of files as a vec of chunks
                 // Flatten out to a vec of chunks that we can subdivide into batch sized pieces
@@ -358,8 +357,8 @@ impl EmbeddingIndex {
 
     fn persist_embeddings(
         &self,
-        mut deleted_entry_ranges: channel::Receiver<(Bound<String>, Bound<String>)>,
-        mut embedded_files: channel::Receiver<(EmbeddedFile, IndexingEntryHandle)>,
+        deleted_entry_ranges: channel::Receiver<(Bound<String>, Bound<String>)>,
+        embedded_files: channel::Receiver<(EmbeddedFile, IndexingEntryHandle)>,
         cx: &AppContext,
     ) -> Task<Result<()>> {
         let db_connection = self.db_connection.clone();
@@ -369,8 +368,8 @@ impl EmbeddingIndex {
             loop {
                 // Interleave deletions and persists of embedded files
                 futures::select_biased! {
-                    deletion_range = deleted_entry_ranges.next() => {
-                        if let Some(deletion_range) = deletion_range {
+                    deletion_range = deleted_entry_ranges.recv().fuse() => {
+                        if let Ok(deletion_range) = deletion_range {
                             let mut txn = db_connection.write_txn()?;
                             let start = deletion_range.0.as_ref().map(|start| start.as_str());
                             let end = deletion_range.1.as_ref().map(|end| end.as_str());
@@ -379,8 +378,8 @@ impl EmbeddingIndex {
                             txn.commit()?;
                         }
                     },
-                    file = embedded_files.next() => {
-                        if let Some((file, _)) = file {
+                    file = embedded_files.recv().fuse() => {
+                        if let Ok((file, _)) = file {
                             let mut txn = db_connection.write_txn()?;
                             log::debug!("saving embedding for file {:?}", file.path);
                             let key = db_key_for_path(&file.path);
