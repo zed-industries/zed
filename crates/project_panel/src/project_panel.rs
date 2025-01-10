@@ -79,7 +79,7 @@ pub struct ProjectPanel {
     /// Relevant only for auto-fold dirs, where a single project panel entry may actually consist of several
     /// project entries (and all non-leaf nodes are guaranteed to be directories).
     ancestors: HashMap<ProjectEntryId, FoldedAncestors>,
-    folded_directory_darg_target: Option<FoldedDirectoryDragTarget>,
+    folded_directory_drag_target: Option<FoldedDirectoryDragTarget>,
     last_worktree_root_id: Option<ProjectEntryId>,
     last_selection_drag_over_entry: Option<ProjectEntryId>,
     last_external_paths_drag_over_entry: Option<ProjectEntryId>,
@@ -391,7 +391,7 @@ impl ProjectPanel {
                 focus_handle,
                 visible_entries: Default::default(),
                 ancestors: Default::default(),
-                folded_directory_darg_target: None,
+                folded_directory_drag_target: None,
                 last_worktree_root_id: Default::default(),
                 last_external_paths_drag_over_entry: None,
                 last_selection_drag_over_entry: None,
@@ -3402,7 +3402,7 @@ impl ProjectPanel {
                 bg_hover_color
             };
 
-        let folded_directory_drag_target = self.folded_directory_darg_target;
+        let folded_directory_drag_target = self.folded_directory_drag_target;
 
         div()
             .id(entry_id.to_proto() as usize)
@@ -3531,6 +3531,9 @@ impl ProjectPanel {
                 cx.listener(move |this, selections: &DraggedSelection, window, cx| {
                     this.hover_scroll_task.take();
                     this.hover_expand_task.take();
+                    if  folded_directory_drag_target.is_some() {
+                        return;
+                    }
                     this.drag_onto(selections, entry_id, kind.is_file(), window, cx);
                 }),
             )
@@ -3713,7 +3716,7 @@ impl ProjectPanel {
                                     let active_index = components_len
                                         - 1
                                         - folded_ancestors.current_ancestor_depth;
-                                    const DELIMITER: SharedString =
+                                        const DELIMITER: SharedString =
                                         SharedString::new_static(std::path::MAIN_SEPARATOR_STR);
                                     for (index, component) in components.into_iter().enumerate() {
                                         if index != 0 {
@@ -3722,7 +3725,7 @@ impl ProjectPanel {
                                                     .on_drag_move(cx.listener(
                                                         move |this, event: &DragMoveEvent<DraggedSelection>, _| {
                                                             if event.bounds.contains(&event.event.position) {
-                                                                this.folded_directory_darg_target = Some(
+                                                                this.folded_directory_drag_target = Some(
                                                                     FoldedDirectoryDragTarget {
                                                                         entry_id,
                                                                         index,
@@ -3730,15 +3733,14 @@ impl ProjectPanel {
                                                                     }
                                                                 );
                                                             } else {
-                                                                let is_current_target = this.folded_directory_darg_target
-                                                                    .as_ref()
+                                                                let is_current_target = this.folded_directory_drag_target
                                                                     .map_or(false, |target|
                                                                         target.entry_id == entry_id &&
                                                                         target.index == index &&
                                                                         target.is_delimiter_target
                                                                     );
                                                                 if is_current_target {
-                                                                    this.folded_directory_darg_target = None;
+                                                                    this.folded_directory_drag_target = None;
                                                                 }
                                                             }
 
@@ -3769,11 +3771,12 @@ impl ProjectPanel {
                                                 }
                                             }))
                                             .when(index != components_len - 1, |div|{
+                                                let target_entry_id = folded_ancestors.ancestors.get(components_len - 1 - index).cloned();
                                                 div
                                                 .on_drag_move(cx.listener(
                                                     move |this, event: &DragMoveEvent<DraggedSelection>, _| {
                                                     if event.bounds.contains(&event.event.position) {
-                                                            this.folded_directory_darg_target = Some(
+                                                            this.folded_directory_drag_target = Some(
                                                                 FoldedDirectoryDragTarget {
                                                                     entry_id,
                                                                     index,
@@ -3781,7 +3784,7 @@ impl ProjectPanel {
                                                                 }
                                                             );
                                                         } else {
-                                                            let is_current_target = this.folded_directory_darg_target
+                                                            let is_current_target = this.folded_directory_drag_target
                                                                 .as_ref()
                                                                 .map_or(false, |target|
                                                                     target.entry_id == entry_id &&
@@ -3789,12 +3792,19 @@ impl ProjectPanel {
                                                                     !target.is_delimiter_target
                                                                 );
                                                             if is_current_target {
-                                                                this.folded_directory_darg_target = None;
+                                                                this.folded_directory_drag_target = None;
                                                             }
                                                         }
                                                     },
                                                 ))
-                                                .when(folded_directory_drag_target.as_ref().map_or(false, |target|
+                                                .on_drop(cx.listener(move |this, selections: &DraggedSelection, cx| {
+                                                    this.hover_scroll_task.take();
+                                                    this.folded_directory_drag_target = None;
+                                                    if let Some(target_entry_id) = target_entry_id {
+                                                        this.drag_onto(selections, target_entry_id.clone(), kind.is_file(), cx);
+                                                    }
+                                                }))
+                                                .when(folded_directory_drag_target.map_or(false, |target|
                                                     target.entry_id == entry_id &&
                                                     target.index == index
                                                 ), |this| {
