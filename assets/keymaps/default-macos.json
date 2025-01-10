@@ -228,7 +228,9 @@
       "cmd-shift-h": "assistant2::OpenHistory",
       "cmd-shift-m": "assistant2::ToggleModelSelector",
       "cmd-shift-a": "assistant2::ToggleContextPicker",
-      "cmd-alt-e": "assistant2::RemoveAllContext"
+      "cmd-alt-e": "assistant2::RemoveAllContext",
+      "cmd-alt-left": "assistant2::FocusPrevContext",
+      "cmd-alt-right": "assistant2::FocusNextContext"
     }
   },
   {
@@ -618,7 +620,9 @@
       "cmd-shift-a": "assistant2::ToggleContextPicker",
       "cmd-alt-e": "assistant2::RemoveAllContext",
       "ctrl-[": "assistant::CyclePreviousInlineAssist",
-      "ctrl-]": "assistant::CycleNextInlineAssist"
+      "ctrl-]": "assistant::CycleNextInlineAssist",
+      "cmd-alt-left": "assistant2::FocusPrevContext",
+      "cmd-alt-right": "assistant2::FocusNextContext"
     }
   },
   {

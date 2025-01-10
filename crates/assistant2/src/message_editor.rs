@@ -23,7 +23,10 @@ use crate::context_store::{refresh_context_store_text, ContextStore};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
-use crate::{Chat, RemoveAllContext, ToggleContextPicker, ToggleModelSelector};
+use crate::{
+    Chat, FocusNextContext, FocusPrevContext, RemoveAllContext, ToggleContextPicker,
+    ToggleModelSelector,
+};
 
 pub struct MessageEditor {
     thread: Model<Thread>,
@@ -222,6 +225,18 @@ impl MessageEditor {
         let editor_focus_handle = self.editor.focus_handle(cx);
         cx.focus(&editor_focus_handle);
     }
+
+    pub fn handle_select_prev_context(&mut self, _: &FocusPrevContext, cx: &mut ViewContext<Self>) {
+        self.context_strip.update(cx, |context_strip, cx| {
+            context_strip.focus_prev(cx);
+        });
+    }
+
+    pub fn handle_select_next_context(&mut self, _: &FocusNextContext, cx: &mut ViewContext<Self>) {
+        self.context_strip.update(cx, |context_strip, cx| {
+            context_strip.focus_next(cx);
+        });
+    }
 }
 
 impl FocusableView for MessageEditor {
@@ -244,6 +259,8 @@ impl Render for MessageEditor {
             .on_action(cx.listener(Self::toggle_model_selector))
             .on_action(cx.listener(Self::toggle_context_picker))
             .on_action(cx.listener(Self::remove_all_context))
+            .on_action(cx.listener(Self::handle_select_prev_context))
+            .on_action(cx.listener(Self::handle_select_next_context))
             .size_full()
             .gap_2()
             .p_2()

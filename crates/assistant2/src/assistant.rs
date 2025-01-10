@@ -45,7 +45,9 @@ actions!(
         OpenHistory,
         Chat,
         CycleNextInlineAssist,
-        CyclePreviousInlineAssist
+        CyclePreviousInlineAssist,
+        FocusNextContext,
+        FocusPrevContext
     ]
 );
 

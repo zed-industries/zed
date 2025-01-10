@@ -54,6 +54,10 @@ impl ContextStore {
         &self.context
     }
 
+    pub fn len(&self) -> usize {
+        self.context.len()
+    }
+
     pub fn clear(&mut self) {
         self.context.clear();
         self.files.clear();

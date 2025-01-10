@@ -29,6 +29,7 @@ pub struct ContextStrip {
     suggest_context_kind: SuggestContextKind,
     workspace: WeakView<Workspace>,
     _context_picker_subscription: Subscription,
+    focused_index: Option<usize>,
 }
 
 impl ContextStrip {
@@ -62,6 +63,7 @@ impl ContextStrip {
             suggest_context_kind,
             workspace,
             _context_picker_subscription: context_picker_subscription,
+            focused_index: None,
         }
     }
 
@@ -139,6 +141,26 @@ impl ContextStrip {
     ) {
         cx.emit(ContextStripEvent::PickerDismissed);
     }
+
+    pub fn focus_prev(&mut self, cx: &mut ViewContext<Self>) {
+        self.focused_index = match self.focused_index {
+            Some(index) if index > 0 => Some(index - 1),
+            _ => Some(self.context_store.read(cx).len() - 1),
+        };
+
+        cx.notify();
+    }
+
+    pub fn focus_next(&mut self, cx: &mut ViewContext<Self>) {
+        let count = self.context_store.read(cx).len();
+
+        self.focused_index = match self.focused_index {
+            Some(index) if index < count - 1 => Some(index + 1),
+            _ => Some(0),
+        };
+
+        cx.notify();
+    }
 }
 
 impl Render for ContextStrip {
@@ -213,10 +235,11 @@ impl Render for ContextStrip {
                     )
                 }
             })
-            .children(context.iter().map(|context| {
+            .children(context.iter().enumerate().map(|(i, context)| {
                 ContextPill::new_added(
                     context.clone(),
                     dupe_names.contains(&context.name),
+                    self.focused_index == Some(i),
                     Some({
                         let id = context.id;
                         let context_store = self.context_store.clone();

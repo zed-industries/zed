@@ -5,7 +5,7 @@ use crate::context_store::ContextStore;
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::terminal_codegen::TerminalCodegen;
 use crate::thread_store::ThreadStore;
-use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist};
+use crate::{CycleNextInlineAssist, CyclePreviousInlineAssist, FocusNextContext, FocusPrevContext};
 use crate::{RemoveAllContext, ToggleContextPicker, ToggleModelSelector};
 use client::ErrorExt;
 use collections::VecDeque;
@@ -111,6 +111,8 @@ impl<T: 'static> Render for PromptEditor<T> {
                     .on_action(cx.listener(Self::move_up))
                     .on_action(cx.listener(Self::move_down))
                     .on_action(cx.listener(Self::remove_all_context))
+                    .on_action(cx.listener(Self::handle_select_prev_context))
+                    .on_action(cx.listener(Self::handle_select_next_context))
                     .capture_action(cx.listener(Self::cycle_prev))
                     .capture_action(cx.listener(Self::cycle_next))
                     .child(
@@ -344,6 +346,18 @@ impl<T: 'static> PromptEditor<T> {
     pub fn remove_all_context(&mut self, _: &RemoveAllContext, cx: &mut ViewContext<Self>) {
         self.context_store.update(cx, |store, _cx| store.clear());
         cx.notify();
+    }
+
+    pub fn handle_select_prev_context(&mut self, _: &FocusPrevContext, cx: &mut ViewContext<Self>) {
+        self.context_strip.update(cx, |context_strip, cx| {
+            context_strip.focus_prev(cx);
+        });
+    }
+
+    pub fn handle_select_next_context(&mut self, _: &FocusNextContext, cx: &mut ViewContext<Self>) {
+        self.context_strip.update(cx, |context_strip, cx| {
+            context_strip.focus_next(cx);
+        });
     }
 
     fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
