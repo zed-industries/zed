@@ -187,7 +187,7 @@ impl MetalAtlasState {
             let mut descriptor = texture_descriptor.clone();
             descriptor.set_texture_type(metal::MTLTextureType::D2Multisample);
             descriptor.set_storage_mode(metal::MTLStorageMode::Private);
-            descriptor.set_sample_count(self.sample_count as _);
+            descriptor.set_sample_count(self.path_sample_count as _);
             let msaa_texture = self.device.new_texture(&descriptor);
             Some(msaa_texture)
         } else {
