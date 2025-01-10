@@ -15,8 +15,6 @@ actions!(
     zeta,
     [
         RateCompletions,
-        ThumbsUp,
-        ThumbsDown,
         ThumbsUpActiveCompletion,
         ThumbsDownActiveCompletion,
         NextEdit,
@@ -57,6 +55,7 @@ impl RateCompletionModal {
 
     pub fn new(zeta: Model<Zeta>, cx: &mut ViewContext<Self>) -> Self {
         let subscription = cx.observe(&zeta, |_, _, cx| cx.notify());
+
         Self {
             zeta,
             selected_index: 0,
@@ -130,27 +129,6 @@ impl RateCompletionModal {
 
     fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
         self.selected_index = self.zeta.read(cx).recent_completions_len() - 1;
-        cx.notify();
-    }
-
-    fn thumbs_up(&mut self, _: &ThumbsUp, cx: &mut ViewContext<Self>) {
-        self.zeta.update(cx, |zeta, cx| {
-            let completion = zeta
-                .recent_completions()
-                .skip(self.selected_index)
-                .next()
-                .cloned();
-
-            if let Some(completion) = completion {
-                zeta.rate_completion(
-                    &completion,
-                    InlineCompletionRating::Positive,
-                    "".to_string(),
-                    cx,
-                );
-            }
-        });
-        self.select_next_edit(&Default::default(), cx);
         cx.notify();
     }
 
@@ -289,6 +267,7 @@ impl RateCompletionModal {
     fn render_active_completion(&mut self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
         let active_completion = self.active_completion.as_ref()?;
         let completion_id = active_completion.completion.id;
+        let focus_handle = &self.focus_handle(cx);
 
         let mut diff = active_completion
             .completion
@@ -343,6 +322,8 @@ impl RateCompletionModal {
             font_style: settings.buffer_font.style,
             ..Default::default()
         };
+        let border_color = cx.theme().colors().border;
+        let bg_color = cx.theme().colors().editor_background;
 
         let rated = self.zeta.read(cx).is_completion_rated(completion_id);
         let was_shown = self.zeta.read(cx).was_completion_shown(completion_id);
@@ -351,9 +332,6 @@ impl RateCompletionModal {
             .read(cx)
             .text(cx)
             .is_empty();
-
-        let border_color = cx.theme().colors().border;
-        let bg_color = cx.theme().colors().editor_background;
 
         let label_container = || h_flex().pl_1().gap_1p5();
 
@@ -453,12 +431,6 @@ impl RateCompletionModal {
                                 .gap_1()
                                 .child(
                                     Button::new("bad", "Bad Completion")
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &ThumbsDown,
-                                            &self.focus_handle(cx),
-                                            cx,
-                                        ))
-                                        .style(ButtonStyle::Filled)
                                         .icon(IconName::ThumbsDown)
                                         .icon_size(IconSize::Small)
                                         .icon_position(IconPosition::Start)
@@ -468,6 +440,11 @@ impl RateCompletionModal {
                                                 Tooltip::text("Explain what's bad about it before reporting it", cx)
                                             })
                                         })
+                                        .key_binding(KeyBinding::for_action_in(
+                                            &ThumbsDownActiveCompletion,
+                                            focus_handle,
+                                            cx,
+                                        ))
                                         .on_click(cx.listener(move |this, _, cx| {
                                             this.thumbs_down_active(
                                                 &ThumbsDownActiveCompletion,
@@ -477,16 +454,15 @@ impl RateCompletionModal {
                                 )
                                 .child(
                                     Button::new("good", "Good Completion")
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &ThumbsUp,
-                                            &self.focus_handle(cx),
-                                            cx,
-                                        ))
-                                        .style(ButtonStyle::Filled)
                                         .icon(IconName::ThumbsUp)
                                         .icon_size(IconSize::Small)
                                         .icon_position(IconPosition::Start)
                                         .disabled(rated)
+                                        .key_binding(KeyBinding::for_action_in(
+                                            &ThumbsUpActiveCompletion,
+                                            focus_handle,
+                                            cx,
+                                        ))
                                         .on_click(cx.listener(move |this, _, cx| {
                                             this.thumbs_up_active(&ThumbsUpActiveCompletion, cx);
                                         })),
@@ -512,7 +488,6 @@ impl Render for RateCompletionModal {
             .on_action(cx.listener(Self::select_next_edit))
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
-            .on_action(cx.listener(Self::thumbs_up))
             .on_action(cx.listener(Self::thumbs_up_active))
             .on_action(cx.listener(Self::thumbs_down_active))
             .on_action(cx.listener(Self::focus_completions))
@@ -528,7 +503,7 @@ impl Render for RateCompletionModal {
                 v_flex()
                     .border_r_1()
                     .border_color(border_color)
-                    .w_96()
+                    .w_72()
                     .h_full()
                     .flex_shrink_0()
                     .overflow_hidden()
