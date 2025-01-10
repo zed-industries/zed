@@ -127,7 +127,7 @@ impl Anchor {
 
     pub fn summary<D>(&self, snapshot: &MultiBufferSnapshot) -> D
     where
-        D: TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug,
+        D: TextDimension + Ord + Sub<D, Output = D> + Copy + std::fmt::Debug,
     {
         snapshot.summary_for_anchor(self)
     }

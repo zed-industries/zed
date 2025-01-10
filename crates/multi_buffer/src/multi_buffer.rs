@@ -4095,17 +4095,19 @@ impl MultiBufferSnapshot {
 
     pub fn summary_for_anchor<D>(&self, anchor: &Anchor) -> D
     where
-        D: TextDimension + Ord + Sub<D, Output = D> + Clone + std::fmt::Debug,
+        D: TextDimension + Ord + Sub<D, Output = D> + Clone + Copy + std::fmt::Debug,
     {
-        let mut cursor = self.excerpts.cursor::<ExcerptSummary>(&());
+        let mut cursor = self
+            .excerpts
+            .cursor::<(Option<&Locator>, ExcerptDimension<D>)>(&());
         let locator = self.excerpt_locator_for_id(anchor.excerpt_id);
 
-        cursor.seek(locator, Bias::Left, &());
+        cursor.seek(&Some(locator), Bias::Left, &());
         if cursor.item().is_none() {
             cursor.next(&());
         }
 
-        let mut excerpt_position = D::from_text_summary(&cursor.start().text);
+        let mut excerpt_position = cursor.start().1 .0;
         if let Some(excerpt) = cursor.item() {
             if excerpt.id == anchor.excerpt_id {
                 let excerpt_buffer_start =
@@ -4121,9 +4123,11 @@ impl MultiBufferSnapshot {
             }
         }
 
-        let mut diff_transforms_cursor = self.diff_transforms.cursor::<DiffTransformSummary>(&());
+        let mut diff_transforms_cursor = self
+            .diff_transforms
+            .cursor::<(ExcerptDimension<D>, OutputDimension<D>)>(&());
         diff_transforms_cursor.seek(&ExcerptDimension(excerpt_position.clone()), Bias::Left, &());
-        let transform_end_position = D::from_text_summary(&diff_transforms_cursor.end(&()).input);
+        let transform_end_position = diff_transforms_cursor.end(&()).1 .0;
 
         if transform_end_position == excerpt_position
             && (anchor.diff_base_anchor.is_some() || anchor.text_anchor.bias == Bias::Right)
@@ -4142,12 +4146,12 @@ impl MultiBufferSnapshot {
         &self,
         diff_base_anchor: &Option<DiffBaseAnchor>,
         excerpt_position: D,
-        diff_transforms_cursor: &Cursor<DiffTransform, DiffTransformSummary>,
+        diff_transforms_cursor: &Cursor<DiffTransform, (ExcerptDimension<D>, OutputDimension<D>)>,
     ) -> D
     where
         D: TextDimension + Sub<D, Output = D>,
     {
-        let mut position = D::from_text_summary(&diff_transforms_cursor.start().output);
+        let mut position = diff_transforms_cursor.start().1 .0.clone();
         if let Some(DiffTransform::DeletedHunk {
             buffer_id,
             base_text_byte_range,
@@ -4172,11 +4176,10 @@ impl MultiBufferSnapshot {
                 }
             }
             if !in_deleted_hunk {
-                position = D::from_text_summary(&diff_transforms_cursor.end(&()).output);
+                position = diff_transforms_cursor.end(&()).1 .0;
             }
         } else {
-            let overshoot =
-                excerpt_position - D::from_text_summary(&diff_transforms_cursor.start().input);
+            let overshoot = excerpt_position - diff_transforms_cursor.start().0 .0.clone();
             position.add_assign(&overshoot);
         }
 
@@ -4219,7 +4222,9 @@ impl MultiBufferSnapshot {
     {
         let mut anchors = anchors.into_iter().peekable();
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>(&());
-        let mut diff_transforms_cursor = self.diff_transforms.cursor::<DiffTransformSummary>(&());
+        let mut diff_transforms_cursor = self
+            .diff_transforms
+            .cursor::<(ExcerptDimension<D>, OutputDimension<D>)>(&());
         diff_transforms_cursor.next(&());
 
         let mut summaries = Vec::new();
@@ -4259,14 +4264,13 @@ impl MultiBufferSnapshot {
                         position.add_assign(&(summary - excerpt_buffer_start));
                     }
 
-                    if position > D::from_text_summary(&diff_transforms_cursor.start().input) {
+                    if position > diff_transforms_cursor.start().0 .0 {
                         diff_transforms_cursor.seek_forward(
                             &ExcerptDimension(position.clone()),
                             Bias::Left,
                             &(),
                         );
-                        let transform_end_position =
-                            D::from_text_summary(&diff_transforms_cursor.end(&()).input);
+                        let transform_end_position = diff_transforms_cursor.end(&()).0 .0;
                         if transform_end_position == position
                             && (diff_base_anchor.is_some() || bias == Bias::Right)
                         {
