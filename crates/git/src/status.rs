@@ -14,6 +14,7 @@ impl GitStatusPair {
         match (self.index_status, self.worktree_status) {
             (Some(_), None) => Some(true),
             (None, Some(_)) => Some(false),
+            (Some(GitFileStatus::Untracked), Some(GitFileStatus::Untracked)) => Some(false),
             (Some(_), Some(_)) => None,
             (None, None) => unreachable!(),
         }
