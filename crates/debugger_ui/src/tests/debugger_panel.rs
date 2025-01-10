@@ -1,8 +1,11 @@
 use crate::*;
 use dap::{
     client::DebugAdapterClientId,
-    requests::{Disconnect, Initialize, Launch, RunInTerminal, StackTrace, StartDebugging},
-    RunInTerminalRequestArguments, StartDebuggingRequestArguments,
+    requests::{
+        Continue, Disconnect, Initialize, Launch, Next, RunInTerminal, StackTrace, StartDebugging,
+        StepBack, StepIn, StepOut,
+    },
+    ErrorResponse, RunInTerminalRequestArguments, StartDebuggingRequestArguments,
     StartDebuggingRequestArgumentsRequest,
 };
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
@@ -912,4 +915,149 @@ async fn test_handle_start_debugging_reverse_request(
     });
 
     shutdown_session.await.unwrap();
+}
+
+#[gpui::test]
+async fn test_debug_panel_item_thread_status_reset_on_failure(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    let project = Project::test(fs, [], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let task = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |store, cx| {
+            store.start_debug_session(
+                task::DebugAdapterConfig {
+                    label: "test config".into(),
+                    kind: task::DebugAdapterKind::Fake,
+                    request: task::DebugRequestType::Launch,
+                    program: None,
+                    cwd: None,
+                    initialize_args: None,
+                },
+                cx,
+            )
+        })
+    });
+
+    let (session, client) = task.await.unwrap();
+
+    client
+        .on_request::<Initialize, _>(move |_, _| {
+            Ok(dap::Capabilities {
+                supports_step_back: Some(true),
+                ..Default::default()
+            })
+        })
+        .await;
+
+    client.on_request::<Launch, _>(move |_, _| Ok(())).await;
+
+    client
+        .on_request::<StackTrace, _>(move |_, _| {
+            Ok(dap::StackTraceResponse {
+                stack_frames: Vec::default(),
+                total_frames: None,
+            })
+        })
+        .await;
+
+    client
+        .on_request::<Next, _>(move |_, _| Err(ErrorResponse { error: None }))
+        .await;
+
+    client
+        .on_request::<StepOut, _>(move |_, _| Err(ErrorResponse { error: None }))
+        .await;
+
+    client
+        .on_request::<StepIn, _>(move |_, _| Err(ErrorResponse { error: None }))
+        .await;
+
+    client
+        .on_request::<StepBack, _>(move |_, _| Err(ErrorResponse { error: None }))
+        .await;
+
+    client
+        .on_request::<Continue, _>(move |_, _| Err(ErrorResponse { error: None }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
+
+    cx.run_until_parked();
+
+    let debug_panel_item = workspace
+        .update(cx, |workspace, cx| {
+            workspace
+                .panel::<DebugPanel>(cx)
+                .unwrap()
+                .update(cx, |panel, cx| panel.active_debug_panel_item(cx))
+                .unwrap()
+        })
+        .unwrap();
+
+    for operation in &[
+        "step_over",
+        "continue_thread",
+        "step_back",
+        "step_in",
+        "step_out",
+    ] {
+        debug_panel_item.update(cx, |item, cx| match *operation {
+            "step_over" => item.step_over(cx),
+            "continue_thread" => item.continue_thread(cx),
+            "step_back" => item.step_back(cx),
+            "step_in" => item.step_in(cx),
+            "step_out" => item.step_out(cx),
+            _ => unreachable!(),
+        });
+
+        cx.run_until_parked();
+
+        debug_panel_item.update(cx, |item, cx| {
+            assert_eq!(
+                item.thread_status(cx),
+                debugger_panel::ThreadStatus::Stopped,
+                "Thread status not reset to Stopped after failed {}",
+                operation
+            );
+        });
+    }
+
+    let shutdown_session = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |dap_store, cx| {
+            dap_store.shutdown_session(&session.read(cx).id(), cx)
+        })
+    });
+
+    shutdown_session.await.unwrap();
+
+    workspace
+        .update(cx, |workspace, cx| {
+            let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+
+            debug_panel.update(cx, |this, cx| {
+                assert!(this.active_debug_panel_item(cx).is_none());
+                assert_eq!(0, this.pane().unwrap().read(cx).items_len());
+            });
+        })
+        .unwrap();
 }

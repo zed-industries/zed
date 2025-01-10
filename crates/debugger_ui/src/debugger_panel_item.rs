@@ -526,6 +526,11 @@ impl DebugPanelItem {
         &self.variable_list
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn thread_status(&self, cx: &ViewContext<Self>) -> ThreadStatus {
+        self.thread_state.read(cx).status
+    }
+
     pub fn capabilities(&self, cx: &mut ViewContext<Self>) -> Capabilities {
         self.dap_store.read(cx).capabilities_by_id(&self.client_id)
     }
@@ -603,59 +608,100 @@ impl DebugPanelItem {
     pub fn continue_thread(&mut self, cx: &mut ViewContext<Self>) {
         self.update_thread_state_status(ThreadStatus::Running, cx);
 
-        self.dap_store.update(cx, |store, cx| {
-            store
-                .continue_thread(&self.client_id, self.thread_id, cx)
-                .detach_and_log_err(cx);
+        let task = self.dap_store.update(cx, |store, cx| {
+            store.continue_thread(&self.client_id, self.thread_id, cx)
         });
+
+        let task = cx.spawn(|weak, mut cx| async move {
+            if let Err(_) = task.await {
+                weak.update(&mut cx, |this, cx| {
+                    this.update_thread_state_status(ThreadStatus::Stopped, cx);
+                })
+                .log_err();
+            }
+        });
+
+        cx.background_executor().spawn(task).detach();
     }
 
     pub fn step_over(&mut self, cx: &mut ViewContext<Self>) {
         self.update_thread_state_status(ThreadStatus::Running, cx);
-
         let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
 
-        self.dap_store.update(cx, |store, cx| {
-            store
-                .step_over(&self.client_id, self.thread_id, granularity, cx)
-                .detach_and_log_err(cx);
+        let task = self.dap_store.update(cx, |store, cx| {
+            store.step_over(&self.client_id, self.thread_id, granularity, cx)
         });
+
+        let task = cx.spawn(|weak, mut cx| async move {
+            if let Err(_) = task.await {
+                weak.update(&mut cx, |this, cx| {
+                    this.update_thread_state_status(ThreadStatus::Stopped, cx);
+                })
+                .log_err();
+            }
+        });
+
+        cx.background_executor().spawn(task).detach();
     }
 
     pub fn step_in(&mut self, cx: &mut ViewContext<Self>) {
         self.update_thread_state_status(ThreadStatus::Running, cx);
-
         let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
 
-        self.dap_store.update(cx, |store, cx| {
-            store
-                .step_in(&self.client_id, self.thread_id, granularity, cx)
-                .detach_and_log_err(cx);
+        let task = self.dap_store.update(cx, |store, cx| {
+            store.step_in(&self.client_id, self.thread_id, granularity, cx)
         });
+
+        let task = cx.spawn(|weak, mut cx| async move {
+            if let Err(_) = task.await {
+                weak.update(&mut cx, |this, cx| {
+                    this.update_thread_state_status(ThreadStatus::Stopped, cx);
+                })
+                .log_err();
+            }
+        });
+
+        cx.background_executor().spawn(task).detach();
     }
 
     pub fn step_out(&mut self, cx: &mut ViewContext<Self>) {
         self.update_thread_state_status(ThreadStatus::Running, cx);
-
         let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
 
-        self.dap_store.update(cx, |store, cx| {
-            store
-                .step_out(&self.client_id, self.thread_id, granularity, cx)
-                .detach_and_log_err(cx);
+        let task = self.dap_store.update(cx, |store, cx| {
+            store.step_out(&self.client_id, self.thread_id, granularity, cx)
         });
+
+        let task = cx.spawn(|weak, mut cx| async move {
+            if let Err(_) = task.await {
+                weak.update(&mut cx, |this, cx| {
+                    this.update_thread_state_status(ThreadStatus::Stopped, cx);
+                })
+                .log_err();
+            }
+        });
+
+        cx.background_executor().spawn(task).detach();
     }
 
     pub fn step_back(&mut self, cx: &mut ViewContext<Self>) {
         self.update_thread_state_status(ThreadStatus::Running, cx);
-
         let granularity = DebuggerSettings::get_global(cx).stepping_granularity;
 
-        self.dap_store.update(cx, |store, cx| {
-            store
-                .step_back(&self.client_id, self.thread_id, granularity, cx)
-                .detach_and_log_err(cx);
+        let task = self.dap_store.update(cx, |store, cx| {
+            store.step_back(&self.client_id, self.thread_id, granularity, cx)
         });
+
+        let task = cx.spawn(|weak, mut cx| async move {
+            if let Err(_) = task.await {
+                weak.update(&mut cx, |this, cx| {
+                    this.update_thread_state_status(ThreadStatus::Stopped, cx);
+                })
+                .log_err();
+            }
+        });
+
+        cx.background_executor().spawn(task).detach();
     }
 
     pub fn restart_client(&self, cx: &mut ViewContext<Self>) {
