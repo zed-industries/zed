@@ -148,7 +148,7 @@ impl ContextStore {
         })
     }
 
-    pub fn insert_file(&mut self, context_buffer: ContextBuffer) {
+    fn insert_file(&mut self, context_buffer: ContextBuffer) {
         let id = self.next_context_id.post_inc();
         self.files.insert(context_buffer.id, id);
         self.context
@@ -239,7 +239,7 @@ impl ContextStore {
         })
     }
 
-    pub fn insert_directory(&mut self, path: &Path, context_buffers: Vec<ContextBuffer>) {
+    fn insert_directory(&mut self, path: &Path, context_buffers: Vec<ContextBuffer>) {
         let id = self.next_context_id.post_inc();
         self.directories.insert(path.to_path_buf(), id);
 
@@ -267,7 +267,13 @@ impl ContextStore {
             .push(Context::Thread(ThreadContext { id, thread, text }));
     }
 
-    pub fn insert_fetched_url(&mut self, url: String, text: impl Into<SharedString>) {
+    pub fn add_fetched_url(&mut self, url: String, text: impl Into<SharedString>) {
+        if self.includes_url(&url).is_none() {
+            self.insert_fetched_url(url, text);
+        }
+    }
+
+    fn insert_fetched_url(&mut self, url: String, text: impl Into<SharedString>) {
         let id = self.next_context_id.post_inc();
 
         self.fetched_urls.insert(url.clone(), id);
