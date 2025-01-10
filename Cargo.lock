@@ -347,7 +347,7 @@ version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e9c39d707614dbcc6bed00015539f488d8e3fe3e66ed60961efc0c90f4b380b3"
 dependencies = [
- "async-fs 2.1.2",
+ "async-fs",
  "async-net",
  "enumflags2",
  "futures-channel",
@@ -665,23 +665,11 @@ dependencies = [
 
 [[package]]
 name = "async-fs"
-version = "1.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "279cf904654eeebfa37ac9bb1598880884924aab82e290aa65c9e77a0e142e06"
-dependencies = [
- "async-lock 2.8.0",
- "autocfg",
- "blocking",
- "futures-lite 1.13.0",
-]
-
-[[package]]
-name = "async-fs"
 version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebcd09b382f40fcd159c2d695175b2ae620ffa5f3bd6f664131efff4e8b9e04a"
 dependencies = [
- "async-lock 3.4.0",
+ "async-lock",
  "blocking",
  "futures-lite 2.5.0",
 ]
@@ -695,7 +683,7 @@ dependencies = [
  "async-channel 2.3.1",
  "async-executor",
  "async-io",
- "async-lock 3.4.0",
+ "async-lock",
  "blocking",
  "futures-lite 2.5.0",
  "once_cell",
@@ -707,7 +695,7 @@ version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "43a2b323ccce0a1d90b449fd71f2a06ca7faa7c54c2751f06c9bd851fc061059"
 dependencies = [
- "async-lock 3.4.0",
+ "async-lock",
  "cfg-if",
  "concurrent-queue",
  "futures-io",
@@ -718,15 +706,6 @@ dependencies = [
  "slab",
  "tracing",
  "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "async-lock"
-version = "2.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "287272293e9d8c41773cec55e365490fe034813a2f172f502d6ddcf75b2f582b"
-dependencies = [
- "event-listener 2.5.3",
 ]
 
 [[package]]
@@ -780,7 +759,7 @@ checksum = "63255f1dc2381611000436537bbedfe83183faa303a5a0edaf191edef06526bb"
 dependencies = [
  "async-channel 2.3.1",
  "async-io",
- "async-lock 3.4.0",
+ "async-lock",
  "async-signal",
  "async-task",
  "blocking",
@@ -820,7 +799,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "637e00349800c0bdf8bfc21ebbc0b6524abea702b0da4168ac00d070d0c0b9f3"
 dependencies = [
  "async-io",
- "async-lock 3.4.0",
+ "async-lock",
  "atomic-waker",
  "cfg-if",
  "futures-core",
@@ -841,7 +820,7 @@ dependencies = [
  "async-channel 1.9.0",
  "async-global-executor",
  "async-io",
- "async-lock 3.4.0",
+ "async-lock",
  "async-process",
  "crossbeam-utils",
  "futures-channel",
@@ -8340,9 +8319,9 @@ version = "0.3.3"
 source = "git+https://github.com/zed-industries/oo7?branch=avoid-crypto-panic#9d5d5fcd7e4e0add9b420ffb58f67661b0b37568"
 dependencies = [
  "aes",
- "async-fs 2.1.2",
+ "async-fs",
  "async-io",
- "async-lock 3.4.0",
+ "async-lock",
  "async-net",
  "blocking",
  "cbc",
@@ -11840,9 +11819,9 @@ checksum = "a33bd3e260892199c3ccfc487c88b2da2265080acb316cd920da72fdfd7c599f"
 dependencies = [
  "async-channel 2.3.1",
  "async-executor",
- "async-fs 2.1.2",
+ "async-fs",
  "async-io",
- "async-lock 3.4.0",
+ "async-lock",
  "async-net",
  "async-process",
  "blocking",
@@ -14071,7 +14050,7 @@ name = "util"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-fs 1.6.0",
+ "async-fs",
  "collections",
  "dirs 4.0.0",
  "dunce",
@@ -15967,9 +15946,9 @@ checksum = "bb97012beadd29e654708a0fdb4c84bc046f537aecfde2c3ee0a9e4b4d48c725"
 dependencies = [
  "async-broadcast",
  "async-executor",
- "async-fs 2.1.2",
+ "async-fs",
  "async-io",
- "async-lock 3.4.0",
+ "async-lock",
  "async-process",
  "async-recursion 1.1.1",
  "async-task",
@@ -16005,9 +15984,9 @@ checksum = "1162094dc63b1629fcc44150bcceeaa80798cd28bcbe7fa987b65a034c258608"
 dependencies = [
  "async-broadcast",
  "async-executor",
- "async-fs 2.1.2",
+ "async-fs",
  "async-io",
- "async-lock 3.4.0",
+ "async-lock",
  "async-process",
  "async-recursion 1.1.1",
  "async-task",
