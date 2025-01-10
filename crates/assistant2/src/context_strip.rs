@@ -196,7 +196,7 @@ impl Render for ContextStrip {
                     .anchor(gpui::Corner::BottomLeft)
                     .offset(gpui::Point {
                         x: px(0.0),
-                        y: px(-16.0),
+                        y: px(-2.0),
                     })
                     .with_handle(self.context_picker_menu_handle.clone()),
             )
