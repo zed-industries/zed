@@ -818,7 +818,7 @@ impl LocalLspStore {
                     let name = name.to_string();
                     async move {
                         let actions = params.actions.unwrap_or_default();
-                        let (tx, mut rx) = smol::channel::bounded(1);
+                        let (tx, rx) = smol::channel::bounded(1);
                         let request = LanguageServerPromptRequest {
                             level: match params.typ {
                                 lsp::MessageType::ERROR => PromptLevel::Critical,
@@ -837,9 +837,9 @@ impl LocalLspStore {
                             })
                             .is_ok();
                         if did_update {
-                            let response = rx.next().await;
+                            let response = rx.recv().await?;
 
-                            Ok(response)
+                            Ok(Some(response))
                         } else {
                             Ok(None)
                         }

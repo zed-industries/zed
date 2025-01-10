@@ -249,7 +249,7 @@ impl ServerListeners {
 
 fn start_server(
     listeners: ServerListeners,
-    mut log_rx: Receiver<Vec<u8>>,
+    log_rx: Receiver<Vec<u8>>,
     cx: &mut AppContext,
 ) -> Arc<ChannelClient> {
     // This is the server idle timeout. If no connection comes in in this timeout, the server will shut down.
@@ -351,8 +351,8 @@ fn start_server(
                         }
                     }
 
-                    log_message = log_rx.next().fuse() => {
-                        if let Some(log_message) = log_message {
+                    log_message = log_rx.recv().fuse() => {
+                        if let Ok(log_message) = log_message {
                             if let Err(error) = stderr_stream.write_all(&log_message).await {
                                 log::error!("failed to write log message to stderr: {:?}", error);
                                 break;

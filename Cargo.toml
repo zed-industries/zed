@@ -342,7 +342,7 @@ ashpd = { version = "0.10", default-features = false, features = ["async-std"]}
 async-compat = "0.2.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = "0.1"
-async-fs = "1.6"
+async-fs = "2.1"
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 async-recursion = "1.0.0"
 async-tar = "0.5.0"
@@ -461,7 +461,7 @@ signal-hook = "0.3.17"
 similar = "1.3"
 simplelog = "0.12.2"
 smallvec = { version = "1.6", features = ["union"] }
-smol = "1.2"
+smol = "2.0"
 sqlformat = "0.2"
 strsim = "0.11"
 strum = { version = "0.26.0", features = ["derive"] }

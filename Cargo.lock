@@ -95,7 +95,7 @@ dependencies = [
  "miow",
  "parking_lot",
  "piper",
- "polling 3.7.4",
+ "polling",
  "regex-automata 0.4.9",
  "rustix-openpty",
  "serde",
@@ -347,8 +347,8 @@ version = "0.10.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e9c39d707614dbcc6bed00015539f488d8e3fe3e66ed60961efc0c90f4b380b3"
 dependencies = [
- "async-fs 2.1.2",
- "async-net 2.0.0",
+ "async-fs",
+ "async-net",
  "enumflags2",
  "futures-channel",
  "futures-util",
@@ -434,7 +434,7 @@ dependencies = [
  "settings",
  "similar",
  "smallvec",
- "smol 1.3.0",
+ "smol",
  "strum",
  "telemetry_events",
  "terminal",
@@ -504,7 +504,7 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "similar",
- "smol 1.3.0",
+ "smol",
  "telemetry_events",
  "terminal",
  "terminal_view",
@@ -666,23 +666,11 @@ dependencies = [
 
 [[package]]
 name = "async-fs"
-version = "1.6.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "279cf904654eeebfa37ac9bb1598880884924aab82e290aa65c9e77a0e142e06"
-dependencies = [
- "async-lock 2.8.0",
- "autocfg",
- "blocking",
- "futures-lite 1.13.0",
-]
-
-[[package]]
-name = "async-fs"
 version = "2.1.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "ebcd09b382f40fcd159c2d695175b2ae620ffa5f3bd6f664131efff4e8b9e04a"
 dependencies = [
- "async-lock 3.4.0",
+ "async-lock",
  "blocking",
  "futures-lite 2.5.0",
 ]
@@ -695,31 +683,11 @@ checksum = "05b1b633a2115cd122d73b955eadd9916c18c8f510ec9cd1686404c60ad1c29c"
 dependencies = [
  "async-channel 2.3.1",
  "async-executor",
- "async-io 2.4.0",
- "async-lock 3.4.0",
+ "async-io",
+ "async-lock",
  "blocking",
  "futures-lite 2.5.0",
  "once_cell",
-]
-
-[[package]]
-name = "async-io"
-version = "1.13.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0fc5b45d93ef0529756f812ca52e44c221b35341892d3dcc34132ac02f3dd2af"
-dependencies = [
- "async-lock 2.8.0",
- "autocfg",
- "cfg-if",
- "concurrent-queue",
- "futures-lite 1.13.0",
- "log",
- "parking",
- "polling 2.8.0",
- "rustix 0.37.27",
- "slab",
- "socket2 0.4.10",
- "waker-fn",
 ]
 
 [[package]]
@@ -728,26 +696,17 @@ version = "2.4.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "43a2b323ccce0a1d90b449fd71f2a06ca7faa7c54c2751f06c9bd851fc061059"
 dependencies = [
- "async-lock 3.4.0",
+ "async-lock",
  "cfg-if",
  "concurrent-queue",
  "futures-io",
  "futures-lite 2.5.0",
  "parking",
- "polling 3.7.4",
- "rustix 0.38.42",
+ "polling",
+ "rustix",
  "slab",
  "tracing",
  "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "async-lock"
-version = "2.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "287272293e9d8c41773cec55e365490fe034813a2f172f502d6ddcf75b2f582b"
-dependencies = [
- "event-listener 2.5.3",
 ]
 
 [[package]]
@@ -775,22 +734,11 @@ dependencies = [
 
 [[package]]
 name = "async-net"
-version = "1.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0434b1ed18ce1cf5769b8ac540e33f01fa9471058b5e89da9e06f3c882a8c12f"
-dependencies = [
- "async-io 1.13.0",
- "blocking",
- "futures-lite 1.13.0",
-]
-
-[[package]]
-name = "async-net"
 version = "2.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b948000fad4873c1c9339d60f2623323a0cfd3816e5181033c6a5cb68b2accf7"
 dependencies = [
- "async-io 2.4.0",
+ "async-io",
  "blocking",
  "futures-lite 2.5.0",
 ]
@@ -806,37 +754,20 @@ dependencies = [
 
 [[package]]
 name = "async-process"
-version = "1.8.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ea6438ba0a08d81529c69b36700fa2f95837bfe3e776ab39cde9c14d9149da88"
-dependencies = [
- "async-io 1.13.0",
- "async-lock 2.8.0",
- "async-signal",
- "blocking",
- "cfg-if",
- "event-listener 3.1.0",
- "futures-lite 1.13.0",
- "rustix 0.38.42",
- "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "async-process"
 version = "2.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63255f1dc2381611000436537bbedfe83183faa303a5a0edaf191edef06526bb"
 dependencies = [
  "async-channel 2.3.1",
- "async-io 2.4.0",
- "async-lock 3.4.0",
+ "async-io",
+ "async-lock",
  "async-signal",
  "async-task",
  "blocking",
  "cfg-if",
  "event-listener 5.3.1",
  "futures-lite 2.5.0",
- "rustix 0.38.42",
+ "rustix",
  "tracing",
 ]
 
@@ -868,13 +799,13 @@ version = "0.2.10"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "637e00349800c0bdf8bfc21ebbc0b6524abea702b0da4168ac00d070d0c0b9f3"
 dependencies = [
- "async-io 2.4.0",
- "async-lock 3.4.0",
+ "async-io",
+ "async-lock",
  "atomic-waker",
  "cfg-if",
  "futures-core",
  "futures-io",
- "rustix 0.38.42",
+ "rustix",
  "signal-hook-registry",
  "slab",
  "windows-sys 0.59.0",
@@ -889,9 +820,9 @@ dependencies = [
  "async-attributes",
  "async-channel 1.9.0",
  "async-global-executor",
- "async-io 2.4.0",
- "async-lock 3.4.0",
- "async-process 2.3.0",
+ "async-io",
+ "async-lock",
+ "async-process",
  "crossbeam-utils",
  "futures-channel",
  "futures-core",
@@ -1113,7 +1044,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol 1.3.0",
+ "smol",
  "tempfile",
  "which 6.0.3",
  "workspace",
@@ -1134,7 +1065,7 @@ dependencies = [
  "release_channel",
  "serde",
  "serde_json",
- "smol 1.3.0",
+ "smol",
  "util",
  "workspace",
 ]
@@ -2118,8 +2049,8 @@ checksum = "b99da2f8558ca23c71f4fd15dc57c906239752dd27ff3c00a1d56b685b7cbfec"
 dependencies = [
  "bitflags 2.6.0",
  "log",
- "polling 3.7.4",
- "rustix 0.38.42",
+ "polling",
+ "rustix",
  "slab",
  "thiserror 1.0.69",
 ]
@@ -2131,7 +2062,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "95a66a987056935f7efce4ab5668920b5d0dac4a7c99991a67395f13702ddd20"
 dependencies = [
  "calloop",
- "rustix 0.38.42",
+ "rustix",
  "wayland-backend",
  "wayland-client",
 ]
@@ -2153,7 +2084,7 @@ checksum = "7f78efdd7378980d79c0f36b519e51191742d2c9f91ffa5e228fba9f3806d2e1"
 dependencies = [
  "cap-primitives",
  "cap-std",
- "io-lifetimes 2.0.4",
+ "io-lifetimes",
  "windows-sys 0.59.0",
 ]
 
@@ -2165,7 +2096,7 @@ checksum = "4ac68674a6042af2bcee1adad9f6abd432642cf03444ce3a5b36c3f39f23baf8"
 dependencies = [
  "cap-primitives",
  "cap-std",
- "rustix 0.38.42",
+ "rustix",
  "smallvec",
 ]
 
@@ -2178,10 +2109,10 @@ dependencies = [
  "ambient-authority",
  "fs-set-times",
  "io-extras",
- "io-lifetimes 2.0.4",
+ "io-lifetimes",
  "ipnet",
  "maybe-owned",
- "rustix 0.38.42",
+ "rustix",
  "windows-sys 0.59.0",
  "winx",
 ]
@@ -2204,8 +2135,8 @@ checksum = "c3dbd3e8e8d093d6ccb4b512264869e1281cdb032f7940bd50b2894f96f25609"
 dependencies = [
  "cap-primitives",
  "io-extras",
- "io-lifetimes 2.0.4",
- "rustix 0.38.42",
+ "io-lifetimes",
+ "rustix",
 ]
 
 [[package]]
@@ -2218,7 +2149,7 @@ dependencies = [
  "cap-primitives",
  "iana-time-zone",
  "once_cell",
- "rustix 0.38.42",
+ "rustix",
  "winx",
 ]
 
@@ -2536,7 +2467,7 @@ dependencies = [
  "serde_json",
  "settings",
  "sha2",
- "smol 1.3.0",
+ "smol",
  "telemetry",
  "telemetry_events",
  "text",
@@ -2930,7 +2861,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol 1.3.0",
+ "smol",
  "url",
  "util",
  "workspace",
@@ -2996,7 +2927,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol 1.3.0",
+ "smol",
  "strum",
  "task",
  "theme",
@@ -3606,7 +3537,7 @@ dependencies = [
  "log",
  "paths",
  "release_channel",
- "smol 1.3.0",
+ "smol",
  "sqlez",
  "sqlez_macros",
  "tempfile",
@@ -3927,7 +3858,7 @@ dependencies = [
  "settings",
  "similar",
  "smallvec",
- "smol 1.3.0",
+ "smol",
  "snippet",
  "sum_tree",
  "task",
@@ -4215,7 +4146,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol 1.3.0",
+ "smol",
  "util",
 ]
 
@@ -4224,17 +4155,6 @@ name = "event-listener"
 version = "2.5.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0206175f82b8d6bf6652ff7d71a1e27fd2e4efde587fd368662814d6ec1d9ce0"
-
-[[package]]
-name = "event-listener"
-version = "3.1.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d93877bcde0eb80ca09131a08d23f0a5c18a620b01db137dba666d18cd9b30c2"
-dependencies = [
- "concurrent-queue",
- "parking",
- "pin-project-lite",
-]
 
 [[package]]
 name = "event-listener"
@@ -4466,7 +4386,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7e5768da2206272c81ef0b5e951a41862938a6070da63bcea197899942d3b947"
 dependencies = [
  "cfg-if",
- "rustix 0.38.42",
+ "rustix",
  "windows-sys 0.52.0",
 ]
 
@@ -4509,7 +4429,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
- "smol 1.3.0",
+ "smol",
  "sysinfo",
  "ui",
  "urlencoding",
@@ -4797,7 +4717,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shlex",
- "smol 1.3.0",
+ "smol",
  "tempfile",
  "text",
  "time",
@@ -4812,8 +4732,8 @@ version = "0.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5e2e6123af26f0f2c51cc66869137080199406754903cc926a7690401ce09cb4"
 dependencies = [
- "io-lifetimes 2.0.4",
- "rustix 0.38.42",
+ "io-lifetimes",
+ "rustix",
  "windows-sys 0.59.0",
 ]
 
@@ -5132,7 +5052,7 @@ dependencies = [
  "rope",
  "serde",
  "serde_json",
- "smol 1.3.0",
+ "smol",
  "sum_tree",
  "text",
  "time",
@@ -5376,7 +5296,7 @@ dependencies = [
  "serde_json",
  "slotmap",
  "smallvec",
- "smol 1.3.0",
+ "smol",
  "strum",
  "sum_tree",
  "taffy",
@@ -5879,7 +5799,7 @@ dependencies = [
  "httpdate",
  "itoa",
  "pin-project-lite",
- "socket2 0.5.8",
+ "socket2",
  "tokio",
  "tower-service",
  "tracing",
@@ -5966,7 +5886,7 @@ dependencies = [
  "http-body 1.0.1",
  "hyper 1.5.1",
  "pin-project-lite",
- "socket2 0.5.8",
+ "socket2",
  "tokio",
  "tower-service",
  "tracing",
@@ -6350,7 +6270,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "gpui",
- "smol 1.3.0",
+ "smol",
  "util",
 ]
 
@@ -6380,19 +6300,8 @@ version = "0.18.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2285ddfe3054097ef4b2fe909ef8c3bcd1ea52a8f0d274416caebeef39f04a65"
 dependencies = [
- "io-lifetimes 2.0.4",
+ "io-lifetimes",
  "windows-sys 0.59.0",
-]
-
-[[package]]
-name = "io-lifetimes"
-version = "1.0.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "eae7b9aee968036d54dce06cebaefd919e4472e753296daccd6d344e3e2df0c2"
-dependencies = [
- "hermit-abi 0.3.9",
- "libc",
- "windows-sys 0.48.0",
 ]
 
 [[package]]
@@ -6708,7 +6617,7 @@ dependencies = [
  "settings",
  "similar",
  "smallvec",
- "smol 1.3.0",
+ "smol",
  "strsim",
  "sum_tree",
  "task",
@@ -6767,7 +6676,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "smol 1.3.0",
+ "smol",
  "strum",
  "ui",
  "util",
@@ -6813,7 +6722,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol 1.3.0",
+ "smol",
  "strum",
  "telemetry_events",
  "theme",
@@ -6899,7 +6808,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol 1.3.0",
+ "smol",
  "task",
  "text",
  "theme",
@@ -7108,12 +7017,6 @@ dependencies = [
 
 [[package]]
 name = "linux-raw-sys"
-version = "0.3.8"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef53942eb7bf7ff43a617b3e2c1c4a5ecf5944a7c1bc12d7ee39bbb15e5c1519"
-
-[[package]]
-name = "linux-raw-sys"
 version = "0.4.14"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "78b3ae25bc7c8c38cec158d1f2757ee79e9b3740fbc7ccf0e59e4b08d793fa89"
@@ -7193,7 +7096,7 @@ name = "livekit-runtime"
 version = "0.3.1"
 source = "git+https://github.com/zed-industries/livekit-rust-sdks?rev=060964da10574cd9bf06463a53bf6e0769c5c45e#060964da10574cd9bf06463a53bf6e0769c5c45e"
 dependencies = [
- "async-io 2.4.0",
+ "async-io",
  "async-std",
  "async-task",
  "futures 0.3.31",
@@ -7335,7 +7238,7 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "smol 1.3.0",
+ "smol",
  "util",
 ]
 
@@ -7551,7 +7454,7 @@ version = "0.6.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b2cffa4ad52c6f791f4f8b15f0c05f9824b2ced1160e88cc393d64fff9a8ac64"
 dependencies = [
- "rustix 0.38.42",
+ "rustix",
 ]
 
 [[package]]
@@ -7859,7 +7762,7 @@ dependencies = [
  "semver",
  "serde",
  "serde_json",
- "smol 1.3.0",
+ "smol",
  "tempfile",
  "util",
  "walkdir",
@@ -8417,10 +8320,10 @@ version = "0.3.3"
 source = "git+https://github.com/zed-industries/oo7?branch=avoid-crypto-panic#9d5d5fcd7e4e0add9b420ffb58f67661b0b37568"
 dependencies = [
  "aes",
- "async-fs 2.1.2",
- "async-io 2.4.0",
- "async-lock 3.4.0",
- "async-net 2.0.0",
+ "async-fs",
+ "async-io",
+ "async-lock",
+ "async-net",
  "blocking",
  "cbc",
  "cipher",
@@ -8614,7 +8517,7 @@ dependencies = [
  "rope",
  "serde_json",
  "settings",
- "smol 1.3.0",
+ "smol",
  "theme",
  "tree-sitter-rust",
  "tree-sitter-typescript",
@@ -8648,7 +8551,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
- "smol 1.3.0",
+ "smol",
  "theme",
  "ui",
  "util",
@@ -9565,22 +9468,6 @@ dependencies = [
 
 [[package]]
 name = "polling"
-version = "2.8.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4b2d323e8ca7996b3e23126511a523f7e62924d93ecd5ae73b333815b0eb3dce"
-dependencies = [
- "autocfg",
- "bitflags 1.3.2",
- "cfg-if",
- "concurrent-queue",
- "libc",
- "log",
- "pin-project-lite",
- "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "polling"
 version = "3.7.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a604568c3202727d1507653cb121dbd627a58684eb09a820fd746bee38b4442f"
@@ -9589,7 +9476,7 @@ dependencies = [
  "concurrent-queue",
  "hermit-abi 0.4.0",
  "pin-project-lite",
- "rustix 0.38.42",
+ "rustix",
  "tracing",
  "windows-sys 0.59.0",
 ]
@@ -9806,7 +9693,7 @@ dependencies = [
  "shellexpand 2.1.2",
  "shlex",
  "similar",
- "smol 1.3.0",
+ "smol",
  "snippet",
  "snippet_provider",
  "task",
@@ -10116,7 +10003,7 @@ dependencies = [
  "quinn-udp",
  "rustc-hash 2.1.0",
  "rustls 0.23.20",
- "socket2 0.5.8",
+ "socket2",
  "thiserror 2.0.6",
  "tokio",
  "tracing",
@@ -10151,7 +10038,7 @@ dependencies = [
  "cfg_aliases 0.2.1",
  "libc",
  "once_cell",
- "socket2 0.5.8",
+ "socket2",
  "tracing",
  "windows-sys 0.59.0",
 ]
@@ -10372,7 +10259,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol 1.3.0",
+ "smol",
  "task",
  "theme",
  "ui",
@@ -10507,7 +10394,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shlex",
- "smol 1.3.0",
+ "smol",
  "tempfile",
  "thiserror 1.0.69",
  "util",
@@ -10555,7 +10442,7 @@ dependencies = [
  "serde_json",
  "settings",
  "shellexpand 2.1.2",
- "smol 1.3.0",
+ "smol",
  "sysinfo",
  "telemetry_events",
  "toml 0.8.19",
@@ -10609,7 +10496,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol 1.3.0",
+ "smol",
  "telemetry",
  "terminal",
  "terminal_view",
@@ -10726,7 +10613,7 @@ dependencies = [
  "log",
  "reqwest 0.12.8",
  "serde",
- "smol 1.3.0",
+ "smol",
  "tokio",
 ]
 
@@ -10943,7 +10830,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shellexpand 3.1.0",
- "smol 2.0.2",
+ "smol",
  "uuid",
  "zeromq",
 ]
@@ -11028,20 +10915,6 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "0.37.27"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fea8ca367a3a01fe35e6943c400addf443c0f57670e6ec51196f71a4b8762dd2"
-dependencies = [
- "bitflags 1.3.2",
- "errno 0.3.10",
- "io-lifetimes 1.0.11",
- "libc",
- "linux-raw-sys 0.3.8",
- "windows-sys 0.48.0",
-]
-
-[[package]]
-name = "rustix"
 version = "0.38.42"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f93dc38ecbab2eb790ff964bb77fa94faf256fd3e73285fd7ba0903b76bedb85"
@@ -11050,7 +10923,7 @@ dependencies = [
  "errno 0.3.10",
  "itoa",
  "libc",
- "linux-raw-sys 0.4.14",
+ "linux-raw-sys",
  "once_cell",
  "windows-sys 0.59.0",
 ]
@@ -11063,7 +10936,7 @@ checksum = "a25c3aad9fc1424eb82c88087789a7d938e1829724f3e4043163baf0d13cfc12"
 dependencies = [
  "errno 0.3.10",
  "libc",
- "rustix 0.38.42",
+ "rustix",
 ]
 
 [[package]]
@@ -11396,7 +11269,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol 1.3.0",
+ "smol",
  "theme",
  "ui",
  "unindent",
@@ -11490,7 +11363,7 @@ dependencies = [
  "serde_json",
  "settings",
  "sha2",
- "smol 1.3.0",
+ "smol",
  "tempfile",
  "theme",
  "tree-sitter",
@@ -11941,34 +11814,17 @@ dependencies = [
 
 [[package]]
 name = "smol"
-version = "1.3.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "13f2b548cd8447f8de0fdf1c592929f70f4fc7039a05e47404b0d096ec6987a1"
-dependencies = [
- "async-channel 1.9.0",
- "async-executor",
- "async-fs 1.6.0",
- "async-io 1.13.0",
- "async-lock 2.8.0",
- "async-net 1.8.0",
- "async-process 1.8.1",
- "blocking",
- "futures-lite 1.13.0",
-]
-
-[[package]]
-name = "smol"
 version = "2.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a33bd3e260892199c3ccfc487c88b2da2265080acb316cd920da72fdfd7c599f"
 dependencies = [
  "async-channel 2.3.1",
  "async-executor",
- "async-fs 2.1.2",
- "async-io 2.4.0",
- "async-lock 3.4.0",
- "async-net 2.0.0",
- "async-process 2.3.0",
+ "async-fs",
+ "async-io",
+ "async-lock",
+ "async-net",
+ "async-process",
  "blocking",
  "futures-lite 2.5.0",
 ]
@@ -12020,16 +11876,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
-]
-
-[[package]]
-name = "socket2"
-version = "0.4.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9f7916fc008ca5542385b89a3d3ce689953c143e9304a9bf8beec1de48994c0d"
-dependencies = [
- "libc",
- "winapi",
 ]
 
 [[package]]
@@ -12105,7 +11951,7 @@ dependencies = [
  "indoc",
  "libsqlite3-sys",
  "parking_lot",
- "smol 1.3.0",
+ "smol",
  "sqlformat",
  "thread_local",
  "util",
@@ -12509,7 +12355,7 @@ dependencies = [
  "serde",
  "serde_json",
  "settings",
- "smol 1.3.0",
+ "smol",
  "supermaven_api",
  "text",
  "theme",
@@ -12528,7 +12374,7 @@ dependencies = [
  "paths",
  "serde",
  "serde_json",
- "smol 1.3.0",
+ "smol",
 ]
 
 [[package]]
@@ -12781,8 +12627,8 @@ dependencies = [
  "cap-fs-ext",
  "cap-std",
  "fd-lock",
- "io-lifetimes 2.0.4",
- "rustix 0.38.42",
+ "io-lifetimes",
+ "rustix",
  "windows-sys 0.59.0",
  "winx",
 ]
@@ -12915,7 +12761,7 @@ dependencies = [
  "fastrand 2.3.0",
  "getrandom 0.2.15",
  "once_cell",
- "rustix 0.38.42",
+ "rustix",
  "windows-sys 0.59.0",
 ]
 
@@ -12957,7 +12803,7 @@ dependencies = [
  "serde",
  "serde_derive",
  "settings",
- "smol 1.3.0",
+ "smol",
  "sysinfo",
  "task",
  "theme",
@@ -12972,7 +12818,7 @@ version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5352447f921fda68cf61b4101566c0bdb5104eff6804d0678e5227580ab6a4e9"
 dependencies = [
- "rustix 0.38.42",
+ "rustix",
  "windows-sys 0.59.0",
 ]
 
@@ -12999,7 +12845,7 @@ dependencies = [
  "serde_json",
  "settings",
  "shellexpand 2.1.2",
- "smol 1.3.0",
+ "smol",
  "task",
  "terminal",
  "theme",
@@ -13355,7 +13201,7 @@ dependencies = [
  "parking_lot",
  "pin-project-lite",
  "signal-hook-registry",
- "socket2 0.5.8",
+ "socket2",
  "tokio-macros",
  "windows-sys 0.52.0",
 ]
@@ -14205,7 +14051,7 @@ name = "util"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-fs 1.6.0",
+ "async-fs",
  "collections",
  "dirs 4.0.0",
  "dunce",
@@ -14221,7 +14067,7 @@ dependencies = [
  "rust-embed",
  "serde",
  "serde_json",
- "smol 1.3.0",
+ "smol",
  "take-until",
  "tempfile",
  "tendril",
@@ -14678,7 +14524,7 @@ dependencies = [
  "paste",
  "postcard",
  "psm",
- "rustix 0.38.42",
+ "rustix",
  "semver",
  "serde",
  "serde_derive",
@@ -14813,7 +14659,7 @@ dependencies = [
  "anyhow",
  "cc",
  "cfg-if",
- "rustix 0.38.42",
+ "rustix",
  "wasmtime-asm-macros",
  "wasmtime-versioned-export-macros",
  "windows-sys 0.52.0",
@@ -14880,9 +14726,9 @@ dependencies = [
  "fs-set-times",
  "futures 0.3.31",
  "io-extras",
- "io-lifetimes 2.0.4",
+ "io-lifetimes",
  "once_cell",
- "rustix 0.38.42",
+ "rustix",
  "system-interface",
  "thiserror 1.0.69",
  "tokio",
@@ -14939,7 +14785,7 @@ checksum = "056535ced7a150d45159d3a8dc30f91a2e2d588ca0b23f70e56033622b8016f6"
 dependencies = [
  "cc",
  "downcast-rs",
- "rustix 0.38.42",
+ "rustix",
  "scoped-tls",
  "smallvec",
  "wayland-sys",
@@ -14952,7 +14798,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b66249d3fc69f76fd74c82cc319300faa554e9d865dab1f7cd66cc20db10b280"
 dependencies = [
  "bitflags 2.6.0",
- "rustix 0.38.42",
+ "rustix",
  "wayland-backend",
  "wayland-scanner",
 ]
@@ -14963,7 +14809,7 @@ version = "0.31.7"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32b08bc3aafdb0035e7fe0fdf17ba0c09c268732707dca4ae098f60cb28c9e4c"
 dependencies = [
- "rustix 0.38.42",
+ "rustix",
  "wayland-client",
  "xcursor",
 ]
@@ -15130,7 +14976,7 @@ dependencies = [
  "either",
  "home",
  "once_cell",
- "rustix 0.38.42",
+ "rustix",
 ]
 
 [[package]]
@@ -15141,7 +14987,7 @@ checksum = "b4ee928febd44d98f2f459a4a79bd4d928591333a494a10a868418ac1b39cf1f"
 dependencies = [
  "either",
  "home",
- "rustix 0.38.42",
+ "rustix",
  "winsafe",
 ]
 
@@ -15875,7 +15721,7 @@ dependencies = [
  "serde_json",
  "settings",
  "smallvec",
- "smol 1.3.0",
+ "smol",
  "sum_tree",
  "text",
  "util",
@@ -15921,7 +15767,7 @@ dependencies = [
  "as-raw-xcb-connection",
  "gethostname",
  "libc",
- "rustix 0.38.42",
+ "rustix",
  "x11rb-protocol",
 ]
 
@@ -16101,10 +15947,10 @@ checksum = "bb97012beadd29e654708a0fdb4c84bc046f537aecfde2c3ee0a9e4b4d48c725"
 dependencies = [
  "async-broadcast",
  "async-executor",
- "async-fs 2.1.2",
- "async-io 2.4.0",
- "async-lock 3.4.0",
- "async-process 2.3.0",
+ "async-fs",
+ "async-io",
+ "async-lock",
+ "async-process",
  "async-recursion 1.1.1",
  "async-task",
  "async-trait",
@@ -16139,10 +15985,10 @@ checksum = "1162094dc63b1629fcc44150bcceeaa80798cd28bcbe7fa987b65a034c258608"
 dependencies = [
  "async-broadcast",
  "async-executor",
- "async-fs 2.1.2",
- "async-io 2.4.0",
- "async-lock 3.4.0",
- "async-process 2.3.0",
+ "async-fs",
+ "async-io",
+ "async-lock",
+ "async-process",
  "async-recursion 1.1.1",
  "async-task",
  "async-trait",
@@ -16309,7 +16155,7 @@ dependencies = [
  "settings_ui",
  "shellexpand 2.1.2",
  "simplelog",
- "smol 1.3.0",
+ "smol",
  "snippet_provider",
  "snippets_ui",
  "supermaven",
