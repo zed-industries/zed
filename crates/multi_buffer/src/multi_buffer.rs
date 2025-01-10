@@ -5455,7 +5455,7 @@ where
         self.excerpts.next(&());
         self.diff_transforms
             .seek_forward(self.excerpts.start(), Bias::Left, &());
-        if self.diff_transforms.start().1 < *self.excerpts.start() {
+        if self.diff_transforms.end(&()).1 < *self.excerpts.start() {
             self.diff_transforms.next(&());
         }
     }
