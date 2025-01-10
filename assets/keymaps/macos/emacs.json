@@ -50,7 +50,8 @@
       "alt->": "editor::MoveToEnd", // end-of-buffer
       "ctrl-l": "editor::ScrollCursorCenterTopBottom", // recenter-top-bottom
       "ctrl-s": "buffer_search::Deploy", // isearch-forward
-      "alt-^": "editor::JoinLines" // join-line
+      "alt-^": "editor::JoinLines", // join-line
+      "alt-/": "editor::ShowCompletions"
     }
   },
   // Extend selection with movement bindings
