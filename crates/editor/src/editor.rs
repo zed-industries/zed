@@ -10260,7 +10260,6 @@ impl Editor {
             .all_adjusted(cx)
             .into_iter()
             .map(|selection| selection.range())
-            .filter(|s| !s.is_empty())
             .collect_vec();
 
         Some(self.perform_format(
