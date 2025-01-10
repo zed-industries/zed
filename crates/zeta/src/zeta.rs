@@ -733,6 +733,7 @@ and then another
         feedback: String,
         cx: &mut ModelContext<Self>,
     ) {
+        self.rated_completions.insert(completion.id);
         telemetry::event!(
             "Inline Completion Rated",
             rating,
