@@ -214,7 +214,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
             )
         });
 
-        assert!(receiver.recv().await.is_ok());
+        assert!(receiver.recv().await.is_err());
         buffer
     }
 
