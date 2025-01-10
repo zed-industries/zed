@@ -3801,7 +3801,7 @@ impl ProjectPanel {
                                                     this.hover_scroll_task.take();
                                                     this.folded_directory_drag_target = None;
                                                     if let Some(target_entry_id) = target_entry_id {
-                                                        this.drag_onto(selections, target_entry_id.clone(), kind.is_file(), cx);
+                                                        this.drag_onto(selections, target_entry_id, kind.is_file(), cx);
                                                     }
                                                 }))
                                                 .when(folded_directory_drag_target.map_or(false, |target|
