@@ -2231,10 +2231,6 @@ impl MultiBuffer {
             let start = snapshot.excerpt_offset_for_anchor(&range.start);
             let end = snapshot.excerpt_offset_for_anchor(&range.end);
 
-            // let start = snapshot.point_to_offset(Point::new(start.row, 0));
-            // let end = snapshot.point_to_offset(Point::new(end.row + 1, 0));
-            // let expanded_start = start.saturating_sub(1);
-
             changes.push((
                 text::Edit {
                     old: start..end,

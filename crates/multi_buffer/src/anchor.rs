@@ -61,12 +61,18 @@ impl Anchor {
                     let other_anchor = other.diff_base_anchor.and_then(|a| {
                         (a.version == diff_base.base_text_version).then(|| a.text_anchor)
                     });
-                    match (self_anchor, other_anchor) {
-                        (Some(a), Some(b)) => return a.cmp(&b, &diff_base.base_text),
-                        (Some(_), None) => return Ordering::Less,
-                        (None, Some(_)) => return Ordering::Greater,
-                        (None, None) => {}
-                    }
+                    return match (self_anchor, other_anchor) {
+                        (Some(a), Some(b)) => a.cmp(&b, &diff_base.base_text),
+                        (Some(_), None) => match other.text_anchor.bias {
+                            Bias::Left => Ordering::Greater,
+                            Bias::Right => Ordering::Less,
+                        },
+                        (None, Some(_)) => match self.text_anchor.bias {
+                            Bias::Left => Ordering::Less,
+                            Bias::Right => Ordering::Greater,
+                        },
+                        (None, None) => Ordering::Equal,
+                    };
                 }
             }
         }

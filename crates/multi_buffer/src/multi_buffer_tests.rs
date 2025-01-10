@@ -1086,7 +1086,7 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
 
     assert_chunks_in_ranges(&snapshot);
     assert_consistent_line_numbers(&snapshot);
-    assert_point_translation(&snapshot);
+    assert_position_translation(&snapshot);
 
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
@@ -1109,11 +1109,11 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
 
     assert_chunks_in_ranges(&snapshot);
     assert_consistent_line_numbers(&snapshot);
-    assert_point_translation(&snapshot);
+    assert_position_translation(&snapshot);
 
     // Expand the first diff hunk
     multibuffer.update(cx, |multibuffer, cx| {
-        let position = multibuffer.read(cx).anchor_before(Point::new(2, 0));
+        let position = multibuffer.read(cx).anchor_before(Point::new(2, 2));
         multibuffer.expand_diff_hunks(vec![position..position], cx)
     });
     assert_new_snapshot(
@@ -1160,7 +1160,7 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
 
     assert_chunks_in_ranges(&snapshot);
     assert_consistent_line_numbers(&snapshot);
-    assert_point_translation(&snapshot);
+    assert_position_translation(&snapshot);
 
     // Edit the buffer before the first hunk
     buffer.update(cx, |buffer, cx| {
@@ -1201,7 +1201,7 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
 
     assert_chunks_in_ranges(&snapshot);
     assert_consistent_line_numbers(&snapshot);
-    assert_point_translation(&snapshot);
+    assert_position_translation(&snapshot);
 
     // Recalculate the diff, changing the first diff hunk.
     let _ = change_set.update(cx, |change_set, cx| {
@@ -1414,7 +1414,7 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
         ]
     );
 
-    assert_point_translation(&snapshot);
+    assert_position_translation(&snapshot);
 
     assert_eq!(
         snapshot
@@ -1951,7 +1951,7 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
                 + 1
         );
 
-        assert_point_translation(&snapshot);
+        assert_position_translation(&snapshot);
 
         for (row, line) in expected_text.split('\n').enumerate() {
             assert_eq!(
@@ -2701,7 +2701,7 @@ fn assert_consistent_line_numbers(snapshot: &MultiBufferSnapshot) {
 }
 
 #[track_caller]
-fn assert_point_translation(snapshot: &MultiBufferSnapshot) {
+fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
     let text = Rope::from(snapshot.text());
 
     let mut left_anchors = Vec::new();
@@ -2774,6 +2774,28 @@ fn assert_point_translation(snapshot: &MultiBufferSnapshot) {
                 text.point_to_offset(clipped_right),
                 "point_to_offset({clipped_right:?})"
             );
+        }
+    }
+
+    for (anchors, bias) in [(&left_anchors, Bias::Left), (&right_anchors, Bias::Right)] {
+        for (ix, (offset, anchor)) in offsets.iter().zip(anchors).enumerate() {
+            if ix > 0 {
+                if offset > &offsets[ix - 1] {
+                    let prev_anchor = left_anchors[ix - 1];
+                    assert!(
+                        anchor.cmp(&prev_anchor, snapshot).is_gt(),
+                        "anchor({}, {bias:?}).cmp(&anchor({}, {bias:?}).is_gt()",
+                        offsets[ix],
+                        offsets[ix - 1],
+                    );
+                    assert!(
+                        prev_anchor.cmp(&anchor, snapshot).is_lt(),
+                        "anchor({}, {bias:?}).cmp(&anchor({}, {bias:?}).is_lt()",
+                        offsets[ix - 1],
+                        offsets[ix],
+                    );
+                }
+            }
         }
     }
 
