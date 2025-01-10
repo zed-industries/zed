@@ -2,11 +2,13 @@ use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use file_icons::FileIcons;
 use gpui::{AppContext, Model, SharedString};
 use language::Buffer;
 use language_model::{LanguageModelRequestMessage, MessageContent};
 use serde::{Deserialize, Serialize};
 use text::BufferId;
+use ui::IconName;
 use util::post_inc;
 
 use crate::thread::Thread;
@@ -27,6 +29,7 @@ pub struct ContextSnapshot {
     pub name: SharedString,
     pub parent: Option<SharedString>,
     pub tooltip: Option<SharedString>,
+    pub icon_path: Option<SharedString>,
     pub kind: ContextKind,
     /// Concatenating these strings yields text to send to the model. Not refreshed by `snapshot`.
     pub text: Box<[SharedString]>,
@@ -38,6 +41,17 @@ pub enum ContextKind {
     Directory,
     FetchedUrl,
     Thread,
+}
+
+impl ContextKind {
+    pub fn icon(&self) -> IconName {
+        match self {
+            ContextKind::File => IconName::File,
+            ContextKind::Directory => IconName::Folder,
+            ContextKind::FetchedUrl => IconName::Globe,
+            ContextKind::Thread => IconName::MessageCircle,
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -138,11 +152,14 @@ impl FileContext {
             .and_then(|p| p.file_name())
             .map(|p| p.to_string_lossy().into_owned().into());
 
+        let icon_path = FileIcons::get_icon(&path, cx);
+
         Some(ContextSnapshot {
             id: self.id,
             name,
             parent,
             tooltip: Some(full_path),
+            icon_path,
             kind: ContextKind::File,
             text: Box::new([self.buffer.text.clone()]),
         })
@@ -162,6 +179,7 @@ impl FetchedUrlContext {
             name: self.url.clone(),
             parent: None,
             tooltip: None,
+            icon_path: None,
             kind: ContextKind::FetchedUrl,
             text: Box::new([self.text.clone()]),
         }
@@ -176,6 +194,7 @@ impl ThreadContext {
             name: thread.summary().unwrap_or("New thread".into()),
             parent: None,
             tooltip: None,
+            icon_path: None,
             kind: ContextKind::Thread,
             text: Box::new([self.text.clone()]),
         }

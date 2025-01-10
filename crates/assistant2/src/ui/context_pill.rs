@@ -14,6 +14,7 @@ pub enum ContextPill {
     },
     Suggested {
         name: SharedString,
+        icon_path: Option<SharedString>,
         kind: ContextKind,
         on_add: Rc<dyn Fn(&ClickEvent, &mut WindowContext)>,
     },
@@ -34,10 +35,16 @@ impl ContextPill {
 
     pub fn new_suggested(
         name: SharedString,
+        icon_path: Option<SharedString>,
         kind: ContextKind,
         on_add: Rc<dyn Fn(&ClickEvent, &mut WindowContext)>,
     ) -> Self {
-        Self::Suggested { name, kind, on_add }
+        Self::Suggested {
+            name,
+            icon_path,
+            kind,
+            on_add,
+        }
     }
 
     pub fn id(&self) -> ElementId {
@@ -49,23 +56,27 @@ impl ContextPill {
         }
     }
 
-    pub fn kind(&self) -> ContextKind {
+    pub fn icon(&self) -> Icon {
         match self {
-            Self::Added { context, .. } => context.kind,
-            Self::Suggested { kind, .. } => *kind,
+            Self::Added { context, .. } => match &context.icon_path {
+                Some(icon_path) => Icon::from_path(icon_path),
+                None => Icon::new(context.kind.icon()),
+            },
+            Self::Suggested {
+                icon_path: Some(icon_path),
+                ..
+            } => Icon::from_path(icon_path),
+            Self::Suggested {
+                kind,
+                icon_path: None,
+                ..
+            } => Icon::new(kind.icon()),
         }
     }
 }
 
 impl RenderOnce for ContextPill {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let icon = match &self.kind() {
-            ContextKind::File => IconName::File,
-            ContextKind::Directory => IconName::Folder,
-            ContextKind::FetchedUrl => IconName::Globe,
-            ContextKind::Thread => IconName::MessageCircle,
-        };
-
         let color = cx.theme().colors();
 
         let base_pill = h_flex()
@@ -75,7 +86,7 @@ impl RenderOnce for ContextPill {
             .border_1()
             .rounded_md()
             .gap_1()
-            .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted));
+            .child(self.icon().size(IconSize::XSmall).color(Color::Muted));
 
         match &self {
             ContextPill::Added {
@@ -118,7 +129,12 @@ impl RenderOnce for ContextPill {
                             }),
                     )
                 }),
-            ContextPill::Suggested { name, kind, on_add } => base_pill
+            ContextPill::Suggested {
+                name,
+                icon_path: _,
+                kind,
+                on_add,
+            } => base_pill
                 .cursor_pointer()
                 .pr_1()
                 .border_color(color.border_variant.opacity(0.5))

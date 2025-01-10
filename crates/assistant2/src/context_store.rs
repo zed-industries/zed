@@ -273,6 +273,7 @@ impl ContextStore {
                 name,
                 parent,
                 tooltip: Some(full_path),
+                icon_path: None,
                 kind: ContextKind::Directory,
                 text,
             },

@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use file_icons::FileIcons;
 use fuzzy::PathMatch;
 use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakModel, WeakView};
 use picker::{Picker, PickerDelegate};
@@ -281,6 +282,10 @@ impl PickerDelegate for FileContextPickerDelegate {
                 .will_include_file_path(&path_match.path, cx)
         });
 
+        let file_icon = FileIcons::get_icon(&path_match.path.clone(), cx)
+            .map(Icon::from_path)
+            .unwrap_or_else(|| Icon::new(IconName::File));
+
         Some(
             ListItem::new(ix)
                 .inset(true)
@@ -288,6 +293,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                 .child(
                     h_flex()
                         .gap_2()
+                        .child(file_icon.size(IconSize::Small))
                         .child(Label::new(file_name))
                         .children(directory.map(|directory| {
                             Label::new(directory)
