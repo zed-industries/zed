@@ -146,7 +146,7 @@ pub struct ReplSessionsPage {
 impl ReplSessionsPage {
     pub fn new(window: &mut Window, cx: &mut ModelContext<Workspace>) -> Model<Self> {
         window.new_view(cx, |window: &mut Window, cx: &mut ModelContext<Self>| {
-            let focus_handle = cx.focus_handle();
+            let focus_handle = window.focus_handle(cx);
 
             let subscriptions = vec![
                 cx.on_focus_in(&focus_handle, window, |_this, _window, cx| cx.notify()),

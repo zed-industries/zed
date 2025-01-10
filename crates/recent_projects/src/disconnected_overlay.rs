@@ -74,7 +74,7 @@ impl DisconnectedOverlay {
                     finished: false,
                     workspace: handle,
                     host,
-                    focus_handle: cx.focus_handle(),
+                    focus_handle: window.focus_handle(cx),
                 });
             },
         )

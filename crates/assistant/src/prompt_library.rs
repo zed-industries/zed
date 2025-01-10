@@ -551,7 +551,7 @@ impl PromptLibrary {
                     Ok(prompt) => {
                         let title_editor = window.new_view(cx, |window, cx| {
                             let mut editor = Editor::auto_width(window, cx);
-                            editor.set_placeholder_text("Untitled", window, cx);
+                            editor.set_placeholder_text("Untitled", cx);
                             editor.set_text(prompt_metadata.title.unwrap_or_default(), window, cx);
                             if prompt_id.is_built_in() {
                                 editor.set_read_only(true);

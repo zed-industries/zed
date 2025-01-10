@@ -162,12 +162,12 @@ impl Render for BufferSearchBar {
             query_editor.placeholder_text(window, cx).is_none()
         }) {
             self.query_editor.update(cx, |editor, cx| {
-                editor.set_placeholder_text("Search…", window, cx);
+                editor.set_placeholder_text("Search…", cx);
             });
         }
 
         self.replacement_editor.update(cx, |editor, cx| {
-            editor.set_placeholder_text("Replace with…", window, cx);
+            editor.set_placeholder_text("Replace with…", cx);
         });
 
         let mut text_color = Color::Default;

@@ -34,8 +34,8 @@ use util::ResultExt;
 use crate::{
     current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
     Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
-    Entity, EventEmitter, FocusHandle, FocusId, ForegroundExecutor, Global, KeyBinding, Keymap,
-    Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
+    Entity, EventEmitter, FocusHandle, FocusId, FocusMap, ForegroundExecutor, Global, KeyBinding,
+    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
     PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
     Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
@@ -246,7 +246,7 @@ pub struct AppContext {
     pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
-    pub(crate) focus_handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
+    pub(crate) focus_handles: Arc<FocusMap>,
     pub(crate) keymap: Rc<RefCell<Keymap>>,
     pub(crate) keyboard_layout: SharedString,
     pub(crate) global_action_listeners:
@@ -603,12 +603,6 @@ impl AppContext {
         })
     }
 
-    /// Obtain a new [`FocusHandle`], which allows you to track and manipulate the keyboard focus
-    /// for elements rendered within this window.
-    pub fn focus_handle(&self) -> FocusHandle {
-        FocusHandle::new(&self.focus_handles)
-    }
-
     /// Instructs the platform to activate the application by bringing it to the foreground.
     pub fn activate(&self, ignoring_other_apps: bool) {
         self.platform.activate(ignoring_other_apps);
@@ -888,7 +882,7 @@ impl AppContext {
         self.focus_handles
             .clone()
             .write()
-            .retain(|handle_id, count| {
+            .retain(|handle_id, (count, _)| {
                 if count.load(SeqCst) == 0 {
                     for window_handle in self.windows() {
                         window_handle

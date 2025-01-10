@@ -510,7 +510,7 @@ mod test {
                 window.new_view(cx, |window, cx| TestView {
                     saw_key_down: false,
                     saw_action: false,
-                    focus_handle: cx.focus_handle(),
+                    focus_handle: window.focus_handle(cx),
                 })
             })
             .unwrap()

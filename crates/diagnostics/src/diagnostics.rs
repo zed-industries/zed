@@ -158,7 +158,7 @@ impl ProjectDiagnosticsEditor {
                 _ => {}
             });
 
-        let focus_handle = cx.focus_handle();
+        let focus_handle = window.focus_handle(cx);
         cx.on_focus_in(&focus_handle, window, |this, window, cx| {
             this.focus_in(window, cx)
         })
@@ -555,7 +555,7 @@ impl ProjectDiagnosticsEditor {
         });
 
         self.editor.update(cx, |editor, cx| {
-            editor.remove_blocks(blocks_to_remove, None, window, cx);
+            editor.remove_blocks(blocks_to_remove, None, cx);
             let block_ids = editor.insert_blocks(
                 blocks_to_add.into_iter().flat_map(|block| {
                     let placement = match block.placement {

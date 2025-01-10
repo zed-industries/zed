@@ -138,13 +138,8 @@ pub fn notify_of_any_new_update(
                 let workspace_handle = workspace.weak_handle();
                 workspace.show_notification(
                     NotificationId::unique::<UpdateNotification>(),
-                    window,
                     cx,
-                    |window, cx| {
-                        window.new_view(cx, |_, _| {
-                            UpdateNotification::new(version, workspace_handle)
-                        })
-                    },
+                    |cx| cx.new_model(|_| UpdateNotification::new(version, workspace_handle)),
                 );
                 updater.update(cx, |updater, cx| {
                     updater

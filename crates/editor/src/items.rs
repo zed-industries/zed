@@ -456,7 +456,7 @@ async fn update_editor_from_message(
     this.update_in(cx, |editor, window, cx| {
         if !selections.is_empty() || pending_selection.is_some() {
             editor.set_selections_from_remote(selections, pending_selection, window, cx);
-            editor.request_autoscroll_remotely(Autoscroll::newest(), window, cx);
+            editor.request_autoscroll_remotely(Autoscroll::newest(), cx);
         } else if let Some(scroll_top_anchor) = scroll_top_anchor {
             editor.set_scroll_anchor_remote(
                 ScrollAnchor {
@@ -734,7 +734,7 @@ impl Item for Editor {
 
     fn deactivated(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         let selection = self.selections.newest_anchor();
-        self.push_to_nav_history(selection.head(), None, window, cx);
+        self.push_to_nav_history(selection.head(), None, cx);
     }
 
     fn workspace_deactivated(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
@@ -861,7 +861,7 @@ impl Item for Editor {
         cx.spawn_in(window, |this, mut cx| async move {
             let transaction = reload_buffers.log_err().await;
             this.update_in(&mut cx, |editor, window, cx| {
-                editor.request_autoscroll(Autoscroll::fit(), window, cx)
+                editor.request_autoscroll(Autoscroll::fit(), cx)
             })?;
             buffer
                 .update(&mut cx, |buffer, cx| {
@@ -1291,7 +1291,6 @@ impl SearchableItem for Editor {
         self.highlight_background::<BufferSearchHighlights>(
             matches,
             |theme| theme.search_match_background,
-            window,
             cx,
         );
         if updated {
@@ -1403,8 +1402,8 @@ impl SearchableItem for Editor {
         };
 
         if let Some(replacement) = query.replacement_for(&text) {
-            self.transact(window, cx, |this, window, cx| {
-                this.edit([(identifier.clone(), Arc::from(&*replacement))], window, cx);
+            self.transact(window, cx, |this, _, cx| {
+                this.edit([(identifier.clone(), Arc::from(&*replacement))], cx);
             });
         }
     }
@@ -1433,8 +1432,8 @@ impl SearchableItem for Editor {
         }
 
         if !edits.is_empty() {
-            self.transact(window, cx, |this, window, cx| {
-                this.edit(edits, window, cx);
+            self.transact(window, cx, |this, _, cx| {
+                this.edit(edits, cx);
             });
         }
     }

@@ -1405,7 +1405,7 @@ impl Interactivity {
                         self.tracked_focus_handle = Some(
                             element_state
                                 .focus_handle
-                                .get_or_insert_with(|| cx.focus_handle())
+                                .get_or_insert_with(|| window.focus_handle(cx))
                                 .clone(),
                         );
                     }

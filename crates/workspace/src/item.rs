@@ -1315,7 +1315,7 @@ pub mod test {
                 tab_descriptions: None,
                 tab_detail: Default::default(),
                 workspace_id: Default::default(),
-                focus_handle: cx.focus_handle(),
+                focus_handle: window.focus_handle(cx),
                 serialize: None,
             }
         }
@@ -1376,7 +1376,7 @@ pub mod test {
 
         fn push_to_nav_history(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
             if let Some(history) = &mut self.nav_history {
-                history.push(Some(Box::new(self.state.clone())), window, cx);
+                history.push(Some(Box::new(self.state.clone())), cx);
             }
         }
     }
@@ -1488,7 +1488,7 @@ pub mod test {
                 tab_descriptions: None,
                 tab_detail: Default::default(),
                 workspace_id: self.workspace_id,
-                focus_handle: cx.focus_handle(),
+                focus_handle: window.focus_handle(cx),
                 serialize: None,
             }))
         }

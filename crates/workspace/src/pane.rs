@@ -392,7 +392,7 @@ impl Pane {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let focus_handle = cx.focus_handle();
+        let focus_handle = window.focus_handle(cx);
 
         let subscriptions = vec![
             cx.on_focus(&focus_handle, window, Pane::focus_in),
@@ -812,7 +812,7 @@ impl Pane {
         cx.emit(Event::JoinAll);
     }
 
-    fn history_updated(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn history_updated(&mut self, cx: &mut ModelContext<Self>) {
         self.toolbar.update(cx, |_, cx| cx.notify());
     }
 
@@ -2958,7 +2958,6 @@ impl Pane {
                 if workspace.project().read(cx).is_via_collab() {
                     workspace.show_error(
                         &anyhow::anyhow!("Cannot drop files on a remote project"),
-                        window,
                         cx,
                     );
                     true
@@ -3007,7 +3006,7 @@ impl Pane {
                         _ = workspace.update_in(&mut cx, |workspace, window, cx| {
                             for item in opened_items.into_iter().flatten() {
                                 if let Err(e) = item {
-                                    workspace.show_error(&e, window, cx);
+                                    workspace.show_error(&e, cx);
                                 }
                             }
                         });
@@ -3331,30 +3330,17 @@ impl Render for Pane {
 }
 
 impl ItemNavHistory {
-    pub fn push<D: 'static + Send + Any>(
-        &mut self,
-        data: Option<D>,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) {
+    pub fn push<D: 'static + Send + Any>(&mut self, data: Option<D>, cx: &mut AppContext) {
         self.history
-            .push(data, self.item.clone(), self.is_preview, window, cx);
+            .push(data, self.item.clone(), self.is_preview, cx);
     }
 
-    pub fn pop_backward(
-        &mut self,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Option<NavigationEntry> {
-        self.history.pop(NavigationMode::GoingBack, window, cx)
+    pub fn pop_backward(&mut self, cx: &mut AppContext) -> Option<NavigationEntry> {
+        self.history.pop(NavigationMode::GoingBack, cx)
     }
 
-    pub fn pop_forward(
-        &mut self,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Option<NavigationEntry> {
-        self.history.pop(NavigationMode::GoingForward, window, cx)
+    pub fn pop_forward(&mut self, cx: &mut AppContext) -> Option<NavigationEntry> {
+        self.history.pop(NavigationMode::GoingForward, cx)
     }
 }
 
@@ -3399,12 +3385,7 @@ impl NavHistory {
         self.0.lock().mode = NavigationMode::Normal;
     }
 
-    pub fn pop(
-        &mut self,
-        mode: NavigationMode,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Option<NavigationEntry> {
+    pub fn pop(&mut self, mode: NavigationMode, cx: &mut AppContext) -> Option<NavigationEntry> {
         let mut state = self.0.lock();
         let entry = match mode {
             NavigationMode::Normal | NavigationMode::Disabled | NavigationMode::ClosingItem => {
@@ -3416,7 +3397,7 @@ impl NavHistory {
         }
         .pop_back();
         if entry.is_some() {
-            state.did_update(window, cx);
+            state.did_update(cx);
         }
         entry
     }
@@ -3426,7 +3407,6 @@ impl NavHistory {
         data: Option<D>,
         item: Arc<dyn WeakItemHandle>,
         is_preview: bool,
-        window: &mut Window,
         cx: &mut AppContext,
     ) {
         let state = &mut *self.0.lock();
@@ -3478,7 +3458,7 @@ impl NavHistory {
                 });
             }
         }
-        state.did_update(window, cx);
+        state.did_update(cx);
     }
 
     pub fn remove_item(&mut self, item_id: EntityId) {
@@ -3501,10 +3481,10 @@ impl NavHistory {
 }
 
 impl NavHistoryState {
-    pub fn did_update(&self, window: &mut Window, cx: &mut AppContext) {
+    pub fn did_update(&self, cx: &mut AppContext) {
         if let Some(pane) = self.pane.upgrade() {
-            window.defer(cx, move |window, cx| {
-                pane.update(cx, |pane, cx| pane.history_updated(window, cx));
+            cx.defer(move |cx| {
+                pane.update(cx, |pane, cx| pane.history_updated(cx));
             });
         }
     }

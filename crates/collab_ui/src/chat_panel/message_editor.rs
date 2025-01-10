@@ -196,9 +196,9 @@ impl MessageEditor {
             .map(|channel| channel.name.clone());
         self.editor.update(cx, |editor, cx| {
             if let Some(channel_name) = channel_name {
-                editor.set_placeholder_text(format!("Message #{channel_name}"), window, cx);
+                editor.set_placeholder_text(format!("Message #{channel_name}"), cx);
             } else {
-                editor.set_placeholder_text("Message Channel", window, cx);
+                editor.set_placeholder_text("Message Channel", cx);
             }
         });
     }
@@ -500,14 +500,13 @@ impl MessageEditor {
                     }
                 }
 
-                editor.clear_highlights::<Self>(window, cx);
+                editor.clear_highlights::<Self>(cx);
                 editor.highlight_text::<Self>(
                     anchor_ranges,
                     HighlightStyle {
                         font_weight: Some(FontWeight::BOLD),
                         ..Default::default()
                     },
-                    window,
                     cx,
                 )
             });

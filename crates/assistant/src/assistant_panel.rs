@@ -236,12 +236,7 @@ impl PickerDelegate for SavedContextPickerDelegate {
         })
     }
 
-    fn confirm(
-        &mut self,
-        _secondary: bool,
-        window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
-    ) {
+    fn confirm(&mut self, _secondary: bool, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         if let Some(metadata) = self.matches.get(self.selected_index) {
             cx.emit(SavedContextPickerEvent::Confirmed(metadata.clone()));
         }
@@ -2095,7 +2090,7 @@ impl ContextEditor {
                         })
                         .collect::<Vec<_>>();
 
-                    let crease_ids = editor.insert_creases(creases, window, cx);
+                    let crease_ids = editor.insert_creases(creases, cx);
 
                     for buffer_row in buffer_rows_to_fold.into_iter().rev() {
                         editor.fold_at(&FoldAt { buffer_row }, window, cx);
@@ -2121,7 +2116,6 @@ impl ContextEditor {
                         removed
                             .iter()
                             .filter_map(|range| self.pending_slash_command_creases.remove(range)),
-                        window,
                         cx,
                     );
 
@@ -2172,7 +2166,6 @@ impl ContextEditor {
                                         return render_docs_slash_command_trailer(
                                             row,
                                             command.clone(),
-                                            window,
                                             cx,
                                         );
                                     }
@@ -2189,7 +2182,6 @@ impl ContextEditor {
                                 .unwrap();
                             Crease::inline(start..end, placeholder, render_toggle, render_trailer)
                         }),
-                        window,
                         cx,
                     );
 
@@ -2265,7 +2257,7 @@ impl ContextEditor {
                         render_trailer,
                     );
 
-                    editor.insert_creases([crease], window, cx);
+                    editor.insert_creases([crease], cx);
                     editor.fold_at(&FoldAt { buffer_row }, window, cx);
                 });
             }
@@ -2345,7 +2337,6 @@ impl ContextEditor {
 
                     editor.remove_creases(
                         HashSet::from_iter(self.invoked_slash_command_creases.remove(&command_id)),
-                        window,
                         cx,
                     );
                 } else if let hash_map::Entry::Vacant(entry) =
@@ -2367,7 +2358,7 @@ impl ContextEditor {
                         fold_toggle("invoked-slash-command"),
                         |_row, _folded, _window, _cx| Empty.into_any(),
                     );
-                    let crease_ids = editor.insert_creases([crease.clone()], window, cx);
+                    let crease_ids = editor.insert_creases([crease.clone()], cx);
                     editor.fold_creases(vec![crease], false, window, cx);
                     entry.insert(crease_ids[0]);
                 } else {
@@ -2376,7 +2367,6 @@ impl ContextEditor {
             } else {
                 editor.remove_creases(
                     HashSet::from_iter(self.invoked_slash_command_creases.remove(&command_id)),
-                    window,
                     cx,
                 );
                 cx.notify();
@@ -2416,7 +2406,7 @@ impl ContextEditor {
                 }
             }
             editor.unfold_ranges(&ranges_to_unfold, true, false, window, cx);
-            editor.remove_creases(removed_crease_ids, window, cx);
+            editor.remove_creases(removed_crease_ids, cx);
 
             for range in updated {
                 let Some(patch) = self.context.read(cx).patch_for_range(&range, cx).cloned() else {
@@ -2482,7 +2472,7 @@ impl ContextEditor {
                     should_refold =
                         snapshot.intersects_fold(patch_start.to_offset(&snapshot.buffer_snapshot));
                 } else {
-                    let crease_id = editor.insert_creases([crease.clone()], window, cx)[0];
+                    let crease_id = editor.insert_creases([crease.clone()], cx)[0];
                     self.patches.insert(
                         range.clone(),
                         PatchViewState {
@@ -2552,7 +2542,7 @@ impl ContextEditor {
                 );
             }
 
-            editor.insert_creases(creases, window, cx);
+            editor.insert_creases(creases, cx);
 
             if expand_result {
                 buffer_rows_to_fold.clear();
@@ -3058,7 +3048,7 @@ impl ContextEditor {
                 }
             }
             editor.replace_blocks(blocks_to_replace, None, window, cx);
-            editor.remove_blocks(blocks_to_remove.into_values().collect(), None, window, cx);
+            editor.remove_blocks(blocks_to_remove.into_values().collect(), None, cx);
 
             let ids = editor.insert_blocks(new_blocks, None, window, cx);
             old_blocks.extend(ids.into_iter().zip(block_index_to_message).map(
@@ -3172,7 +3162,6 @@ impl ContextEditor {
                 ),
             )
             .autohide(),
-            window,
             cx,
         );
     }
@@ -3201,7 +3190,7 @@ impl ContextEditor {
                     .map(|path| Workspace::project_path_for_path(project.clone(), &path, false, cx))
                     .collect::<Vec<_>>();
 
-                cx.spawn_in(window, move |_, cx| async move {
+                cx.spawn(move |_, cx| async move {
                     let mut paths = vec![];
                     let mut worktrees = vec![];
 
@@ -3311,7 +3300,7 @@ impl ContextEditor {
                                     render_quote_selection_output_toggle,
                                     |_, _, _, _| Empty.into_any(),
                                 );
-                                editor.insert_creases(vec![crease], window, cx);
+                                editor.insert_creases(vec![crease], cx);
                                 editor.fold_at(
                                     &FoldAt {
                                         buffer_row: start_row,
@@ -3334,7 +3323,7 @@ impl ContextEditor {
         cx: &mut ModelContext<Self>,
     ) {
         if self.editor.read(cx).selections.count() == 1 {
-            let (copied_text, metadata, _) = self.get_clipboard_contents(window, cx);
+            let (copied_text, metadata, _) = self.get_clipboard_contents(cx);
             cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
                 copied_text,
                 metadata,
@@ -3348,7 +3337,7 @@ impl ContextEditor {
 
     fn cut(&mut self, _: &editor::actions::Cut, window: &mut Window, cx: &mut ModelContext<Self>) {
         if self.editor.read(cx).selections.count() == 1 {
-            let (copied_text, metadata, selections) = self.get_clipboard_contents(window, cx);
+            let (copied_text, metadata, selections) = self.get_clipboard_contents(cx);
 
             self.editor.update(cx, |editor, cx| {
                 editor.transact(window, cx, |this, window, cx| {
@@ -3372,7 +3361,6 @@ impl ContextEditor {
 
     fn get_clipboard_contents(
         &mut self,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> (String, CopyMetadata, Vec<text::Selection<usize>>) {
         let (snapshot, selection, creases) = self.editor.update(cx, |editor, cx| {
@@ -3525,7 +3513,6 @@ impl ContextEditor {
                             )
                             .with_metadata(metadata.crease.clone())
                         }),
-                        window,
                         cx,
                     );
                     for buffer_row in buffer_rows_to_fold.into_iter().rev() {
@@ -3536,13 +3523,13 @@ impl ContextEditor {
         } else {
             let mut image_positions = Vec::new();
             self.editor.update(cx, |editor, cx| {
-                editor.transact(window, cx, |editor, window, cx| {
+                editor.transact(window, cx, |editor, _window, cx| {
                     let edits = editor
                         .selections
                         .all::<usize>(cx)
                         .into_iter()
                         .map(|selection| (selection.start..selection.end, "\n"));
-                    editor.edit(edits, window, cx);
+                    editor.edit(edits, cx);
 
                     let snapshot = editor.buffer().read(cx).snapshot(cx);
                     for selection in editor.selections.all::<usize>(cx) {
@@ -3628,7 +3615,7 @@ impl ContextEditor {
                 })
                 .collect::<Vec<_>>();
 
-            editor.remove_blocks(old_blocks, None, window, cx);
+            editor.remove_blocks(old_blocks, None, cx);
             let ids = editor.insert_blocks(new_blocks, None, window, cx);
             self.image_blocks = HashSet::from_iter(ids);
         });
@@ -3987,11 +3974,7 @@ impl ContextEditor {
             })
     }
 
-    fn render_inject_context_menu(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> impl IntoElement {
+    fn render_inject_context_menu(&self, cx: &mut ModelContext<Self>) -> impl IntoElement {
         slash_command_picker::SlashCommandSelector::new(
             self.slash_commands.clone(),
             cx.model().downgrade(),
@@ -4435,11 +4418,7 @@ impl Render for ContextEditor {
                         .border_t_1()
                         .border_color(cx.theme().colors().border_variant)
                         .bg(cx.theme().colors().editor_background)
-                        .child(
-                            h_flex()
-                                .gap_1()
-                                .child(self.render_inject_context_menu(window, cx)),
-                        )
+                        .child(h_flex().gap_1().child(self.render_inject_context_menu(cx)))
                         .child(
                             h_flex()
                                 .w_full()
@@ -4738,7 +4717,7 @@ impl FollowableItem for ContextEditor {
         })
     }
 
-    fn dedup(&self, existing: &Self, window: &Window, cx: &AppContext) -> Option<item::Dedup> {
+    fn dedup(&self, existing: &Self, _: &Window, cx: &AppContext) -> Option<item::Dedup> {
         if existing.context.read(cx).id() == self.context.read(cx).id() {
             Some(item::Dedup::KeepExisting)
         } else {
@@ -4783,11 +4762,7 @@ impl ContextEditorToolbarItem {
         }
     }
 
-    fn render_remaining_tokens(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<impl IntoElement> {
+    fn render_remaining_tokens(&self, cx: &mut ModelContext<Self>) -> Option<impl IntoElement> {
         let context = &self
             .active_context_editor
             .as_ref()?
@@ -4849,7 +4824,7 @@ impl Render for ContextEditorToolbarItem {
                     IconButton::new("regenerate-context", IconName::RefreshTitle)
                         .shape(ui::IconButtonShape::Square)
                         .tooltip(|window, cx| Tooltip::text("Regenerate Title", window, cx))
-                        .on_click(cx.listener(move |_, _, window, cx| {
+                        .on_click(cx.listener(move |_, _, _, cx| {
                             cx.emit(ContextEditorToolbarItemEvent::RegenerateSummary)
                         })),
                 ),
@@ -4921,7 +4896,7 @@ impl Render for ContextEditorToolbarItem {
                 )
                 .with_handle(self.language_model_selector_menu_handle.clone()),
             )
-            .children(self.render_remaining_tokens(window, cx));
+            .children(self.render_remaining_tokens(cx));
 
         h_flex()
             .px_0p5()
@@ -5070,7 +5045,7 @@ pub struct ConfigurationView {
 
 impl ConfigurationView {
     fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
-        let focus_handle = cx.focus_handle();
+        let focus_handle = window.focus_handle(cx);
 
         let registry_subscription = cx.subscribe_in(
             &LanguageModelRegistry::global(cx),
@@ -5123,7 +5098,6 @@ impl ConfigurationView {
     fn render_provider_view(
         &mut self,
         provider: &Arc<dyn LanguageModelProvider>,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Div {
         let provider_id = provider.id().0.clone();
@@ -5186,7 +5160,7 @@ impl Render for ConfigurationView {
         let providers = LanguageModelRegistry::read_global(cx).providers();
         let provider_views = providers
             .into_iter()
-            .map(|provider| self.render_provider_view(&provider, window, cx))
+            .map(|provider| self.render_provider_view(&provider, cx))
             .collect::<Vec<_>>();
 
         let mut element = v_flex()
@@ -5361,7 +5335,6 @@ fn render_pending_slash_command_gutter_decoration(
 fn render_docs_slash_command_trailer(
     row: MultiBufferRow,
     command: ParsedSlashCommand,
-    window: &mut Window,
     cx: &mut AppContext,
 ) -> AnyElement {
     if command.arguments.is_empty() {

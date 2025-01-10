@@ -475,7 +475,7 @@ impl TerminalInlineAssist {
                                                     assist_id.0,
                                                 );
 
-                                            workspace.show_toast(Toast::new(id, error), window, cx);
+                                            workspace.show_toast(Toast::new(id, error), cx);
                                         })
                                     }
                                 }
@@ -747,7 +747,7 @@ impl PromptEditor {
                 window,
                 cx,
             );
-            editor.set_placeholder_text(Self::placeholder_text(window, cx), window, cx);
+            editor.set_placeholder_text(Self::placeholder_text(window, cx), cx);
             editor
         });
 

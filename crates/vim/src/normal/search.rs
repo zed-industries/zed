@@ -444,7 +444,7 @@ impl Vim {
             anyhow::Ok(())
         }) {
             workspace.update(cx, |workspace, cx| {
-                result.notify_err(workspace, window, cx);
+                result.notify_err(workspace, cx);
             })
         }
         let vim = cx.model().clone();

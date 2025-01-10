@@ -156,7 +156,7 @@ impl Editor {
 
     pub(crate) fn hide_hovered_link(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.hovered_link_state.take();
-        self.clear_highlights::<HoveredLinkState>(window, cx);
+        self.clear_highlights::<HoveredLinkState>(cx);
     }
 
     pub(crate) fn handle_click_hovered_link(
@@ -297,7 +297,7 @@ pub fn update_inlay_link_and_hover_points(
             Bias::Right,
         );
         if let Some(hovered_hint) = editor
-            .visible_inlay_hints(window, cx)
+            .visible_inlay_hints(cx)
             .into_iter()
             .skip_while(|hint| {
                 hint.position
@@ -587,7 +587,7 @@ pub fn show_link_definition(
 
             this.update_in(&mut cx, |editor, window, cx| {
                 // Clear any existing highlights
-                editor.clear_highlights::<HoveredLinkState>(window, cx);
+                editor.clear_highlights::<HoveredLinkState>(cx);
                 let Some(hovered_link_state) = editor.hovered_link_state.as_mut() else {
                     editor.hide_hovered_link(window, cx);
                     return;
@@ -630,19 +630,9 @@ pub fn show_link_definition(
 
                         match highlight_range {
                             RangeInEditor::Text(text_range) => editor
-                                .highlight_text::<HoveredLinkState>(
-                                    vec![text_range],
-                                    style,
-                                    window,
-                                    cx,
-                                ),
+                                .highlight_text::<HoveredLinkState>(vec![text_range], style, cx),
                             RangeInEditor::Inlay(highlight) => editor
-                                .highlight_inlays::<HoveredLinkState>(
-                                    vec![highlight],
-                                    style,
-                                    window,
-                                    cx,
-                                ),
+                                .highlight_inlays::<HoveredLinkState>(vec![highlight], style, cx),
                         }
                     }
                 } else {

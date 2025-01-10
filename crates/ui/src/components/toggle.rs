@@ -55,7 +55,7 @@ impl Checkbox {
 }
 
 impl RenderOnce for Checkbox {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let group_id = format!("checkbox_group_{:?}", self.id);
 
         let icon = match self.toggle_state {
@@ -158,7 +158,7 @@ impl CheckboxWithLabel {
 }
 
 impl RenderOnce for CheckboxWithLabel {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         h_flex()
             .gap(DynamicSpacing::Base08.rems(cx))
             .child(Checkbox::new(self.id.clone(), self.checked).on_click({
@@ -312,7 +312,7 @@ impl SwitchWithLabel {
 }
 
 impl RenderOnce for SwitchWithLabel {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         h_flex()
             .gap(DynamicSpacing::Base08.rems(cx))
             .child(Switch::new(self.id.clone(), self.checked).on_click({

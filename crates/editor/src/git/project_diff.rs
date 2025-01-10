@@ -93,7 +93,7 @@ impl ProjectDiffEditor {
     ) -> Self {
         // TODO diff change subscriptions. For that, needed:
         // * `-20/+50` stats retrieval: some background process that reacts on file changes
-        let focus_handle = cx.focus_handle();
+        let focus_handle = window.focus_handle(cx);
         let changed_entries_subscription =
             cx.subscribe_in(&project, window, |project_diff_editor, _, e, window, cx| {
                 let mut worktree_to_rescan = None;

@@ -2121,7 +2121,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
     // editor_b updates the file, which gets sent to client_a, which updates git blame,
     // which gets back to client_b.
     editor_b.update_in(cx_b, |editor_b, window, cx| {
-        editor_b.edit([(Point::new(0, 3)..Point::new(0, 3), "FOO")], window, cx);
+        editor_b.edit([(Point::new(0, 3)..Point::new(0, 3), "FOO")], cx);
     });
 
     cx_a.executor().run_until_parked();
@@ -2148,7 +2148,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
 
     // Now editor_a also updates the file
     editor_a.update_in(cx_a, |editor_a, window, cx| {
-        editor_a.edit([(Point::new(1, 3)..Point::new(1, 3), "FOO")], window, cx);
+        editor_a.edit([(Point::new(1, 3)..Point::new(1, 3), "FOO")], cx);
     });
 
     cx_a.executor().run_until_parked();

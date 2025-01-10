@@ -20,14 +20,14 @@ impl NavigableEntry {
     /// Creates a new [NavigableEntry] for a given scroll handle.
     pub fn new(scroll_handle: &ScrollHandle, window: &mut Window, cx: &mut AppContext) -> Self {
         Self {
-            focus_handle: cx.focus_handle(),
+            focus_handle: window.focus_handle(cx),
             scroll_anchor: Some(ScrollAnchor::for_handle(scroll_handle.clone())),
         }
     }
     /// Create a new [NavigableEntry] that cannot be scrolled to.
     pub fn focusable(window: &mut Window, cx: &mut AppContext) -> Self {
         Self {
-            focus_handle: cx.focus_handle(),
+            focus_handle: window.focus_handle(cx),
             scroll_anchor: None,
         }
     }

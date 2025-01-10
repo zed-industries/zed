@@ -436,11 +436,7 @@ impl Editor {
             cx.spawn_in(window, |editor, mut cx| async move {
                 editor
                     .update_in(&mut cx, |editor, window, cx| {
-                        editor.refresh_inlay_hints(
-                            InlayHintRefreshReason::NewLinesShown,
-                            window,
-                            cx,
-                        )
+                        editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx)
                     })
                     .ok()
             })
@@ -515,7 +511,7 @@ impl Editor {
             cx,
         );
 
-        self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, window, cx);
+        self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
     }
 
     pub fn scroll_position(&self, cx: &mut ModelContext<Self>) -> gpui::Point<f32> {

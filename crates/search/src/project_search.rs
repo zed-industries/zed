@@ -712,7 +712,7 @@ impl ProjectSearchView {
 
         let query_editor = window.new_view(cx, |window, cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Search all files…", window, cx);
+            editor.set_placeholder_text("Search all files…", cx);
             editor.set_text(query_text, window, cx);
             editor
         });
@@ -737,7 +737,7 @@ impl ProjectSearchView {
         ));
         let replacement_editor = window.new_view(cx, |window, cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Replace in project…", window, cx);
+            editor.set_placeholder_text("Replace in project…", cx);
             if let Some(text) = replacement_text {
                 editor.set_text(text, window, cx);
             }
@@ -767,7 +767,7 @@ impl ProjectSearchView {
 
         let included_files_editor = window.new_view(cx, |window, cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Include: crates/**/*.toml", window, cx);
+            editor.set_placeholder_text("Include: crates/**/*.toml", cx);
 
             editor
         });
@@ -780,7 +780,7 @@ impl ProjectSearchView {
 
         let excluded_files_editor = window.new_view(cx, |window, cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Exclude: vendor/*, *.lock", window, cx);
+            editor.set_placeholder_text("Exclude: vendor/*, *.lock", cx);
 
             editor
         });
@@ -791,7 +791,7 @@ impl ProjectSearchView {
             |_, _, event: &EditorEvent, window, cx| cx.emit(ViewEvent::EditorEvent(event.clone())),
         ));
 
-        let focus_handle = cx.focus_handle();
+        let focus_handle = window.focus_handle(cx);
         subscriptions.push(cx.on_focus_in(&focus_handle, window, |this, window, cx| {
             if this.focus_handle.is_focused(window) {
                 if this.has_matches() {
@@ -1220,7 +1220,6 @@ impl ProjectSearchView {
                 editor.highlight_background::<Self>(
                     &match_ranges,
                     |theme| theme.search_match_background,
-                    window,
                     cx,
                 );
             });
@@ -3712,7 +3711,7 @@ pub mod tests {
                     assert_eq!(this.items_len(), 2);
                 });
                 second_pane.update(cx, |this, cx| {
-                    assert!(!cx.focus_handle().contains_focused(window, cx));
+                    assert!(!window.focus_handle(cx).contains_focused(window, cx));
                     assert_eq!(this.items_len(), 2);
                 });
             })

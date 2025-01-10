@@ -22,9 +22,9 @@ impl FocusStory {
         ]);
 
         window.new_view(cx, move |window, cx| {
-            let parent_focus = cx.focus_handle();
-            let child_1_focus = cx.focus_handle();
-            let child_2_focus = cx.focus_handle();
+            let parent_focus = window.focus_handle(cx);
+            let child_1_focus = window.focus_handle(cx);
+            let child_2_focus = window.focus_handle(cx);
             let _focus_subscriptions = vec![
                 cx.on_focus(&parent_focus, window, |_, _, _| {
                     println!("Parent focused");

@@ -30,7 +30,7 @@ impl Vim {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window, cx);
             editor.transact(window, cx, |editor, window, cx| {
-                editor.set_clip_at_line_ends(false, window, cx);
+                editor.set_clip_at_line_ends(false, cx);
 
                 let selected_register = vim.selected_register.take();
 
@@ -153,7 +153,7 @@ impl Vim {
                     original_indent_columns.extend(original_indent_column);
                 }
 
-                editor.edit_with_block_indent(edits, original_indent_columns, window, cx);
+                editor.edit_with_block_indent(edits, original_indent_columns, cx);
 
                 // in line_mode vim will insert the new text on the next (or previous if before) line
                 // and put the cursor on the first non-blank character of the first inserted line (or at the end if the first line is blank).

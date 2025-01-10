@@ -365,8 +365,8 @@ impl Vim {
     }
 
     fn deactivate(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Editor>) {
-        editor.set_cursor_shape(CursorShape::Bar, window, cx);
-        editor.set_clip_at_line_ends(false, window, cx);
+        editor.set_cursor_shape(CursorShape::Bar, cx);
+        editor.set_clip_at_line_ends(false, cx);
         editor.set_collapse_matches(false);
         editor.set_input_enabled(true);
         editor.set_autoindent(true);
@@ -795,7 +795,7 @@ impl Vim {
                 self.switch_mode(Mode::Visual, true, window, cx);
             } else {
                 self.update_editor(window, cx, |_, editor, window, cx| {
-                    editor.set_clip_at_line_ends(false, window, cx);
+                    editor.set_clip_at_line_ends(false, cx);
                     editor.change_selections(None, window, cx, |s| {
                         s.move_with(|_, selection| {
                             selection.collapse_to(selection.start, selection.goal)
@@ -837,13 +837,13 @@ impl Vim {
         self.store_visual_marks(window, cx);
         self.clear_operator(window, cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
-            editor.set_cursor_shape(language::CursorShape::Hollow, window, cx);
+            editor.set_cursor_shape(language::CursorShape::Hollow, cx);
         });
     }
 
     fn cursor_shape_changed(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
-            editor.set_cursor_shape(vim.cursor_shape(), window, cx);
+            editor.set_cursor_shape(vim.cursor_shape(), cx);
         });
     }
 
@@ -1267,8 +1267,8 @@ impl Vim {
 
     fn sync_vim_settings(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
-            editor.set_cursor_shape(vim.cursor_shape(), window, cx);
-            editor.set_clip_at_line_ends(vim.clip_at_line_ends(), window, cx);
+            editor.set_cursor_shape(vim.cursor_shape(), cx);
+            editor.set_clip_at_line_ends(vim.clip_at_line_ends(), cx);
             editor.set_collapse_matches(true);
             editor.set_input_enabled(vim.editor_input_enabled());
             editor.set_autoindent(vim.should_autoindent());

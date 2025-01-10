@@ -374,7 +374,7 @@ impl Editor {
                         window,
                         cx,
                     );
-                    editor.remove_blocks(blocks_to_remove, None, window, cx);
+                    editor.remove_blocks(blocks_to_remove, None, cx);
                     for hunk in hunks_to_expand {
                         editor.expand_diff_hunk(None, &hunk, window, cx);
                     }
@@ -954,7 +954,7 @@ impl Editor {
         if to_remove.is_empty() {
             false
         } else {
-            self.remove_blocks(to_remove, None, window, cx);
+            self.remove_blocks(to_remove, None, cx);
             true
         }
     }
@@ -1113,7 +1113,7 @@ impl Editor {
                         window,
                         cx,
                     );
-                    editor.remove_blocks(blocks_to_remove, None, window, cx);
+                    editor.remove_blocks(blocks_to_remove, None, cx);
 
                     if let Some(diff_base_buffer) = &diff_base_buffer {
                         for hunk in hunks_to_reexpand {

@@ -197,7 +197,7 @@ pub struct Headline {
 }
 
 impl RenderOnce for Headline {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
 
         div()

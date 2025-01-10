@@ -33,7 +33,6 @@ pub fn initiate_sign_in(window: &mut Window, cx: &mut AppContext) {
                         NotificationId::unique::<CopilotStartingToast>(),
                         "Copilot is starting...",
                     ),
-                    window,
                     cx,
                 );
                 workspace.weak_handle()
@@ -41,39 +40,32 @@ pub fn initiate_sign_in(window: &mut Window, cx: &mut AppContext) {
                 return;
             };
 
-            window
-                .spawn(cx, |mut cx| async move {
-                    task.await;
-                    if let Some(copilot) =
-                        cx.update(|_window, cx| Copilot::global(cx)).ok().flatten()
-                    {
-                        workspace
-                            .update_in(&mut cx, |workspace, window, cx| {
-                                match copilot.read(cx).status() {
-                                    Status::Authorized => workspace.show_toast(
-                                        Toast::new(
-                                            NotificationId::unique::<CopilotStartingToast>(),
-                                            "Copilot has started!",
-                                        ),
-                                        window,
-                                        cx,
-                                    ),
-                                    _ => {
-                                        workspace.dismiss_toast(
-                                            &NotificationId::unique::<CopilotStartingToast>(),
-                                            window,
-                                            cx,
-                                        );
-                                        copilot
-                                            .update(cx, |copilot, cx| copilot.sign_in(cx))
-                                            .detach_and_log_err(cx);
-                                    }
-                                }
-                            })
-                            .log_err();
-                    }
-                })
-                .detach();
+            cx.spawn(|mut cx| async move {
+                task.await;
+                if let Some(copilot) = cx.update(|cx| Copilot::global(cx)).ok().flatten() {
+                    workspace
+                        .update(&mut cx, |workspace, cx| match copilot.read(cx).status() {
+                            Status::Authorized => workspace.show_toast(
+                                Toast::new(
+                                    NotificationId::unique::<CopilotStartingToast>(),
+                                    "Copilot has started!",
+                                ),
+                                cx,
+                            ),
+                            _ => {
+                                workspace.dismiss_toast(
+                                    &NotificationId::unique::<CopilotStartingToast>(),
+                                    cx,
+                                );
+                                copilot
+                                    .update(cx, |copilot, cx| copilot.sign_in(cx))
+                                    .detach_and_log_err(cx);
+                            }
+                        })
+                        .log_err();
+                }
+            })
+            .detach();
         }
         _ => {
             copilot.update(cx, |this, cx| this.sign_in(cx)).detach();
@@ -110,12 +102,12 @@ impl CopilotCodeVerification {
         Self {
             status,
             connect_clicked: false,
-            focus_handle: cx.focus_handle(),
-            _subscription: cx.observe_in(copilot, window, |this, copilot, window, cx| {
+            focus_handle: window.focus_handle(cx),
+            _subscription: cx.observe(copilot, |this, copilot, cx| {
                 let status = copilot.read(cx).status();
                 match status {
                     Status::Authorized | Status::Unauthorized | Status::SigningIn { .. } => {
-                        this.set_status(status, window, cx)
+                        this.set_status(status, cx)
                     }
                     _ => cx.emit(DismissEvent),
                 }
@@ -123,7 +115,7 @@ impl CopilotCodeVerification {
         }
     }
 
-    pub fn set_status(&mut self, status: Status, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn set_status(&mut self, status: Status, cx: &mut ModelContext<Self>) {
         self.status = status;
         cx.notify();
     }
@@ -203,7 +195,7 @@ impl CopilotCodeVerification {
                     .on_click(cx.listener(|_, _, window, cx| cx.emit(DismissEvent))),
             )
     }
-    fn render_enabled_modal(window: &mut Window, cx: &mut ModelContext<Self>) -> impl Element {
+    fn render_enabled_modal(cx: &mut ModelContext<Self>) -> impl Element {
         v_flex()
             .gap_2()
             .child(Headline::new("Copilot Enabled!").size(HeadlineSize::Large))
@@ -213,11 +205,11 @@ impl CopilotCodeVerification {
             .child(
                 Button::new("copilot-enabled-done-button", "Done")
                     .full_width()
-                    .on_click(cx.listener(|_, _, window, cx| cx.emit(DismissEvent))),
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
             )
     }
 
-    fn render_unauthorized_modal(window: &mut Window, cx: &mut ModelContext<Self>) -> impl Element {
+    fn render_unauthorized_modal(cx: &mut ModelContext<Self>) -> impl Element {
         v_flex()
             .child(Headline::new("You must have an active GitHub Copilot subscription.").size(HeadlineSize::Large))
 
@@ -227,12 +219,12 @@ impl CopilotCodeVerification {
             .child(
                 Button::new("copilot-subscribe-button", "Subscribe on GitHub")
                     .full_width()
-                    .on_click(|_, window, cx| cx.open_url(COPILOT_SIGN_UP_URL)),
+                    .on_click(|_, _, cx| cx.open_url(COPILOT_SIGN_UP_URL)),
             )
             .child(
                 Button::new("copilot-subscribe-cancel-button", "Cancel")
                     .full_width()
-                    .on_click(cx.listener(|_, _, window, cx| cx.emit(DismissEvent))),
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
             )
     }
 
@@ -252,11 +244,11 @@ impl Render for CopilotCodeVerification {
                 .into_any_element(),
             Status::Unauthorized => {
                 self.connect_clicked = false;
-                Self::render_unauthorized_modal(window, cx).into_any_element()
+                Self::render_unauthorized_modal(cx).into_any_element()
             }
             Status::Authorized => {
                 self.connect_clicked = false;
-                Self::render_enabled_modal(window, cx).into_any_element()
+                Self::render_enabled_modal(cx).into_any_element()
             }
             Status::Disabled => {
                 self.connect_clicked = false;

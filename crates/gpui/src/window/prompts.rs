@@ -85,7 +85,7 @@ pub fn fallback_prompt_renderer(
             message: message.to_string(),
             detail: detail.map(ToString::to_string),
             actions: actions.iter().map(ToString::to_string).collect(),
-            focus: cx.focus_handle(),
+            focus: window.focus_handle(cx),
         }
     });
 

@@ -23,8 +23,8 @@ use feature_flags::FeatureFlagAppExt;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem, Model,
-    ModelContext, PathPromptOptions, PromptLevel, ReadGlobal, Task, TitlebarOptions, VisualContext,
-    Window, WindowKind, WindowOptions,
+    ModelContext, PathPromptOptions, PromptLevel, ReadGlobal, Task, TitlebarOptions, Window,
+    WindowKind, WindowOptions,
 };
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
@@ -297,9 +297,9 @@ fn show_software_emulation_warning_if_needed(
             &["Skip", "Troubleshoot and Quit"],
             cx,
         );
-        cx.spawn_in(window, |_, mut cx| async move {
+        cx.spawn(|_, mut cx| async move {
             if prompt.await == Ok(1) {
-                cx.update(|window, cx| {
+                cx.update(|cx| {
                     cx.open_url("https://zed.dev/docs/linux#zed-fails-to-open-windows");
                     cx.quit();
                 })
@@ -509,7 +509,6 @@ fn register_actions(
                                 ReleaseChannel::global(cx).display_name()
                             ),
                         ),
-                        window,
                         cx,
                     )
                 })?;
@@ -832,7 +831,6 @@ fn install_cli(
                         ReleaseChannel::global(cx).display_name()
                     ),
                 ),
-                window,
                 cx,
             )
         })?;
@@ -937,10 +935,9 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut ModelC
 
                             workspace.show_notification(
                                 NotificationId::unique::<OpenLogError>(),
-                                window,
                                 cx,
-                                |window, cx| {
-                                    window.new_view(cx, |_, _| {
+                                |cx| {
+                                    cx.new_model(|_| {
                                         MessageNotification::new(format!(
                                             "Unable to access/open log file at path {:?}",
                                             paths::log_file().as_path()
@@ -1194,16 +1191,11 @@ fn open_local_file(
     } else {
         struct NoOpenFolders;
 
-        workspace.show_notification(
-            NotificationId::unique::<NoOpenFolders>(),
-            window,
-            cx,
-            |window, cx| {
-                window.new_view(cx, |_, _| {
-                    MessageNotification::new("This project has no folders open.")
-                })
-            },
-        )
+        workspace.show_notification(NotificationId::unique::<NoOpenFolders>(), cx, |cx| {
+            window.new_view(cx, |_, _| {
+                MessageNotification::new("This project has no folders open.")
+            })
+        })
     }
 }
 
@@ -1400,7 +1392,7 @@ mod tests {
 
         let workspace = cx.windows()[0].downcast::<Workspace>().unwrap();
         workspace
-            .update(cx, |workspace, window, cx| {
+            .update(cx, |workspace, _, cx| {
                 assert!(workspace.active_item_as::<Editor>(cx).is_some())
             })
             .unwrap();
@@ -1626,7 +1618,7 @@ mod tests {
         assert_eq!(cx.update(|cx| cx.windows().len()), 2);
         let window2 = cx.update(|cx| cx.active_window().unwrap());
         assert!(window1 != window2);
-        cx.update_window(window1, |_, window, cx| window.activate_window())
+        cx.update_window(window1, |_, window, _| window.activate_window())
             .unwrap();
 
         cx.update(|cx| {
@@ -1758,7 +1750,7 @@ mod tests {
         executor.run_until_parked();
 
         window
-            .update(cx, |workspace, window, cx| {
+            .update(cx, |workspace, _, cx| {
                 let editor = workspace
                     .active_item(cx)
                     .unwrap()
@@ -1883,7 +1875,7 @@ mod tests {
         assert!(window_is_edited(window, cx));
 
         window
-            .update(cx, |workspace, window, cx| {
+            .update(cx, |workspace, _, cx| {
                 let editor = workspace
                     .active_item(cx)
                     .unwrap()
@@ -1921,7 +1913,7 @@ mod tests {
             .unwrap();
 
         let editor = workspace
-            .update(cx, |workspace, window, cx| {
+            .update(cx, |workspace, _, cx| {
                 let editor = workspace
                     .active_item(cx)
                     .unwrap()
@@ -1946,7 +1938,7 @@ mod tests {
         cx.simulate_new_path_selection(|_| Some(PathBuf::from("/root/the-new-name")));
         save_task.await.unwrap();
         workspace
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 editor.update(cx, |editor, cx| {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(editor.title(cx), "the-new-name");
@@ -2505,7 +2497,7 @@ mod tests {
         cx.simulate_prompt_answer(0);
         save_task.await.unwrap();
         window
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 editor.update(cx, |editor, cx| {
                     assert!(!editor.is_dirty(cx));
                     assert!(!editor.has_conflict(cx));
@@ -2574,7 +2566,7 @@ mod tests {
         // on the path.
         save_task.await.unwrap();
         window
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 editor.update(cx, |editor, cx| {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(editor.title(cx), "the-new-name.rs");
@@ -2605,7 +2597,7 @@ mod tests {
 
         assert!(!cx.did_prompt_for_new_path());
         window
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 editor.update(cx, |editor, cx| {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(editor.title(cx), "the-new-name.rs")
@@ -2636,7 +2628,7 @@ mod tests {
             .await
             .unwrap();
         let editor2 = window
-            .update(cx, |workspace, window, cx| {
+            .update(cx, |workspace, _, cx| {
                 workspace
                     .active_item(cx)
                     .unwrap()
@@ -2699,7 +2691,7 @@ mod tests {
         save_task.await.unwrap();
         // The buffer is not dirty anymore and the language is assigned based on the path.
         window
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 editor.update(cx, |editor, cx| {
                     assert!(!editor.is_dirty(cx));
                     assert_eq!(
@@ -2795,7 +2787,7 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         window
-            .update(cx, |workspace, window, cx| {
+            .update(cx, |workspace, _, cx| {
                 assert_eq!(workspace.panes().len(), 1);
                 assert!(workspace.active_item(cx).is_none());
             })

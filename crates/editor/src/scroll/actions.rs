@@ -25,7 +25,7 @@ impl Editor {
             cx.propagate();
             return;
         }
-        self.request_autoscroll(Autoscroll::Next, window, cx);
+        self.request_autoscroll(Autoscroll::Next, cx);
     }
 
     pub fn scroll(

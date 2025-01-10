@@ -23,7 +23,7 @@ impl Head {
     ) -> Self {
         let editor = window.new_view(cx, |window, cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text(placeholder_text, window, cx);
+            editor.set_placeholder_text(placeholder_text, cx);
             editor
         });
         cx.subscribe_in(&editor, window, edit_handler).detach();
@@ -50,7 +50,7 @@ pub(crate) struct EmptyHead {
 impl EmptyHead {
     fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
         Self {
-            focus_handle: cx.focus_handle(),
+            focus_handle: window.focus_handle(cx),
         }
     }
 }

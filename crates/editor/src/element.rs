@@ -1692,7 +1692,7 @@ impl EditorElement {
     ) -> Option<Vec<AnyElement>> {
         if !self
             .editor
-            .update(cx, |editor, cx| editor.render_git_blame_gutter(window, cx))
+            .update(cx, |editor, cx| editor.render_git_blame_gutter(cx))
         {
             return None;
         }
@@ -6655,7 +6655,6 @@ impl Element for EditorElement {
                                 scroll_width,
                                 em_width,
                                 &line_layouts,
-                                window,
                                 cx,
                             )
                         } else {
@@ -6746,7 +6745,6 @@ impl Element for EditorElement {
                                 scroll_width,
                                 em_width,
                                 &line_layouts,
-                                window,
                                 cx,
                             )
                         } else {
@@ -8162,7 +8160,7 @@ mod tests {
         let style = cx.update(|window, cx| editor.read(cx).style().unwrap().clone());
         window
             .update(cx, |editor, window, cx| {
-                editor.set_placeholder_text("hello", window, cx);
+                editor.set_placeholder_text("hello", cx);
                 editor.insert_blocks(
                     [BlockProperties {
                         style: BlockStyle::Fixed,

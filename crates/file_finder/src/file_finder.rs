@@ -683,7 +683,7 @@ impl FileFinderDelegate {
             separate_history,
             first_update: true,
             popover_menu_handle: PopoverMenuHandle::default(),
-            focus_handle: cx.focus_handle(),
+            focus_handle: window.focus_handle(cx),
         }
     }
 

@@ -66,7 +66,7 @@ impl RateCompletionModal {
         Self {
             zeta,
             selected_index: 0,
-            focus_handle: cx.focus_handle(),
+            focus_handle: window.focus_handle(cx),
             active_completion: None,
             _subscription: subscription,
         }
@@ -328,7 +328,7 @@ impl RateCompletionModal {
                 editor.set_show_wrap_guides(false, window, cx);
                 editor.set_show_indent_guides(false, window, cx);
                 editor.set_show_inline_completions(Some(false), window, cx);
-                editor.set_placeholder_text("Add your feedback…", window, cx);
+                editor.set_placeholder_text("Add your feedback…", cx);
                 if focus {
                     cx.focus_self(window);
                 }

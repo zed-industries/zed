@@ -33,7 +33,7 @@ impl Vim {
     ) {
         self.store_visual_marks(window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
-            editor.set_clip_at_line_ends(false, window, cx);
+            editor.set_clip_at_line_ends(false, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 let text_layout_details = editor.text_layout_details(window, cx);
                 editor.change_selections(None, window, cx, |s| {
@@ -78,7 +78,7 @@ impl Vim {
                 vim.copy_selections_content(editor, line_mode, window, cx);
                 let selections = editor.selections.all::<Point>(cx).into_iter();
                 let edits = selections.map(|selection| (selection.start..selection.end, ""));
-                editor.edit(edits, window, cx);
+                editor.edit(edits, cx);
             });
         });
         self.switch_mode(Mode::Insert, true, window, cx);

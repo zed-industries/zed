@@ -79,7 +79,7 @@ impl KeyBinding {
 }
 
 impl RenderOnce for KeyBinding {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         h_flex()
             .debug_selector(|| {
                 format!(
@@ -155,7 +155,7 @@ pub struct Key {
 }
 
 impl RenderOnce for Key {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let single_char = self.key.len() == 1;
 
         div()

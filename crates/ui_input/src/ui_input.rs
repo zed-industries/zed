@@ -65,7 +65,7 @@ impl TextField {
 
         let editor = window.new_view(cx, |window, cx| {
             let mut input = Editor::single_line(window, cx);
-            input.set_placeholder_text(placeholder_text.clone(), window, cx);
+            input.set_placeholder_text(placeholder_text.clone(), cx);
             input
         });
 

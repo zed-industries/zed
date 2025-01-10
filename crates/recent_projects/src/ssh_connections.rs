@@ -196,7 +196,7 @@ impl SshPrompt {
                 editor.set_masked(true, window, cx);
             }
             editor.set_text_style_refinement(refinement);
-            editor.set_cursor_shape(CursorShape::Block, window, cx);
+            editor.set_cursor_shape(CursorShape::Block, cx);
         });
         let markdown_style = MarkdownStyle {
             base_text_style: text_style,
@@ -320,7 +320,7 @@ pub(crate) struct SshConnectionHeader {
 }
 
 impl RenderOnce for SshConnectionHeader {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let theme = cx.theme();
 
         let mut header_color = theme.colors().text;

@@ -73,7 +73,7 @@ impl SettingsPage {
         cx: &mut ModelContext<Workspace>,
     ) -> Model<Self> {
         window.new_view(cx, |window, cx| Self {
-            focus_handle: cx.focus_handle(),
+            focus_handle: window.focus_handle(cx),
         })
     }
 }

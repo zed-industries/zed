@@ -334,7 +334,6 @@ impl ChannelView {
                         NotificationId::unique::<CopyLinkForPositionToast>(),
                         "Link copied to clipboard",
                     ),
-                    window,
                     cx,
                 );
             })

@@ -119,6 +119,8 @@ thread_local! {
     pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(32 * 1024 * 1024));
 }
 
+pub(crate) type FocusMap = RwLock<SlotMap<FocusId, (AtomicUsize, WindowId)>>;
+
 impl FocusId {
     /// Obtains whether the element associated with this handle is currently focused.
     pub fn is_focused(&self, window: &Window) -> bool {
@@ -152,7 +154,8 @@ impl FocusId {
 /// A handle which can be used to track and manipulate the focused element in a window.
 pub struct FocusHandle {
     pub(crate) id: FocusId,
-    handles: Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
+    pub(crate) window: WindowId,
+    handles: Arc<FocusMap>,
 }
 
 impl std::fmt::Debug for FocusHandle {
@@ -162,26 +165,25 @@ impl std::fmt::Debug for FocusHandle {
 }
 
 impl FocusHandle {
-    pub(crate) fn new(handles: &Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>) -> Self {
-        let id = handles.write().insert(AtomicUsize::new(1));
+    pub(crate) fn new(window: WindowId, handles: &Arc<FocusMap>) -> Self {
+        let id = handles.write().insert((AtomicUsize::new(1), window));
         Self {
             id,
+            window,
             handles: handles.clone(),
         }
     }
 
-    pub(crate) fn for_id(
-        id: FocusId,
-        handles: &Arc<RwLock<SlotMap<FocusId, AtomicUsize>>>,
-    ) -> Option<Self> {
+    pub(crate) fn for_id(id: FocusId, handles: &Arc<FocusMap>) -> Option<Self> {
         let lock = handles.read();
-        let ref_count = lock.get(id)?;
+        let (ref_count, window) = lock.get(id)?;
         if ref_count.load(SeqCst) == 0 {
             None
         } else {
             ref_count.fetch_add(1, SeqCst);
             Some(Self {
                 id,
+                window: *window,
                 handles: handles.clone(),
             })
         }
@@ -255,6 +257,7 @@ impl Drop for FocusHandle {
             .read()
             .get(self.id)
             .unwrap()
+            .0
             .fetch_sub(1, SeqCst);
     }
 }
@@ -263,7 +266,7 @@ impl Drop for FocusHandle {
 #[derive(Clone, Debug)]
 pub struct WeakFocusHandle {
     pub(crate) id: FocusId,
-    pub(crate) handles: Weak<RwLock<SlotMap<FocusId, AtomicUsize>>>,
+    pub(crate) handles: Weak<FocusMap>,
 }
 
 impl WeakFocusHandle {
@@ -3830,6 +3833,12 @@ impl Window {
         self.next_frame
             .dispatch_tree
             .on_action(action_type, Rc::new(listener));
+    }
+
+    /// Obtain a new [`FocusHandle`], which allows you to track and manipulate the keyboard focus
+    /// for elements rendered within this window.
+    pub fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        FocusHandle::new(self.handle.id, &cx.focus_handles)
     }
 
     /// Read information about the GPU backing this window.

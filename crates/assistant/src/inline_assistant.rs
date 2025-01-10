@@ -528,7 +528,7 @@ impl InlineAssistant {
                 let scroll_top = editor.scroll_position(cx).y;
                 let scroll_bottom = scroll_top + editor.visible_line_count().unwrap_or(0.);
                 let prompt_row = editor
-                    .row_for_block(decorations.prompt_block_id, window, cx)
+                    .row_for_block(decorations.prompt_block_id, cx)
                     .unwrap()
                     .0 as f32;
 
@@ -579,7 +579,7 @@ impl InlineAssistant {
                 self.start_assist(assist_id, window, cx);
             }
             PromptEditorEvent::StopRequested => {
-                self.stop_assist(assist_id, window, cx);
+                self.stop_assist(assist_id, cx);
             }
             PromptEditorEvent::ConfirmRequested => {
                 self.finish_assist(assist_id, false, window, cx);
@@ -721,7 +721,7 @@ impl InlineAssistant {
         editor.update(cx, |editor, cx| {
             let scroll_position = editor.scroll_position(cx);
             let target_scroll_top = editor
-                .row_for_block(decorations.prompt_block_id, window, cx)
+                .row_for_block(decorations.prompt_block_id, cx)
                 .unwrap()
                 .0 as f32
                 - scroll_lock.distance_from_top;
@@ -772,7 +772,7 @@ impl InlineAssistant {
                         let distance_from_top = editor.update(cx, |editor, cx| {
                             let scroll_top = editor.scroll_position(cx).y;
                             let prompt_row = editor
-                                .row_for_block(decorations.prompt_block_id, window, cx)
+                                .row_for_block(decorations.prompt_block_id, cx)
                                 .unwrap()
                                 .0 as f32;
                             prompt_row - scroll_top
@@ -909,7 +909,7 @@ impl InlineAssistant {
             let mut to_remove = decorations.removed_line_block_ids;
             to_remove.insert(decorations.prompt_block_id);
             to_remove.insert(decorations.end_block_id);
-            editor.remove_blocks(to_remove, None, window, cx);
+            editor.remove_blocks(to_remove, None, cx);
         });
 
         if decorations
@@ -1015,11 +1015,11 @@ impl InlineAssistant {
             let mut scroll_target_bottom;
             if let Some(decorations) = assist.decorations.as_ref() {
                 scroll_target_top = editor
-                    .row_for_block(decorations.prompt_block_id, window, cx)
+                    .row_for_block(decorations.prompt_block_id, cx)
                     .unwrap()
                     .0 as f32;
                 scroll_target_bottom = editor
-                    .row_for_block(decorations.end_block_id, window, cx)
+                    .row_for_block(decorations.end_block_id, cx)
                     .unwrap()
                     .0 as f32;
             } else {
@@ -1114,12 +1114,7 @@ impl InlineAssistant {
             .log_err();
     }
 
-    pub fn stop_assist(
-        &mut self,
-        assist_id: InlineAssistId,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) {
+    pub fn stop_assist(&mut self, assist_id: InlineAssistId, cx: &mut AppContext) {
         let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
             assist
         } else {
@@ -1203,7 +1198,7 @@ impl InlineAssistant {
             }
 
             if foreground_ranges.is_empty() {
-                editor.clear_highlights::<InlineAssist>(window, cx);
+                editor.clear_highlights::<InlineAssist>(cx);
             } else {
                 editor.highlight_text::<InlineAssist>(
                     foreground_ranges,
@@ -1211,7 +1206,6 @@ impl InlineAssistant {
                         fade_out: Some(0.6),
                         ..Default::default()
                     },
-                    window,
                     cx,
                 );
             }
@@ -1250,7 +1244,7 @@ impl InlineAssistant {
 
         editor.update(cx, |editor, cx| {
             let old_blocks = mem::take(&mut decorations.removed_line_block_ids);
-            editor.remove_blocks(old_blocks, None, window, cx);
+            editor.remove_blocks(old_blocks, None, cx);
 
             let mut new_blocks = Vec::new();
             for (new_row, old_row_range) in deleted_row_ranges {
@@ -1746,11 +1740,7 @@ impl PromptEditor {
             // always show the cursor (even when it isn't focused) because
             // typing in one will make what you typed appear in all of them.
             editor.set_show_cursor_when_unfocused(true, window, cx);
-            editor.set_placeholder_text(
-                Self::placeholder_text(codegen.read(cx), window, cx),
-                window,
-                cx,
-            );
+            editor.set_placeholder_text(Self::placeholder_text(codegen.read(cx), window, cx), cx);
             editor
         });
 
@@ -1839,10 +1829,9 @@ impl PromptEditor {
             );
             editor.set_placeholder_text(
                 Self::placeholder_text(self.codegen.read(cx), window, cx),
-                window,
                 cx,
             );
-            editor.set_placeholder_text("Add a prompt…", window, cx);
+            editor.set_placeholder_text("Add a prompt…", cx);
             editor.set_text(prompt, window, cx);
             if focus {
                 editor.focus(window, cx);
@@ -1852,7 +1841,7 @@ impl PromptEditor {
         self.subscribe_to_editor(window, cx);
     }
 
-    fn placeholder_text(codegen: &Codegen, window: &Window, cx: &AppContext) -> String {
+    fn placeholder_text(codegen: &Codegen, window: &Window, _cx: &AppContext) -> String {
         let context_keybinding = text_for_action(&crate::ToggleFocus, window)
             .map(|keybinding| format!(" • {keybinding} for context"))
             .unwrap_or_default();
@@ -2506,7 +2495,7 @@ impl InlineAssist {
                                                     assist_id.0,
                                                 );
 
-                                            workspace.show_toast(Toast::new(id, error), window, cx);
+                                            workspace.show_toast(Toast::new(id, error), cx);
                                         })
                                     }
                                 }

@@ -438,7 +438,7 @@ impl TerminalInlineAssist {
                                                     assist_id.0,
                                                 );
 
-                                            workspace.show_toast(Toast::new(id, error), window, cx);
+                                            workspace.show_toast(Toast::new(id, error), cx);
                                         })
                                     }
                                 }

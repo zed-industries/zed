@@ -71,11 +71,7 @@ impl GoToLine {
 
         let line_editor = window.new_view(cx, |window, cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text(
-                format!("{line}{FILE_ROW_COLUMN_DELIMITER}{column}"),
-                window,
-                cx,
-            );
+            editor.set_placeholder_text(format!("{line}{FILE_ROW_COLUMN_DELIMITER}{column}"), cx);
             editor
         });
         let line_editor_change = cx.subscribe_in(&line_editor, window, Self::on_line_editor_event);
@@ -140,7 +136,7 @@ impl GoToLine {
                     window,
                     cx,
                 );
-                active_editor.request_autoscroll(Autoscroll::center(), window, cx);
+                active_editor.request_autoscroll(Autoscroll::center(), cx);
             });
             cx.notify();
         }

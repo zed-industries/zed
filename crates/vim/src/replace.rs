@@ -36,7 +36,7 @@ impl Vim {
     ) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                editor.set_clip_at_line_ends(false, window, cx);
+                editor.set_clip_at_line_ends(false, cx);
                 let map = editor.snapshot(window, cx);
                 let display_selections = editor.selections.all::<Point>(cx);
 
@@ -63,12 +63,12 @@ impl Vim {
                     })
                     .collect::<Vec<_>>();
 
-                editor.edit_with_block_indent(edits.clone(), Vec::new(), window, cx);
+                editor.edit_with_block_indent(edits.clone(), Vec::new(), cx);
 
                 editor.change_selections(None, window, cx, |s| {
                     s.select_anchor_ranges(edits.iter().map(|(range, _)| range.end..range.end));
                 });
-                editor.set_clip_at_line_ends(true, window, cx);
+                editor.set_clip_at_line_ends(true, cx);
             });
         });
     }
@@ -81,7 +81,7 @@ impl Vim {
     ) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                editor.set_clip_at_line_ends(false, window, cx);
+                editor.set_clip_at_line_ends(false, cx);
                 let map = editor.snapshot(window, cx);
                 let selections = editor.selections.all::<Point>(cx);
                 let mut new_selections = vec![];
@@ -115,12 +115,12 @@ impl Vim {
                     })
                     .collect::<Vec<_>>();
 
-                editor.edit(edits, window, cx);
+                editor.edit(edits, cx);
 
                 editor.change_selections(None, window, cx, |s| {
                     s.select_ranges(new_selections);
                 });
-                editor.set_clip_at_line_ends(true, window, cx);
+                editor.set_clip_at_line_ends(true, cx);
             });
         });
     }

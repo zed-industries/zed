@@ -225,7 +225,6 @@ impl Editor {
         scroll_width: Pixels,
         max_glyph_width: Pixels,
         layouts: &[LineWithInvisibles],
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> bool {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
@@ -283,12 +282,7 @@ impl Editor {
         }
     }
 
-    pub fn request_autoscroll(
-        &mut self,
-        autoscroll: Autoscroll,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn request_autoscroll(&mut self, autoscroll: Autoscroll, cx: &mut ModelContext<Self>) {
         self.scroll_manager.autoscroll_request = Some((autoscroll, true));
         cx.notify();
     }
@@ -296,7 +290,6 @@ impl Editor {
     pub(crate) fn request_autoscroll_remotely(
         &mut self,
         autoscroll: Autoscroll,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.scroll_manager.autoscroll_request = Some((autoscroll, false));

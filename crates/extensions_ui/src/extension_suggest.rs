@@ -8,6 +8,7 @@ use extension_host::ExtensionStore;
 use gpui::{Model, VisualContext};
 use language::Buffer;
 use ui::{ModelContext, SharedString, Window};
+use workspace::notifications::simple_message_notification::MessageNotification;
 use workspace::{
     notifications::{simple_message_notification, NotificationId},
     Workspace,
@@ -173,32 +174,29 @@ pub(crate) fn suggest(
             SharedString::from(extension_id.clone()),
         );
 
-        workspace.show_notification(notification_id, window, cx, |window, cx| {
-            window.new_view(cx, move |_window, _cx| {
-                simple_message_notification::MessageNotification::new(format!(
-                    "Do you want to install the recommended '{}' extension for '{}' files?",
-                    extension_id, file_name_or_extension
-                ))
-                .with_click_message("Yes")
-                .on_click({
-                    let extension_id = extension_id.clone();
-                    move |window, cx| {
-                        let extension_id = extension_id.clone();
-                        let extension_store = ExtensionStore::global(cx);
-                        extension_store.update(cx, move |store, cx| {
-                            store.install_latest_extension(extension_id, cx);
-                        });
-                    }
-                })
-                .with_secondary_click_message("No")
-                .on_secondary_click(move |window, cx| {
-                    let key = language_extension_key(&extension_id);
-                    db::write_and_log(cx, move || {
-                        KEY_VALUE_STORE.write_kvp(key, "dismissed".to_string())
-                    });
-                })
-            })
-        });
+        MessageNotification::new(format!(
+            "Do you want to install the recommended '{}' extension for '{}' files?",
+            extension_id, file_name_or_extension
+        ))
+        .with_click_message("Yes")
+        .on_click({
+            let extension_id = extension_id.clone();
+            move |window, cx| {
+                let extension_id = extension_id.clone();
+                let extension_store = ExtensionStore::global(cx);
+                extension_store.update(cx, move |store, cx| {
+                    store.install_latest_extension(extension_id, cx);
+                });
+            }
+        })
+        .with_secondary_click_message("No")
+        .on_secondary_click(move |window, cx| {
+            let key = language_extension_key(&extension_id);
+            db::write_and_log(cx, move || {
+                KEY_VALUE_STORE.write_kvp(key, "dismissed".to_string())
+            });
+        })
+        .show(notification_id, workspace, cx);
     })
 }
 

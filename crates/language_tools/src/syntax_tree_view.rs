@@ -76,7 +76,7 @@ impl SyntaxTreeView {
             editor: None,
             hovered_descendant_ix: None,
             selected_descendant_ix: None,
-            focus_handle: cx.focus_handle(),
+            focus_handle: window.focus_handle(cx),
         };
 
         this.workspace_updated(active_item, window, cx);
@@ -361,7 +361,7 @@ impl Render for SyntaxTreeView {
                                                 editor.highlight_background::<Self>(
                                                     &[range],
                                                     |theme| theme.editor_document_highlight_write_background,
-                                                    window, cx,
+                                                     cx,
                                                 );
                                             });
                                             cx.notify();

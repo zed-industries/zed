@@ -137,7 +137,7 @@ impl EditableSettingControl for ThemeModeControl {
 }
 
 impl RenderOnce for ThemeModeControl {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         h_flex()
@@ -253,7 +253,7 @@ impl EditableSettingControl for UiFontSizeControl {
 }
 
 impl RenderOnce for UiFontSizeControl {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         h_flex()
@@ -365,7 +365,7 @@ impl EditableSettingControl for UiFontLigaturesControl {
 }
 
 impl RenderOnce for UiFontLigaturesControl {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let value = Self::read(cx);
 
         CheckboxWithLabel::new(

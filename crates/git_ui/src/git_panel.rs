@@ -162,7 +162,7 @@ impl GitPanel {
         let project = workspace.project().clone();
 
         let git_panel = window.new_view(cx, |window: &mut Window, cx: &mut ModelContext<Self>| {
-            let focus_handle = cx.focus_handle();
+            let focus_handle = window.focus_handle(cx);
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
             cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
                 this.hide_scrollbar(window, cx);
@@ -199,7 +199,7 @@ impl GitPanel {
 
             let mut git_panel = Self {
                 workspace: weak_workspace,
-                focus_handle: cx.focus_handle(),
+                focus_handle: window.focus_handle(cx),
                 fs,
                 pending_serialization: Task::ready(None),
                 visible_entries: Vec::new(),

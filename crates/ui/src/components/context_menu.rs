@@ -59,7 +59,7 @@ impl ContextMenu {
         f: impl FnOnce(Self, &mut Window, &mut ModelContext<Self>) -> Self,
     ) -> Model<Self> {
         window.new_view(cx, |window, cx| {
-            let focus_handle = cx.focus_handle();
+            let focus_handle = window.focus_handle(cx);
             let _on_blur_subscription = cx.on_blur(
                 &focus_handle,
                 window,

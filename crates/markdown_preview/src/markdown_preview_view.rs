@@ -178,7 +178,6 @@ impl MarkdownPreviewView {
 
                                                         editor.edit(
                                                             vec![(source_range, task_marker)],
-                                                            window,
                                                             cx,
                                                         );
                                                     });
@@ -254,7 +253,7 @@ impl MarkdownPreviewView {
             let mut this = Self {
                 selected_block: 0,
                 active_editor: None,
-                focus_handle: cx.focus_handle(),
+                focus_handle: window.focus_handle(cx),
                 workspace: workspace.clone(),
                 contents: None,
                 list_state,

@@ -362,7 +362,7 @@ impl ConfigurationView {
         Self {
             api_key_editor: window.new_view(cx, |window, cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text("AIzaSy...", window, cx);
+                editor.set_placeholder_text("AIzaSy...", cx);
                 editor
             }),
             state,

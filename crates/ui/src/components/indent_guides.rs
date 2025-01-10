@@ -240,7 +240,7 @@ mod uniform_list {
             _bounds: Bounds<Pixels>,
             _request_layout: &mut Self::RequestLayoutState,
             window: &mut Window,
-            cx: &mut AppContext,
+            _cx: &mut AppContext,
         ) -> Self::PrepaintState {
             if let Some(on_hovered_indent_guide_click) = self.on_hovered_indent_guide_click.clone()
             {
@@ -266,7 +266,7 @@ mod uniform_list {
             _request_layout: &mut Self::RequestLayoutState,
             prepaint: &mut Self::PrepaintState,
             window: &mut Window,
-            cx: &mut AppContext,
+            _cx: &mut AppContext,
         ) {
             match prepaint {
                 IndentGuidesElementPrepaintState::Static => {
@@ -329,7 +329,7 @@ mod uniform_list {
                     window.on_mouse_event({
                         let prev_hovered_hitbox_id = hovered_hitbox_id;
                         let hitboxes = hitboxes.clone();
-                        move |_: &MouseMoveEvent, phase, window, cx| {
+                        move |_: &MouseMoveEvent, phase, window, _cx| {
                             let mut hovered_hitbox_id = None;
                             for hitbox in hitboxes.as_ref() {
                                 if hitbox.is_hovered(window) {

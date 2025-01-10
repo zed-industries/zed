@@ -74,12 +74,10 @@ impl ActivityIndicator {
             })
             .detach();
 
-            cx.observe_in(&project, window, |_, _, window, cx| cx.notify())
-                .detach();
+            cx.observe(&project, |_, _, cx| cx.notify()).detach();
 
             if let Some(auto_updater) = auto_updater.as_ref() {
-                cx.observe_in(auto_updater, window, |_, _, window, cx| cx.notify())
-                    .detach();
+                cx.observe(auto_updater, |_, _, cx| cx.notify()).detach();
             }
 
             Self {
@@ -154,7 +152,7 @@ impl ActivityIndicator {
     fn dismiss_error_message(
         &mut self,
         _: &DismissErrorMessage,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(updater) = &self.auto_updater {

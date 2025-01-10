@@ -345,7 +345,7 @@ impl Session {
             if !blocks_to_remove.is_empty() {
                 self.editor
                     .update(cx, |editor, cx| {
-                        editor.remove_blocks(blocks_to_remove, None, window, cx);
+                        editor.remove_blocks(blocks_to_remove, None, cx);
                     })
                     .ok();
                 cx.notify();
@@ -372,7 +372,7 @@ impl Session {
 
         self.editor
             .update(cx, |editor, cx| {
-                editor.remove_blocks(blocks_to_remove, None, window, cx);
+                editor.remove_blocks(blocks_to_remove, None, cx);
             })
             .ok();
 
@@ -418,7 +418,7 @@ impl Session {
 
         self.editor
             .update(cx, |editor, cx| {
-                editor.remove_blocks(blocks_to_remove, None, window, cx);
+                editor.remove_blocks(blocks_to_remove, None, cx);
             })
             .ok();
 
@@ -448,7 +448,7 @@ impl Session {
                     editor.update(cx, |editor, cx| {
                         let mut block_ids = HashSet::default();
                         block_ids.insert(block_id);
-                        editor.remove_blocks(block_ids, None, window, cx);
+                        editor.remove_blocks(block_ids, None, cx);
                     });
                 }
             },

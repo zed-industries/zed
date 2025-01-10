@@ -42,7 +42,7 @@ fn open_folder(
     window: &mut Window,
     cx: &mut ModelContext<Workspace>,
 ) {
-    fs::create_dir_all(config_dir().join("snippets")).notify_err(workspace, window, cx);
+    fs::create_dir_all(config_dir().join("snippets")).notify_err(workspace, cx);
     cx.open_with_system(config_dir().join("snippets").borrow());
 }
 

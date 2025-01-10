@@ -29,7 +29,7 @@ impl ContextPill {
 }
 
 impl RenderOnce for ContextPill {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let padding_right = if self.on_remove.is_some() {
             px(2.)
         } else {

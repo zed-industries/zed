@@ -199,7 +199,7 @@ impl CollabPanel {
         window.new_view(cx, |window, cx| {
             let filter_editor = window.new_view(cx, |window, cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text("Filter...", window, cx);
+                editor.set_placeholder_text("Filter...", cx);
                 editor
             });
 
@@ -260,7 +260,7 @@ impl CollabPanel {
 
             let mut this = Self {
                 width: None,
-                focus_handle: cx.focus_handle(),
+                focus_handle: window.focus_handle(cx),
                 channel_clipboard: None,
                 fs: workspace.app_state().fs.clone(),
                 pending_serialization: Task::ready(None),

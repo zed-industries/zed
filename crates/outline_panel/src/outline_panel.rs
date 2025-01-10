@@ -628,7 +628,7 @@ impl OutlinePanel {
         let outline_panel = window.new_view(cx, |window, cx| {
             let filter_editor = window.new_view(cx, |window, cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text("Filter...", window, cx);
+                editor.set_placeholder_text("Filter...", cx);
                 editor
             });
             let filter_update_subscription = cx.subscribe_in(
@@ -641,7 +641,7 @@ impl OutlinePanel {
                 },
             );
 
-            let focus_handle = cx.focus_handle();
+            let focus_handle = window.focus_handle(cx);
             let focus_subscription = cx.on_focus(&focus_handle, window, Self::focus_in);
             let focus_out_subscription =
                 cx.on_focus_out(&focus_handle, window, |outline_panel, _, window, cx| {

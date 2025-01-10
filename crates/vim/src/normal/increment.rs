@@ -83,7 +83,7 @@ impl Vim {
                 }
             }
             editor.transact(window, cx, |editor, window, cx| {
-                editor.edit(edits, window, cx);
+                editor.edit(edits, cx);
 
                 let snapshot = editor.buffer().read(cx).snapshot(cx);
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {

@@ -99,7 +99,7 @@ impl EditNicknameState {
             .and_then(|state| state.nickname.clone())
             .filter(|text| !text.is_empty());
         this.editor.update(cx, |this, cx| {
-            this.set_placeholder_text("Add a nickname for this server", window, cx);
+            this.set_placeholder_text("Add a nickname for this server", cx);
             if let Some(starting_text) = starting_text {
                 this.set_text(starting_text, window, cx);
             }
@@ -343,7 +343,7 @@ impl RemoteServerProjects {
         cx: &mut ModelContext<Self>,
         workspace: WeakModel<Workspace>,
     ) -> Self {
-        let focus_handle = cx.focus_handle();
+        let focus_handle = window.focus_handle(cx);
 
         let mut base_style = window.text_style();
         base_style.refine(&gpui::TextStyleRefinement {
@@ -926,7 +926,7 @@ impl RemoteServerProjects {
 
         state.address_editor.update(cx, |editor, cx| {
             if editor.text(cx).is_empty() {
-                editor.set_placeholder_text("ssh user@example -p 2222", window, cx);
+                editor.set_placeholder_text("ssh user@example -p 2222", cx);
             }
         });
 
@@ -1087,7 +1087,6 @@ impl RemoteServerProjects {
                                                 notification,
                                             )
                                             .autohide(),
-                                            window,
                                             cx,
                                         );
                                     })

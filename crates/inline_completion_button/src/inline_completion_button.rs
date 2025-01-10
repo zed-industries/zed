@@ -103,7 +103,6 @@ impl Render for InlineCompletionButton {
                                                             .detach();
                                                     }
                                                 }),
-                                                window,
                                                 cx,
                                             );
                                         })
@@ -500,7 +499,7 @@ async fn configure_disabled_globs(
 
                 // When *enabling* a path, don't actually perform an edit, just select the range.
                 if path_to_disable.is_some() {
-                    item.edit(edits.iter().cloned(), window, cx);
+                    item.edit(edits.iter().cloned(), cx);
                 }
             }
         })?;

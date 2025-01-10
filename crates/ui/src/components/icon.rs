@@ -367,7 +367,7 @@ impl Icon {
 }
 
 impl RenderOnce for Icon {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         svg()
             .with_transformation(self.transformation)
             .size(self.size)
@@ -674,7 +674,7 @@ impl IconWithIndicator {
 }
 
 impl RenderOnce for IconWithIndicator {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let indicator_border_color = self
             .indicator_border_color
             .unwrap_or_else(|| cx.theme().colors().elevated_surface_background);

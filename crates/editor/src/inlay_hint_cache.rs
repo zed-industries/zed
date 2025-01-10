@@ -19,7 +19,7 @@ use crate::{
 use anyhow::Context;
 use clock::Global;
 use futures::future;
-use gpui::{AppContext, AsyncWindowContext, Model, ModelContext, Task, Window};
+use gpui::{AppContext, AsyncAppContext, AsyncWindowContext, Model, ModelContext, Task, Window};
 use language::{language_settings::InlayHintKind, Buffer, BufferSnapshot};
 use parking_lot::RwLock;
 use project::{InlayHint, ResolveState};
@@ -286,7 +286,6 @@ impl InlayHintCache {
         multi_buffer: &Model<MultiBuffer>,
         new_hint_settings: InlayHintSettings,
         visible_hints: Vec<Inlay>,
-        window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> ControlFlow<Option<InlaySplice>> {
         self.invalidate_debounce = debounce_value(new_hint_settings.edit_debounce_ms);
@@ -305,7 +304,6 @@ impl InlayHintCache {
                         multi_buffer,
                         &visible_hints,
                         &new_allowed_hint_kinds,
-                        window,
                         cx,
                     );
                     if new_splice.is_some() {
@@ -346,7 +344,6 @@ impl InlayHintCache {
         excerpts_to_query: HashMap<ExcerptId, (Model<Buffer>, Global, Range<usize>)>,
         invalidate: InvalidationStrategy,
         ignore_debounce: bool,
-        window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> Option<InlaySplice> {
         if !self.enabled {
@@ -376,20 +373,19 @@ impl InlayHintCache {
         } else {
             self.append_debounce
         };
-        self.refresh_task = Some(cx.spawn_in(window, |editor, mut cx| async move {
+        self.refresh_task = Some(cx.spawn(|editor, mut cx| async move {
             if let Some(debounce_duration) = debounce_duration {
                 cx.background_executor().timer(debounce_duration).await;
             }
 
             editor
-                .update_in(&mut cx, |editor, window, cx| {
+                .update(&mut cx, |editor, cx| {
                     spawn_new_update_tasks(
                         editor,
                         reason_description,
                         excerpts_to_query,
                         invalidate,
                         cache_version,
-                        window,
                         cx,
                     )
                 })
@@ -411,7 +407,6 @@ impl InlayHintCache {
         multi_buffer: &Model<MultiBuffer>,
         visible_hints: &[Inlay],
         new_kinds: &HashSet<Option<InlayHintKind>>,
-        window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> Option<InlaySplice> {
         let old_kinds = &self.allowed_hint_kinds;
@@ -646,7 +641,6 @@ fn spawn_new_update_tasks(
     excerpts_to_query: HashMap<ExcerptId, (Model<Buffer>, Global, Range<usize>)>,
     invalidate: InvalidationStrategy,
     update_cache_version: usize,
-    window: &mut Window,
     cx: &mut ModelContext<Editor>,
 ) {
     for (excerpt_id, (excerpt_buffer, new_task_buffer_version, excerpt_visible_range)) in
@@ -695,7 +689,7 @@ fn spawn_new_update_tasks(
         };
 
         let mut new_update_task =
-            |query_ranges| new_update_task(query, query_ranges, excerpt_buffer.clone(), window, cx);
+            |query_ranges| new_update_task(query, query_ranges, excerpt_buffer.clone(), cx);
 
         match editor.inlay_hint_cache.update_tasks.entry(excerpt_id) {
             hash_map::Entry::Occupied(mut o) => {
@@ -804,23 +798,21 @@ fn new_update_task(
     query: ExcerptQuery,
     query_ranges: QueryRanges,
     excerpt_buffer: Model<Buffer>,
-    window: &mut Window,
     cx: &mut ModelContext<Editor>,
 ) -> Task<()> {
-    cx.spawn_in(window, move |editor, mut cx| async move {
+    cx.spawn(move |editor, mut cx| async move {
         let visible_range_update_results = future::join_all(
             query_ranges
                 .visible
                 .into_iter()
                 .filter_map(|visible_range| {
                     let fetch_task = editor
-                        .update_in(&mut cx, |_, window, cx| {
+                        .update(&mut cx, |_, cx| {
                             fetch_and_update_hints(
                                 excerpt_buffer.clone(),
                                 query,
                                 visible_range.clone(),
                                 query.invalidate.should_invalidate(),
-                                window,
                                 cx,
                             )
                         })
@@ -835,7 +827,7 @@ fn new_update_task(
         ));
 
         let query_range_failed =
-            |range: &Range<language::Anchor>, e: anyhow::Error, cx: &mut AsyncWindowContext| {
+            |range: &Range<language::Anchor>, e: anyhow::Error, cx: &mut AsyncAppContext| {
                 log::error!("inlay hint update task for range failed: {e:#?}");
                 editor
                     .update(cx, |editor, cx| {
@@ -865,13 +857,12 @@ fn new_update_task(
                 .chain(query_ranges.after_visible.into_iter())
                 .filter_map(|invisible_range| {
                     let fetch_task = editor
-                        .update_in(&mut cx, |_, window, cx| {
+                        .update(&mut cx, |_, cx| {
                             fetch_and_update_hints(
                                 excerpt_buffer.clone(),
                                 query,
                                 invisible_range.clone(),
                                 false, // visible screen request already invalidated the entries
-                                window,
                                 cx,
                             )
                         })
@@ -893,10 +884,9 @@ fn fetch_and_update_hints(
     query: ExcerptQuery,
     fetch_range: Range<language::Anchor>,
     invalidate: bool,
-    window: &mut Window,
     cx: &mut ModelContext<Editor>,
 ) -> Task<anyhow::Result<()>> {
-    cx.spawn_in(window, |editor, mut cx| async move {
+    cx.spawn(|editor, mut cx| async move {
         let buffer_snapshot = excerpt_buffer.update(&mut cx, |buffer, _| buffer.snapshot())?;
         let (lsp_request_limiter, multi_buffer_snapshot) =
             editor.update(&mut cx, |editor, cx| {
@@ -917,10 +907,10 @@ fn fetch_and_update_hints(
         let fetch_range_to_log = fetch_range.start.to_point(&buffer_snapshot)
             ..fetch_range.end.to_point(&buffer_snapshot);
         let inlay_hints_fetch_task = editor
-            .update_in(&mut cx, |editor, window, cx| {
+            .update(&mut cx, |editor, cx| {
                 if got_throttled {
                     let query_not_around_visible_range = match editor
-                        .excerpts_for_inlay_hints_query(None, window, cx)
+                        .excerpts_for_inlay_hints_query(None, cx)
                         .remove(&query.excerpt_id)
                     {
                         Some((_, _, current_visible_range)) => {
@@ -969,7 +959,7 @@ fn fetch_and_update_hints(
                 .cloned()
         })?;
 
-        let visible_hints = editor.update_in(&mut cx, |editor, window, cx| editor.visible_inlay_hints(window, cx))?;
+        let visible_hints = editor.update(&mut cx, |editor, cx| editor.visible_inlay_hints(cx))?;
         let new_hints = match inlay_hints_fetch_task {
             Some(fetch_task) => {
                 log::debug!(
@@ -1016,7 +1006,7 @@ fn fetch_and_update_hints(
             // );
             log::trace!("New update: {new_update:?}");
             editor
-                .update_in(&mut cx, |editor, window, cx| {
+                .update(&mut cx, |editor,  cx| {
                     apply_hint_update(
                         editor,
                         new_update,
@@ -1024,7 +1014,7 @@ fn fetch_and_update_hints(
                         invalidate,
                         buffer_snapshot,
                         multi_buffer_snapshot,
-                        window, cx,
+                        cx,
                     );
                 })
                 .ok();
@@ -1140,7 +1130,6 @@ fn apply_hint_update(
     invalidate: bool,
     buffer_snapshot: BufferSnapshot,
     multi_buffer_snapshot: MultiBufferSnapshot,
-    window: &mut Window,
     cx: &mut ModelContext<Editor>,
 ) {
     let cached_excerpt_hints = editor
@@ -1260,7 +1249,7 @@ fn apply_hint_update(
         editor.inlay_hint_cache.version += 1;
     }
     if displayed_inlays_changed {
-        editor.splice_inlays(to_remove, to_insert, window, cx)
+        editor.splice_inlays(to_remove, to_insert, cx)
     }
 }
 
@@ -3456,7 +3445,7 @@ pub mod tests {
         cx: &mut ModelContext<Editor>,
     ) -> Vec<String> {
         let mut hints = editor
-            .visible_inlay_hints(window, cx)
+            .visible_inlay_hints(cx)
             .into_iter()
             .map(|hint| hint.text.to_string())
             .collect::<Vec<_>>();

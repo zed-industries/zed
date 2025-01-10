@@ -597,7 +597,7 @@ impl ConfigurationView {
         Self {
             api_key_editor: window.new_view(cx, |window, cx| {
                 let mut editor = Editor::single_line(window, cx);
-                editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, window, cx);
+                editor.set_placeholder_text(Self::PLACEHOLDER_TEXT, cx);
                 editor
             }),
             state,

@@ -178,7 +178,7 @@ impl FeedbackModal {
     ) -> Self {
         let email_address_editor = window.new_view(cx, |window, cx| {
             let mut editor = Editor::single_line(window, cx);
-            editor.set_placeholder_text("Email address (optional)", window, cx);
+            editor.set_placeholder_text("Email address (optional)", cx);
 
             if let Ok(Some(email_address)) = KEY_VALUE_STORE.read_kvp(DATABASE_KEY_NAME) {
                 editor.set_text(email_address, window, cx)
@@ -191,7 +191,6 @@ impl FeedbackModal {
             let mut editor = Editor::for_buffer(buffer, Some(project.clone()), window, cx);
             editor.set_placeholder_text(
                 "You can use markdown to organize your feedback with code and links.",
-                window,
                 cx,
             );
             editor.set_show_gutter(false, window, cx);

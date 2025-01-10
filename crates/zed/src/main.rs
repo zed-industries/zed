@@ -620,8 +620,8 @@ fn handle_keymap_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
         workspace
             .update(cx, |workspace, window, cx| match &error {
                 Some(error) => {
-                    workspace.show_notification(id.clone(), window, cx, |window, cx| {
-                        window.new_view(cx, |_, _| {
+                    workspace.show_notification(id.clone(), cx, |cx| {
+                        cx.new_model(|_| {
                             MessageNotification::new(format!("Invalid keymap file\n{error}"))
                                 .with_click_message("Open keymap file")
                                 .on_click(|window, cx| {
@@ -632,7 +632,7 @@ fn handle_keymap_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
                         })
                     });
                 }
-                None => workspace.dismiss_notification(&id, window, cx),
+                None => workspace.dismiss_notification(&id, cx),
             })
             .log_err();
     }
@@ -652,24 +652,18 @@ fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
                         {
                             // Local settings will be displayed by the projects
                         } else {
-                            workspace.show_notification(id.clone(), window, cx, |window, cx| {
-                                window.new_view(cx, |_, _| {
-                                    MessageNotification::new(format!(
-                                        "Invalid user settings file\n{error}"
-                                    ))
-                                    .with_click_message("Open settings file")
-                                    .on_click(|window, cx| {
-                                        window.dispatch_action(
-                                            zed_actions::OpenSettings.boxed_clone(),
-                                            cx,
-                                        );
-                                        cx.emit(DismissEvent);
-                                    })
-                                })
-                            });
+                            MessageNotification::new(format!(
+                                "Invalid user settings file\n{error}"
+                            ))
+                            .with_click_message("Open settings file")
+                            .on_click(|window, cx| {
+                                window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
+                                cx.emit(DismissEvent);
+                            })
+                            .show(id.clone(), workspace, cx);
                         }
                     }
-                    None => workspace.dismiss_notification(&id, window, cx),
+                    None => workspace.dismiss_notification(&id, cx),
                 }
             })
             .log_err();

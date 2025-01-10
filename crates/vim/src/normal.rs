@@ -396,7 +396,7 @@ impl Vim {
                         (start_of_line..start_of_line, indent + "\n")
                     })
                     .collect::<Vec<_>>();
-                editor.edit_with_autoindent(edits, window, cx);
+                editor.edit_with_autoindent(edits, cx);
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_cursors_with(|map, cursor, _| {
                         let previous_line = motion::start_of_relative_buffer_row(map, cursor, -1);
@@ -449,7 +449,7 @@ impl Vim {
                         )
                     });
                 });
-                editor.edit_with_autoindent(edits, window, cx);
+                editor.edit_with_autoindent(edits, cx);
             });
         });
     }
@@ -489,7 +489,7 @@ impl Vim {
         self.stop_recording(window, cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                editor.set_clip_at_line_ends(false, window, cx);
+                editor.set_clip_at_line_ends(false, cx);
                 let (map, display_selections) = editor.selections.all_display(cx);
 
                 let mut edits = Vec::new();
@@ -510,8 +510,8 @@ impl Vim {
                     ))
                 }
 
-                editor.edit(edits, window, cx);
-                editor.set_clip_at_line_ends(true, window, cx);
+                editor.edit(edits, cx);
+                editor.set_clip_at_line_ends(true, cx);
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
                         let point = movement::saturating_left(map, selection.head());

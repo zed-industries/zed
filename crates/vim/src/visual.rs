@@ -543,7 +543,7 @@ impl Vim {
                 editor.insert("", window, cx);
 
                 // Fixup cursor position after the deletion
-                editor.set_clip_at_line_ends(true, window, cx);
+                editor.set_clip_at_line_ends(true, cx);
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.move_with(|map, selection| {
                         let mut cursor = selection.head().to_point(map);
@@ -620,7 +620,7 @@ impl Vim {
                     }
                 }
 
-                editor.edit(edits, window, cx);
+                editor.edit(edits, cx);
                 editor.change_selections(None, window, cx, |s| s.select_ranges(stable_anchors));
             });
         });
@@ -636,7 +636,7 @@ impl Vim {
         let count =
             Vim::take_count(cx).unwrap_or_else(|| if self.mode.is_visual() { 1 } else { 2 });
         self.update_editor(window, cx, |_, editor, window, cx| {
-            editor.set_clip_at_line_ends(false, window, cx);
+            editor.set_clip_at_line_ends(false, cx);
             for _ in 0..count {
                 if editor
                     .select_next(&Default::default(), window, cx)

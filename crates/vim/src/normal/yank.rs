@@ -27,7 +27,7 @@ impl Vim {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window, cx);
             editor.transact(window, cx, |editor, window, cx| {
-                editor.set_clip_at_line_ends(false, window, cx);
+                editor.set_clip_at_line_ends(false, cx);
                 let mut original_positions: HashMap<_, _> = Default::default();
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
@@ -57,7 +57,7 @@ impl Vim {
     ) {
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                editor.set_clip_at_line_ends(false, window, cx);
+                editor.set_clip_at_line_ends(false, cx);
                 let mut original_positions: HashMap<_, _> = Default::default();
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|map, selection| {
@@ -218,7 +218,6 @@ impl Vim {
         editor.highlight_background::<HighlightOnYank>(
             &ranges_to_highlight,
             |colors| colors.editor_document_highlight_read_background,
-            window,
             cx,
         );
         cx.spawn_in(window, |this, mut cx| async move {

@@ -143,7 +143,7 @@ impl NotificationPanel {
                 notification_list,
                 pending_serialization: Task::ready(None),
                 workspace: workspace_handle,
-                focus_handle: cx.focus_handle(),
+                focus_handle: window.focus_handle(cx),
                 current_notification_toast: None,
                 subscriptions: Vec::new(),
                 active: false,
@@ -583,10 +583,10 @@ impl NotificationPanel {
             .update(cx, |workspace, cx| {
                 let id = NotificationId::unique::<NotificationToast>();
 
-                workspace.dismiss_notification(&id, window, cx);
-                workspace.show_notification(id, window, cx, |window, cx| {
+                workspace.dismiss_notification(&id, cx);
+                workspace.show_notification(id, cx, |cx| {
                     let workspace = cx.model().downgrade();
-                    window.new_view(cx, |window, _| NotificationToast {
+                    cx.new_model(|_| NotificationToast {
                         notification_id,
                         actor,
                         text,
@@ -609,7 +609,7 @@ impl NotificationPanel {
                 self.workspace
                     .update(cx, |workspace, cx| {
                         let id = NotificationId::unique::<NotificationToast>();
-                        workspace.dismiss_notification(&id, window, cx)
+                        workspace.dismiss_notification(&id, cx)
                     })
                     .ok();
             }

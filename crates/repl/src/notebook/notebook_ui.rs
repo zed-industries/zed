@@ -86,7 +86,7 @@ impl NotebookEditor {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let focus_handle = cx.focus_handle();
+        let focus_handle = window.focus_handle(cx);
 
         let languages = project.read(cx).languages().clone();
         let language_name = notebook_item.read(cx).language_name();

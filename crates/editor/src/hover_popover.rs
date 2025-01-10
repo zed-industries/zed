@@ -484,7 +484,6 @@ fn show_hover(
                     editor.highlight_background::<HoverState>(
                         &hover_highlights,
                         |theme| theme.element_hover, // todo update theme
-                        window,
                         cx,
                     );
                 }

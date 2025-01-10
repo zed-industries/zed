@@ -29,7 +29,7 @@ impl Vim {
     ) {
         self.stop_recording(window, cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
-            editor.set_clip_at_line_ends(false, window, cx);
+            editor.set_clip_at_line_ends(false, cx);
             let text_layout_details = editor.text_layout_details(window, cx);
             editor.transact(window, cx, |editor, window, cx| {
                 let mut selection_starts: HashMap<_, _> = Default::default();
@@ -58,7 +58,7 @@ impl Vim {
                     });
                 });
             });
-            editor.set_clip_at_line_ends(true, window, cx);
+            editor.set_clip_at_line_ends(true, cx);
         });
     }
 
@@ -195,7 +195,7 @@ impl Vim {
                         .flat_map(|s| s.chars())
                         .flat_map(transform)
                         .collect::<String>();
-                    editor.edit([(range, text)], window, cx)
+                    editor.edit([(range, text)], cx)
                 }
                 editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                     s.select_ranges(cursor_positions)

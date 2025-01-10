@@ -699,11 +699,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
                 window: &mut Window,
                 cx: &mut AppContext,
             ) -> Option<NavigationEntry> {
-                editor
-                    .nav_history
-                    .as_mut()
-                    .unwrap()
-                    .pop_backward(window, cx)
+                editor.nav_history.as_mut().unwrap().pop_backward(cx)
             }
 
             // Move the cursor a small distance.
@@ -9815,7 +9811,6 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
                 anchor_range(Point::new(8, 4)..Point::new(8, 6)),
             ],
             |_| Hsla::red(),
-            window,
             cx,
         );
         editor.highlight_background::<Type2>(
@@ -9826,7 +9821,6 @@ fn test_highlighted_ranges(cx: &mut TestAppContext) {
                 anchor_range(Point::new(9, 5)..Point::new(9, 8)),
             ],
             |_| Hsla::green(),
-            window,
             cx,
         );
 
@@ -9990,7 +9984,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     // via autoscroll, not via the leader's exact scroll position.
     _ = leader.update(cx, |leader, window, cx| {
         leader.change_selections(None, window, cx, |s| s.select_ranges([0..0]));
-        leader.request_autoscroll(Autoscroll::newest(), window, cx);
+        leader.request_autoscroll(Autoscroll::newest(), cx);
         leader.set_scroll_position(gpui::Point::new(1.5, 3.5), window, cx);
     });
     follower
@@ -14072,7 +14066,7 @@ fn test_crease_insertion_and_rendering(cx: &mut TestAppContext) {
                 |_row, _folded, _window, _cx| div(),
             );
 
-            editor.insert_creases(Some(crease), window, cx);
+            editor.insert_creases(Some(crease), cx);
             let snapshot = editor.snapshot(window, cx);
             let _div = snapshot.render_crease_toggle(
                 MultiBufferRow(1),
@@ -14828,7 +14822,6 @@ async fn test_multi_buffer_with_single_excerpt_folding(cx: &mut gpui::TestAppCon
         editor.highlight_text::<TestHighlight>(
             vec![highlight_range.clone()],
             HighlightStyle::color(Hsla::green()),
-            window,
             cx,
         );
         editor.change_selections(None, window, cx, |s| s.select_ranges(Some(highlight_range)));
@@ -15088,13 +15081,12 @@ async fn test_rename_with_duplicate_edits(cx: &mut gpui::TestAppContext) {
         struct Fˇoo {}
     "});
 
-    cx.update_editor(|editor, window, cx| {
+    cx.update_editor(|editor, _, cx| {
         let highlight_range = Point::new(0, 7)..Point::new(0, 10);
         let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
         editor.highlight_background::<DocumentHighlightRead>(
             &[highlight_range],
             |c| c.editor_document_highlight_read_background,
-            window,
             cx,
         );
     });

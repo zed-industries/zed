@@ -30,7 +30,7 @@ impl RadioWithLabel {
 }
 
 impl RenderOnce for RadioWithLabel {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let inner_diameter = rems_from_px(6.);
         let outer_diameter = rems_from_px(16.);
         let border_width = rems_from_px(1.);

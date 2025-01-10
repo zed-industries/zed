@@ -36,7 +36,6 @@ pub fn refresh_matching_bracket_highlights(
                 closing_range.to_anchors(&snapshot.buffer_snapshot),
             ],
             |theme| theme.editor_document_highlight_bracket_background,
-            window,
             cx,
         )
     }

@@ -32,13 +32,14 @@ impl ImageView {
     pub fn new(
         image_item: Model<ImageItem>,
         project: Model<Project>,
+        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         cx.subscribe(&image_item, Self::on_image_event).detach();
         Self {
             image_item,
             project,
-            focus_handle: cx.focus_handle(),
+            focus_handle: window.focus_handle(cx),
         }
     }
 
@@ -161,7 +162,7 @@ impl Item for ImageView {
         Some(window.new_view(cx, |window, cx| Self {
             image_item: self.image_item.clone(),
             project: self.project.clone(),
-            focus_handle: cx.focus_handle(),
+            focus_handle: window.focus_handle(cx),
         }))
     }
 }
@@ -219,7 +220,9 @@ impl SerializableItem for ImageView {
                 .await?;
 
             cx.update(|window, cx| {
-                Ok(window.new_view(cx, |_window, cx| ImageView::new(image_item, project, cx)))
+                Ok(window.new_view(cx, |window, cx| {
+                    ImageView::new(image_item, project, window, cx)
+                }))
             })?
         })
     }
@@ -351,7 +354,7 @@ impl ProjectItem for ImageView {
     where
         Self: Sized,
     {
-        Self::new(item, project, cx)
+        Self::new(item, project, window, cx)
     }
 }
 

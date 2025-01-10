@@ -82,11 +82,7 @@ pub fn init(cx: &mut AppContext) {
                                 Err(err) => {
                                     workspace_handle
                                         .update_in(&mut cx, |workspace, window, cx| {
-                                            workspace.show_portal_error(
-                                                err.to_string(),
-                                                window,
-                                                cx,
-                                            );
+                                            workspace.show_portal_error(err.to_string(), cx);
                                         })
                                         .ok();
                                     return None;
@@ -236,7 +232,7 @@ impl ExtensionsPage {
 
             let query_editor = window.new_view(cx, |window, cx| {
                 let mut input = Editor::single_line(window, cx);
-                input.set_placeholder_text("Search extensions...", window, cx);
+                input.set_placeholder_text("Search extensions...", cx);
                 input
             });
             cx.subscribe_in(&query_editor, window, Self::on_query_change)

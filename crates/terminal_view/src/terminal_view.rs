@@ -157,7 +157,7 @@ impl TerminalView {
         let terminal_subscriptions =
             subscribe_for_terminal_events(&terminal, workspace, window, cx);
 
-        let focus_handle = cx.focus_handle();
+        let focus_handle = window.focus_handle(cx);
         let focus_in = cx.on_focus_in(&focus_handle, window, |terminal_view, window, cx| {
             terminal_view.focus_in(window, cx);
         });

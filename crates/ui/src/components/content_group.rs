@@ -67,7 +67,7 @@ impl Styled for ContentGroup {
 }
 
 impl RenderOnce for ContentGroup {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         // TODO:
         // Baked in padding will make scrollable views inside of content boxes awkward.
         //

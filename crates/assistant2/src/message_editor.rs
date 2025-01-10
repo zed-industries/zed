@@ -52,7 +52,7 @@ impl MessageEditor {
 
         let editor = window.new_view(cx, |window, cx| {
             let mut editor = Editor::auto_height(10, window, cx);
-            editor.set_placeholder_text("Ask anything…", window, cx);
+            editor.set_placeholder_text("Ask anything…", cx);
             editor.set_show_indent_guides(false, window, cx);
 
             editor

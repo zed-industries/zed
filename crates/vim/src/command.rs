@@ -130,7 +130,7 @@ pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
-                    e.notify_err(workspace, window, cx);
+                    e.notify_err(workspace, cx);
                 });
                 return;
             }
@@ -188,7 +188,7 @@ pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
-                    e.notify_err(workspace, window, cx);
+                    e.notify_err(workspace, cx);
                 });
                 return;
             }
@@ -962,7 +962,7 @@ impl OnMatchingLines {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
-                    e.notify_err(workspace, window, cx);
+                    e.notify_err(workspace, cx);
                 });
                 return;
             }
@@ -979,7 +979,7 @@ impl OnMatchingLines {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
-                    e.notify_err(workspace, window, cx);
+                    e.notify_err(workspace, cx);
                 });
                 return;
             }

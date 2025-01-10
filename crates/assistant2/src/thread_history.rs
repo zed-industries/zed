@@ -23,7 +23,7 @@ impl ThreadHistory {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         Self {
-            focus_handle: cx.focus_handle(),
+            focus_handle: window.focus_handle(cx),
             assistant_panel,
             thread_store,
             scroll_handle: UniformListScrollHandle::default(),
@@ -99,7 +99,7 @@ impl PastThread {
 }
 
 impl RenderOnce for PastThread {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let (id, summary) = {
             const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Thread");
             let thread = self.thread.read(cx);

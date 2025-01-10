@@ -238,8 +238,8 @@ impl<T: 'static> PromptEditor<T> {
                 window,
                 cx,
             );
-            editor.set_placeholder_text(Self::placeholder_text(&self.mode, window, cx), window, cx);
-            editor.set_placeholder_text("Add a prompt…", window, cx);
+            editor.set_placeholder_text(Self::placeholder_text(&self.mode, window, cx), cx);
+            editor.set_placeholder_text("Add a prompt…", cx);
             editor.set_text(prompt, window, cx);
             if focus {
                 editor.focus(window, cx);
@@ -847,7 +847,7 @@ impl PromptEditor<BufferCodegen> {
             // always show the cursor (even when it isn't focused) because
             // typing in one will make what you typed appear in all of them.
             editor.set_show_cursor_when_unfocused(true, window, cx);
-            editor.set_placeholder_text(Self::placeholder_text(&mode, window, cx), window, cx);
+            editor.set_placeholder_text(Self::placeholder_text(&mode, window, cx), cx);
             editor
         });
         let context_picker_menu_handle = PopoverMenuHandle::default();
@@ -994,7 +994,7 @@ impl PromptEditor<TerminalCodegen> {
                 window,
                 cx,
             );
-            editor.set_placeholder_text(Self::placeholder_text(&mode, window, cx), window, cx);
+            editor.set_placeholder_text(Self::placeholder_text(&mode, window, cx), cx);
             editor
         });
         let context_picker_menu_handle = PopoverMenuHandle::default();

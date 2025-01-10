@@ -138,7 +138,7 @@ impl ChatPanel {
                 active: false,
                 width: None,
                 markdown_data: Default::default(),
-                focus_handle: cx.focus_handle(),
+                focus_handle: window.focus_handle(cx),
                 open_context_menu: None,
                 highlighted_message: None,
                 last_acknowledged_message_id: None,

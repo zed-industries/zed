@@ -176,7 +176,7 @@ impl OutlineViewDelegate {
                     window,
                     cx,
                 );
-                active_editor.request_autoscroll(Autoscroll::center(), window, cx);
+                active_editor.request_autoscroll(Autoscroll::center(), cx);
             });
         }
     }

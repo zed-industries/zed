@@ -283,7 +283,7 @@ impl ProjectPanel {
         let project = workspace.project().clone();
         let project_panel =
             window.new_view(cx, |window: &mut Window, cx: &mut ModelContext<Self>| {
-                let focus_handle = cx.focus_handle();
+                let focus_handle = window.focus_handle(cx);
                 cx.on_focus(&focus_handle, window, Self::focus_in).detach();
                 cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
                     this.focus_out(window, cx);
@@ -7329,7 +7329,7 @@ mod tests {
                     1,
                     "Should receive one notification with the error message"
                 );
-                workspace.dismiss_notification(notifications.first().unwrap(), window, cx);
+                workspace.dismiss_notification(notifications.first().unwrap(), cx);
                 assert!(workspace.notification_ids().is_empty());
             })
             .unwrap();
@@ -7370,7 +7370,7 @@ mod tests {
                     1,
                     "Should receive one notification explaining that no directory is actually shown"
                 );
-                workspace.dismiss_notification(notifications.first().unwrap(), window, cx);
+                workspace.dismiss_notification(notifications.first().unwrap(), cx);
                 assert!(workspace.notification_ids().is_empty());
             })
             .unwrap();
@@ -8364,7 +8364,7 @@ mod tests {
         {
             Self {
                 path: project_item.update(cx, |project_item, _| project_item.path.clone()),
-                focus_handle: cx.focus_handle(),
+                focus_handle: window.focus_handle(cx),
             }
         }
     }

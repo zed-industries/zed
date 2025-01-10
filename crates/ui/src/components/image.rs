@@ -69,7 +69,7 @@ impl Vector {
 }
 
 impl RenderOnce for Vector {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let width = self.size.width;
         let height = self.size.height;
 

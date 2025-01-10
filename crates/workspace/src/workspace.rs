@@ -368,11 +368,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
                                 {
                                     workspace_window
                                         .update(cx, |workspace, window, cx| {
-                                            workspace.show_portal_error(
-                                                err.to_string(),
-                                                window,
-                                                cx,
-                                            );
+                                            workspace.show_portal_error(err.to_string(), cx);
                                         })
                                         .ok();
                                 }
@@ -894,18 +890,13 @@ impl Workspace {
                     message,
                 } => this.show_notification(
                     NotificationId::named(notification_id.clone()),
-                    window,
                     cx,
-                    |window, cx| {
-                        window.new_view(cx, |_, _| MessageNotification::new(message.clone()))
-                    },
+                    |cx| cx.new_model(|_| MessageNotification::new(message.clone())),
                 ),
 
-                project::Event::HideToast { notification_id } => this.dismiss_notification(
-                    &NotificationId::named(notification_id.clone()),
-                    window,
-                    cx,
-                ),
+                project::Event::HideToast { notification_id } => {
+                    this.dismiss_notification(&NotificationId::named(notification_id.clone()), cx)
+                }
 
                 project::Event::LanguageServerPrompt(request) => {
                     struct LanguageServerPrompt;
@@ -916,10 +907,9 @@ impl Workspace {
 
                     this.show_notification(
                         NotificationId::composite::<LanguageServerPrompt>(id as usize),
-                        window,
                         cx,
-                        |window, cx| {
-                            window.new_view(cx, |_, _| {
+                        |cx| {
+                            cx.new_model(|_| {
                                 notifications::LanguageServerPrompt::new(request.clone())
                             })
                         },
@@ -1435,7 +1425,7 @@ impl Workspace {
                 pane.focus(window, cx);
                 loop {
                     // Retrieve the weak item handle from the history.
-                    let entry = pane.nav_history_mut().pop(mode, window, cx)?;
+                    let entry = pane.nav_history_mut().pop(mode, cx)?;
 
                     // If the item is still present in this pane, then activate it.
                     if let Some(index) = entry
@@ -1637,7 +1627,7 @@ impl Workspace {
                     }
                     Err(err) => {
                         let rx = this.update_in(&mut cx, |this, window, cx| {
-                            this.show_portal_error(err.to_string(), window, cx);
+                            this.show_portal_error(err.to_string(), cx);
                             let prompt = this.on_prompt_for_open_path.take().unwrap();
                             let rx = prompt(this, lister, window, cx);
                             this.on_prompt_for_open_path = Some(prompt);
@@ -1684,7 +1674,7 @@ impl Workspace {
                     Ok(path) => path,
                     Err(err) => {
                         let rx = this.update_in(&mut cx, |this, window, cx| {
-                            this.show_portal_error(err.to_string(), window, cx);
+                            this.show_portal_error(err.to_string(), cx);
 
                             let prompt = this.on_prompt_for_new_path.take().unwrap();
                             let rx = prompt(this, window, cx);
@@ -2202,7 +2192,6 @@ impl Workspace {
         if project.is_via_collab() {
             self.show_error(
                 &anyhow!("You cannot add folders to someone else's project"),
-                window,
                 cx,
             );
             return;
@@ -4790,7 +4779,7 @@ impl Workspace {
                 },
             ))
             .on_action(
-                cx.listener(|workspace, action: &SwapPaneInDirection, window, cx| {
+                cx.listener(|workspace, action: &SwapPaneInDirection, _, cx| {
                     workspace.swap_pane_in_direction(action.0, cx)
                 }),
             )
@@ -4813,8 +4802,8 @@ impl Workspace {
                 }),
             )
             .on_action(cx.listener(
-                |workspace: &mut Workspace, _: &ClearAllNotifications, window, cx| {
-                    workspace.clear_all_notifications(window, cx);
+                |workspace: &mut Workspace, _: &ClearAllNotifications, _, cx| {
+                    workspace.clear_all_notifications(cx);
                 },
             ))
             .on_action(cx.listener(
@@ -5120,22 +5109,18 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
     const REPORT_ISSUE_URL: &str = "https://github.com/zed-industries/zed/issues/new?assignees=&labels=admin+read%2Ctriage%2Cbug&projects=&template=1_bug_report.yml";
 
     workspace
-        .update(cx, |workspace, window, cx| {
+        .update(cx, |workspace, _, cx| {
             if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
                 struct DatabaseFailedNotification;
 
-                workspace.show_notification_once(
-                    NotificationId::unique::<DatabaseFailedNotification>(),
-                    window,
-                    cx,
-                    |window, cx| {
-                        window.new_view(cx, |_, _| {
-                            MessageNotification::new("Failed to load the database file.")
-                                .with_click_message("File an issue")
-                                .on_click(|window, cx| cx.open_url(REPORT_ISSUE_URL))
-                        })
-                    },
-                );
+                MessageNotification::new("Failed to load the database file.")
+                    .with_click_message("File an issue")
+                    .on_click(|_, cx| cx.open_url(REPORT_ISSUE_URL))
+                    .show(
+                        NotificationId::unique::<DatabaseFailedNotification>(),
+                        workspace,
+                        cx,
+                    );
             }
         })
         .log_err();
@@ -6112,10 +6097,10 @@ pub fn open_ssh_project(
             for error in project_path_errors {
                 if error.error_code() == proto::ErrorCode::DevServerProjectPathDoesNotExist {
                     if let Some(path) = error.error_tag("path") {
-                        workspace.show_error(&anyhow!("'{path}' does not exist"), window, cx)
+                        workspace.show_error(&anyhow!("'{path}' does not exist"), cx)
                     }
                 } else {
-                    workspace.show_error(&error, window, cx)
+                    workspace.show_error(&error, cx)
                 }
             }
         })
@@ -7727,7 +7712,7 @@ mod tests {
 
     impl TestModal {
         fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
-            Self(cx.focus_handle())
+            Self(window.focus_handle(cx))
         }
     }
 
@@ -8505,7 +8490,7 @@ mod tests {
                 Self: Sized,
             {
                 Self {
-                    focus_handle: cx.focus_handle(),
+                    focus_handle: window.focus_handle(cx),
                 }
             }
         }
@@ -8576,7 +8561,7 @@ mod tests {
                 Self: Sized,
             {
                 Self {
-                    focus_handle: cx.focus_handle(),
+                    focus_handle: window.focus_handle(cx),
                 }
             }
         }
@@ -8619,7 +8604,7 @@ mod tests {
                 Self: Sized,
             {
                 Self {
-                    focus_handle: cx.focus_handle(),
+                    focus_handle: window.focus_handle(cx),
                 }
             }
         }
