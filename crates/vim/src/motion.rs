@@ -2254,11 +2254,16 @@ fn sneak(
 
     for _ in 0..times {
         found = false;
-        let new_to = find_boundary(map, to, FindRange::MultiLine, |left, right| {
-            found = is_character_match(first_target, left, smartcase)
-                && is_character_match(second_target, right, smartcase);
-            found
-        });
+        let new_to = find_boundary(
+            map,
+            movement::right(map, to),
+            FindRange::MultiLine,
+            |left, right| {
+                found = is_character_match(first_target, left, smartcase)
+                    && is_character_match(second_target, right, smartcase);
+                found
+            },
+        );
         if to == new_to {
             break;
         }
