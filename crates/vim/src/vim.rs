@@ -80,9 +80,11 @@ actions!(
         InnerObject,
         FindForward,
         FindBackward,
-        OpenDefaultKeymap,
         MaximizePane,
+        OpenDefaultKeymap,
         ResetPaneSizes,
+        Sneak,
+        SneakBackward,
     ]
 );
 
@@ -1092,6 +1094,40 @@ impl Vim {
                 };
                 Vim::globals(cx).last_find = Some(find.clone());
                 self.motion(find, cx)
+            }
+            Some(Operator::Sneak { first_char }) => {
+                if let Some(first_char) = first_char {
+                    if let Some(second_char) = text.chars().next() {
+                        let sneak = Motion::Sneak {
+                            first_char,
+                            second_char,
+                            smartcase: VimSettings::get_global(cx).use_smartcase_find,
+                        };
+                        Vim::globals(cx).last_find = Some((&sneak).clone());
+                        self.motion(sneak, cx)
+                    }
+                } else {
+                    let first_char = text.chars().next();
+                    self.pop_operator(cx);
+                    self.push_operator(Operator::Sneak { first_char }, cx);
+                }
+            }
+            Some(Operator::SneakBackward { first_char }) => {
+                if let Some(first_char) = first_char {
+                    if let Some(second_char) = text.chars().next() {
+                        let sneak = Motion::SneakBackward {
+                            first_char,
+                            second_char,
+                            smartcase: VimSettings::get_global(cx).use_smartcase_find,
+                        };
+                        Vim::globals(cx).last_find = Some((&sneak).clone());
+                        self.motion(sneak, cx)
+                    }
+                } else {
+                    let first_char = text.chars().next();
+                    self.pop_operator(cx);
+                    self.push_operator(Operator::SneakBackward { first_char }, cx);
+                }
             }
             Some(Operator::Replace) => match self.mode {
                 Mode::Normal => self.normal_replace(text, cx),
