@@ -936,7 +936,7 @@ fn fetch_and_update_hints(
                         None => true,
                     };
                     if query_not_around_visible_range {
-                        // log::trace!("Fetching inlay hints for range {fetch_range_to_log:?} got throttled and fell off the current visible range, skipping.");
+                        log::trace!("Fetching inlay hints for range {fetch_range_to_log:?} got throttled and fell off the current visible range, skipping.");
                         if let Some(task_ranges) = editor
                             .inlay_hint_cache
                             .update_tasks
@@ -1004,12 +1004,12 @@ fn fetch_and_update_hints(
             })
             .await;
         if let Some(new_update) = new_update {
-            // log::debug!(
-            //     "Applying update for range {fetch_range_to_log:?}: remove from editor: {}, remove from cache: {}, add to cache: {}",
-            //     new_update.remove_from_visible.len(),
-            //     new_update.remove_from_cache.len(),
-            //     new_update.add_to_cache.len()
-            // );
+            log::debug!(
+                "Applying update for range {fetch_range_to_log:?}: remove from editor: {}, remove from cache: {}, add to cache: {}",
+                new_update.remove_from_visible.len(),
+                new_update.remove_from_cache.len(),
+                new_update.add_to_cache.len()
+            );
             log::trace!("New update: {new_update:?}");
             editor
                 .update(&mut cx, |editor, cx| {
@@ -1567,7 +1567,6 @@ pub mod tests {
             cx.add_window(|cx| Editor::for_buffer(rs_buffer, Some(project.clone()), cx));
 
         cx.executor().run_until_parked();
-        cx.executor().start_waiting();
         let rs_fake_server = rs_fake_servers.unwrap().next().await.unwrap();
         let rs_lsp_request_count = Arc::new(AtomicU32::new(0));
         rs_fake_server
@@ -1617,7 +1616,6 @@ pub mod tests {
         let md_editor = cx.add_window(|cx| Editor::for_buffer(md_buffer, Some(project), cx));
 
         cx.executor().run_until_parked();
-        cx.executor().start_waiting();
         let md_fake_server = md_fake_servers.unwrap().next().await.unwrap();
         let md_lsp_request_count = Arc::new(AtomicU32::new(0));
         md_fake_server
@@ -2750,7 +2748,7 @@ pub mod tests {
             INVISIBLE_RANGES_HINTS_REQUEST_DELAY_MILLIS + 100,
         ));
         cx.executor().run_until_parked();
-        let last_scroll_update_version = editor.update(cx, |editor, cx| {
+        editor.update(cx, |editor, cx| {
                 let expected_hints = vec![
                     "main hint #0".to_string(),
                     "main hint #1".to_string(),
@@ -2769,7 +2767,6 @@ pub mod tests {
                     "After multibuffer was scrolled to the end, all hints for all excerpts should be fetched");
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
                 // TODO kb check inlay request count?
-                expected_hints.len()
             }).unwrap();
 
         editor
@@ -3125,9 +3122,6 @@ pub mod tests {
         let editor = cx.add_window(|cx| Editor::for_buffer(buffer, Some(project), cx));
 
         cx.executor().run_until_parked();
-        cx.executor().start_waiting();
-
-        cx.executor().run_until_parked();
         editor
             .update(cx, |editor, cx| {
                 editor.change_selections(None, cx, |s| {
@@ -3191,7 +3185,6 @@ pub mod tests {
                 editor.toggle_inlay_hints(&crate::ToggleInlayHints, cx)
             })
             .unwrap();
-        cx.executor().start_waiting();
 
         cx.executor().run_until_parked();
         editor
@@ -3397,9 +3390,6 @@ pub mod tests {
         let editor = cx.add_window(|cx| Editor::for_buffer(buffer, Some(project), cx));
 
         cx.executor().run_until_parked();
-        cx.executor().start_waiting();
-
-        cx.executor().run_until_parked();
         editor
             .update(cx, |editor, cx| {
                 editor.change_selections(None, cx, |s| {
@@ -3485,15 +3475,11 @@ pub mod tests {
             .update(cx, |editor, cx| {
                 assert!(cached_hint_labels(editor).is_empty());
                 assert!(visible_hint_labels(editor, cx).is_empty());
-                // TODO kb check inlay request count?
             })
             .unwrap();
 
         cx.executor().run_until_parked();
-        cx.executor().start_waiting();
         let fake_server = fake_servers.next().await.unwrap();
-        cx.executor().finish_waiting();
-
         (file_path, editor, fake_server)
     }
 
@@ -3520,13 +3506,10 @@ pub mod tests {
     }
 
     pub fn visible_hint_labels(editor: &Editor, cx: &ViewContext<Editor>) -> Vec<String> {
-        let mut hints = editor
+        editor
             .visible_inlay_hints(cx)
             .into_iter()
             .map(|hint| hint.text.to_string())
-            .collect::<Vec<_>>();
-        // TODO kb
-        // hints.sort();
-        hints
+            .collect()
     }
 }
