@@ -2228,8 +2228,14 @@ impl MultiBuffer {
         let snapshot = self.snapshot.borrow_mut();
         let mut changes = Vec::new();
         for range in ranges.iter() {
-            let start = snapshot.excerpt_offset_for_anchor(&range.start);
-            let end = snapshot.excerpt_offset_for_anchor(&range.end);
+            let range = range.to_point(&snapshot);
+            let start = snapshot.anchor_before(Point::new(range.start.row, 0));
+            let end = snapshot.anchor_before(Point::new(
+                range.end.row,
+                snapshot.line_len(MultiBufferRow(range.end.row)),
+            ));
+            let start = snapshot.excerpt_offset_for_anchor(&start);
+            let end = snapshot.excerpt_offset_for_anchor(&end);
 
             changes.push((
                 text::Edit {
