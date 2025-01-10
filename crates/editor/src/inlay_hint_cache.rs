@@ -1321,7 +1321,6 @@ pub mod tests {
         .await;
         cx.executor().run_until_parked();
 
-        let mut edits_made = 1;
         editor
             .update(cx, |editor, cx| {
                 let expected_hints = vec!["1".to_string()];
@@ -1336,7 +1335,6 @@ pub mod tests {
                     inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
                     "Cache should use editor settings to get the allowed hint kinds"
                 );
-                // TODO kb check inlay request count?
             })
             .unwrap();
 
@@ -1344,7 +1342,6 @@ pub mod tests {
             .update(cx, |editor, cx| {
                 editor.change_selections(None, cx, |s| s.select_ranges([13..13]));
                 editor.handle_input("some change", cx);
-                edits_made += 1;
             })
             .unwrap();
         cx.executor().run_until_parked();
@@ -1362,7 +1359,6 @@ pub mod tests {
                     inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
                     "Cache should use editor settings to get the allowed hint kinds"
                 );
-                // TODO kb check inlay request count?
             })
             .unwrap();
 
@@ -1370,7 +1366,6 @@ pub mod tests {
             .request::<lsp::request::InlayHintRefreshRequest>(())
             .await
             .expect("inlay refresh request failed");
-        edits_made += 1;
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, cx| {
@@ -1386,7 +1381,6 @@ pub mod tests {
                     inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
                     "Cache should use editor settings to get the allowed hint kinds"
                 );
-                // TODO kb check inlay request count?
             })
             .unwrap();
     }
@@ -1432,7 +1426,6 @@ pub mod tests {
         .await;
         cx.executor().run_until_parked();
 
-        let mut edits_made = 1;
         editor
             .update(cx, |editor, cx| {
                 let expected_hints = vec!["0".to_string()];
@@ -1442,7 +1435,6 @@ pub mod tests {
                     "Should get its first hints when opening the editor"
                 );
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-                // TODO kb check inlay request count?
             })
             .unwrap();
 
@@ -1471,7 +1463,6 @@ pub mod tests {
                     "Should not update hints while the work task is running"
                 );
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-                // TODO kb check inlay request count?
             })
             .unwrap();
 
@@ -1483,7 +1474,6 @@ pub mod tests {
         });
         cx.executor().run_until_parked();
 
-        edits_made += 1;
         editor
             .update(cx, |editor, cx| {
                 let expected_hints = vec!["1".to_string()];
@@ -1493,7 +1483,6 @@ pub mod tests {
                     "New hints should be queried after the work task is done"
                 );
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-                // TODO kb check inlay request count?
             })
             .unwrap();
     }
@@ -1527,8 +1516,6 @@ pub mod tests {
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         let mut rs_fake_servers = None;
         let mut md_fake_servers = None;
-        let rs_lsp_request_count = Arc::new(AtomicU32::new(0));
-        let md_lsp_request_count = Arc::new(AtomicU32::new(0));
         for (name, path_suffix) in [("Rust", "rs"), ("Markdown", "md")] {
             language_registry.add(Arc::new(Language::new(
                 LanguageConfig {
@@ -1550,11 +1537,9 @@ pub mod tests {
                         ..Default::default()
                     },
                     initializer: Some(Box::new({
-                        let rs_lsp_request_count = rs_lsp_request_count.clone();
-                        let md_lsp_request_count = md_lsp_request_count.clone();
                         move |fake_server| {
-                            let rs_lsp_request_count = rs_lsp_request_count.clone();
-                            let md_lsp_request_count = md_lsp_request_count.clone();
+                            let rs_lsp_request_count = Arc::new(AtomicU32::new(0));
+                            let md_lsp_request_count = Arc::new(AtomicU32::new(0));
                             fake_server.handle_request::<lsp::request::InlayHintRequest, _, _>(
                                 move |params, _| {
                                     let i = match name {
@@ -1612,7 +1597,7 @@ pub mod tests {
             cx.add_window(|cx| Editor::for_buffer(rs_buffer, Some(project.clone()), cx));
         cx.executor().run_until_parked();
 
-        let rs_fake_server = rs_fake_servers.unwrap().next().await.unwrap();
+        let _rs_fake_server = rs_fake_servers.unwrap().next().await.unwrap();
         cx.executor().run_until_parked();
         rs_editor
             .update(cx, |editor, cx| {
@@ -1636,7 +1621,7 @@ pub mod tests {
         let md_editor = cx.add_window(|cx| Editor::for_buffer(md_buffer, Some(project), cx));
         cx.executor().run_until_parked();
 
-        let md_fake_server = md_fake_servers.unwrap().next().await.unwrap();
+        let _md_fake_server = md_fake_servers.unwrap().next().await.unwrap();
         cx.executor().run_until_parked();
         md_editor
             .update(cx, |editor, cx| {
@@ -1781,7 +1766,6 @@ pub mod tests {
         .await;
         cx.executor().run_until_parked();
 
-        let mut edits_made = lsp_request_count.fetch_add(1, Ordering::Release) + 1;
         editor
             .update(cx, |editor, cx| {
                 // TODO kb
@@ -1808,7 +1792,6 @@ pub mod tests {
                     inlay_cache.allowed_hint_kinds, allowed_hint_kinds,
                     "Cache should use editor settings to get the allowed hint kinds"
                 );
-                // TODO kb check inlay request count?
             })
             .unwrap();
 
@@ -1838,7 +1821,6 @@ pub mod tests {
                     vec!["type hint".to_string(), "other hint".to_string()],
                     visible_hint_labels(editor, cx)
                 );
-                // TODO kb check inlay request count?
             })
             .unwrap();
 
@@ -1877,7 +1859,6 @@ pub mod tests {
                 ],
             ),
         ] {
-            edits_made = lsp_request_count.fetch_add(1, Ordering::Release) + 1;
             update_test_language_settings(cx, |settings| {
                 settings.defaults.inlay_hints = Some(InlayHintSettings {
                     enabled: true,
@@ -1917,11 +1898,9 @@ pub mod tests {
                     inlay_cache.allowed_hint_kinds, new_allowed_hint_kinds,
                     "Cache should use editor settings to get the allowed hint kinds for hint kinds {new_allowed_hint_kinds:?}"
                 );
-                // TODO kb check inlay request count?
             }).unwrap();
         }
 
-        edits_made = lsp_request_count.fetch_add(1, Ordering::Release) + 1;
         let another_allowed_hint_kinds = HashSet::from_iter([Some(InlayHintKind::Type)]);
         update_test_language_settings(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
@@ -1957,7 +1936,6 @@ pub mod tests {
                     inlay_cache.allowed_hint_kinds, another_allowed_hint_kinds,
                     "Should update its allowed hint kinds even when hints got disabled"
                 );
-                // TODO kb check inlay request count?
             })
             .unwrap();
 
@@ -1980,7 +1958,6 @@ pub mod tests {
             .unwrap();
 
         let final_allowed_hint_kinds = HashSet::from_iter([Some(InlayHintKind::Parameter)]);
-        edits_made = lsp_request_count.fetch_add(1, Ordering::Release) + 1;
         update_test_language_settings(cx, |settings| {
             settings.defaults.inlay_hints = Some(InlayHintSettings {
                 enabled: true,
@@ -2274,33 +2251,7 @@ pub mod tests {
 
         cx.executor().run_until_parked();
 
-        fn editor_visible_range(
-            editor: &WindowHandle<Editor>,
-            cx: &mut gpui::TestAppContext,
-        ) -> Range<Point> {
-            let ranges = editor
-                .update(cx, |editor, cx| {
-                    editor.excerpts_for_inlay_hints_query(None, cx)
-                })
-                .unwrap();
-            assert_eq!(
-                ranges.len(),
-                1,
-                "Single buffer should produce a single excerpt with visible range"
-            );
-            let (_, (excerpt_buffer, _, excerpt_visible_range)) =
-                ranges.into_iter().next().unwrap();
-            excerpt_buffer.update(cx, |buffer, _| {
-                let snapshot = buffer.snapshot();
-                let start = buffer
-                    .anchor_before(excerpt_visible_range.start)
-                    .to_point(&snapshot);
-                let end = buffer
-                    .anchor_after(excerpt_visible_range.end)
-                    .to_point(&snapshot);
-                start..end
-            })
-        }
+        let _fake_server = fake_servers.next().await.unwrap();
 
         // in large buffers, requests are made for more than visible range of a buffer.
         // invisible parts are queried later, to avoid excessive requests on quick typing.
@@ -2346,7 +2297,6 @@ pub mod tests {
                 "Should have hints from both LSP requests made for a big file"
             );
             assert_eq!(expected_hints, visible_hint_labels(editor, cx), "Should display only hints from the visible range");
-            // TODO kb check inlay request count?
         }).unwrap();
 
         editor
@@ -2482,8 +2432,34 @@ pub mod tests {
             assert_eq!(expected_hints, cached_hint_labels(editor),
                 "Should have hints from the new LSP response after the edit");
             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-            // TODO kb check inlay request count?
         }).unwrap();
+    }
+
+    fn editor_visible_range(
+        editor: &WindowHandle<Editor>,
+        cx: &mut gpui::TestAppContext,
+    ) -> Range<Point> {
+        let ranges = editor
+            .update(cx, |editor, cx| {
+                editor.excerpts_for_inlay_hints_query(None, cx)
+            })
+            .unwrap();
+        assert_eq!(
+            ranges.len(),
+            1,
+            "Single buffer should produce a single excerpt with visible range"
+        );
+        let (_, (excerpt_buffer, _, excerpt_visible_range)) = ranges.into_iter().next().unwrap();
+        excerpt_buffer.update(cx, |buffer, _| {
+            let snapshot = buffer.snapshot();
+            let start = buffer
+                .anchor_before(excerpt_visible_range.start)
+                .to_point(&snapshot);
+            let end = buffer
+                .anchor_after(excerpt_visible_range.end)
+                .to_point(&snapshot);
+            start..end
+        })
     }
 
     #[gpui::test]
@@ -2692,8 +2668,6 @@ pub mod tests {
                     "When scroll is at the edge of a multibuffer, its visible excerpts only should be queried for inlay hints"
                 );
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-                // TODO kb
-                // assert_eq!(editor.inlay_hint_cache().version, expected_hints.len(), "Every visible excerpt hints should bump the version");
             }).unwrap();
 
         editor
@@ -2725,7 +2699,6 @@ pub mod tests {
                 assert_eq!(expected_hints, cached_hint_labels(editor),
                     "With more scrolls of the multibuffer, more hints should be added into the cache and nothing invalidated without edits");
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-                // TODO kb check inlay request count?
             }).unwrap();
 
         editor
@@ -2757,7 +2730,6 @@ pub mod tests {
                 assert_eq!(expected_hints, cached_hint_labels(editor),
                     "After multibuffer was scrolled to the end, all hints for all excerpts should be fetched");
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-                // TODO kb check inlay request count?
             }).unwrap();
 
         editor
@@ -2789,7 +2761,6 @@ pub mod tests {
                 assert_eq!(expected_hints, cached_hint_labels(editor),
                     "After multibuffer was scrolled to the end, further scrolls up should not bring more hints");
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-                // TODO kb check inlay request count?
             }).unwrap();
 
         editor_edited.store(true, Ordering::Release);
@@ -2983,7 +2954,6 @@ pub mod tests {
                 visible_hint_labels(editor, cx).is_empty(),
                 "All hints are disabled and should not be shown despite being present in the cache"
             );
-                // TODO kb check inlay request count?
             })
             .unwrap();
 
@@ -3006,7 +2976,6 @@ pub mod tests {
                 visible_hint_labels(editor, cx).is_empty(),
                 "All hints are disabled and should not be shown despite being present in the cache"
             );
-                // TODO kb check inlay request count?
             })
             .unwrap();
 
@@ -3035,7 +3004,6 @@ pub mod tests {
                     visible_hint_labels(editor, cx),
                     "Settings change should make cached hints visible"
                 );
-                // TODO kb check inlay request count?
             })
             .unwrap();
     }
@@ -3126,7 +3094,6 @@ pub mod tests {
                 let expected_hints = vec!["1".to_string()];
                 assert_eq!(expected_hints, cached_hint_labels(editor));
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-                // TODO kb check inlay request count?
             })
             .unwrap();
     }
@@ -3187,7 +3154,6 @@ pub mod tests {
                     "Should display inlays after toggle despite them disabled in settings"
                 );
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-                // TODO kb check inlay request count?
             })
             .unwrap();
 
@@ -3204,7 +3170,6 @@ pub mod tests {
                     "Should clear hints after 2nd toggle"
                 );
                 assert!(visible_hint_labels(editor, cx).is_empty());
-                // TODO kb check inlay request count?
             })
             .unwrap();
 
@@ -3229,7 +3194,6 @@ pub mod tests {
                     "Should query LSP hints for the 2nd time after enabling hints in settings"
                 );
                 assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-                // TODO kb check inlay request count?
             })
             .unwrap();
 
@@ -3246,7 +3210,6 @@ pub mod tests {
                     "Should clear hints after enabling in settings and a 3rd toggle"
                 );
                 assert!(visible_hint_labels(editor, cx).is_empty());
-                // TODO kb check inlay request count?
             })
             .unwrap();
 
@@ -3264,7 +3227,6 @@ pub mod tests {
                 "Should query LSP hints for the 3rd time after enabling hints in settings and toggling them back on"
             );
             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
-            // TODO kb check inlay request count?
         }).unwrap();
     }
 
@@ -3491,8 +3453,6 @@ pub mod tests {
             }
         }
 
-        // TODO kb
-        // labels.sort();
         labels
     }
 
