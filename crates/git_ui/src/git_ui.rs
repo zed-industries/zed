@@ -1,9 +1,7 @@
 use ::settings::Settings;
+use collections::HashMap;
 use futures::{future::FusedFuture, select, FutureExt};
-use git::{
-    repository::{GitFileStatus, GitRepository, RepoPath},
-    status::GitStatusPair,
-};
+use git::repository::{GitFileStatus, GitRepository, RepoPath};
 use gpui::{actions, AppContext, Context, Global, Hsla, Model, ModelContext};
 use project::{Project, WorktreeId};
 use settings::GitPanelSettings;
@@ -13,7 +11,8 @@ use std::{
     sync::Arc,
     time::Duration,
 };
-use ui::{Color, Icon, IconName, IntoElement, SharedString, ToggleState};
+use sum_tree::SumTree;
+use ui::{Color, Icon, IconName, IntoElement, SharedString};
 use worktree::RepositoryEntry;
 
 pub mod git_panel;
@@ -68,9 +67,11 @@ pub struct GitState {
 
     /// When a git repository is selected, this is used to track which repository's changes
     /// are currently being viewed or modified in the UI.
-    active_repository: Option<(RepositoryEntry, Arc<dyn GitRepository>)>,
+    active_repository: Option<(WorktreeId, RepositoryEntry, Arc<dyn GitRepository>)>,
 
     updater_tx: mpsc::Sender<(Arc<dyn GitRepository>, Vec<RepoPath>, StatusAction)>,
+
+    all_repositories: HashMap<WorktreeId, SumTree<RepositoryEntry>>,
 
     list_view_mode: GitViewMode,
 }
@@ -163,6 +164,7 @@ impl GitState {
             active_repository: None,
             updater_tx,
             list_view_mode: GitViewMode::default(),
+            all_repositories: HashMap::default(),
         }
     }
 
@@ -172,13 +174,16 @@ impl GitState {
 
     pub fn activate_repository(
         &mut self,
+        worktree_id: WorktreeId,
         active_repository: RepositoryEntry,
         git_repo: Arc<dyn GitRepository>,
     ) {
-        self.active_repository = Some((active_repository, git_repo));
+        self.active_repository = Some((worktree_id, active_repository, git_repo));
     }
 
-    pub fn active_repository(&self) -> Option<&(RepositoryEntry, Arc<dyn GitRepository>)> {
+    pub fn active_repository(
+        &self,
+    ) -> Option<&(WorktreeId, RepositoryEntry, Arc<dyn GitRepository>)> {
         self.active_repository.as_ref()
     }
 
@@ -191,7 +196,7 @@ impl GitState {
     }
 
     pub fn stage_entry(&mut self, repo_path: RepoPath) {
-        if let Some((_, git_repo)) = self.active_repository.as_ref() {
+        if let Some((_, _, git_repo)) = self.active_repository.as_ref() {
             let _ = self
                 .updater_tx
                 .send((git_repo.clone(), vec![repo_path], StatusAction::Stage));
@@ -199,7 +204,7 @@ impl GitState {
     }
 
     pub fn unstage_entry(&mut self, repo_path: RepoPath) {
-        if let Some((_, git_repo)) = self.active_repository.as_ref() {
+        if let Some((_, _, git_repo)) = self.active_repository.as_ref() {
             let _ =
                 self.updater_tx
                     .send((git_repo.clone(), vec![repo_path], StatusAction::Unstage));
@@ -207,7 +212,7 @@ impl GitState {
     }
 
     pub fn stage_entries(&mut self, entries: Vec<RepoPath>) {
-        if let Some((_, git_repo)) = self.active_repository.as_ref() {
+        if let Some((_, _, git_repo)) = self.active_repository.as_ref() {
             let _ = self
                 .updater_tx
                 .send((git_repo.clone(), entries, StatusAction::Stage));
@@ -215,7 +220,7 @@ impl GitState {
     }
 
     fn act_on_all(&mut self, action: StatusAction) {
-        if let Some((active_repository, git_repo)) = self.active_repository.as_ref() {
+        if let Some((_, active_repository, git_repo)) = self.active_repository.as_ref() {
             let _ = self.updater_tx.send((
                 git_repo.clone(),
                 active_repository
@@ -241,12 +246,37 @@ pub fn first_worktree_repository(
     worktree_id: WorktreeId,
     cx: &mut AppContext,
 ) -> Option<(RepositoryEntry, Arc<dyn GitRepository>)> {
-    let worktree = project.read(cx).worktree_for_id(worktree_id, cx)?;
-    let snapshot = worktree.read(cx).snapshot();
-    let repo = snapshot.repositories().next()?.clone();
-    let local = worktree.read(cx).as_local()?;
-    let git_repo = local.get_local_repo(&repo)?.repo().clone();
-    Some((repo, git_repo))
+    project
+        .read(cx)
+        .worktree_for_id(worktree_id, cx)
+        .and_then(|worktree| {
+            let snapshot = worktree.read(cx).snapshot();
+            let repo = snapshot.repositories().iter().next()?.clone();
+            let git_repo = worktree
+                .read(cx)
+                .as_local()?
+                .get_local_repo(&repo)?
+                .repo()
+                .clone();
+            Some((repo, git_repo))
+        })
+}
+
+pub fn first_repository_in_project(
+    project: &Model<Project>,
+    cx: &mut AppContext,
+) -> Option<(WorktreeId, RepositoryEntry, Arc<dyn GitRepository>)> {
+    project.read(cx).worktrees(cx).next().and_then(|worktree| {
+        let snapshot = worktree.read(cx).snapshot();
+        let repo = snapshot.repositories().iter().next()?.clone();
+        let git_repo = worktree
+            .read(cx)
+            .as_local()?
+            .get_local_repo(&repo)?
+            .repo()
+            .clone();
+        Some((snapshot.id(), repo, git_repo))
+    })
 }
 
 const ADDED_COLOR: Hsla = Hsla {

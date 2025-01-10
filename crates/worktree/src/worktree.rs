@@ -2581,8 +2581,8 @@ impl Snapshot {
             .map(|repo| repo.status().collect())
     }
 
-    pub fn repositories(&self) -> impl Iterator<Item = &RepositoryEntry> {
-        self.repositories.iter()
+    pub fn repositories(&self) -> &SumTree<RepositoryEntry> {
+        &self.repositories
     }
 
     /// Get the repository whose work directory corresponds to the given path.
@@ -2616,7 +2616,7 @@ impl Snapshot {
         entries: impl 'a + Iterator<Item = &'a Entry>,
     ) -> impl 'a + Iterator<Item = (&'a Entry, Option<&'a RepositoryEntry>)> {
         let mut containing_repos = Vec::<&RepositoryEntry>::new();
-        let mut repositories = self.repositories().peekable();
+        let mut repositories = self.repositories().iter().peekable();
         entries.map(move |entry| {
             while let Some(repository) = containing_repos.last() {
                 if repository.directory_contains(&entry.path) {
