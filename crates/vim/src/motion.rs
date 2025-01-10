@@ -2266,8 +2266,7 @@ fn sneak(
     }
 
     if found {
-        // No need to check if column > 0 because we're looking for 2 characters
-        *to.column_mut() -= 1;
+        *to.column_mut() -= first_target.len_utf8();
         Some(to)
     } else {
         None
@@ -2300,8 +2299,7 @@ fn sneak_backward(
     }
 
     if found {
-        // No need to check if column > 0 because we're looking for 2 characters
-        *to.column_mut() -= 1;
+        *to.column_mut() -= first_target.len_utf8();
         Some(to)
     } else {
         None
