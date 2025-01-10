@@ -34,7 +34,7 @@ pub struct ContextSnapshot {
     pub text: Box<[SharedString]>,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextKind {
     File,
     Directory,
