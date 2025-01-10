@@ -17,7 +17,12 @@ use indoc::indoc;
 use search::BufferSearchBar;
 use workspace::WorkspaceSettings;
 
-use crate::{insert::NormalBefore, motion, state::Mode};
+use crate::{
+    insert::NormalBefore,
+    motion,
+    state::{Mode, Operator},
+    PushOperator,
+};
 
 #[gpui::test]
 async fn test_initially_disabled(cx: &mut gpui::TestAppContext) {
@@ -1330,6 +1335,68 @@ async fn test_find_multibyte(cx: &mut gpui::TestAppContext) {
     cx.shared_state()
         .await
         .assert_eq(r#"<label for="guests">ˇo</label>"#);
+}
+
+#[gpui::test]
+async fn test_sneak(cx: &mut gpui::TestAppContext) {
+    let mut cx = VimTestContext::new(cx, true).await;
+
+    cx.update(|cx| {
+        cx.bind_keys([
+            KeyBinding::new(
+                "s",
+                PushOperator(Operator::Sneak { first_char: None }),
+                Some("vim_mode == normal"),
+            ),
+            KeyBinding::new(
+                "S",
+                PushOperator(Operator::SneakBackward { first_char: None }),
+                Some("vim_mode == normal"),
+            ),
+            KeyBinding::new(
+                "S",
+                PushOperator(Operator::SneakBackward { first_char: None }),
+                Some("vim_mode == visual"),
+            ),
+        ])
+    });
+
+    // Sneak forwards multibyte & multiline
+    cx.set_state(
+        indoc! {
+            r#"<labelˇ for="guests">
+                    Počet hostů
+                </label>"#
+        },
+        Mode::Normal,
+    );
+    cx.simulate_keystrokes("s t ů");
+    cx.assert_state(
+        indoc! {
+            r#"<label for="guests">
+                Počet hosˇtů
+            </label>"#
+        },
+        Mode::Normal,
+    );
+
+    // Visual sneak backwards multibyte & multiline
+    cx.simulate_keystrokes("v S < l");
+    cx.assert_state(
+        indoc! {
+            r#"«ˇ<label for="guests">
+                Počet host»ů
+            </label>"#
+        },
+        Mode::Visual,
+    );
+
+    // Sneak backwards repeated
+    cx.set_state(r#"11 12 13 ˇ14"#, Mode::Normal);
+    cx.simulate_keystrokes("S space 1");
+    cx.assert_state(r#"11 12ˇ 13 14"#, Mode::Normal);
+    cx.simulate_keystrokes(";");
+    cx.assert_state(r#"11ˇ 12 13 14"#, Mode::Normal);
 }
 
 #[gpui::test]

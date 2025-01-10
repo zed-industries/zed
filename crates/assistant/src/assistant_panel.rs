@@ -595,7 +595,7 @@ impl AssistantPanel {
                 true
             }
 
-            pane::Event::ActivateItem { local } => {
+            pane::Event::ActivateItem { local, .. } => {
                 if *local {
                     self.workspace
                         .update(cx, |workspace, cx| {
@@ -4271,6 +4271,10 @@ impl Item for ContextEditor {
         } else {
             None
         }
+    }
+
+    fn include_in_nav_history() -> bool {
+        false
     }
 }
 

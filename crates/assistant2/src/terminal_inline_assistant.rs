@@ -245,10 +245,10 @@ impl TerminalInlineAssistant {
             cache: false,
         };
 
-        let context = assist
-            .context_store
-            .update(cx, |this, _cx| this.context().clone());
-        attach_context_to_message(&mut request_message, context);
+        attach_context_to_message(
+            &mut request_message,
+            assist.context_store.read(cx).snapshot(cx),
+        );
 
         request_message.content.push(prompt.into());
 

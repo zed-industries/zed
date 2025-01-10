@@ -3958,7 +3958,13 @@ impl EditorElement {
             let Some(()) = line.paint(hitbox.origin, line_height, cx).log_err() else {
                 continue;
             };
-            cx.set_cursor_style(CursorStyle::PointingHand, hitbox);
+            // In singleton buffers, we select corresponding lines on the line number click, so use | -like cursor.
+            // In multi buffers, we open file at the line number clicked, so use a pointing hand cursor.
+            if is_singleton {
+                cx.set_cursor_style(CursorStyle::IBeam, hitbox);
+            } else {
+                cx.set_cursor_style(CursorStyle::PointingHand, hitbox);
+            }
         }
     }
 

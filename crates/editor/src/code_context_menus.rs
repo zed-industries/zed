@@ -158,7 +158,7 @@ pub struct CompletionsMenu {
     pub buffer: Model<Buffer>,
     pub completions: Rc<RefCell<Box<[Completion]>>>,
     match_candidates: Rc<[StringMatchCandidate]>,
-    pub entries: Rc<[CompletionEntry]>,
+    pub entries: Rc<RefCell<Vec<CompletionEntry>>>,
     pub selected_item: usize,
     scroll_handle: UniformListScrollHandle,
     resolve_completions: bool,
@@ -195,7 +195,7 @@ impl CompletionsMenu {
             show_completion_documentation,
             completions: RefCell::new(completions).into(),
             match_candidates,
-            entries: Vec::new().into(),
+            entries: RefCell::new(Vec::new()).into(),
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: true,
@@ -244,7 +244,7 @@ impl CompletionsMenu {
                     string: completion.clone(),
                 })
             })
-            .collect();
+            .collect::<Vec<_>>();
         Self {
             id,
             sort_completions,
@@ -252,7 +252,7 @@ impl CompletionsMenu {
             buffer,
             completions: RefCell::new(completions).into(),
             match_candidates,
-            entries,
+            entries: RefCell::new(entries).into(),
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: false,
@@ -290,7 +290,8 @@ impl CompletionsMenu {
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        self.update_selection_index(self.entries.len() - 1, provider, cx);
+        let index = self.entries.borrow().len() - 1;
+        self.update_selection_index(index, provider, cx);
     }
 
     fn update_selection_index(
@@ -312,12 +313,12 @@ impl CompletionsMenu {
         if self.selected_item > 0 {
             self.selected_item - 1
         } else {
-            self.entries.len() - 1
+            self.entries.borrow().len() - 1
         }
     }
 
     fn next_match_index(&self) -> usize {
-        if self.selected_item + 1 < self.entries.len() {
+        if self.selected_item + 1 < self.entries.borrow().len() {
             self.selected_item + 1
         } else {
             0
@@ -326,24 +327,18 @@ impl CompletionsMenu {
 
     pub fn show_inline_completion_hint(&mut self, hint: InlineCompletionMenuHint) {
         let hint = CompletionEntry::InlineCompletionHint(hint);
-
-        self.entries = match self.entries.first() {
+        let mut entries = self.entries.borrow_mut();
+        match entries.first() {
             Some(CompletionEntry::InlineCompletionHint { .. }) => {
-                let mut entries = Vec::from(&*self.entries);
                 entries[0] = hint;
-                entries
             }
             _ => {
                 if self.selected_item != 0 {
                     self.selected_item += 1;
                 }
-                let mut entries = Vec::with_capacity(self.entries.len() + 1);
-                entries.push(hint);
-                entries.extend_from_slice(&self.entries);
-                entries
+                entries.insert(0, hint);
             }
         }
-        .into();
     }
 
     pub fn resolve_visible_completions(
@@ -369,13 +364,14 @@ impl CompletionsMenu {
         let visible_count = last_rendered_range
             .clone()
             .map_or(APPROXIMATE_VISIBLE_COUNT, |range| range.count());
+        let entries = self.entries.borrow();
         let entry_range = if self.selected_item == 0 {
-            0..min(visible_count, self.entries.len())
-        } else if self.selected_item == self.entries.len() - 1 {
-            self.entries.len().saturating_sub(visible_count)..self.entries.len()
+            0..min(visible_count, entries.len())
+        } else if self.selected_item == entries.len() - 1 {
+            entries.len().saturating_sub(visible_count)..entries.len()
         } else {
             last_rendered_range.map_or(0..0, |range| {
-                min(range.start, self.entries.len())..min(range.end, self.entries.len())
+                min(range.start, entries.len())..min(range.end, entries.len())
             })
         };
 
@@ -386,24 +382,25 @@ impl CompletionsMenu {
             entry_range.clone(),
             EXTRA_TO_RESOLVE,
             EXTRA_TO_RESOLVE,
-            self.entries.len(),
+            entries.len(),
         );
 
         // Avoid work by sometimes filtering out completions that already have documentation.
         // This filtering doesn't happen if the completions are currently being updated.
         let completions = self.completions.borrow();
         let candidate_ids = entry_indices
-            .flat_map(|i| Self::entry_candidate_id(&self.entries[i]))
+            .flat_map(|i| Self::entry_candidate_id(&entries[i]))
             .filter(|i| completions[*i].documentation.is_none());
 
         // Current selection is always resolved even if it already has documentation, to handle
         // out-of-spec language servers that return more results later.
-        let candidate_ids = match Self::entry_candidate_id(&self.entries[self.selected_item]) {
+        let candidate_ids = match Self::entry_candidate_id(&entries[self.selected_item]) {
             None => candidate_ids.collect::<Vec<usize>>(),
             Some(selected_candidate_id) => iter::once(selected_candidate_id)
                 .chain(candidate_ids.filter(|id| *id != selected_candidate_id))
                 .collect::<Vec<usize>>(),
         };
+        drop(entries);
 
         if candidate_ids.is_empty() {
             return;
@@ -432,7 +429,7 @@ impl CompletionsMenu {
     }
 
     pub fn visible(&self) -> bool {
-        !self.entries.is_empty()
+        !self.entries.borrow().is_empty()
     }
 
     fn origin(&self, cursor_position: DisplayPoint) -> ContextMenuOrigin {
@@ -449,6 +446,7 @@ impl CompletionsMenu {
         let show_completion_documentation = self.show_completion_documentation;
         let widest_completion_ix = self
             .entries
+            .borrow()
             .iter()
             .enumerate()
             .max_by_key(|(_, mat)| match mat {
@@ -475,19 +473,19 @@ impl CompletionsMenu {
 
         let selected_item = self.selected_item;
         let completions = self.completions.clone();
-        let matches = self.entries.clone();
+        let entries = self.entries.clone();
         let last_rendered_range = self.last_rendered_range.clone();
         let style = style.clone();
         let list = uniform_list(
             cx.view().clone(),
             "completions",
-            matches.len(),
+            self.entries.borrow().len(),
             move |_editor, range, cx| {
                 last_rendered_range.borrow_mut().replace(range.clone());
                 let start_ix = range.start;
                 let completions_guard = completions.borrow_mut();
 
-                matches[range]
+                entries.borrow()[range]
                     .iter()
                     .enumerate()
                     .map(|(ix, mat)| {
@@ -623,7 +621,7 @@ impl CompletionsMenu {
             return None;
         }
 
-        let multiline_docs = match &self.entries[self.selected_item] {
+        let multiline_docs = match &self.entries.borrow()[self.selected_item] {
             CompletionEntry::Match(mat) => {
                 match self.completions.borrow_mut()[mat.candidate_id]
                     .documentation
@@ -769,12 +767,14 @@ impl CompletionsMenu {
         }
         drop(completions);
 
-        let mut new_entries: Vec<_> = matches.into_iter().map(CompletionEntry::Match).collect();
-        if let Some(CompletionEntry::InlineCompletionHint(hint)) = self.entries.first() {
-            new_entries.insert(0, CompletionEntry::InlineCompletionHint(hint.clone()));
+        let mut entries = self.entries.borrow_mut();
+        if let Some(CompletionEntry::InlineCompletionHint(_)) = entries.first() {
+            entries.truncate(1);
+        } else {
+            entries.truncate(0);
         }
+        entries.extend(matches.into_iter().map(CompletionEntry::Match));
 
-        self.entries = new_entries.into();
         self.selected_item = 0;
     }
 }

@@ -210,7 +210,7 @@ impl ContextPicker {
         };
 
         let task = context_store.update(cx, |context_store, cx| {
-            context_store.add_file(project_path.clone(), cx)
+            context_store.add_file_from_path(project_path.clone(), cx)
         });
 
         let workspace = self.workspace.clone();
@@ -241,12 +241,17 @@ impl ContextPicker {
             return;
         };
 
-        let Some(thread_store) = self.thread_store.clone() else {
+        let Some(thread) = self
+            .thread_store
+            .clone()
+            .and_then(|this| this.upgrade())
+            .and_then(|this| this.update(cx, |this, cx| this.open_thread(&thread.id, cx)))
+        else {
             return;
         };
 
         context_store.update(cx, |context_store, cx| {
-            context_store.add_thread(&thread.id, thread_store, cx);
+            context_store.add_thread(thread, cx);
         });
 
         cx.notify();
@@ -263,7 +268,7 @@ impl ContextPicker {
 
         let mut recent = Vec::with_capacity(6);
 
-        let mut current_files = context_store.file_paths();
+        let mut current_files = context_store.file_paths(cx);
 
         if let Some(active_path) = Self::active_singleton_buffer_path(&workspace, cx) {
             current_files.insert(active_path);

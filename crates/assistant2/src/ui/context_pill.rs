@@ -3,17 +3,18 @@ use std::rc::Rc;
 use gpui::ClickEvent;
 use ui::{prelude::*, IconButtonShape, Tooltip};
 
-use crate::context::{Context, ContextKind};
+use crate::context::{ContextKind, ContextSnapshot};
 
 #[derive(IntoElement)]
 pub enum ContextPill {
     Added {
-        context: Context,
+        context: ContextSnapshot,
         dupe_name: bool,
         on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
     },
     Suggested {
         name: SharedString,
+        icon_path: Option<SharedString>,
         kind: ContextKind,
         on_add: Rc<dyn Fn(&ClickEvent, &mut WindowContext)>,
     },
@@ -21,7 +22,7 @@ pub enum ContextPill {
 
 impl ContextPill {
     pub fn new_added(
-        context: Context,
+        context: ContextSnapshot,
         dupe_name: bool,
         on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
     ) -> Self {
@@ -34,10 +35,16 @@ impl ContextPill {
 
     pub fn new_suggested(
         name: SharedString,
+        icon_path: Option<SharedString>,
         kind: ContextKind,
         on_add: Rc<dyn Fn(&ClickEvent, &mut WindowContext)>,
     ) -> Self {
-        Self::Suggested { name, kind, on_add }
+        Self::Suggested {
+            name,
+            icon_path,
+            kind,
+            on_add,
+        }
     }
 
     pub fn id(&self) -> ElementId {
@@ -49,10 +56,21 @@ impl ContextPill {
         }
     }
 
-    pub fn kind(&self) -> &ContextKind {
+    pub fn icon(&self) -> Icon {
         match self {
-            Self::Added { context, .. } => &context.kind,
-            Self::Suggested { kind, .. } => kind,
+            Self::Added { context, .. } => match &context.icon_path {
+                Some(icon_path) => Icon::from_path(icon_path),
+                None => Icon::new(context.kind.icon()),
+            },
+            Self::Suggested {
+                icon_path: Some(icon_path),
+                ..
+            } => Icon::from_path(icon_path),
+            Self::Suggested {
+                kind,
+                icon_path: None,
+                ..
+            } => Icon::new(kind.icon()),
         }
     }
 }
@@ -68,11 +86,7 @@ impl RenderOnce for ContextPill {
             .border_1()
             .rounded_md()
             .gap_1()
-            .child(
-                Icon::new(self.kind().icon())
-                    .size(IconSize::XSmall)
-                    .color(Color::Muted),
-            );
+            .child(self.icon().size(IconSize::XSmall).color(Color::Muted));
 
         match &self {
             ContextPill::Added {
@@ -115,7 +129,12 @@ impl RenderOnce for ContextPill {
                             }),
                     )
                 }),
-            ContextPill::Suggested { name, kind, on_add } => base_pill
+            ContextPill::Suggested {
+                name,
+                icon_path: _,
+                kind,
+                on_add,
+            } => base_pill
                 .cursor_pointer()
                 .pr_1()
                 .border_color(color.border_variant.opacity(0.5))

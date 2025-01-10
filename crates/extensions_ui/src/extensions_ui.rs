@@ -82,13 +82,26 @@ pub fn init(cx: &mut AppContext) {
                                 }
                             };
 
-                        store
+                        let install_task = store
                             .update(&mut cx, |store, cx| {
-                                store
-                                    .install_dev_extension(extension_path, cx)
-                                    .detach_and_log_err(cx)
+                                store.install_dev_extension(extension_path, cx)
                             })
                             .ok()?;
+
+                        match install_task.await {
+                            Ok(_) => {}
+                            Err(err) => {
+                                workspace_handle
+                                    .update(&mut cx, |workspace, cx| {
+                                        workspace.show_error(
+                                            &err.context("failed to install dev extension"),
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            }
+                        }
+
                         Some(())
                     })
                     .detach();

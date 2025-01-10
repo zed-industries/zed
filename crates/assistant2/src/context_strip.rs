@@ -1,10 +1,14 @@
 use std::rc::Rc;
 
+use anyhow::Result;
+use collections::HashSet;
 use editor::Editor;
+use file_icons::FileIcons;
 use gpui::{
-    AppContext, DismissEvent, EventEmitter, FocusHandle, Model, Subscription, View, WeakModel,
-    WeakView,
+    DismissEvent, EventEmitter, FocusHandle, Model, ModelContext, Subscription, Task, View,
+    WeakModel, WeakView,
 };
+use itertools::Itertools;
 use language::Buffer;
 use ui::{prelude::*, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip};
 use workspace::Workspace;
@@ -73,11 +77,17 @@ impl ContextStrip {
         let active_item = workspace.read(cx).active_item(cx)?;
 
         let editor = active_item.to_any().downcast::<Editor>().ok()?.read(cx);
-        let active_buffer = editor.buffer().read(cx).as_singleton()?;
+        let active_buffer_model = editor.buffer().read(cx).as_singleton()?;
+        let active_buffer = active_buffer_model.read(cx);
 
-        let path = active_buffer.read(cx).file()?.path();
+        let path = active_buffer.file()?.path();
 
-        if self.context_store.read(cx).included_file(path).is_some() {
+        if self
+            .context_store
+            .read(cx)
+            .will_include_buffer(active_buffer.remote_id(), path)
+            .is_some()
+        {
             return None;
         }
 
@@ -86,9 +96,12 @@ impl ContextStrip {
             None => path.to_string_lossy().into_owned().into(),
         };
 
+        let icon_path = FileIcons::get_icon(path, cx);
+
         Some(SuggestedContext::File {
             name,
-            buffer: active_buffer.downgrade(),
+            buffer: active_buffer_model.downgrade(),
+            icon_path,
         })
     }
 
@@ -106,7 +119,7 @@ impl ContextStrip {
         if self
             .context_store
             .read(cx)
-            .included_thread(active_thread.id())
+            .includes_thread(active_thread.id())
             .is_some()
         {
             return None;
@@ -131,13 +144,24 @@ impl ContextStrip {
 impl Render for ContextStrip {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let context_store = self.context_store.read(cx);
-        let context = context_store.context().clone();
+        let context = context_store
+            .context()
+            .iter()
+            .flat_map(|context| context.snapshot(cx))
+            .collect::<Vec<_>>();
         let context_picker = self.context_picker.clone();
         let focus_handle = self.focus_handle.clone();
 
         let suggested_context = self.suggested_context(cx);
 
-        let dupe_names = context_store.duplicated_names();
+        let dupe_names = context
+            .iter()
+            .map(|context| context.name.clone())
+            .sorted()
+            .tuple_windows()
+            .filter(|(a, b)| a == b)
+            .map(|(a, _)| a)
+            .collect::<HashSet<SharedString>>();
 
         h_flex()
             .flex_wrap()
@@ -200,11 +224,11 @@ impl Render for ContextStrip {
                     context.clone(),
                     dupe_names.contains(&context.name),
                     Some({
-                        let context = context.clone();
+                        let id = context.id;
                         let context_store = self.context_store.clone();
                         Rc::new(cx.listener(move |_this, _event, cx| {
                             context_store.update(cx, |this, _cx| {
-                                this.remove_context(&context.id);
+                                this.remove_context(id);
                             });
                             cx.notify();
                         }))
@@ -214,15 +238,36 @@ impl Render for ContextStrip {
             .when_some(suggested_context, |el, suggested| {
                 el.child(ContextPill::new_suggested(
                     suggested.name().clone(),
+                    suggested.icon_path(),
                     suggested.kind(),
                     {
                         let context_store = self.context_store.clone();
-                        Rc::new(cx.listener(move |_this, _event, cx| {
-                            context_store.update(cx, |context_store, cx| {
-                                suggested.accept(context_store, cx);
+                        Rc::new(cx.listener(move |this, _event, cx| {
+                            let task = context_store.update(cx, |context_store, cx| {
+                                suggested.accept(context_store, cx)
                             });
 
-                            cx.notify();
+                            let workspace = this.workspace.clone();
+                            cx.spawn(|this, mut cx| async move {
+                                match task.await {
+                                    Ok(()) => {
+                                        if let Some(this) = this.upgrade() {
+                                            this.update(&mut cx, |_, cx| cx.notify())?;
+                                        }
+                                    }
+                                    Err(err) => {
+                                        let Some(workspace) = workspace.upgrade() else {
+                                            return anyhow::Ok(());
+                                        };
+
+                                        workspace.update(&mut cx, |workspace, cx| {
+                                            workspace.show_error(&err, cx);
+                                        })?;
+                                    }
+                                }
+                                anyhow::Ok(())
+                            })
+                            .detach_and_log_err(cx);
                         }))
                     },
                 ))
@@ -270,6 +315,7 @@ pub enum SuggestContextKind {
 pub enum SuggestedContext {
     File {
         name: SharedString,
+        icon_path: Option<SharedString>,
         buffer: WeakModel<Buffer>,
     },
     Thread {
@@ -286,19 +332,35 @@ impl SuggestedContext {
         }
     }
 
-    pub fn accept(&self, context_store: &mut ContextStore, cx: &mut AppContext) {
+    pub fn icon_path(&self) -> Option<SharedString> {
         match self {
-            Self::File { buffer, name: _ } => {
+            Self::File { icon_path, .. } => icon_path.clone(),
+            Self::Thread { .. } => None,
+        }
+    }
+
+    pub fn accept(
+        &self,
+        context_store: &mut ContextStore,
+        cx: &mut ModelContext<ContextStore>,
+    ) -> Task<Result<()>> {
+        match self {
+            Self::File {
+                buffer,
+                icon_path: _,
+                name: _,
+            } => {
                 if let Some(buffer) = buffer.upgrade() {
-                    context_store.insert_file(buffer.read(cx));
+                    return context_store.add_file_from_buffer(buffer, cx);
                 };
             }
             Self::Thread { thread, name: _ } => {
                 if let Some(thread) = thread.upgrade() {
-                    context_store.insert_thread(thread.read(cx));
+                    context_store.insert_thread(thread, cx);
                 };
             }
         }
+        Task::ready(Ok(()))
     }
 
     pub fn kind(&self) -> ContextKind {

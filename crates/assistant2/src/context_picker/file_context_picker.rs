@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use file_icons::FileIcons;
 use fuzzy::PathMatch;
 use gpui::{
     AppContext, DismissEvent, FocusHandle, FocusableView, Stateful, Task, View, WeakModel, WeakView,
@@ -13,7 +14,7 @@ use util::ResultExt as _;
 use workspace::Workspace;
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
-use crate::context_store::{ContextStore, IncludedFile};
+use crate::context_store::{ContextStore, FileInclusion};
 
 pub struct FileContextPicker {
     picker: View<Picker<FileContextPickerDelegate>>,
@@ -203,7 +204,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         let Some(task) = self
             .context_store
             .update(cx, |context_store, cx| {
-                context_store.add_file(project_path, cx)
+                context_store.add_file_from_path(project_path, cx)
             })
             .ok()
         else {
@@ -297,13 +298,17 @@ pub fn render_file_context_entry(
 
     let added = context_store
         .upgrade()
-        .and_then(|context_store| context_store.read(cx).included_file(path));
+        .and_then(|context_store| context_store.read(cx).will_include_file_path(path, cx));
+
+    let file_icon = FileIcons::get_icon(&path, cx)
+        .map(Icon::from_path)
+        .unwrap_or_else(|| Icon::new(IconName::File));
 
     h_flex()
         .id(id)
         .gap_1()
         .w_full()
-        .child(Icon::new(IconName::File).size(IconSize::Small))
+        .child(file_icon.size(IconSize::Small))
         .child(
             h_flex()
                 .gap_2()
@@ -316,7 +321,7 @@ pub fn render_file_context_entry(
         )
         .child(div().w_full())
         .when_some(added, |el, added| match added {
-            IncludedFile::Direct(_) => el.child(
+            FileInclusion::Direct(_) => el.child(
                 h_flex()
                     .gap_1()
                     .child(
@@ -326,7 +331,7 @@ pub fn render_file_context_entry(
                     )
                     .child(Label::new("Added").size(LabelSize::Small)),
             ),
-            IncludedFile::InDirectory(dir_name) => {
+            FileInclusion::InDirectory(dir_name) => {
                 let dir_name = dir_name.to_string_lossy().into_owned();
 
                 el.child(

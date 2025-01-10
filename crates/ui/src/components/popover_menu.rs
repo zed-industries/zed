@@ -15,6 +15,28 @@ pub trait PopoverTrigger: IntoElement + Clickable + Toggleable + 'static {}
 
 impl<T: IntoElement + Clickable + Toggleable + 'static> PopoverTrigger for T {}
 
+impl<T: Clickable> Clickable for gpui::AnimationElement<T>
+where
+    T: Clickable + 'static,
+{
+    fn on_click(self, handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static) -> Self {
+        self.map_element(|e| e.on_click(handler))
+    }
+
+    fn cursor_style(self, cursor_style: gpui::CursorStyle) -> Self {
+        self.map_element(|e| e.cursor_style(cursor_style))
+    }
+}
+
+impl<T: Toggleable> Toggleable for gpui::AnimationElement<T>
+where
+    T: Toggleable + 'static,
+{
+    fn toggle_state(self, selected: bool) -> Self {
+        self.map_element(|e| e.toggle_state(selected))
+    }
+}
+
 pub struct PopoverMenuHandle<M>(Rc<RefCell<Option<PopoverMenuHandleState<M>>>>);
 
 impl<M> Clone for PopoverMenuHandle<M> {
