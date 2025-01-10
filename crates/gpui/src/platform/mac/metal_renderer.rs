@@ -107,6 +107,10 @@ pub(crate) struct MetalRenderer {
     core_video_texture_cache: CVMetalTextureCache,
 }
 
+// macOS use 4x MSAA, all devices support it.
+// https://developer.apple.com/documentation/metal/mtldevice/1433355-supportstexturesamplecount
+const SAMPLE_COUNT: u32 = 4;
+
 impl MetalRenderer {
     pub fn new(instance_buffer_pool: Arc<Mutex<InstanceBufferPool>>) -> Self {
         // Prefer low‐power integrated GPUs on Intel Mac. On Apple
@@ -118,15 +122,6 @@ impl MetalRenderer {
             log::error!("unable to access a compatible graphics device");
             std::process::exit(1);
         };
-
-        // Determine the sample count based on the device's capabilities.
-        let mut sample_count = 1;
-        for &n in &[4, 2] {
-            if device.supports_texture_sample_count(n) {
-                sample_count = n as _;
-                break;
-            }
-        }
 
         let layer = metal::MetalLayer::new();
         layer.set_device(&device);
@@ -179,7 +174,7 @@ impl MetalRenderer {
             "path_rasterization_vertex",
             "path_rasterization_fragment",
             MTLPixelFormat::R16Float,
-            sample_count,
+            SAMPLE_COUNT,
         );
         let path_sprites_pipeline_state = build_pipeline_state(
             &device,
@@ -239,7 +234,7 @@ impl MetalRenderer {
         );
 
         let command_queue = device.new_command_queue();
-        let sprite_atlas = Arc::new(MetalAtlas::new(device.clone(), sample_count));
+        let sprite_atlas = Arc::new(MetalAtlas::new(device.clone(), SAMPLE_COUNT));
         let core_video_texture_cache =
             unsafe { CVMetalTextureCache::new(device.as_ptr()).unwrap() };
 
@@ -548,13 +543,13 @@ impl MetalRenderer {
                 color_attachment.set_resolve_texture(Some(&texture));
                 color_attachment.set_load_action(metal::MTLLoadAction::Clear);
                 color_attachment.set_store_action(metal::MTLStoreAction::MultisampleResolve);
-                color_attachment.set_resolve_level(0);
             } else {
                 color_attachment.set_texture(Some(&texture));
                 color_attachment.set_load_action(metal::MTLLoadAction::Clear);
                 color_attachment.set_store_action(metal::MTLStoreAction::Store);
             }
             color_attachment.set_clear_color(metal::MTLClearColor::new(0., 0., 0., 1.));
+
             let command_encoder = command_buffer.new_render_command_encoder(render_pass_descriptor);
             command_encoder.set_render_pipeline_state(&self.paths_rasterization_pipeline_state);
             command_encoder.set_vertex_buffer(

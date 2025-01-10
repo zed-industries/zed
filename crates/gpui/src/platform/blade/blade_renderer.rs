@@ -13,8 +13,6 @@ use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
 #[cfg(target_os = "macos")]
 use media::core_video::CVMetalTextureCache;
-#[cfg(target_os = "macos")]
-use objc2_metal::MTLDevice;
 use std::{mem, sync::Arc};
 
 const MAX_FRAME_TIME_MS: u32 = 10000;
@@ -129,7 +127,7 @@ struct BladePipelines {
 }
 
 impl BladePipelines {
-    fn new(gpu: &gpu::Context, surface_info: gpu::SurfaceInfo, sample_count: u32) -> Self {
+    fn new(gpu: &gpu::Context, surface_info: gpu::SurfaceInfo, path_sample_count: u32) -> Self {
         use gpu::ShaderData as _;
 
         log::info!(
@@ -210,7 +208,7 @@ impl BladePipelines {
                     write_mask: gpu::ColorWrites::default(),
                 }],
                 multisample_state: gpu::MultisampleState {
-                    sample_count,
+                    sample_count: path_sample_count,
                     ..Default::default()
                 },
             }),
@@ -343,20 +341,21 @@ impl BladeRenderer {
             .create_surface_configured(window, surface_config)
             .unwrap();
 
-        // Determine the sample count based on the device's capabilities.
+        // macOS use 4x MSAA, all devices support it.
+        // https://developer.apple.com/documentation/metal/mtldevice/1433355-supportstexturesamplecount
         #[cfg(target_os = "macos")]
+        let sample_count = 4;
+
+        // Determine on non-macOS platforms, until Blade supports querying sample counts.
+        #[cfg(not(target_os = "macos"))]
         let mut sample_count = 1;
-        #[cfg(target_os = "macos")]
+        #[cfg(not(target_os = "macos"))]
         for &n in &[4, 2] {
-            if context.gpu.metal_device().supportsTextureSampleCount(n) {
+            if context.gpu.supports_texture_sample_count(n) {
                 sample_count = n as _;
                 break;
             }
         }
-
-        // TODO: Determine on non-macOS platforms, until Blade supports querying sample counts.
-        #[cfg(not(target_os = "macos"))]
-        let sample_count = 4;
 
         let command_encoder = context.gpu.create_command_encoder(gpu::CommandEncoderDesc {
             name: "main",
@@ -519,7 +518,7 @@ impl BladeRenderer {
 
             let vertex_buf = unsafe { self.instance_belt.alloc_typed(&vertices, &self.gpu) };
             let frame_view = tex_info.raw_view;
-            let render_target = if let Some(msaa_view) = tex_info.msaa_view {
+            let color_target = if let Some(msaa_view) = tex_info.msaa_view {
                 gpu::RenderTargetSet {
                     colors: &[gpu::RenderTarget {
                         view: msaa_view,
@@ -539,7 +538,7 @@ impl BladeRenderer {
                 }
             };
 
-            if let mut pass = self.command_encoder.render("paths", render_target) {
+            if let mut pass = self.command_encoder.render("paths", color_target) {
                 let mut encoder = pass.with(&self.pipelines.path_rasterization);
                 encoder.bind(
                     0,
