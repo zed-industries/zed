@@ -1007,7 +1007,7 @@ impl FakeFs {
     const SYSTEMTIME_INTERVAL: Duration = Duration::from_nanos(100);
 
     pub fn new(executor: gpui::BackgroundExecutor) -> Arc<Self> {
-        let (tx, mut rx) = smol::channel::bounded::<PathBuf>(10);
+        let (tx, rx) = smol::channel::bounded::<PathBuf>(10);
 
         let this = Arc::new_cyclic(|this| Self {
             this: this.clone(),
@@ -1035,7 +1035,7 @@ impl FakeFs {
         executor.spawn({
             let this = this.clone();
             async move {
-                while let Some(git_event) = rx.next().await {
+                while let Ok(git_event) = rx.recv().await {
                     if let Some(mut state) = this.state.try_lock() {
                         state.emit_event([(git_event, None)]);
                     } else {
