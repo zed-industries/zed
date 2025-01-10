@@ -2,19 +2,46 @@ use crate::repository::{GitFileStatus, RepoPath};
 use anyhow::{anyhow, Result};
 use std::{path::Path, process::Stdio, sync::Arc};
 
-#[derive(Clone, Debug)]
-pub struct GitStatusItem {
-    pub path: RepoPath,
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GitStatusPair {
     // Not both `None`.
     pub index_status: Option<GitFileStatus>,
     pub worktree_status: Option<GitFileStatus>,
 }
 
-impl GitStatusItem {}
+impl GitStatusPair {
+    pub fn is_staged(&self) -> Option<bool> {
+        match (self.index_status, self.worktree_status) {
+            (Some(_), None) => Some(true),
+            (None, Some(_)) => Some(false),
+            (Some(_), Some(_)) => None,
+            (None, None) => unreachable!(),
+        }
+    }
+
+    // TODO reconsider uses of this
+    pub fn combined(&self) -> GitFileStatus {
+        self.index_status.or(self.worktree_status).unwrap()
+    }
+
+    pub fn stage(&mut self) {
+        // FIXME need to handle the mixed case
+        if let Some(status) = self.worktree_status.take() {
+            self.index_status = Some(status);
+        }
+    }
+
+    pub fn unstage(&mut self) {
+        // FIXME need to handle the mixed case
+        if let Some(status) = self.index_status.take() {
+            self.worktree_status = Some(status);
+        }
+    }
+}
 
 #[derive(Clone)]
 pub struct GitStatus {
-    pub items: Arc<[GitStatusItem]>,
+    pub entries: Arc<[(RepoPath, GitStatusPair)]>,
 }
 
 impl GitStatus {
@@ -30,6 +57,7 @@ impl GitStatus {
                 "status",
                 "--porcelain=v1",
                 "--untracked-files=all",
+                "--no-renames",
                 "-z",
             ])
             .args(path_prefixes.iter().map(|path_prefix| {
@@ -54,30 +82,33 @@ impl GitStatus {
             return Err(anyhow!("git status process failed: {}", stderr));
         }
         let stdout = String::from_utf8_lossy(&output.stdout);
-        let mut items = stdout
+        let mut entries = stdout
             .split('\0')
             .filter_map(|entry| {
-                if !entry.is_char_boundary(3) {
+                let sep = entry.get(2..3)?;
+                if sep != " " {
                     return None;
-                }
-                let (status, path) = entry.split_at(3);
-                let status = status.trim_end().as_bytes();
-                let index_status = GitFileStatus::from_byte(status.get(0).copied()?);
-                let worktree_status = GitFileStatus::from_byte(status.get(1).copied()?);
+                };
+                let path = &entry[3..];
+                let status = entry[0..2].as_bytes();
+                let index_status = GitFileStatus::from_byte(status[0]);
+                let worktree_status = GitFileStatus::from_byte(status[1]);
                 if (index_status, worktree_status) == (None, None) {
                     return None;
                 }
                 let path = RepoPath(Path::new(path).into());
-                Some(GitStatusItem {
+                Some((
                     path,
-                    index_status,
-                    worktree_status,
-                })
+                    GitStatusPair {
+                        index_status,
+                        worktree_status,
+                    },
+                ))
             })
             .collect::<Vec<_>>();
-        items.sort_unstable_by(|a, b| a.path.cmp(&b.path));
+        entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(&b));
         Ok(Self {
-            items: items.into(),
+            entries: entries.into(),
         })
     }
 }
@@ -85,7 +116,7 @@ impl GitStatus {
 impl Default for GitStatus {
     fn default() -> Self {
         Self {
-            items: Arc::new([]),
+            entries: Arc::new([]),
         }
     }
 }

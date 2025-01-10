@@ -5110,7 +5110,6 @@ name = "git_ui"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "async-broadcast",
  "collections",
  "db",
  "editor",
