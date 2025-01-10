@@ -462,13 +462,12 @@ fn to_fenced_codeblock(path: &Path, content: Rope) -> SharedString {
 
     buffer.push_str("```\n");
 
-    if buffer.len() > capacity {
-        log::error!(
-            "to_fenced_codeblock calculated capacity {} but length was {}",
-            capacity,
-            buffer.len()
-        );
-    }
+    debug_assert!(
+        buffer.len() == capacity - 1 || buffer.len() == capacity,
+        "to_fenced_codeblock calculated capacity of {}, but length was {}",
+        capacity,
+        buffer.len(),
+    );
 
     buffer.into()
 }

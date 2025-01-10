@@ -31,7 +31,7 @@ pub struct ContextSnapshot {
     pub tooltip: Option<SharedString>,
     pub icon_path: Option<SharedString>,
     pub kind: ContextKind,
-    /// Concatenating these strings yields text to send to the model. Not refreshed by `snapshot`.
+    /// Joining these strings separated by \n yields text for model. Not refreshed by `snapshot`.
     pub text: Box<[SharedString]>,
 }
 
@@ -210,7 +210,9 @@ pub fn attach_context_to_message(
     let mut fetch_context = Vec::new();
     let mut thread_context = Vec::new();
 
+    let mut capacity = 0;
     for context in contexts {
+        capacity += context.text.len();
         match context.kind {
             ContextKind::File => file_context.push(context),
             ContextKind::Directory => directory_context.push(context),
@@ -218,54 +220,72 @@ pub fn attach_context_to_message(
             ContextKind::Thread => thread_context.push(context),
         }
     }
+    if !file_context.is_empty() {
+        capacity += 1;
+    }
+    if !directory_context.is_empty() {
+        capacity += 1;
+    }
+    if !fetch_context.is_empty() {
+        capacity += 1 + fetch_context.len();
+    }
+    if !thread_context.is_empty() {
+        capacity += 1 + thread_context.len();
+    }
+    if capacity == 0 {
+        return;
+    }
 
-    let mut context_text = String::new();
+    let mut context_chunks = Vec::with_capacity(capacity);
 
     if !file_context.is_empty() {
-        context_text.push_str("The following files are available:\n");
-        for context in file_context {
-            for chunk in context.text {
-                context_text.push_str(&chunk);
+        context_chunks.push("The following files are available:\n");
+        for context in &file_context {
+            for chunk in &context.text {
+                context_chunks.push(&chunk);
             }
-            context_text.push('\n');
         }
     }
 
     if !directory_context.is_empty() {
-        context_text.push_str("The following directories are available:\n");
-        for context in directory_context {
-            for chunk in context.text {
-                context_text.push_str(&chunk);
+        context_chunks.push("The following directories are available:\n");
+        for context in &directory_context {
+            for chunk in &context.text {
+                context_chunks.push(&chunk);
             }
-            context_text.push('\n');
         }
     }
 
     if !fetch_context.is_empty() {
-        context_text.push_str("The following fetched results are available\n");
-        for context in fetch_context {
-            context_text.push_str(&context.name);
-            context_text.push('\n');
-            for chunk in context.text {
-                context_text.push_str(&chunk);
+        context_chunks.push("The following fetched results are available:\n");
+        for context in &fetch_context {
+            context_chunks.push(&context.name);
+            for chunk in &context.text {
+                context_chunks.push(&chunk);
             }
-            context_text.push('\n');
         }
     }
 
     if !thread_context.is_empty() {
-        context_text.push_str("The following previous conversation threads are available\n");
-        for context in thread_context {
-            context_text.push_str(&context.name);
-            context_text.push('\n');
-            for chunk in context.text {
-                context_text.push_str(&chunk);
+        context_chunks.push("The following previous conversation threads are available:\n");
+        for context in &thread_context {
+            context_chunks.push(&context.name);
+            for chunk in &context.text {
+                context_chunks.push(&chunk);
             }
-            context_text.push('\n');
         }
     }
 
-    if !context_text.is_empty() {
-        message.content.push(MessageContent::Text(context_text));
+    debug_assert!(
+        context_chunks.len() == capacity,
+        "attach_context_message calculated capacity of {}, but length was {}",
+        capacity,
+        context_chunks.len()
+    );
+
+    if !context_chunks.is_empty() {
+        message
+            .content
+            .push(MessageContent::Text(context_chunks.join("\n")));
     }
 }
