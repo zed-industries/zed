@@ -3174,6 +3174,12 @@ impl MultiBuffer {
 
 impl EventEmitter<Event> for MultiBuffer {}
 
+struct BufferRegion<'a> {
+    snapshot: &'a BufferSnapshot,
+    range: Range<usize>,
+    multi_buffer_start: usize,
+}
+
 impl MultiBufferSnapshot {
     pub fn text(&self) -> String {
         self.chunks(0..self.len(), false)
@@ -3275,6 +3281,46 @@ impl MultiBufferSnapshot {
             buffer_id: buffer.remote_id(),
             buffer_range: hunk.buffer_range.clone(),
             diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+        })
+    }
+
+    fn buffer_regions_in_range<'a>(
+        &'a self,
+        range: Range<usize>,
+        reversed: bool,
+    ) -> impl Iterator<Item = BufferRegion<'a>> {
+        let mut cursor = self.cursor::<usize>();
+
+        if reversed {
+            cursor.seek(&range.end)
+        } else {
+            cursor.seek(&range.start)
+        }
+
+        iter::from_fn(move || loop {
+            let region = cursor.region()?;
+            if reversed {
+                cursor.prev()
+            } else {
+                cursor.next()
+            }
+
+            if !region.is_main_buffer {
+                continue;
+            }
+            if region.range.start > range.end || region.range.end < range.start {
+                return None;
+            }
+
+            let start_overshoot = range.start.saturating_sub(region.range.start);
+            let end_undershoot = region.range.end.saturating_sub(range.end);
+
+            return Some(BufferRegion {
+                snapshot: region.buffer,
+                range: region.buffer_range.start + start_overshoot
+                    ..region.buffer_range.end - end_undershoot,
+                multi_buffer_start: region.range.start + start_overshoot,
+            });
         })
     }
 
@@ -5020,18 +5066,28 @@ impl MultiBufferSnapshot {
     {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
 
-        if !reversed {
-            self.lift_buffer_metadata(range, |_this, buffer, buffer_range| {
-                Some(
-                    buffer
-                        .diagnostics_in_range(buffer_range.start..buffer_range.end, false)
-                        .map(|entry| (entry.diagnostic, entry.range)),
-                )
+        self.buffer_regions_in_range(range, reversed)
+            .flat_map(move |region| {
+                region
+                    .snapshot
+                    .diagnostics_in_range::<_, usize>(
+                        region.range.start..region.range.end,
+                        reversed,
+                    )
+                    .map(move |entry| {
+                        let start = entry.range.start.saturating_sub(region.range.start)
+                            + region.multi_buffer_start;
+                        let end = entry.range.end.saturating_sub(region.range.start)
+                            + region.multi_buffer_start;
+
+                        let multibuffer_start = self.text_summary_for_range(0..start);
+                        let multibuffer_end = self.text_summary_for_range(0..end);
+                        DiagnosticEntry {
+                            range: multibuffer_start..multibuffer_end,
+                            diagnostic: entry.diagnostic,
+                        }
+                    })
             })
-            .map(|(diagnostic, _buffer, range)| DiagnosticEntry { diagnostic, range })
-        } else {
-            todo!()
-        }
     }
 
     pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
