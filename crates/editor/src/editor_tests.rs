@@ -12881,7 +12881,8 @@ async fn test_backspace_after_deletion_hunk(
           one
           two
         - threeˇ
-          our
+        - four
+        + our
           five
         "#
         .unindent(),

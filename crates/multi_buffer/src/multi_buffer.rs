@@ -4480,6 +4480,7 @@ impl MultiBufferSnapshot {
                     .anchor_at(base_text_byte_range.start + offset_in_transform, bias),
                 version: diff_base.base_text_version,
             });
+            bias = Bias::Left;
         } else {
             excerpt_offset += ExcerptOffset::new(offset_in_transform);
         };
