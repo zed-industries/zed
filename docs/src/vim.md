@@ -418,7 +418,7 @@ The [Sneak motion](https://github.com/justinmk/vim-sneak) feature allows for qui
       "s": ["vim::PushOperator", { "Sneak": {} }],
       "S": ["vim::PushOperator", { "SneakBackward": {} }]
     }
-  },
+  }
 ]
 ```
 
