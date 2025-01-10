@@ -405,7 +405,7 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn update_index(&self, _stage: &[RepoPath], _unstage: &[RepoPath]) -> Result<()> {
-        todo!()
+        unimplemented!()
     }
 }
 
