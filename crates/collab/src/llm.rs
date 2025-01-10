@@ -477,7 +477,7 @@ async fn predict_edits(
         open_ai::CompletionRequest {
             model: model.to_string(),
             prompt: prompt.clone(),
-            max_tokens: 1024,
+            max_tokens: 2048,
             temperature: 0.,
             prediction: Some(open_ai::Prediction::Content {
                 content: params.input_excerpt,
