@@ -1260,8 +1260,8 @@ impl SearchableItem for Editor {
             return;
         }
 
-        let ranges = self.selections.disjoint_anchor_ranges();
-        if ranges.iter().any(|range| range.start != range.end) {
+        let ranges = self.selections.disjoint_anchor_ranges().collect::<Vec<_>>();
+        if ranges.iter().any(|s| s.start != s.end) {
             self.set_search_within_ranges(&ranges, cx);
         } else if let Some(previous_search_ranges) = self.previous_search_ranges.take() {
             self.set_search_within_ranges(&previous_search_ranges, cx)
