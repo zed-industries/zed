@@ -131,11 +131,10 @@ impl GitPanel {
             cx.subscribe(&project, move |this, project, event, cx| {
                 use project::Event;
 
-                let first_worktree_id =
-                    project.read(cx).worktrees(cx).next().and_then(|worktree| {
-                        let snapshot = worktree.read(cx).snapshot();
-                        Some(snapshot.id().clone())
-                    });
+                let first_worktree_id = project.read(cx).worktrees(cx).next().map(|worktree| {
+                    let snapshot = worktree.read(cx).snapshot();
+                    snapshot.id()
+                });
                 let first_repo_in_project = first_repository_in_project(&project, cx);
 
                 // TODO: Don't get another git_state here
@@ -292,7 +291,7 @@ impl GitPanel {
                 if let Some((repo, git_repo)) =
                     first_worktree_repository(&project, snapshot.id(), cx)
                 {
-                    state.activate_repository(snapshot.id().clone(), repo, git_repo);
+                    state.activate_repository(snapshot.id(), repo, git_repo);
                 }
             });
 
