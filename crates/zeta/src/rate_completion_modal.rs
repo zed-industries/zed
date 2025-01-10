@@ -431,7 +431,6 @@ impl RateCompletionModal {
                                 .gap_1()
                                 .child(
                                     Button::new("bad", "Bad Completion")
-                                        // .style(ButtonStyle::Filled)
                                         .icon(IconName::ThumbsDown)
                                         .icon_size(IconSize::Small)
                                         .icon_position(IconPosition::Start)
@@ -455,7 +454,6 @@ impl RateCompletionModal {
                                 )
                                 .child(
                                     Button::new("good", "Good Completion")
-                                        // .style(ButtonStyle::Filled)
                                         .icon(IconName::ThumbsUp)
                                         .icon_size(IconSize::Small)
                                         .icon_position(IconPosition::Start)
