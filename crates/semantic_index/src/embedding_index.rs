@@ -365,11 +365,13 @@ impl EmbeddingIndex {
         let db = self.db;
 
         cx.background_executor().spawn(async move {
+            let mut deleted_entry_ranges = pin!(deleted_entry_ranges);
+            let mut embedded_files = pin!(embedded_files);
             loop {
                 // Interleave deletions and persists of embedded files
                 futures::select_biased! {
-                    deletion_range = deleted_entry_ranges.recv().fuse() => {
-                        if let Ok(deletion_range) = deletion_range {
+                    deletion_range = deleted_entry_ranges.next() => {
+                        if let Some(deletion_range) = deletion_range {
                             let mut txn = db_connection.write_txn()?;
                             let start = deletion_range.0.as_ref().map(|start| start.as_str());
                             let end = deletion_range.1.as_ref().map(|end| end.as_str());
@@ -378,8 +380,8 @@ impl EmbeddingIndex {
                             txn.commit()?;
                         }
                     },
-                    file = embedded_files.recv().fuse() => {
-                        if let Ok((file, _)) = file {
+                    file = embedded_files.next() => {
+                        if let Some((file, _)) = file {
                             let mut txn = db_connection.write_txn()?;
                             log::debug!("saving embedding for file {:?}", file.path);
                             let key = db_key_for_path(&file.path);
