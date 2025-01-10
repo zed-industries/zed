@@ -911,21 +911,41 @@ impl DebugPanel {
         let client_id = DebugAdapterClientId::from_proto(update.client_id);
         let thread_id = update.thread_id;
 
-        let existing_item = self
+        let active_item = self
+            .pane
+            .read(cx)
+            .active_item()
+            .and_then(|item| item.downcast::<DebugPanelItem>());
+
+        let search = self
             .pane
             .read(cx)
             .items()
             .filter_map(|item| item.downcast::<DebugPanelItem>())
-            .find(|item| {
-                let item = item.read(cx);
+            .find_map(|item_view| {
+                let item = item_view.read(cx);
 
-                item.client_id() == client_id
+                if item.client_id() == client_id
                     && thread_id.map(|id| id == item.thread_id()).unwrap_or(true)
+                {
+                    Some((
+                        item_view.clone(),
+                        active_item
+                            .as_ref()
+                            .map_or(false, |this| this == &item_view),
+                    ))
+                } else {
+                    None
+                }
             });
 
-        if let Some(debug_panel_item) = existing_item {
+        if let Some((debug_panel_item, is_active_item)) = search {
             debug_panel_item.update(cx, |this, cx| {
                 this.update_adapter(update, cx);
+
+                if is_active_item {
+                    this.go_to_current_stack_frame(cx);
+                }
             });
         }
     }

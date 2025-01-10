@@ -474,7 +474,7 @@ impl DebugPanelItem {
             match update_variant {
                 proto::update_debug_adapter::Variant::StackFrameList(stack_frame_list) => {
                     self.stack_frame_list.update(cx, |this, cx| {
-                        this.set_from_proto(stack_frame_list.clone(), cx)
+                        this.set_from_proto(stack_frame_list.clone(), cx);
                     })
                 }
                 proto::update_debug_adapter::Variant::ThreadState(thread_state) => {

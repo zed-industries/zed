@@ -310,17 +310,6 @@ impl DapStore {
         self.active_debug_line = Some((*client_id, project_path.clone(), row));
         cx.emit(DapStoreEvent::ActiveDebugLineChanged);
         cx.notify();
-
-        if let Some((client, project_id)) = self.downstream_client.clone() {
-            client
-                .send(client::proto::SetActiveDebugLine {
-                    row,
-                    project_id,
-                    client_id: client_id.to_proto(),
-                    project_path: Some(project_path.to_proto()),
-                })
-                .log_err();
-        }
     }
 
     pub fn remove_active_debug_line_for_client(

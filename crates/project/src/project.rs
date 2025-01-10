@@ -3914,11 +3914,7 @@ impl Project {
         let trees = self.worktrees(cx);
 
         for tree in trees {
-            if let Some(relative_path) = tree
-                .read(cx)
-                .as_local()
-                .and_then(|t| abs_path.strip_prefix(t.abs_path()).ok())
-            {
+            if let Some(relative_path) = abs_path.strip_prefix(tree.read(cx).abs_path()).ok() {
                 return Some((tree.clone(), relative_path.into()));
             }
         }

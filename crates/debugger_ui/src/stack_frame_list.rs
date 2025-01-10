@@ -132,6 +132,12 @@ impl StackFrameList {
     }
 
     fn fetch_stack_frames(&mut self, go_to_stack_frame: bool, cx: &mut ViewContext<Self>) {
+        // If this is a remote debug session we never need to fetch stack frames ourselves
+        // because the host will fetch and send us stack frames whenever there's a stop event
+        if self.dap_store.read(cx).as_remote().is_some() {
+            return;
+        }
+
         let task = self.dap_store.update(cx, |store, cx| {
             store.stack_frames(&self.client_id, self.thread_id, cx)
         });
