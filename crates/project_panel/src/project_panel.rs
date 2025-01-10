@@ -112,7 +112,7 @@ pub struct ProjectPanel {
 struct FoldedDirectoryDragTarget {
     entry_id: ProjectEntryId,
     index: usize,
-    // True if dragging over the delimiter rather than the component itself
+    /// Whether we are dragging over the delimiter rather than the component itself.
     is_delimiter_target: bool,
 }
 
