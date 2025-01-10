@@ -550,27 +550,38 @@ impl Render for RateCompletionModal {
                                             let rated =
                                                 self.zeta.read(cx).is_completion_rated(completion.id);
 
+                                            let (icon_name, icon_color, tooltip_text) = match (rated, completion.edits.is_empty()) {
+                                                (true, _) => (IconName::Check, Color::Success, "Rated Completion"),
+                                                (false, true) => (IconName::File, Color::Muted, "No Edits Produced"),
+                                                (false, false) => (IconName::FileDiff, Color::Accent, "Edits Available"),
+                                            };
+
                                             ListItem::new(completion.id)
                                                 .inset(true)
                                                 .spacing(ListItemSpacing::Sparse)
                                                 .focused(index == self.selected_index)
                                                 .toggle_state(selected)
-                                                .start_slot(if rated {
-                                                    Icon::new(IconName::Check).color(Color::Success).size(IconSize::Small)
-                                                } else if completion.edits.is_empty() {
-                                                    Icon::new(IconName::File).color(Color::Muted).size(IconSize::Small)
-                                                } else {
-                                                    Icon::new(IconName::FileDiff).color(Color::Accent).size(IconSize::Small)
-                                                })
                                                 .child(
-                                                    v_flex()
-                                                        .pl_1p5()
-                                                        .child(Label::new(completion.path.to_string_lossy().to_string()).size(LabelSize::Small))
-                                                        .child(Label::new(format!("{} ago, {:.2?}", format_time_ago(completion.response_received_at.elapsed()), completion.latency()))
-                                                            .color(Color::Muted)
-                                                            .size(LabelSize::XSmall)
+                                                    h_flex()
+                                                        .id("completion-content")
+                                                        .gap_2p5()
+                                                        .child(
+                                                            Icon::new(icon_name)
+                                                                .color(icon_color)
+                                                                .size(IconSize::Small)
+                                                        )
+                                                        .child(
+                                                            v_flex()
+                                                                .child(Label::new(completion.path.to_string_lossy().to_string()).size(LabelSize::Small))
+                                                                .child(Label::new(format!("{} ago, {:.2?}", format_time_ago(completion.response_received_at.elapsed()), completion.latency()))
+                                                                    .color(Color::Muted)
+                                                                    .size(LabelSize::XSmall)
+                                                                )
                                                         )
                                                 )
+                                                .tooltip(move |cx| {
+                                                    Tooltip::text(tooltip_text, cx)
+                                                })
                                                 .on_click(cx.listener(move |this, _, cx| {
                                                     this.select_completion(Some(completion.clone()), true, cx);
                                                 }))
