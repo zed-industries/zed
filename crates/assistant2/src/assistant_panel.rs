@@ -279,7 +279,12 @@ impl Panel for AssistantPanel {
         Some(proto::PanelId::AssistantPanel)
     }
 
-    fn icon(&self, _cx: &WindowContext) -> Option<IconName> {
+    fn icon(&self, cx: &WindowContext) -> Option<IconName> {
+        let settings = AssistantSettings::get_global(cx);
+        if !settings.enabled || !settings.button {
+            return None;
+        }
+
         Some(IconName::ZedAssistant2)
     }
 
