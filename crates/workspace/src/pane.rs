@@ -392,7 +392,7 @@ impl Pane {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let focus_handle = window.focus_handle(cx);
+        let focus_handle = cx.focus_handle();
 
         let subscriptions = vec![
             cx.on_focus(&focus_handle, window, Pane::focus_in),

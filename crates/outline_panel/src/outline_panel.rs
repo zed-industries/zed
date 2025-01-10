@@ -641,7 +641,7 @@ impl OutlinePanel {
                 },
             );
 
-            let focus_handle = window.focus_handle(cx);
+            let focus_handle = cx.focus_handle();
             let focus_subscription = cx.on_focus(&focus_handle, window, Self::focus_in);
             let focus_out_subscription =
                 cx.on_focus_out(&focus_handle, window, |outline_panel, _, window, cx| {

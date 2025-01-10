@@ -283,7 +283,7 @@ impl ProjectPanel {
         let project = workspace.project().clone();
         let project_panel =
             window.new_view(cx, |window: &mut Window, cx: &mut ModelContext<Self>| {
-                let focus_handle = window.focus_handle(cx);
+                let focus_handle = cx.focus_handle();
                 cx.on_focus(&focus_handle, window, Self::focus_in).detach();
                 cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
                     this.focus_out(window, cx);
@@ -8364,7 +8364,7 @@ mod tests {
         {
             Self {
                 path: project_item.update(cx, |project_item, _| project_item.path.clone()),
-                focus_handle: window.focus_handle(cx),
+                focus_handle: cx.focus_handle(),
             }
         }
     }

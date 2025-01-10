@@ -23,7 +23,7 @@ impl ThreadHistory {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         Self {
-            focus_handle: window.focus_handle(cx),
+            focus_handle: cx.focus_handle(),
             assistant_panel,
             thread_store,
             scroll_handle: UniformListScrollHandle::default(),

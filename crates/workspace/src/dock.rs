@@ -229,7 +229,7 @@ impl Dock {
         window: &mut Window,
         cx: &mut ModelContext<Workspace>,
     ) -> Model<Self> {
-        let focus_handle = window.focus_handle(cx);
+        let focus_handle = cx.focus_handle();
         let workspace = cx.model().clone();
         let dock = window.new_view(cx, |window: &mut Window, cx: &mut ModelContext<Self>| {
             let focus_subscription = cx.on_focus(&focus_handle, window, |dock, window, cx| {
@@ -910,7 +910,7 @@ pub mod test {
                 position,
                 zoomed: false,
                 active: false,
-                focus_handle: window.focus_handle(cx),
+                focus_handle: cx.focus_handle(),
                 size: px(300.),
             }
         }

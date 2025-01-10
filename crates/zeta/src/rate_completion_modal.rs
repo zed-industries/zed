@@ -66,7 +66,7 @@ impl RateCompletionModal {
         Self {
             zeta,
             selected_index: 0,
-            focus_handle: window.focus_handle(cx),
+            focus_handle: cx.focus_handle(),
             active_completion: None,
             _subscription: subscription,
         }

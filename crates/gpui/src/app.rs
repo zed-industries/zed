@@ -882,7 +882,7 @@ impl AppContext {
         self.focus_handles
             .clone()
             .write()
-            .retain(|handle_id, (count, _)| {
+            .retain(|handle_id, count| {
                 if count.load(SeqCst) == 0 {
                     for window_handle in self.windows() {
                         window_handle
@@ -1458,6 +1458,12 @@ impl AppContext {
         (task, is_first)
     }
 
+    /// Obtain a new [`FocusHandle`], which allows you to track and manipulate the keyboard focus
+    /// for elements rendered within this window.
+    pub fn focus_handle(&self) -> FocusHandle {
+        FocusHandle::new(&self.focus_handles)
+    }
+
     /// Get the name for this App.
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub fn get_name(&self) -> &'static str {
@@ -1542,6 +1548,8 @@ impl Context for AppContext {
     where
         F: FnOnce(AnyView, &mut Window, &mut AppContext) -> T,
     {
+        //
+
         self.update(|cx| {
             let mut window = cx
                 .windows

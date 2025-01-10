@@ -50,7 +50,7 @@ pub(crate) struct EmptyHead {
 impl EmptyHead {
     fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
         Self {
-            focus_handle: window.focus_handle(cx),
+            focus_handle: cx.focus_handle(),
         }
     }
 }

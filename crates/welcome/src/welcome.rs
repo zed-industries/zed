@@ -360,7 +360,7 @@ impl WelcomePage {
             .detach();
 
             WelcomePage {
-                focus_handle: window.focus_handle(cx),
+                focus_handle: cx.focus_handle(),
                 workspace: workspace.weak_handle(),
                 telemetry: workspace.client().telemetry().clone(),
                 _settings_subscription: cx
@@ -431,7 +431,7 @@ impl Item for WelcomePage {
         cx: &mut ModelContext<Self>,
     ) -> Option<Model<Self>> {
         Some(window.new_view(cx, |window, cx| WelcomePage {
-            focus_handle: window.focus_handle(cx),
+            focus_handle: cx.focus_handle(),
             workspace: self.workspace.clone(),
             telemetry: self.telemetry.clone(),
             _settings_subscription:

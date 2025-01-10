@@ -1315,7 +1315,7 @@ pub mod test {
                 tab_descriptions: None,
                 tab_detail: Default::default(),
                 workspace_id: Default::default(),
-                focus_handle: window.focus_handle(cx),
+                focus_handle: cx.focus_handle(),
                 serialize: None,
             }
         }
@@ -1488,7 +1488,7 @@ pub mod test {
                 tab_descriptions: None,
                 tab_detail: Default::default(),
                 workspace_id: self.workspace_id,
-                focus_handle: window.focus_handle(cx),
+                focus_handle: cx.focus_handle(),
                 serialize: None,
             }))
         }

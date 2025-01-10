@@ -75,7 +75,7 @@ impl Markdown {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let focus_handle = window.focus_handle(cx);
+        let focus_handle = cx.focus_handle();
         let mut this = Self {
             source,
             selection: Selection::default(),
@@ -102,7 +102,7 @@ impl Markdown {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let focus_handle = window.focus_handle(cx);
+        let focus_handle = cx.focus_handle();
         let mut this = Self {
             source,
             selection: Selection::default(),

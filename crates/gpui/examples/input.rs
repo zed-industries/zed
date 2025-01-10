@@ -689,7 +689,7 @@ fn main() {
                 },
                 |window, cx| {
                     let text_input = window.new_view(cx, |window, cx| TextInput {
-                        focus_handle: window.focus_handle(cx),
+                        focus_handle: cx.focus_handle(),
                         content: "".into(),
                         placeholder: "Type here...".into(),
                         selected_range: 0..0,
@@ -702,7 +702,7 @@ fn main() {
                     window.new_view(cx, |window, cx| InputExample {
                         text_input,
                         recent_keystrokes: vec![],
-                        focus_handle: window.focus_handle(cx),
+                        focus_handle: cx.focus_handle(),
                     })
                 },
             )

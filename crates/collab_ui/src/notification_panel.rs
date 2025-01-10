@@ -143,7 +143,7 @@ impl NotificationPanel {
                 notification_list,
                 pending_serialization: Task::ready(None),
                 workspace: workspace_handle,
-                focus_handle: window.focus_handle(cx),
+                focus_handle: cx.focus_handle(),
                 current_notification_toast: None,
                 subscriptions: Vec::new(),
                 active: false,

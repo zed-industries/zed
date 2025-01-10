@@ -35,7 +35,7 @@ impl SharedScreen {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        window.focus_handle(cx);
+        cx.focus_handle();
         let mut frames = track.frames();
         Self {
             track: Arc::downgrade(&track),
@@ -53,7 +53,7 @@ impl SharedScreen {
                 this.update(&mut cx, |_, cx| cx.emit(Event::Close))?;
                 Ok(())
             }),
-            focus: window.focus_handle(cx),
+            focus: cx.focus_handle(),
         }
     }
 }

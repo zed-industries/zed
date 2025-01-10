@@ -1245,7 +1245,7 @@ impl Editor {
 
         let inlay_hint_settings =
             inlay_hint_settings(selections.newest_anchor().head(), &buffer_snapshot, cx);
-        let focus_handle = window.focus_handle(cx);
+        let focus_handle = cx.focus_handle();
         cx.on_focus(&focus_handle, window, Self::handle_focus)
             .detach();
         cx.on_focus_in(&focus_handle, window, Self::handle_focus_in)

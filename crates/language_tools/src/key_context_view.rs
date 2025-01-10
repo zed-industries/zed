@@ -101,7 +101,7 @@ impl KeyContextView {
             pending_keystrokes: None,
             last_keystrokes: None,
             last_possibilities: Vec::new(),
-            focus_handle: window.focus_handle(cx),
+            focus_handle: cx.focus_handle(),
             _subscriptions: [sub1, sub2],
         }
     }

@@ -343,7 +343,7 @@ impl RemoteServerProjects {
         cx: &mut ModelContext<Self>,
         workspace: WeakModel<Workspace>,
     ) -> Self {
-        let focus_handle = window.focus_handle(cx);
+        let focus_handle = cx.focus_handle();
 
         let mut base_style = window.text_style();
         base_style.refine(&gpui::TextStyleRefinement {

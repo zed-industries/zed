@@ -43,7 +43,7 @@ impl ProjectIndexDebugView {
             list_scroll_handle: UniformListScrollHandle::new(),
             selected_path: None,
             hovered_row_ix: None,
-            focus_handle: window.focus_handle(cx),
+            focus_handle: cx.focus_handle(),
             _subscription: cx.subscribe_in(&index, window, |this, _, _, window, cx| {
                 this.update_rows(window, cx)
             }),

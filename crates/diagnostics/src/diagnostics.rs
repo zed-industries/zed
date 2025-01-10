@@ -158,7 +158,7 @@ impl ProjectDiagnosticsEditor {
                 _ => {}
             });
 
-        let focus_handle = window.focus_handle(cx);
+        let focus_handle = cx.focus_handle();
         cx.on_focus_in(&focus_handle, window, |this, window, cx| {
             this.focus_in(window, cx)
         })

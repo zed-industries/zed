@@ -76,7 +76,7 @@ impl SyntaxTreeView {
             editor: None,
             hovered_descendant_ix: None,
             selected_descendant_ix: None,
-            focus_handle: window.focus_handle(cx),
+            focus_handle: cx.focus_handle(),
         };
 
         this.workspace_updated(active_item, window, cx);

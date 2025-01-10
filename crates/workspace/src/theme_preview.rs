@@ -51,7 +51,7 @@ impl ThemePreview {
     pub fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
         Self {
             current_page: ThemePreviewPage::Overview,
-            focus_handle: window.focus_handle(cx),
+            focus_handle: cx.focus_handle(),
         }
     }
 

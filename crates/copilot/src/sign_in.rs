@@ -102,7 +102,7 @@ impl CopilotCodeVerification {
         Self {
             status,
             connect_clicked: false,
-            focus_handle: window.focus_handle(cx),
+            focus_handle: cx.focus_handle(),
             _subscription: cx.observe(copilot, |this, copilot, cx| {
                 let status = copilot.read(cx).status();
                 match status {

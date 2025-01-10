@@ -791,7 +791,7 @@ impl ProjectSearchView {
             |_, _, event: &EditorEvent, window, cx| cx.emit(ViewEvent::EditorEvent(event.clone())),
         ));
 
-        let focus_handle = window.focus_handle(cx);
+        let focus_handle = cx.focus_handle();
         subscriptions.push(cx.on_focus_in(&focus_handle, window, |this, window, cx| {
             if this.focus_handle.is_focused(window) {
                 if this.has_matches() {
@@ -3711,7 +3711,7 @@ pub mod tests {
                     assert_eq!(this.items_len(), 2);
                 });
                 second_pane.update(cx, |this, cx| {
-                    assert!(!window.focus_handle(cx).contains_focused(window, cx));
+                    assert!(!cx.focus_handle().contains_focused(window, cx));
                     assert_eq!(this.items_len(), 2);
                 });
             })

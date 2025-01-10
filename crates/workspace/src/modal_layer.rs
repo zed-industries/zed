@@ -94,7 +94,7 @@ impl ModalLayer {
     ) where
         V: ModalView,
     {
-        let focus_handle = window.focus_handle(cx);
+        let focus_handle = cx.focus_handle();
         self.active_modal = Some(ActiveModal {
             modal: Box::new(new_modal.clone()),
             _subscriptions: [

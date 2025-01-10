@@ -5045,7 +5045,7 @@ pub struct ConfigurationView {
 
 impl ConfigurationView {
     fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
-        let focus_handle = window.focus_handle(cx);
+        let focus_handle = cx.focus_handle();
 
         let registry_subscription = cx.subscribe_in(
             &LanguageModelRegistry::global(cx),

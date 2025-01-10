@@ -260,7 +260,7 @@ impl CollabPanel {
 
             let mut this = Self {
                 width: None,
-                focus_handle: window.focus_handle(cx),
+                focus_handle: cx.focus_handle(),
                 channel_clipboard: None,
                 fs: workspace.app_state().fs.clone(),
                 pending_serialization: Task::ready(None),

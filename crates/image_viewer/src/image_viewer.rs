@@ -39,7 +39,7 @@ impl ImageView {
         Self {
             image_item,
             project,
-            focus_handle: window.focus_handle(cx),
+            focus_handle: cx.focus_handle(),
         }
     }
 
@@ -162,7 +162,7 @@ impl Item for ImageView {
         Some(window.new_view(cx, |window, cx| Self {
             image_item: self.image_item.clone(),
             project: self.project.clone(),
-            focus_handle: window.focus_handle(cx),
+            focus_handle: cx.focus_handle(),
         }))
     }
 }

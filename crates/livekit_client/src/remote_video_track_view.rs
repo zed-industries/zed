@@ -22,7 +22,7 @@ pub enum RemoteVideoTrackViewEvent {
 
 impl RemoteVideoTrackView {
     pub fn new(track: RemoteVideoTrack, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
-        window.focus_handle(cx);
+        cx.focus_handle();
         let frames = super::play_remote_video_track(&track);
 
         Self {

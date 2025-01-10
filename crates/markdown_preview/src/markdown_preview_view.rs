@@ -253,7 +253,7 @@ impl MarkdownPreviewView {
             let mut this = Self {
                 selected_block: 0,
                 active_editor: None,
-                focus_handle: window.focus_handle(cx),
+                focus_handle: cx.focus_handle(),
                 workspace: workspace.clone(),
                 contents: None,
                 list_state,

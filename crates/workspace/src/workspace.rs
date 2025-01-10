@@ -7712,7 +7712,7 @@ mod tests {
 
     impl TestModal {
         fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
-            Self(window.focus_handle(cx))
+            Self(cx.focus_handle())
         }
     }
 
@@ -8490,7 +8490,7 @@ mod tests {
                 Self: Sized,
             {
                 Self {
-                    focus_handle: window.focus_handle(cx),
+                    focus_handle: cx.focus_handle(),
                 }
             }
         }
@@ -8561,7 +8561,7 @@ mod tests {
                 Self: Sized,
             {
                 Self {
-                    focus_handle: window.focus_handle(cx),
+                    focus_handle: cx.focus_handle(),
                 }
             }
         }
@@ -8604,7 +8604,7 @@ mod tests {
                 Self: Sized,
             {
                 Self {
-                    focus_handle: window.focus_handle(cx),
+                    focus_handle: cx.focus_handle(),
                 }
             }
         }
