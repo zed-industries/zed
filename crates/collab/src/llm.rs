@@ -459,7 +459,15 @@ async fn predict_edits(
         .prediction_model
         .as_ref()
         .context("no PREDICTION_MODEL configured on the server")?;
+
+    let outline_prefix = params
+        .outline
+        .as_ref()
+        .map(|outline| format!("### Outline for current file:\n{}\n", outline))
+        .unwrap_or_default();
+
     let prompt = include_str!("./llm/prediction_prompt.md")
+        .replace("<outline>", &outline_prefix)
         .replace("<events>", &params.input_events)
         .replace("<excerpt>", &params.input_excerpt);
     let mut response = open_ai::complete_text(

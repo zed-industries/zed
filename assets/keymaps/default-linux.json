@@ -568,6 +568,23 @@
     }
   },
   {
+    "context": "AssistantPanel2",
+    "bindings": {
+      "ctrl-n": "assistant2::NewThread",
+      "ctrl-shift-h": "assistant2::OpenHistory",
+      "ctrl-shift-m": "assistant2::ToggleModelSelector",
+      "ctrl-shift-a": "assistant2::ToggleContextPicker",
+      "ctrl-alt-e": "assistant2::RemoveAllContext"
+    }
+  },
+  {
+    "context": "MessageEditor > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "enter": "assistant2::Chat"
+    }
+  },
+  {
     "context": "PromptEditor",
     "bindings": {
       "ctrl-[": "assistant::CyclePreviousInlineAssist",

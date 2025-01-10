@@ -175,7 +175,7 @@ impl ExtensionManifest {
                 .await
                 .with_context(|| format!("failed to load {extension_name} extension.toml"))?;
             toml::from_str(&manifest_content)
-                .with_context(|| format!("invalid extension.json for extension {extension_name}"))
+                .with_context(|| format!("invalid extension.toml for extension {extension_name}"))
         }
     }
 }

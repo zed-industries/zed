@@ -81,13 +81,12 @@ impl FetchContextPickerDelegate {
         }
     }
 
-    async fn build_message(http_client: Arc<HttpClientWithUrl>, url: &str) -> Result<String> {
-        let prefixed_url = if !url.starts_with("https://") && !url.starts_with("http://") {
-            Some(format!("https://{url}"))
+    async fn build_message(http_client: Arc<HttpClientWithUrl>, url: String) -> Result<String> {
+        let url = if !url.starts_with("https://") && !url.starts_with("http://") {
+            format!("https://{url}")
         } else {
-            None
+            url
         };
-        let url = prefixed_url.as_deref().unwrap_or(url);
 
         let mut response = http_client.get(&url, AsyncBody::default(), true).await?;
 
@@ -196,7 +195,10 @@ impl PickerDelegate for FetchContextPickerDelegate {
         let url = self.url.clone();
         let confirm_behavior = self.confirm_behavior;
         cx.spawn(|this, mut cx| async move {
-            let text = Self::build_message(http_client, &url).await?;
+            let text = cx
+                .background_executor()
+                .spawn(Self::build_message(http_client, url.clone()))
+                .await?;
 
             this.update(&mut cx, |this, cx| {
                 this.delegate

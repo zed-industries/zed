@@ -3101,7 +3101,10 @@ impl Workspace {
             pane::Event::Remove { focus_on_pane } => {
                 self.remove_pane(pane, focus_on_pane.clone(), cx);
             }
-            pane::Event::ActivateItem { local } => {
+            pane::Event::ActivateItem {
+                local,
+                focus_changed,
+            } => {
                 cx.on_next_frame(|_, cx| {
                     cx.invalidate_character_coordinates();
                 });
@@ -3116,6 +3119,7 @@ impl Workspace {
                     self.active_item_path_changed(cx);
                     self.update_active_view_for_followers(cx);
                 }
+                serialize_workspace = *focus_changed || &pane != self.active_pane();
             }
             pane::Event::UserSavedItem { item, save_intent } => {
                 cx.emit(Event::UserSavedItem {
