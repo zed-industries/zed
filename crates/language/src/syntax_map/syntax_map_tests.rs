@@ -1193,15 +1193,15 @@ fn erb_lang() -> Language {
     .with_injection_query(
         r#"
             (
-                (code) @content
-                (#set! "language" "ruby")
-                (#set! "combined")
+                (code) @injection.content
+                (#set! injection.language "ruby")
+                (#set! injection.combined)
             )
 
             (
-                (content) @content
-                (#set! "language" "html")
-                (#set! "combined")
+                (content) @injection.content
+                (#set! injection.language "html")
+                (#set! injection.combined)
             )
         "#,
     )
@@ -1230,8 +1230,8 @@ fn rust_lang() -> Language {
     .with_injection_query(
         r#"
             (macro_invocation
-                (token_tree) @content
-                (#set! "language" "rust"))
+                (token_tree) @injection.content
+                (#set! injection.language "rust"))
         "#,
     )
     .unwrap()
@@ -1277,13 +1277,13 @@ fn heex_lang() -> Language {
               (partial_expression_value)
               (expression_value)
               (ending_expression_value)
-            ] @content)
-          (#set! language "elixir")
-          (#set! combined)
+            ] @injection.content)
+          (#set! injection.language "elixir")
+          (#set! injection.combined)
         )
 
-        ((expression (expression_value) @content)
-         (#set! language "elixir"))
+        ((expression (expression_value) @injection.content)
+         (#set! injection.language "elixir"))
         "#,
     )
     .unwrap()

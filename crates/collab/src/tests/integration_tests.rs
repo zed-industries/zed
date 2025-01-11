@@ -27,10 +27,10 @@ use language::{
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
-use project::lsp_store::FormatTarget;
 use project::{
-    lsp_store::FormatTrigger, search::SearchQuery, search::SearchResult, DiagnosticSummary,
-    HoverBlockKind, Project, ProjectPath,
+    lsp_store::{FormatTrigger, LspFormatTarget},
+    search::{SearchQuery, SearchResult},
+    DiagnosticSummary, HoverBlockKind, Project, ProjectPath,
 };
 use rand::prelude::*;
 use serde_json::json;
@@ -2925,8 +2925,6 @@ async fn test_git_status_sync(
         assert_eq!(snapshot.status_for_file(file), status);
     }
 
-    // Smoke test status reading
-
     project_local.read_with(cx_a, |project, cx| {
         assert_status(&Path::new(A_TXT), Some(GitFileStatus::Added), project, cx);
         assert_status(&Path::new(B_TXT), Some(GitFileStatus::Added), project, cx);
@@ -4402,9 +4400,9 @@ async fn test_formatting_buffer(
         .update(cx_b, |project, cx| {
             project.format(
                 HashSet::from_iter([buffer_b.clone()]),
+                LspFormatTarget::Buffers,
                 true,
                 FormatTrigger::Save,
-                FormatTarget::Buffer,
                 cx,
             )
         })
@@ -4438,9 +4436,9 @@ async fn test_formatting_buffer(
         .update(cx_b, |project, cx| {
             project.format(
                 HashSet::from_iter([buffer_b.clone()]),
+                LspFormatTarget::Buffers,
                 true,
                 FormatTrigger::Save,
-                FormatTarget::Buffer,
                 cx,
             )
         })
@@ -4548,9 +4546,9 @@ async fn test_prettier_formatting_buffer(
         .update(cx_b, |project, cx| {
             project.format(
                 HashSet::from_iter([buffer_b.clone()]),
+                LspFormatTarget::Buffers,
                 true,
                 FormatTrigger::Save,
-                FormatTarget::Buffer,
                 cx,
             )
         })
@@ -4568,9 +4566,9 @@ async fn test_prettier_formatting_buffer(
         .update(cx_a, |project, cx| {
             project.format(
                 HashSet::from_iter([buffer_a.clone()]),
+                LspFormatTarget::Buffers,
                 true,
                 FormatTrigger::Manual,
-                FormatTarget::Buffer,
                 cx,
             )
         })
@@ -4938,7 +4936,7 @@ async fn test_project_search(
 
     // Perform a search as the guest.
     let mut results = HashMap::default();
-    let mut search_rx = project_b.update(cx_b, |project, cx| {
+    let search_rx = project_b.update(cx_b, |project, cx| {
         project.search(
             SearchQuery::text(
                 "world",
@@ -4953,7 +4951,7 @@ async fn test_project_search(
             cx,
         )
     });
-    while let Some(result) = search_rx.next().await {
+    while let Ok(result) = search_rx.recv().await {
         match result {
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);
@@ -6669,6 +6667,10 @@ async fn test_remote_git_branches(
     client_a
         .fs()
         .insert_branches(Path::new("/project/.git"), &branches);
+    let branches_set = branches
+        .into_iter()
+        .map(ToString::to_string)
+        .collect::<HashSet<_>>();
 
     let (project_a, worktree_id) = client_a.build_local_project("/project", cx_a).await;
     let project_id = active_call_a
@@ -6690,10 +6692,10 @@ async fn test_remote_git_branches(
 
     let branches_b = branches_b
         .into_iter()
-        .map(|branch| branch.name)
-        .collect::<Vec<_>>();
+        .map(|branch| branch.name.to_string())
+        .collect::<HashSet<_>>();
 
-    assert_eq!(&branches_b, &branches);
+    assert_eq!(branches_b, branches_set);
 
     cx_b.update(|cx| {
         project_b.update(cx, |project, cx| {

@@ -98,3 +98,17 @@ Diagnostics:
 ```
 
 For more advanced usage of clangd configuration file, take a look into their [official page](https://clangd.llvm.org/config.html).
+
+## Compile Commands
+
+For some projects Clangd requires a `compile_commands.json` file to properly analyze your project. This file contains the compilation database that tells clangd how your project should be built.
+
+### CMake Compile Commands
+
+With CMake, you can generate `compile_commands.json` automatically by adding the following line to your `CMakeLists.txt`:
+
+```cmake
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+```
+
+After building your project, CMake will generate the `compile_commands.json` file in the build directory and clangd will automatically pick it up.

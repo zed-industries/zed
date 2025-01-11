@@ -1,6 +1,7 @@
 mod persistence;
 pub mod terminal_element;
 pub mod terminal_panel;
+pub mod terminal_tab_tooltip;
 
 use collections::HashSet;
 use editor::{actions::SelectAll, scroll::Autoscroll, Editor};
@@ -26,10 +27,16 @@ use terminal::{
 };
 use terminal_element::{is_blank, TerminalElement};
 use terminal_panel::TerminalPanel;
+use terminal_tab_tooltip::TerminalTooltip;
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
-use util::{paths::PathWithPosition, ResultExt};
+use util::{
+    paths::{PathWithPosition, SanitizedPath},
+    ResultExt,
+};
 use workspace::{
-    item::{BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams},
+    item::{
+        BreadcrumbText, Item, ItemEvent, SerializableItem, TabContentParams, TabTooltipContent,
+    },
     register_serializable_item,
     searchable::{SearchEvent, SearchOptions, SearchableItem, SearchableItemHandle},
     CloseActiveItem, NewCenterTerminal, NewTerminal, OpenVisible, ToolbarItemLocation, Workspace,
@@ -780,9 +787,19 @@ fn possible_open_paths_metadata(
     cx: &mut ViewContext<TerminalView>,
 ) -> Task<Vec<(PathWithPosition, Metadata)>> {
     cx.background_executor().spawn(async move {
-        let mut paths_with_metadata = Vec::with_capacity(potential_paths.len());
+        let mut canonical_paths = HashSet::default();
+        for path in potential_paths {
+            if let Ok(canonical) = fs.canonicalize(&path).await {
+                let sanitized = SanitizedPath::from(canonical);
+                canonical_paths.insert(sanitized.as_path().to_path_buf());
+            } else {
+                canonical_paths.insert(path);
+            }
+        }
 
-        let mut fetch_metadata_tasks = potential_paths
+        let mut paths_with_metadata = Vec::with_capacity(canonical_paths.len());
+
+        let mut fetch_metadata_tasks = canonical_paths
             .into_iter()
             .map(|potential_path| async {
                 let metadata = fs.metadata(&potential_path).await.ok().flatten();
@@ -819,19 +836,19 @@ fn possible_open_targets(
     let column = path_position.column;
     let maybe_path = path_position.path;
 
-    let abs_path = if maybe_path.is_absolute() {
-        Some(maybe_path)
+    let potential_paths = if maybe_path.is_absolute() {
+        HashSet::from_iter([maybe_path])
     } else if maybe_path.starts_with("~") {
         maybe_path
             .strip_prefix("~")
             .ok()
             .and_then(|maybe_path| Some(dirs::home_dir()?.join(maybe_path)))
+            .map_or_else(HashSet::default, |p| HashSet::from_iter([p]))
     } else {
         let mut potential_cwd_and_workspace_paths = HashSet::default();
         if let Some(cwd) = cwd {
             let abs_path = Path::join(cwd, &maybe_path);
-            let canonicalized_path = abs_path.canonicalize().unwrap_or(abs_path);
-            potential_cwd_and_workspace_paths.insert(canonicalized_path);
+            potential_cwd_and_workspace_paths.insert(abs_path);
         }
         if let Some(workspace) = workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
@@ -856,25 +873,10 @@ fn possible_open_targets(
                 }
             });
         }
-
-        return possible_open_paths_metadata(
-            fs,
-            row,
-            column,
-            potential_cwd_and_workspace_paths,
-            cx,
-        );
+        potential_cwd_and_workspace_paths
     };
 
-    let canonicalized_paths = match abs_path {
-        Some(abs_path) => match abs_path.canonicalize() {
-            Ok(path) => HashSet::from_iter([path]),
-            Err(_) => HashSet::default(),
-        },
-        None => HashSet::default(),
-    };
-
-    possible_open_paths_metadata(fs, row, column, canonicalized_paths, cx)
+    possible_open_paths_metadata(fs, row, column, potential_paths, cx)
 }
 
 fn regex_to_literal(regex: &str) -> String {
@@ -998,8 +1000,17 @@ impl Render for TerminalView {
 impl Item for TerminalView {
     type Event = ItemEvent;
 
-    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
-        Some(self.terminal().read(cx).title(false).into())
+    fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent> {
+        let terminal = self.terminal().read(cx);
+        let title = terminal.title(false);
+        let pid = terminal.pty_info.pid_getter().fallback_pid();
+
+        Some(TabTooltipContent::Custom(Box::new(
+            move |cx: &mut WindowContext| {
+                cx.new_view(|_| TerminalTooltip::new(title.clone(), pid))
+                    .into()
+            },
+        )))
     }
 
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {

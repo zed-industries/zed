@@ -1226,6 +1226,11 @@ impl AppContext {
         self.actions.all_action_names()
     }
 
+    /// Get a list of all deprecated action aliases and their canonical names.
+    pub fn action_deprecations(&self) -> &[(SharedString, SharedString)] {
+        self.actions.action_deprecations()
+    }
+
     /// Register a callback to be invoked when the application is about to quit.
     /// It is not possible to cancel the quit event at this point.
     pub fn on_app_quit<Fut>(
@@ -1412,6 +1417,11 @@ impl AppContext {
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub fn get_name(&self) -> &'static str {
         self.name.as_ref().unwrap()
+    }
+
+    /// Returns `true` if the platform file picker supports selecting a mix of files and directories.
+    pub fn can_select_mixed_files_and_dirs(&self) -> bool {
+        self.platform.can_select_mixed_files_and_dirs()
     }
 }
 

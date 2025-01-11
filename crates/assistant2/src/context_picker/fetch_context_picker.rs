@@ -11,7 +11,6 @@ use picker::{Picker, PickerDelegate};
 use ui::{prelude::*, ListItem, ViewContext};
 use workspace::Workspace;
 
-use crate::context::ContextKind;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 
@@ -82,11 +81,12 @@ impl FetchContextPickerDelegate {
         }
     }
 
-    async fn build_message(http_client: Arc<HttpClientWithUrl>, url: &str) -> Result<String> {
-        let mut url = url.to_owned();
-        if !url.starts_with("https://") && !url.starts_with("http://") {
-            url = format!("https://{url}");
-        }
+    async fn build_message(http_client: Arc<HttpClientWithUrl>, url: String) -> Result<String> {
+        let url = if !url.starts_with("https://") && !url.starts_with("http://") {
+            format!("https://{url}")
+        } else {
+            url
+        };
 
         let mut response = http_client.get(&url, AsyncBody::default(), true).await?;
 
@@ -195,13 +195,16 @@ impl PickerDelegate for FetchContextPickerDelegate {
         let url = self.url.clone();
         let confirm_behavior = self.confirm_behavior;
         cx.spawn(|this, mut cx| async move {
-            let text = Self::build_message(http_client, &url).await?;
+            let text = cx
+                .background_executor()
+                .spawn(Self::build_message(http_client, url.clone()))
+                .await?;
 
             this.update(&mut cx, |this, cx| {
                 this.delegate
                     .context_store
                     .update(cx, |context_store, _cx| {
-                        context_store.insert_context(ContextKind::FetchedUrl, url, text);
+                        context_store.add_fetched_url(url, text);
                     })?;
 
                 match confirm_behavior {
@@ -220,7 +223,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         self.context_picker
             .update(cx, |this, cx| {
-                this.reset_mode();
+                this.reset_mode(cx);
                 cx.emit(DismissEvent);
             })
             .ok();
@@ -230,13 +233,29 @@ impl PickerDelegate for FetchContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
+        let added = self.context_store.upgrade().map_or(false, |context_store| {
+            context_store.read(cx).includes_url(&self.url).is_some()
+        });
+
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .toggle_state(selected)
-                .child(Label::new(self.url.clone())),
+                .child(Label::new(self.url.clone()))
+                .when(added, |child| {
+                    child.disabled(true).end_slot(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Check)
+                                    .size(IconSize::Small)
+                                    .color(Color::Success),
+                            )
+                            .child(Label::new("Added").size(LabelSize::Small)),
+                    )
+                }),
         )
     }
 }

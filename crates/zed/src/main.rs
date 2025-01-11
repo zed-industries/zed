@@ -48,7 +48,7 @@ use std::{
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use time::UtcOffset;
-use util::{load_login_shell_environment, maybe, ResultExt, TryFutureExt};
+use util::{maybe, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{
@@ -64,13 +64,13 @@ use zed::{
 use crate::zed::inline_completion_registry;
 
 #[cfg(unix)]
-use util::load_shell_from_passwd;
+use util::{load_login_shell_environment, load_shell_from_passwd};
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
-fn files_not_createad_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
+fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
     let message = "Zed failed to launch";
     let error_details = errors
         .into_iter()
@@ -179,7 +179,7 @@ fn main() {
 
     let file_errors = init_paths();
     if !file_errors.is_empty() {
-        files_not_createad_on_launch(file_errors);
+        files_not_created_on_launch(file_errors);
         return;
     }
 
@@ -255,13 +255,11 @@ fn main() {
         paths::keymap_file().clone(),
     );
 
+    #[cfg(unix)]
     if !stdout_is_a_pty() {
         app.background_executor()
             .spawn(async {
-                #[cfg(unix)]
-                {
-                    load_shell_from_passwd().log_err();
-                }
+                load_shell_from_passwd().log_err();
                 load_login_shell_environment().log_err();
             })
             .detach()

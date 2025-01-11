@@ -28,8 +28,6 @@ extend-exclude = [
     # Editor and file finder rely on partial typing and custom in-string syntax.
     "crates/file_finder/src/file_finder_tests.rs",
     "crates/editor/src/editor_tests.rs",
-    # Clojure uses .edn filename extension, which is not a misspelling of "end".
-    "extensions/clojure/languages/clojure/config.toml",
     # There are some names in the test data that are incorrectly flagged as typos.
     "crates/git/test_data/blame_incremental_complex",
     "crates/git/test_data/golden/blame_incremental_complex.json",

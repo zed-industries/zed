@@ -5,9 +5,8 @@ use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, Wea
 use picker::{Picker, PickerDelegate};
 use ui::{prelude::*, ListItem};
 
-use crate::context::ContextKind;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
-use crate::context_store;
+use crate::context_store::{self, ContextStore};
 use crate::thread::ThreadId;
 use crate::thread_store::ThreadStore;
 
@@ -48,9 +47,9 @@ impl Render for ThreadContextPicker {
 }
 
 #[derive(Debug, Clone)]
-struct ThreadContextEntry {
-    id: ThreadId,
-    summary: SharedString,
+pub struct ThreadContextEntry {
+    pub id: ThreadId,
+    pub summary: SharedString,
 }
 
 pub struct ThreadContextPickerDelegate {
@@ -104,10 +103,8 @@ impl PickerDelegate for ThreadContextPickerDelegate {
             this.threads(cx)
                 .into_iter()
                 .map(|thread| {
-                    const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Thread");
-
                     let id = thread.read(cx).id().clone();
-                    let summary = thread.read(cx).summary().unwrap_or(DEFAULT_SUMMARY);
+                    let summary = thread.read(cx).summary_or_default();
                     ThreadContextEntry { id, summary }
                 })
                 .collect::<Vec<_>>()
@@ -168,13 +165,7 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         };
 
         self.context_store
-            .update(cx, |context_store, cx| {
-                context_store.insert_context(
-                    ContextKind::Thread(thread.read(cx).id().clone()),
-                    entry.summary.clone(),
-                    thread.read(cx).text(),
-                );
-            })
+            .update(cx, |context_store, cx| context_store.add_thread(thread, cx))
             .ok();
 
         match self.confirm_behavior {
@@ -186,7 +177,7 @@ impl PickerDelegate for ThreadContextPickerDelegate {
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         self.context_picker
             .update(cx, |this, cx| {
-                this.reset_mode();
+                this.reset_mode(cx);
                 cx.emit(DismissEvent);
             })
             .ok();
@@ -196,15 +187,41 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let thread = &self.matches[ix];
 
-        Some(
-            ListItem::new(ix)
-                .inset(true)
-                .toggle_state(selected)
-                .child(Label::new(thread.summary.clone())),
-        )
+        Some(ListItem::new(ix).inset(true).toggle_state(selected).child(
+            render_thread_context_entry(thread, self.context_store.clone(), cx),
+        ))
     }
+}
+
+pub fn render_thread_context_entry(
+    thread: &ThreadContextEntry,
+    context_store: WeakModel<ContextStore>,
+    cx: &mut WindowContext,
+) -> Div {
+    let added = context_store.upgrade().map_or(false, |ctx_store| {
+        ctx_store.read(cx).includes_thread(&thread.id).is_some()
+    });
+
+    h_flex()
+        .gap_1()
+        .w_full()
+        .child(Icon::new(IconName::MessageCircle).size(IconSize::Small))
+        .child(Label::new(thread.summary.clone()))
+        .child(div().w_full())
+        .when(added, |el| {
+            el.child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::Check)
+                            .size(IconSize::Small)
+                            .color(Color::Success),
+                    )
+                    .child(Label::new("Added").size(LabelSize::Small)),
+            )
+        })
 }

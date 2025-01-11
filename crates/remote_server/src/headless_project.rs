@@ -515,7 +515,7 @@ impl HeadlessProject {
                 .query
                 .ok_or_else(|| anyhow!("missing query field"))?,
         )?;
-        let mut results = this.update(&mut cx, |this, cx| {
+        let results = this.update(&mut cx, |this, cx| {
             this.buffer_store.update(cx, |buffer_store, cx| {
                 buffer_store.find_search_candidates(&query, message.limit as _, this.fs.clone(), cx)
             })
@@ -527,7 +527,7 @@ impl HeadlessProject {
 
         let buffer_store = this.read_with(&cx, |this, _| this.buffer_store.clone())?;
 
-        while let Some(buffer) = results.next().await {
+        while let Ok(buffer) = results.recv().await {
             let buffer_id = buffer.update(&mut cx, |this, _| this.remote_id())?;
             response.buffer_ids.push(buffer_id.to_proto());
             buffer_store

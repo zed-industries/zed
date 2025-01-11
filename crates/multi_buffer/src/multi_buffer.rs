@@ -269,7 +269,7 @@ struct ExcerptIdMapping {
 
 /// A range of text from a single [`Buffer`], to be shown as an [`Excerpt`].
 /// These ranges are relative to the buffer itself
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ExcerptRange<T> {
     /// The full range of text to be shown in the excerpt.
     pub context: Range<T>,
@@ -3871,15 +3871,19 @@ impl MultiBufferSnapshot {
             .any(|excerpt| excerpt.buffer.has_diagnostics())
     }
 
-    pub fn diagnostic_group<'a, O>(
-        &'a self,
+    pub fn diagnostic_group(
+        &self,
         group_id: usize,
-    ) -> impl Iterator<Item = DiagnosticEntry<O>> + 'a
-    where
-        O: text::FromAnchor + 'a,
-    {
-        self.all_excerpts()
-            .flat_map(move |excerpt| excerpt.buffer().diagnostic_group(group_id))
+    ) -> impl Iterator<Item = DiagnosticEntry<Anchor>> + '_ {
+        self.all_excerpts().flat_map(move |excerpt| {
+            excerpt.buffer().diagnostic_group(group_id).map(
+                move |DiagnosticEntry { diagnostic, range }| DiagnosticEntry {
+                    diagnostic,
+                    range: self.anchor_in_excerpt(excerpt.id(), range.start).unwrap()
+                        ..self.anchor_in_excerpt(excerpt.id(), range.end).unwrap(),
+                },
+            )
+        })
     }
 
     pub fn diagnostics_in_range<'a, T>(
