@@ -602,6 +602,15 @@ fn register_actions(
                 );
             },
         )
+        .register_action(
+            move |_: &mut Workspace, _: &OpenDebugTasks, cx: &mut ViewContext<Workspace>| {
+                open_settings_file(
+                    paths::debug_tasks_file(),
+                    || settings::initial_debug_tasks_content().as_ref().into(),
+                    cx,
+                );
+            },
+        )
         .register_action(open_project_settings_file)
         .register_action(open_project_tasks_file)
         .register_action(open_project_debug_tasks_file)
