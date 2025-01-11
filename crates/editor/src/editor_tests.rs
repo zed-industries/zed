@@ -11664,11 +11664,7 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
             (buffer_3.clone(), base_text_3),
         ] {
             let change_set = cx.new_model(|cx| {
-                BufferChangeSet::new_with_base_text(
-                    diff_base.to_string(),
-                    buffer.read(cx).text_snapshot(),
-                    cx,
-                )
+                BufferChangeSet::new_with_base_text(diff_base.to_string(), &buffer, cx)
             });
             editor
                 .buffer
@@ -12354,11 +12350,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
                 (buffer_3.clone(), file_3_old),
             ] {
                 let change_set = cx.new_model(|cx| {
-                    BufferChangeSet::new_with_base_text(
-                        diff_base.to_string(),
-                        buffer.read(cx).text_snapshot(),
-                        cx,
-                    )
+                    BufferChangeSet::new_with_base_text(diff_base.to_string(), &buffer, cx)
                 });
                 editor
                     .buffer
@@ -12469,9 +12461,8 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
     let editor = cx.add_window(|cx| Editor::new(EditorMode::Full, multi_buffer, None, true, cx));
     editor
         .update(cx, |editor, cx| {
-            let buffer = buffer.read(cx).text_snapshot();
             let change_set = cx
-                .new_model(|cx| BufferChangeSet::new_with_base_text(base.to_string(), buffer, cx));
+                .new_model(|cx| BufferChangeSet::new_with_base_text(base.to_string(), &buffer, cx));
             editor
                 .buffer
                 .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx))

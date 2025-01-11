@@ -187,7 +187,7 @@ impl ProposedChangesEditor {
             } else {
                 branch_buffer = location.buffer.update(cx, |buffer, cx| buffer.branch(cx));
                 new_change_sets.push(cx.new_model(|cx| {
-                    let mut change_set = BufferChangeSet::new(branch_buffer.read(cx));
+                    let mut change_set = BufferChangeSet::new(&branch_buffer, cx);
                     let _ = change_set.set_base_text(
                         location.buffer.read(cx).text(),
                         branch_buffer.read(cx).text_snapshot(),

@@ -21,7 +21,7 @@ use language::{
         deserialize_line_ending, deserialize_version, serialize_line_ending, serialize_version,
         split_operations,
     },
-    Buffer, BufferEvent, Capability, DiskState, File as _, Language, Operation,
+    Buffer, BufferEvent, Capability, DiskState, File as _, Language, LanguageRegistry, Operation,
 };
 use rpc::{proto, AnyProtoClient, ErrorExt as _, TypedEnvelope};
 use serde::Deserialize;
@@ -59,14 +59,15 @@ struct SharedBuffer {
     lsp_handle: Option<OpenLspBufferHandle>,
 }
 
-#[derive(Debug)]
 pub struct BufferChangeSet {
     pub buffer_id: BufferId,
     pub base_text: Option<Model<Buffer>>,
+    pub language: Option<Arc<Language>>,
     pub diff_to_buffer: git::diff::BufferDiff,
     pub recalculate_diff_task: Option<Task<Result<()>>>,
     pub diff_updated_futures: Vec<oneshot::Sender<()>>,
     pub base_text_version: usize,
+    pub language_registry: Option<Arc<LanguageRegistry>>,
 }
 
 enum BufferStoreState {
@@ -1079,9 +1080,9 @@ impl BufferStore {
             Ok(text) => text,
         };
 
-        let change_set = buffer.update(&mut cx, |buffer, cx| {
-            cx.new_model(|_| BufferChangeSet::new(buffer))
-        })?;
+        let change_set = cx
+            .new_model(|cx| BufferChangeSet::new(&buffer, cx))
+            .unwrap();
 
         if let Some(text) = text {
             change_set
@@ -2223,7 +2224,22 @@ impl BufferStore {
 }
 
 impl BufferChangeSet {
-    pub fn new(buffer: &text::BufferSnapshot) -> Self {
+    pub fn new(buffer: &Model<Buffer>, cx: &mut ModelContext<Self>) -> Self {
+        cx.subscribe(buffer, |this, buffer, event, cx| match event {
+            BufferEvent::LanguageChanged => {
+                this.language = buffer.read(cx).language().cloned();
+                if let Some(buffer) = this.base_text.as_ref() {
+                    buffer.update(cx, |buffer, cx| {
+                        buffer.set_language(this.language.clone(), cx);
+                    });
+                }
+            }
+            _ => {}
+        })
+        .detach();
+
+        let buffer = buffer.read(cx);
+
         Self {
             buffer_id: buffer.remote_id(),
             base_text: None,
@@ -2231,17 +2247,19 @@ impl BufferChangeSet {
             recalculate_diff_task: None,
             diff_updated_futures: Vec::new(),
             base_text_version: 0,
+            language: buffer.language().cloned(),
+            language_registry: buffer.language_registry(),
         }
     }
 
     #[cfg(any(test, feature = "test-support"))]
     pub fn new_with_base_text(
         base_text: String,
-        buffer: text::BufferSnapshot,
+        buffer: &Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let mut this = Self::new(&buffer);
-        let _ = this.set_base_text(base_text, buffer, cx);
+        let mut this = Self::new(&buffer, cx);
+        let _ = this.set_base_text(base_text, buffer.read(cx).text_snapshot(), cx);
         this
     }
 
@@ -2328,8 +2346,27 @@ impl BufferChangeSet {
                 if base_text_changed {
                     this.base_text_version += 1;
                     this.base_text = Some(cx.new_model(|cx| {
-                        Buffer::local_normalized(Rope::from(base_text), LineEnding::default(), cx)
+                        let mut buffer = Buffer::local_normalized(
+                            Rope::from(base_text),
+                            LineEnding::default(),
+                            cx,
+                        );
+                        if let Some(language_registry) = this.language_registry.as_ref() {
+                            buffer.set_language_registry(language_registry.clone());
+                        }
+                        buffer.set_language(this.language.clone(), cx);
+                        buffer
                     }));
+                    cx.subscribe(
+                        this.base_text.as_ref().unwrap(),
+                        |_, _, event, cx| match event {
+                            BufferEvent::Reparsed => {
+                                cx.notify();
+                            }
+                            _ => {}
+                        },
+                    )
+                    .detach();
                 }
                 this.diff_to_buffer = diff;
                 this.recalculate_diff_task.take();

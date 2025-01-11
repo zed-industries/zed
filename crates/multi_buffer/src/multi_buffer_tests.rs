@@ -342,7 +342,7 @@ fn test_diff_boundary_anchors(cx: &mut AppContext) {
     let buffer = cx.new_model(|cx| Buffer::local(text, cx));
     let snapshot = buffer.read(cx).snapshot();
     let change_set = cx.new_model(|cx| {
-        let mut change_set = BufferChangeSet::new(&snapshot);
+        let mut change_set = BufferChangeSet::new(&buffer, cx);
         change_set.recalculate_diff_sync(base_text.into(), snapshot.text, true, cx);
         change_set
     });
@@ -389,9 +389,9 @@ fn test_diff_hunks_in_range(cx: &mut AppContext) {
     let base_text = "one\ntwo\nthree\nfour\nfive\n";
     let text = "one\nthree\nfive\n";
     let buffer = cx.new_model(|cx| Buffer::local(text, cx));
-    let snapshot = buffer.read(cx).snapshot();
     let change_set = cx.new_model(|cx| {
-        let mut change_set = BufferChangeSet::new(&snapshot);
+        let mut change_set = BufferChangeSet::new(&buffer, cx);
+        let snapshot = buffer.read(cx).snapshot();
         change_set.recalculate_diff_sync(base_text.into(), snapshot.text, true, cx);
         change_set
     });
@@ -1012,13 +1012,8 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
     );
 
     let buffer = cx.new_model(|cx| Buffer::local(text, cx));
-    let change_set = cx.new_model(|cx| {
-        BufferChangeSet::new_with_base_text(
-            base_text.to_string(),
-            buffer.read(cx).text_snapshot(),
-            cx,
-        )
-    });
+    let change_set =
+        cx.new_model(|cx| BufferChangeSet::new_with_base_text(base_text.to_string(), &buffer, cx));
     cx.run_until_parked();
 
     let multibuffer = cx.new_model(|cx| {
@@ -1280,18 +1275,10 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
     let buffer_1 = cx.new_model(|cx| Buffer::local(text_1, cx));
     let buffer_2 = cx.new_model(|cx| Buffer::local(text_2, cx));
     let change_set_1 = cx.new_model(|cx| {
-        BufferChangeSet::new_with_base_text(
-            base_text_1.to_string(),
-            buffer_1.read(cx).text_snapshot(),
-            cx,
-        )
+        BufferChangeSet::new_with_base_text(base_text_1.to_string(), &buffer_1, cx)
     });
     let change_set_2 = cx.new_model(|cx| {
-        BufferChangeSet::new_with_base_text(
-            base_text_2.to_string(),
-            buffer_2.read(cx).text_snapshot(),
-            cx,
-        )
+        BufferChangeSet::new_with_base_text(base_text_2.to_string(), &buffer_2, cx)
     });
     cx.run_until_parked();
 
@@ -1847,7 +1834,7 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
                     let buffer = cx.new_model(|cx| Buffer::local(base_text.clone(), cx));
                     let snapshot = buffer.read(cx).snapshot();
                     let change_set = cx.new_model(|cx| {
-                        let mut change_set = BufferChangeSet::new(&snapshot);
+                        let mut change_set = BufferChangeSet::new(&buffer, cx);
                         change_set.recalculate_diff_sync(base_text, snapshot.text, true, cx);
                         change_set
                     });

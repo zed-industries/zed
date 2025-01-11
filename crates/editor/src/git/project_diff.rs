@@ -1185,13 +1185,7 @@ mod tests {
             let change_set = cx.new_model(|cx| {
                 BufferChangeSet::new_with_base_text(
                     old_text.clone(),
-                    file_a_editor
-                        .buffer()
-                        .read(cx)
-                        .as_singleton()
-                        .unwrap()
-                        .read(cx)
-                        .text_snapshot(),
+                    &file_a_editor.buffer().read(cx).as_singleton().unwrap(),
                     cx,
                 )
             });
