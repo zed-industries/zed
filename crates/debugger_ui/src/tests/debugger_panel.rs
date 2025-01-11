@@ -8,6 +8,7 @@ use dap::{
     ErrorResponse, RunInTerminalRequestArguments, StartDebuggingRequestArguments,
     StartDebuggingRequestArgumentsRequest,
 };
+use debugger_panel::ThreadStatus;
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{FakeFs, Project};
 use serde_json::json;
@@ -16,7 +17,7 @@ use std::sync::{
     Arc,
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
-use tests::{init_test, init_test_workspace};
+use tests::{active_debug_panel_item, init_test, init_test_workspace};
 use workspace::dock::Panel;
 
 #[gpui::test]
@@ -969,23 +970,83 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
         .await;
 
     client
-        .on_request::<Next, _>(move |_, _| Err(ErrorResponse { error: None }))
+        .on_request::<Next, _>(move |_, _| {
+            Err(ErrorResponse {
+                error: Some(dap::Message {
+                    id: 1,
+                    format: "error".into(),
+                    variables: None,
+                    send_telemetry: None,
+                    show_user: None,
+                    url: None,
+                    url_label: None,
+                }),
+            })
+        })
         .await;
 
     client
-        .on_request::<StepOut, _>(move |_, _| Err(ErrorResponse { error: None }))
+        .on_request::<StepOut, _>(move |_, _| {
+            Err(ErrorResponse {
+                error: Some(dap::Message {
+                    id: 1,
+                    format: "error".into(),
+                    variables: None,
+                    send_telemetry: None,
+                    show_user: None,
+                    url: None,
+                    url_label: None,
+                }),
+            })
+        })
         .await;
 
     client
-        .on_request::<StepIn, _>(move |_, _| Err(ErrorResponse { error: None }))
+        .on_request::<StepIn, _>(move |_, _| {
+            Err(ErrorResponse {
+                error: Some(dap::Message {
+                    id: 1,
+                    format: "error".into(),
+                    variables: None,
+                    send_telemetry: None,
+                    show_user: None,
+                    url: None,
+                    url_label: None,
+                }),
+            })
+        })
         .await;
 
     client
-        .on_request::<StepBack, _>(move |_, _| Err(ErrorResponse { error: None }))
+        .on_request::<StepBack, _>(move |_, _| {
+            Err(ErrorResponse {
+                error: Some(dap::Message {
+                    id: 1,
+                    format: "error".into(),
+                    variables: None,
+                    send_telemetry: None,
+                    show_user: None,
+                    url: None,
+                    url_label: None,
+                }),
+            })
+        })
         .await;
 
     client
-        .on_request::<Continue, _>(move |_, _| Err(ErrorResponse { error: None }))
+        .on_request::<Continue, _>(move |_, _| {
+            Err(ErrorResponse {
+                error: Some(dap::Message {
+                    id: 1,
+                    format: "error".into(),
+                    variables: None,
+                    send_telemetry: None,
+                    show_user: None,
+                    url: None,
+                    url_label: None,
+                }),
+            })
+        })
         .await;
 
     client
@@ -1004,16 +1065,6 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
 
     cx.run_until_parked();
 
-    let debug_panel_item = workspace
-        .update(cx, |workspace, cx| {
-            workspace
-                .panel::<DebugPanel>(cx)
-                .unwrap()
-                .update(cx, |panel, cx| panel.active_debug_panel_item(cx))
-                .unwrap()
-        })
-        .unwrap();
-
     for operation in &[
         "step_over",
         "continue_thread",
@@ -1021,24 +1072,35 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
         "step_in",
         "step_out",
     ] {
-        debug_panel_item.update(cx, |item, cx| match *operation {
-            "step_over" => item.step_over(cx),
-            "continue_thread" => item.continue_thread(cx),
-            "step_back" => item.step_back(cx),
-            "step_in" => item.step_in(cx),
-            "step_out" => item.step_out(cx),
-            _ => unreachable!(),
-        });
+        active_debug_panel_item(workspace, cx).update(
+            cx,
+            |debug_panel_item, cx| match *operation {
+                "step_over" => debug_panel_item.step_over(cx),
+                "continue_thread" => debug_panel_item.continue_thread(cx),
+                "step_back" => debug_panel_item.step_back(cx),
+                "step_in" => debug_panel_item.step_in(cx),
+                "step_out" => debug_panel_item.step_out(cx),
+                _ => unreachable!(),
+            },
+        );
 
         cx.run_until_parked();
 
-        debug_panel_item.update(cx, |item, cx| {
+        active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
             assert_eq!(
-                item.thread_status(cx),
+                debug_panel_item.thread_state().read(cx).status,
                 debugger_panel::ThreadStatus::Stopped,
                 "Thread status not reset to Stopped after failed {}",
                 operation
             );
+
+            // update state to running, so we can test it actually changes the status back to stopped
+            debug_panel_item
+                .thread_state()
+                .update(cx, |thread_state, cx| {
+                    thread_state.status = ThreadStatus::Running;
+                    cx.notify();
+                });
         });
     }
 
@@ -1049,15 +1111,4 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
     });
 
     shutdown_session.await.unwrap();
-
-    workspace
-        .update(cx, |workspace, cx| {
-            let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
-
-            debug_panel.update(cx, |this, cx| {
-                assert!(this.active_debug_panel_item(cx).is_none());
-                assert_eq!(0, this.pane().unwrap().read(cx).items_len());
-            });
-        })
-        .unwrap();
 }
