@@ -759,6 +759,10 @@ impl Platform for MacPlatform {
         done_rx
     }
 
+    fn can_select_mixed_files_and_dirs(&self) -> bool {
+        true
+    }
+
     fn reveal_path(&self, path: &Path) {
         unsafe {
             let path = path.to_path_buf();

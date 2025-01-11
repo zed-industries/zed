@@ -22,6 +22,7 @@ pkgs.mkShell rec {
 
   buildInputs =
     [
+      pkgs.bzip2
       pkgs.curl
       pkgs.fontconfig
       pkgs.freetype
@@ -40,6 +41,8 @@ pkgs.mkShell rec {
       pkgs.vulkan-loader
     ]
     ++ lib.optional pkgs.stdenv.hostPlatform.isDarwin pkgs.apple-sdk_15;
+
+  LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib";
 
   # We set SDKROOT and DEVELOPER_DIR to the Xcode ones instead of the nixpkgs ones,
   # because we need Swift 6.0 and nixpkgs doesn't have it.

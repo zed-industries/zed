@@ -91,6 +91,16 @@ pub enum Motion {
         mode: FindRange,
         smartcase: bool,
     },
+    Sneak {
+        first_char: char,
+        second_char: char,
+        smartcase: bool,
+    },
+    SneakBackward {
+        first_char: char,
+        second_char: char,
+        smartcase: bool,
+    },
     RepeatFind {
         last_find: Box<Motion>,
     },
@@ -538,8 +548,10 @@ impl Vim {
     }
 
     pub(crate) fn motion(&mut self, motion: Motion, cx: &mut ViewContext<Self>) {
-        if let Some(Operator::FindForward { .. }) | Some(Operator::FindBackward { .. }) =
-            self.active_operator()
+        if let Some(Operator::FindForward { .. })
+        | Some(Operator::Sneak { .. })
+        | Some(Operator::SneakBackward { .. })
+        | Some(Operator::FindBackward { .. }) = self.active_operator()
         {
             self.pop_operator(cx);
         }
@@ -625,6 +637,8 @@ impl Motion {
             | PreviousSubwordEnd { .. }
             | FirstNonWhitespace { .. }
             | FindBackward { .. }
+            | Sneak { .. }
+            | SneakBackward { .. }
             | RepeatFind { .. }
             | RepeatFindReversed { .. }
             | Jump { line: false, .. }
@@ -666,6 +680,8 @@ impl Motion {
             | PreviousSubwordEnd { .. }
             | FirstNonWhitespace { .. }
             | FindBackward { .. }
+            | Sneak { .. }
+            | SneakBackward { .. }
             | RepeatFindReversed { .. }
             | WindowTop
             | WindowMiddle
@@ -727,6 +743,8 @@ impl Motion {
             | PreviousSubwordStart { .. }
             | FirstNonWhitespace { .. }
             | FindBackward { .. }
+            | Sneak { .. }
+            | SneakBackward { .. }
             | Jump { .. }
             | NextSectionStart
             | NextSectionEnd
@@ -862,6 +880,22 @@ impl Motion {
                 find_backward(map, point, *after, *char, times, *mode, *smartcase),
                 SelectionGoal::None,
             ),
+            Sneak {
+                first_char,
+                second_char,
+                smartcase,
+            } => {
+                return sneak(map, point, *first_char, *second_char, times, *smartcase)
+                    .map(|new_point| (new_point, SelectionGoal::None));
+            }
+            SneakBackward {
+                first_char,
+                second_char,
+                smartcase,
+            } => {
+                return sneak_backward(map, point, *first_char, *second_char, times, *smartcase)
+                    .map(|new_point| (new_point, SelectionGoal::None));
+            }
             // ; -- repeat the last find done with t, f, T, F
             RepeatFind { last_find } => match **last_find {
                 Motion::FindForward {
@@ -895,9 +929,44 @@ impl Motion {
 
                     (new_point, SelectionGoal::None)
                 }
+                Motion::Sneak {
+                    first_char,
+                    second_char,
+                    smartcase,
+                } => {
+                    let mut new_point =
+                        sneak(map, point, first_char, second_char, times, smartcase);
+                    if new_point == Some(point) {
+                        new_point =
+                            sneak(map, point, first_char, second_char, times + 1, smartcase);
+                    }
+
+                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                }
+
+                Motion::SneakBackward {
+                    first_char,
+                    second_char,
+                    smartcase,
+                } => {
+                    let mut new_point =
+                        sneak_backward(map, point, first_char, second_char, times, smartcase);
+                    if new_point == Some(point) {
+                        new_point = sneak_backward(
+                            map,
+                            point,
+                            first_char,
+                            second_char,
+                            times + 1,
+                            smartcase,
+                        );
+                    }
+
+                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                }
                 _ => return None,
             },
-            // , -- repeat the last find done with t, f, T, F, in opposite direction
+            // , -- repeat the last find done with t, f, T, F, s, S, in opposite direction
             RepeatFindReversed { last_find } => match **last_find {
                 Motion::FindForward {
                     before,
@@ -926,6 +995,42 @@ impl Motion {
                     if new_point == Some(point) {
                         new_point =
                             find_forward(map, point, after, char, times + 1, mode, smartcase);
+                    }
+
+                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                }
+
+                Motion::Sneak {
+                    first_char,
+                    second_char,
+                    smartcase,
+                } => {
+                    let mut new_point =
+                        sneak_backward(map, point, first_char, second_char, times, smartcase);
+                    if new_point == Some(point) {
+                        new_point = sneak_backward(
+                            map,
+                            point,
+                            first_char,
+                            second_char,
+                            times + 1,
+                            smartcase,
+                        );
+                    }
+
+                    return new_point.map(|new_point| (new_point, SelectionGoal::None));
+                }
+
+                Motion::SneakBackward {
+                    first_char,
+                    second_char,
+                    smartcase,
+                } => {
+                    let mut new_point =
+                        sneak(map, point, first_char, second_char, times, smartcase);
+                    if new_point == Some(point) {
+                        new_point =
+                            sneak(map, point, first_char, second_char, times + 1, smartcase);
                     }
 
                     return new_point.map(|new_point| (new_point, SelectionGoal::None));
@@ -1206,6 +1311,7 @@ fn up_down_buffer_rows(
     times: isize,
     text_layout_details: &TextLayoutDetails,
 ) -> (DisplayPoint, SelectionGoal) {
+    let bias = if times < 0 { Bias::Left } else { Bias::Right };
     let start = map.display_point_to_fold_point(point, Bias::Left);
     let begin_folded_line = map.fold_point_to_display_point(
         map.fold_snapshot
@@ -1229,14 +1335,14 @@ fn up_down_buffer_rows(
 
     let mut begin_folded_line = map.fold_point_to_display_point(
         map.fold_snapshot
-            .clip_point(FoldPoint::new(new_row, 0), Bias::Left),
+            .clip_point(FoldPoint::new(new_row, 0), bias),
     );
 
     let mut i = 0;
     while i < goal_wrap && begin_folded_line.row() < map.max_point().row() {
         let next_folded_line = DisplayPoint::new(begin_folded_line.row().next_row(), 0);
         if map
-            .display_point_to_fold_point(next_folded_line, Bias::Right)
+            .display_point_to_fold_point(next_folded_line, bias)
             .row()
             == new_row
         {
@@ -1254,10 +1360,7 @@ fn up_down_buffer_rows(
     };
 
     (
-        map.clip_point(
-            DisplayPoint::new(begin_folded_line.row(), new_col),
-            Bias::Left,
-        ),
+        map.clip_point(DisplayPoint::new(begin_folded_line.row(), new_col), bias),
         goal,
     )
 }
@@ -2136,6 +2239,74 @@ fn is_character_match(target: char, other: char, smartcase: bool) -> bool {
     }
 }
 
+fn sneak(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    first_target: char,
+    second_target: char,
+    times: usize,
+    smartcase: bool,
+) -> Option<DisplayPoint> {
+    let mut to = from;
+    let mut found = false;
+
+    for _ in 0..times {
+        found = false;
+        let new_to = find_boundary(
+            map,
+            movement::right(map, to),
+            FindRange::MultiLine,
+            |left, right| {
+                found = is_character_match(first_target, left, smartcase)
+                    && is_character_match(second_target, right, smartcase);
+                found
+            },
+        );
+        if to == new_to {
+            break;
+        }
+        to = new_to;
+    }
+
+    if found {
+        Some(movement::left(map, to))
+    } else {
+        None
+    }
+}
+
+fn sneak_backward(
+    map: &DisplaySnapshot,
+    from: DisplayPoint,
+    first_target: char,
+    second_target: char,
+    times: usize,
+    smartcase: bool,
+) -> Option<DisplayPoint> {
+    let mut to = from;
+    let mut found = false;
+
+    for _ in 0..times {
+        found = false;
+        let new_to =
+            find_preceding_boundary_display_point(map, to, FindRange::MultiLine, |left, right| {
+                found = is_character_match(first_target, left, smartcase)
+                    && is_character_match(second_target, right, smartcase);
+                found
+            });
+        if to == new_to {
+            break;
+        }
+        to = new_to;
+    }
+
+    if found {
+        Some(movement::left(map, to))
+    } else {
+        None
+    }
+}
+
 fn next_line_start(map: &DisplaySnapshot, point: DisplayPoint, times: usize) -> DisplayPoint {
     let correct_line = start_of_relative_buffer_row(map, point, times as isize);
     first_non_whitespace(map, false, correct_line)
@@ -2484,7 +2655,11 @@ fn section_motion(
 #[cfg(test)]
 mod test {
 
-    use crate::test::NeovimBackedTestContext;
+    use crate::{
+        state::Mode,
+        test::{NeovimBackedTestContext, VimTestContext},
+    };
+    use editor::display_map::Inlay;
     use indoc::indoc;
 
     #[gpui::test]
@@ -3145,5 +3320,36 @@ mod test {
               return
             }ˇ»
         "});
+    }
+
+    #[gpui::test]
+    async fn test_clipping_with_inlay_hints(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        cx.set_state(
+            indoc! {"
+            struct Foo {
+            ˇ
+            }
+        "},
+            Mode::Normal,
+        );
+
+        cx.update_editor(|editor, cx| {
+            let range = editor.selections.newest_anchor().range();
+            let inlay_text = "  field: int,\n  field2: string\n  field3: float";
+            let inlay = Inlay::inline_completion(1, range.start, inlay_text);
+            editor.splice_inlays(vec![], vec![inlay], cx);
+        });
+
+        cx.simulate_keystrokes("j");
+        cx.assert_state(
+            indoc! {"
+            struct Foo {
+
+            ˇ}
+        "},
+            Mode::Normal,
+        );
     }
 }

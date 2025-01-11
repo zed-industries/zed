@@ -94,6 +94,7 @@ impl Render for QuickActionBar {
             git_blame_inline_enabled,
             show_git_blame_gutter,
             auto_signature_help_enabled,
+            inline_completions_enabled,
         ) = {
             let editor = editor.read(cx);
             let selection_menu_enabled = editor.selection_menu_enabled(cx);
@@ -102,6 +103,7 @@ impl Render for QuickActionBar {
             let git_blame_inline_enabled = editor.git_blame_inline_enabled();
             let show_git_blame_gutter = editor.show_git_blame_gutter();
             let auto_signature_help_enabled = editor.auto_signature_help_enabled(cx);
+            let inline_completions_enabled = editor.inline_completions_enabled(cx);
 
             (
                 selection_menu_enabled,
@@ -110,6 +112,7 @@ impl Render for QuickActionBar {
                 git_blame_inline_enabled,
                 show_git_blame_gutter,
                 auto_signature_help_enabled,
+                inline_completions_enabled,
             )
         };
 
@@ -275,6 +278,26 @@ impl Render for QuickActionBar {
                                         .update(cx, |editor, cx| {
                                             editor.toggle_auto_signature_help_menu(
                                                 &editor::actions::ToggleAutoSignatureHelp,
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                }
+                            },
+                        );
+
+                        menu = menu.toggleable_entry(
+                            "Inline Completions",
+                            inline_completions_enabled,
+                            IconPosition::Start,
+                            Some(editor::actions::ToggleInlineCompletions.boxed_clone()),
+                            {
+                                let editor = editor.clone();
+                                move |cx| {
+                                    editor
+                                        .update(cx, |editor, cx| {
+                                            editor.toggle_inline_completions(
+                                                &editor::actions::ToggleInlineCompletions,
                                                 cx,
                                             );
                                         })

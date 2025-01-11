@@ -16,7 +16,9 @@ use editor::{
     EditorStyle, ExcerptId, ExcerptRange, GutterDimensions, MultiBuffer, MultiBufferSnapshot,
     ToOffset as _, ToPoint,
 };
-use feature_flags::{FeatureFlagAppExt as _, ZedPro};
+use feature_flags::{
+    Assistant2FeatureFlag, FeatureFlagAppExt as _, FeatureFlagViewExt as _, ZedPro,
+};
 use fs::Fs;
 use futures::{
     channel::mpsc,
@@ -70,10 +72,19 @@ pub fn init(
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
     cx.observe_new_views(|_, cx| {
-        let workspace = cx.view().clone();
-        InlineAssistant::update_global(cx, |inline_assistant, cx| {
-            inline_assistant.register_workspace(&workspace, cx)
+        cx.observe_flag::<Assistant2FeatureFlag, _>({
+            |is_assistant2_enabled, _view, cx| {
+                if is_assistant2_enabled {
+                    // Assistant2 enabled, nothing to do for Assistant1.
+                } else {
+                    let workspace = cx.view().clone();
+                    InlineAssistant::update_global(cx, |inline_assistant, cx| {
+                        inline_assistant.register_workspace(&workspace, cx)
+                    })
+                }
+            }
         })
+        .detach();
     })
     .detach();
 }

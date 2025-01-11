@@ -381,7 +381,7 @@ impl TitleBar {
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
                 .toggle_state(is_muted)
-                .selected_style(ButtonStyle::Tinted(TintColor::Negative))
+                .selected_style(ButtonStyle::Tinted(TintColor::Error))
                 .on_click(move |_, cx| {
                     toggle_mute(&Default::default(), cx);
                 })
@@ -398,7 +398,7 @@ impl TitleBar {
                     },
                 )
                 .style(ButtonStyle::Subtle)
-                .selected_style(ButtonStyle::Tinted(TintColor::Negative))
+                .selected_style(ButtonStyle::Tinted(TintColor::Error))
                 .icon_size(IconSize::Small)
                 .toggle_state(is_deafened)
                 .tooltip(move |cx| {

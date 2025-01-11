@@ -279,7 +279,12 @@ impl Panel for AssistantPanel {
         Some(proto::PanelId::AssistantPanel)
     }
 
-    fn icon(&self, _cx: &WindowContext) -> Option<IconName> {
+    fn icon(&self, cx: &WindowContext) -> Option<IconName> {
+        let settings = AssistantSettings::get_global(cx);
+        if !settings.enabled || !settings.button {
+            return None;
+        }
+
         Some(IconName::ZedAssistant2)
     }
 
@@ -300,11 +305,12 @@ impl AssistantPanel {
     fn render_toolbar(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
-        let title = if self.thread.read(cx).is_empty() {
-            SharedString::from("New Thread")
+        let thread = self.thread.read(cx);
+
+        let title = if thread.is_empty() {
+            thread.summary_or_default(cx)
         } else {
-            self.thread
-                .read(cx)
+            thread
                 .summary(cx)
                 .unwrap_or_else(|| SharedString::from("Loading Summary…"))
         };

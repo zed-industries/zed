@@ -42,7 +42,7 @@ use fold_map::{FoldMap, FoldSnapshot};
 use gpui::{
     AnyElement, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
 };
-pub(crate) use inlay_map::Inlay;
+pub use inlay_map::Inlay;
 use inlay_map::{InlayMap, InlaySnapshot};
 pub use inlay_map::{InlayOffset, InlayPoint};
 use invisibles::{is_invisible, replacement};

@@ -3,17 +3,18 @@ use std::rc::Rc;
 use gpui::ClickEvent;
 use ui::{prelude::*, IconButtonShape, Tooltip};
 
-use crate::context::{Context, ContextKind};
+use crate::context::{ContextKind, ContextSnapshot};
 
 #[derive(IntoElement)]
 pub enum ContextPill {
     Added {
-        context: Context,
+        context: ContextSnapshot,
         dupe_name: bool,
         on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
     },
     Suggested {
         name: SharedString,
+        icon_path: Option<SharedString>,
         kind: ContextKind,
         on_add: Rc<dyn Fn(&ClickEvent, &mut WindowContext)>,
     },
@@ -21,7 +22,7 @@ pub enum ContextPill {
 
 impl ContextPill {
     pub fn new_added(
-        context: Context,
+        context: ContextSnapshot,
         dupe_name: bool,
         on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
     ) -> Self {
@@ -34,10 +35,16 @@ impl ContextPill {
 
     pub fn new_suggested(
         name: SharedString,
+        icon_path: Option<SharedString>,
         kind: ContextKind,
         on_add: Rc<dyn Fn(&ClickEvent, &mut WindowContext)>,
     ) -> Self {
-        Self::Suggested { name, kind, on_add }
+        Self::Suggested {
+            name,
+            icon_path,
+            kind,
+            on_add,
+        }
     }
 
     pub fn id(&self) -> ElementId {
@@ -49,23 +56,27 @@ impl ContextPill {
         }
     }
 
-    pub fn kind(&self) -> &ContextKind {
+    pub fn icon(&self) -> Icon {
         match self {
-            Self::Added { context, .. } => &context.kind,
-            Self::Suggested { kind, .. } => kind,
+            Self::Added { context, .. } => match &context.icon_path {
+                Some(icon_path) => Icon::from_path(icon_path),
+                None => Icon::new(context.kind.icon()),
+            },
+            Self::Suggested {
+                icon_path: Some(icon_path),
+                ..
+            } => Icon::from_path(icon_path),
+            Self::Suggested {
+                kind,
+                icon_path: None,
+                ..
+            } => Icon::new(kind.icon()),
         }
     }
 }
 
 impl RenderOnce for ContextPill {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let icon = match &self.kind() {
-            ContextKind::File => IconName::File,
-            ContextKind::Directory => IconName::Folder,
-            ContextKind::FetchedUrl => IconName::Globe,
-            ContextKind::Thread => IconName::MessageCircle,
-        };
-
         let color = cx.theme().colors();
 
         let base_pill = h_flex()
@@ -75,7 +86,7 @@ impl RenderOnce for ContextPill {
             .border_1()
             .rounded_md()
             .gap_1()
-            .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted));
+            .child(self.icon().size(IconSize::XSmall).color(Color::Muted));
 
         match &self {
             ContextPill::Added {
@@ -86,21 +97,26 @@ impl RenderOnce for ContextPill {
                 .bg(color.element_background)
                 .border_color(color.border.opacity(0.5))
                 .pr(if on_remove.is_some() { px(2.) } else { px(4.) })
-                .child(Label::new(context.name.clone()).size(LabelSize::Small))
-                .when_some(context.parent.as_ref(), |element, parent_name| {
-                    if *dupe_name {
-                        element.child(
-                            Label::new(parent_name.clone())
-                                .size(LabelSize::XSmall)
-                                .color(Color::Muted),
-                        )
-                    } else {
-                        element
-                    }
-                })
-                .when_some(context.tooltip.clone(), |element, tooltip| {
-                    element.tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
-                })
+                .child(
+                    h_flex()
+                        .id("context-data")
+                        .gap_1()
+                        .child(Label::new(context.name.clone()).size(LabelSize::Small))
+                        .when_some(context.parent.as_ref(), |element, parent_name| {
+                            if *dupe_name {
+                                element.child(
+                                    Label::new(parent_name.clone())
+                                        .size(LabelSize::XSmall)
+                                        .color(Color::Muted),
+                                )
+                            } else {
+                                element
+                            }
+                        })
+                        .when_some(context.tooltip.clone(), |element, tooltip| {
+                            element.tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
+                        }),
+                )
                 .when_some(on_remove.as_ref(), |element, on_remove| {
                     element.child(
                         IconButton::new(("remove", context.id.0), IconName::Close)
@@ -113,7 +129,12 @@ impl RenderOnce for ContextPill {
                             }),
                     )
                 }),
-            ContextPill::Suggested { name, kind, on_add } => base_pill
+            ContextPill::Suggested {
+                name,
+                icon_path: _,
+                kind,
+                on_add,
+            } => base_pill
                 .cursor_pointer()
                 .pr_1()
                 .border_color(color.border_variant.opacity(0.5))
@@ -124,14 +145,16 @@ impl RenderOnce for ContextPill {
                         .color(Color::Muted),
                 )
                 .child(
-                    Label::new(match kind {
-                        ContextKind::File => "Open File",
-                        ContextKind::Thread | ContextKind::Directory | ContextKind::FetchedUrl => {
-                            "Active"
-                        }
-                    })
-                    .size(LabelSize::XSmall)
-                    .color(Color::Muted),
+                    div().px_0p5().child(
+                        Label::new(match kind {
+                            ContextKind::File => "Active Tab",
+                            ContextKind::Thread
+                            | ContextKind::Directory
+                            | ContextKind::FetchedUrl => "Active",
+                        })
+                        .size(LabelSize::XSmall)
+                        .color(Color::Muted),
+                    ),
                 )
                 .child(
                     Icon::new(IconName::Plus)

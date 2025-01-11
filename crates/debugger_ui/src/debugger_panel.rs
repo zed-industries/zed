@@ -355,7 +355,7 @@ impl DebugPanel {
                     })
                     .ok();
             }
-            pane::Event::ActivateItem { local } => {
+            pane::Event::ActivateItem { local, .. } => {
                 if !local {
                     return;
                 }

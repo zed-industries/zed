@@ -407,6 +407,11 @@ impl Platform for WindowsPlatform {
         rx
     }
 
+    fn can_select_mixed_files_and_dirs(&self) -> bool {
+        // The FOS_PICKFOLDERS flag toggles between "only files" and "only folders".
+        false
+    }
+
     fn reveal_path(&self, path: &Path) {
         let Ok(file_full_path) = path.canonicalize() else {
             log::error!("unable to parse file path");

@@ -379,6 +379,11 @@ impl LspAdapter for EsLintLspAdapter {
             }
         }
 
+        let working_directory = eslint_user_settings
+            .get("workingDirectory")
+            .cloned()
+            .unwrap_or_else(|| json!({"mode": "auto"}));
+
         let problems = eslint_user_settings
             .get("problems")
             .cloned()
@@ -400,7 +405,7 @@ impl LspAdapter for EsLintLspAdapter {
                 "rulesCustomizations": rules_customizations,
                 "run": "onType",
                 "nodePath": node_path,
-                "workingDirectory": {"mode": "auto"},
+                "workingDirectory": working_directory,
                 "workspaceFolder": {
                     "uri": workspace_root,
                     "name": workspace_root.file_name()

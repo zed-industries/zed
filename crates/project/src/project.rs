@@ -69,6 +69,7 @@ use lsp::{
     LanguageServerId, LanguageServerName, MessageActionItem,
 };
 use lsp_command::*;
+use lsp_store::LspFormatTarget;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
@@ -88,6 +89,7 @@ use std::{
     borrow::Cow,
     ops::Range,
     path::{Component, Path, PathBuf},
+    pin::pin,
     str,
     sync::Arc,
     time::Duration,
@@ -3012,13 +3014,13 @@ impl Project {
     pub fn format(
         &mut self,
         buffers: HashSet<Model<Buffer>>,
+        target: LspFormatTarget,
         push_to_history: bool,
         trigger: lsp_store::FormatTrigger,
-        target: lsp_store::FormatTarget,
         cx: &mut ModelContext<Project>,
     ) -> Task<anyhow::Result<ProjectTransaction>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.format(buffers, push_to_history, trigger, target, cx)
+            lsp_store.format(buffers, target, push_to_history, trigger, cx)
         })
     }
 
@@ -3398,6 +3400,7 @@ impl Project {
             // 64 buffers at a time to avoid overwhelming the main thread. For each
             // opened buffer, we will spawn a background task that retrieves all the
             // ranges in the buffer matched by the query.
+            let mut chunks = pin!(chunks);
             'outer: while let Some(matching_buffer_chunk) = chunks.next().await {
                 let mut chunk_results = Vec::new();
                 for buffer in matching_buffer_chunk {
@@ -4154,6 +4157,7 @@ impl Project {
         // next `flush_effects()` call.
         drop(this);
 
+        let mut rx = pin!(rx);
         let answer = rx.next().await;
 
         Ok(LanguageServerPromptResponse {
@@ -4295,7 +4299,7 @@ impl Project {
                 .query
                 .ok_or_else(|| anyhow!("missing query field"))?,
         )?;
-        let mut results = this.update(&mut cx, |this, cx| {
+        let results = this.update(&mut cx, |this, cx| {
             this.find_search_candidate_buffers(&query, message.limit as _, cx)
         })?;
 
@@ -4303,7 +4307,7 @@ impl Project {
             buffer_ids: Vec::new(),
         };
 
-        while let Some(buffer) = results.next().await {
+        while let Ok(buffer) = results.recv().await {
             this.update(&mut cx, |this, cx| {
                 let buffer_id = this.create_buffer_for_peer(&buffer, peer_id, cx);
                 response.buffer_ids.push(buffer_id.to_proto());
@@ -4548,14 +4552,6 @@ impl Project {
         cx: &'a AppContext,
     ) -> impl 'a + Iterator<Item = (LanguageServerId, LanguageServerName)> {
         self.lsp_store.read(cx).supplementary_language_servers()
-    }
-
-    pub fn language_server_for_id(
-        &self,
-        id: LanguageServerId,
-        cx: &AppContext,
-    ) -> Option<Arc<LanguageServer>> {
-        self.lsp_store.read(cx).language_server_for_id(id)
     }
 
     pub fn language_servers_for_local_buffer<'a>(
