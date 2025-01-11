@@ -1,13 +1,13 @@
 use collections::{HashMap, VecDeque};
 use copilot::Copilot;
-use editor::{actions::MoveToEnd, Editor, EditorEvent};
+use editor::{actions::MoveToEnd, scroll::Autoscroll, Editor, EditorEvent};
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
     actions, div, AppContext, Context, Corner, EventEmitter, FocusHandle, FocusableView,
     IntoElement, Model, ModelContext, ParentElement, Render, Styled, Subscription, View,
     ViewContext, VisualContext, WeakModel, WindowContext,
 };
-use language::LanguageServerId;
+use language::{language_settings::SoftWrap, LanguageServerId};
 use lsp::{
     notification::SetTrace, IoKind, LanguageServer, LanguageServerName, MessageType,
     SetTraceParams, TraceValue,
@@ -649,6 +649,15 @@ impl LspLogView {
                             ],
                             cx,
                         );
+                        let entry_length = entry.len();
+                        if entry_length > 1024 {
+                            editor.fold_ranges(
+                                vec![last_point + 1024..last_point + entry_length],
+                                false,
+                                cx,
+                            );
+                        }
+                        editor.request_autoscroll(Autoscroll::fit(), cx);
                         editor.set_read_only(true);
                     });
                 }
@@ -691,6 +700,7 @@ impl LspLogView {
             editor.move_to_end(&MoveToEnd, cx);
             editor.set_read_only(true);
             editor.set_show_inline_completions(Some(false), cx);
+            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor
         });
         let editor_subscription = cx.subscribe(
@@ -728,6 +738,7 @@ impl LspLogView {
             editor.set_text(server_info, cx);
             editor.set_read_only(true);
             editor.set_show_inline_completions(Some(false), cx);
+            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor
         });
         let editor_subscription = cx.subscribe(

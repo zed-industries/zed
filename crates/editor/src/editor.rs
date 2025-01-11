@@ -10901,6 +10901,20 @@ impl Editor {
         self.fold_creases(ranges, true, cx);
     }
 
+    pub fn fold_ranges<T: ToOffset + Clone>(
+        &mut self,
+        ranges: Vec<Range<T>>,
+        auto_scroll: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let ranges = ranges
+            .into_iter()
+            .map(|r| Crease::simple(r, display_map.fold_placeholder.clone()))
+            .collect::<Vec<_>>();
+        self.fold_creases(ranges, auto_scroll, cx);
+    }
+
     pub fn fold_creases<T: ToOffset + Clone>(
         &mut self,
         creases: Vec<Crease<T>>,
