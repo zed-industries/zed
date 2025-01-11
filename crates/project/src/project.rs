@@ -307,6 +307,14 @@ impl ProjectPath {
     }
 }
 
+#[derive(Debug, Default)]
+pub enum PrepareRenameResponse {
+    Success(Range<Anchor>),
+    OnlyUnpreparedRenameSupported,
+    #[default]
+    InvalidPosition,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InlayHint {
     pub position: language::Anchor,
@@ -2908,7 +2916,7 @@ impl Project {
         buffer: Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<Range<Anchor>>>> {
+    ) -> Task<Result<PrepareRenameResponse>> {
         self.request_lsp(
             buffer,
             LanguageServerToQuery::Primary,
@@ -2921,7 +2929,7 @@ impl Project {
         buffer: Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<Range<Anchor>>>> {
+    ) -> Task<Result<PrepareRenameResponse>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.prepare_rename_impl(buffer, position, cx)
     }
