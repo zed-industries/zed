@@ -1,3 +1,4 @@
+use crate::settings::StatusStyle;
 use crate::{first_repository_in_project, first_worktree_repository};
 use crate::{
     git_status_icon, settings::GitPanelSettings, CommitAllChanges, CommitChanges, GitState,
@@ -5,7 +6,8 @@ use crate::{
 };
 use anyhow::{Context as _, Result};
 use db::kvp::KEY_VALUE_STORE;
-use editor::Editor;
+use editor::scroll::ScrollbarAutoHide;
+use editor::{Editor, EditorSettings, ShowScrollbar};
 use git::repository::{GitFileStatus, RepoPath};
 use git::status::GitStatusPair;
 use gpui::*;
@@ -85,6 +87,7 @@ pub struct GitPanel {
     show_scrollbar: bool,
     rebuild_requested: Arc<AtomicBool>,
     git_state: Model<GitState>,
+    status_style: StatusStyle,
     commit_editor: View<Editor>,
     /// The visible entries in the list, accounting for folding & expanded state.
     ///
@@ -120,6 +123,7 @@ impl GitPanel {
             let state = git_state.read(cx);
             state.commit_message.clone()
         };
+        let status_style = GitPanelSettings::get_global(cx).status_style;
 
         let git_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
             let focus_handle = cx.focus_handle();
@@ -324,6 +328,7 @@ impl GitPanel {
                 scrollbar_state: ScrollbarState::new(scroll_handle.clone()).parent_view(cx.view()),
                 scroll_handle,
                 selected_entry: None,
+                status_style,
                 show_scrollbar: !Self::should_autohide_scrollbar(cx),
                 hide_scrollbar_task: None,
                 rebuild_requested,
@@ -387,14 +392,32 @@ impl GitPanel {
         }
     }
 
-    fn should_show_scrollbar(_cx: &AppContext) -> bool {
-        // TODO: plug into settings
-        true
+    fn should_show_scrollbar(cx: &AppContext) -> bool {
+        let show = GitPanelSettings::get_global(cx)
+            .scrollbar
+            .show
+            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show);
+        match show {
+            ShowScrollbar::Auto => true,
+            ShowScrollbar::System => true,
+            ShowScrollbar::Always => true,
+            ShowScrollbar::Never => false,
+        }
     }
 
-    fn should_autohide_scrollbar(_cx: &AppContext) -> bool {
-        // TODO: plug into settings
-        true
+    fn should_autohide_scrollbar(cx: &AppContext) -> bool {
+        let show = GitPanelSettings::get_global(cx)
+            .scrollbar
+            .show
+            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show);
+        match show {
+            ShowScrollbar::Auto => true,
+            ShowScrollbar::System => cx
+                .try_global::<ScrollbarAutoHide>()
+                .map_or_else(|| cx.should_auto_hide_scrollbars(), |autohide| autohide.0),
+            ShowScrollbar::Always => false,
+            ShowScrollbar::Never => true,
+        }
     }
 
     fn hide_scrollbar(&mut self, cx: &mut ViewContext<Self>) {
