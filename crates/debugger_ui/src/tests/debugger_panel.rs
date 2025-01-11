@@ -744,7 +744,7 @@ async fn test_handle_error_run_in_terminal_reverse_request(
                 send_response.store(true, Ordering::SeqCst);
 
                 assert!(!response.success);
-                assert!(response.body.is_none());
+                assert!(response.body.is_some());
             }
         })
         .await;

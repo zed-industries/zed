@@ -3651,6 +3651,7 @@ dependencies = [
  "language",
  "menu",
  "picker",
+ "pretty_assertions",
  "project",
  "rpc",
  "serde",

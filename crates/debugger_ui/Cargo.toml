@@ -31,6 +31,7 @@ gpui.workspace = true
 language.workspace = true
 menu.workspace = true
 picker.workspace = true
+pretty_assertions.workspace = true
 project.workspace = true
 rpc.workspace = true
 serde.workspace = true
@@ -52,6 +53,6 @@ editor = { workspace = true, features = ["test-support"] }
 env_logger.workspace = true
 gpui = { workspace = true, features = ["test-support"] }
 project = { workspace = true, features = ["test-support"] }
-util = { workspace = true, features = ["test-support"] }
 unindent.workspace = true
+util = { workspace = true, features = ["test-support"] }
 workspace = { workspace = true, features = ["test-support"] }

@@ -1,10 +1,10 @@
-use gpui::{Model, TestAppContext, WindowHandle};
+use gpui::{Model, TestAppContext, View, WindowHandle};
 use project::Project;
 use settings::SettingsStore;
 use terminal_view::terminal_panel::TerminalPanel;
 use workspace::Workspace;
 
-use crate::debugger_panel::DebugPanel;
+use crate::{debugger_panel::DebugPanel, debugger_panel_item::DebugPanelItem};
 
 mod attach_modal;
 mod console;
@@ -56,4 +56,18 @@ pub async fn init_test_workspace(
         })
         .unwrap();
     window
+}
+
+pub fn active_debug_panel_item(
+    workspace: WindowHandle<Workspace>,
+    cx: &mut TestAppContext,
+) -> View<DebugPanelItem> {
+    workspace
+        .update(cx, |workspace, cx| {
+            let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+            debug_panel
+                .update(cx, |this, cx| this.active_debug_panel_item(cx))
+                .unwrap()
+        })
+        .unwrap()
 }

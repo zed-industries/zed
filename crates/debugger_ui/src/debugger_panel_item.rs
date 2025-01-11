@@ -863,7 +863,7 @@ impl Render for DebugPanelItem {
 
         h_flex()
             .key_context("DebugPanelItem")
-            .track_focus(&self.focus_handle)
+            .track_focus(&self.focus_handle(cx))
             .size_full()
             .items_start()
             .child(

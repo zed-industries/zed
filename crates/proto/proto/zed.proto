@@ -2510,8 +2510,9 @@ message DebuggerOpenEntryScope {
 }
 
 message DebuggerOpenEntryVariable {
-    string name = 1;
-    uint64 depth = 2;
+    uint64 scope_id = 1;
+    string name = 2;
+    uint64 depth = 3;
 }
 
 message DebuggerVariableListEntry {

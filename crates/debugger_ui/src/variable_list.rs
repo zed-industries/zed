@@ -4,15 +4,13 @@ use dap::{
     client::DebugAdapterClientId, proto_conversions::ProtoConversion, session::DebugSessionId,
     Scope, ScopePresentationHint, Variable,
 };
-use editor::{
-    actions::{self, SelectAll},
-    Editor, EditorEvent,
-};
+use editor::{actions::SelectAll, Editor, EditorEvent};
 use gpui::{
-    anchored, deferred, list, AnyElement, ClipboardItem, DismissEvent, FocusHandle, FocusableView,
-    ListOffset, ListState, Model, MouseDownEvent, Point, Subscription, Task, View,
+    actions, anchored, deferred, list, AnyElement, ClipboardItem, DismissEvent, FocusHandle,
+    FocusableView, Hsla, ListOffset, ListState, Model, MouseDownEvent, Point, Subscription, Task,
+    View,
 };
-use menu::Confirm;
+use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::dap_store::DapStore;
 use proto::debugger_variable_list_entry::Entry;
 use rpc::proto::{
@@ -26,6 +24,8 @@ use std::{
 use sum_tree::{Dimension, Item, SumTree, Summary};
 use ui::{prelude::*, ContextMenu, ListItem};
 use util::ResultExt;
+
+actions!(variable_list, [ExpandSelectedEntry, CollapseSelectedEntry]);
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VariableContainer {
@@ -129,8 +129,14 @@ impl SetVariableState {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum OpenEntry {
-    Scope { name: String },
-    Variable { name: String, depth: usize },
+    Scope {
+        name: String,
+    },
+    Variable {
+        scope_id: u64,
+        name: String,
+        depth: usize,
+    },
 }
 
 impl OpenEntry {
@@ -142,6 +148,7 @@ impl OpenEntry {
             proto::variable_list_open_entry::Entry::Variable(state) => Some(Self::Variable {
                 name: state.name.clone(),
                 depth: state.depth as usize,
+                scope_id: state.scope_id,
             }),
         }
     }
@@ -153,10 +160,15 @@ impl OpenEntry {
                     name: name.clone(),
                 })
             }
-            OpenEntry::Variable { name, depth } => {
+            OpenEntry::Variable {
+                name,
+                depth,
+                scope_id,
+            } => {
                 proto::variable_list_open_entry::Entry::Variable(proto::DebuggerOpenEntryVariable {
                     name: name.clone(),
                     depth: *depth as u64,
+                    scope_id: *scope_id,
                 })
             }
         };
@@ -364,16 +376,17 @@ pub struct VariableList {
     list: ListState,
     focus_handle: FocusHandle,
     dap_store: Model<DapStore>,
+    session_id: DebugSessionId,
     open_entries: Vec<OpenEntry>,
     client_id: DebugAdapterClientId,
-    session_id: DebugSessionId,
-    scopes: HashMap<StackFrameId, Vec<Scope>>,
     set_variable_editor: View<Editor>,
     _subscriptions: Vec<Subscription>,
+    selection: Option<VariableListEntry>,
     stack_frame_list: View<StackFrameList>,
+    scopes: HashMap<StackFrameId, Vec<Scope>>,
     set_variable_state: Option<SetVariableState>,
-    entries: HashMap<StackFrameId, Vec<VariableListEntry>>,
     fetch_variables_task: Option<Task<Result<()>>>,
+    entries: HashMap<StackFrameId, Vec<VariableListEntry>>,
     variables: BTreeMap<(StackFrameId, ScopeId), ScopeVariableIndex>,
     open_context_menu: Option<(View<ContextMenu>, Point<Pixels>, Subscription)>,
 }
@@ -416,6 +429,7 @@ impl VariableList {
             dap_store,
             focus_handle,
             _subscriptions,
+            selection: None,
             set_variable_editor,
             client_id: *client_id,
             session_id: *session_id,
@@ -593,8 +607,11 @@ impl VariableList {
             return div().into_any_element();
         };
 
-        match &entries[ix] {
-            VariableListEntry::Scope(scope) => self.render_scope(scope, cx),
+        let entry = &entries[ix];
+        match entry {
+            VariableListEntry::Scope(scope) => {
+                self.render_scope(scope, Some(entry) == self.selection.as_ref(), cx)
+            }
             VariableListEntry::SetVariableEditor { depth, state } => {
                 self.render_set_variable_editor(*depth, state, cx)
             }
@@ -610,9 +627,70 @@ impl VariableList {
                 scope,
                 *depth,
                 *has_children,
+                Some(entry) == self.selection.as_ref(),
                 cx,
             ),
         }
+    }
+
+    fn toggle_variable(
+        &mut self,
+        scope_id: u64,
+        variable: &Variable,
+        depth: usize,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
+
+        let Some(variable_index) = self.variables_by_scope(stack_frame_id, scope_id) else {
+            return;
+        };
+
+        let entry_id = OpenEntry::Variable {
+            depth,
+            scope_id,
+            name: variable.name.clone(),
+        };
+
+        let has_children = variable.variables_reference > 0;
+        let disclosed = has_children.then(|| self.open_entries.binary_search(&entry_id).is_ok());
+
+        // if we already opened the variable/we already fetched it
+        // we can just toggle it because we already have the nested variable
+        if disclosed.unwrap_or(true) || variable_index.fetched(&variable.variables_reference) {
+            return self.toggle_entry(&entry_id, cx);
+        }
+
+        let fetch_variables_task = self.dap_store.update(cx, |store, cx| {
+            store.variables(&self.client_id, variable.variables_reference, cx)
+        });
+
+        let container_reference = variable.variables_reference;
+        let entry_id = entry_id.clone();
+
+        self.fetch_variables_task = Some(cx.spawn(|this, mut cx| async move {
+            let new_variables = fetch_variables_task.await?;
+
+            this.update(&mut cx, |this, cx| {
+                let Some(index) = this.variables.get_mut(&(stack_frame_id, scope_id)) else {
+                    return;
+                };
+
+                index.add_variables(
+                    container_reference,
+                    new_variables
+                        .into_iter()
+                        .map(|variable| VariableContainer {
+                            variable,
+                            depth: depth + 1,
+                            container_reference,
+                        })
+                        .collect::<Vec<_>>(),
+                );
+
+                this.toggle_entry(&entry_id, cx);
+            })
+        }))
     }
 
     pub fn toggle_entry(&mut self, entry_id: &OpenEntry, cx: &mut ViewContext<Self>) {
@@ -698,8 +776,9 @@ impl VariableList {
                 if self
                     .open_entries
                     .binary_search(&OpenEntry::Variable {
-                        name: variable.name.clone(),
                         depth,
+                        name: variable.name.clone(),
+                        scope_id: scope.variables_reference,
                     })
                     .is_err()
                 {
@@ -792,33 +871,32 @@ impl VariableList {
 
     fn fetch_nested_variables(
         &self,
-        variables_reference: u64,
+        container_reference: u64,
         depth: usize,
         open_entries: &Vec<OpenEntry>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<Vec<VariableContainer>>> {
+        let variables_task = self.dap_store.update(cx, |store, cx| {
+            store.variables(&self.client_id, container_reference, cx)
+        });
+
         cx.spawn({
             let open_entries = open_entries.clone();
             |this, mut cx| async move {
-                let variables_task = this.update(&mut cx, |this, cx| {
-                    this.dap_store.update(cx, |store, cx| {
-                        store.variables(&this.client_id, variables_reference, cx)
-                    })
-                })?;
-
                 let mut variables = Vec::new();
 
                 for variable in variables_task.await? {
                     variables.push(VariableContainer {
-                        variable: variable.clone(),
-                        container_reference: variables_reference,
                         depth,
+                        container_reference,
+                        variable: variable.clone(),
                     });
 
                     if open_entries
-                        .binary_search(&&OpenEntry::Variable {
-                            name: variable.name.clone(),
+                        .binary_search(&OpenEntry::Variable {
                             depth,
+                            scope_id: container_reference,
+                            name: variable.name.clone(),
                         })
                         .is_ok()
                     {
@@ -1081,6 +1159,134 @@ impl VariableList {
         });
     }
 
+    fn select_first(&mut self, _: &SelectFirst, cx: &mut ViewContext<Self>) {
+        let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
+        if let Some(entries) = self.entries.get(&stack_frame_id) {
+            self.selection = entries.first().cloned();
+            cx.notify();
+        };
+    }
+
+    fn select_last(&mut self, _: &SelectLast, cx: &mut ViewContext<Self>) {
+        let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
+        if let Some(entries) = self.entries.get(&stack_frame_id) {
+            self.selection = entries.last().cloned();
+            cx.notify();
+        };
+    }
+
+    fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
+        if let Some(selection) = &self.selection {
+            let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
+            if let Some(entries) = self.entries.get(&stack_frame_id) {
+                if let Some(ix) = entries.iter().position(|entry| entry == selection) {
+                    self.selection = entries.get(ix.saturating_sub(1)).cloned();
+                    cx.notify();
+                }
+            }
+        } else {
+            self.select_first(&SelectFirst, cx);
+        }
+    }
+
+    fn select_next(&mut self, _: &SelectNext, cx: &mut ViewContext<Self>) {
+        if let Some(selection) = &self.selection {
+            let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
+            if let Some(entries) = self.entries.get(&stack_frame_id) {
+                if let Some(ix) = entries.iter().position(|entry| entry == selection) {
+                    self.selection = entries.get(ix + 1).cloned();
+                    cx.notify();
+                }
+            }
+        } else {
+            self.select_first(&SelectFirst, cx);
+        }
+    }
+
+    fn collapse_selected_entry(&mut self, _: &CollapseSelectedEntry, cx: &mut ViewContext<Self>) {
+        if let Some(selection) = &self.selection {
+            match selection {
+                VariableListEntry::Scope(scope) => {
+                    let entry_id = &OpenEntry::Scope {
+                        name: scope.name.clone(),
+                    };
+
+                    if self.open_entries.binary_search(entry_id).is_err() {
+                        self.select_prev(&SelectPrev, cx);
+                    } else {
+                        self.toggle_entry(entry_id, cx);
+                    }
+                }
+                VariableListEntry::Variable {
+                    depth,
+                    variable,
+                    scope,
+                    ..
+                } => {
+                    let entry_id = &OpenEntry::Variable {
+                        depth: *depth,
+                        name: variable.name.clone(),
+                        scope_id: scope.variables_reference,
+                    };
+
+                    if self.open_entries.binary_search(entry_id).is_err() {
+                        self.select_prev(&SelectPrev, cx);
+                    } else {
+                        self.toggle_variable(
+                            scope.variables_reference,
+                            &variable.clone(),
+                            *depth,
+                            cx,
+                        );
+                    }
+                }
+                VariableListEntry::SetVariableEditor { .. } => {}
+            }
+        }
+    }
+
+    fn expand_selected_entry(&mut self, _: &ExpandSelectedEntry, cx: &mut ViewContext<Self>) {
+        if let Some(selection) = &self.selection {
+            match selection {
+                VariableListEntry::Scope(scope) => {
+                    let entry_id = &OpenEntry::Scope {
+                        name: scope.name.clone(),
+                    };
+
+                    if self.open_entries.binary_search(entry_id).is_ok() {
+                        self.select_next(&SelectNext, cx);
+                    } else {
+                        self.toggle_entry(entry_id, cx);
+                    }
+                }
+                VariableListEntry::Variable {
+                    depth,
+                    variable,
+                    scope,
+                    ..
+                } => {
+                    let entry_id = &OpenEntry::Variable {
+                        depth: *depth,
+                        name: variable.name.clone(),
+                        scope_id: scope.variables_reference,
+                    };
+
+                    if self.open_entries.binary_search(entry_id).is_ok() {
+                        self.select_next(&SelectNext, cx);
+                    } else {
+                        self.toggle_variable(
+                            scope.variables_reference,
+                            &variable.clone(),
+                            *depth,
+                            cx,
+                        );
+                    }
+                }
+                VariableListEntry::SetVariableEditor { .. } => {}
+            }
+        }
+    }
+
     fn render_set_variable_editor(
         &self,
         depth: usize,
@@ -1100,105 +1306,142 @@ impl VariableList {
             .into_any_element()
     }
 
-    #[allow(clippy::too_many_arguments)]
-    pub fn on_toggle_variable(
-        &mut self,
-        scope_id: u64,
-        entry_id: &OpenEntry,
-        variable_reference: u64,
-        depth: usize,
-        disclosed: Option<bool>,
-        cx: &mut ViewContext<Self>,
-    ) {
+    #[track_caller]
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn assert_visual_entries(&self, expected: Vec<&str>, cx: &ViewContext<Self>) {
+        const INDENT: &'static str = "    ";
+
         let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
+        let entries = self.entries.get(&stack_frame_id).unwrap();
 
-        let Some(index) = self.variables_by_scope(stack_frame_id, scope_id) else {
-            return;
-        };
+        let mut visual_entries = Vec::with_capacity(entries.len());
+        for entry in entries {
+            let is_selected = Some(entry) == self.selection.as_ref();
 
-        // if we already opened the variable/we already fetched it
-        // we can just toggle it because we already have the nested variable
-        if disclosed.unwrap_or(true) || index.fetched(&variable_reference) {
-            return self.toggle_entry(&entry_id, cx);
+            match entry {
+                VariableListEntry::Scope(scope) => {
+                    let is_expanded = self
+                        .open_entries
+                        .binary_search(&OpenEntry::Scope {
+                            name: scope.name.clone(),
+                        })
+                        .is_ok();
+
+                    visual_entries.push(format!(
+                        "{} {}{}",
+                        if is_expanded { "v" } else { ">" },
+                        scope.name,
+                        if is_selected { " <=== selected" } else { "" }
+                    ));
+                }
+                VariableListEntry::SetVariableEditor { depth, state } => {
+                    visual_entries.push(format!(
+                        "{}  [EDITOR: {}]{}",
+                        INDENT.repeat(*depth),
+                        state.name,
+                        if is_selected { " <=== selected" } else { "" }
+                    ));
+                }
+                VariableListEntry::Variable {
+                    depth,
+                    variable,
+                    scope,
+                    ..
+                } => {
+                    let is_expanded = self
+                        .open_entries
+                        .binary_search(&OpenEntry::Variable {
+                            depth: *depth,
+                            name: variable.name.clone(),
+                            scope_id: scope.variables_reference,
+                        })
+                        .is_ok();
+
+                    visual_entries.push(format!(
+                        "{}{} {}{}",
+                        INDENT.repeat(*depth),
+                        if is_expanded { "v" } else { ">" },
+                        variable.name,
+                        if is_selected { " <=== selected" } else { "" }
+                    ));
+                }
+            };
         }
 
-        let fetch_variables_task = self.dap_store.update(cx, |store, cx| {
-            store.variables(&self.client_id, variable_reference, cx)
-        });
-
-        let entry_id = entry_id.clone();
-        cx.spawn(|this, mut cx| async move {
-            let new_variables = fetch_variables_task.await?;
-
-            this.update(&mut cx, |this, cx| {
-                let Some(index) = this.variables.get_mut(&(stack_frame_id, scope_id)) else {
-                    return;
-                };
-
-                index.add_variables(
-                    variable_reference,
-                    new_variables
-                        .into_iter()
-                        .map(|variable| VariableContainer {
-                            container_reference: variable_reference,
-                            variable,
-                            depth: depth + 1,
-                        })
-                        .collect::<Vec<_>>(),
-                );
-
-                this.toggle_entry(&entry_id, cx);
-            })
-        })
-        .detach_and_log_err(cx);
+        pretty_assertions::assert_eq!(expected, visual_entries);
     }
 
     #[allow(clippy::too_many_arguments)]
     fn render_variable(
         &self,
-        parent_variables_reference: u64,
-        variable: &Variable,
-        scope: &Scope,
+        container_reference: u64,
+        variable: &Arc<Variable>,
+        scope: &Arc<Scope>,
         depth: usize,
         has_children: bool,
+        is_selected: bool,
         cx: &mut ViewContext<Self>,
     ) -> AnyElement {
         let scope_id = scope.variables_reference;
-        let variable_reference = variable.variables_reference;
-
         let entry_id = OpenEntry::Variable {
-            name: variable.name.clone(),
             depth,
+            scope_id,
+            name: variable.name.clone(),
         };
         let disclosed = has_children.then(|| self.open_entries.binary_search(&entry_id).is_ok());
+
+        let colors = get_entry_color(cx);
+        let bg_hover_color = if !is_selected {
+            colors.hover
+        } else {
+            colors.default
+        };
+        let border_color = if is_selected {
+            colors.marked_active
+        } else {
+            colors.default
+        };
 
         div()
             .id(SharedString::from(format!(
                 "variable-{}-{}-{}",
                 scope.variables_reference, variable.name, depth
             )))
-            .group("")
+            .group("variable_list_entry")
+            .border_1()
+            .border_r_2()
+            .border_color(border_color)
             .h_4()
             .size_full()
+            .hover(|style| style.bg(bg_hover_color))
+            .on_click(cx.listener({
+                let scope = scope.clone();
+                let variable = variable.clone();
+                move |this, _, cx| {
+                    this.selection = Some(VariableListEntry::Variable {
+                        depth,
+                        has_children,
+                        container_reference,
+                        scope: scope.clone(),
+                        variable: variable.clone(),
+                    });
+                    cx.notify();
+                }
+            }))
             .child(
                 ListItem::new(SharedString::from(format!(
                     "variable-item-{}-{}-{}",
                     scope.variables_reference, variable.name, depth
                 )))
+                .selectable(false)
                 .indent_level(depth + 1)
                 .indent_step_size(px(20.))
                 .always_show_disclosure_icon(true)
                 .toggle(disclosed)
                 .when(has_children, |list_item| {
-                    list_item.on_toggle(cx.listener(move |this, _, cx| {
-                        this.on_toggle_variable(
-                            scope_id,
-                            &entry_id,
-                            variable_reference,
-                            depth,
-                            disclosed,
-                            cx,
-                        )
+                    list_item.on_toggle(cx.listener({
+                        let variable = variable.clone();
+                        move |this, _, cx| this.toggle_variable(scope_id, &variable, depth, cx)
                     }))
                 })
                 .on_secondary_mouse_down(cx.listener({
@@ -1206,7 +1449,7 @@ impl VariableList {
                     let variable = variable.clone();
                     move |this, event: &MouseDownEvent, cx| {
                         this.deploy_variable_context_menu(
-                            parent_variables_reference,
+                            container_reference,
                             &scope,
                             &variable,
                             event.position,
@@ -1230,7 +1473,12 @@ impl VariableList {
             .into_any()
     }
 
-    fn render_scope(&self, scope: &Scope, cx: &mut ViewContext<Self>) -> AnyElement {
+    fn render_scope(
+        &self,
+        scope: &Scope,
+        is_selected: bool,
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement {
         let element_id = scope.variables_reference;
 
         let entry_id = OpenEntry::Scope {
@@ -1238,17 +1486,41 @@ impl VariableList {
         };
         let disclosed = self.open_entries.binary_search(&entry_id).is_ok();
 
+        let colors = get_entry_color(cx);
+        let bg_hover_color = if !is_selected {
+            colors.hover
+        } else {
+            colors.default
+        };
+        let border_color = if is_selected {
+            colors.marked_active
+        } else {
+            colors.default
+        };
+
         div()
             .id(element_id as usize)
-            .group("")
+            .group("variable_list_entry")
+            .border_1()
+            .border_r_2()
+            .border_color(border_color)
             .flex()
             .w_full()
             .h_full()
+            .hover(|style| style.bg(bg_hover_color))
+            .on_click(cx.listener({
+                let scope = scope.clone();
+                move |this, _, cx| {
+                    this.selection = Some(VariableListEntry::Scope(scope.clone()));
+                    cx.notify();
+                }
+            }))
             .child(
                 ListItem::new(SharedString::from(format!(
                     "scope-{}",
                     scope.variables_reference
                 )))
+                .selectable(false)
                 .indent_level(1)
                 .indent_step_size(px(20.))
                 .always_show_disclosure_icon(true)
@@ -1269,10 +1541,20 @@ impl FocusableView for VariableList {
 impl Render for VariableList {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
+            .key_context("VariableList")
+            .id("variable-list")
+            .group("variable-list")
             .size_full()
-            .on_action(
-                cx.listener(|this, _: &actions::Cancel, cx| this.cancel_set_variable_value(cx)),
-            )
+            .track_focus(&self.focus_handle(cx))
+            .on_action(cx.listener(Self::select_first))
+            .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::expand_selected_entry))
+            .on_action(cx.listener(Self::collapse_selected_entry))
+            .on_action(cx.listener(|this, _: &editor::actions::Cancel, cx| {
+                this.cancel_set_variable_value(cx)
+            }))
             .child(list(self.list.clone()).gap_1_5().size_full())
             .children(self.open_context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(
@@ -1283,6 +1565,22 @@ impl Render for VariableList {
                 )
                 .with_priority(1)
             }))
+    }
+}
+
+struct EntryColors {
+    default: Hsla,
+    hover: Hsla,
+    marked_active: Hsla,
+}
+
+fn get_entry_color(cx: &ViewContext<VariableList>) -> EntryColors {
+    let colors = cx.theme().colors();
+
+    EntryColors {
+        default: colors.panel_background,
+        hover: colors.ghost_element_hover,
+        marked_active: colors.ghost_element_selected,
     }
 }
 
