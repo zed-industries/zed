@@ -3509,9 +3509,13 @@ impl LspStore {
                 Ok(LspParamsOrResponse::Params(lsp_params)) => lsp_params,
                 Ok(LspParamsOrResponse::Response(response)) => return Task::ready(Ok(response)),
                 Err(err) => {
-                    let message =
-                        format!("LSP request to {} failed: {}", language_server.name(), err);
-                    log::error!("{}", message);
+                    let message = format!(
+                        "{} via {} failed: {}",
+                        request.display_name(),
+                        language_server.name(),
+                        err
+                    );
+                    log::warn!("{}", message);
                     return Task::ready(Err(anyhow!(message)));
                 }
             };
@@ -3562,8 +3566,14 @@ impl LspStore {
                 let result = lsp_request.await;
 
                 let response = result.map_err(|err| {
-                    log::warn!("LSP request to {} failed: {}", language_server.name(), err);
-                    err
+                    let message = format!(
+                        "{} via {} failed: {}",
+                        request.display_name(),
+                        language_server.name(),
+                        err
+                    );
+                    log::warn!("{}", message);
+                    anyhow!(message)
                 })?;
 
                 let response = request
