@@ -4,7 +4,7 @@ use crate::{
     lsp_store::{LocalLspStore, LspStore},
     CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint,
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
-    LocationLink, MarkupContent, ProjectTransaction, ResolveState,
+    LocationLink, MarkupContent, PrepareRenameResponse, ProjectTransaction, ResolveState,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -23,7 +23,7 @@ use language::{
 use lsp::{
     AdapterServerCapabilities, CodeActionKind, CodeActionOptions, CompletionContext,
     CompletionListItemDefaultsEditRange, CompletionTriggerKind, DocumentHighlightKind,
-    LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities, OneOf,
+    LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities, OneOf, RenameOptions,
     ServerCapabilities,
 };
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
@@ -76,12 +76,34 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
     type LspRequest: 'static + Send + lsp::request::Request;
     type ProtoRequest: 'static + Send + proto::RequestMessage;
 
-    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
-        true
-    }
-
     fn status(&self) -> Option<String> {
         None
+    }
+
+    fn to_lsp_params_or_response(
+        &self,
+        path: &Path,
+        buffer: &Buffer,
+        language_server: &Arc<LanguageServer>,
+        cx: &AppContext,
+    ) -> Result<
+        LspParamsOrResponse<<Self::LspRequest as lsp::request::Request>::Params, Self::Response>,
+    > {
+        if self.check_capabilities(language_server.adapter_server_capabilities()) {
+            Ok(LspParamsOrResponse::Params(self.to_lsp(
+                path,
+                buffer,
+                language_server,
+                cx,
+            )?))
+        } else {
+            Ok(LspParamsOrResponse::Response(Default::default()))
+        }
+    }
+
+    /// When false, `to_lsp_params_or_response` default implementation will return the default response.
+    fn check_capabilities(&self, _: AdapterServerCapabilities) -> bool {
+        true
     }
 
     fn to_lsp(
@@ -129,6 +151,11 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
     fn buffer_id_from_proto(message: &Self::ProtoRequest) -> Result<BufferId>;
 }
 
+pub enum LspParamsOrResponse<P, R> {
+    Params(P),
+    Response(R),
+}
+
 #[derive(Debug)]
 pub(crate) struct PrepareRename {
     pub position: PointUtf16,
@@ -160,6 +187,7 @@ pub(crate) struct GetTypeDefinition {
 pub(crate) struct GetImplementation {
     pub position: PointUtf16,
 }
+
 #[derive(Debug)]
 pub(crate) struct GetReferences {
     pub position: PointUtf16,
@@ -191,6 +219,7 @@ pub(crate) struct GetCodeActions {
     pub range: Range<Anchor>,
     pub kinds: Option<Vec<lsp::CodeActionKind>>,
 }
+
 #[derive(Debug)]
 pub(crate) struct OnTypeFormatting {
     pub position: PointUtf16,
@@ -198,10 +227,12 @@ pub(crate) struct OnTypeFormatting {
     pub options: lsp::FormattingOptions,
     pub push_to_history: bool,
 }
+
 #[derive(Debug)]
 pub(crate) struct InlayHints {
     pub range: Range<Anchor>,
 }
+
 #[derive(Debug)]
 pub(crate) struct LinkedEditingRange {
     pub position: Anchor,
@@ -209,15 +240,38 @@ pub(crate) struct LinkedEditingRange {
 
 #[async_trait(?Send)]
 impl LspCommand for PrepareRename {
-    type Response = Option<Range<Anchor>>;
+    type Response = PrepareRenameResponse;
     type LspRequest = lsp::request::PrepareRenameRequest;
     type ProtoRequest = proto::PrepareRename;
 
-    fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
-        if let Some(lsp::OneOf::Right(rename)) = &capabilities.server_capabilities.rename_provider {
-            rename.prepare_provider == Some(true)
-        } else {
-            false
+    fn to_lsp_params_or_response(
+        &self,
+        path: &Path,
+        buffer: &Buffer,
+        language_server: &Arc<LanguageServer>,
+        cx: &AppContext,
+    ) -> Result<LspParamsOrResponse<lsp::TextDocumentPositionParams, PrepareRenameResponse>> {
+        let rename_provider = language_server
+            .adapter_server_capabilities()
+            .server_capabilities
+            .rename_provider;
+        match rename_provider {
+            Some(lsp::OneOf::Right(RenameOptions {
+                prepare_provider: Some(true),
+                ..
+            })) => Ok(LspParamsOrResponse::Params(self.to_lsp(
+                path,
+                buffer,
+                language_server,
+                cx,
+            )?)),
+            Some(lsp::OneOf::Right(_)) => Ok(LspParamsOrResponse::Response(
+                PrepareRenameResponse::OnlyUnpreparedRenameSupported,
+            )),
+            Some(lsp::OneOf::Left(true)) => Ok(LspParamsOrResponse::Response(
+                PrepareRenameResponse::OnlyUnpreparedRenameSupported,
+            )),
+            _ => Err(anyhow!("Rename not supported")),
         }
     }
 
@@ -238,21 +292,29 @@ impl LspCommand for PrepareRename {
         buffer: Model<Buffer>,
         _: LanguageServerId,
         mut cx: AsyncAppContext,
-    ) -> Result<Option<Range<Anchor>>> {
+    ) -> Result<PrepareRenameResponse> {
         buffer.update(&mut cx, |buffer, _| {
-            if let Some(
-                lsp::PrepareRenameResponse::Range(range)
-                | lsp::PrepareRenameResponse::RangeWithPlaceholder { range, .. },
-            ) = message
-            {
-                let Range { start, end } = range_from_lsp(range);
-                if buffer.clip_point_utf16(start, Bias::Left) == start.0
-                    && buffer.clip_point_utf16(end, Bias::Left) == end.0
-                {
-                    return Ok(Some(buffer.anchor_after(start)..buffer.anchor_before(end)));
+            match message {
+                Some(lsp::PrepareRenameResponse::Range(range))
+                | Some(lsp::PrepareRenameResponse::RangeWithPlaceholder { range, .. }) => {
+                    let Range { start, end } = range_from_lsp(range);
+                    if buffer.clip_point_utf16(start, Bias::Left) == start.0
+                        && buffer.clip_point_utf16(end, Bias::Left) == end.0
+                    {
+                        Ok(PrepareRenameResponse::Success(
+                            buffer.anchor_after(start)..buffer.anchor_before(end),
+                        ))
+                    } else {
+                        Ok(PrepareRenameResponse::InvalidPosition)
+                    }
+                }
+                Some(lsp::PrepareRenameResponse::DefaultBehavior { .. }) => {
+                    Err(anyhow!("Invalid for language server to send a `defaultBehavior` response to `prepareRename`"))
+                }
+                None => {
+                    Ok(PrepareRenameResponse::InvalidPosition)
                 }
             }
-            Ok(None)
         })?
     }
 
@@ -289,21 +351,34 @@ impl LspCommand for PrepareRename {
     }
 
     fn response_to_proto(
-        range: Option<Range<Anchor>>,
+        response: PrepareRenameResponse,
         _: &mut LspStore,
         _: PeerId,
         buffer_version: &clock::Global,
         _: &mut AppContext,
     ) -> proto::PrepareRenameResponse {
-        proto::PrepareRenameResponse {
-            can_rename: range.is_some(),
-            start: range
-                .as_ref()
-                .map(|range| language::proto::serialize_anchor(&range.start)),
-            end: range
-                .as_ref()
-                .map(|range| language::proto::serialize_anchor(&range.end)),
-            version: serialize_version(buffer_version),
+        match response {
+            PrepareRenameResponse::Success(range) => proto::PrepareRenameResponse {
+                can_rename: true,
+                only_unprepared_rename_supported: false,
+                start: Some(language::proto::serialize_anchor(&range.start)),
+                end: Some(language::proto::serialize_anchor(&range.end)),
+                version: serialize_version(buffer_version),
+            },
+            PrepareRenameResponse::OnlyUnpreparedRenameSupported => proto::PrepareRenameResponse {
+                can_rename: false,
+                only_unprepared_rename_supported: true,
+                start: None,
+                end: None,
+                version: vec![],
+            },
+            PrepareRenameResponse::InvalidPosition => proto::PrepareRenameResponse {
+                can_rename: false,
+                only_unprepared_rename_supported: false,
+                start: None,
+                end: None,
+                version: vec![],
+            },
         }
     }
 
@@ -313,18 +388,27 @@ impl LspCommand for PrepareRename {
         _: Model<LspStore>,
         buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
-    ) -> Result<Option<Range<Anchor>>> {
+    ) -> Result<PrepareRenameResponse> {
         if message.can_rename {
             buffer
                 .update(&mut cx, |buffer, _| {
                     buffer.wait_for_version(deserialize_version(&message.version))
                 })?
                 .await?;
-            let start = message.start.and_then(deserialize_anchor);
-            let end = message.end.and_then(deserialize_anchor);
-            Ok(start.zip(end).map(|(start, end)| start..end))
+            if let (Some(start), Some(end)) = (
+                message.start.and_then(deserialize_anchor),
+                message.end.and_then(deserialize_anchor),
+            ) {
+                Ok(PrepareRenameResponse::Success(start..end))
+            } else {
+                Err(anyhow!(
+                    "Missing start or end position in remote project PrepareRenameResponse"
+                ))
+            }
+        } else if message.only_unprepared_rename_supported {
+            Ok(PrepareRenameResponse::OnlyUnpreparedRenameSupported)
         } else {
-            Ok(None)
+            Ok(PrepareRenameResponse::InvalidPosition)
         }
     }
 
