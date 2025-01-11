@@ -10253,6 +10253,7 @@ async fn test_move_to_enclosing_bracket(cx: &mut gpui::TestAppContext) {
         cx.update_editor(|editor, cx| {
             editor.move_to_enclosing_bracket(&MoveToEnclosingBracket, cx)
         });
+        cx.run_until_parked();
         cx.assert_editor_state(after);
     };
 
