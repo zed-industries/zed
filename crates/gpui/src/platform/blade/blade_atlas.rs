@@ -209,7 +209,7 @@ impl BladeAtlasState {
         }
 
         // We currently only enable MSAA for path textures.
-        let msaa_view = if self.path_sample_count > 1 && kind == AtlasTextureKind::Path {
+        let (msaa, msaa_view) = if self.path_sample_count > 1 && kind == AtlasTextureKind::Path {
             let msaa = self.gpu.create_texture(gpu::TextureDesc {
                 name: "msaa path texture",
                 format,
@@ -225,17 +225,20 @@ impl BladeAtlasState {
                 usage: gpu::TextureUsage::TARGET,
             });
 
-            Some(self.gpu.create_texture_view(
-                msaa,
-                gpu::TextureViewDesc {
-                    name: "msaa texture view",
-                    format,
-                    dimension: gpu::ViewDimension::D2,
-                    subresources: &Default::default(),
-                },
-            ))
+            (
+                Some(msaa),
+                Some(self.gpu.create_texture_view(
+                    msaa,
+                    gpu::TextureViewDesc {
+                        name: "msaa texture view",
+                        format,
+                        dimension: gpu::ViewDimension::D2,
+                        subresources: &Default::default(),
+                    },
+                )),
+            )
         } else {
-            None
+            (None, None)
         };
 
         let raw = self.gpu.create_texture(gpu::TextureDesc {
@@ -274,6 +277,7 @@ impl BladeAtlasState {
             format,
             raw,
             raw_view,
+            msaa,
             msaa_view,
             live_atlas_keys: 0,
         };
@@ -389,6 +393,7 @@ struct BladeAtlasTexture {
     allocator: BucketedAtlasAllocator,
     raw: gpu::Texture,
     raw_view: gpu::TextureView,
+    msaa: Option<gpu::Texture>,
     msaa_view: Option<gpu::TextureView>,
     format: gpu::TextureFormat,
     live_atlas_keys: u32,
@@ -417,6 +422,9 @@ impl BladeAtlasTexture {
     fn destroy(&mut self, gpu: &gpu::Context) {
         gpu.destroy_texture(self.raw);
         gpu.destroy_texture_view(self.raw_view);
+        if let Some(msaa) = self.msaa {
+            gpu.destroy_texture(msaa);
+        }
         if let Some(msaa_view) = self.msaa_view {
             gpu.destroy_texture_view(msaa_view);
         }
