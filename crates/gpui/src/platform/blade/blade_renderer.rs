@@ -520,26 +520,26 @@ impl BladeRenderer {
             let vertex_buf = unsafe { self.instance_belt.alloc_typed(&vertices, &self.gpu) };
             let frame_view = tex_info.raw_view;
             let color_target = if let Some(msaa_view) = tex_info.msaa_view {
-                gpu::RenderTargetSet {
-                    colors: &[gpu::RenderTarget {
-                        view: msaa_view,
-                        init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
-                        finish_op: gpu::FinishOp::ResolveTo(frame_view),
-                    }],
-                    depth_stencil: None,
+                gpu::RenderTarget {
+                    view: msaa_view,
+                    init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
+                    finish_op: gpu::FinishOp::ResolveTo(frame_view),
                 }
             } else {
-                gpu::RenderTargetSet {
-                    colors: &[gpu::RenderTarget {
-                        view: frame_view,
-                        init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
-                        finish_op: gpu::FinishOp::Store,
-                    }],
-                    depth_stencil: None,
+                gpu::RenderTarget {
+                    view: frame_view,
+                    init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
+                    finish_op: gpu::FinishOp::Store,
                 }
             };
 
-            if let mut pass = self.command_encoder.render("paths", color_target) {
+            if let mut pass = self.command_encoder.render(
+                "paths",
+                gpu::RenderTargetSet {
+                    colors: &[color_target],
+                    depth_stencil: None,
+                },
+            ) {
                 let mut encoder = pass.with(&self.pipelines.path_rasterization);
                 encoder.bind(
                     0,
