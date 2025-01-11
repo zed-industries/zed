@@ -27,10 +27,10 @@ use language::{
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
-use project::lsp_store::FormatTarget;
 use project::{
-    lsp_store::FormatTrigger, search::SearchQuery, search::SearchResult, DiagnosticSummary,
-    HoverBlockKind, Project, ProjectPath,
+    lsp_store::{FormatTrigger, LspFormatTarget},
+    search::{SearchQuery, SearchResult},
+    DiagnosticSummary, HoverBlockKind, Project, ProjectPath,
 };
 use rand::prelude::*;
 use serde_json::json;
@@ -2925,8 +2925,6 @@ async fn test_git_status_sync(
         assert_eq!(snapshot.status_for_file(file), status);
     }
 
-    // Smoke test status reading
-
     project_local.read_with(cx_a, |project, cx| {
         assert_status(&Path::new(A_TXT), Some(GitFileStatus::Added), project, cx);
         assert_status(&Path::new(B_TXT), Some(GitFileStatus::Added), project, cx);
@@ -3891,13 +3889,7 @@ async fn test_collaborating_with_diagnostics(
     // Cause the language server to start.
     let _buffer = project_a
         .update(cx_a, |project, cx| {
-            project.open_buffer(
-                ProjectPath {
-                    worktree_id,
-                    path: Path::new("other.rs").into(),
-                },
-                cx,
-            )
+            project.open_local_buffer_with_lsp("/a/other.rs", cx)
         })
         .await
         .unwrap();
@@ -4176,7 +4168,9 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
     // Join the project as client B and open all three files.
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
     let guest_buffers = futures::future::try_join_all(file_names.iter().map(|file_name| {
-        project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, file_name), cx))
+        project_b.update(cx_b, |p, cx| {
+            p.open_buffer_with_lsp((worktree_id, file_name), cx)
+        })
     }))
     .await
     .unwrap();
@@ -4230,7 +4224,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
             cx.subscribe(&project_b, move |_, _, event, cx| {
                 if let project::Event::DiskBasedDiagnosticsFinished { .. } = event {
                     disk_based_diagnostics_finished.store(true, SeqCst);
-                    for buffer in &guest_buffers {
+                    for (buffer, _) in &guest_buffers {
                         assert_eq!(
                             buffer
                                 .read(cx)
@@ -4351,7 +4345,6 @@ async fn test_formatting_buffer(
     cx_a: &mut TestAppContext,
     cx_b: &mut TestAppContext,
 ) {
-    executor.allow_parking();
     let mut server = TestServer::start(executor.clone()).await;
     let client_a = server.create_client(cx_a, "user_a").await;
     let client_b = server.create_client(cx_b, "user_b").await;
@@ -4379,10 +4372,16 @@ async fn test_formatting_buffer(
         .await
         .unwrap();
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    let lsp_store_b = project_b.update(cx_b, |p, _| p.lsp_store());
 
-    let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx));
-    let buffer_b = cx_b.executor().spawn(open_buffer).await.unwrap();
+    let buffer_b = project_b
+        .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx))
+        .await
+        .unwrap();
 
+    let _handle = lsp_store_b.update(cx_b, |lsp_store, cx| {
+        lsp_store.register_buffer_with_language_servers(&buffer_b, cx)
+    });
     let fake_language_server = fake_language_servers.next().await.unwrap();
     fake_language_server.handle_request::<lsp::request::Formatting, _, _>(|_, _| async move {
         Ok(Some(vec![
@@ -4401,9 +4400,9 @@ async fn test_formatting_buffer(
         .update(cx_b, |project, cx| {
             project.format(
                 HashSet::from_iter([buffer_b.clone()]),
+                LspFormatTarget::Buffers,
                 true,
                 FormatTrigger::Save,
-                FormatTarget::Buffer,
                 cx,
             )
         })
@@ -4431,13 +4430,15 @@ async fn test_formatting_buffer(
             });
         });
     });
+
+    executor.allow_parking();
     project_b
         .update(cx_b, |project, cx| {
             project.format(
                 HashSet::from_iter([buffer_b.clone()]),
+                LspFormatTarget::Buffers,
                 true,
                 FormatTrigger::Save,
-                FormatTarget::Buffer,
                 cx,
             )
         })
@@ -4503,8 +4504,12 @@ async fn test_prettier_formatting_buffer(
         .await
         .unwrap();
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
-    let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.ts"), cx));
-    let buffer_b = cx_b.executor().spawn(open_buffer).await.unwrap();
+    let (buffer_b, _) = project_b
+        .update(cx_b, |p, cx| {
+            p.open_buffer_with_lsp((worktree_id, "a.ts"), cx)
+        })
+        .await
+        .unwrap();
 
     cx_a.update(|cx| {
         SettingsStore::update_global(cx, |store, cx| {
@@ -4541,9 +4546,9 @@ async fn test_prettier_formatting_buffer(
         .update(cx_b, |project, cx| {
             project.format(
                 HashSet::from_iter([buffer_b.clone()]),
+                LspFormatTarget::Buffers,
                 true,
                 FormatTrigger::Save,
-                FormatTarget::Buffer,
                 cx,
             )
         })
@@ -4561,9 +4566,9 @@ async fn test_prettier_formatting_buffer(
         .update(cx_a, |project, cx| {
             project.format(
                 HashSet::from_iter([buffer_a.clone()]),
+                LspFormatTarget::Buffers,
                 true,
                 FormatTrigger::Manual,
-                FormatTarget::Buffer,
                 cx,
             )
         })
@@ -4620,8 +4625,12 @@ async fn test_definition(
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
 
     // Open the file on client B.
-    let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx));
-    let buffer_b = cx_b.executor().spawn(open_buffer).await.unwrap();
+    let (buffer_b, _handle) = project_b
+        .update(cx_b, |p, cx| {
+            p.open_buffer_with_lsp((worktree_id, "a.rs"), cx)
+        })
+        .await
+        .unwrap();
 
     // Request the definition of a symbol as the guest.
     let fake_language_server = fake_language_servers.next().await.unwrap();
@@ -4765,8 +4774,12 @@ async fn test_references(
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
 
     // Open the file on client B.
-    let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "one.rs"), cx));
-    let buffer_b = cx_b.executor().spawn(open_buffer).await.unwrap();
+    let (buffer_b, _handle) = project_b
+        .update(cx_b, |p, cx| {
+            p.open_buffer_with_lsp((worktree_id, "one.rs"), cx)
+        })
+        .await
+        .unwrap();
 
     // Request references to a symbol as the guest.
     let fake_language_server = fake_language_servers.next().await.unwrap();
@@ -4923,7 +4936,7 @@ async fn test_project_search(
 
     // Perform a search as the guest.
     let mut results = HashMap::default();
-    let mut search_rx = project_b.update(cx_b, |project, cx| {
+    let search_rx = project_b.update(cx_b, |project, cx| {
         project.search(
             SearchQuery::text(
                 "world",
@@ -4938,7 +4951,7 @@ async fn test_project_search(
             cx,
         )
     });
-    while let Some(result) = search_rx.next().await {
+    while let Ok(result) = search_rx.recv().await {
         match result {
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);
@@ -5012,8 +5025,12 @@ async fn test_document_highlights(
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
 
     // Open the file on client B.
-    let open_b = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx));
-    let buffer_b = cx_b.executor().spawn(open_b).await.unwrap();
+    let (buffer_b, _handle) = project_b
+        .update(cx_b, |p, cx| {
+            p.open_buffer_with_lsp((worktree_id, "main.rs"), cx)
+        })
+        .await
+        .unwrap();
 
     // Request document highlights as the guest.
     let fake_language_server = fake_language_servers.next().await.unwrap();
@@ -5130,8 +5147,12 @@ async fn test_lsp_hover(
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
 
     // Open the file as the guest
-    let open_buffer = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "main.rs"), cx));
-    let buffer_b = cx_b.executor().spawn(open_buffer).await.unwrap();
+    let (buffer_b, _handle) = project_b
+        .update(cx_b, |p, cx| {
+            p.open_buffer_with_lsp((worktree_id, "main.rs"), cx)
+        })
+        .await
+        .unwrap();
 
     let mut servers_with_hover_requests = HashMap::default();
     for i in 0..language_server_names.len() {
@@ -5306,9 +5327,12 @@ async fn test_project_symbols(
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
 
     // Cause the language server to start.
-    let open_buffer_task =
-        project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "one.rs"), cx));
-    let _buffer = cx_b.executor().spawn(open_buffer_task).await.unwrap();
+    let _buffer = project_b
+        .update(cx_b, |p, cx| {
+            p.open_buffer_with_lsp((worktree_id, "one.rs"), cx)
+        })
+        .await
+        .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
     fake_language_server.handle_request::<lsp::WorkspaceSymbolRequest, _, _>(|_, _| async move {
@@ -5400,8 +5424,12 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
         .unwrap();
     let project_b = client_b.join_remote_project(project_id, cx_b).await;
 
-    let open_buffer_task = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.rs"), cx));
-    let buffer_b1 = cx_b.executor().spawn(open_buffer_task).await.unwrap();
+    let (buffer_b1, _lsp) = project_b
+        .update(cx_b, |p, cx| {
+            p.open_buffer_with_lsp((worktree_id, "a.rs"), cx)
+        })
+        .await
+        .unwrap();
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
     fake_language_server.handle_request::<lsp::request::GotoDefinition, _, _>(|_, _| async move {
@@ -5417,13 +5445,22 @@ async fn test_open_buffer_while_getting_definition_pointing_to_it(
     let buffer_b2;
     if rng.gen() {
         definitions = project_b.update(cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
-        buffer_b2 = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "b.rs"), cx));
+        (buffer_b2, _) = project_b
+            .update(cx_b, |p, cx| {
+                p.open_buffer_with_lsp((worktree_id, "b.rs"), cx)
+            })
+            .await
+            .unwrap();
     } else {
-        buffer_b2 = project_b.update(cx_b, |p, cx| p.open_buffer((worktree_id, "b.rs"), cx));
+        (buffer_b2, _) = project_b
+            .update(cx_b, |p, cx| {
+                p.open_buffer_with_lsp((worktree_id, "b.rs"), cx)
+            })
+            .await
+            .unwrap();
         definitions = project_b.update(cx_b, |p, cx| p.definition(&buffer_b1, 23, cx));
     }
 
-    let buffer_b2 = buffer_b2.await.unwrap();
     let definitions = definitions.await.unwrap();
     assert_eq!(definitions.len(), 1);
     assert_eq!(definitions[0].target.buffer, buffer_b2);
@@ -6630,6 +6667,10 @@ async fn test_remote_git_branches(
     client_a
         .fs()
         .insert_branches(Path::new("/project/.git"), &branches);
+    let branches_set = branches
+        .into_iter()
+        .map(ToString::to_string)
+        .collect::<HashSet<_>>();
 
     let (project_a, worktree_id) = client_a.build_local_project("/project", cx_a).await;
     let project_id = active_call_a
@@ -6651,10 +6692,10 @@ async fn test_remote_git_branches(
 
     let branches_b = branches_b
         .into_iter()
-        .map(|branch| branch.name)
-        .collect::<Vec<_>>();
+        .map(|branch| branch.name.to_string())
+        .collect::<HashSet<_>>();
 
-    assert_eq!(&branches_b, &branches);
+    assert_eq!(branches_b, branches_set);
 
     cx_b.update(|cx| {
         project_b.update(cx, |project, cx| {

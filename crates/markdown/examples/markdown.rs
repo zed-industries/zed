@@ -51,10 +51,16 @@ Links are created using the format [http://zed.dev](https://zed.dev).
 
 They can also be detected automatically, for example https://zed.dev/blog.
 
+They may contain dollar signs:
+
+[https://svelte.dev/docs/svelte/$state](https://svelte.dev/docs/svelte/$state)
+
+https://svelte.dev/docs/svelte/$state
+
 ## Images
 Images are like links, but with an exclamation mark `!` in front.
 
-```todo!
+```markdown
 ![This is an image](/images/logo.png)
 ```
 

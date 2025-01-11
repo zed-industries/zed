@@ -22,11 +22,7 @@ use language_model::{
 use settings::SettingsStore;
 use std::time::Duration;
 use strum::IntoEnumIterator;
-use ui::{
-    div, h_flex, v_flex, Button, ButtonCommon, Clickable, Color, Context, FixedWidth, Icon,
-    IconName, IconPosition, IconSize, IntoElement, Label, LabelCommon, ParentElement, Styled,
-    ViewContext, VisualContext, WindowContext,
-};
+use ui::prelude::*;
 
 use super::anthropic::count_anthropic_tokens;
 use super::open_ai::count_open_ai_tokens;

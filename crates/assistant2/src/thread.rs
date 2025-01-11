@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use assistant_tool::ToolWorkingSet;
 use chrono::{DateTime, Utc};
-use collections::HashMap;
+use collections::{BTreeMap, HashMap, HashSet};
 use futures::future::Shared;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{AppContext, EventEmitter, ModelContext, SharedString, Task};
@@ -16,6 +16,8 @@ use language_models::provider::cloud::{MaxMonthlySpendReachedError, PaymentRequi
 use serde::{Deserialize, Serialize};
 use util::{post_inc, TryFutureExt as _};
 use uuid::Uuid;
+
+use crate::context::{attach_context_to_message, ContextId, ContextSnapshot};
 
 #[derive(Debug, Clone, Copy)]
 pub enum RequestKind {
@@ -62,6 +64,8 @@ pub struct Thread {
     pending_summary: Task<Option<()>>,
     messages: Vec<Message>,
     next_message_id: MessageId,
+    context: BTreeMap<ContextId, ContextSnapshot>,
+    context_by_message: HashMap<MessageId, Vec<ContextId>>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
     tools: Arc<ToolWorkingSet>,
@@ -79,6 +83,8 @@ impl Thread {
             pending_summary: Task::ready(None),
             messages: Vec::new(),
             next_message_id: MessageId(0),
+            context: BTreeMap::default(),
+            context_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
             tools,
@@ -108,6 +114,11 @@ impl Thread {
         self.summary.clone()
     }
 
+    pub fn summary_or_default(&self) -> SharedString {
+        const DEFAULT: SharedString = SharedString::new_static("New Thread");
+        self.summary.clone().unwrap_or(DEFAULT)
+    }
+
     pub fn set_summary(&mut self, summary: impl Into<SharedString>, cx: &mut ModelContext<Self>) {
         self.summary = Some(summary.into());
         cx.emit(ThreadEvent::SummaryChanged);
@@ -125,12 +136,32 @@ impl Thread {
         &self.tools
     }
 
+    pub fn context_for_message(&self, id: MessageId) -> Option<Vec<ContextSnapshot>> {
+        let context = self.context_by_message.get(&id)?;
+        Some(
+            context
+                .into_iter()
+                .filter_map(|context_id| self.context.get(&context_id))
+                .cloned()
+                .collect::<Vec<_>>(),
+        )
+    }
+
     pub fn pending_tool_uses(&self) -> Vec<&PendingToolUse> {
         self.pending_tool_uses_by_id.values().collect()
     }
 
-    pub fn insert_user_message(&mut self, text: impl Into<String>, cx: &mut ModelContext<Self>) {
-        self.insert_message(Role::User, text, cx)
+    pub fn insert_user_message(
+        &mut self,
+        text: impl Into<String>,
+        context: Vec<ContextSnapshot>,
+        cx: &mut ModelContext<Self>,
+    ) {
+        let message_id = self.insert_message(Role::User, text, cx);
+        let context_ids = context.iter().map(|context| context.id).collect::<Vec<_>>();
+        self.context
+            .extend(context.into_iter().map(|context| (context.id, context)));
+        self.context_by_message.insert(message_id, context_ids);
     }
 
     pub fn insert_message(
@@ -138,7 +169,7 @@ impl Thread {
         role: Role,
         text: impl Into<String>,
         cx: &mut ModelContext<Self>,
-    ) {
+    ) -> MessageId {
         let id = self.next_message_id.post_inc();
         self.messages.push(Message {
             id,
@@ -147,6 +178,28 @@ impl Thread {
         });
         self.touch_updated_at();
         cx.emit(ThreadEvent::MessageAdded(id));
+        id
+    }
+
+    /// Returns the representation of this [`Thread`] in a textual form.
+    ///
+    /// This is the representation we use when attaching a thread as context to another thread.
+    pub fn text(&self) -> String {
+        let mut text = String::new();
+
+        for message in &self.messages {
+            text.push_str(match message.role {
+                language_model::Role::User => "User:",
+                language_model::Role::Assistant => "Assistant:",
+                language_model::Role::System => "System:",
+            });
+            text.push('\n');
+
+            text.push_str(&message.text);
+            text.push('\n');
+        }
+
+        text
     }
 
     pub fn to_completion_request(
@@ -161,7 +214,13 @@ impl Thread {
             temperature: None,
         };
 
+        let mut referenced_context_ids = HashSet::default();
+
         for message in &self.messages {
+            if let Some(context_ids) = self.context_by_message.get(&message.id) {
+                referenced_context_ids.extend(context_ids);
+            }
+
             let mut request_message = LanguageModelRequestMessage {
                 role: message.role,
                 content: Vec::new(),
@@ -191,6 +250,22 @@ impl Thread {
             }
 
             request.messages.push(request_message);
+        }
+
+        if !referenced_context_ids.is_empty() {
+            let mut context_message = LanguageModelRequestMessage {
+                role: Role::User,
+                content: Vec::new(),
+                cache: false,
+            };
+
+            let referenced_context = referenced_context_ids
+                .into_iter()
+                .filter_map(|context_id| self.context.get(context_id))
+                .cloned();
+            attach_context_to_message(&mut context_message, referenced_context);
+
+            request.messages.push(context_message);
         }
 
         request

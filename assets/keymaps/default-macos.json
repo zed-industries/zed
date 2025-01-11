@@ -24,6 +24,7 @@
       "cmd-escape": "menu::Cancel",
       "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
+      "alt-shift-enter": "menu::Restart",
       "cmd-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
       "cmd-o": "workspace::Open",
@@ -66,6 +67,7 @@
       "cmd-v": "editor::Paste",
       "cmd-z": "editor::Undo",
       "cmd-shift-z": "editor::Redo",
+      "ctrl-shift-z": "zeta::RateCompletions",
       "up": "editor::MoveUp",
       "ctrl-up": "editor::MoveToStartOfParagraph",
       "pageup": "editor::MovePageUp",
@@ -194,9 +196,10 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-k c": "assistant::CopyCode",
+      "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPrevMatch",
-      "cmd-shift-m": "assistant::ToggleModelSelector",
+      "cmd-alt-/": "assistant::ToggleModelSelector",
       "cmd-k h": "assistant::DeployHistory",
       "cmd-k l": "assistant::DeployPromptLibrary",
       "cmd-n": "assistant::NewContext"
@@ -222,14 +225,17 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "assistant2::NewThread",
-      "cmd-shift-h": "assistant2::OpenHistory"
+      "cmd-shift-h": "assistant2::OpenHistory",
+      "cmd-alt-/": "assistant2::ToggleModelSelector",
+      "cmd-shift-a": "assistant2::ToggleContextPicker",
+      "cmd-alt-e": "assistant2::RemoveAllContext"
     }
   },
   {
     "context": "MessageEditor > Editor",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-enter": "assistant2::Chat"
+      "enter": "assistant2::Chat"
     }
   },
   {
@@ -323,6 +329,8 @@
       "cmd-w": "pane::CloseActiveItem",
       "alt-cmd-t": ["pane::CloseInactiveItems", { "close_pinned": false }],
       "ctrl-alt-cmd-w": "workspace::CloseInactiveTabsAndPanes",
+      "cmd-k e": ["pane::CloseItemsToTheLeft", { "close_pinned": false }],
+      "cmd-k t": ["pane::CloseItemsToTheRight", { "close_pinned": false }],
       "cmd-k u": ["pane::CloseCleanItems", { "close_pinned": false }],
       "cmd-k cmd-w": ["pane::CloseAllItems", { "close_pinned": false }],
       "cmd-f": "project_search::ToggleFocus",
@@ -428,7 +436,7 @@
       "ctrl--": "pane::GoBack",
       "ctrl-shift--": "pane::GoForward",
       "cmd-shift-t": "pane::ReopenClosedItem",
-      "cmd-shift-f": "project_search::ToggleFocus"
+      "cmd-shift-f": "pane::DeploySearch"
     }
   },
   {
@@ -445,7 +453,6 @@
       "cmd-s": "workspace::Save",
       "cmd-k s": "workspace::SaveWithoutFormat",
       "cmd-shift-s": "workspace::SaveAs",
-      "cmd-n": "workspace::NewFile",
       "cmd-shift-n": "workspace::NewWindow",
       "ctrl-`": "terminal_panel::ToggleFocus",
       "cmd-1": ["workspace::ActivatePane", 0],
@@ -471,7 +478,7 @@
       "ctrl-shift-tab": ["tab_switcher::Toggle", { "select_last": true }],
       "cmd-shift-p": "command_palette::Toggle",
       "cmd-shift-m": "diagnostics::Deploy",
-      "cmd-shift-e": "pane::RevealInProjectPanel",
+      "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-shift-b": "outline_panel::ToggleFocus",
       "cmd-?": "assistant::ToggleFocus",
       "cmd-alt-s": "workspace::SaveAll",
@@ -492,10 +499,12 @@
     "context": "Workspace && !Terminal",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-n": "workspace::NewFile",
       "cmd-shift-r": "task::Spawn",
       "cmd-alt-r": "task::Rerun",
-      "alt-t": "task::Spawn",
-      "alt-shift-t": "task::Spawn"
+      "ctrl-alt-shift-r": ["task::Spawn", { "reveal_target": "center" }]
+      // also possible to spawn tasks by name:
+      // "foo-bar": ["task_name::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
     }
   },
   // Bindings from Sublime Text
@@ -589,6 +598,7 @@
       "alt-enter": "editor::OpenExcerpts",
       "shift-enter": "editor::ExpandExcerpts",
       "cmd-k enter": "editor::OpenExcerptsSplit",
+      "cmd-shift-e": "pane::RevealInProjectPanel",
       "cmd-f8": "editor::GoToHunk",
       "cmd-shift-f8": "editor::GoToPrevHunk",
       "ctrl-enter": "assistant::InlineAssist"
@@ -606,6 +616,9 @@
     "context": "PromptEditor",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-shift-a": "assistant2::ToggleContextPicker",
+      "cmd-alt-/": "assistant2::ToggleModelSelector",
+      "cmd-alt-e": "assistant2::RemoveAllContext",
       "ctrl-[": "assistant::CyclePreviousInlineAssist",
       "ctrl-]": "assistant::CycleNextInlineAssist"
     }
@@ -656,7 +669,6 @@
       "cmd-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-cmd-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "project_panel::OpenWithSystem",
-      "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-alt-backspace": ["project_panel::Delete", { "skip_prompt": false }],
       "cmd-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
@@ -756,6 +768,7 @@
       "cmd-v": "terminal::Paste",
       "cmd-a": "editor::SelectAll",
       "cmd-k": "terminal::Clear",
+      "cmd-n": "workspace::NewTerminal",
       "ctrl-enter": "assistant::InlineAssist",
       // Some nice conveniences
       "cmd-backspace": ["terminal::SendText", "\u0015"],
@@ -788,6 +801,25 @@
       "ctrl-k down": "pane::SplitDown",
       "ctrl-k left": "pane::SplitLeft",
       "ctrl-k right": "pane::SplitRight"
+    }
+  },
+  {
+    "context": "RateCompletionModal",
+    "use_key_equivalents": true,
+    "bindings": {
+      "cmd-enter": "zeta::ThumbsUp",
+      "shift-down": "zeta::NextEdit",
+      "shift-up": "zeta::PreviousEdit",
+      "right": "zeta::PreviewCompletion"
+    }
+  },
+  {
+    "context": "RateCompletionModal > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "zeta::FocusCompletions",
+      "cmd-shift-enter": "zeta::ThumbsUpActiveCompletion",
+      "cmd-shift-backspace": "zeta::ThumbsDownActiveCompletion"
     }
   }
 ]

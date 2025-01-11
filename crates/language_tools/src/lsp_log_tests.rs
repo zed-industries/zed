@@ -57,7 +57,7 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
 
     let _rust_buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer("/the-root/test.rs", cx)
+            project.open_local_buffer_with_lsp("/the-root/test.rs", cx)
         })
         .await
         .unwrap();

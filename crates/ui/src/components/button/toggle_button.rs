@@ -57,9 +57,9 @@ impl ToggleButton {
     }
 }
 
-impl Selectable for ToggleButton {
-    fn selected(mut self, selected: bool) -> Self {
-        self.base = self.base.selected(selected);
+impl Toggleable for ToggleButton {
+    fn toggle_state(mut self, selected: bool) -> Self {
+        self.base = self.base.toggle_state(selected);
         self
     }
 }

@@ -88,6 +88,12 @@ impl SelectionsCollection {
         self.disjoint.clone()
     }
 
+    pub fn disjoint_anchor_ranges(&self) -> impl Iterator<Item = Range<Anchor>> {
+        // Mapping the Arc slice would borrow it, whereas indexing captures it.
+        let disjoint = self.disjoint_anchors();
+        (0..disjoint.len()).map(move |ix| disjoint[ix].range())
+    }
+
     pub fn pending_anchor(&self) -> Option<Selection<Anchor>> {
         self.pending
             .as_ref()
@@ -317,13 +323,6 @@ impl SelectionsCollection {
         self.all(cx).last().unwrap().clone()
     }
 
-    pub fn disjoint_anchor_ranges(&self) -> Vec<Range<Anchor>> {
-        self.disjoint_anchors()
-            .iter()
-            .map(|s| s.start..s.end)
-            .collect()
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     pub fn ranges<D: TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug>(
         &self,
@@ -391,7 +390,7 @@ impl SelectionsCollection {
         }
     }
 
-    pub(crate) fn change_with<R>(
+    pub fn change_with<R>(
         &mut self,
         cx: &mut AppContext,
         change: impl FnOnce(&mut MutableSelectionsCollection) -> R,
@@ -764,7 +763,7 @@ impl<'a> MutableSelectionsCollection<'a> {
 
     pub fn replace_cursors_with(
         &mut self,
-        mut find_replacement_cursors: impl FnMut(&DisplaySnapshot) -> Vec<DisplayPoint>,
+        find_replacement_cursors: impl FnOnce(&DisplaySnapshot) -> Vec<DisplayPoint>,
     ) {
         let display_map = self.display_map();
         let new_selections = find_replacement_cursors(&display_map)

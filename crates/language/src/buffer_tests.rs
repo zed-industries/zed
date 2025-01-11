@@ -1104,20 +1104,32 @@ fn test_range_for_syntax_ancestor(cx: &mut AppContext) {
         let snapshot = buffer.snapshot();
 
         assert_eq!(
-            snapshot.range_for_syntax_ancestor(empty_range_at(text, "|")),
-            Some(range_of(text, "|"))
+            snapshot
+                .syntax_ancestor(empty_range_at(text, "|"))
+                .unwrap()
+                .byte_range(),
+            range_of(text, "|")
         );
         assert_eq!(
-            snapshot.range_for_syntax_ancestor(range_of(text, "|")),
-            Some(range_of(text, "|c|"))
+            snapshot
+                .syntax_ancestor(range_of(text, "|"))
+                .unwrap()
+                .byte_range(),
+            range_of(text, "|c|")
         );
         assert_eq!(
-            snapshot.range_for_syntax_ancestor(range_of(text, "|c|")),
-            Some(range_of(text, "|c| {}"))
+            snapshot
+                .syntax_ancestor(range_of(text, "|c|"))
+                .unwrap()
+                .byte_range(),
+            range_of(text, "|c| {}")
         );
         assert_eq!(
-            snapshot.range_for_syntax_ancestor(range_of(text, "|c| {}")),
-            Some(range_of(text, "(|c| {})"))
+            snapshot
+                .syntax_ancestor(range_of(text, "|c| {}"))
+                .unwrap()
+                .byte_range(),
+            range_of(text, "(|c| {})")
         );
 
         buffer
@@ -3103,8 +3115,8 @@ fn html_lang() -> Language {
     .with_injection_query(
         r#"
         (script_element
-            (raw_text) @content
-            (#set! "language" "javascript"))
+            (raw_text) @injection.content
+            (#set! injection.language "javascript"))
         "#,
     )
     .unwrap()
@@ -3126,15 +3138,15 @@ fn erb_lang() -> Language {
     .with_injection_query(
         r#"
             (
-                (code) @content
-                (#set! "language" "ruby")
-                (#set! "combined")
+                (code) @injection.content
+                (#set! injection.language "ruby")
+                (#set! injection.combined)
             )
 
             (
-                (content) @content
-                (#set! "language" "html")
-                (#set! "combined")
+                (content) @injection.content
+                (#set! injection.language "html")
+                (#set! injection.combined)
             )
         "#,
     )
@@ -3266,11 +3278,11 @@ pub fn markdown_lang() -> Language {
         r#"
             (fenced_code_block
                 (info_string
-                    (language) @language)
-                (code_fence_content) @content)
+                    (language) @injection.language)
+                (code_fence_content) @injection.content)
 
-            ((inline) @content
-                (#set! "language" "markdown-inline"))
+                ((inline) @injection.content
+                (#set! injection.language "markdown-inline"))
         "#,
     )
     .unwrap()

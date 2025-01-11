@@ -6,13 +6,12 @@ use anyhow::{anyhow, Result};
 use chrono::DateTime;
 use fs::Fs;
 use futures::{io::BufReader, stream::BoxStream, AsyncBufReadExt, AsyncReadExt, StreamExt};
-use gpui::{AppContext, AsyncAppContext, Global};
+use gpui::{prelude::*, AppContext, AsyncAppContext, Global};
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use paths::home_dir;
 use serde::{Deserialize, Serialize};
 use settings::watch_config_file;
 use strum::EnumIter;
-use ui::Context;
 
 pub const COPILOT_CHAT_COMPLETION_URL: &str = "https://api.githubcopilot.com/chat/completions";
 pub const COPILOT_CHAT_AUTH_URL: &str = "https://api.github.com/copilot_internal/v2/token";
@@ -35,9 +34,9 @@ pub enum Model {
     Gpt4,
     #[serde(alias = "gpt-3.5-turbo", rename = "gpt-3.5-turbo")]
     Gpt3_5Turbo,
-    #[serde(alias = "o1-preview", rename = "o1-preview-2024-09-12")]
+    #[serde(alias = "o1-preview", rename = "o1")]
     O1Preview,
-    #[serde(alias = "o1-mini", rename = "o1-mini-2024-09-12")]
+    #[serde(alias = "o1-mini", rename = "o1-mini")]
     O1Mini,
     #[serde(alias = "claude-3-5-sonnet", rename = "claude-3.5-sonnet")]
     Claude3_5Sonnet,

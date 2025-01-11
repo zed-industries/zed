@@ -117,30 +117,48 @@ impl LspAdapter for PythonLspAdapter {
         let latest_version = latest_version.downcast::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
 
-        let should_install_language_server = self
-            .node
-            .should_install_npm_package(
-                Self::SERVER_NAME.as_ref(),
-                &server_path,
+        self.node
+            .npm_install_packages(
                 &container_dir,
-                &latest_version,
+                &[(Self::SERVER_NAME.as_ref(), latest_version.as_str())],
             )
-            .await;
-
-        if should_install_language_server {
-            self.node
-                .npm_install_packages(
-                    &container_dir,
-                    &[(Self::SERVER_NAME.as_ref(), latest_version.as_str())],
-                )
-                .await?;
-        }
+            .await?;
 
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,
             env: None,
             arguments: server_binary_arguments(&server_path),
         })
+    }
+
+    async fn check_if_version_installed(
+        &self,
+        version: &(dyn 'static + Send + Any),
+        container_dir: &PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        let version = version.downcast_ref::<String>().unwrap();
+        let server_path = container_dir.join(SERVER_PATH);
+
+        let should_install_language_server = self
+            .node
+            .should_install_npm_package(
+                Self::SERVER_NAME.as_ref(),
+                &server_path,
+                &container_dir,
+                &version,
+            )
+            .await;
+
+        if should_install_language_server {
+            None
+        } else {
+            Some(LanguageServerBinary {
+                path: self.node.binary_path().await.ok()?,
+                env: None,
+                arguments: server_binary_arguments(&server_path),
+            })
+        }
     }
 
     async fn cached_server_binary(
@@ -315,7 +333,10 @@ impl ContextProvider for PythonContextProvider {
                 toolchains
                     .active_toolchain(worktree_id, "Python".into(), &mut cx)
                     .await
-                    .map_or_else(|| "python3".to_owned(), |toolchain| toolchain.path.into())
+                    .map_or_else(
+                        || "python3".to_owned(),
+                        |toolchain| format!("\"{}\"", toolchain.path),
+                    )
             } else {
                 String::from("python3")
             };
@@ -336,14 +357,17 @@ impl ContextProvider for PythonContextProvider {
             TaskTemplate {
                 label: "execute selection".to_owned(),
                 command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
-                args: vec!["-c".to_owned(), VariableName::SelectedText.template_value()],
+                args: vec![
+                    "-c".to_owned(),
+                    VariableName::SelectedText.template_value_with_whitespace(),
+                ],
                 ..TaskTemplate::default()
             },
             // Execute an entire file
             TaskTemplate {
                 label: format!("run '{}'", VariableName::File.template_value()),
                 command: PYTHON_ACTIVE_TOOLCHAIN_PATH.template_value(),
-                args: vec![VariableName::File.template_value()],
+                args: vec![VariableName::File.template_value_with_whitespace()],
                 ..TaskTemplate::default()
             },
         ];
@@ -358,7 +382,7 @@ impl ContextProvider for PythonContextProvider {
                         args: vec![
                             "-m".to_owned(),
                             "unittest".to_owned(),
-                            VariableName::File.template_value(),
+                            VariableName::File.template_value_with_whitespace(),
                         ],
                         ..TaskTemplate::default()
                     },
@@ -369,7 +393,7 @@ impl ContextProvider for PythonContextProvider {
                         args: vec![
                             "-m".to_owned(),
                             "unittest".to_owned(),
-                            "$ZED_CUSTOM_PYTHON_TEST_TARGET".to_owned(),
+                            PYTHON_TEST_TARGET_TASK_VARIABLE.template_value_with_whitespace(),
                         ],
                         tags: vec![
                             "python-unittest-class".to_owned(),
@@ -388,7 +412,7 @@ impl ContextProvider for PythonContextProvider {
                         args: vec![
                             "-m".to_owned(),
                             "pytest".to_owned(),
-                            VariableName::File.template_value(),
+                            VariableName::File.template_value_with_whitespace(),
                         ],
                         ..TaskTemplate::default()
                     },
@@ -399,7 +423,7 @@ impl ContextProvider for PythonContextProvider {
                         args: vec![
                             "-m".to_owned(),
                             "pytest".to_owned(),
-                            "$ZED_CUSTOM_PYTHON_TEST_TARGET".to_owned(),
+                            PYTHON_TEST_TARGET_TASK_VARIABLE.template_value_with_whitespace(),
                         ],
                         tags: vec![
                             "python-pytest-class".to_owned(),
@@ -518,6 +542,7 @@ static ENV_PRIORITY_LIST: &'static [PythonEnvironmentKind] = &[
     PythonEnvironmentKind::VirtualEnvWrapper,
     PythonEnvironmentKind::Venv,
     PythonEnvironmentKind::VirtualEnv,
+    PythonEnvironmentKind::Pixi,
     PythonEnvironmentKind::Conda,
     PythonEnvironmentKind::Pyenv,
     PythonEnvironmentKind::GlobalPaths,
@@ -746,6 +771,12 @@ impl PyLspAdapter {
     }
 }
 
+const BINARY_DIR: &str = if cfg!(target_os = "windows") {
+    "Scripts"
+} else {
+    "bin"
+};
+
 #[async_trait(?Send)]
 impl LspAdapter for PyLspAdapter {
     fn name(&self) -> LanguageServerName {
@@ -787,7 +818,7 @@ impl LspAdapter for PyLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Result<LanguageServerBinary> {
         let venv = self.base_venv(delegate).await.map_err(|e| anyhow!(e))?;
-        let pip_path = venv.join("bin").join("pip3");
+        let pip_path = venv.join(BINARY_DIR).join("pip3");
         ensure!(
             util::command::new_smol_command(pip_path.as_path())
                 .arg("install")
@@ -818,7 +849,7 @@ impl LspAdapter for PyLspAdapter {
                 .success(),
             "pylsp-mypy installation failed"
         );
-        let pylsp = venv.join("bin").join("pylsp");
+        let pylsp = venv.join(BINARY_DIR).join("pylsp");
         Ok(LanguageServerBinary {
             path: pylsp,
             env: None,
@@ -832,7 +863,7 @@ impl LspAdapter for PyLspAdapter {
         delegate: &dyn LspAdapterDelegate,
     ) -> Option<LanguageServerBinary> {
         let venv = self.base_venv(delegate).await.ok()?;
-        let pylsp = venv.join("bin").join("pylsp");
+        let pylsp = venv.join(BINARY_DIR).join("pylsp");
         Some(LanguageServerBinary {
             path: pylsp,
             env: None,

@@ -1,15 +1,16 @@
 use crate::{
+    lsp_store::OpenLspBufferHandle,
     search::SearchQuery,
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     ProjectItem as _, ProjectPath,
 };
 use ::git::{parse_git_remote_url, BuildPermalinkParams, GitHostingProviderRegistry};
-use anyhow::{anyhow, Context as _, Result};
+use anyhow::{anyhow, bail, Context as _, Result};
 use client::Client;
 use collections::{hash_map, HashMap, HashSet};
 use fs::Fs;
 use futures::{channel::oneshot, future::Shared, Future, FutureExt as _, StreamExt};
-use git::{blame::Blame, diff::BufferDiff};
+use git::{blame::Blame, diff::BufferDiff, repository::RepoPath};
 use gpui::{
     AppContext, AsyncAppContext, Context as _, EventEmitter, Model, ModelContext, Subscription,
     Task, WeakModel,
@@ -23,8 +24,17 @@ use language::{
     Buffer, BufferEvent, Capability, DiskState, File as _, Language, Operation,
 };
 use rpc::{proto, AnyProtoClient, ErrorExt as _, TypedEnvelope};
+use serde::Deserialize;
 use smol::channel::Receiver;
-use std::{io, ops::Range, path::Path, str::FromStr as _, sync::Arc, time::Instant};
+use std::{
+    io,
+    ops::Range,
+    path::{Path, PathBuf},
+    pin::pin,
+    str::FromStr as _,
+    sync::Arc,
+    time::Instant,
+};
 use text::{BufferId, LineEnding, Rope};
 use util::{debug_panic, maybe, ResultExt as _, TryFutureExt};
 use worktree::{File, PathChange, ProjectEntryId, UpdatedGitRepositoriesSet, Worktree, WorktreeId};
@@ -47,6 +57,7 @@ pub struct BufferStore {
 struct SharedBuffer {
     buffer: Model<Buffer>,
     unstaged_changes: Option<Model<BufferChangeSet>>,
+    lsp_handle: Option<OpenLspBufferHandle>,
 }
 
 #[derive(Debug)]
@@ -394,7 +405,7 @@ impl LocalBufferStore {
         cx: &AppContext,
     ) -> Task<Result<Option<String>>> {
         let Some(file) = buffer.read(cx).file() else {
-            return Task::ready(Err(anyhow!("buffer has no file")));
+            return Task::ready(Ok(None));
         };
         let worktree_id = file.worktree_id(cx);
         let path = file.path().clone();
@@ -559,9 +570,9 @@ impl LocalBufferStore {
                     buffer_change_sets
                         .into_iter()
                         .filter_map(|(change_set, buffer_snapshot, path)| {
-                            let (repo_entry, local_repo_entry) = snapshot.repo_for_path(&path)?;
-                            let relative_path = repo_entry.relativize(&snapshot, &path).ok()?;
-                            let base_text = local_repo_entry.repo().load_index_text(&relative_path);
+                            let local_repo = snapshot.local_repo_for_path(&path)?;
+                            let relative_path = local_repo.relativize(&path).ok()?;
+                            let base_text = local_repo.repo().load_index_text(&relative_path);
                             Some((change_set, buffer_snapshot, base_text))
                         })
                         .collect::<Vec<_>>()
@@ -1151,16 +1162,16 @@ impl BufferStore {
             Worktree::Local(worktree) => {
                 let worktree = worktree.snapshot();
                 let blame_params = maybe!({
-                    let (repo_entry, local_repo_entry) = match worktree.repo_for_path(&file.path) {
+                    let local_repo = match worktree.local_repo_for_path(&file.path) {
                         Some(repo_for_path) => repo_for_path,
                         None => return Ok(None),
                     };
 
-                    let relative_path = repo_entry
-                        .relativize(&worktree, &file.path)
+                    let relative_path = local_repo
+                        .relativize(&file.path)
                         .context("failed to relativize buffer path")?;
 
-                    let repo = local_repo_entry.repo().clone();
+                    let repo = local_repo.repo().clone();
 
                     let content = match version {
                         Some(version) => buffer.rope_for_version(&version).clone(),
@@ -1209,13 +1220,38 @@ impl BufferStore {
             return Task::ready(Err(anyhow!("buffer has no file")));
         };
 
-        match file.worktree.clone().read(cx) {
+        match file.worktree.read(cx) {
             Worktree::Local(worktree) => {
-                let Some(repo) = worktree.local_git_repo(file.path()) else {
-                    return Task::ready(Err(anyhow!("no repository for buffer found")));
+                let worktree_path = worktree.abs_path().clone();
+                let Some((repo_entry, repo)) =
+                    worktree.repository_for_path(file.path()).and_then(|entry| {
+                        let repo = worktree.get_local_repo(&entry)?.repo().clone();
+                        Some((entry, repo))
+                    })
+                else {
+                    // If we're not in a Git repo, check whether this is a Rust source
+                    // file in the Cargo registry (presumably opened with go-to-definition
+                    // from a normal Rust file). If so, we can put together a permalink
+                    // using crate metadata.
+                    if !buffer
+                        .language()
+                        .is_some_and(|lang| lang.name() == "Rust".into())
+                    {
+                        return Task::ready(Err(anyhow!("no permalink available")));
+                    }
+                    let file_path = worktree_path.join(file.path());
+                    return cx.spawn(|cx| async move {
+                        let provider_registry =
+                            cx.update(GitHostingProviderRegistry::default_global)?;
+                        get_permalink_in_rust_registry_src(provider_registry, file_path, selection)
+                            .map_err(|_| anyhow!("no permalink available"))
+                    });
                 };
 
-                let path = file.path().clone();
+                let path = match repo_entry.relativize(file.path()) {
+                    Ok(RepoPath(path)) => path,
+                    Err(e) => return Task::ready(Err(e)),
+                };
 
                 cx.spawn(|cx| async move {
                     const REMOTE_NAME: &str = "origin";
@@ -1236,7 +1272,7 @@ impl BufferStore {
 
                     let path = path
                         .to_str()
-                        .context("failed to convert buffer path to string")?;
+                        .ok_or_else(|| anyhow!("failed to convert path to string"))?;
 
                     Ok(provider.build_permalink(
                         remote,
@@ -1448,7 +1484,7 @@ impl BufferStore {
         }
 
         const MAX_CONCURRENT_BUFFER_OPENS: usize = 64;
-        let mut project_paths_rx = self
+        let project_paths_rx = self
             .worktree_store
             .update(cx, |worktree_store, cx| {
                 worktree_store.find_search_candidates(query.clone(), limit, open_buffers, fs, cx)
@@ -1460,6 +1496,7 @@ impl BufferStore {
                 tx.send(buffer).await.ok();
             }
 
+            let mut project_paths_rx = pin!(project_paths_rx);
             while let Some(project_paths) = project_paths_rx.next().await {
                 let buffers = this.update(&mut cx, |this, cx| {
                     project_paths
@@ -1571,6 +1608,21 @@ impl BufferStore {
         })?
     }
 
+    pub fn register_shared_lsp_handle(
+        &mut self,
+        peer_id: proto::PeerId,
+        buffer_id: BufferId,
+        handle: OpenLspBufferHandle,
+    ) {
+        if let Some(shared_buffers) = self.shared_buffers.get_mut(&peer_id) {
+            if let Some(buffer) = shared_buffers.get_mut(&buffer_id) {
+                buffer.lsp_handle = Some(handle);
+                return;
+            }
+        }
+        debug_panic!("tried to register shared lsp handle, but buffer was not shared")
+    }
+
     pub fn handle_synchronize_buffers(
         &mut self,
         envelope: TypedEnvelope<proto::SynchronizeBuffers>,
@@ -1597,6 +1649,7 @@ impl BufferStore {
                     .or_insert_with(|| SharedBuffer {
                         buffer: buffer.clone(),
                         unstaged_changes: None,
+                        lsp_handle: None,
                     });
 
                 let buffer = buffer.read(cx);
@@ -1617,7 +1670,7 @@ impl BufferStore {
                         .log_err();
                 }
 
-                // todo!(max): do something
+                // TODO(max): do something
                 // client
                 //     .send(proto::UpdateStagedText {
                 //         project_id,
@@ -2017,6 +2070,7 @@ impl BufferStore {
             SharedBuffer {
                 buffer: buffer.clone(),
                 unstaged_changes: None,
+                lsp_handle: None,
             },
         );
 
@@ -2412,4 +2466,53 @@ fn deserialize_blame_buffer_response(
         messages,
         remote_url: response.remote_url,
     })
+}
+
+fn get_permalink_in_rust_registry_src(
+    provider_registry: Arc<GitHostingProviderRegistry>,
+    path: PathBuf,
+    selection: Range<u32>,
+) -> Result<url::Url> {
+    #[derive(Deserialize)]
+    struct CargoVcsGit {
+        sha1: String,
+    }
+
+    #[derive(Deserialize)]
+    struct CargoVcsInfo {
+        git: CargoVcsGit,
+        path_in_vcs: String,
+    }
+
+    #[derive(Deserialize)]
+    struct CargoPackage {
+        repository: String,
+    }
+
+    #[derive(Deserialize)]
+    struct CargoToml {
+        package: CargoPackage,
+    }
+
+    let Some((dir, cargo_vcs_info_json)) = path.ancestors().skip(1).find_map(|dir| {
+        let json = std::fs::read_to_string(dir.join(".cargo_vcs_info.json")).ok()?;
+        Some((dir, json))
+    }) else {
+        bail!("No .cargo_vcs_info.json found in parent directories")
+    };
+    let cargo_vcs_info = serde_json::from_str::<CargoVcsInfo>(&cargo_vcs_info_json)?;
+    let cargo_toml = std::fs::read_to_string(dir.join("Cargo.toml"))?;
+    let manifest = toml::from_str::<CargoToml>(&cargo_toml)?;
+    let (provider, remote) = parse_git_remote_url(provider_registry, &manifest.package.repository)
+        .ok_or_else(|| anyhow!("Failed to parse package.repository field of manifest"))?;
+    let path = PathBuf::from(cargo_vcs_info.path_in_vcs).join(path.strip_prefix(dir).unwrap());
+    let permalink = provider.build_permalink(
+        remote,
+        BuildPermalinkParams {
+            sha: &cargo_vcs_info.git.sha1,
+            path: &path.to_string_lossy(),
+            selection: Some(selection),
+        },
+    );
+    Ok(permalink)
 }

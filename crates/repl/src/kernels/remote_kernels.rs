@@ -3,6 +3,11 @@ use gpui::{Task, View, WindowContext};
 use http_client::{AsyncBody, HttpClient, Request};
 use jupyter_protocol::{ExecutionState, JupyterKernelspec, JupyterMessage, KernelInfoReply};
 
+use async_tungstenite::{
+    async_std::connect_async,
+    tungstenite::{client::IntoClientRequest, http::HeaderValue},
+};
+
 use futures::StreamExt;
 use smol::io::AsyncReadExt as _;
 
@@ -11,8 +16,8 @@ use crate::Session;
 use super::RunningKernel;
 use anyhow::Result;
 use jupyter_websocket_client::{
-    JupyterWebSocketReader, JupyterWebSocketWriter, KernelLaunchRequest, KernelSpecsResponse,
-    RemoteServer,
+    JupyterWebSocket, JupyterWebSocketReader, JupyterWebSocketWriter, KernelLaunchRequest,
+    KernelSpecsResponse, RemoteServer,
 };
 use std::{fmt::Debug, sync::Arc};
 
@@ -34,7 +39,7 @@ pub async fn launch_remote_kernel(
     let kernel_launch_request = KernelLaunchRequest {
         name: kernel_name.to_string(),
         // Note: since the path we have locally may not be the same as the one on the remote server,
-        // we don't send it. We'll have to evaluate this decisiion along the way.
+        // we don't send it. We'll have to evaluate this decision along the way.
         path: None,
     };
 
@@ -151,7 +156,31 @@ impl RemoteRunningKernel {
             )
             .await?;
 
-            let (kernel_socket, _response) = remote_server.connect_to_kernel(&kernel_id).await?;
+            let ws_url = format!(
+                "{}/api/kernels/{}/channels?token={}",
+                remote_server.base_url.replace("http", "ws"),
+                kernel_id,
+                remote_server.token
+            );
+
+            let mut req: Request<()> = ws_url.into_client_request()?;
+            let headers = req.headers_mut();
+
+            headers.insert(
+                "User-Agent",
+                HeaderValue::from_str(&format!(
+                    "Zed/{} ({}; {})",
+                    "repl",
+                    std::env::consts::OS,
+                    std::env::consts::ARCH
+                ))?,
+            );
+
+            let response = connect_async(req).await;
+
+            let (ws_stream, _response) = response?;
+
+            let kernel_socket = JupyterWebSocket { inner: ws_stream };
 
             let (mut w, mut r): (JupyterWebSocketWriter, JupyterWebSocketReader) =
                 kernel_socket.split();

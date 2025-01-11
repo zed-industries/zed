@@ -128,6 +128,13 @@ impl BranchListDelegate {
             branch_name_trailoff_after,
         })
     }
+
+    fn branch_count(&self) -> usize {
+        self.matches
+            .iter()
+            .filter(|item| matches!(item, BranchEntry::Branch(_)))
+            .count()
+    }
 }
 
 impl PickerDelegate for BranchListDelegate {
@@ -172,11 +179,7 @@ impl PickerDelegate for BranchListDelegate {
                 branches
                     .into_iter()
                     .enumerate()
-                    .map(|(ix, command)| StringMatchCandidate {
-                        id: ix,
-                        char_bag: command.name.chars().collect(),
-                        string: command.name.into(),
-                    })
+                    .map(|(ix, command)| StringMatchCandidate::new(ix, &command.name))
                     .collect::<Vec<StringMatchCandidate>>()
             });
             let Some(candidates) = candidates.log_err() else {
@@ -284,7 +287,7 @@ impl PickerDelegate for BranchListDelegate {
             ListItem::new(SharedString::from(format!("vcs-menu-{ix}")))
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .map(|parent| match hit {
                     BranchEntry::Branch(branch) => {
                         let highlights: Vec<_> = branch
@@ -312,8 +315,8 @@ impl PickerDelegate for BranchListDelegate {
                 .into_any_element()
         } else {
             let match_label = self.matches.is_empty().not().then(|| {
-                let suffix = if self.matches.len() == 1 { "" } else { "es" };
-                Label::new(format!("{} match{}", self.matches.len(), suffix))
+                let suffix = if self.branch_count() == 1 { "" } else { "es" };
+                Label::new(format!("{} match{}", self.branch_count(), suffix))
                     .color(Color::Muted)
                     .size(LabelSize::Small)
             });

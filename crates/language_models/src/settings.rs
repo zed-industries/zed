@@ -97,6 +97,7 @@ impl AnthropicSettingsContent {
                                     cache_configuration,
                                     max_output_tokens,
                                     default_temperature,
+                                    extra_beta_headers,
                                 } => Some(provider::anthropic::AvailableModel {
                                     name,
                                     display_name,
@@ -111,6 +112,7 @@ impl AnthropicSettingsContent {
                                     ),
                                     max_output_tokens,
                                     default_temperature,
+                                    extra_beta_headers,
                                 }),
                                 _ => None,
                             })

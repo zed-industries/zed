@@ -20,6 +20,7 @@ use serde_json::json;
 use settings::{initial_server_settings_content, Settings, SettingsLocation, SettingsStore};
 use smol::stream::StreamExt;
 use std::{
+    collections::HashSet,
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -186,7 +187,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
     cx.run_until_parked();
 
     async fn do_search(project: &Model<Project>, mut cx: TestAppContext) -> Model<Buffer> {
-        let mut receiver = project.update(&mut cx, |project, cx| {
+        let receiver = project.update(&mut cx, |project, cx| {
             project.search(
                 SearchQuery::text(
                     "project",
@@ -202,7 +203,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
             )
         });
 
-        let first_response = receiver.next().await.unwrap();
+        let first_response = receiver.recv().await.unwrap();
         let SearchResult::Buffer { buffer, .. } = first_response else {
             panic!("incorrect result");
         };
@@ -213,7 +214,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
             )
         });
 
-        assert!(receiver.next().await.is_none());
+        assert!(receiver.recv().await.is_err());
         buffer
     }
 
@@ -440,9 +441,9 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     // Wait for the settings to synchronize
     cx.run_until_parked();
 
-    let buffer = project
+    let (buffer, _handle) = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+            project.open_buffer_with_lsp((worktree_id, Path::new("src/lib.rs")), cx)
         })
         .await
         .unwrap();
@@ -616,9 +617,9 @@ async fn test_remote_cancel_language_server_work(
 
     cx.run_until_parked();
 
-    let buffer = project
+    let (buffer, _handle) = project
         .update(cx, |project, cx| {
-            project.open_buffer((worktree_id, Path::new("src/lib.rs")), cx)
+            project.open_buffer_with_lsp((worktree_id, Path::new("src/lib.rs")), cx)
         })
         .await
         .unwrap();
@@ -1150,6 +1151,10 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let (project, headless_project) = init_test(&fs, cx, server_cx).await;
     let branches = ["main", "dev", "feature-1"];
+    let branches_set = branches
+        .iter()
+        .map(ToString::to_string)
+        .collect::<HashSet<_>>();
     fs.insert_branches(Path::new("/code/project1/.git"), &branches);
 
     let (worktree, _) = project
@@ -1173,10 +1178,10 @@ async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestA
 
     let remote_branches = remote_branches
         .into_iter()
-        .map(|branch| branch.name)
-        .collect::<Vec<_>>();
+        .map(|branch| branch.name.to_string())
+        .collect::<HashSet<_>>();
 
-    assert_eq!(&remote_branches, &branches);
+    assert_eq!(&remote_branches, &branches_set);
 
     cx.update(|cx| {
         project.update(cx, |project, cx| {

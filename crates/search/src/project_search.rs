@@ -5,18 +5,16 @@ use crate::{
 };
 use collections::{HashMap, HashSet};
 use editor::{
-    actions::SelectAll,
-    items::active_match_index,
-    scroll::{Autoscroll, Axis},
-    Anchor, Editor, EditorElement, EditorEvent, EditorSettings, EditorStyle, MultiBuffer,
-    MAX_TAB_TITLE_LEN,
+    actions::SelectAll, items::active_match_index, scroll::Autoscroll, Anchor, Editor,
+    EditorElement, EditorEvent, EditorSettings, EditorStyle, MultiBuffer, MAX_TAB_TITLE_LEN,
 };
 use futures::StreamExt;
 use gpui::{
-    actions, div, Action, AnyElement, AnyView, AppContext, Context as _, EntityId, EventEmitter,
-    FocusHandle, FocusableView, Global, Hsla, InteractiveElement, IntoElement, KeyContext, Model,
-    ModelContext, ParentElement, Point, Render, SharedString, Styled, Subscription, Task,
-    TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel, WeakView, WindowContext,
+    actions, div, Action, AnyElement, AnyView, AppContext, Axis, Context as _, EntityId,
+    EventEmitter, FocusHandle, FocusableView, Global, Hsla, InteractiveElement, IntoElement,
+    KeyContext, Model, ModelContext, ParentElement, Point, Render, SharedString, Styled,
+    Subscription, Task, TextStyle, UpdateGlobal, View, ViewContext, VisualContext, WeakModel,
+    WeakView, WindowContext,
 };
 use language::Buffer;
 use menu::Confirm;
@@ -31,11 +29,12 @@ use std::{
     mem,
     ops::{Not, Range},
     path::Path,
+    pin::pin,
 };
 use theme::ThemeSettings;
 use ui::{
     h_flex, prelude::*, utils::SearchInputWidth, v_flex, Icon, IconButton, IconButtonShape,
-    IconName, KeyBinding, Label, LabelCommon, LabelSize, Selectable, Tooltip,
+    IconName, KeyBinding, Label, LabelCommon, LabelSize, Toggleable, Tooltip,
 };
 use util::paths::PathMatcher;
 use workspace::{
@@ -251,7 +250,7 @@ impl ProjectSearch {
         self.active_query = Some(query);
         self.match_ranges.clear();
         self.pending_search = Some(cx.spawn(|this, mut cx| async move {
-            let mut matches = search.ready_chunks(1024);
+            let mut matches = pin!(search.ready_chunks(1024));
             let this = this.upgrade()?;
             this.update(&mut cx, |this, cx| {
                 this.match_ranges.clear();
@@ -1256,7 +1255,7 @@ impl ProjectSearchView {
 fn buffer_search_query(
     workspace: &mut Workspace,
     item: &dyn ItemHandle,
-    cx: &mut ViewContext<'_, Workspace>,
+    cx: &mut ViewContext<Workspace>,
 ) -> Option<String> {
     let buffer_search_bar = workspace
         .pane_for(item)
@@ -1595,9 +1594,11 @@ impl Render for ProjectSearchBar {
 
         let input_base_styles = || {
             h_flex()
+                .min_w_32()
                 .w(input_width)
                 .h_8()
-                .px_2()
+                .pl_2()
+                .pr_1()
                 .py_1()
                 .border_1()
                 .border_color(search.border_color_for(InputPanel::Query, cx))
@@ -1611,7 +1612,7 @@ impl Render for ProjectSearchBar {
             .child(self.render_text_input(&search.query_editor, cx))
             .child(
                 h_flex()
-                    .gap_0p5()
+                    .gap_1()
                     .child(SearchOptions::CASE_SENSITIVE.as_button(
                         self.is_option_enabled(SearchOptions::CASE_SENSITIVE, cx),
                         focus_handle.clone(),
@@ -1644,7 +1645,7 @@ impl Render for ProjectSearchBar {
                     .on_click(cx.listener(|this, _, cx| {
                         this.toggle_filters(cx);
                     }))
-                    .selected(
+                    .toggle_state(
                         self.active_project_search
                             .as_ref()
                             .map(|search| search.read(cx).filters_enabled)
@@ -1668,7 +1669,7 @@ impl Render for ProjectSearchBar {
                     .on_click(cx.listener(|this, _, cx| {
                         this.toggle_replace(&ToggleReplace, cx);
                     }))
-                    .selected(
+                    .toggle_state(
                         self.active_project_search
                             .as_ref()
                             .map(|search| search.read(cx).replace_enabled)
@@ -1877,7 +1878,7 @@ impl Render for ProjectSearchBar {
                         .child(
                             IconButton::new("project-search-opened-only", IconName::FileSearch)
                                 .shape(IconButtonShape::Square)
-                                .selected(self.is_opened_only_enabled(cx))
+                                .toggle_state(self.is_opened_only_enabled(cx))
                                 .tooltip(|cx| Tooltip::text("Only Search Open Files", cx))
                                 .on_click(cx.listener(|this, _, cx| {
                                     this.toggle_opened_only(cx);
@@ -1906,6 +1907,7 @@ impl Render for ProjectSearchBar {
         }
 
         v_flex()
+            .py(px(1.0))
             .key_context(key_context)
             .on_action(cx.listener(|this, _: &ToggleFocus, cx| this.move_focus_to_results(cx)))
             .on_action(cx.listener(|this, _: &ToggleFilters, cx| {

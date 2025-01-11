@@ -55,7 +55,7 @@ use language_model::{
     LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, Role,
     ZED_CLOUD_PROVIDER_ID,
 };
-use language_model_selector::{LanguageModelPickerDelegate, LanguageModelSelector};
+use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::lsp_store::LocalLspAdapterDelegate;
@@ -108,7 +108,6 @@ pub fn init(cx: &mut AppContext) {
 
                     workspace.toggle_panel_focus::<AssistantPanel>(cx);
                 })
-                .register_action(AssistantPanel::inline_assist)
                 .register_action(ContextEditor::quote_selection)
                 .register_action(ContextEditor::insert_selection)
                 .register_action(ContextEditor::copy_code)
@@ -123,7 +122,7 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |terminal_panel: &mut TerminalPanel, cx: &mut ViewContext<TerminalPanel>| {
             let settings = AssistantSettings::get_global(cx);
-            terminal_panel.asssistant_enabled(settings.enabled, cx);
+            terminal_panel.set_assistant_enabled(settings.enabled, cx);
         },
     )
     .detach();
@@ -143,7 +142,7 @@ pub struct AssistantPanel {
     languages: Arc<LanguageRegistry>,
     fs: Arc<dyn Fs>,
     subscriptions: Vec<Subscription>,
-    model_selector_menu_handle: PopoverMenuHandle<Picker<LanguageModelPickerDelegate>>,
+    model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
     model_summary_editor: View<Editor>,
     authenticate_provider_task: Option<(LanguageModelProviderId, Task<()>)>,
     configuration_subscription: Option<Subscription>,
@@ -305,7 +304,7 @@ impl PickerDelegate for SavedContextPickerDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(item),
         )
     }
@@ -341,11 +340,12 @@ impl AssistantPanel {
     ) -> Self {
         let model_selector_menu_handle = PopoverMenuHandle::default();
         let model_summary_editor = cx.new_view(Editor::single_line);
-        let context_editor_toolbar = cx.new_view(|_| {
+        let context_editor_toolbar = cx.new_view(|cx| {
             ContextEditorToolbarItem::new(
                 workspace,
                 model_selector_menu_handle.clone(),
                 model_summary_editor.clone(),
+                cx,
             )
         });
 
@@ -441,7 +441,7 @@ impl AssistantPanel {
                             )
                         }
                     })
-                    .selected(
+                    .toggle_state(
                         pane.active_item()
                             .map_or(false, |item| item.downcast::<ContextHistory>().is_some()),
                     );
@@ -595,7 +595,7 @@ impl AssistantPanel {
                 true
             }
 
-            pane::Event::ActivateItem { local } => {
+            pane::Event::ActivateItem { local, .. } => {
                 if *local {
                     self.workspace
                         .update(cx, |workspace, cx| {
@@ -1458,6 +1458,10 @@ impl Panel for AssistantPanel {
     fn toggle_action(&self) -> Box<dyn Action> {
         Box::new(ToggleFocus)
     }
+
+    fn activation_priority(&self) -> u32 {
+        4
+    }
 }
 
 impl EventEmitter<PanelEvent> for AssistantPanel {}
@@ -1556,6 +1560,7 @@ impl ContextEditor {
             let mut editor = Editor::for_buffer(context.read(cx).buffer().clone(), None, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_show_line_numbers(false, cx);
+            editor.set_show_scrollbars(false, cx);
             editor.set_show_git_diff_gutter(false, cx);
             editor.set_show_code_actions(false, cx);
             editor.set_show_runnables(false, cx);
@@ -3649,7 +3654,7 @@ impl ContextEditor {
 
         let (style, tooltip) = match token_state(&self.context, cx) {
             Some(TokenState::NoTokensLeft { .. }) => (
-                ButtonStyle::Tinted(TintColor::Negative),
+                ButtonStyle::Tinted(TintColor::Error),
                 Some(Tooltip::text("Token limit reached", cx)),
             ),
             Some(TokenState::HasMoreTokens {
@@ -3706,7 +3711,7 @@ impl ContextEditor {
 
         let (style, tooltip) = match token_state(&self.context, cx) {
             Some(TokenState::NoTokensLeft { .. }) => (
-                ButtonStyle::Tinted(TintColor::Negative),
+                ButtonStyle::Tinted(TintColor::Error),
                 Some(Tooltip::text("Token limit reached", cx)),
             ),
             Some(TokenState::HasMoreTokens {
@@ -4267,6 +4272,10 @@ impl Item for ContextEditor {
             None
         }
     }
+
+    fn include_in_nav_history() -> bool {
+        false
+    }
 }
 
 impl SearchableItem for ContextEditor {
@@ -4455,23 +4464,36 @@ impl FollowableItem for ContextEditor {
 }
 
 pub struct ContextEditorToolbarItem {
-    fs: Arc<dyn Fs>,
     active_context_editor: Option<WeakView<ContextEditor>>,
     model_summary_editor: View<Editor>,
-    model_selector_menu_handle: PopoverMenuHandle<Picker<LanguageModelPickerDelegate>>,
+    language_model_selector: View<LanguageModelSelector>,
+    language_model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
 }
 
 impl ContextEditorToolbarItem {
     pub fn new(
         workspace: &Workspace,
-        model_selector_menu_handle: PopoverMenuHandle<Picker<LanguageModelPickerDelegate>>,
+        model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
         model_summary_editor: View<Editor>,
+        cx: &mut ViewContext<Self>,
     ) -> Self {
         Self {
-            fs: workspace.app_state().fs.clone(),
             active_context_editor: None,
             model_summary_editor,
-            model_selector_menu_handle,
+            language_model_selector: cx.new_view(|cx| {
+                let fs = workspace.app_state().fs.clone();
+                LanguageModelSelector::new(
+                    move |model, cx| {
+                        update_settings_file::<AssistantSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _| settings.set_model(model.clone()),
+                        );
+                    },
+                    cx,
+                )
+            }),
+            language_model_selector_menu_handle: model_selector_menu_handle,
         }
     }
 
@@ -4560,17 +4582,8 @@ impl Render for ContextEditorToolbarItem {
             //         .map(|remaining_items| format!("Files to scan: {}", remaining_items))
             // })
             .child(
-                LanguageModelSelector::new(
-                    {
-                        let fs = self.fs.clone();
-                        move |model, cx| {
-                            update_settings_file::<AssistantSettings>(
-                                fs.clone(),
-                                cx,
-                                move |settings, _| settings.set_model(model.clone()),
-                            );
-                        }
-                    },
+                LanguageModelSelectorPopoverMenu::new(
+                    self.language_model_selector.clone(),
                     ButtonLike::new("active-model")
                         .style(ButtonStyle::Subtle)
                         .child(
@@ -4616,7 +4629,7 @@ impl Render for ContextEditorToolbarItem {
                             Tooltip::for_action("Change Model", &ToggleModelSelector, cx)
                         }),
                 )
-                .with_handle(self.model_selector_menu_handle.clone()),
+                .with_handle(self.language_model_selector_menu_handle.clone()),
             )
             .children(self.render_remaining_tokens(cx));
 
@@ -4951,7 +4964,7 @@ fn render_slash_command_output_toggle(
         ("slash-command-output-fold-indicator", row.0 as u64),
         !is_folded,
     )
-    .selected(is_folded)
+    .toggle_state(is_folded)
     .on_click(move |_e, cx| fold(!is_folded, cx))
     .into_any_element()
 }
@@ -4961,12 +4974,12 @@ fn fold_toggle(
 ) -> impl Fn(
     MultiBufferRow,
     bool,
-    Arc<dyn Fn(bool, &mut WindowContext<'_>) + Send + Sync>,
-    &mut WindowContext<'_>,
+    Arc<dyn Fn(bool, &mut WindowContext) + Send + Sync>,
+    &mut WindowContext,
 ) -> AnyElement {
     move |row, is_folded, fold, _cx| {
         Disclosure::new((name, row.0 as u64), !is_folded)
-            .selected(is_folded)
+            .toggle_state(is_folded)
             .on_click(move |_e, cx| fold(!is_folded, cx))
             .into_any_element()
     }
@@ -5008,7 +5021,7 @@ fn render_quote_selection_output_toggle(
     _cx: &mut WindowContext,
 ) -> AnyElement {
     Disclosure::new(("quote-selection-indicator", row.0 as u64), !is_folded)
-        .selected(is_folded)
+        .toggle_state(is_folded)
         .on_click(move |_e, cx| fold(!is_folded, cx))
         .into_any_element()
 }
@@ -5031,7 +5044,7 @@ fn render_pending_slash_command_gutter_decoration(
             icon = icon.icon_color(Color::Muted);
         }
         PendingSlashCommandStatus::Running { .. } => {
-            icon = icon.selected(true);
+            icon = icon.toggle_state(true);
         }
         PendingSlashCommandStatus::Error(_) => icon = icon.icon_color(Color::Error),
     }
@@ -5113,9 +5126,11 @@ fn make_lsp_adapter_delegate(
             return Ok(None::<Arc<dyn LspAdapterDelegate>>);
         };
         let http_client = project.client().http_client().clone();
-        project.lsp_store().update(cx, |lsp_store, cx| {
+        project.lsp_store().update(cx, |_, cx| {
             Ok(Some(LocalLspAdapterDelegate::new(
-                lsp_store,
+                project.languages().clone(),
+                project.environment(),
+                cx.weak_model(),
                 &worktree,
                 http_client,
                 project.fs().clone(),

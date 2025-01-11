@@ -6,8 +6,8 @@ use collections::BTreeMap;
 use futures::Future;
 use git::diff::DiffHunkStatus;
 use gpui::{
-    AnyWindowHandle, AppContext, Keystroke, ModelContext, Pixels, Point, View, ViewContext,
-    VisualTestContext, WindowHandle,
+    prelude::*, AnyWindowHandle, AppContext, Keystroke, ModelContext, Pixels, Point, View,
+    ViewContext, VisualTestContext, WindowHandle,
 };
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
@@ -23,8 +23,6 @@ use std::{
         Arc,
     },
 };
-
-use ui::Context;
 use util::{
     assert_set_eq,
     test::{generate_marked_text, marked_text_ranges},
@@ -232,6 +230,7 @@ impl EditorTestContext {
         self.cx.background_executor.run_until_parked();
     }
 
+    #[track_caller]
     pub fn ranges(&mut self, marked_text: &str) -> Vec<Range<usize>> {
         let (unmarked_text, ranges) = marked_text_ranges(marked_text, false);
         assert_eq!(self.buffer_text(), unmarked_text);

@@ -518,7 +518,6 @@ impl TestServer {
             stripe_billing: None,
             rate_limiter: Arc::new(RateLimiter::new(test_db.db().clone())),
             executor,
-            clickhouse_client: None,
             kinesis_client: None,
             config: Config {
                 http_port: 0,
@@ -549,10 +548,6 @@ impl TestServer {
                 prediction_api_url: None,
                 prediction_api_key: None,
                 prediction_model: None,
-                clickhouse_url: None,
-                clickhouse_user: None,
-                clickhouse_password: None,
-                clickhouse_database: None,
                 zed_client_checksum_seed: None,
                 slack_panics_webhook: None,
                 auto_join_channel_id: None,

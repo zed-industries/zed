@@ -47,6 +47,7 @@ pub(crate) fn handle_msg(
         WM_MOUSEMOVE => handle_mouse_move_msg(handle, lparam, wparam, state_ptr),
         WM_MOUSELEAVE => handle_mouse_leave_msg(state_ptr),
         WM_NCMOUSEMOVE => handle_nc_mouse_move_msg(handle, lparam, state_ptr),
+        WM_NCMOUSELEAVE => handle_nc_mouse_leave_msg(state_ptr),
         WM_NCLBUTTONDOWN => {
             handle_nc_mouse_down_msg(handle, MouseButton::Left, wparam, lparam, state_ptr)
         }
@@ -141,16 +142,26 @@ fn handle_size_msg(
     lparam: LPARAM,
     state_ptr: Rc<WindowsWindowStatePtr>,
 ) -> Option<isize> {
+    let mut lock = state_ptr.state.borrow_mut();
+
+    // Don't resize the renderer when the window is minimized, but record that it was minimized so
+    // that on restore the swap chain can be recreated via `update_drawable_size_even_if_unchanged`.
     if wparam.0 == SIZE_MINIMIZED as usize {
+        lock.restore_from_minimized = lock.callbacks.request_frame.take();
         return Some(0);
     }
 
     let width = lparam.loword().max(1) as i32;
     let height = lparam.hiword().max(1) as i32;
-    let mut lock = state_ptr.state.borrow_mut();
     let new_size = size(DevicePixels(width), DevicePixels(height));
     let scale_factor = lock.scale_factor;
-    lock.renderer.update_drawable_size(new_size);
+    if lock.restore_from_minimized.is_some() {
+        lock.renderer
+            .update_drawable_size_even_if_unchanged(new_size);
+        lock.callbacks.request_frame = lock.restore_from_minimized.take();
+    } else {
+        lock.renderer.update_drawable_size(new_size);
+    }
     let new_size = new_size.to_pixels(scale_factor);
     lock.logical_size = new_size;
     if let Some(mut callback) = lock.callbacks.resize.take() {
@@ -302,6 +313,18 @@ fn handle_mouse_move_msg(
         return result;
     }
     Some(1)
+}
+
+fn handle_nc_mouse_leave_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
+    let mut lock = state_ptr.state.borrow_mut();
+    lock.hovered = false;
+    if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
+        drop(lock);
+        callback(false);
+        state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
+    }
+
+    Some(0)
 }
 
 fn handle_mouse_leave_msg(state_ptr: Rc<WindowsWindowStatePtr>) -> Option<isize> {
@@ -959,6 +982,27 @@ fn handle_nc_mouse_move_msg(
 ) -> Option<isize> {
     if !state_ptr.hide_title_bar {
         return None;
+    }
+
+    let mut lock = state_ptr.state.borrow_mut();
+    if !lock.hovered {
+        lock.hovered = true;
+        unsafe {
+            TrackMouseEvent(&mut TRACKMOUSEEVENT {
+                cbSize: std::mem::size_of::<TRACKMOUSEEVENT>() as u32,
+                dwFlags: TME_LEAVE | TME_NONCLIENT,
+                hwndTrack: handle,
+                dwHoverTime: HOVER_DEFAULT,
+            })
+            .log_err()
+        };
+        if let Some(mut callback) = lock.callbacks.hovered_status_change.take() {
+            drop(lock);
+            callback(true);
+            state_ptr.state.borrow_mut().callbacks.hovered_status_change = Some(callback);
+        }
+    } else {
+        drop(lock);
     }
 
     let mut lock = state_ptr.state.borrow_mut();

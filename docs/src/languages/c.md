@@ -14,6 +14,16 @@ CompileFlags:
   Add: [-xc]
 ```
 
+By default clang and gcc by will recognize `*.C` and `*.H` (uppercase extensions) as C++ and not C and so Zed too follows this convention. If you are working with a C-only project (perhaps one with legacy uppercase pathing like `FILENAME.C`) you can override this behavior by adding this to your settings:
+
+```json
+{
+  "file_types": {
+    "C": ["C", "H"]
+  }
+}
+```
+
 ## Formatting
 
 By default Zed will use the `clangd` language server for formatting C code. The Clangd is the same as the `clang-format` CLI tool. To configure this you can add a `.clang-format` file. For example:
@@ -31,7 +41,7 @@ You can trigger formatting via {#kb editor::Format} or the `editor: format` acti
 
 ```json
   "languages": {
-    "C" {
+    "C": {
       "format_on_save": "on",
       "tab_size": 2
     }
@@ -39,3 +49,17 @@ You can trigger formatting via {#kb editor::Format} or the `editor: format` acti
 ```
 
 See [Clang-Format Style Options](https://clang.llvm.org/docs/ClangFormatStyleOptions.html) for a complete list of options.
+
+## Compile Commands
+
+For some projects Clangd requires a `compile_commands.json` file to properly analyze your project. This file contains the compilation database that tells clangd how your project should be built.
+
+### CMake Compile Commands
+
+With CMake, you can generate `compile_commands.json` automatically by adding the following line to your `CMakeLists.txt`:
+
+```cmake
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
+```
+
+After building your project, CMake will generate the `compile_commands.json` file in the build directory and clangd will automatically pick it up.

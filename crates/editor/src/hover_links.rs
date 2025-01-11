@@ -266,7 +266,7 @@ pub fn update_inlay_link_and_hover_points(
     editor: &mut Editor,
     secondary_held: bool,
     shift_held: bool,
-    cx: &mut ViewContext<'_, Editor>,
+    cx: &mut ViewContext<Editor>,
 ) {
     let hovered_offset = if point_for_position.column_overshoot_after_line_end == 0 {
         Some(snapshot.display_point_to_inlay_offset(point_for_position.exact_unclipped, Bias::Left))
@@ -691,6 +691,65 @@ pub(crate) fn find_url(
             return Some((range, link.as_str().to_string()));
         }
     }
+    None
+}
+
+pub(crate) fn find_url_from_range(
+    buffer: &Model<language::Buffer>,
+    range: Range<text::Anchor>,
+    mut cx: AsyncWindowContext,
+) -> Option<String> {
+    const LIMIT: usize = 2048;
+
+    let Ok(snapshot) = buffer.update(&mut cx, |buffer, _| buffer.snapshot()) else {
+        return None;
+    };
+
+    let start_offset = range.start.to_offset(&snapshot);
+    let end_offset = range.end.to_offset(&snapshot);
+
+    let mut token_start = start_offset.min(end_offset);
+    let mut token_end = start_offset.max(end_offset);
+
+    let range_len = token_end - token_start;
+
+    if range_len >= LIMIT {
+        return None;
+    }
+
+    // Skip leading whitespace
+    for ch in snapshot.chars_at(token_start).take(range_len) {
+        if !ch.is_whitespace() {
+            break;
+        }
+        token_start += ch.len_utf8();
+    }
+
+    // Skip trailing whitespace
+    for ch in snapshot.reversed_chars_at(token_end).take(range_len) {
+        if !ch.is_whitespace() {
+            break;
+        }
+        token_end -= ch.len_utf8();
+    }
+
+    if token_start >= token_end {
+        return None;
+    }
+
+    let text = snapshot
+        .text_for_range(token_start..token_end)
+        .collect::<String>();
+
+    let mut finder = LinkFinder::new();
+    finder.kinds(&[LinkKind::Url]);
+
+    if let Some(link) = finder.links(&text).next() {
+        if link.start() == 0 && link.end() == text.len() {
+            return Some(link.as_str().to_string());
+        }
+    }
+
     None
 }
 
