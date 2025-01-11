@@ -40,6 +40,7 @@ members = [
     "crates/feedback",
     "crates/file_finder",
     "crates/file_icons",
+    "crates/fireworks",
     "crates/fs",
     "crates/fsevent",
     "crates/fuzzy",
@@ -149,12 +150,9 @@ members = [
     # Extensions
     #
 
-    "extensions/astro",
-    "extensions/clojure",
     "extensions/csharp",
     "extensions/deno",
     "extensions/elixir",
-    "extensions/elm",
     "extensions/emmet",
     "extensions/erlang",
     "extensions/glsl",
@@ -225,6 +223,7 @@ feature_flags = { path = "crates/feature_flags" }
 feedback = { path = "crates/feedback" }
 file_finder = { path = "crates/file_finder" }
 file_icons = { path = "crates/file_icons" }
+fireworks = { path = "crates/fireworks" }
 fs = { path = "crates/fs" }
 fsevent = { path = "crates/fsevent" }
 fuzzy = { path = "crates/fuzzy" }
@@ -337,7 +336,7 @@ zeta = { path = "crates/zeta" }
 #
 
 aho-corasick = "1.1"
-alacritty_terminal = { git = "https://github.com/alacritty/alacritty", rev = "91d034ff8b53867143c005acfaa14609147c9a2c" }
+alacritty_terminal = "0.24"
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
@@ -345,7 +344,7 @@ ashpd = { version = "0.10", default-features = false, features = ["async-std"]}
 async-compat = "0.2.1"
 async-compression = { version = "0.4", features = ["gzip", "futures-io"] }
 async-dispatcher = "0.1"
-async-fs = "1.6"
+async-fs = "2.1"
 async-pipe = { git = "https://github.com/zed-industries/async-pipe-rs", rev = "82d00a04211cf4e1236029aa03e6b6ce2a74c553" }
 async-recursion = "1.0.0"
 async-tar = "0.5.0"
@@ -355,9 +354,9 @@ async-watch = "0.3.1"
 async_zip = { version = "0.0.17", features = ["deflate", "deflate64"] }
 base64 = "0.22"
 bitflags = "2.6.0"
-blade-graphics = { git = "https://github.com/kvark/blade", rev = "099555282605c7c4cca9e66a8f40148298347f80" }
-blade-macros = { git = "https://github.com/kvark/blade", rev = "099555282605c7c4cca9e66a8f40148298347f80" }
-blade-util = { git = "https://github.com/kvark/blade", rev = "099555282605c7c4cca9e66a8f40148298347f80" }
+blade-graphics = { git = "https://github.com/kvark/blade", rev = "091a8401033847bb9b6ace3fcf70448d069621c5" }
+blade-macros = { git = "https://github.com/kvark/blade", rev = "091a8401033847bb9b6ace3fcf70448d069621c5" }
+blade-util = { git = "https://github.com/kvark/blade", rev = "091a8401033847bb9b6ace3fcf70448d069621c5" }
 blake3 = "1.5.3"
 bytes = "1.0"
 cargo_metadata = "0.19"
@@ -392,33 +391,33 @@ hyper = "0.14"
 http = "1.1"
 ignore = "0.4.22"
 image = "0.25.1"
-indexmap = { version = "1.6.2", features = ["serde"] }
+indexmap = { version = "2.7.0", features = ["serde"] }
 indoc = "2"
-itertools = "0.13.0"
+itertools = "0.14.0"
 jsonwebtoken = "9.3"
-jupyter-protocol = { version = "0.5.0" }
-jupyter-websocket-client = { version = "0.8.0" }
+jupyter-protocol = { version = "0.6.0" }
+jupyter-websocket-client = { version = "0.9.0" }
 libc = "0.2"
 libsqlite3-sys = { version = "0.30.1", features = ["bundled"] }
 linkify = "0.10.0"
-livekit = { git = "https://github.com/zed-industries/rust-sdks", rev="799f10133d93ba2a88642cd480d01ec4da53408c", features = ["dispatcher", "services-dispatcher", "rustls-tls-native-roots"], default-features = false }
+livekit = { git = "https://github.com/zed-industries/livekit-rust-sdks", rev="060964da10574cd9bf06463a53bf6e0769c5c45e", features = ["dispatcher", "services-dispatcher", "rustls-tls-native-roots"], default-features = false }
 log = { version = "0.4.16", features = ["kv_unstable_serde", "serde"] }
 markup5ever_rcdom = "0.3.0"
 nanoid = "0.4"
-nbformat = { version = "0.9.0" }
+nbformat = { version = "0.10.0" }
 nix = "0.29"
 num-format = "0.4.4"
-once_cell = "1.19.0"
 ordered-float = "2.1.1"
 palette = { version = "0.7.5", default-features = false, features = ["std"] }
 parking_lot = "0.12.1"
 pathdiff = "0.2"
-pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c" }
-pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c" }
-pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c" }
-pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c" }
-pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c" }
-pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "ffcbf3f28c46633abd5448a52b1f396c322e0d6c" }
+pet = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0" }
+pet-fs = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0" }
+pet-pixi = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0" }
+pet-conda = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0" }
+pet-core = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0" }
+pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0" }
+pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0" }
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
 profiling = "1"
@@ -439,14 +438,15 @@ reqwest = { git = "https://github.com/zed-industries/reqwest.git", rev = "fd110f
     "stream",
 ] }
 rsa = "0.9.6"
-runtimelib = { version = "0.24.0", default-features = false, features = [
+runtimelib = { version = "0.25.0", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rustc-demangle = "0.1.23"
 rust-embed = { version = "8.4", features = ["include-exclude"] }
+rustc-hash = "2.1.0"
 rustls = "0.21.12"
 rustls-native-certs = "0.8.0"
-schemars = { version = "0.8", features = ["impl_json_schema"] }
+schemars = { version = "0.8", features = ["impl_json_schema", "indexmap2"] }
 semver = "1.0"
 serde = { version = "1.0", features = ["derive", "rc"] }
 serde_derive = { version = "1.0", features = ["deserialize_in_place"] }
@@ -463,10 +463,10 @@ signal-hook = "0.3.17"
 similar = "1.3"
 simplelog = "0.12.2"
 smallvec = { version = "1.6", features = ["union"] }
-smol = "1.2"
+smol = "2.0"
 sqlformat = "0.2"
 strsim = "0.11"
-strum = { version = "0.25.0", features = ["derive"] }
+strum = { version = "0.26.0", features = ["derive"] }
 subtle = "2.5.0"
 sys-locale = "0.3.1"
 sysinfo = "0.31.0"
@@ -498,7 +498,7 @@ tree-sitter-heex = { git = "https://github.com/zed-industries/tree-sitter-heex",
 tree-sitter-diff = "0.1.0"
 tree-sitter-html = "0.20"
 tree-sitter-jsdoc = "0.23"
-tree-sitter-json = "0.23"
+tree-sitter-json = "0.24"
 tree-sitter-md = { git = "https://github.com/tree-sitter-grammars/tree-sitter-markdown", rev = "9a23c1a96c0513d8fc6520972beedd419a973539" }
 tree-sitter-python = "0.23"
 tree-sitter-regex = "0.23"
@@ -525,12 +525,7 @@ wasmtime-wasi = "24"
 which = "6.0.0"
 wit-component = "0.201"
 zstd = "0.11"
-# Custom metal-rs is only needed for "macos-blade" feature of GPUI
-#TODO: switch to crates once these are published:
-# - https://github.com/gfx-rs/metal-rs/pull/335
-# - https://github.com/gfx-rs/metal-rs/pull/336
-# - https://github.com/gfx-rs/metal-rs/pull/337
-metal = { git = "https://github.com/gfx-rs/metal-rs", rev = "ef768ff9d742ae6a0f4e83ddc8031264e7d460c4" }
+metal = "0.30"
 
 [workspace.dependencies.async-stripe]
 git = "https://github.com/zed-industries/async-stripe"

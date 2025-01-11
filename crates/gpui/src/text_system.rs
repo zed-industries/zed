@@ -356,7 +356,7 @@ impl WindowTextSystem {
             });
         }
 
-        let layout = self.layout_line(text.as_ref(), font_size, runs)?;
+        let layout = self.layout_line(&text, font_size, runs)?;
 
         Ok(ShapedLine {
             layout,
@@ -483,12 +483,16 @@ impl WindowTextSystem {
     /// Subsets of the line can be styled independently with the `runs` parameter.
     /// Generally, you should prefer to use `TextLayout::shape_line` instead, which
     /// can be painted directly.
-    pub fn layout_line(
+    pub fn layout_line<Text>(
         &self,
-        text: &str,
+        text: Text,
         font_size: Pixels,
         runs: &[TextRun],
-    ) -> Result<Arc<LineLayout>> {
+    ) -> Result<Arc<LineLayout>>
+    where
+        Text: AsRef<str>,
+        SharedString: From<Text>,
+    {
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
         for run in runs.iter() {
             let font_id = self.resolve_font(&run.font);

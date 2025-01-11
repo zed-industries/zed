@@ -10,4 +10,3 @@ workspace = true
 
 [dependencies]
 gpui.workspace = true
-once_cell.workspace = true

@@ -320,7 +320,7 @@ struct ExcerptIdMapping {
 
 /// A range of text from a single [`Buffer`], to be shown as an [`Excerpt`].
 /// These ranges are relative to the buffer itself
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ExcerptRange<T> {
     /// The full range of text to be shown in the excerpt.
     pub context: Range<T>,
@@ -1802,45 +1802,6 @@ impl MultiBuffer {
         })
     }
 
-    pub fn range_to_buffer_ranges<T: ToOffset>(
-        &self,
-        range: Range<T>,
-        cx: &AppContext,
-    ) -> Vec<(Model<Buffer>, Range<usize>, ExcerptId)> {
-        let snapshot = self.read(cx);
-        let start = range.start.to_offset(&snapshot);
-        let end = range.end.to_offset(&snapshot);
-
-        let mut result = Vec::new();
-        let mut cursor = snapshot.cursor::<usize>();
-        cursor.seek(&start);
-
-        while let Some(region) = cursor.region() {
-            if region.range.start > end {
-                break;
-            }
-            if region.is_main_buffer {
-                let start_overshoot = start.saturating_sub(region.range.start);
-                let end_overshoot = end.saturating_sub(region.range.start);
-                let start = region
-                    .buffer_range
-                    .end
-                    .min(region.buffer_range.start + start_overshoot);
-                let end = region
-                    .buffer_range
-                    .end
-                    .min(region.buffer_range.start + end_overshoot);
-                let buffer = self.buffers.borrow()[&region.buffer.remote_id()]
-                    .buffer
-                    .clone();
-                result.push((buffer, start..end, region.excerpt.id));
-            }
-            cursor.next();
-        }
-
-        result
-    }
-
     pub fn remove_excerpts(
         &mut self,
         excerpt_ids: impl IntoIterator<Item = ExcerptId>,
@@ -3296,6 +3257,56 @@ impl MultiBufferSnapshot {
         })
     }
 
+    pub fn excerpt_ids_for_range<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = ExcerptId> + 'a {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut cursor = self.cursor::<usize>();
+        cursor.seek(&range.start);
+        std::iter::from_fn(move || {
+            let region = cursor.region()?;
+            if region.range.start >= range.end {
+                return None;
+            }
+            cursor.next_excerpt();
+            Some(region.excerpt.id)
+        })
+    }
+
+    pub fn range_to_buffer_ranges<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> Vec<(&'a BufferSnapshot, Range<usize>, ExcerptId)> {
+        let start = range.start.to_offset(&self);
+        let end = range.end.to_offset(&self);
+
+        let mut cursor = self.cursor::<usize>();
+        cursor.seek(&start);
+
+        let mut result = Vec::new();
+        while let Some(region) = cursor.region() {
+            if region.range.start > end {
+                break;
+            }
+            if region.is_main_buffer {
+                let start_overshoot = start.saturating_sub(region.range.start);
+                let end_overshoot = end.saturating_sub(region.range.start);
+                let start = region
+                    .buffer_range
+                    .end
+                    .min(region.buffer_range.start + start_overshoot);
+                let end = region
+                    .buffer_range
+                    .end
+                    .min(region.buffer_range.start + end_overshoot);
+                result.push((region.buffer, start..end, region.excerpt.id));
+            }
+            cursor.next();
+        }
+        result
+    }
+
     fn buffer_regions_in_range<'a>(
         &'a self,
         range: Range<usize>,
@@ -4636,6 +4647,24 @@ impl MultiBufferSnapshot {
         }
     }
 
+    pub fn buffer_ids_in_selected_rows(
+        &self,
+        selection: Selection<Point>,
+    ) -> impl Iterator<Item = BufferId> + '_ {
+        let mut cursor = self.excerpts.cursor::<Point>(&());
+        cursor.seek(&Point::new(selection.start.row, 0), Bias::Right, &());
+        cursor.prev(&());
+
+        iter::from_fn(move || {
+            cursor.next(&());
+            if cursor.start().row <= selection.end.row {
+                cursor.item().map(|item| item.buffer_id)
+            } else {
+                None
+            }
+        })
+    }
+
     pub fn excerpts(
         &self,
     ) -> impl Iterator<Item = (ExcerptId, &BufferSnapshot, ExcerptRange<text::Anchor>)> {
@@ -5061,16 +5090,12 @@ impl MultiBufferSnapshot {
             .any(|excerpt| excerpt.buffer.has_diagnostics())
     }
 
-    pub fn diagnostic_group<'a, O>(
-        &'a self,
-        group_id: usize,
-    ) -> impl Iterator<Item = DiagnosticEntry<O>> + 'a
-    where
-        O: text::FromAnchor + 'a,
-    {
-        self.as_singleton()
-            .into_iter()
-            .flat_map(move |(_, _, buffer)| buffer.diagnostic_group(group_id))
+    pub fn diagnostic_group(
+        &self,
+        _group_id: usize,
+    ) -> impl Iterator<Item = DiagnosticEntry<Anchor>> + '_ {
+        todo!();
+        [].into_iter()
     }
 
     pub fn diagnostics_in_range<'a, T, O>(
@@ -5108,15 +5133,16 @@ impl MultiBufferSnapshot {
             })
     }
 
-    pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
+    pub fn syntax_ancestor<T: ToOffset>(
+        &self,
+        range: Range<T>,
+    ) -> Option<(tree_sitter::Node, Range<usize>)> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let excerpt = self.excerpt_containing(range.clone())?;
-
-        let ancestor_buffer_range = excerpt
+        let node = excerpt
             .buffer()
-            .range_for_syntax_ancestor(excerpt.map_range_to_buffer(range))?;
-
-        Some(excerpt.map_range_from_buffer(ancestor_buffer_range))
+            .syntax_ancestor(excerpt.map_range_to_buffer(range))?;
+        Some((node, excerpt.map_range_from_buffer(node.byte_range())))
     }
 
     pub fn outline(&self, theme: Option<&SyntaxTheme>) -> Option<Outline<Anchor>> {
@@ -5963,6 +5989,10 @@ impl<'a> MultiBufferExcerpt<'a> {
 
     pub fn id(&self) -> ExcerptId {
         self.excerpt.id
+    }
+
+    pub fn buffer_id(&self) -> BufferId {
+        self.excerpt.buffer_id
     }
 
     pub fn start_anchor(&self) -> Anchor {

@@ -49,9 +49,9 @@ pub enum IconPosition {
 pub enum TintColor {
     #[default]
     Accent,
-    Negative,
+    Error,
     Warning,
-    Positive,
+    Success,
 }
 
 impl TintColor {
@@ -63,7 +63,7 @@ impl TintColor {
                 label_color: cx.theme().colors().text,
                 icon_color: cx.theme().colors().text,
             },
-            TintColor::Negative => ButtonLikeStyles {
+            TintColor::Error => ButtonLikeStyles {
                 background: cx.theme().status().error_background,
                 border_color: cx.theme().status().error_border,
                 label_color: cx.theme().colors().text,
@@ -75,7 +75,7 @@ impl TintColor {
                 label_color: cx.theme().colors().text,
                 icon_color: cx.theme().colors().text,
             },
-            TintColor::Positive => ButtonLikeStyles {
+            TintColor::Success => ButtonLikeStyles {
                 background: cx.theme().status().success_background,
                 border_color: cx.theme().status().success_border,
                 label_color: cx.theme().colors().text,
@@ -89,9 +89,9 @@ impl From<TintColor> for Color {
     fn from(tint: TintColor) -> Self {
         match tint {
             TintColor::Accent => Color::Accent,
-            TintColor::Negative => Color::Error,
+            TintColor::Error => Color::Error,
             TintColor::Warning => Color::Warning,
-            TintColor::Positive => Color::Success,
+            TintColor::Success => Color::Success,
         }
     }
 }

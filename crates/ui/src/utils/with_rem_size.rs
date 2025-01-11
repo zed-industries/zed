@@ -1,6 +1,7 @@
 use gpui::{
     div, AnyElement, Bounds, Div, DivFrameState, Element, ElementId, GlobalElementId, Hitbox,
-    IntoElement, LayoutId, ParentElement, Pixels, StyleRefinement, Styled, WindowContext,
+    InteractiveElement as _, IntoElement, LayoutId, ParentElement, Pixels, StyleRefinement, Styled,
+    WindowContext,
 };
 
 /// An element that sets a particular rem size for its children.
@@ -17,6 +18,13 @@ impl WithRemSize {
             div: div(),
             rem_size: rem_size.into(),
         }
+    }
+
+    /// Block the mouse from interacting with this element or any of its children
+    /// The fluent API equivalent to [`Interactivity::occlude_mouse`]
+    pub fn occlude(mut self) -> Self {
+        self.div = self.div.occlude();
+        self
     }
 }
 
@@ -37,7 +45,7 @@ impl Element for WithRemSize {
     type PrepaintState = Option<Hitbox>;
 
     fn id(&self) -> Option<ElementId> {
-        self.div.id()
+        Element::id(&self.div)
     }
 
     fn request_layout(

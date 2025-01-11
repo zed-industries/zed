@@ -32,6 +32,7 @@ use crate::{
 pub use block_map::{
     Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
     BlockPoint, BlockProperties, BlockRows, BlockStyle, CustomBlockId, RenderBlock,
+    StickyHeaderExcerpt,
 };
 use block_map::{BlockRow, BlockSnapshot};
 use collections::{HashMap, HashSet};
@@ -41,7 +42,7 @@ use fold_map::{FoldMap, FoldSnapshot};
 use gpui::{
     AnyElement, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
 };
-pub(crate) use inlay_map::Inlay;
+pub use inlay_map::Inlay;
 use inlay_map::{InlayMap, InlaySnapshot};
 pub use inlay_map::{InlayOffset, InlayPoint};
 use invisibles::{is_invisible, replacement};
@@ -1098,6 +1099,10 @@ impl DisplaySnapshot {
         self.block_snapshot
             .blocks_in_range(rows.start.0..rows.end.0)
             .map(|(row, block)| (DisplayRow(row), block))
+    }
+
+    pub fn sticky_header_excerpt(&self, row: DisplayRow) -> Option<StickyHeaderExcerpt<'_>> {
+        self.block_snapshot.sticky_header_excerpt(row.0)
     }
 
     pub fn block_for_id(&self, id: BlockId) -> Option<Block> {

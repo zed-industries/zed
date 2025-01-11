@@ -128,13 +128,18 @@ impl SyntaxTreeView {
     fn editor_updated(&mut self, did_reparse: bool, cx: &mut ViewContext<Self>) -> Option<()> {
         // Find which excerpt the cursor is in, and the position within that excerpted buffer.
         let editor_state = self.editor.as_mut()?;
+        let snapshot = editor_state
+            .editor
+            .update(cx, |editor, cx| editor.snapshot(cx));
         let (buffer, range, excerpt_id) = editor_state.editor.update(cx, |editor, cx| {
             let selection_range = editor.selections.last::<usize>(cx).range();
-            editor
-                .buffer()
-                .read(cx)
-                .range_to_buffer_ranges(selection_range, cx)
-                .pop()
+            let multi_buffer = editor.buffer().read(cx);
+            let (buffer, range, excerpt_id) = snapshot
+                .buffer_snapshot
+                .range_to_buffer_ranges(selection_range)
+                .pop()?;
+            let buffer = multi_buffer.buffer(buffer.remote_id()).unwrap().clone();
+            Some((buffer, range, excerpt_id))
         })?;
 
         // If the cursor has moved into a different excerpt, retrieve a new syntax layer
@@ -273,7 +278,7 @@ impl SyntaxTreeView {
 }
 
 impl Render for SyntaxTreeView {
-    fn render(&mut self, cx: &mut gpui::ViewContext<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let mut rendered = div().flex_1();
 
         if let Some(layer) = self
@@ -422,7 +427,7 @@ impl SyntaxTreeToolbarItemView {
         }
     }
 
-    fn render_menu(&mut self, cx: &mut ViewContext<'_, Self>) -> Option<PopoverMenu<ContextMenu>> {
+    fn render_menu(&mut self, cx: &mut ViewContext<Self>) -> Option<PopoverMenu<ContextMenu>> {
         let tree_view = self.tree_view.as_ref()?;
         let tree_view = tree_view.read(cx);
 
@@ -492,7 +497,7 @@ fn format_node_range(node: Node) -> String {
 }
 
 impl Render for SyntaxTreeToolbarItemView {
-    fn render(&mut self, cx: &mut ViewContext<'_, Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         self.render_menu(cx)
             .unwrap_or_else(|| PopoverMenu::new("Empty Syntax Tree"))
     }

@@ -13,13 +13,12 @@ use editor::{
     display_map::ToDisplayPoint,
     Bias, Editor, ToPoint,
 };
-use gpui::{actions, impl_actions, Action, AppContext, Global, ViewContext};
+use gpui::{actions, impl_actions, Action, AppContext, Global, ViewContext, WindowContext};
 use language::Point;
 use multi_buffer::MultiBufferRow;
 use regex::Regex;
 use search::{BufferSearchBar, SearchOptions};
 use serde::Deserialize;
-use ui::WindowContext;
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, SaveIntent};
 
@@ -186,9 +185,12 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
 
         let previous_selections = vim
             .update_editor(cx, |_, editor, cx| {
-                let selections = action
-                    .restore_selection
-                    .then(|| editor.selections.disjoint_anchor_ranges());
+                let selections = action.restore_selection.then(|| {
+                    editor
+                        .selections
+                        .disjoint_anchor_ranges()
+                        .collect::<Vec<_>>()
+                });
                 editor.change_selections(None, cx, |s| {
                     let end = Point::new(range.end.0, s.buffer().line_len(range.end));
                     s.select_ranges([end..Point::new(range.start.0, 0)]);

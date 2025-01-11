@@ -999,6 +999,11 @@ impl<'a> WindowContext<'a> {
         self.window.platform_window.window_bounds()
     }
 
+    /// Return the `WindowBounds` excluding insets (Wayland and X11)
+    pub fn inner_window_bounds(&self) -> WindowBounds {
+        self.window.platform_window.inner_window_bounds()
+    }
+
     /// Dispatch the given action on the currently focused element.
     pub fn dispatch_action(&mut self, action: Box<dyn Action>) {
         let focus_handle = self.focused();
@@ -1581,6 +1586,19 @@ impl<'a> WindowContext<'a> {
             }
         }
 
+        // Element's parent can get hidden (e.g. via the `visible_on_hover` method),
+        // and element's `paint` won't be called (ergo, mouse listeners also won't be active) to detect that the tooltip has to be removed.
+        // Ensure it's not stuck around in such cases.
+        let invalidate_tooltip = !tooltip_request
+            .tooltip
+            .origin_bounds
+            .contains(&self.mouse_position())
+            && (!tooltip_request.tooltip.hoverable
+                || !tooltip_bounds.contains(&self.mouse_position()));
+        if invalidate_tooltip {
+            return None;
+        }
+
         self.with_absolute_element_offset(tooltip_bounds.origin, |cx| element.prepaint(cx));
 
         self.window.tooltip_bounds = Some(TooltipBounds {
@@ -1748,17 +1766,12 @@ impl<'a> WindowContext<'a> {
                 .iter_mut()
                 .map(|listener| listener.take()),
         );
-        if let Some(element_states) = window
-            .rendered_frame
-            .accessed_element_states
-            .get(range.start.accessed_element_states_index..range.end.accessed_element_states_index)
-        {
-            window.next_frame.accessed_element_states.extend(
-                element_states
-                    .iter()
-                    .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
-            );
-        }
+        window.next_frame.accessed_element_states.extend(
+            window.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+                ..range.end.accessed_element_states_index]
+                .iter()
+                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+        );
 
         window
             .text_system
@@ -4867,6 +4880,8 @@ pub enum ElementId {
     FocusHandle(FocusId),
     /// A combination of a name and an integer.
     NamedInteger(SharedString, usize),
+    /// A path
+    Path(Arc<std::path::Path>),
 }
 
 impl Display for ElementId {
@@ -4878,6 +4893,7 @@ impl Display for ElementId {
             ElementId::FocusHandle(_) => write!(f, "FocusHandle")?,
             ElementId::NamedInteger(s, i) => write!(f, "{}-{}", s, i)?,
             ElementId::Uuid(uuid) => write!(f, "{}", uuid)?,
+            ElementId::Path(path) => write!(f, "{}", path.display())?,
         }
 
         Ok(())
@@ -4911,6 +4927,12 @@ impl From<i32> for ElementId {
 impl From<SharedString> for ElementId {
     fn from(name: SharedString) -> Self {
         ElementId::Name(name)
+    }
+}
+
+impl From<Arc<std::path::Path>> for ElementId {
+    fn from(path: Arc<std::path::Path>) -> Self {
+        ElementId::Path(path)
     }
 }
 

@@ -1,8 +1,8 @@
 #[cfg(target_os = "macos")]
 mod mac_watcher;
 
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-pub mod linux_watcher;
+#[cfg(not(target_os = "macos"))]
+pub mod fs_watcher;
 
 use anyhow::{anyhow, Result};
 use git::GitHostingProviderRegistry;
@@ -11,8 +11,7 @@ use git::GitHostingProviderRegistry;
 use ashpd::desktop::trash;
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
 use smol::process::Command;
-#[cfg(any(target_os = "linux", target_os = "freebsd"))]
-use std::fs::File;
+
 #[cfg(unix)]
 use std::os::fd::AsFd;
 #[cfg(unix)]
@@ -445,7 +444,13 @@ impl Fs for RealFs {
 
     #[cfg(any(target_os = "linux", target_os = "freebsd"))]
     async fn trash_file(&self, path: &Path, _options: RemoveOptions) -> Result<()> {
-        let file = File::open(path)?;
+        if let Ok(Some(metadata)) = self.metadata(path).await {
+            if metadata.is_symlink {
+                // TODO: trash_file does not support trashing symlinks yet - https://github.com/bilelmoussaoui/ashpd/issues/255
+                return self.remove_file(path, RemoveOptions::default()).await;
+            }
+        }
+        let file = smol::fs::File::open(path).await?;
         match trash::trash_file(&file.as_fd()).await {
             Ok(_) => Ok(()),
             Err(err) => Err(anyhow::Error::new(err)),
@@ -695,7 +700,7 @@ impl Fs for RealFs {
         )
     }
 
-    #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+    #[cfg(not(target_os = "macos"))]
     async fn watch(
         &self,
         path: &Path,
@@ -705,10 +710,11 @@ impl Fs for RealFs {
         Arc<dyn Watcher>,
     ) {
         use parking_lot::Mutex;
+        use util::paths::SanitizedPath;
 
         let (tx, rx) = smol::channel::unbounded();
         let pending_paths: Arc<Mutex<Vec<PathEvent>>> = Default::default();
-        let watcher = Arc::new(linux_watcher::LinuxWatcher::new(tx, pending_paths.clone()));
+        let watcher = Arc::new(fs_watcher::FsWatcher::new(tx, pending_paths.clone()));
 
         if watcher.add(path).is_err() {
             // If the path doesn't exist yet (e.g. settings.json), watch the parent dir to learn when it's created.
@@ -720,7 +726,16 @@ impl Fs for RealFs {
         }
 
         // Check if path is a symlink and follow the target parent
-        if let Some(target) = self.read_link(&path).await.ok() {
+        if let Some(mut target) = self.read_link(&path).await.ok() {
+            // Check if symlink target is relative path, if so make it absolute
+            if target.is_relative() {
+                if let Some(parent) = path.parent() {
+                    target = parent.join(target);
+                    if let Ok(canonical) = self.canonicalize(&target).await {
+                        target = SanitizedPath::from(canonical).as_path().to_path_buf();
+                    }
+                }
+            }
             watcher.add(&target).ok();
             if let Some(parent) = target.parent() {
                 watcher.add(parent).log_err();
@@ -741,56 +756,6 @@ impl Fs for RealFs {
                 }
             })),
             watcher,
-        )
-    }
-
-    #[cfg(target_os = "windows")]
-    async fn watch(
-        &self,
-        path: &Path,
-        _latency: Duration,
-    ) -> (
-        Pin<Box<dyn Send + Stream<Item = Vec<PathEvent>>>>,
-        Arc<dyn Watcher>,
-    ) {
-        use notify::{EventKind, Watcher};
-
-        let (tx, rx) = smol::channel::unbounded();
-
-        let mut file_watcher = notify::recommended_watcher({
-            let tx = tx.clone();
-            move |event: Result<notify::Event, _>| {
-                if let Some(event) = event.log_err() {
-                    let kind = match event.kind {
-                        EventKind::Create(_) => Some(PathEventKind::Created),
-                        EventKind::Modify(_) => Some(PathEventKind::Changed),
-                        EventKind::Remove(_) => Some(PathEventKind::Removed),
-                        _ => None,
-                    };
-
-                    tx.try_send(
-                        event
-                            .paths
-                            .into_iter()
-                            .map(|path| PathEvent { path, kind })
-                            .collect::<Vec<_>>(),
-                    )
-                    .ok();
-                }
-            }
-        })
-        .expect("Could not start file watcher");
-
-        file_watcher
-            .watch(path, notify::RecursiveMode::Recursive)
-            .log_err();
-
-        (
-            Box::pin(rx.chain(futures::stream::once(async move {
-                drop(file_watcher);
-                vec![]
-            }))),
-            Arc::new(RealWatcher {}),
         )
     }
 
@@ -1042,7 +1007,7 @@ impl FakeFs {
     const SYSTEMTIME_INTERVAL: Duration = Duration::from_nanos(100);
 
     pub fn new(executor: gpui::BackgroundExecutor) -> Arc<Self> {
-        let (tx, mut rx) = smol::channel::bounded::<PathBuf>(10);
+        let (tx, rx) = smol::channel::bounded::<PathBuf>(10);
 
         let this = Arc::new_cyclic(|this| Self {
             this: this.clone(),
@@ -1070,7 +1035,7 @@ impl FakeFs {
         executor.spawn({
             let this = this.clone();
             async move {
-                while let Some(git_event) = rx.next().await {
+                while let Ok(git_event) = rx.recv().await {
                     if let Some(mut state) = this.state.try_lock() {
                         state.emit_event([(git_event, None)]);
                     } else {

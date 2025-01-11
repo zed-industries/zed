@@ -6,7 +6,6 @@ use call::ActiveCall;
 use collections::{BTreeMap, HashMap};
 use editor::Bias;
 use fs::{FakeFs, Fs as _};
-use futures::StreamExt;
 use git::repository::GitFileStatus;
 use gpui::{BackgroundExecutor, Model, TestAppContext};
 use language::{
@@ -873,7 +872,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                     if detach { "detaching" } else { "awaiting" }
                 );
 
-                let mut search = project.update(cx, |project, cx| {
+                let search = project.update(cx, |project, cx| {
                     project.search(
                         SearchQuery::text(
                             query,
@@ -891,7 +890,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                 drop(project);
                 let search = cx.executor().spawn(async move {
                     let mut results = HashMap::default();
-                    while let Some(result) = search.next().await {
+                    while let Ok(result) = search.recv().await {
                         if let SearchResult::Buffer { buffer, ranges } = result {
                             results.entry(buffer).or_insert(ranges);
                         }
@@ -1134,7 +1133,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                     let end = PointUtf16::new(end_row, end_column);
                                     let range = if start > end { end..start } else { start..end };
                                     highlights.push(lsp::DocumentHighlight {
-                                        range: range_to_lsp(range.clone()),
+                                        range: range_to_lsp(range.clone()).unwrap(),
                                         kind: Some(lsp::DocumentHighlightKind::READ),
                                     });
                                 }

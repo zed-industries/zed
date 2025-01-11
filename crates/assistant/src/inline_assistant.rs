@@ -16,7 +16,9 @@ use editor::{
     EditorStyle, ExcerptId, ExcerptRange, GutterDimensions, MultiBuffer, MultiBufferSnapshot,
     ToOffset as _, ToPoint,
 };
-use feature_flags::{FeatureFlagAppExt as _, ZedPro};
+use feature_flags::{
+    Assistant2FeatureFlag, FeatureFlagAppExt as _, FeatureFlagViewExt as _, ZedPro,
+};
 use fs::Fs;
 use futures::{
     channel::mpsc,
@@ -70,10 +72,19 @@ pub fn init(
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
     cx.observe_new_views(|_, cx| {
-        let workspace = cx.view().clone();
-        InlineAssistant::update_global(cx, |inline_assistant, cx| {
-            inline_assistant.register_workspace(&workspace, cx)
+        cx.observe_flag::<Assistant2FeatureFlag, _>({
+            |is_assistant2_enabled, _view, cx| {
+                if is_assistant2_enabled {
+                    // Assistant2 enabled, nothing to do for Assistant1.
+                } else {
+                    let workspace = cx.view().clone();
+                    InlineAssistant::update_global(cx, |inline_assistant, cx| {
+                        inline_assistant.register_workspace(&workspace, cx)
+                    })
+                }
+            }
         })
+        .detach();
     })
     .detach();
 }
@@ -133,7 +144,7 @@ impl InlineAssistant {
             };
             let enabled = AssistantSettings::get_global(cx).enabled;
             terminal_panel.update(cx, |terminal_panel, cx| {
-                terminal_panel.asssistant_enabled(enabled, cx)
+                terminal_panel.set_assistant_enabled(enabled, cx)
             });
         })
         .detach();
@@ -799,10 +810,11 @@ impl InlineAssistant {
             if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
                 let language_name = assist.editor.upgrade().and_then(|editor| {
                     let multibuffer = editor.read(cx).buffer().read(cx);
-                    let ranges = multibuffer.range_to_buffer_ranges(assist.range.clone(), cx);
+                    let multibuffer_snapshot = multibuffer.snapshot(cx);
+                    let ranges = multibuffer_snapshot.range_to_buffer_ranges(assist.range.clone());
                     ranges
                         .first()
-                        .and_then(|(buffer, _, _)| buffer.read(cx).language())
+                        .and_then(|(buffer, _, _)| buffer.language())
                         .map(|language| language.name())
                 });
                 report_assistant_event(
@@ -2617,26 +2629,29 @@ impl EventEmitter<CodegenEvent> for CodegenAlternative {}
 
 impl CodegenAlternative {
     pub fn new(
-        buffer: Model<MultiBuffer>,
+        multi_buffer: Model<MultiBuffer>,
         range: Range<Anchor>,
         active: bool,
         telemetry: Option<Arc<Telemetry>>,
         builder: Arc<PromptBuilder>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let snapshot = buffer.read(cx).snapshot(cx);
+        let snapshot = multi_buffer.read(cx).snapshot(cx);
 
-        let (old_buffer, _, _) = buffer
-            .read(cx)
-            .range_to_buffer_ranges(range.clone(), cx)
+        let (buffer, _, _) = snapshot
+            .range_to_buffer_ranges(range.clone())
             .pop()
             .unwrap();
         let old_buffer = cx.new_model(|cx| {
-            let old_buffer = old_buffer.read(cx);
-            let text = old_buffer.as_rope().clone();
-            let line_ending = old_buffer.line_ending();
-            let language = old_buffer.language().cloned();
-            let language_registry = old_buffer.language_registry();
+            let text = buffer.as_rope().clone();
+            let line_ending = buffer.line_ending();
+            let language = buffer.language().cloned();
+            let language_registry = multi_buffer
+                .read(cx)
+                .buffer(buffer.remote_id())
+                .unwrap()
+                .read(cx)
+                .language_registry();
 
             let mut buffer = Buffer::local_normalized(text, line_ending, cx);
             buffer.set_language(language, cx);
@@ -2647,7 +2662,7 @@ impl CodegenAlternative {
         });
 
         Self {
-            buffer: buffer.clone(),
+            buffer: multi_buffer.clone(),
             old_buffer,
             edit_position: None,
             message_id: None,
@@ -2658,7 +2673,7 @@ impl CodegenAlternative {
             generation: Task::ready(()),
             diff: Diff::default(),
             telemetry,
-            _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
+            _subscription: cx.subscribe(&multi_buffer, Self::handle_buffer_event),
             builder,
             active,
             edits: Vec::new(),
@@ -2869,10 +2884,11 @@ impl CodegenAlternative {
         let telemetry = self.telemetry.clone();
         let language_name = {
             let multibuffer = self.buffer.read(cx);
-            let ranges = multibuffer.range_to_buffer_ranges(self.range.clone(), cx);
+            let snapshot = multibuffer.snapshot(cx);
+            let ranges = snapshot.range_to_buffer_ranges(self.range.clone());
             ranges
                 .first()
-                .and_then(|(buffer, _, _)| buffer.read(cx).language())
+                .and_then(|(buffer, _, _)| buffer.language())
                 .map(|language| language.name())
         };
 

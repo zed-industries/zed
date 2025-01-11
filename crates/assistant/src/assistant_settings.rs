@@ -3,18 +3,12 @@ use std::sync::Arc;
 use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
 use feature_flags::FeatureFlagAppExt;
-use fs::Fs;
 use gpui::{AppContext, Pixels};
 use language_model::{CloudModel, LanguageModel};
-use language_models::{
-    provider::open_ai, AllLanguageModelSettings, AnthropicSettingsContent,
-    AnthropicSettingsContentV1, OllamaSettingsContent, OpenAiSettingsContent,
-    OpenAiSettingsContentV1, VersionedAnthropicSettingsContent, VersionedOpenAiSettingsContent,
-};
 use ollama::Model as OllamaModel;
 use schemars::{schema::Schema, JsonSchema};
 use serde::{Deserialize, Serialize};
-use settings::{update_settings_file, Settings, SettingsSources};
+use settings::{Settings, SettingsSources};
 
 #[derive(Copy, Clone, Default, Debug, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -104,96 +98,6 @@ impl AssistantSettingsContent {
             },
             AssistantSettingsContent::Legacy(_) => true,
         }
-    }
-
-    pub fn update_file(&mut self, fs: Arc<dyn Fs>, cx: &AppContext) {
-        if let AssistantSettingsContent::Versioned(settings) = self {
-            if let VersionedAssistantSettingsContent::V1(settings) = settings {
-                if let Some(provider) = settings.provider.clone() {
-                    match provider {
-                        AssistantProviderContentV1::Anthropic { api_url, .. } => {
-                            update_settings_file::<AllLanguageModelSettings>(
-                                fs,
-                                cx,
-                                move |content, _| {
-                                    if content.anthropic.is_none() {
-                                        content.anthropic =
-                                            Some(AnthropicSettingsContent::Versioned(
-                                                VersionedAnthropicSettingsContent::V1(
-                                                    AnthropicSettingsContentV1 {
-                                                        api_url,
-                                                        available_models: None,
-                                                    },
-                                                ),
-                                            ));
-                                    }
-                                },
-                            )
-                        }
-                        AssistantProviderContentV1::Ollama { api_url, .. } => {
-                            update_settings_file::<AllLanguageModelSettings>(
-                                fs,
-                                cx,
-                                move |content, _| {
-                                    if content.ollama.is_none() {
-                                        content.ollama = Some(OllamaSettingsContent {
-                                            api_url,
-                                            available_models: None,
-                                        });
-                                    }
-                                },
-                            )
-                        }
-                        AssistantProviderContentV1::OpenAi {
-                            api_url,
-                            available_models,
-                            ..
-                        } => update_settings_file::<AllLanguageModelSettings>(
-                            fs,
-                            cx,
-                            move |content, _| {
-                                if content.openai.is_none() {
-                                    let available_models = available_models.map(|models| {
-                                        models
-                                            .into_iter()
-                                            .filter_map(|model| match model {
-                                                OpenAiModel::Custom {
-                                                    name,
-                                                    display_name,
-                                                    max_tokens,
-                                                    max_output_tokens,
-                                                    max_completion_tokens: None,
-                                                } => Some(open_ai::AvailableModel {
-                                                    name,
-                                                    display_name,
-                                                    max_tokens,
-                                                    max_output_tokens,
-                                                    max_completion_tokens: None,
-                                                }),
-                                                _ => None,
-                                            })
-                                            .collect::<Vec<_>>()
-                                    });
-                                    content.openai = Some(OpenAiSettingsContent::Versioned(
-                                        VersionedOpenAiSettingsContent::V1(
-                                            OpenAiSettingsContentV1 {
-                                                api_url,
-                                                available_models,
-                                            },
-                                        ),
-                                    ));
-                                }
-                            },
-                        ),
-                        _ => {}
-                    }
-                }
-            }
-        }
-
-        *self = AssistantSettingsContent::Versioned(VersionedAssistantSettingsContent::V2(
-            self.upgrade(),
-        ));
     }
 
     fn upgrade(&self) -> AssistantSettingsContentV2 {
@@ -534,6 +438,7 @@ fn merge<T>(target: &mut T, value: Option<T>) {
 
 #[cfg(test)]
 mod tests {
+    use fs::Fs;
     use gpui::{ReadGlobal, TestAppContext};
 
     use super::*;

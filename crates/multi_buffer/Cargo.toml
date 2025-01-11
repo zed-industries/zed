@@ -42,6 +42,7 @@ smallvec.workspace = true
 sum_tree.workspace = true
 text.workspace = true
 theme.workspace = true
+tree-sitter.workspace = true
 util.workspace = true
 
 [dev-dependencies]

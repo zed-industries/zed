@@ -122,7 +122,7 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |terminal_panel: &mut TerminalPanel, cx: &mut ViewContext<TerminalPanel>| {
             let settings = AssistantSettings::get_global(cx);
-            terminal_panel.asssistant_enabled(settings.enabled, cx);
+            terminal_panel.set_assistant_enabled(settings.enabled, cx);
         },
     )
     .detach();
@@ -595,7 +595,7 @@ impl AssistantPanel {
                 true
             }
 
-            pane::Event::ActivateItem { local } => {
+            pane::Event::ActivateItem { local, .. } => {
                 if *local {
                     self.workspace
                         .update(cx, |workspace, cx| {
@@ -1458,6 +1458,10 @@ impl Panel for AssistantPanel {
     fn toggle_action(&self) -> Box<dyn Action> {
         Box::new(ToggleFocus)
     }
+
+    fn activation_priority(&self) -> u32 {
+        4
+    }
 }
 
 impl EventEmitter<PanelEvent> for AssistantPanel {}
@@ -1556,6 +1560,7 @@ impl ContextEditor {
             let mut editor = Editor::for_buffer(context.read(cx).buffer().clone(), None, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_show_line_numbers(false, cx);
+            editor.set_show_scrollbars(false, cx);
             editor.set_show_git_diff_gutter(false, cx);
             editor.set_show_code_actions(false, cx);
             editor.set_show_runnables(false, cx);
@@ -3649,7 +3654,7 @@ impl ContextEditor {
 
         let (style, tooltip) = match token_state(&self.context, cx) {
             Some(TokenState::NoTokensLeft { .. }) => (
-                ButtonStyle::Tinted(TintColor::Negative),
+                ButtonStyle::Tinted(TintColor::Error),
                 Some(Tooltip::text("Token limit reached", cx)),
             ),
             Some(TokenState::HasMoreTokens {
@@ -3706,7 +3711,7 @@ impl ContextEditor {
 
         let (style, tooltip) = match token_state(&self.context, cx) {
             Some(TokenState::NoTokensLeft { .. }) => (
-                ButtonStyle::Tinted(TintColor::Negative),
+                ButtonStyle::Tinted(TintColor::Error),
                 Some(Tooltip::text("Token limit reached", cx)),
             ),
             Some(TokenState::HasMoreTokens {
@@ -4266,6 +4271,10 @@ impl Item for ContextEditor {
         } else {
             None
         }
+    }
+
+    fn include_in_nav_history() -> bool {
+        false
     }
 }
 
@@ -4965,8 +4974,8 @@ fn fold_toggle(
 ) -> impl Fn(
     MultiBufferRow,
     bool,
-    Arc<dyn Fn(bool, &mut WindowContext<'_>) + Send + Sync>,
-    &mut WindowContext<'_>,
+    Arc<dyn Fn(bool, &mut WindowContext) + Send + Sync>,
+    &mut WindowContext,
 ) -> AnyElement {
     move |row, is_folded, fold, _cx| {
         Disclosure::new((name, row.0 as u64), !is_folded)

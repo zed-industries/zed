@@ -36,6 +36,7 @@ pub struct InlayHintCache {
     allowed_hint_kinds: HashSet<Option<InlayHintKind>>,
     version: usize,
     pub(super) enabled: bool,
+    enabled_in_settings: bool,
     update_tasks: HashMap<ExcerptId, TasksForRanges>,
     refresh_task: Option<Task<()>>,
     invalidate_debounce: Option<Duration>,
@@ -268,6 +269,7 @@ impl InlayHintCache {
         Self {
             allowed_hint_kinds: inlay_hint_settings.enabled_inlay_hint_kinds(),
             enabled: inlay_hint_settings.enabled,
+            enabled_in_settings: inlay_hint_settings.enabled,
             hints: HashMap::default(),
             update_tasks: HashMap::default(),
             refresh_task: None,
@@ -288,10 +290,21 @@ impl InlayHintCache {
         visible_hints: Vec<Inlay>,
         cx: &mut ViewContext<Editor>,
     ) -> ControlFlow<Option<InlaySplice>> {
+        let old_enabled = self.enabled;
+        // If the setting for inlay hints has changed, update `enabled`. This condition avoids inlay
+        // hint visibility changes when other settings change (such as theme).
+        //
+        // Another option might be to store whether the user has manually toggled inlay hint
+        // visibility, and prefer this. This could lead to confusion as it means inlay hint
+        // visibility would not change when updating the setting if they were ever toggled.
+        if new_hint_settings.enabled != self.enabled_in_settings {
+            self.enabled = new_hint_settings.enabled;
+        };
+        self.enabled_in_settings = new_hint_settings.enabled;
         self.invalidate_debounce = debounce_value(new_hint_settings.edit_debounce_ms);
         self.append_debounce = debounce_value(new_hint_settings.scroll_debounce_ms);
         let new_allowed_hint_kinds = new_hint_settings.enabled_inlay_hint_kinds();
-        match (self.enabled, new_hint_settings.enabled) {
+        match (old_enabled, self.enabled) {
             (false, false) => {
                 self.allowed_hint_kinds = new_allowed_hint_kinds;
                 ControlFlow::Break(None)
@@ -314,7 +327,6 @@ impl InlayHintCache {
                 }
             }
             (true, false) => {
-                self.enabled = new_hint_settings.enabled;
                 self.allowed_hint_kinds = new_allowed_hint_kinds;
                 if self.hints.is_empty() {
                     ControlFlow::Break(None)
@@ -327,7 +339,6 @@ impl InlayHintCache {
                 }
             }
             (false, true) => {
-                self.enabled = new_hint_settings.enabled;
                 self.allowed_hint_kinds = new_allowed_hint_kinds;
                 ControlFlow::Continue(())
             }
@@ -579,7 +590,7 @@ impl InlayHintCache {
         buffer_id: BufferId,
         excerpt_id: ExcerptId,
         id: InlayId,
-        cx: &mut ViewContext<'_, Editor>,
+        cx: &mut ViewContext<Editor>,
     ) {
         if let Some(excerpt_hints) = self.hints.get(&excerpt_id) {
             let mut guard = excerpt_hints.write();
@@ -640,7 +651,7 @@ fn spawn_new_update_tasks(
     excerpts_to_query: HashMap<ExcerptId, (Model<Buffer>, Global, Range<usize>)>,
     invalidate: InvalidationStrategy,
     update_cache_version: usize,
-    cx: &mut ViewContext<'_, Editor>,
+    cx: &mut ViewContext<Editor>,
 ) {
     for (excerpt_id, (excerpt_buffer, new_task_buffer_version, excerpt_visible_range)) in
         excerpts_to_query
@@ -797,7 +808,7 @@ fn new_update_task(
     query: ExcerptQuery,
     query_ranges: QueryRanges,
     excerpt_buffer: Model<Buffer>,
-    cx: &mut ViewContext<'_, Editor>,
+    cx: &mut ViewContext<Editor>,
 ) -> Task<()> {
     cx.spawn(move |editor, mut cx| async move {
         let visible_range_update_results = future::join_all(
@@ -1129,7 +1140,7 @@ fn apply_hint_update(
     invalidate: bool,
     buffer_snapshot: BufferSnapshot,
     multi_buffer_snapshot: MultiBufferSnapshot,
-    cx: &mut ViewContext<'_, Editor>,
+    cx: &mut ViewContext<Editor>,
 ) {
     let cached_excerpt_hints = editor
         .inlay_hint_cache
@@ -3434,7 +3445,7 @@ pub mod tests {
         labels
     }
 
-    pub fn visible_hint_labels(editor: &Editor, cx: &ViewContext<'_, Editor>) -> Vec<String> {
+    pub fn visible_hint_labels(editor: &Editor, cx: &ViewContext<Editor>) -> Vec<String> {
         let mut hints = editor
             .visible_inlay_hints(cx)
             .into_iter()

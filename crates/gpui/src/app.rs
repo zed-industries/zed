@@ -33,9 +33,9 @@ use util::ResultExt;
 
 use crate::{
     current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
-    Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
-    Entity, EventEmitter, FocusHandle, FocusId, ForegroundExecutor, Global, KeyBinding, Keymap,
-    Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
+    Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, Context, DispatchPhase,
+    DisplayId, Entity, EventEmitter, FocusHandle, FocusId, ForegroundExecutor, Global, KeyBinding,
+    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
     PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
     Subscription, SvgRenderer, Task, TextSystem, View, ViewContext, Window, WindowAppearance,
@@ -1226,6 +1226,11 @@ impl AppContext {
         self.actions.all_action_names()
     }
 
+    /// Get a list of all deprecated action aliases and their canonical names.
+    pub fn action_deprecations(&self) -> &[(SharedString, SharedString)] {
+        self.actions.action_deprecations()
+    }
+
     /// Register a callback to be invoked when the application is about to quit.
     /// It is not possible to cancel the quit event at this point.
     pub fn on_app_quit<Fut>(
@@ -1413,6 +1418,11 @@ impl AppContext {
     pub fn get_name(&self) -> &'static str {
         self.name.as_ref().unwrap()
     }
+
+    /// Returns `true` if the platform file picker supports selecting a mix of files and directories.
+    pub fn can_select_mixed_files_and_dirs(&self) -> bool {
+        self.platform.can_select_mixed_files_and_dirs()
+    }
 }
 
 impl Context for AppContext {
@@ -1490,7 +1500,7 @@ impl Context for AppContext {
 
     fn update_window<T, F>(&mut self, handle: AnyWindowHandle, update: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+        F: FnOnce(AnyView, &mut WindowContext) -> T,
     {
         self.update(|cx| {
             let mut window = cx
@@ -1612,6 +1622,12 @@ pub struct AnyTooltip {
 
     /// The absolute position of the mouse when the tooltip was deployed.
     pub mouse_position: Point<Pixels>,
+
+    /// Whether the tooltitp can be hovered or not.
+    pub hoverable: bool,
+
+    /// Bounds of the element that triggered the tooltip appearance.
+    pub origin_bounds: Bounds<Pixels>,
 }
 
 /// A keystroke event, and potentially the associated action

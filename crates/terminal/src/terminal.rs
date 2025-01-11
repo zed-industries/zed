@@ -347,6 +347,7 @@ impl TerminalBuilder {
 
         env.insert("ZED_TERM".to_string(), "true".to_string());
         env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
+        env.insert("TERM".to_string(), "xterm-256color".to_string());
         env.insert(
             "TERM_PROGRAM_VERSION".to_string(),
             release_channel::AppVersion::global(cx).to_string(),
@@ -953,22 +954,32 @@ impl Terminal {
 
                 match found_word {
                     Some((maybe_url_or_path, is_url, url_match)) => {
-                        if *open {
-                            let target = if is_url {
-                                MaybeNavigationTarget::Url(maybe_url_or_path)
-                            } else {
+                        let target = if is_url {
+                            // Treat "file://" URLs like file paths to ensure
+                            // that line numbers at the end of the path are
+                            // handled correctly
+                            if let Some(path) = maybe_url_or_path.strip_prefix("file://") {
                                 MaybeNavigationTarget::PathLike(PathLikeTarget {
-                                    maybe_path: maybe_url_or_path,
+                                    maybe_path: path.to_string(),
                                     terminal_dir: self.working_directory(),
                                 })
-                            };
+                            } else {
+                                MaybeNavigationTarget::Url(maybe_url_or_path.clone())
+                            }
+                        } else {
+                            MaybeNavigationTarget::PathLike(PathLikeTarget {
+                                maybe_path: maybe_url_or_path.clone(),
+                                terminal_dir: self.working_directory(),
+                            })
+                        };
+                        if *open {
                             cx.emit(Event::Open(target));
                         } else {
                             self.update_selected_word(
                                 prev_hovered_word,
                                 url_match,
                                 maybe_url_or_path,
-                                is_url,
+                                target,
                                 cx,
                             );
                         }
@@ -990,7 +1001,7 @@ impl Terminal {
         prev_word: Option<HoveredWord>,
         word_match: RangeInclusive<AlacPoint>,
         word: String,
-        is_url: bool,
+        navigation_target: MaybeNavigationTarget,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(prev_word) = prev_word {
@@ -1009,14 +1020,6 @@ impl Terminal {
             word_match,
             id: self.next_link_id(),
         });
-        let navigation_target = if is_url {
-            MaybeNavigationTarget::Url(word)
-        } else {
-            MaybeNavigationTarget::PathLike(PathLikeTarget {
-                maybe_path: word,
-                terminal_dir: self.working_directory(),
-            })
-        };
         cx.emit(Event::NewNavigationTarget(Some(navigation_target)));
     }
 
@@ -1183,10 +1186,10 @@ impl Terminal {
         }
 
         let motion: Option<ViMotion> = match key.as_str() {
-            "h" => Some(ViMotion::Left),
-            "j" => Some(ViMotion::Down),
-            "k" => Some(ViMotion::Up),
-            "l" => Some(ViMotion::Right),
+            "h" | "left" => Some(ViMotion::Left),
+            "j" | "down" => Some(ViMotion::Down),
+            "k" | "up" => Some(ViMotion::Up),
+            "l" | "right" => Some(ViMotion::Right),
             "w" => Some(ViMotion::WordRight),
             "b" if !keystroke.modifiers.control => Some(ViMotion::WordLeft),
             "e" => Some(ViMotion::WordRightEnd),
@@ -1728,9 +1731,9 @@ impl Terminal {
     pub fn wait_for_completed_task(&self, cx: &AppContext) -> Task<()> {
         if let Some(task) = self.task() {
             if task.status == TaskStatus::Running {
-                let mut completion_receiver = task.completion_rx.clone();
+                let completion_receiver = task.completion_rx.clone();
                 return cx.spawn(|_| async move {
-                    completion_receiver.next().await;
+                    let _ = completion_receiver.recv().await;
                 });
             }
         }

@@ -194,14 +194,24 @@ impl ProjectDiffEditor {
                 let open_tasks = project
                     .update(&mut cx, |project, cx| {
                         let worktree = project.worktree_for_id(id, cx)?;
-                        let applicable_entries = worktree
-                            .read(cx)
-                            .entries(false, 0)
-                            .filter(|entry| !entry.is_external)
-                            .filter(|entry| entry.is_file())
-                            .filter_map(|entry| Some((entry.git_status?, entry)))
-                            .filter_map(|(git_status, entry)| {
-                                Some((git_status, entry.id, project.path_for_entry(entry.id, cx)?))
+                        let snapshot = worktree.read(cx).snapshot();
+                        let applicable_entries = snapshot
+                            .repositories()
+                            .flat_map(|entry| {
+                                entry.status().map(|git_entry| {
+                                    (git_entry.status, entry.join(git_entry.repo_path))
+                                })
+                            })
+                            .filter_map(|(status, path)| {
+                                let id = snapshot.entry_for_path(&path)?.id;
+                                Some((
+                                    status,
+                                    id,
+                                    ProjectPath {
+                                        worktree_id: snapshot.id(),
+                                        path: path.into(),
+                                    },
+                                ))
                             })
                             .collect::<Vec<_>>();
                         Some(

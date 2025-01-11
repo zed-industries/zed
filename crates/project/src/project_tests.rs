@@ -5657,9 +5657,9 @@ async fn search(
     query: SearchQuery,
     cx: &mut gpui::TestAppContext,
 ) -> Result<HashMap<String, Vec<Range<usize>>>> {
-    let mut search_rx = project.update(cx, |project, cx| project.search(query, cx));
+    let search_rx = project.update(cx, |project, cx| project.search(query, cx));
     let mut results = HashMap::default();
-    while let Some(search_result) = search_rx.next().await {
+    while let Ok(search_result) = search_rx.recv().await {
         match search_result {
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);

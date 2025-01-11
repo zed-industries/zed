@@ -1,12 +1,11 @@
-// TODO: Remove this once we've implemented the functionality.
-#![allow(unused)]
-
+use std::path::Path;
+use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use fuzzy::PathMatch;
 use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakModel, WeakView};
 use picker::{Picker, PickerDelegate};
-use project::{PathMatchCandidateSet, WorktreeId};
+use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use ui::{prelude::*, ListItem};
 use util::ResultExt as _;
 use workspace::Workspace;
@@ -75,6 +74,65 @@ impl DirectoryContextPickerDelegate {
             selected_index: 0,
         }
     }
+
+    fn search(
+        &mut self,
+        query: String,
+        cancellation_flag: Arc<AtomicBool>,
+        workspace: &View<Workspace>,
+        cx: &mut ViewContext<Picker<Self>>,
+    ) -> Task<Vec<PathMatch>> {
+        if query.is_empty() {
+            let workspace = workspace.read(cx);
+            let project = workspace.project().read(cx);
+            let directory_matches = project.worktrees(cx).flat_map(|worktree| {
+                let worktree = worktree.read(cx);
+                let path_prefix: Arc<str> = worktree.root_name().into();
+                worktree.directories(false, 0).map(move |entry| PathMatch {
+                    score: 0.,
+                    positions: Vec::new(),
+                    worktree_id: worktree.id().to_usize(),
+                    path: entry.path.clone(),
+                    path_prefix: path_prefix.clone(),
+                    distance_to_relative_ancestor: 0,
+                    is_dir: true,
+                })
+            });
+
+            Task::ready(directory_matches.collect())
+        } else {
+            let worktrees = workspace.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
+            let candidate_sets = worktrees
+                .into_iter()
+                .map(|worktree| {
+                    let worktree = worktree.read(cx);
+
+                    PathMatchCandidateSet {
+                        snapshot: worktree.snapshot(),
+                        include_ignored: worktree
+                            .root_entry()
+                            .map_or(false, |entry| entry.is_ignored),
+                        include_root_name: true,
+                        candidates: project::Candidates::Directories,
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            let executor = cx.background_executor().clone();
+            cx.foreground_executor().spawn(async move {
+                fuzzy::match_path_sets(
+                    candidate_sets.as_slice(),
+                    query.as_str(),
+                    None,
+                    false,
+                    100,
+                    &cancellation_flag,
+                    executor,
+                )
+                .await
+            })
+        }
+    }
 }
 
 impl PickerDelegate for DirectoryContextPickerDelegate {
@@ -88,7 +146,7 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, _cx: &mut ViewContext<Picker<Self>>) {
         self.selected_index = ix;
     }
 
@@ -96,23 +154,75 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         "Search folders…".into()
     }
 
-    fn update_matches(&mut self, _query: String, _cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
-        // TODO: Implement this once we fix the issues with the file context picker.
-        Task::ready(())
+    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+        let Some(workspace) = self.workspace.upgrade() else {
+            return Task::ready(());
+        };
+
+        let search_task = self.search(query, Arc::<AtomicBool>::default(), &workspace, cx);
+
+        cx.spawn(|this, mut cx| async move {
+            let mut paths = search_task.await;
+            let empty_path = Path::new("");
+            paths.retain(|path_match| path_match.path.as_ref() != empty_path);
+
+            this.update(&mut cx, |this, _cx| {
+                this.delegate.matches = paths;
+            })
+            .log_err();
+        })
     }
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
-        // TODO: Implement this once we fix the issues with the file context picker.
-        match self.confirm_behavior {
-            ConfirmBehavior::KeepOpen => {}
-            ConfirmBehavior::Close => self.dismissed(cx),
-        }
+        let Some(mat) = self.matches.get(self.selected_index) else {
+            return;
+        };
+
+        let project_path = ProjectPath {
+            worktree_id: WorktreeId::from_usize(mat.worktree_id),
+            path: mat.path.clone(),
+        };
+
+        let Some(task) = self
+            .context_store
+            .update(cx, |context_store, cx| {
+                context_store.add_directory(project_path, cx)
+            })
+            .ok()
+        else {
+            return;
+        };
+
+        let workspace = self.workspace.clone();
+        let confirm_behavior = self.confirm_behavior;
+        cx.spawn(|this, mut cx| async move {
+            match task.await {
+                Ok(()) => {
+                    this.update(&mut cx, |this, cx| match confirm_behavior {
+                        ConfirmBehavior::KeepOpen => {}
+                        ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                    })?;
+                }
+                Err(err) => {
+                    let Some(workspace) = workspace.upgrade() else {
+                        return anyhow::Ok(());
+                    };
+
+                    workspace.update(&mut cx, |workspace, cx| {
+                        workspace.show_error(&err, cx);
+                    })?;
+                }
+            }
+
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         self.context_picker
             .update(cx, |this, cx| {
-                this.reset_mode();
+                this.reset_mode(cx);
                 cx.emit(DismissEvent);
             })
             .ok();
@@ -120,10 +230,37 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
 
     fn render_match(
         &self,
-        _ix: usize,
-        _selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        ix: usize,
+        selected: bool,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        None
+        let path_match = &self.matches[ix];
+        let directory_name = path_match.path.to_string_lossy().to_string();
+
+        let added = self.context_store.upgrade().map_or(false, |context_store| {
+            context_store
+                .read(cx)
+                .includes_directory(&path_match.path)
+                .is_some()
+        });
+
+        Some(
+            ListItem::new(ix)
+                .inset(true)
+                .toggle_state(selected)
+                .child(h_flex().gap_2().child(Label::new(directory_name)))
+                .when(added, |el| {
+                    el.end_slot(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Check)
+                                    .size(IconSize::Small)
+                                    .color(Color::Success),
+                            )
+                            .child(Label::new("Added").size(LabelSize::Small)),
+                    )
+                }),
+        )
     }
 }
