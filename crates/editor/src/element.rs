@@ -3480,7 +3480,7 @@ impl EditorElement {
             } = &hunk
             {
                 if display_row_range.start < row_range.start
-                    || display_row_range.end >= row_range.end
+                    || display_row_range.start >= row_range.end
                 {
                     continue;
                 }
