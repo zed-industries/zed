@@ -76,6 +76,8 @@ pub trait LspCommand: 'static + Sized + Send + std::fmt::Debug {
     type LspRequest: 'static + Send + lsp::request::Request;
     type ProtoRequest: 'static + Send + proto::RequestMessage;
 
+    fn display_name(&self) -> &str;
+
     fn status(&self) -> Option<String> {
         None
     }
@@ -243,6 +245,10 @@ impl LspCommand for PrepareRename {
     type Response = PrepareRenameResponse;
     type LspRequest = lsp::request::PrepareRenameRequest;
     type ProtoRequest = proto::PrepareRename;
+
+    fn display_name(&self) -> &str {
+        "Prepare rename"
+    }
 
     fn to_lsp_params_or_response(
         &self,
@@ -423,6 +429,10 @@ impl LspCommand for PerformRename {
     type LspRequest = lsp::request::Rename;
     type ProtoRequest = proto::PerformRename;
 
+    fn display_name(&self) -> &str {
+        "Rename"
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
@@ -541,6 +551,10 @@ impl LspCommand for GetDefinition {
     type LspRequest = lsp::request::GotoDefinition;
     type ProtoRequest = proto::GetDefinition;
 
+    fn display_name(&self) -> &str {
+        "Get definition"
+    }
+
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
         capabilities
             .server_capabilities
@@ -635,6 +649,10 @@ impl LspCommand for GetDeclaration {
     type Response = Vec<LocationLink>;
     type LspRequest = lsp::request::GotoDeclaration;
     type ProtoRequest = proto::GetDeclaration;
+
+    fn display_name(&self) -> &str {
+        "Get declaration"
+    }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
         capabilities
@@ -731,6 +749,10 @@ impl LspCommand for GetImplementation {
     type LspRequest = lsp::request::GotoImplementation;
     type ProtoRequest = proto::GetImplementation;
 
+    fn display_name(&self) -> &str {
+        "Get implementation"
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
@@ -818,6 +840,10 @@ impl LspCommand for GetTypeDefinition {
     type Response = Vec<LocationLink>;
     type LspRequest = lsp::request::GotoTypeDefinition;
     type ProtoRequest = proto::GetTypeDefinition;
+
+    fn display_name(&self) -> &str {
+        "Get type definition"
+    }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
         !matches!(
@@ -1122,6 +1148,10 @@ impl LspCommand for GetReferences {
     type LspRequest = lsp::request::References;
     type ProtoRequest = proto::GetReferences;
 
+    fn display_name(&self) -> &str {
+        "Find all references"
+    }
+
     fn status(&self) -> Option<String> {
         Some("Finding references...".to_owned())
     }
@@ -1298,6 +1328,10 @@ impl LspCommand for GetDocumentHighlights {
     type LspRequest = lsp::request::DocumentHighlightRequest;
     type ProtoRequest = proto::GetDocumentHighlights;
 
+    fn display_name(&self) -> &str {
+        "Get document highlights"
+    }
+
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
         capabilities
             .server_capabilities
@@ -1447,6 +1481,10 @@ impl LspCommand for GetSignatureHelp {
     type LspRequest = lsp::SignatureHelpRequest;
     type ProtoRequest = proto::GetSignatureHelp;
 
+    fn display_name(&self) -> &str {
+        "Get signature help"
+    }
+
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
         capabilities
             .server_capabilities
@@ -1549,6 +1587,10 @@ impl LspCommand for GetHover {
     type Response = Option<Hover>;
     type LspRequest = lsp::request::HoverRequest;
     type ProtoRequest = proto::GetHover;
+
+    fn display_name(&self) -> &str {
+        "Get hover"
+    }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
         match capabilities.server_capabilities.hover_provider {
@@ -1775,6 +1817,10 @@ impl LspCommand for GetCompletions {
     type Response = Vec<CoreCompletion>;
     type LspRequest = lsp::request::Completion;
     type ProtoRequest = proto::GetCompletions;
+
+    fn display_name(&self) -> &str {
+        "Get completion"
+    }
 
     fn to_lsp(
         &self,
@@ -2098,6 +2144,10 @@ impl LspCommand for GetCodeActions {
     type LspRequest = lsp::request::CodeActionRequest;
     type ProtoRequest = proto::GetCodeActions;
 
+    fn display_name(&self) -> &str {
+        "Get code actions"
+    }
+
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
         match &capabilities.server_capabilities.code_action_provider {
             None => false,
@@ -2313,6 +2363,10 @@ impl LspCommand for OnTypeFormatting {
     type Response = Option<Transaction>;
     type LspRequest = lsp::request::OnTypeFormatting;
     type ProtoRequest = proto::OnTypeFormatting;
+
+    fn display_name(&self) -> &str {
+        "Formatting on typing"
+    }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
         let Some(on_type_formatting_options) = &capabilities
@@ -2820,6 +2874,10 @@ impl LspCommand for InlayHints {
     type LspRequest = lsp::InlayHintRequest;
     type ProtoRequest = proto::InlayHints;
 
+    fn display_name(&self) -> &str {
+        "Inlay hints"
+    }
+
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
         let Some(inlay_hint_provider) = &capabilities.server_capabilities.inlay_hint_provider
         else {
@@ -2977,6 +3035,10 @@ impl LspCommand for LinkedEditingRange {
     type Response = Vec<Range<Anchor>>;
     type LspRequest = lsp::request::LinkedEditingRange;
     type ProtoRequest = proto::LinkedEditingRange;
+
+    fn display_name(&self) -> &str {
+        "Linked editing range"
+    }
 
     fn check_capabilities(&self, capabilities: AdapterServerCapabilities) -> bool {
         let Some(linked_editing_options) = &capabilities
