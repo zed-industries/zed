@@ -74,6 +74,15 @@ impl LspAdapter for RustLspAdapter {
         Self::SERVER_NAME.clone()
     }
 
+    fn find_project_root(
+        &self,
+        _path: &Path,
+        _ancestor_depth: usize,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Option<Arc<Path>> {
+        dbg!(&_path, _ancestor_depth);
+        None
+    }
     async fn check_if_user_installed(
         &self,
         delegate: &dyn LspAdapterDelegate,

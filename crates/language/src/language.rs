@@ -549,7 +549,6 @@ pub trait LspAdapter: 'static + Send + Sync {
         _ancestor_depth: usize,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Option<Arc<Path>> {
-        dbg!("Hey!");
         // By default all language servers are rooted at the root of the worktree.
         Some(Arc::from("".as_ref()))
     }

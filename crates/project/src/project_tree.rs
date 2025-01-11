@@ -77,7 +77,7 @@ pub struct ProjectTree {
     _subscriptions: [Subscription; 1],
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
 struct AdapterWrapper(Arc<CachedLspAdapter>);
 impl PartialEq for AdapterWrapper {
     fn eq(&self, other: &Self) -> bool {
@@ -127,11 +127,16 @@ impl ProjectTree {
     ) -> BTreeMap<AdapterWrapper, ProjectPath> {
         debug_assert_eq!(delegate.worktree_id(), worktree_id);
         let adapters = self.languages.lsp_adapters(&language_name);
-        let mut roots = BTreeMap::from_iter(
-            adapters
-                .into_iter()
-                .map(|adapter| (AdapterWrapper(adapter), None)),
-        );
+        let empty_path = ProjectPath {
+            worktree_id,
+            path: Arc::from("".as_ref()),
+        };
+        let mut roots = BTreeMap::from_iter(adapters.into_iter().map(|adapter| {
+            (
+                AdapterWrapper(adapter),
+                (empty_path.clone(), LabelPresence::KnownAbsent),
+            )
+        }));
         let worktree_roots = match self.root_points.entry(worktree_id) {
             Entry::Occupied(occupied_entry) => occupied_entry.get().clone(),
             Entry::Vacant(vacant_entry) => {
@@ -148,59 +153,61 @@ impl ProjectTree {
         };
 
         let key = TriePath::from(&*path);
-        let mut known_missing = HashSet::default();
         worktree_roots.update(cx, |this, _| {
             this.roots.walk(&key, &mut |path, labels| {
                 for (label, presence) in labels {
-                    if *presence == LabelPresence::Present {
-                        known_missing.remove(label);
-                        if let Some(slot) = roots.get_mut(label) {
-                            debug_assert_eq!(slot, &mut None, "For a given path to a root of a worktree there should be at most project root of {label:?} kind");
-                            let _ = slot.insert(ProjectPath {
-                                worktree_id,
-                                path: path.clone(),
-                            });
+
+                    debug_assert_ne!(*presence, LabelPresence::Forbidden, "Forbidden labels are not implemented yet");
+
+                    if let Some((marked_path, current_presence)) = roots.get_mut(label) {
+                        if *current_presence > *presence {
+                            debug_assert!(false, "RootPathTrie precondition violation; while walking the tree label presence is only allowed to increase");
                         }
-                    } else {
-                        known_missing.insert(label.clone());
+                        *marked_path = ProjectPath {worktree_id, path: path.clone()};
+                        *current_presence = *presence;
                     }
+
                 }
-                // If all language adapters either have a rooting point or are known missing, we don't need to look further
-                // down into the tree.
-                if roots.values().filter(|v| v.is_some()).count() + known_missing.len() == roots.len() {
-                    // Stop recursing downwards as we've already found all the project roots we're interested in.
-                    ControlFlow::Break(())
-                } else {
-                    ControlFlow::Continue(())
-                }
+                ControlFlow::Continue(())
             });
         });
-
-        for (adapter, maybe_known_root) in &mut roots {
-            if maybe_known_root.is_some() {
+        for (adapter, (root_path, presence)) in &mut roots {
+            if *presence == LabelPresence::Present {
                 continue;
             }
-            let root = adapter.0.find_project_root(&path, 0, &delegate);
-            match root {
-                Some(known_root) => worktree_roots.update(cx, |this, _| {
-                    let root = TriePath::from(&*known_root);
-                    this.roots
-                        .insert(&root, adapter.0.name(), LabelPresence::Present);
-                    let _ = maybe_known_root.insert(ProjectPath {
-                        worktree_id,
-                        path: known_root,
-                    });
-                }),
-                None => worktree_roots.update(cx, |this, _| {
-                    this.roots
-                        .insert(&key, adapter.0.name(), LabelPresence::KnownAbsent);
-                }),
+            let depth = path
+                .strip_prefix(&root_path.path)
+                .unwrap()
+                .components()
+                .count();
+
+            if depth > 0 {
+                dbg!(&path, &root_path.path, depth);
+                let root = adapter.0.find_project_root(&path, depth, &delegate);
+                match root {
+                    Some(known_root) => worktree_roots.update(cx, |this, _| {
+                        let root = TriePath::from(&*known_root);
+                        this.roots
+                            .insert(&root, adapter.0.name(), LabelPresence::Present);
+                        *presence = LabelPresence::Present;
+                        *root_path = ProjectPath {
+                            worktree_id,
+                            path: known_root,
+                        };
+                    }),
+                    None => worktree_roots.update(cx, |this, _| {
+                        this.roots
+                            .insert(&key, adapter.0.name(), LabelPresence::KnownAbsent);
+                    }),
+                }
             }
         }
 
         roots
             .into_iter()
-            .filter_map(|(k, v)| v.map(|v| (k, v)))
+            .filter_map(|(k, (path, presence))| {
+                presence.eq(&LabelPresence::Present).then(|| (k, path))
+            })
             .collect()
     }
     fn on_worktree_store_event(

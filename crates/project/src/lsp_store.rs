@@ -1037,10 +1037,10 @@ impl LocalLspStore {
         if let Some((file, language)) = File::from_dyn(buffer.file()).zip(buffer.language()) {
             let worktree_id = file.worktree_id(cx);
 
-            let path = ProjectPath {
-                worktree_id,
-                path: file.path().clone(),
+            let Some(path): Option<Arc<Path>> = file.path().parent().map(Arc::from) else {
+                return vec![];
             };
+            let worktree_path = ProjectPath { worktree_id, path };
             let Some(worktree) = self
                 .worktree_store
                 .read(cx)
@@ -1050,7 +1050,7 @@ impl LocalLspStore {
             };
             let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
             let root = self.lsp_tree.update(cx, |this, cx| {
-                this.get(path, language.name(), delegate, cx)
+                this.get(worktree_path, language.name(), delegate, cx)
                     .filter_map(|node| node.server_id())
                     .collect::<Vec<_>>()
             });
@@ -1779,14 +1779,14 @@ impl LocalLspStore {
         else {
             return;
         };
+        let Some(path): Option<Arc<Path>> = file.path().parent().map(Arc::from) else {
+            return;
+        };
         let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
         self.lsp_tree.update(cx, |this, cx| {
             let servers = this
                 .get(
-                    ProjectPath {
-                        worktree_id,
-                        path: file.path.clone(),
-                    },
+                    ProjectPath { worktree_id, path },
                     language.name(),
                     delegate,
                     cx,
@@ -1840,13 +1840,13 @@ impl LocalLspStore {
                 else {
                     return;
                 };
+                let Some(path): Option<Arc<Path>> = old_file.path().parent().map(Arc::from) else {
+                    return;
+                };
                 let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
                 let nodes = self.lsp_tree.update(cx, |this, cx| {
                     this.get_initialized(
-                        ProjectPath {
-                            worktree_id,
-                            path: old_file.path().clone(),
-                        },
+                        ProjectPath { worktree_id, path },
                         language.name(),
                         delegate,
                         cx,
