@@ -32,9 +32,15 @@ impl Autoscroll {
     pub fn focused() -> Self {
         Self::Strategy(AutoscrollStrategy::Focused)
     }
+
     /// Scrolls so that the newest cursor is roughly an n-th line from the top.
     pub fn top_relative(n: usize) -> Self {
         Self::Strategy(AutoscrollStrategy::TopRelative(n))
+    }
+
+    /// Scrolls so that the newest cursor is at the bottom.
+    pub fn bottom() -> Self {
+        Self::Strategy(AutoscrollStrategy::Bottom)
     }
 }
 
