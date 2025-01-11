@@ -15,7 +15,7 @@ use dap::{
 };
 use gpui::{
     actions, Action, AppContext, AsyncWindowContext, EventEmitter, FocusHandle, FocusableView,
-    FontWeight, Model, Subscription, Task, View, ViewContext, WeakView,
+    Model, Subscription, Task, View, ViewContext, WeakView,
 };
 use project::{
     dap_store::{DapStore, DapStoreEvent},
@@ -117,7 +117,6 @@ pub struct DebugPanel {
     focus_handle: FocusHandle,
     dap_store: Model<DapStore>,
     workspace: WeakView<Workspace>,
-    show_did_not_stop_warning: bool,
     _subscriptions: Vec<Subscription>,
     message_queue: HashMap<DebugAdapterClientId, VecDeque<OutputEvent>>,
     thread_states: BTreeMap<(DebugAdapterClientId, u64), Model<ThreadState>>,
@@ -209,7 +208,6 @@ impl DebugPanel {
                 size: px(300.),
                 _subscriptions,
                 focus_handle: cx.focus_handle(),
-                show_did_not_stop_warning: false,
                 thread_states: Default::default(),
                 message_queue: Default::default(),
                 workspace: workspace.weak_handle(),
@@ -810,8 +808,11 @@ impl DebugPanel {
 
         if let Some(thread_state) = self.thread_states.get(&(*client_id, thread_id)) {
             if !thread_state.read(cx).stopped && event.reason == ThreadEventReason::Exited {
-                self.show_did_not_stop_warning = true;
-                cx.notify();
+                const MESSAGE: &'static str = "Debug session exited without hitting breakpoints\n\nTry adding a breakpoint, or define the correct path mapping for your debugger.";
+
+                self.dap_store.update(cx, |_, cx| {
+                    cx.emit(DapStoreEvent::Notification(MESSAGE.into()));
+                });
             };
         }
 
@@ -823,6 +824,7 @@ impl DebugPanel {
         }
 
         cx.emit(DebugPanelEvent::Thread((*client_id, event.clone())));
+        cx.notify();
     }
 
     fn handle_exited_event(
@@ -1034,48 +1036,6 @@ impl DebugPanel {
 
         cx.emit(DebugPanelEvent::CapabilitiesChanged(*client_id));
     }
-
-    fn render_did_not_stop_warning(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        const TITLE: &'static str = "Debug session exited without hitting any breakpoints";
-        const DESCRIPTION: &'static str =
-            "Try adding a breakpoint, or define the correct path mapping for your debugger.";
-
-        div()
-            .absolute()
-            .right_3()
-            .bottom_12()
-            .max_w_96()
-            .py_2()
-            .px_3()
-            .elevation_2(cx)
-            .occlude()
-            .child(
-                v_flex()
-                    .gap_0p5()
-                    .child(
-                        h_flex()
-                            .gap_1p5()
-                            .items_center()
-                            .child(Icon::new(IconName::Warning).color(Color::Conflict))
-                            .child(Label::new(TITLE).weight(FontWeight::MEDIUM)),
-                    )
-                    .child(
-                        Label::new(DESCRIPTION)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted),
-                    )
-                    .child(
-                        h_flex().justify_end().mt_1().child(
-                            Button::new("dismiss", "Dismiss")
-                                .color(Color::Muted)
-                                .on_click(cx.listener(|this, _, cx| {
-                                    this.show_did_not_stop_warning = false;
-                                    cx.notify();
-                                })),
-                        ),
-                    ),
-            )
-    }
 }
 
 impl EventEmitter<PanelEvent> for DebugPanel {}
@@ -1146,9 +1106,6 @@ impl Render for DebugPanel {
             .key_context("DebugPanel")
             .track_focus(&self.focus_handle)
             .size_full()
-            .when(self.show_did_not_stop_warning, |this| {
-              this.child(self.render_did_not_stop_warning(cx))
-            })
             .map(|this| {
                 if self.pane.read(cx).items_len() == 0 {
                     this.child(
