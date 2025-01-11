@@ -4380,7 +4380,7 @@ impl Editor {
     }
 
     pub fn render_diagnostics_inline(&mut self, cx: &mut WindowContext) -> bool {
-        self.show_diagnostics_inline && self.focus_handle.is_focused(cx)
+        self.show_diagnostics_inline
     }
 
     pub fn toggle_show_diagnostics_inline(

@@ -719,10 +719,13 @@
       // The delay in milliseconds to show inline diagnostics after the
       // last buffer update.
       // "delay_ms": 0,
-      // The minimum column to show inline diagnostic information.
+      // The amount of padding between the end of the source line and the start
+      // of the inline diagnostic in units of columns.
+      // "padding": 6,
+      // The minimum column to display inline diagnostics. This setting can be
+      // used to horizontally align inline diagnostics at some position. Lines
+      // longer than this value will still push diagnostics further to the right.
       // "min_column": 0
-      // Which action to take when hovering inline diagnostic indicators
-      // "hover": "tooltip",
     }
   },
   // Add files or globs of files that will be excluded by Zed entirely:

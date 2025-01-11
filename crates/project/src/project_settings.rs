@@ -1,4 +1,3 @@
-use anyhow::Context;
 use collections::HashMap;
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, BorrowAppContext, EventEmitter, Model, ModelContext};
@@ -86,6 +85,7 @@ pub enum DirenvSettings {
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
 pub struct DiagnosticsSettings {
     /// Whether or not to include warning diagnostics
+    #[serde(default = "default_true")]
     pub include_warnings: bool,
 
     /// Settings for showing inline diagnostics
@@ -110,14 +110,17 @@ pub struct InlineDiagnosticsSettings {
     ///
     /// Default: 0
     pub delay_ms: Option<u64>,
-    /// The minimum column number to show the inline blame information at
+    /// The amount of padding between the end of the source line and the start
+    /// of the inline diagnostic in units of columns.
+    ///
+    /// Default: 6
+    pub padding: Option<u32>,
+    /// The minimum column to display inline diagnostics. This setting can be
+    /// used to horizontally align inline diagnostics at some position. Lines
+    /// longer than this value will still push diagnostics further to the right.
     ///
     /// Default: 0
     pub min_column: Option<u32>,
-    /// The behavior when hovering over an inline diagnostic tooltip.
-    ///
-    /// Default: tooltip
-    pub hover: Option<InlineDiagnosticHoverAction>,
 }
 
 impl InlineDiagnosticsSettings {
@@ -129,12 +132,12 @@ impl InlineDiagnosticsSettings {
         self.delay_ms.unwrap_or(0)
     }
 
-    pub fn min_column(&self) -> u32 {
-        self.min_column.unwrap_or(0)
+    pub fn padding(&self) -> u32 {
+        self.padding.unwrap_or(6)
     }
 
-    pub fn hover(&self) -> InlineDiagnosticHoverAction {
-        self.hover.unwrap_or(InlineDiagnosticHoverAction::Tooltip)
+    pub fn min_column(&self) -> u32 {
+        self.min_column.unwrap_or(0)
     }
 }
 

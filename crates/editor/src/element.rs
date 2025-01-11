@@ -145,33 +145,11 @@ impl SelectionLayout {
     }
 }
 
-struct DiagnosticDisplay {
-    severity: DiagnosticSeverity,
-    group_id: usize,
-    tooltip: View<DiagnosticTooltip>,
-}
-
-impl DiagnosticDisplay {
-    pub fn new(
-        severity: DiagnosticSeverity,
-        group_id: usize,
-        tooltip: View<DiagnosticTooltip>,
-    ) -> Self {
-        Self {
-            severity,
-            group_id,
-            tooltip,
-        }
-    }
-}
-
 struct DiagnosticElement {
     x: Pixels,
     y: Pixels,
     message: String,
     severity: DiagnosticSeverity,
-    entries: Vec<DiagnosticDisplay>,
-    exceeded_max: bool,
 }
 
 pub struct EditorElement {
@@ -1640,71 +1618,8 @@ impl EditorElement {
             _ => Color::Error,
         };
 
-        let hover_action = ProjectSettings::get_global(cx).diagnostics.inline().hover();
-
         let mut elements = HashMap::default();
         for (line_ix, elem) in diagnostics.into_iter() {
-            let mut boxes = h_flex().size(line_height).w_full().h_full().gap_1();
-            for (idx, disp) in elem.entries.iter().enumerate() {
-                let indicator = Icon::new(IconName::Square)
-                    .color(sev_to_color(&disp.severity))
-                    .size(IconSize::Medium);
-
-                let tooltip = disp.tooltip.clone();
-
-                let div = h_flex()
-                    .id(SharedString::from(format!(
-                        "diagnostic-entry-{}-{}",
-                        line_ix.0, idx
-                    )))
-                    .size(line_height)
-                    .h_full()
-                    .w_full()
-                    .child(indicator);
-
-                let div = if matches!(hover_action, InlineDiagnosticHoverAction::Tooltip) {
-                    div.hoverable_tooltip(move |_| tooltip.clone().into())
-                } else if matches!(hover_action, InlineDiagnosticHoverAction::Inline) {
-                    div.hover(|style| style.bg(cx.theme().colors().element_hover))
-                        .on_hover({
-                            let editor = self.editor.clone();
-                            let group_id = disp.group_id;
-                            move |hovered, cx| {
-                                editor.update(cx, |editor, cx| {
-                                    let current_group = editor
-                                        .active_diagnostics
-                                        .as_ref()
-                                        .map(|group| group.group_id);
-                                    if *hovered && Some(group_id) != current_group {
-                                        editor.activate_diagnostics(group_id, cx);
-                                    }
-                                });
-                            }
-                        })
-                } else {
-                    div
-                };
-
-                boxes = boxes.child(div);
-            }
-
-            let boxes = if elem.exceeded_max {
-                boxes.child(
-                    h_flex()
-                        .size(line_height)
-                        .h_full()
-                        .w_full()
-                        .bg(Color::Info.color(cx).opacity(0.25))
-                        .child(
-                            Icon::new(IconName::Plus)
-                                .color(Color::Info)
-                                .size(IconSize::Medium),
-                        ),
-                )
-            } else {
-                boxes
-            };
-
             let mut element = h_flex()
                 .id(SharedString::from(format!("diagnostic-{}", line_ix.0)))
                 .h(line_height)
@@ -1713,13 +1628,7 @@ impl EditorElement {
                 .text_color(sev_to_color(&elem.severity).color(cx))
                 .text_sm()
                 .font_family(style.text.font().family)
-                .child(
-                    h_flex()
-                        .h(line_height)
-                        .gap_2()
-                        .child(boxes)
-                        .child(elem.message),
-                )
+                .child(elem.message)
                 .into_any();
 
             element.prepaint_as_root(point(elem.x, elem.y), AvailableSpace::min_size(), cx);
@@ -1765,7 +1674,6 @@ impl EditorElement {
                 )
             });
 
-        let max_entries = 5; // ToDo: Configuration
         for diagnostic in diagnostics {
             let diag_point = MultiBufferPoint::new(diagnostic.range.start.row, 0);
             let display_point = snapshot.point_to_display_point(diag_point, Bias::Right);
@@ -1776,19 +1684,6 @@ impl EditorElement {
             let line_ix = DisplayRow(display_point.row().minus(start_row));
 
             if let Some(ref mut elem) = inline_diagnostics.get_mut(&line_ix) {
-                if elem.entries.len() >= max_entries {
-                    elem.exceeded_max = true;
-                    continue;
-                }
-
-                let entry = DiagnosticDisplay::new(
-                    diagnostic.diagnostic.severity,
-                    diagnostic.diagnostic.group_id,
-                    cx.new_view(|cx| {
-                        DiagnosticTooltip::new(diagnostic, hitbox, line_height, em_width, cx)
-                    }),
-                );
-                elem.entries.push(entry);
                 continue;
             }
 
@@ -1797,7 +1692,10 @@ impl EditorElement {
                     * (display_point.row().0 as f32 - scroll_pixel_position.y / line_height);
 
             let start_x = {
-                const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
+                let padding = ProjectSettings::get_global(cx)
+                    .diagnostics
+                    .inline()
+                    .padding();
 
                 let crease_trailer_layout = crease_trailers[line_ix.0 as usize].as_ref();
                 let line_layout = &line_layouts[line_ix.0 as usize];
@@ -1807,7 +1705,8 @@ impl EditorElement {
                 } else {
                     content_origin.x - scroll_pixel_position.x + line_layout.width
                 };
-                let padded_line_end = line_end + em_width * INLINE_BLAME_PADDING_EM_WIDTHS;
+                let padding_pixels = self.column_pixels(padding as usize, cx);
+                let padded_line_end = line_end + padding_pixels;
 
                 let min_column = ProjectSettings::get_global(cx)
                     .diagnostics
@@ -1819,26 +1718,19 @@ impl EditorElement {
                 cmp::max(padded_line_end, min_start)
             };
 
-            let entry = DiagnosticDisplay::new(
-                diagnostic.diagnostic.severity,
-                diagnostic.diagnostic.group_id,
-                cx.new_view(|cx| {
-                    DiagnosticTooltip::new(diagnostic.clone(), hitbox, line_height, em_width, cx)
-                }),
-            );
+            let message_parts = diagnostic
+                .diagnostic
+                .message
+                .split('\n')
+                .take(1)
+                .collect::<Vec<_>>();
+            let message = message_parts.join("");
+
             let elem = DiagnosticElement {
                 x: start_x,
                 y: start_y,
-                message: diagnostic
-                    .diagnostic
-                    .message
-                    .split('\n')
-                    .take(1)
-                    .collect::<Vec<_>>()[0]
-                    .to_string(),
+                message,
                 severity: diagnostic.diagnostic.severity,
-                entries: vec![entry],
-                exceeded_max: false,
             };
 
             inline_diagnostics.insert(line_ix, elem);
