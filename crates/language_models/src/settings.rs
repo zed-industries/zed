@@ -14,6 +14,7 @@ use crate::provider::{
     cloud::{self, ZedDotDevSettings},
     copilot_chat::CopilotChatSettings,
     google::GoogleSettings,
+    lmstudio::LMStudioSettings,
     ollama::OllamaSettings,
     open_ai::OpenAiSettings,
 };
@@ -50,7 +51,6 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
         });
     }
 }
-
 #[derive(Default)]
 pub struct AllLanguageModelSettings {
     pub anthropic: AnthropicSettings,
@@ -59,12 +59,14 @@ pub struct AllLanguageModelSettings {
     pub zed_dot_dev: ZedDotDevSettings,
     pub google: GoogleSettings,
     pub copilot_chat: CopilotChatSettings,
+    pub lmstudio: LMStudioSettings,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
     pub ollama: Option<OllamaSettingsContent>,
+    pub lmstudio: Option<LMStudioSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
     #[serde(rename = "zed.dev")]
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
@@ -151,6 +153,12 @@ pub struct AnthropicSettingsContentV1 {
 pub struct OllamaSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::ollama::AvailableModel>>,
+}
+
+#[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct LMStudioSettingsContent {
+    pub api_url: Option<String>,
+    pub available_models: Option<Vec<provider::lmstudio::AvailableModel>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
@@ -276,6 +284,18 @@ impl settings::Settings for AllLanguageModelSettings {
             merge(
                 &mut settings.ollama.available_models,
                 ollama.as_ref().and_then(|s| s.available_models.clone()),
+            );
+
+            // LMStudio
+            let lmstudio = value.lmstudio.clone();
+
+            merge(
+                &mut settings.lmstudio.api_url,
+                value.lmstudio.as_ref().and_then(|s| s.api_url.clone()),
+            );
+            merge(
+                &mut settings.lmstudio.available_models,
+                lmstudio.as_ref().and_then(|s| s.available_models.clone()),
             );
 
             // OpenAI

@@ -118,6 +118,7 @@ pub enum IconName {
     AiGoogle,
     AiOllama,
     AiOpenAi,
+    AiLMStudio,
     AiZed,
     ArrowCircle,
     ArrowDown,

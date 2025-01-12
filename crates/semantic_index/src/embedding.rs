@@ -1,10 +1,12 @@
 mod cloud;
 mod ollama;
 mod open_ai;
+mod lmstudio;
 
 pub use cloud::*;
 pub use ollama::*;
 pub use open_ai::*;
+pub use lmstudio::*;
 use sha2::{Digest, Sha256};
 
 use anyhow::Result;

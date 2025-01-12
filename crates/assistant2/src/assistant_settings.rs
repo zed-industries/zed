@@ -4,6 +4,7 @@ use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
 use gpui::Pixels;
 use language_model::{CloudModel, LanguageModel};
+use lmstudio::Model as LMStudioModel;
 use ollama::Model as OllamaModel;
 use schemars::{schema::Schema, JsonSchema};
 use serde::{Deserialize, Serialize};
@@ -37,6 +38,11 @@ pub enum AssistantProviderContentV1 {
     #[serde(rename = "ollama")]
     Ollama {
         default_model: Option<OllamaModel>,
+        api_url: Option<String>,
+    },
+    #[serde(rename = "lmstudio")]
+    LMStudio {
+        default_model: Option<LMStudioModel>,
         api_url: Option<String>,
     },
 }
@@ -130,6 +136,12 @@ impl AssistantSettingsContent {
                                     model: model.id().to_string(),
                                 })
                             }
+                            AssistantProviderContentV1::LMStudio { default_model, .. } => {
+                                default_model.map(|model| LanguageModelSelection {
+                                    provider: "lmstudio".to_string(),
+                                    model: model.id().to_string(),
+                                })
+                            }
                         }),
                     inline_alternatives: None,
                     enable_experimental_live_diffs: None,
@@ -204,6 +216,18 @@ impl AssistantSettingsContent {
                         };
                         settings.provider = Some(AssistantProviderContentV1::Ollama {
                             default_model: Some(ollama::Model::new(&model, None, None)),
+                            api_url,
+                        });
+                    }
+                    "lmstudio" => {
+                        let api_url = match &settings.provider {
+                            Some(AssistantProviderContentV1::LMStudio { api_url, .. }) => {
+                                api_url.clone()
+                            }
+                            _ => None,
+                        };
+                        settings.provider = Some(AssistantProviderContentV1::LMStudio {
+                            default_model: Some(lmstudio::Model::new(&model, None, None)),
                             api_url,
                         });
                     }
@@ -306,6 +330,7 @@ fn providers_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema:
             "anthropic".into(),
             "google".into(),
             "ollama".into(),
+            "lmstudio".into(),
             "openai".into(),
             "zed.dev".into(),
             "copilot_chat".into(),

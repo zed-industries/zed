@@ -1,0 +1,33 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg width="818px" height="816px" viewBox="0 0 818 816" version="1.1" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink">
+    <title>Artboard</title>
+    <g id="Artboard" stroke="none" stroke-width="1" fill="none" fill-rule="evenodd">
+        <rect id="Rectangle" stroke="#FFFFFF" stroke-width="64.332848" x="62.166424" y="61.166424" width="693.667152" height="693.667152" rx="136.235168"></rect>
+        <g id="Group-7" transform="translate(125, 155)" fill="#FFFFFF">
+            <g id="Group" transform="translate(19, 0)">
+                <rect id="Rectangle" opacity="0.487118676" x="97" y="0" width="321" height="73" rx="36.5"></rect>
+                <rect id="Rectangle" opacity="0.845098586" x="0" y="0" width="321" height="73" rx="36.5"></rect>
+            </g>
+            <g id="Group-2" transform="translate(147, 87)">
+                <rect id="Rectangle" opacity="0.487118676" x="97" y="0" width="321" height="73" rx="36.5"></rect>
+                <rect id="Rectangle" opacity="0.845098586" x="0" y="0" width="321" height="73" rx="36.5"></rect>
+            </g>
+            <g id="Group-3" transform="translate(78, 173)">
+                <rect id="Rectangle" opacity="0.487118676" x="98" y="0" width="321" height="73" rx="36.5"></rect>
+                <rect id="Rectangle" opacity="0.845098586" x="0" y="0" width="321" height="73" rx="36.5"></rect>
+            </g>
+            <g id="Group-4" transform="translate(0, 260)">
+                <rect id="Rectangle" opacity="0.487118676" x="97" y="0" width="321" height="73" rx="36.5"></rect>
+                <rect id="Rectangle" opacity="0.845098586" x="0" y="0" width="321" height="73" rx="36.5"></rect>
+            </g>
+            <g id="Group-5" transform="translate(84, 346)">
+                <rect id="Rectangle" opacity="0.487118676" x="99" y="0" width="279" height="73" rx="36.5"></rect>
+                <rect id="Rectangle" opacity="0.845098586" x="0" y="0" width="279" height="73" rx="36.5"></rect>
+            </g>
+            <g id="Group-6" transform="translate(217, 433)">
+                <rect id="Rectangle" opacity="0.487118676" x="108" y="0" width="233" height="73" rx="36.5"></rect>
+                <rect id="Rectangle" opacity="0.845098586" x="0" y="0" width="233" height="73" rx="36.5"></rect>
+            </g>
+        </g>
+    </g>
+</svg>
