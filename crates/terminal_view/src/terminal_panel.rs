@@ -75,6 +75,7 @@ pub struct TerminalPanel {
     deferred_tasks: HashMap<TaskId, Task<()>>,
     assistant_enabled: bool,
     assistant_tab_bar_button: Option<AnyView>,
+    active: bool,
 }
 
 impl TerminalPanel {
@@ -95,6 +96,7 @@ impl TerminalPanel {
             deferred_tasks: HashMap::default(),
             assistant_enabled: false,
             assistant_tab_bar_button: None,
+            active: false,
         };
         terminal_panel.apply_tab_bar_buttons(&terminal_panel.active_pane, cx);
         terminal_panel
@@ -1339,7 +1341,9 @@ impl Panel for TerminalPanel {
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if !active || !self.has_no_terminals(cx) {
+        let old_active = self.active;
+        self.active = active;
+        if !active || old_active == active || !self.has_no_terminals(cx) {
             return;
         }
         cx.defer(|this, cx| {
