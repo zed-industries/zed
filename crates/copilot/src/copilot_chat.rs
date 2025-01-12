@@ -39,7 +39,7 @@ pub enum Model {
     #[serde(alias = "o1-mini", rename = "o1-mini")]
     O1Mini,
     #[serde(alias = "claude-3-5-sonnet", rename = "claude-3.5-sonnet")]
-    Claude3_5Sonnet,
+    Claude3_5Sonnet
 }
 
 impl Model {
