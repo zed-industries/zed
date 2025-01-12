@@ -1163,6 +1163,9 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "inline": {
       "enabled": false
     }
+    "update_with_cursor": false,
+    "primary_only": false,
+    "use_rendered": false,
   }
 }
 ```
@@ -1179,8 +1182,8 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     "inline": {
       "enabled": false,
       "delay_ms": 0,
-      "min_column": 0,
-      "hover": "tooltip"
+      "padding": 4,
+      "min_column": 0
     }
   }
 }
@@ -1213,7 +1216,19 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 }
 ```
 
-3. Use this as the minimum column at which to display inline diagnostics:
+3. Set padding between the end of the source line and the start of the diagnostic
+
+````json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "padding": 4
+    }
+  }
+}
+
+4. Horizontally align inline diagnostics at the given column.
 
 ```json
 {
@@ -1224,31 +1239,44 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
     }
   }
 }
-```
+````
 
-4. Activate the diagnostic group instead of showing a tooltip when hovering over inline diagnostic indicators.
+### Update Active Diagnostic With Cursor
+
+- Description: Whether or not to update the active diagnostic on cursor movement.
+- Setting: `update_with_cursor`
+- Default:
 
 ```json
 {
   "diagnostics": {
-    "inline": {
-      "enabled": true,
-      "hover": "inline"
-    }
-  }
+    "update_with_cursor": false
 }
 ```
 
-5. Do not react to hover events on the inline diagnostic indicators.
+### Only Show the Primary Diagnostic
+
+- Description: Whether or not to show non-primary diagnostics.
+- Setting: `primary_only`
+- Default:
 
 ```json
 {
   "diagnostics": {
-    "inline": {
-      "enabled": true,
-      "hover": "inline"
-    }
-  }
+    "primary_only": false
+}
+```
+
+### Use the Rendered Diagnostic When Available
+
+- Description: Whether or not to use a rendered version of the primary diagnostic
+- Setting: `use_rendered`
+- Default:
+
+```json
+{
+  "diagnostics": {
+    "use_rendered": false
 }
 ```
 

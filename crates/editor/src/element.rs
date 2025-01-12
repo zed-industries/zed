@@ -389,7 +389,7 @@ impl EditorElement {
         register_action(view, cx, Editor::copy_permalink_to_line);
         register_action(view, cx, Editor::open_permalink_to_line);
         register_action(view, cx, Editor::copy_file_location);
-        register_action(view, cx, Editor::toggle_show_diagnostics_inline);
+        register_action(view, cx, Editor::toggle_active_diagnostic_at_cursor);
         register_action(view, cx, Editor::toggle_git_blame);
         register_action(view, cx, Editor::toggle_git_blame_inline);
         register_action(view, cx, Editor::toggle_hunk_diff);
@@ -1579,11 +1579,11 @@ impl EditorElement {
         line_layouts: &[LineWithInvisibles],
         crease_trailers: &[Option<CreaseTrailerLayout>],
         content_origin: gpui::Point<Pixels>,
-        start_row: DisplayRow,
-        end_row: DisplayRow,
         scroll_pixel_position: gpui::Point<Pixels>,
         line_height: Pixels,
         style: &EditorStyle,
+        start_row: DisplayRow,
+        end_row: DisplayRow,
         cx: &mut WindowContext,
     ) -> HashMap<DisplayRow, AnyElement> {
         if !self
@@ -1665,7 +1665,8 @@ impl EditorElement {
                     diagnostic.range.start.row,
                     diagnostic.range.start.column,
                 )
-            });
+            })
+            .collect::<Vec<_>>();
 
         for diagnostic in diagnostics {
             let diag_point = MultiBufferPoint::new(diagnostic.range.start.row, 0);
@@ -1674,6 +1675,7 @@ impl EditorElement {
             if !(start_row..end_row).contains(&display_point.row()) {
                 continue;
             }
+
             let line_ix = DisplayRow(display_point.row().minus(start_row));
 
             if inline_diagnostics.contains_key(&line_ix) {
@@ -6620,11 +6622,11 @@ impl Element for EditorElement {
                         &line_layouts[..],
                         &crease_trailers[..],
                         content_origin,
-                        start_row,
-                        end_row,
                         scroll_pixel_position,
                         line_height,
                         &style,
+                        start_row,
+                        end_row,
                         cx,
                     );
 

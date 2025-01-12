@@ -92,11 +92,32 @@ pub struct DiagnosticsSettings {
 
     /// Settings for showing inline diagnostics
     pub inline: Option<InlineDiagnosticsSettings>,
+
+    /// Update active diagnostic on cursor movement
+    pub update_with_cursor: Option<bool>,
+
+    /// Whether to show only the primary diagnostic or not
+    pub primary_only: Option<bool>,
+
+    /// Whether to try and use the rendered diagnostic if available
+    pub use_rendered: Option<bool>,
 }
 
 impl DiagnosticsSettings {
     pub fn inline(&self) -> InlineDiagnosticsSettings {
         self.inline.unwrap_or_default()
+    }
+
+    pub fn update_with_cursor(&self) -> bool {
+        self.update_with_cursor.unwrap_or(false)
+    }
+
+    pub fn primary_only(&self) -> bool {
+        self.primary_only.unwrap_or(false)
+    }
+
+    pub fn use_rendered(&self) -> bool {
+        self.use_rendered.unwrap_or(false)
     }
 }
 
@@ -135,7 +156,7 @@ impl InlineDiagnosticsSettings {
     }
 
     pub fn padding(&self) -> u32 {
-        self.padding.unwrap_or(6)
+        self.padding.unwrap_or(4)
     }
 
     pub fn min_column(&self) -> u32 {
