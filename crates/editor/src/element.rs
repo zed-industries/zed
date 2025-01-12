@@ -378,6 +378,8 @@ impl EditorElement {
         register_action(view, cx, Editor::reveal_in_finder);
         register_action(view, cx, Editor::copy_path);
         register_action(view, cx, Editor::copy_relative_path);
+        register_action(view, cx, Editor::copy_file_name);
+        register_action(view, cx, Editor::copy_file_name_without_extension);
         register_action(view, cx, Editor::copy_highlight_json);
         register_action(view, cx, Editor::copy_permalink_to_line);
         register_action(view, cx, Editor::open_permalink_to_line);

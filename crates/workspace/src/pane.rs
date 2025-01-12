@@ -2374,7 +2374,7 @@ impl Pane {
                                     }),
                                 )
                             })
-                            .when_some(relative_path, |menu, relative_path| {
+                            .when_some(relative_path.clone(), |menu, relative_path| {
                                 menu.entry(
                                     "Copy Relative Path",
                                     Some(Box::new(CopyRelativePath)),
