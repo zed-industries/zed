@@ -83,7 +83,6 @@ impl TerminalPanel {
         let project = workspace.project();
         let pane = new_terminal_pane(workspace.weak_handle(), project.clone(), false, cx);
         let center = PaneGroup::new(pane.clone());
-        cx.focus_view(&pane);
         let terminal_panel = Self {
             center,
             active_pane: pane,
@@ -282,6 +281,14 @@ impl TerminalPanel {
                 task.await.log_err();
             }
         }
+
+        terminal_panel
+            .update(&mut cx, |terminal_panel, cx| {
+                terminal_panel.active_pane.update(cx, |pane, cx| {
+                    pane.focus_active_item(cx);
+                });
+            })
+            .ok();
 
         Ok(terminal_panel)
     }
