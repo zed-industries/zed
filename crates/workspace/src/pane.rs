@@ -305,6 +305,7 @@ pub struct Pane {
     save_modals_spawned: HashSet<EntityId>,
     pub new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pub split_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
+    pub layout_mode_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     pinned_tab_count: usize,
     diagnostics: HashMap<ProjectPath, DiagnosticSeverity>,
     zoom_out_on_close: bool,
@@ -507,6 +508,7 @@ impl Pane {
             save_modals_spawned: HashSet::default(),
             split_item_context_menu_handle: Default::default(),
             new_item_context_menu_handle: Default::default(),
+            layout_mode_context_menu_handle: Default::default(),
             pinned_tab_count: 0,
             diagnostics: Default::default(),
             zoom_out_on_close: true,
@@ -594,6 +596,7 @@ impl Pane {
     pub fn context_menu_focused(&self, cx: &mut ViewContext<Self>) -> bool {
         self.new_item_context_menu_handle.is_focused(cx)
             || self.split_item_context_menu_handle.is_focused(cx)
+            || self.layout_mode_context_menu_handle.is_focused(cx)
     }
 
     fn focus_out(&mut self, _event: FocusOutEvent, cx: &mut ViewContext<Self>) {
