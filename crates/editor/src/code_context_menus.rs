@@ -773,7 +773,7 @@ impl CompletionsMenu {
         let mut entries = self.entries.borrow_mut();
         if let Some(CompletionEntry::InlineCompletionHint(_)) = entries.first() {
             entries.truncate(1);
-            if inline_completion_was_selected {
+            if inline_completion_was_selected || matches.is_empty() {
                 self.selected_item = 0;
             } else {
                 self.selected_item = 1;
