@@ -4,7 +4,7 @@ use collections::BTreeMap;
 use gpui::{Action, AppContext, KeyBinding, SharedString};
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},
-    schema::{InstanceType, Schema, SchemaObject, SingleOrVec, SubschemaValidation},
+    schema::{ArrayValidation, InstanceType, Schema, SchemaObject, SubschemaValidation},
     JsonSchema, Map,
 };
 use serde::Deserialize;
@@ -143,14 +143,13 @@ impl KeymapFile {
         action_names: &[SharedString],
         deprecations: &[(SharedString, SharedString)],
     ) -> serde_json::Value {
-        let mut root_schema = SchemaSettings::draft07()
+        let mut gen = SchemaSettings::draft07()
             .with(|settings| settings.option_add_null_type = false)
-            .into_generator()
-            .into_root_schema_for::<KeymapFile>();
+            .into_generator();
 
         let mut alternatives = vec![
-            Schema::Object(SchemaObject {
-                instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
+            SchemaObject {
+                instance_type: Some(InstanceType::String.into()),
                 enum_values: Some(
                     action_names
                         .iter()
@@ -158,37 +157,57 @@ impl KeymapFile {
                         .collect(),
                 ),
                 ..Default::default()
-            }),
-            Schema::Object(SchemaObject {
-                instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Array))),
+            }
+            .into(),
+            SchemaObject {
+                instance_type: Some(InstanceType::Array.into()),
+                array: Some(
+                    ArrayValidation {
+                        items: Some(vec![String::json_schema(&mut gen), Schema::Bool(true)].into()),
+                        min_items: Some(2),
+                        max_items: Some(2),
+                        ..Default::default()
+                    }
+                    .into(),
+                ),
                 ..Default::default()
-            }),
-            Schema::Object(SchemaObject {
-                instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::Null))),
+            }
+            .into(),
+            SchemaObject {
+                instance_type: Some(InstanceType::Null.into()),
                 ..Default::default()
-            }),
+            }
+            .into(),
         ];
         for (old, new) in deprecations {
-            alternatives.push(Schema::Object(SchemaObject {
-                instance_type: Some(SingleOrVec::Single(Box::new(InstanceType::String))),
-                const_value: Some(Value::String(old.to_string())),
-                extensions: Map::from_iter([(
-                    // deprecationMessage is not part of the JSON Schema spec,
-                    // but json-language-server recognizes it.
-                    "deprecationMessage".to_owned(),
-                    format!("Deprecated, use {new}").into(),
-                )]),
-                ..Default::default()
-            }));
+            alternatives.push(
+                SchemaObject {
+                    instance_type: Some(InstanceType::String.into()),
+                    const_value: Some(Value::String(old.to_string())),
+                    extensions: Map::from_iter([(
+                        // deprecationMessage is not part of the JSON Schema spec,
+                        // but json-language-server recognizes it.
+                        "deprecationMessage".to_owned(),
+                        format!("Deprecated, use {new}").into(),
+                    )]),
+                    ..Default::default()
+                }
+                .into(),
+            );
         }
-        let action_schema = Schema::Object(SchemaObject {
-            subschemas: Some(Box::new(SubschemaValidation {
-                one_of: Some(alternatives),
-                ..Default::default()
-            })),
+        let action_schema = SchemaObject {
+            subschemas: Some(
+                SubschemaValidation {
+                    one_of: Some(alternatives),
+                    ..Default::default()
+                }
+                .into(),
+            ),
             ..Default::default()
-        });
+        }
+        .into();
 
+        let mut root_schema = gen.into_root_schema_for::<KeymapFile>();
         root_schema
             .definitions
             .insert("KeymapAction".to_owned(), action_schema);
