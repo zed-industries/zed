@@ -1,5 +1,0 @@
-{
-  "tasks": {
-    "build": "cargo build"
-  }
-}
