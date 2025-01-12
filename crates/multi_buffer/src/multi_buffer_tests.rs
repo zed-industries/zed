@@ -1361,11 +1361,11 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
 
     let id_1 = buffer_1.read_with(cx, |buffer, _| buffer.remote_id());
     let id_2 = buffer_2.read_with(cx, |buffer, _| buffer.remote_id());
-    let base_id_1 = change_set_1.read_with(cx, |change_set, cx| {
-        change_set.base_text.as_ref().unwrap().read(cx).remote_id()
+    let base_id_1 = change_set_1.read_with(cx, |change_set, _| {
+        change_set.base_text.as_ref().unwrap().remote_id()
     });
-    let base_id_2 = change_set_2.read_with(cx, |change_set, cx| {
-        change_set.base_text.as_ref().unwrap().read(cx).remote_id()
+    let base_id_2 = change_set_2.read_with(cx, |change_set, _| {
+        change_set.base_text.as_ref().unwrap().remote_id()
     });
 
     let buffer_lines = (0..=snapshot.max_row().0)
@@ -1571,7 +1571,7 @@ impl ReferenceMultibuffer {
             let buffer_range = excerpt.range.to_offset(buffer);
             let change_set = self.change_sets.get(&buffer.remote_id()).unwrap().read(cx);
             let diff = change_set.diff_to_buffer.clone();
-            let base_buffer = change_set.base_text.as_ref().unwrap().read(cx);
+            let base_buffer = change_set.base_text.as_ref().unwrap();
 
             let mut start = buffer_range.start;
             let mut insertion_end_point = Point::zero();
@@ -1815,7 +1815,7 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
                                     snapshot.remote_id(),
                                 );
                                 change_set.recalculate_diff_sync(
-                                    change_set.base_text.clone().unwrap().read(cx).text(),
+                                    change_set.base_text.clone().unwrap().text(),
                                     snapshot.text,
                                     false,
                                     cx,

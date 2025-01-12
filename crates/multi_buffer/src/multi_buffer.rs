@@ -1981,17 +1981,14 @@ impl MultiBuffer {
         let change_set = change_set.read(cx);
         let buffer_id = change_set.buffer_id;
         let diff = change_set.diff_to_buffer.clone();
-        let base_text = change_set
-            .base_text
-            .as_ref()
-            .map(|buffer| buffer.read(cx).snapshot());
+        let base_text = change_set.base_text.clone();
         self.sync(cx);
         let mut snapshot = self.snapshot.borrow_mut();
         let base_text_version_changed = snapshot.diffs.get(&buffer_id).map_or(true, |snapshot| {
             snapshot.base_text_version != change_set.base_text_version
         });
 
-        if let Some(base_text) = base_text.clone() {
+        if let Some(base_text) = base_text {
             snapshot.diffs.insert(
                 buffer_id,
                 DiffSnapshot {

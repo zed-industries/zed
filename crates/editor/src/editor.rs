@@ -6061,7 +6061,6 @@ impl Editor {
             .read(cx)
             .base_text
             .as_ref()?
-            .read(cx)
             .as_rope()
             .slice(hunk.diff_base_byte_range.clone());
         let buffer_snapshot = buffer.snapshot();
