@@ -31,7 +31,7 @@ use ui::{
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
-    dock::{DockPosition, Panel, PanelEvent},
+    dock::{DockPosition, Panel, PanelEvent, PanelHandle},
     item::SerializableItem,
     move_active_item, move_item, pane,
     ui::IconName,
@@ -282,13 +282,24 @@ impl TerminalPanel {
             }
         }
 
-        terminal_panel
-            .update(&mut cx, |terminal_panel, cx| {
-                terminal_panel.active_pane.update(cx, |pane, cx| {
-                    pane.focus_active_item(cx);
-                });
-            })
-            .ok();
+        if let Some(workspace) = workspace.upgrade() {
+            let should_focus = workspace
+                .update(&mut cx, |workspace, cx| {
+                    workspace.active_item(cx).is_none()
+                        && workspace.is_dock_at_position_open(terminal_panel.position(cx), cx)
+                })
+                .unwrap_or(false);
+
+            if should_focus {
+                terminal_panel
+                    .update(&mut cx, |panel, cx| {
+                        panel.active_pane.update(cx, |pane, cx| {
+                            pane.focus_active_item(cx);
+                        });
+                    })
+                    .ok();
+            }
+        }
 
         Ok(terminal_panel)
     }

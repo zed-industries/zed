@@ -2302,6 +2302,20 @@ impl Workspace {
         }
     }
 
+    pub fn is_dock_at_position_open(
+        &self,
+        position: DockPosition,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        for dock in [&self.left_dock, &self.bottom_dock, &self.right_dock] {
+            let dock = dock.read(cx);
+            if dock.position() == position && dock.is_open() {
+                return true;
+            }
+        }
+        false
+    }
+
     pub fn toggle_dock(&mut self, dock_side: DockPosition, cx: &mut ViewContext<Self>) {
         let dock = match dock_side {
             DockPosition::Left => &self.left_dock,
