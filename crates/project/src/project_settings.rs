@@ -1,3 +1,4 @@
+use anyhow::Context;
 use collections::HashMap;
 use fs::Fs;
 use gpui::{AppContext, AsyncAppContext, BorrowAppContext, EventEmitter, Model, ModelContext};
@@ -19,6 +20,7 @@ use std::{
     time::Duration,
 };
 use task::{TaskTemplates, VsCodeTaskFile};
+use util::serde::default_true;
 use util::ResultExt;
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
@@ -139,19 +141,6 @@ impl InlineDiagnosticsSettings {
     pub fn min_column(&self) -> u32 {
         self.min_column.unwrap_or(0)
     }
-}
-
-/// Hover action for inline diagnostic indicators
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, JsonSchema, Default)]
-#[serde(rename_all = "snake_case")]
-pub enum InlineDiagnosticHoverAction {
-    /// Show a tooltip when hovering over inline diagnostic indicators.
-    #[default]
-    Tooltip,
-    /// Activate the diagnostic group when hovering.
-    Inline,
-    /// Don't react to hover events
-    None,
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]

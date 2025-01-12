@@ -723,7 +723,7 @@
       // of the inline diagnostic in units of columns.
       // "padding": 6,
       // The minimum column to display inline diagnostics. This setting can be
-      // used to horizontally align inline diagnostics at some position. Lines
+      // used to horizontally align inline diagnostics at some column. Lines
       // longer than this value will still push diagnostics further to the right.
       // "min_column": 0
     }

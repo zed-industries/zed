@@ -17,7 +17,6 @@ mod blame_entry_tooltip;
 mod blink_manager;
 mod clangd_ext;
 mod code_context_menus;
-mod diagnostic_tooltip;
 pub mod display_map;
 mod editor_settings;
 mod editor_settings_controls;
@@ -4379,8 +4378,14 @@ impl Editor {
         None
     }
 
-    pub fn render_diagnostics_inline(&mut self, cx: &mut WindowContext) -> bool {
+    pub fn render_inline_diagnostics(&mut self) -> bool {
         self.show_diagnostics_inline
+    }
+
+    /// Used to disable the inline diagnostics rendering in the ProjectDiagnostics
+    /// multi-buffer.
+    pub fn set_render_inline_diagnostics(&mut self, enabled: bool) {
+        self.show_diagnostics_inline = enabled;
     }
 
     pub fn toggle_show_diagnostics_inline(

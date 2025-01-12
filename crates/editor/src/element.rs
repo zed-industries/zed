@@ -1,7 +1,6 @@
 use crate::{
     blame_entry_tooltip::{blame_entry_relative_timestamp, BlameEntryTooltip},
     code_context_menus::{CodeActionsMenu, MENU_ASIDE_MAX_WIDTH, MENU_ASIDE_MIN_WIDTH, MENU_GAP},
-    diagnostic_tooltip::DiagnosticTooltip,
     display_map::{
         Block, BlockContext, BlockStyle, DisplaySnapshot, HighlightedChunk, ToDisplayPoint,
     },
@@ -53,7 +52,7 @@ use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint,
     MultiBufferRow, MultiBufferSnapshot, ToOffset,
 };
-use project::project_settings::{GitGutterSetting, InlineDiagnosticHoverAction, ProjectSettings};
+use project::project_settings::{GitGutterSetting, ProjectSettings};
 use settings::Settings;
 use smallvec::{smallvec, SmallVec};
 use std::{
@@ -1577,7 +1576,6 @@ impl EditorElement {
     fn layout_inline_diagnostics(
         &self,
         snapshot: &EditorSnapshot,
-        hitbox: &Hitbox,
         line_layouts: &[LineWithInvisibles],
         crease_trailers: &[Option<CreaseTrailerLayout>],
         content_origin: gpui::Point<Pixels>,
@@ -1585,26 +1583,23 @@ impl EditorElement {
         end_row: DisplayRow,
         scroll_pixel_position: gpui::Point<Pixels>,
         line_height: Pixels,
-        em_width: Pixels,
         style: &EditorStyle,
         cx: &mut WindowContext,
     ) -> HashMap<DisplayRow, AnyElement> {
         if !self
             .editor
-            .update(cx, |editor, cx| editor.render_diagnostics_inline(cx))
+            .update(cx, |editor, _| editor.render_inline_diagnostics())
         {
             return Default::default();
         }
 
         let diagnostics = self.gather_inline_diagnostics(
             snapshot,
-            hitbox,
             line_layouts,
             crease_trailers,
             content_origin,
             scroll_pixel_position,
             line_height,
-            em_width,
             start_row,
             end_row,
             cx,
@@ -1642,13 +1637,11 @@ impl EditorElement {
     fn gather_inline_diagnostics(
         &self,
         snapshot: &EditorSnapshot,
-        hitbox: &Hitbox,
         line_layouts: &[LineWithInvisibles],
         crease_trailers: &[Option<CreaseTrailerLayout>],
         content_origin: gpui::Point<Pixels>,
         scroll_pixel_position: gpui::Point<Pixels>,
         line_height: Pixels,
-        em_width: Pixels,
         start_row: DisplayRow,
         end_row: DisplayRow,
         cx: &mut WindowContext,
@@ -1683,7 +1676,7 @@ impl EditorElement {
             }
             let line_ix = DisplayRow(display_point.row().minus(start_row));
 
-            if let Some(ref mut elem) = inline_diagnostics.get_mut(&line_ix) {
+            if inline_diagnostics.contains_key(&line_ix) {
                 continue;
             }
 
@@ -1718,13 +1711,12 @@ impl EditorElement {
                 cmp::max(padded_line_end, min_start)
             };
 
-            let message_parts = diagnostic
+            let message = diagnostic
                 .diagnostic
                 .message
-                .split('\n')
-                .take(1)
-                .collect::<Vec<_>>();
-            let message = message_parts.join("");
+                .split_once('\n')
+                .map(|(line, _)| line.to_string())
+                .unwrap_or(diagnostic.diagnostic.message.to_string());
 
             let elem = DiagnosticElement {
                 x: start_x,
@@ -6625,7 +6617,6 @@ impl Element for EditorElement {
 
                     let inline_diagnostics = self.layout_inline_diagnostics(
                         &snapshot,
-                        &hitbox,
                         &line_layouts[..],
                         &crease_trailers[..],
                         content_origin,
@@ -6633,7 +6624,6 @@ impl Element for EditorElement {
                         end_row,
                         scroll_pixel_position,
                         line_height,
-                        em_width,
                         &style,
                         cx,
                     );
