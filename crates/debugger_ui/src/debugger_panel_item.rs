@@ -346,12 +346,15 @@ impl DebugPanelItem {
             return;
         }
 
-        // The default value of an event category is console
-        // so we assume that is the output type if it doesn't exist
         let output_category = event
             .category
             .as_ref()
             .unwrap_or(&OutputEventCategory::Console);
+
+        // skip telementry output as it pollutes the users output view
+        if output_category == &OutputEventCategory::Telemetry {
+            return;
+        }
 
         match output_category {
             OutputEventCategory::Console => {
