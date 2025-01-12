@@ -351,7 +351,7 @@ impl DebugPanelItem {
             .as_ref()
             .unwrap_or(&OutputEventCategory::Console);
 
-        // skip telementry output as it pollutes the users output view
+        // skip telemetry output as it pollutes the users output view
         if output_category == &OutputEventCategory::Telemetry {
             return;
         }
