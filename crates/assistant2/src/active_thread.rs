@@ -344,7 +344,30 @@ impl ActiveThread {
 }
 
 impl Render for ActiveThread {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        list(self.list_state.clone()).flex_1().py_1()
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let is_streaming_completion = self.thread.read(cx).is_streaming();
+
+        v_flex()
+            .size_full()
+            .child(list(self.list_state.clone()).flex_grow())
+            .child(
+                h_flex()
+                    .absolute()
+                    .bottom_1()
+                    .flex_shrink()
+                    .justify_center()
+                    .w_full()
+                    .when(is_streaming_completion, |parent| {
+                        parent.child(
+                            h_flex()
+                                .gap_2()
+                                .p_1p5()
+                                .rounded_md()
+                                .bg(cx.theme().colors().elevated_surface_background)
+                                .child(Label::new("Generating…").size(LabelSize::Small))
+                                .child(Label::new("esc to cancel").size(LabelSize::Small)),
+                        )
+                    }),
+            )
     }
 }
