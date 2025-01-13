@@ -1865,7 +1865,7 @@ impl LocalLspStore {
                             }
                         }
                     },
-                );
+                )?;
                 let server_state = self.language_servers.get(&server_id)?;
                 if let LanguageServerState::Running { server, .. } = server_state {
                     Some(server.clone())
