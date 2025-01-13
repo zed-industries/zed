@@ -347,6 +347,7 @@ impl Render for ActiveThread {
 
         v_flex()
             .size_full()
+            .pt_1p5()
             .child(list(self.list_state.clone()).flex_grow())
             .when(is_streaming_completion, |parent| {
                 parent.child(
