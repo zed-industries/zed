@@ -359,9 +359,9 @@ impl ActiveThread {
                         .child(message_content),
                 ),
             Role::Assistant => div().id(("message-container", ix)).child(
-                v_flex()
-                    .relative()
-                    .when(is_streaming_completion, |parent| {
+                v_flex().relative().child(message_content).when(
+                    is_streaming_completion,
+                    |parent| {
                         parent.child(
                             h_flex()
                                 .absolute()
@@ -401,10 +401,9 @@ impl ActiveThread {
                                         .child(esc_to_cancel),
                                 ),
                         )
-                    })
-                    // .bg(colors.editor_background)
-                    // .rounded_md()
-                    .child(message_content),
+                    },
+                ), // .bg(colors.editor_background)
+                   // .rounded_md()
             ),
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
