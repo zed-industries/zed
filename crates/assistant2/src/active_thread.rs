@@ -298,15 +298,13 @@ impl ActiveThread {
                 }
             });
 
-        let styled_message = div().relative().debug_bg_blue().child(match message.role {
+        let styled_message = match message.role {
             Role::User => v_flex()
                 .id(("message-container", ix))
                 .py_1()
-                // .debug_bg_cyan()
                 .px_2p5()
                 .child(
                     v_flex()
-                        // .bg(colors.editor_foreground.opacity(0.05))
                         .bg(colors.editor_background)
                         .shadow_sm()
                         .rounded_lg()
@@ -340,9 +338,6 @@ impl ActiveThread {
             Role::Assistant => div()
                 .id(("message-container", ix))
                 .relative()
-                // .py_1()
-                // .debug_bg_red()
-                // .px_2()
                 .when(is_streaming_completion, |parent| {
                     parent.child(
                         h_flex()
@@ -397,7 +392,7 @@ impl ActiveThread {
                     .rounded_md()
                     .child(message_content),
             ),
-        });
+        };
 
         styled_message.into_any()
     }
