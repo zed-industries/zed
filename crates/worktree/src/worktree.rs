@@ -240,10 +240,7 @@ impl RepositoryEntry {
             updated_statuses: self
                 .statuses_by_path
                 .iter()
-                .map(|entry| proto::StatusEntry {
-                    repo_path: entry.repo_path.to_string_lossy().to_string(),
-                    status: status_to_proto(entry.status),
-                })
+                .map(|entry| entry.to_proto())
                 .collect(),
             removed_statuses: Default::default(),
         }
@@ -3645,7 +3642,8 @@ impl StatusEntry {
     fn to_proto(&self) -> proto::StatusEntry {
         proto::StatusEntry {
             repo_path: self.repo_path.to_proto(),
-            status: status_to_proto(self.status),
+            simple_status: 0,
+            status: Some(status_to_proto(self.status)),
         }
     }
 }
@@ -3654,8 +3652,7 @@ impl TryFrom<proto::StatusEntry> for StatusEntry {
     type Error = anyhow::Error;
     fn try_from(value: proto::StatusEntry) -> Result<Self, Self::Error> {
         let repo_path = RepoPath(Path::new(&value.repo_path).into());
-        let status = status_from_proto(value.status)
-            .ok_or_else(|| anyhow!("Unable to parse status value {}", value.status))?;
+        let status = status_from_proto(value.simple_status, value.status)?;
         Ok(Self { repo_path, status })
     }
 }
@@ -6063,44 +6060,116 @@ impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
 
 // TODO transmit file statuses with full fidelity
 
-fn status_from_proto(proto: i32) -> Option<FileStatus> {
-    let proto = proto::GitStatus::from_i32(proto)?;
-    let status = match proto {
-        proto::GitStatus::Added => TrackedStatus {
-            worktree_status: StatusCode::Added,
-            index_status: StatusCode::Unmodified,
-        }
-        .into(),
-        proto::GitStatus::Modified => TrackedStatus {
-            worktree_status: StatusCode::Modified,
-            index_status: StatusCode::Unmodified,
-        }
-        .into(),
-        proto::GitStatus::Conflict => UnmergedStatus {
-            first_head: UnmergedStatusCode::Updated,
-            second_head: UnmergedStatusCode::Updated,
-        }
-        .into(),
-        proto::GitStatus::Deleted => TrackedStatus {
-            worktree_status: StatusCode::Deleted,
-            index_status: StatusCode::Unmodified,
-        }
-        .into(),
+fn status_from_proto(
+    simple_status: i32,
+    status: Option<proto::GitFileStatus>,
+) -> anyhow::Result<FileStatus> {
+    use proto::git_file_status::Variant;
+
+    let Some(variant) = status.and_then(|status| status.variant) else {
+        let code = proto::GitStatusCode::from_i32(simple_status)
+            .ok_or_else(|| anyhow!("Invalid git status code: {simple_status}"))?;
+        let result = match code {
+            proto::GitStatusCode::Added => TrackedStatus {
+                worktree_status: StatusCode::Added,
+                index_status: StatusCode::Unmodified,
+            }
+            .into(),
+            proto::GitStatusCode::Modified => TrackedStatus {
+                worktree_status: StatusCode::Modified,
+                index_status: StatusCode::Unmodified,
+            }
+            .into(),
+            proto::GitStatusCode::Conflict => UnmergedStatus {
+                first_head: UnmergedStatusCode::Updated,
+                second_head: UnmergedStatusCode::Updated,
+            }
+            .into(),
+            proto::GitStatusCode::Deleted => TrackedStatus {
+                worktree_status: StatusCode::Deleted,
+                index_status: StatusCode::Unmodified,
+            }
+            .into(),
+            _ => return Err(anyhow!("Invalid code for simple status: {simple_status}")),
+        };
+        return Ok(result);
     };
-    Some(status)
+
+    let result = match variant {
+        Variant::Untracked(_) => FileStatus::Untracked,
+        Variant::Ignored(_) => FileStatus::Ignored,
+        Variant::Unmerged(unmerged) => {
+            let [first_head, second_head] =
+                [unmerged.first_head, unmerged.second_head].map(|head| {
+                    let code = proto::GitStatusCode::from_i32(head)
+                        .ok_or_else(|| anyhow!("Invalid git status code: {head}"))?;
+                    let result = match code {
+                        proto::GitStatusCode::Added => UnmergedStatusCode::Added,
+                        proto::GitStatusCode::Updated => UnmergedStatusCode::Updated,
+                        proto::GitStatusCode::Deleted => UnmergedStatusCode::Deleted,
+                        _ => return Err(anyhow!("Invalid code for unmerged status: {code:?}")),
+                    };
+                    Ok(result)
+                });
+            let [first_head, second_head] = [first_head?, second_head?];
+            UnmergedStatus {
+                first_head,
+                second_head,
+            }
+            .into()
+        }
+        Variant::Tracked(tracked) => {
+            let [index_status, worktree_status] = [tracked.index_status, tracked.worktree_status]
+                .map(|status| {
+                    let code = proto::GitStatusCode::from_i32(status)
+                        .ok_or_else(|| anyhow!("Invalid git status code: {status}"))?;
+                    let result = match code {
+                        proto::GitStatusCode::Modified => StatusCode::Modified,
+                        proto::GitStatusCode::TypeChanged => StatusCode::TypeChanged,
+                        proto::GitStatusCode::Added => StatusCode::Added,
+                        proto::GitStatusCode::Deleted => StatusCode::Deleted,
+                        proto::GitStatusCode::Renamed => StatusCode::Renamed,
+                        proto::GitStatusCode::Copied => StatusCode::Copied,
+                        proto::GitStatusCode::Unmodified => StatusCode::Unmodified,
+                        _ => return Err(anyhow!("Invalid code for tracked status: {code:?}")),
+                    };
+                    Ok(result)
+                });
+            let [index_status, worktree_status] = [index_status?, worktree_status?];
+            TrackedStatus {
+                index_status,
+                worktree_status,
+            }
+            .into()
+        }
+    };
+    Ok(result)
 }
 
-fn status_to_proto(status: FileStatus) -> i32 {
-    let proto = if status.is_conflicted() {
-        proto::GitStatus::Conflict
-    } else if status.is_deleted() {
-        proto::GitStatus::Modified
-    } else if status.is_modified() {
-        proto::GitStatus::Modified
-    } else {
-        proto::GitStatus::Added
+fn status_to_proto(status: FileStatus) -> proto::GitFileStatus {
+    use proto::git_file_status::{Tracked, Unmerged, Variant};
+
+    let variant = match status {
+        FileStatus::Untracked => Variant::Untracked(Default::default()),
+        FileStatus::Ignored => Variant::Ignored(Default::default()),
+        FileStatus::Unmerged(UnmergedStatus {
+            first_head,
+            second_head,
+        }) => Variant::Unmerged(Unmerged {
+            first_head: first_head as i32,
+            second_head: second_head as i32,
+        }),
+        FileStatus::Tracked(TrackedStatus {
+            index_status,
+            worktree_status,
+        }) => Variant::Tracked(Tracked {
+            index_status: index_status as i32,
+            worktree_status: worktree_status as i32,
+        }),
     };
-    proto as i32
+    proto::GitFileStatus {
+        variant: Some(variant),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
