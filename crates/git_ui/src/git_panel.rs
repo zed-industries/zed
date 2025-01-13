@@ -201,6 +201,7 @@ impl GitPanel {
                                 .as_ref()
                                 .is_some_and(|(active_id, _, _)| active_id == id)
                             {
+                                state.active_repository = first_repo_in_project;
                                 this.schedule_update();
                             }
                         });
@@ -210,13 +211,7 @@ impl GitPanel {
                             return;
                         };
                         git_state.update(cx, |state, _| {
-                            if !state
-                                .active_repository
-                                .as_ref()
-                                .is_some_and(|(id, _, _)| id == &first.0)
-                            {
-                                state.active_repository = Some(first);
-                            }
+                            state.active_repository = Some(first);
                             this.schedule_update();
                         });
                     }
