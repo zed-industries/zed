@@ -51,6 +51,7 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
         });
     }
 }
+
 #[derive(Default)]
 pub struct AllLanguageModelSettings {
     pub anthropic: AnthropicSettings,
