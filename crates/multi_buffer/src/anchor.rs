@@ -22,6 +22,19 @@ pub struct DiffBaseAnchor {
 }
 
 impl Anchor {
+    pub fn in_buffer(
+        excerpt_id: ExcerptId,
+        buffer_id: BufferId,
+        text_anchor: text::Anchor,
+    ) -> Self {
+        Self {
+            buffer_id: Some(buffer_id),
+            excerpt_id,
+            text_anchor,
+            diff_base_anchor: None,
+        }
+    }
+
     pub fn min() -> Self {
         Self {
             buffer_id: None,

@@ -11,7 +11,7 @@ use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
 use futures::{channel::mpsc, SinkExt};
-use gpui::{AppContext, EntityId, EventEmitter, Model, ModelContext, Task};
+use gpui::{px, AppContext, EntityId, EventEmitter, Model, ModelContext, Task};
 use itertools::Itertools;
 use language::{
     language_settings::{language_settings, LanguageSettings},
@@ -3264,7 +3264,7 @@ impl MultiBufferSnapshot {
         let mut cursor = self.cursor::<usize>();
         cursor.seek(&start);
 
-        let mut result = Vec::new();
+        let mut result: Vec<(&'a BufferSnapshot, Range<usize>, ExcerptId)> = Vec::new();
         while let Some(region) = cursor.region() {
             if region.range.start > end {
                 break;
@@ -3280,14 +3280,20 @@ impl MultiBufferSnapshot {
                     .buffer_range
                     .end
                     .min(region.buffer_range.start + end_overshoot);
-                result.push((region.buffer, start..end, region.excerpt.id));
+                if let Some(prev) = result.last_mut().filter(|(_, prev_range, excerpt_id)| {
+                    *excerpt_id == region.excerpt.id && prev_range.end == start
+                }) {
+                    prev.1.end = end;
+                } else {
+                    result.push((region.buffer, start..end, region.excerpt.id));
+                }
             }
             cursor.next();
         }
         result
     }
 
-    fn buffer_regions_in_range<'a>(
+    pub fn buffer_regions_in_range<'a>(
         &'a self,
         range: Range<usize>,
         reversed: bool,
