@@ -11,8 +11,8 @@ use util::ResultExt as _;
 
 use db::{define_connection, query, sqlez::statement::Statement, sqlez_macros::sql};
 use workspace::{
-    ItemHandle, ItemId, Member, Pane, PaneAxis, PaneGroup, SerializableItem as _, Workspace,
-    WorkspaceDb, WorkspaceId,
+    ItemId, Member, Pane, PaneAxis, PaneGroup, SerializableItem as _, Workspace, WorkspaceDb,
+    WorkspaceId,
 };
 
 use crate::{
@@ -145,14 +145,14 @@ fn populate_pane_items(
     active_item: Option<u64>,
     cx: &mut ViewContext<Pane>,
 ) {
-    let mut item_index = pane.items_len();
     for item in items {
-        let activate_item = Some(item.item_id().as_u64()) == active_item;
         pane.add_item(Box::new(item), false, false, None, cx);
-        item_index += 1;
-        if activate_item {
-            pane.activate_item(item_index, false, false, cx);
-        }
+    }
+    let active_index = pane
+        .items()
+        .position(|item| Some(item.item_id().as_u64()) == active_item);
+    if let Some(index) = active_index {
+        pane.activate_item(index, false, false, cx);
     }
 }
 
