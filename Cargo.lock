@@ -6819,7 +6819,6 @@ dependencies = [
  "regex",
  "rope",
  "rust-embed",
- "schemars",
  "serde",
  "serde_json",
  "settings",

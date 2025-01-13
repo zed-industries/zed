@@ -3,7 +3,7 @@ use anyhow::{anyhow, Context, Result};
 use collections::{BTreeMap, HashMap};
 use gpui::{Action, AppContext, KeyBinding, SharedString};
 use schemars::{
-    gen::SchemaGenerator,
+    gen::{SchemaGenerator, SchemaSettings},
     schema::{ArrayValidation, InstanceType, Metadata, Schema, SchemaObject, SubschemaValidation},
     JsonSchema,
 };
@@ -139,7 +139,17 @@ impl KeymapFile {
         Ok(())
     }
 
-    pub fn generate_json_schema(
+    pub fn generate_json_schema_for_registered_actions(cx: &mut AppContext) -> Value {
+        let mut generator = SchemaSettings::draft07()
+            .with(|settings| settings.option_add_null_type = false)
+            .into_generator();
+
+        let action_schemas = cx.action_schemas(&mut generator);
+        let deprecations = cx.action_deprecations();
+        KeymapFile::generate_json_schema(generator, action_schemas, deprecations)
+    }
+
+    fn generate_json_schema(
         generator: SchemaGenerator,
         action_schemas: Vec<(SharedString, Option<Schema>)>,
         deprecations: &HashMap<SharedString, SharedString>,
