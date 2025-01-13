@@ -168,7 +168,7 @@ impl Render for ContextStrip {
                 PopoverMenu::new("context-picker")
                     .menu(move |cx| {
                         context_picker.update(cx, |this, cx| {
-                            this.reset_mode(cx);
+                            this.init(cx);
                         });
 
                         Some(context_picker.clone())

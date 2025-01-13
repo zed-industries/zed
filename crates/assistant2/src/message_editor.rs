@@ -200,6 +200,7 @@ impl MessageEditor {
                         let char_behind_cursor = snapshot.chars_at(behind_cursor).next();
                         if char_behind_cursor == Some('@') {
                             self.inline_context_picker_menu_handle.show(cx);
+                            // TODO az
                         }
                     }
                 });
@@ -281,7 +282,13 @@ impl Render for MessageEditor {
                     })
                     .child(
                         PopoverMenu::new("inline-context-picker")
-                            .menu(move |_cx| Some(inline_context_picker.clone()))
+                            .menu(move |cx| {
+                                inline_context_picker.update(cx, |this, cx| {
+                                    this.init(cx);
+                                });
+
+                                Some(inline_context_picker.clone())
+                            })
                             .attach(gpui::Corner::TopLeft)
                             .anchor(gpui::Corner::BottomLeft)
                             .offset(gpui::Point {
