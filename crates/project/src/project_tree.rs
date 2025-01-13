@@ -17,7 +17,7 @@ use gpui::{AppContext, Context as _, EventEmitter, Model, ModelContext, Subscrip
 use language::{CachedLspAdapter, LanguageName, LanguageRegistry, LspAdapterDelegate};
 use lsp::LanguageServerName;
 use path_trie::{LabelPresence, RootPathTrie, TriePath};
-use settings::WorktreeId;
+use settings::{SettingsStore, WorktreeId};
 use worktree::{Event as WorktreeEvent, Worktree};
 
 use crate::{
@@ -74,7 +74,7 @@ pub struct ProjectTree {
     languages: Arc<LanguageRegistry>,
     root_points: HashMap<WorktreeId, Model<WorktreeRoots>>,
     worktree_store: Model<WorktreeStore>,
-    _subscriptions: [Subscription; 1],
+    _subscriptions: [Subscription; 2],
 }
 
 #[derive(Debug, Clone)]
@@ -105,6 +105,14 @@ impl Borrow<LanguageServerName> for AdapterWrapper {
     }
 }
 
+#[derive(PartialEq)]
+pub(crate) enum ProjectTreeEvent {
+    WorktreeRemoved(WorktreeId),
+    Cleared,
+}
+
+impl EventEmitter<ProjectTreeEvent> for ProjectTree {}
+
 impl ProjectTree {
     pub(crate) fn new(
         languages: Arc<LanguageRegistry>,
@@ -114,7 +122,17 @@ impl ProjectTree {
         cx.new_model(|cx| Self {
             languages,
             root_points: Default::default(),
-            _subscriptions: [cx.subscribe(&worktree_store, Self::on_worktree_store_event)],
+            _subscriptions: [
+                cx.subscribe(&worktree_store, Self::on_worktree_store_event),
+                cx.observe_global::<SettingsStore>(|this, cx| {
+                    for (_, roots) in &mut this.root_points {
+                        roots.update(cx, |worktree_roots, _| {
+                            worktree_roots.roots = RootPathTrie::new();
+                        })
+                    }
+                    cx.emit(ProjectTreeEvent::Cleared);
+                }),
+            ],
             worktree_store,
         })
     }
@@ -214,11 +232,12 @@ impl ProjectTree {
         &mut self,
         _: Model<WorktreeStore>,
         evt: &WorktreeStoreEvent,
-        _: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Self>,
     ) {
         match evt {
             WorktreeStoreEvent::WorktreeRemoved(_, worktree_id) => {
                 self.root_points.remove(&worktree_id);
+                cx.emit(ProjectTreeEvent::WorktreeRemoved(*worktree_id));
             }
             _ => {}
         }

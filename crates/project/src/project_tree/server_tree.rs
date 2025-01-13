@@ -14,18 +14,19 @@ use std::{
 };
 
 use collections::HashMap;
-use gpui::{AppContext, Context as _, Model};
+use gpui::{AppContext, Context as _, Model, Subscription};
 use language::{Attach, LanguageName, LspAdapterDelegate};
 use lsp::LanguageServerName;
 
 use crate::{LanguageServerId, ProjectPath};
 
-use super::{AdapterWrapper, ProjectTree};
+use super::{AdapterWrapper, ProjectTree, ProjectTreeEvent};
 
 pub struct LanguageServerTree {
     project_tree: Model<ProjectTree>,
     instances: HashMap<ProjectPath, BTreeMap<LanguageServerName, Arc<InnerTreeNode>>>,
     attach_kind_cache: HashMap<LanguageServerName, Attach>,
+    _subscriptions: Subscription,
 }
 
 /// A node in language server tree represents either:
@@ -61,6 +62,7 @@ impl From<Weak<InnerTreeNode>> for LanguageServerTreeNode {
     }
 }
 
+#[derive(Debug)]
 struct InnerTreeNode {
     id: OnceLock<LanguageServerId>,
     name: LanguageServerName,
@@ -81,12 +83,19 @@ impl InnerTreeNode {
 
 impl LanguageServerTree {
     pub(crate) fn new(project_tree: Model<ProjectTree>, cx: &mut AppContext) -> Model<Self> {
-        cx.new_model(|_| Self {
+        cx.new_model(|cx| Self {
+            _subscriptions: cx.subscribe(
+                &project_tree,
+                |_: &mut Self, _, event, _| {
+                    if event == &ProjectTreeEvent::Cleared {}
+                },
+            ),
             project_tree,
             instances: Default::default(),
             attach_kind_cache: Default::default(),
         })
     }
+    /// Memoize calls to attach_kind on LspAdapter (which might be a WASM extension, thus ~expensive to call).
     fn attach_kind(&mut self, adapter: &AdapterWrapper) -> Attach {
         *self
             .attach_kind_cache
