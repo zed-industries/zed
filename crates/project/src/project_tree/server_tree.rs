@@ -17,7 +17,6 @@ use collections::HashMap;
 use gpui::{AppContext, Context as _, Model};
 use language::{Attach, LanguageName, LspAdapterDelegate};
 use lsp::LanguageServerName;
-use settings::WorktreeId;
 
 use crate::{LanguageServerId, ProjectPath};
 
