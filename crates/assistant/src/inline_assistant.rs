@@ -4,7 +4,10 @@ use crate::{
     CyclePreviousInlineAssist, LineDiff, LineOperation, RequestType, StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
-use client::{telemetry::Telemetry, ErrorExt};
+use client::{
+    telemetry::{AssistantEventData, Telemetry},
+    ErrorExt,
+};
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     actions::{MoveDown, MoveUp, SelectAll},
@@ -257,18 +260,18 @@ impl InlineAssistant {
             codegen_ranges.push(start..end);
 
             if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-                telemetry::event!(
-                    "Assistant Invoked",
-                    conversation_id = Option::<String>::None,
-                    kind = AssistantKind::Inline,
-                    phase = AssistantPhase::Invoked,
-                    message_id = Option::<String>::None,
-                    model = model.telemetry_id(),
-                    model_provider = model.provider_id().to_string(),
-                    response_latency = Option::<Duration>::None,
-                    error_message = Option::<String>::None,
-                    language_name = buffer.language().map(|language| language.name().to_proto()),
-                );
+                self.telemetry.report_assistant_event(AssistantEventData {
+                    event_type: "Assistant Invoked",
+                    conversation_id: None,
+                    kind: AssistantKind::Inline,
+                    phase: AssistantPhase::Invoked,
+                    message_id: None,
+                    model: model.telemetry_id(),
+                    model_provider: model.provider_id().to_string(),
+                    response_latency: None,
+                    error_message: None,
+                    language_name: buffer.language().map(|language| language.name().to_proto()),
+                });
             }
         }
 

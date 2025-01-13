@@ -17,7 +17,9 @@ use std::io::Write;
 use std::sync::LazyLock;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
-use telemetry_events::{AppEvent, EditEvent, Event, EventRequestBody, EventWrapper};
+use telemetry_events::{
+    AppEvent, AssistantKind, AssistantPhase, EditEvent, Event, EventRequestBody, EventWrapper,
+};
 use util::{ResultExt, TryFutureExt};
 use worktree::{UpdatedEntriesSet, WorktreeId};
 
@@ -50,6 +52,20 @@ struct TelemetryState {
     os_name: String,
     app_version: String,
     os_version: Option<String>,
+}
+
+#[derive(Clone)]
+pub struct AssistantEventData {
+    pub event_type: &'static str,
+    pub conversation_id: Option<String>,
+    pub kind: AssistantKind,
+    pub phase: AssistantPhase,
+    pub message_id: Option<String>,
+    pub model: String,
+    pub model_provider: String,
+    pub response_latency: Option<Duration>,
+    pub error_message: Option<String>,
+    pub language_name: Option<String>,
 }
 
 #[derive(Debug)]
@@ -329,6 +345,21 @@ impl Telemetry {
         state.metrics_id.clone_from(&metrics_id);
         state.is_staff = Some(is_staff);
         drop(state);
+    }
+
+    pub fn report_assistant_event(self: &Arc<Self>, event_data: AssistantEventData) {
+        telemetry::event!(
+            event_data.event_type,
+            conversation_id = event_data.conversation_id,
+            kind = event_data.kind,
+            phase = event_data.phase,
+            message_id = event_data.message_id,
+            model = event_data.model,
+            model_provider = event_data.model_provider,
+            response_latency = event_data.response_latency,
+            error_message = event_data.error_message,
+            language_name = event_data.language_name,
+        );
     }
 
     pub fn report_app_event(self: &Arc<Self>, operation: String) -> Event {
