@@ -13,7 +13,7 @@ use std::{
 };
 
 use collections::HashMap;
-use gpui::{AppContext, Context as _, Model, ModelContext, Subscription};
+use gpui::{AppContext, Context as _, EventEmitter, Model, ModelContext, Subscription};
 use language::{CachedLspAdapter, LanguageName, LanguageRegistry, LspAdapterDelegate};
 use lsp::LanguageServerName;
 use path_trie::{LabelPresence, RootPathTrie, TriePath};
