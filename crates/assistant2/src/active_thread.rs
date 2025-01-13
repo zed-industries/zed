@@ -273,7 +273,7 @@ impl ActiveThread {
                     // .border_color(theme::color_alpha(colors.border_variant, 0.6))
                     // .bg(theme::color_alpha(colors.element_background, 0.6))
                     .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                    .text_size(TextSize::XSmall.rems(cx))
+                    .text_size(TextSize::Small.rems(cx))
                     .text_color(colors.text_muted)
                     .child("esc"),
             )
@@ -358,56 +358,54 @@ impl ActiveThread {
                         )
                         .child(message_content),
                 ),
-            Role::Assistant => div()
-                .id(("message-container", ix))
-                .relative()
-                .when(is_streaming_completion, |parent| {
-                    parent.child(
-                        h_flex()
-                            .absolute()
-                            .bottom_2()
-                            .right_0()
-                            .left_0()
-                            .justify_center()
-                            .child(
-                                h_flex()
-                                    .flex_none()
-                                    .p_1()
-                                    .bg(colors.editor_background)
-                                    .border_1()
-                                    .border_color(colors.border_focused)
-                                    .rounded_md()
-                                    .shadow_lg()
-                                    .gap_1()
-                                    .child(
-                                        Icon::new(IconName::ArrowCircle)
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted)
-                                            .with_animation(
-                                                "arrow-circle",
-                                                Animation::new(Duration::from_secs(2)).repeat(),
-                                                |icon, delta| {
-                                                    icon.transform(Transformation::rotate(
-                                                        percentage(delta),
-                                                    ))
-                                                },
-                                            ),
-                                    )
-                                    .child(
-                                        Label::new("Generating…")
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    )
-                                    .child(esc_to_cancel),
-                            ),
-                    )
-                })
-                .child(
-                    v_flex()
-                        // .bg(colors.editor_background)
-                        // .rounded_md()
-                        .child(message_content),
-                ),
+            Role::Assistant => div().id(("message-container", ix)).child(
+                v_flex()
+                    .relative()
+                    .when(is_streaming_completion, |parent| {
+                        parent.child(
+                            h_flex()
+                                .absolute()
+                                .bottom_2()
+                                .right_0()
+                                .left_0()
+                                .justify_center()
+                                .child(
+                                    h_flex()
+                                        .flex_none()
+                                        .p_1()
+                                        .bg(colors.editor_background)
+                                        .border_1()
+                                        .border_color(colors.border_focused)
+                                        .rounded_md()
+                                        .shadow_lg()
+                                        .gap_1()
+                                        .child(
+                                            Icon::new(IconName::ArrowCircle)
+                                                .size(IconSize::Small)
+                                                .color(Color::Muted)
+                                                .with_animation(
+                                                    "arrow-circle",
+                                                    Animation::new(Duration::from_secs(2)).repeat(),
+                                                    |icon, delta| {
+                                                        icon.transform(Transformation::rotate(
+                                                            percentage(delta),
+                                                        ))
+                                                    },
+                                                ),
+                                        )
+                                        .child(
+                                            Label::new("Generating…")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(esc_to_cancel),
+                                ),
+                        )
+                    })
+                    // .bg(colors.editor_background)
+                    // .rounded_md()
+                    .child(message_content),
+            ),
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
                     .bg(colors.editor_background)
