@@ -3221,13 +3221,14 @@ impl MultiBufferSnapshot {
                 diff.diff
                     .hunks_intersecting_range(buffer_start..buffer_end, buffer)
                     .map(|hunk| {
-                        let range =
-                            Point::new(hunk.row_range.start, 0)..Point::new(hunk.row_range.end, 0);
-                        (hunk, range)
+                        (
+                            Point::new(hunk.row_range.start, 0)..Point::new(hunk.row_range.end, 0),
+                            hunk,
+                        )
                     }),
             )
         })
-        .map(|(hunk, excerpt, range)| MultiBufferDiffHunk {
+        .map(|(range, hunk, excerpt)| MultiBufferDiffHunk {
             row_range: MultiBufferRow(range.start.row)..MultiBufferRow(range.end.row),
             buffer_id: excerpt.buffer_id,
             excerpt_id: excerpt.id,
@@ -3339,9 +3340,9 @@ impl MultiBufferSnapshot {
         &'a self,
         range: Range<usize>,
         get_buffer_metadata: impl 'a + Fn(&'a Self, &'a BufferSnapshot, Range<usize>) -> Option<I>,
-    ) -> impl Iterator<Item = (M, &'a Excerpt, Range<D>)> + 'a
+    ) -> impl Iterator<Item = (Range<D>, M, &'a Excerpt)> + 'a
     where
-        I: Iterator<Item = (M, Range<D>)> + 'a,
+        I: Iterator<Item = (Range<D>, M)> + 'a,
         D: TextDimension + Ord + Copy + Sub<D, Output = D> + std::fmt::Debug,
     {
         let max_position = D::from_text_summary(&self.text_summary());
@@ -3409,7 +3410,7 @@ impl MultiBufferSnapshot {
             };
 
             // Visit each metadata item.
-            if let Some((metadata, range)) = metadata_iter.and_then(Iterator::next) {
+            if let Some((range, metadata)) = metadata_iter.and_then(Iterator::next) {
                 // Find the multibuffer regions that contain the start and end of
                 // the metadata item's range.
                 if range.start > D::default() {
@@ -3454,7 +3455,7 @@ impl MultiBufferSnapshot {
                     }
                 }
 
-                return Some((metadata, excerpt, start..end));
+                return Some((start..end, metadata, excerpt));
             }
             // When there are no more metadata items for this excerpt, move to the next excerpt.
             else {
@@ -4667,28 +4668,6 @@ impl MultiBufferSnapshot {
         }
     }
 
-    fn excerpts_for_range<T: ToOffset>(
-        &self,
-        range: Range<T>,
-    ) -> impl Iterator<Item = MultiBufferExcerpt> + '_ {
-        let range = range.start.to_offset(self)..range.end.to_offset(self);
-
-        let mut cursor = self.excerpts.cursor::<(usize, Point)>(&());
-        cursor.seek(&range.start, Bias::Right, &());
-        cursor.prev(&());
-
-        iter::from_fn(move || {
-            cursor.next(&());
-            if cursor.start().0 < range.end {
-                cursor
-                    .item()
-                    .map(|item| MultiBufferExcerpt::new(item, *cursor.start()))
-            } else {
-                None
-            }
-        })
-    }
-
     pub fn excerpt_before(&self, id: ExcerptId) -> Option<MultiBufferExcerpt<'_>> {
         let start_locator = self.excerpt_locator_for_id(id);
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>(&());
@@ -4886,12 +4865,12 @@ impl MultiBufferSnapshot {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         self.lift_buffer_metadata(range, move |_, buffer, range| {
             if redaction_enabled(buffer.file()) {
-                Some(buffer.redacted_ranges(range).map(|range| ((), range)))
+                Some(buffer.redacted_ranges(range).map(|range| (range, ())))
             } else {
                 None
             }
         })
-        .map(|(_, _, range)| range)
+        .map(|(range, _, _)| range)
     }
 
     pub fn runnable_ranges(
@@ -4907,71 +4886,63 @@ impl MultiBufferSnapshot {
                         runnable.run_range.start >= range.start
                             && runnable.run_range.end < range.end
                     })
-                    .map(|runnable| {
-                        let run_range = runnable.run_range.clone();
-                        (runnable, run_range)
-                    }),
+                    .map(|runnable| (runnable.run_range.clone(), runnable)),
             )
         })
-        .map(|(runnable, _, range)| language::RunnableRange {
-            run_range: range,
+        .map(|(run_range, runnable, _)| language::RunnableRange {
+            run_range,
             ..runnable
         })
     }
 
-    pub fn indent_guides_in_range(
-        &self,
+    pub fn indent_guides_in_range<'a>(
+        &'a self,
         range: Range<Anchor>,
         ignore_disabled_for_language: bool,
-        cx: &AppContext,
-    ) -> Vec<MultiBufferIndentGuide> {
-        // Fast path for singleton buffers, we can skip the conversion between offsets.
-        if let Some((_, _, snapshot)) = self.as_singleton() {
-            return snapshot
-                .indent_guides_in_range(
-                    range.start.text_anchor..range.end.text_anchor,
-                    ignore_disabled_for_language,
-                    cx,
-                )
-                .into_iter()
-                .map(|guide| MultiBufferIndentGuide {
-                    multibuffer_row_range: MultiBufferRow(guide.start_row)
-                        ..MultiBufferRow(guide.end_row),
-                    buffer: guide,
-                })
-                .collect();
+        cx: &'a AppContext,
+    ) -> impl 'a + Iterator<Item = MultiBufferIndentGuide> {
+        let range = range.start.to_point(self)..range.end.to_point(self);
+        let mut cursor = self.cursor::<Point>();
+        cursor.seek(&range.start);
+        if let Some(region) = cursor.region() {
+            let buffer = region.buffer;
+
+            let start_overshoot = range.start.saturating_sub(region.range.start);
+            let end_overshoot = range.end.saturating_sub(region.range.start);
+            let start = region.buffer_range.start + start_overshoot;
+            let end = (region.buffer_range.start + end_overshoot).min(region.buffer_range.end);
+            let mut buffer_indent_guides = buffer
+                .indent_guides_in_range(start..end, ignore_disabled_for_language, cx)
+                .into_iter();
+
+            Some(iter::from_fn(move || loop {
+                if let Some(indent_guide) = buffer_indent_guides.next() {
+                    let region = cursor.region()?;
+                    let start_row = region.range.start.row + indent_guide.start_row
+                        - region.buffer_range.start.row;
+                    let end_row = region.range.start.row + indent_guide.end_row
+                        - region.buffer_range.start.row;
+                    return Some(MultiBufferIndentGuide {
+                        multibuffer_row_range: MultiBufferRow(start_row)..MultiBufferRow(end_row),
+                        buffer: indent_guide,
+                    });
+                }
+                cursor.next();
+                let region = cursor.region()?;
+                let buffer = region.buffer;
+
+                let end_overshoot = range.end.saturating_sub(region.range.start);
+                let start = region.buffer_range.start;
+                let end = (region.buffer_range.start + end_overshoot).min(region.buffer_range.end);
+                buffer_indent_guides = buffer
+                    .indent_guides_in_range(start..end, ignore_disabled_for_language, cx)
+                    .into_iter();
+            }))
+        } else {
+            None
         }
-
-        let range = range.start.to_offset(self)..range.end.to_offset(self);
-
-        self.excerpts_for_range(range.clone())
-            .flat_map(move |excerpt| {
-                let excerpt_buffer_start_row =
-                    excerpt.buffer_range().start.to_point(&excerpt.buffer()).row;
-                let excerpt_offset_row = excerpt.start_point().row;
-
-                excerpt
-                    .buffer()
-                    .indent_guides_in_range(
-                        excerpt.buffer_range(),
-                        ignore_disabled_for_language,
-                        cx,
-                    )
-                    .into_iter()
-                    .map(move |indent_guide| {
-                        let start_row = excerpt_offset_row
-                            + (indent_guide.start_row - excerpt_buffer_start_row);
-                        let end_row =
-                            excerpt_offset_row + (indent_guide.end_row - excerpt_buffer_start_row);
-
-                        MultiBufferIndentGuide {
-                            multibuffer_row_range: MultiBufferRow(start_row)
-                                ..MultiBufferRow(end_row),
-                            buffer: indent_guide,
-                        }
-                    })
-            })
-            .collect()
+        .into_iter()
+        .flatten()
     }
 
     pub fn trailing_excerpt_update_count(&self) -> usize {

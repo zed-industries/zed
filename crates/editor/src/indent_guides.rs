@@ -169,7 +169,6 @@ pub fn indent_guides_in_range(
     snapshot
         .buffer_snapshot
         .indent_guides_in_range(start_anchor..end_anchor, ignore_disabled_for_language, cx)
-        .into_iter()
         .filter(|indent_guide| {
             if editor.buffer_folded(indent_guide.buffer_id, cx) {
                 return false;

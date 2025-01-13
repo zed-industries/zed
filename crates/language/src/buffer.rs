@@ -3678,9 +3678,20 @@ impl BufferSnapshot {
         })
     }
 
-    pub fn indent_guides_in_range(
+    pub fn indent_guides_in_range<T: ToPoint>(
         &self,
-        range: Range<Anchor>,
+        range: Range<T>,
+        ignore_disabled_for_language: bool,
+        cx: &AppContext,
+    ) -> Vec<IndentGuide> {
+        let start = range.start.to_point(self);
+        let end = range.end.to_point(self);
+        self.indent_guides_in_range_impl(start..end, ignore_disabled_for_language, cx)
+    }
+
+    pub fn indent_guides_in_range_impl(
+        &self,
+        range: Range<Point>,
         ignore_disabled_for_language: bool,
         cx: &AppContext,
     ) -> Vec<IndentGuide> {
@@ -3692,8 +3703,8 @@ impl BufferSnapshot {
         }
         let tab_size = language_settings.tab_size.get() as u32;
 
-        let start_row = range.start.to_point(self).row;
-        let end_row = range.end.to_point(self).row;
+        let start_row = range.start.row;
+        let end_row = range.end.row;
         let row_range = start_row..end_row + 1;
 
         let mut row_indents = self.line_indents_in_row_range(row_range.clone());
