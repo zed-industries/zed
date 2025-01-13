@@ -149,7 +149,7 @@ impl TestAppContext {
     /// Schedules all windows to be redrawn on the next effect cycle.
     pub fn refresh(&mut self) -> Result<()> {
         let mut app = self.app.borrow_mut();
-        app.refresh();
+        app.refresh_windows();
         Ok(())
     }
 
@@ -783,7 +783,7 @@ impl VisualTestContext {
             let (request_layout_state, prepaint_state) = element.paint(window, cx);
 
             window.draw_phase = DrawPhase::None;
-            cx.refresh();
+            window.refresh();
 
             (request_layout_state, prepaint_state)
         })

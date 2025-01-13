@@ -653,7 +653,7 @@ impl Element for InteractiveText {
                                 }
 
                                 mouse_down.take();
-                                cx.refresh();
+                                window.refresh();
                             }
                         });
                     } else {
@@ -664,7 +664,7 @@ impl Element for InteractiveText {
                                     text_layout.index_for_position(event.position)
                                 {
                                     mouse_down.set(Some(mouse_down_index));
-                                    cx.refresh();
+                                    window.refresh();
                                 }
                             }
                         });
@@ -685,7 +685,7 @@ impl Element for InteractiveText {
                                 if let Some(hover_listener) = hover_listener.as_ref() {
                                     hover_listener(updated, event.clone(), window, cx);
                                 }
-                                cx.refresh();
+                                window.refresh();
                             }
                         }
                     }
@@ -729,7 +729,7 @@ impl Element for InteractiveText {
                                                 _task: None,
                                             });
                                         *active_tooltip.borrow_mut() = new_tooltip;
-                                        cx.refresh();
+                                        window.refresh();
                                     })
                                     .ok();
                                 }

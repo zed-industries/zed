@@ -413,7 +413,7 @@ impl StateInner {
             );
         }
 
-        cx.refresh();
+        window.refresh();
     }
 
     fn logical_scroll_top(&self) -> ListOffset {

@@ -168,7 +168,7 @@ impl ThemeSelectorDelegate {
             theme_settings.active_theme = theme;
             theme_settings.apply_theme_overrides();
             store.override_global(theme_settings);
-            cx.refresh();
+            cx.refresh_windows();
         });
     }
 }

@@ -1478,7 +1478,7 @@ impl Panel for AssistantPanel {
         "AssistantPanel"
     }
 
-    fn position(&self, window: &Window, cx: &AppContext) -> DockPosition {
+    fn position(&self, _: &Window, cx: &AppContext) -> DockPosition {
         match AssistantSettings::get_global(cx).dock {
             AssistantDockPosition::Left => DockPosition::Left,
             AssistantDockPosition::Bottom => DockPosition::Bottom,
@@ -4010,8 +4010,8 @@ impl ContextEditor {
                 .elevation_2(window, cx)
                 .occlude()
                 .child(match last_error {
-                    AssistError::FileRequired => self.render_file_required_error(window, cx),
-                    AssistError::PaymentRequired => self.render_payment_required_error(window, cx),
+                    AssistError::FileRequired => self.render_file_required_error(cx),
+                    AssistError::PaymentRequired => self.render_payment_required_error(cx),
                     AssistError::MaxMonthlySpendReached => {
                         self.render_max_monthly_spend_reached_error(window, cx)
                     }
@@ -4023,11 +4023,7 @@ impl ContextEditor {
         )
     }
 
-    fn render_file_required_error(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> AnyElement {
+    fn render_file_required_error(&self, cx: &mut ModelContext<Self>) -> AnyElement {
         v_flex()
             .gap_0p5()
             .child(
@@ -4062,11 +4058,7 @@ impl ContextEditor {
             .into_any()
     }
 
-    fn render_payment_required_error(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> AnyElement {
+    fn render_payment_required_error(&self, cx: &mut ModelContext<Self>) -> AnyElement {
         const ERROR_MESSAGE: &str = "Free tier exceeded. Subscribe and add payment to continue using Zed LLMs. You'll be billed at cost for tokens used.";
 
         v_flex()

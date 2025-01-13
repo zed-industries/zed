@@ -931,7 +931,7 @@ impl Element for TerminalElement {
 
                     window.on_key_event({
                         let this = self.terminal.clone();
-                        move |event: &ModifiersChangedEvent, phase, _window, cx| {
+                        move |event: &ModifiersChangedEvent, phase, window, cx| {
                             if phase != DispatchPhase::Bubble {
                                 return;
                             }
@@ -940,7 +940,7 @@ impl Element for TerminalElement {
                                 .update(cx, |term, _| term.try_modifiers_change(&event.modifiers));
 
                             if handled {
-                                cx.refresh();
+                                window.refresh();
                             }
                         }
                     });

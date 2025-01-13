@@ -85,7 +85,7 @@ pub fn handle_settings_file_changes(
                     log::error!("Failed to load user settings: {err}");
                 }
                 settings_changed(result.err(), cx);
-                cx.refresh();
+                cx.refresh_windows();
             });
             if result.is_err() {
                 break; // App dropped

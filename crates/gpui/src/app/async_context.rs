@@ -112,7 +112,7 @@ impl AsyncAppContext {
             .upgrade()
             .ok_or_else(|| anyhow!("app was released"))?;
         let mut lock = app.borrow_mut();
-        lock.refresh();
+        lock.refresh_windows();
         Ok(())
     }
 

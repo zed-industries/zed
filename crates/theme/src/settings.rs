@@ -527,7 +527,7 @@ pub fn adjust_buffer_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
     f(&mut adjusted_size);
     adjusted_size = adjusted_size.max(MIN_FONT_SIZE);
     cx.set_global(AdjustedBufferFontSize(adjusted_size));
-    cx.refresh();
+    cx.refresh_windows();
 }
 
 /// Returns whether the buffer font size has been adjusted.
@@ -539,7 +539,7 @@ pub fn has_adjusted_buffer_font_size(cx: &AppContext) -> bool {
 pub fn reset_buffer_font_size(cx: &mut AppContext) {
     if cx.has_global::<AdjustedBufferFontSize>() {
         cx.remove_global::<AdjustedBufferFontSize>();
-        cx.refresh();
+        cx.refresh_windows();
     }
 }
 
@@ -573,7 +573,7 @@ pub fn adjust_ui_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
     f(&mut adjusted_size);
     adjusted_size = adjusted_size.max(MIN_FONT_SIZE);
     cx.set_global(AdjustedUiFontSize(adjusted_size));
-    cx.refresh();
+    cx.refresh_windows();
 }
 
 /// Returns whether the UI font size has been adjusted.
@@ -585,7 +585,7 @@ pub fn has_adjusted_ui_font_size(cx: &AppContext) -> bool {
 pub fn reset_ui_font_size(cx: &mut AppContext) {
     if cx.has_global::<AdjustedUiFontSize>() {
         cx.remove_global::<AdjustedUiFontSize>();
-        cx.refresh();
+        cx.refresh_windows();
     }
 }
 

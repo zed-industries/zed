@@ -53,7 +53,7 @@ impl Display for EntityId {
 
 pub(crate) struct EntityMap {
     entities: SecondaryMap<EntityId, Box<dyn Any>>,
-    pub entities_read: RefCell<FxHashSet<EntityId>>,
+    pub accessed_entities: RefCell<FxHashSet<EntityId>>,
     ref_counts: Arc<RwLock<EntityRefCounts>>,
 }
 
@@ -68,7 +68,7 @@ impl EntityMap {
     pub fn new() -> Self {
         Self {
             entities: SecondaryMap::new(),
-            entities_read: RefCell::new(FxHashSet::default()),
+            accessed_entities: RefCell::new(FxHashSet::default()),
             ref_counts: Arc::new(RwLock::new(EntityRefCounts {
                 counts: SlotMap::with_key(),
                 dropped_entity_ids: Vec::new(),
@@ -92,8 +92,8 @@ impl EntityMap {
     where
         T: 'static,
     {
-        let mut entities_read = self.entities_read.borrow_mut();
-        entities_read.insert(slot.entity_id);
+        let mut accessed_entities = self.accessed_entities.borrow_mut();
+        accessed_entities.insert(slot.entity_id);
 
         let model = slot.0;
         self.entities.insert(model.entity_id, Box::new(entity));
@@ -104,8 +104,8 @@ impl EntityMap {
     #[track_caller]
     pub fn lease<'a, T>(&mut self, model: &'a Model<T>) -> Lease<'a, T> {
         self.assert_valid_context(model);
-        let mut entities_read = self.entities_read.borrow_mut();
-        entities_read.insert(model.entity_id);
+        let mut accessed_entities = self.accessed_entities.borrow_mut();
+        accessed_entities.insert(model.entity_id);
 
         let entity = Some(
             self.entities
@@ -127,8 +127,8 @@ impl EntityMap {
 
     pub fn read<T: 'static>(&self, model: &Model<T>) -> &T {
         self.assert_valid_context(model);
-        let mut entities_read = self.entities_read.borrow_mut();
-        entities_read.insert(model.entity_id);
+        let mut accessed_entities = self.accessed_entities.borrow_mut();
+        accessed_entities.insert(model.entity_id);
 
         self.entities[model.entity_id]
             .downcast_ref()
@@ -142,20 +142,20 @@ impl EntityMap {
         );
     }
 
-    pub fn extend_read(&mut self, entities: &FxHashSet<EntityId>) {
-        self.entities_read
+    pub fn extend_accessed(&mut self, entities: &FxHashSet<EntityId>) {
+        self.accessed_entities
             .borrow_mut()
             .extend(entities.iter().copied());
     }
 
-    pub fn clear_read(&mut self) {
-        self.entities_read.borrow_mut().clear();
+    pub fn clear_accessed(&mut self) {
+        self.accessed_entities.borrow_mut().clear();
     }
 
     pub fn take_dropped(&mut self) -> Vec<(EntityId, Box<dyn Any>)> {
         let mut ref_counts = self.ref_counts.write();
         let dropped_entity_ids = mem::take(&mut ref_counts.dropped_entity_ids);
-        let mut entities_read = self.entities_read.borrow_mut();
+        let mut accessed_entities = self.accessed_entities.borrow_mut();
 
         dropped_entity_ids
             .into_iter()
@@ -166,7 +166,7 @@ impl EntityMap {
                     0,
                     "dropped an entity that was referenced"
                 );
-                entities_read.remove(&entity_id);
+                accessed_entities.remove(&entity_id);
                 // If the EntityId was allocated with `Context::reserve`,
                 // the entity may not have been inserted.
                 Some((entity_id, self.entities.remove(entity_id)?))

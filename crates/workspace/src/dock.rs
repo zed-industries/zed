@@ -394,7 +394,7 @@ impl Dock {
         cx: &mut ModelContext<Self>,
     ) -> usize {
         let subscriptions = [
-            cx.observe_in(&panel, window, |_, _, window, cx| cx.notify()),
+            cx.observe(&panel, |_, _, cx| cx.notify()),
             cx.observe_global_in::<SettingsStore>(window, {
                 let workspace = workspace.clone();
                 let panel = panel.clone();
@@ -690,13 +690,13 @@ impl Render for Dock {
             let create_resize_handle = || {
                 let handle = div()
                     .id("resize-handle")
-                    .on_drag(DraggedDock(position), |dock, _, window, cx| {
+                    .on_drag(DraggedDock(position), |dock, _, _, cx| {
                         cx.stop_propagation();
                         cx.new_model(|_| dock.clone())
                     })
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(|_, _: &MouseDownEvent, window, cx| {
+                        cx.listener(|_, _: &MouseDownEvent, _, cx| {
                             cx.stop_propagation();
                         }),
                     )

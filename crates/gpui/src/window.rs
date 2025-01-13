@@ -760,7 +760,7 @@ impl Window {
                             .activation_observers
                             .clone()
                             .retain(&(), |callback| callback(window, cx));
-                        cx.refresh();
+                        window.refresh();
                     })
                     .log_err();
             }
@@ -771,7 +771,7 @@ impl Window {
                 handle
                     .update(&mut cx, |_, window, cx| {
                         window.hovered.set(active);
-                        cx.refresh();
+                        window.refresh();
                     })
                     .log_err();
             }
@@ -885,8 +885,8 @@ impl Window {
     /// Indicate that a view has changed, which will invoke any observers and also mark the window as dirty.
     /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
     /// Note that this method will always cause a redraw, the entire window is refreshed if view_id is None.
-    pub fn notify(&mut self, view_id: Option<EntityId>, cx: &mut AppContext) {
-        let Some(view_id) = view_id else {
+    pub fn notify(&mut self, entity_id: Option<EntityId>, cx: &mut AppContext) {
+        let Some(view_id) = entity_id else {
             self.refresh();
             return;
         };
@@ -1445,7 +1445,7 @@ impl Window {
     /// the contents of the new [Scene], use [present].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut AppContext) {
-        cx.entities.clear_read();
+        cx.entities.clear_accessed();
         self.dirty.set(false);
         self.requested_autoscroll = None;
 
@@ -1517,12 +1517,12 @@ impl Window {
     }
 
     fn observe_refreshes(&mut self, cx: &mut AppContext) {
-        let mut entities_ref = cx.entities.entities_read.borrow_mut();
+        let mut entities_ref = cx.entities.accessed_entities.borrow_mut();
         let mut entities = mem::take(entities_ref.deref_mut());
         drop(entities_ref);
         let handle = self.handle.clone();
         cx.observe_for_refreshes(handle, &entities);
-        let mut entities_ref = cx.entities.entities_read.borrow_mut();
+        let mut entities_ref = cx.entities.accessed_entities.borrow_mut();
         mem::swap(&mut entities, entities_ref.deref_mut());
     }
 

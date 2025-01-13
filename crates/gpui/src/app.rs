@@ -407,8 +407,8 @@ impl AppContext {
 
     /// Schedules all windows in the application to be redrawn. This can be called
     /// multiple times in an update cycle and still result in a single redraw.
-    pub fn refresh(&mut self) {
-        self.pending_effects.push_back(Effect::Refresh);
+    pub fn refresh_windows(&mut self) {
+        self.pending_effects.push_back(Effect::RefreshWindows);
     }
 
     pub(crate) fn update<R>(&mut self, update: impl FnOnce(&mut Self) -> R) -> R {
@@ -439,18 +439,18 @@ impl AppContext {
         })
     }
 
-    pub(crate) fn entities_read<R>(
+    pub(crate) fn detect_accessed_entities<R>(
         &mut self,
         callback: impl FnOnce(&mut AppContext) -> R,
     ) -> (R, FxHashSet<EntityId>) {
-        let entities_read_start = self.entities.entities_read.borrow().clone();
+        let accessed_entities_start = self.entities.accessed_entities.borrow().clone();
         let result = callback(self);
-        let entities_read_end = self.entities.entities_read.borrow().clone();
-        let entities_read_in_callback = entities_read_end
-            .difference(&entities_read_start)
+        let accessed_entities_end = self.entities.accessed_entities.borrow().clone();
+        let entities_accessed_in_callback = accessed_entities_end
+            .difference(&accessed_entities_start)
             .copied()
             .collect::<FxHashSet<EntityId>>();
-        (result, entities_read_in_callback)
+        (result, entities_accessed_in_callback)
     }
 
     pub(crate) fn observe_for_refreshes(
@@ -836,7 +836,7 @@ impl AppContext {
                         event,
                     } => self.apply_emit_effect(emitter, event_type, event),
 
-                    Effect::Refresh => {
+                    Effect::RefreshWindows => {
                         self.apply_refresh_effect();
                     }
 
@@ -1287,13 +1287,13 @@ impl AppContext {
     /// Register key bindings.
     pub fn bind_keys(&mut self, bindings: impl IntoIterator<Item = KeyBinding>) {
         self.keymap.borrow_mut().add_bindings(bindings);
-        self.pending_effects.push_back(Effect::Refresh);
+        self.pending_effects.push_back(Effect::RefreshWindows);
     }
 
     /// Clear all key bindings in the app.
     pub fn clear_key_bindings(&mut self) {
         self.keymap.borrow_mut().clear();
-        self.pending_effects.push_back(Effect::Refresh);
+        self.pending_effects.push_back(Effect::RefreshWindows);
     }
 
     /// Register a global listener for actions invoked via the keyboard.
@@ -1650,7 +1650,7 @@ pub(crate) enum Effect {
         event_type: TypeId,
         event: Box<dyn Any>,
     },
-    Refresh,
+    RefreshWindows,
     NotifyGlobalObservers {
         global_type: TypeId,
     },
