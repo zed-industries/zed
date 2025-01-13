@@ -829,10 +829,6 @@ impl DiagnosticPopover {
 
         diagnostic_div.into_any_element()
     }
-
-    pub fn group_id(&self) -> usize {
-        self.local_diagnostic.diagnostic.group_id
-    }
 }
 
 #[cfg(test)]
