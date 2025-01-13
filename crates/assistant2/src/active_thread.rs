@@ -260,6 +260,29 @@ impl ActiveThread {
             Role::System => (IconName::Settings, "System", Color::Default),
         };
 
+        let esc_to_cancel = h_flex()
+            .items_center()
+            .gap_1()
+            .child(Label::new("Hit").size(LabelSize::Small).color(Color::Muted))
+            .child(
+                h_flex()
+                    // .rounded_md()
+                    // .px_1()
+                    // .mr_0p5()
+                    // .border_1()
+                    // .border_color(theme::color_alpha(colors.border_variant, 0.6))
+                    // .bg(theme::color_alpha(colors.element_background, 0.6))
+                    .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                    .text_size(TextSize::XSmall.rems(cx))
+                    .text_color(colors.text_muted)
+                    .child("esc"),
+            )
+            .child(
+                Label::new("to cancel")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            );
+
         let message_content = v_flex()
             // .child(
             //     h_flex()
@@ -356,7 +379,6 @@ impl ActiveThread {
                                     .rounded_md()
                                     .shadow_lg()
                                     .gap_1()
-                                    // .debug_bg_blue()
                                     .child(
                                         Icon::new(IconName::ArrowCircle)
                                             .size(IconSize::Small)
@@ -376,7 +398,7 @@ impl ActiveThread {
                                             .size(LabelSize::Small)
                                             .color(Color::Muted),
                                     )
-                                    .child(Label::new("esc to cancel")),
+                                    .child(esc_to_cancel),
                             ),
                     )
                 })
