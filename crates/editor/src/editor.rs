@@ -4299,11 +4299,19 @@ impl Editor {
         self.available_code_actions.take();
     }
 
-    pub fn push_code_action_provider(
+    pub fn add_code_action_provider(
         &mut self,
         provider: Rc<dyn CodeActionProvider>,
         cx: &mut ViewContext<Self>,
     ) {
+        if self
+            .code_action_providers
+            .iter()
+            .any(|existing_provider| existing_provider.id() == provider.id())
+        {
+            return;
+        }
+
         self.code_action_providers.push(provider);
         self.refresh_code_actions(cx);
     }
