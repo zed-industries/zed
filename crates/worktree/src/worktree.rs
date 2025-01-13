@@ -4107,7 +4107,7 @@ impl BackgroundScanner {
                         // also mark where in the git repo the root folder is located.
                         self.state.lock().insert_git_repository_for_path(
                             Path::new("").into(),
-                            ancestor_dot_git.into(),
+                            SanitizedPath::from(ancestor_dot_git).into(),
                             Some(
                                 root_abs_path
                                     .as_path()
@@ -4191,7 +4191,7 @@ impl BackgroundScanner {
                             state.snapshot.abs_path.as_path().join(&path_prefix)
                         };
 
-                        if let Some(abs_path) = self.fs.canonicalize(&abs_path).await.log_err() {
+                        if let Some(abs_path) = canonicalize(self.fs.clone(), &abs_path).await.log_err() {
                             self.process_events(vec![abs_path]).await;
                         }
                     }
@@ -4215,7 +4215,7 @@ impl BackgroundScanner {
         self.forcibly_load_paths(&request.relative_paths).await;
 
         let root_path = self.state.lock().snapshot.abs_path.clone();
-        let root_canonical_path = match self.fs.canonicalize(root_path.as_path()).await {
+        let root_canonical_path = match canonicalize(self.fs.clone(), root_path.as_path()).await {
             Ok(path) => path,
             Err(err) => {
                 log::error!("failed to canonicalize root path: {}", err);
@@ -4257,7 +4257,7 @@ impl BackgroundScanner {
 
     async fn process_events(&self, mut abs_paths: Vec<PathBuf>) {
         let root_path = self.state.lock().snapshot.abs_path.clone();
-        let root_canonical_path = match self.fs.canonicalize(root_path.as_path()).await {
+        let root_canonical_path = match canonicalize(self.fs.clone(), root_path.as_path()).await {
             Ok(path) => path,
             Err(err) => {
                 let new_path = self
@@ -4624,7 +4624,7 @@ impl BackgroundScanner {
             if job.is_external {
                 child_entry.is_external = true;
             } else if child_metadata.is_symlink {
-                let canonical_path = match self.fs.canonicalize(&child_abs_path).await {
+                let canonical_path = match canonicalize(self.fs.clone(), &child_abs_path).await {
                     Ok(path) => path,
                     Err(err) => {
                         log::error!(
@@ -4640,7 +4640,7 @@ impl BackgroundScanner {
                 // symlinks point outside of the worktree.
                 let root_canonical_path = match &root_canonical_path {
                     Some(path) => path,
-                    None => match self.fs.canonicalize(&root_abs_path).await {
+                    None => match canonicalize(self.fs.clone(), &root_abs_path).await {
                         Ok(path) => root_canonical_path.insert(path),
                         Err(err) => {
                             log::error!("error canonicalizing root {:?}: {:?}", root_abs_path, err);
@@ -4747,7 +4747,7 @@ impl BackgroundScanner {
                 .map(|abs_path| async move {
                     let metadata = self.fs.metadata(abs_path).await?;
                     if let Some(metadata) = metadata {
-                        let canonical_path = self.fs.canonicalize(abs_path).await?;
+                        let canonical_path = canonicalize(self.fs.clone(), abs_path).await?;
 
                         // If we're on a case-insensitive filesystem (default on macOS), we want
                         // to only ignore metadata for non-symlink files if their absolute-path matches
@@ -6149,6 +6149,11 @@ fn git_status_to_proto(status: GitFileStatus) -> i32 {
         GitFileStatus::Deleted => proto::GitStatus::Deleted as i32,
         GitFileStatus::Untracked => proto::GitStatus::Added as i32, // TODO
     }
+}
+
+async fn canonicalize(fs: Arc<dyn Fs>, path: &Path) -> Result<PathBuf> {
+    let path = fs.canonicalize(path).await?;
+    Ok(SanitizedPath::from(&path).as_path().to_path_buf())
 }
 
 #[derive(Clone, Copy, Debug, Default, Hash, PartialEq, Eq, PartialOrd, Ord)]
