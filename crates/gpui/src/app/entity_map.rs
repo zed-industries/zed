@@ -143,6 +143,16 @@ impl EntityMap {
         );
     }
 
+    pub fn extend_read(&mut self, entities: &FxHashSet<EntityId>) {
+        self.entities_read
+            .borrow_mut()
+            .extend(entities.iter().copied());
+    }
+
+    pub fn clear_read(&mut self) {
+        self.entities_read.borrow_mut().clear();
+    }
+
     pub fn take_dropped(&mut self) -> Vec<(EntityId, Box<dyn Any>)> {
         let mut ref_counts = self.ref_counts.write();
         let dropped_entity_ids = mem::take(&mut ref_counts.dropped_entity_ids);

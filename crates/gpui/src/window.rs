@@ -1485,7 +1485,7 @@ impl Window {
     /// the contents of the new [Scene], use [present].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut AppContext) {
-        cx.entities.entities_read.borrow_mut().clear();
+        cx.entities.clear_read();
         self.dirty.set(false);
         self.requested_autoscroll = None;
 

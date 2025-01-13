@@ -439,6 +439,20 @@ impl AppContext {
         })
     }
 
+    pub(crate) fn entities_read<R>(
+        &mut self,
+        callback: impl FnOnce(&mut AppContext) -> R,
+    ) -> (R, FxHashSet<EntityId>) {
+        let entities_read_start = self.entities.entities_read.borrow().clone();
+        let result = callback(self);
+        let entities_read_end = self.entities.entities_read.borrow().clone();
+        let entities_read_in_callback = entities_read_end
+            .difference(&entities_read_start)
+            .copied()
+            .collect::<FxHashSet<EntityId>>();
+        (result, entities_read_in_callback)
+    }
+
     pub(crate) fn observe_for_refreshes(
         &mut self,
         window_handle: AnyWindowHandle,

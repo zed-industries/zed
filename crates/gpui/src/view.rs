@@ -6,6 +6,7 @@ use crate::{
 };
 use crate::{Empty, Window};
 use anyhow::{Context, Result};
+use collections::FxHashSet;
 use refineable::Refineable;
 use std::mem;
 use std::{
@@ -19,6 +20,7 @@ struct AnyViewState {
     prepaint_range: Range<PrepaintStateIndex>,
     paint_range: Range<PaintIndex>,
     cache_key: ViewCacheKey,
+    entities_read: FxHashSet<EntityId>,
 }
 
 #[derive(Default)]
@@ -190,15 +192,18 @@ impl Element for AnyView {
                         {
                             let prepaint_start = window.prepaint_index();
                             window.reuse_prepaint(element_state.prepaint_range.clone());
+                            cx.entities.extend_read(&element_state.entities_read);
                             let prepaint_end = window.prepaint_index();
                             element_state.prepaint_range = prepaint_start..prepaint_end;
+
                             return (None, element_state);
                         }
                     }
 
                     let refreshing = mem::replace(&mut window.refreshing, true);
                     let prepaint_start = window.prepaint_index();
-                    let mut element = (self.render)(self, window, cx);
+                    let (mut element, entities_read) =
+                        cx.entities_read(|cx| (self.render)(self, window, cx));
                     element.layout_as_root(bounds.size.into(), window, cx);
                     element.prepaint_at(bounds.origin, window, cx);
                     let prepaint_end = window.prepaint_index();
@@ -207,6 +212,7 @@ impl Element for AnyView {
                     (
                         Some(element),
                         AnyViewState {
+                            entities_read,
                             prepaint_range: prepaint_start..prepaint_end,
                             paint_range: PaintIndex::default()..PaintIndex::default(),
                             cache_key: ViewCacheKey {
