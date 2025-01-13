@@ -3196,7 +3196,7 @@ fn check_git_statuses(snapshot: &Snapshot, expected_statuses: &[(&Path, GitSumma
         .map(|&(path, _)| {
             let git_entry = traversal
                 .find(|git_entry| &*git_entry.path == path)
-                .expect(&format!("Traversal has no entry for {path:?}"));
+                .unwrap_or_else(|| panic!("Traversal has no entry for {path:?}"));
             (path, git_entry.git_summary)
         })
         .collect::<Vec<_>>();
