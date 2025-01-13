@@ -286,7 +286,10 @@ impl Prettier {
         let server = cx
             .update(|cx| {
                 let params = server.default_initialize_params(cx);
-                executor.spawn(server.initialize(params, cx))
+                let configuration = lsp::DidChangeConfigurationParams {
+                    settings: Default::default(),
+                };
+                executor.spawn(server.initialize(params, configuration.into(), cx))
             })?
             .await
             .context("prettier server initialization")?;

@@ -730,12 +730,17 @@ impl LspLogView {
 
 * Binary: {BINARY:#?}
 
-* Capabilities: {CAPABILITIES}",
+
+* Capabilities: {CAPABILITIES}
+
+* Configuration: {CONFIGURATION}",
                 NAME = server.name(),
                 ID = server.server_id(),
                 BINARY = server.binary(),
                 CAPABILITIES = serde_json::to_string_pretty(&server.capabilities())
                     .unwrap_or_else(|e| format!("Failed to serialize capabilities: {e}")),
+                CONFIGURATION = serde_json::to_string_pretty(server.configuration())
+                    .unwrap_or_else(|e| format!("Failed to serialize configuration: {e}")),
             );
             editor.set_text(server_info, cx);
             editor.set_read_only(true);
@@ -960,7 +965,7 @@ impl LspLogView {
             });
 
             server
-                .notify::<SetTrace>(SetTraceParams { value: level })
+                .notify::<SetTrace>(&SetTraceParams { value: level })
                 .ok();
         }
     }

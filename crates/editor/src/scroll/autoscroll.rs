@@ -128,9 +128,9 @@ impl Editor {
                 .next_row()
                 .as_f32();
 
-            // If the selections can't all fit on screen, scroll to the newest.
+            let selections_fit = target_bottom - target_top <= visible_lines;
             if autoscroll == Autoscroll::newest()
-                || autoscroll == Autoscroll::fit() && target_bottom - target_top > visible_lines
+                || (autoscroll == Autoscroll::fit() && !selections_fit)
             {
                 let newest_selection_top = selections
                     .iter()

@@ -86,6 +86,10 @@ pub struct LanguageServer {
     process_name: Arc<str>,
     binary: LanguageServerBinary,
     capabilities: RwLock<ServerCapabilities>,
+    /// Configuration sent to the server, stored for display in the language server logs
+    /// buffer. This is represented as the message sent to the LSP in order to avoid cloning it (can
+    /// be large in cases like sending schemas to the json server).
+    configuration: Arc<DidChangeConfigurationParams>,
     code_action_kinds: Option<Vec<CodeActionKind>>,
     notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
     response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
@@ -456,6 +460,11 @@ impl LanguageServer {
             .log_err()
         });
 
+        let configuration = DidChangeConfigurationParams {
+            settings: Value::Null,
+        }
+        .into();
+
         Self {
             server_id,
             notification_handlers,
@@ -469,6 +478,7 @@ impl LanguageServer {
                 .unwrap_or_default(),
             binary,
             capabilities: Default::default(),
+            configuration,
             code_action_kinds,
             next_id: Default::default(),
             outbound_tx,
@@ -792,6 +802,7 @@ impl LanguageServer {
     pub fn initialize(
         mut self,
         params: InitializeParams,
+        configuration: Arc<DidChangeConfigurationParams>,
         cx: &AppContext,
     ) -> Task<Result<Arc<Self>>> {
         cx.spawn(|_| async move {
@@ -800,8 +811,9 @@ impl LanguageServer {
                 self.process_name = info.name.into();
             }
             self.capabilities = RwLock::new(response.capabilities);
+            self.configuration = configuration;
 
-            self.notify::<notification::Initialized>(InitializedParams {})?;
+            self.notify::<notification::Initialized>(&InitializedParams {})?;
             Ok(Arc::new(self))
         })
     }
@@ -821,7 +833,7 @@ impl LanguageServer {
                 &executor,
                 (),
             );
-            let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, ());
+            let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, &());
             outbound_tx.close();
 
             let server = self.server.clone();
@@ -1035,6 +1047,10 @@ impl LanguageServer {
         update(self.capabilities.write().deref_mut());
     }
 
+    pub fn configuration(&self) -> &Value {
+        &self.configuration.settings
+    }
+
     /// Get the id of the running language server.
     pub fn server_id(&self) -> LanguageServerId {
         self.server_id
@@ -1126,7 +1142,7 @@ impl LanguageServer {
                 if let Some(outbound_tx) = outbound_tx.upgrade() {
                     Self::notify_internal::<notification::Cancel>(
                         &outbound_tx,
-                        CancelParams {
+                        &CancelParams {
                             id: NumberOrString::Number(id),
                         },
                     )
@@ -1154,13 +1170,13 @@ impl LanguageServer {
     /// Sends a RPC notification to the language server.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#notificationMessage)
-    pub fn notify<T: notification::Notification>(&self, params: T::Params) -> Result<()> {
+    pub fn notify<T: notification::Notification>(&self, params: &T::Params) -> Result<()> {
         Self::notify_internal::<T>(&self.outbound_tx, params)
     }
 
     fn notify_internal<T: notification::Notification>(
         outbound_tx: &channel::Sender<String>,
-        params: T::Params,
+        params: &T::Params,
     ) -> Result<()> {
         let message = serde_json::to_string(&Notification {
             jsonrpc: JSON_RPC_VERSION,
@@ -1200,7 +1216,7 @@ impl LanguageServer {
                     removed: vec![],
                 },
             };
-            self.notify::<DidChangeWorkspaceFolders>(params).log_err();
+            self.notify::<DidChangeWorkspaceFolders>(&params).log_err();
         }
     }
     /// Add new workspace folder to the list.
@@ -1230,7 +1246,7 @@ impl LanguageServer {
                     }],
                 },
             };
-            self.notify::<DidChangeWorkspaceFolders>(params).log_err();
+            self.notify::<DidChangeWorkspaceFolders>(&params).log_err();
         }
     }
     pub fn set_workspace_folders(&self, folders: BTreeSet<Url>) {
@@ -1256,7 +1272,7 @@ impl LanguageServer {
             let params = DidChangeWorkspaceFoldersParams {
                 event: WorkspaceFoldersChangeEvent { added, removed },
             };
-            self.notify::<DidChangeWorkspaceFolders>(params).log_err();
+            self.notify::<DidChangeWorkspaceFolders>(&params).log_err();
         }
     }
 
@@ -1428,7 +1444,7 @@ impl LanguageServer {
 #[cfg(any(test, feature = "test-support"))]
 impl FakeLanguageServer {
     /// See [`LanguageServer::notify`].
-    pub fn notify<T: notification::Notification>(&self, params: T::Params) {
+    pub fn notify<T: notification::Notification>(&self, params: &T::Params) {
         self.server.notify::<T>(params).ok();
     }
 
@@ -1536,7 +1552,7 @@ impl FakeLanguageServer {
         })
         .await
         .unwrap();
-        self.notify::<notification::Progress>(ProgressParams {
+        self.notify::<notification::Progress>(&ProgressParams {
             token: NumberOrString::String(token),
             value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(progress)),
         });
@@ -1544,7 +1560,7 @@ impl FakeLanguageServer {
 
     /// Simulate that the server has completed work and notifies about that with the specified token.
     pub fn end_progress(&self, token: impl Into<String>) {
-        self.notify::<notification::Progress>(ProgressParams {
+        self.notify::<notification::Progress>(&ProgressParams {
             token: NumberOrString::String(token.into()),
             value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(Default::default())),
         });
@@ -1597,12 +1613,15 @@ mod tests {
         let server = cx
             .update(|cx| {
                 let params = server.default_initialize_params(cx);
-                server.initialize(params, cx)
+                let configuration = DidChangeConfigurationParams {
+                    settings: Default::default(),
+                };
+                server.initialize(params, configuration.into(), cx)
             })
             .await
             .unwrap();
         server
-            .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
+            .notify::<notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(
                     Url::from_str("file://a/b").unwrap(),
                     "rust".to_string(),
@@ -1620,11 +1639,11 @@ mod tests {
             "file://a/b"
         );
 
-        fake.notify::<notification::ShowMessage>(ShowMessageParams {
+        fake.notify::<notification::ShowMessage>(&ShowMessageParams {
             typ: MessageType::ERROR,
             message: "ok".to_string(),
         });
-        fake.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
+        fake.notify::<notification::PublishDiagnostics>(&PublishDiagnosticsParams {
             uri: Url::from_str("file://b/c").unwrap(),
             version: Some(5),
             diagnostics: vec![],
