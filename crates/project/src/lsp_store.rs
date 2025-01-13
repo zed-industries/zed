@@ -80,6 +80,7 @@ use std::{
     time::{Duration, Instant},
 };
 use text::{Anchor, BufferId, LineEnding, OffsetRangeExt};
+use url::Url;
 use util::{
     debug_panic, defer, maybe, merge_json_value_into, post_inc, ResultExt, TryFutureExt as _,
 };
@@ -1797,16 +1798,28 @@ impl LocalLspStore {
         let servers = servers
             .into_iter()
             .filter_map(|server_node| {
-                let server_id =
-                    server_node.server_id_or_init(|adapter_name, attach, path| match attach {
+                let server_id = server_node.server_id_or_init(
+                    |adapter_name, attach, project_path| match attach {
                         language::Attach::InstancePerRoot => todo!(),
                         language::Attach::Shared => {
                             if let Some(server_ids) = self
                                 .language_server_ids
                                 .get(&(worktree_id, adapter_name.clone()))
                             {
-                                assert_eq!(server_ids.len(), 1);
-                                server_ids.iter().cloned().next().unwrap()
+                                debug_assert_eq!(server_ids.len(), 1);
+                                let server_id = server_ids.iter().cloned().next().unwrap();
+
+                                if let Some(LanguageServerState::Running { server, .. }) =
+                                    self.language_servers.get(&server_id)
+                                {
+                                    let uri = Url::from_directory_path(
+                                        worktree.read(cx).abs_path().join(&project_path.path),
+                                    );
+                                    if let Ok(uri) = uri {
+                                        server.add_workspace_folder(uri);
+                                    };
+                                }
+                                server_id
                             } else {
                                 let language_name = language.name();
                                 self.start_language_server(
@@ -1823,7 +1836,8 @@ impl LocalLspStore {
                                 .expect("Language initialization to succeed")
                             }
                         }
-                    });
+                    },
+                );
                 let server_state = self.language_servers.get(&server_id)?;
                 if let LanguageServerState::Running { server, .. } = server_state {
                     Some(server.clone())

@@ -127,10 +127,6 @@ impl ProjectTree {
     ) -> BTreeMap<AdapterWrapper, ProjectPath> {
         debug_assert_eq!(delegate.worktree_id(), worktree_id);
         let adapters = self.languages.lsp_adapters(&language_name);
-        let empty_path = ProjectPath {
-            worktree_id,
-            path: Arc::from("".as_ref()),
-        };
         let mut roots = BTreeMap::from_iter(
             adapters
                 .into_iter()

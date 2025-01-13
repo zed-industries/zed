@@ -120,9 +120,7 @@ impl LanguageServerTree {
             .filter(|node| node.server_id().is_some())
     }
 
-    pub(crate) fn remove(&mut self, key: (WorktreeId, LanguageServerName), cx: &mut AppContext) {
-        self.project_tree.update(cx, |this, cx| {
-            if let Some(worktree_servers) = this.root_points.get(&key.0) {}
-        });
+    pub(crate) fn remove(&mut self, _: (WorktreeId, LanguageServerName), cx: &mut AppContext) {
+        self.project_tree.update(cx, |_, _| {});
     }
 }
