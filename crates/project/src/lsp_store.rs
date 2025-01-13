@@ -219,7 +219,7 @@ impl LocalLspStore {
                 let binary = binary.await?;
 
                 #[cfg(any(test, feature = "test-support"))]
-                if let Some(server) = _lsp_store
+                if let Some(server) = lsp_store
                     .update(&mut cx.clone(), |this, cx| {
                         this.languages.create_fake_language_server(
                             server_id,
