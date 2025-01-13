@@ -4308,6 +4308,12 @@ impl Editor {
         self.refresh_code_actions(cx);
     }
 
+    pub fn remove_code_action_provider(&mut self, id: Arc<str>, cx: &mut ViewContext<Self>) {
+        self.code_action_providers
+            .retain(|provider| provider.id() != id);
+        self.refresh_code_actions(cx);
+    }
+
     fn refresh_code_actions(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
         let buffer = self.buffer.read(cx);
         let newest_selection = self.selections.newest_anchor().clone();
@@ -13591,6 +13597,8 @@ pub trait CompletionProvider {
 }
 
 pub trait CodeActionProvider {
+    fn id(&self) -> Arc<str>;
+
     fn code_actions(
         &self,
         buffer: &Model<Buffer>,
@@ -13609,6 +13617,10 @@ pub trait CodeActionProvider {
 }
 
 impl CodeActionProvider for Model<Project> {
+    fn id(&self) -> Arc<str> {
+        "project".into()
+    }
+
     fn code_actions(
         &self,
         buffer: &Model<Buffer>,

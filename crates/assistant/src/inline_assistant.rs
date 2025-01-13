@@ -3438,6 +3438,10 @@ struct AssistantCodeActionProvider {
 }
 
 impl CodeActionProvider for AssistantCodeActionProvider {
+    fn id(&self) -> Arc<str> {
+        "assistant".into()
+    }
+
     fn code_actions(
         &self,
         buffer: &Model<Buffer>,

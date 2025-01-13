@@ -1581,7 +1581,13 @@ struct AssistantCodeActionProvider {
     thread_store: Option<WeakModel<ThreadStore>>,
 }
 
+const ASSISTANT_CODE_ACTION_PROVIDER_ID: &str = "assistant2";
+
 impl CodeActionProvider for AssistantCodeActionProvider {
+    fn id(&self) -> Arc<str> {
+        ASSISTANT_CODE_ACTION_PROVIDER_ID.into()
+    }
+
     fn code_actions(
         &self,
         buffer: &Model<Buffer>,
