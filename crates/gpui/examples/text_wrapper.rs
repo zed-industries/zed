@@ -19,6 +19,7 @@ impl Render for HelloWorld {
                 div()
                     .flex()
                     .flex_row()
+                    .flex_shrink_0()
                     .gap_2()
                     .child(
                         div()
@@ -48,25 +49,28 @@ impl Render for HelloWorld {
             )
             .child(
                 div()
+                    .flex_shrink_0()
                     .text_xl()
                     .overflow_hidden()
                     .text_ellipsis()
                     .border_1()
-                    .border_color(gpui::red())
+                    .border_color(gpui::blue())
                     .child("ELLIPSIS: ".to_owned() + text),
             )
             .child(
                 div()
+                    .flex_shrink_0()
                     .text_xl()
                     .overflow_hidden()
                     .text_ellipsis()
                     .line_clamp(2)
                     .border_1()
-                    .border_color(gpui::red())
+                    .border_color(gpui::blue())
                     .child("ELLIPSIS 2 lines: ".to_owned() + text),
             )
             .child(
                 div()
+                    .flex_shrink_0()
                     .text_xl()
                     .overflow_hidden()
                     .truncate()
@@ -76,6 +80,7 @@ impl Render for HelloWorld {
             )
             .child(
                 div()
+                    .flex_shrink_0()
                     .text_xl()
                     .overflow_hidden()
                     .truncate()
@@ -86,11 +91,12 @@ impl Render for HelloWorld {
             )
             .child(
                 div()
+                    .flex_shrink_0()
                     .text_xl()
                     .whitespace_nowrap()
                     .overflow_hidden()
                     .border_1()
-                    .border_color(gpui::blue())
+                    .border_color(gpui::black())
                     .child("NOWRAP: ".to_owned() + text),
             )
             .child(div().text_xl().w_full().child(text))
@@ -99,7 +105,7 @@ impl Render for HelloWorld {
 
 fn main() {
     App::new().run(|cx: &mut AppContext| {
-        let bounds = Bounds::centered(None, size(px(600.0), px(480.0)), cx);
+        let bounds = Bounds::centered(None, size(px(800.0), px(600.0)), cx);
         cx.open_window(
             WindowOptions {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
@@ -108,5 +114,6 @@ fn main() {
             |cx| cx.new_view(|_cx| HelloWorld {}),
         )
         .unwrap();
+        cx.activate(true);
     });
 }

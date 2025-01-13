@@ -285,7 +285,7 @@ impl TextLayout {
                 let (truncate_width, ellipsis) = if let Some(truncate) = text_style.truncate {
                     let width = known_dimensions.width.or(match available_space.width {
                         crate::AvailableSpace::Definite(x) => match text_style.line_clamp {
-                            Some(lines) => Some(x * lines),
+                            Some(max_lines) => Some(x * max_lines),
                             None => Some(x),
                         },
                         _ => None,
@@ -314,10 +314,23 @@ impl TextLayout {
                     text.clone()
                 };
 
+                let line_clamp = match text_style.line_clamp {
+                    Some(max_lines) => Some(max_lines),
+                    None => {
+                        // Default to set line_clamp to 1 if truncate is set.
+                        if text_style.truncate.is_some() {
+                            Some(1)
+                        } else {
+                            None
+                        }
+                    }
+                };
+
                 let Some(lines) = cx
                     .text_system()
                     .shape_text(
                         text, font_size, &runs, wrap_width, // Wrap if we know the width.
+                        line_clamp,
                     )
                     .log_err()
                 else {

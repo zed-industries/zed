@@ -564,6 +564,7 @@ mod tests {
                         normal.with_len(7),
                     ],
                     Some(px(72.)),
+                    None,
                 )
                 .unwrap();
 
