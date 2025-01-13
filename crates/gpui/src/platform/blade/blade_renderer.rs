@@ -16,6 +16,9 @@ use media::core_video::CVMetalTextureCache;
 use std::{mem, sync::Arc};
 
 const MAX_FRAME_TIME_MS: u32 = 10000;
+// Use 4x MSAA, all devices support it.
+// https://developer.apple.com/documentation/metal/mtldevice/1433355-supportstexturesamplecount
+const PATH_SAMPLE_COUNT: u32 = 4;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -127,7 +130,7 @@ struct BladePipelines {
 }
 
 impl BladePipelines {
-    fn new(gpu: &gpu::Context, surface_info: gpu::SurfaceInfo, path_sample_count: u32) -> Self {
+    fn new(gpu: &gpu::Context, surface_info: gpu::SurfaceInfo) -> Self {
         use gpu::ShaderData as _;
 
         log::info!(
@@ -208,7 +211,7 @@ impl BladePipelines {
                     write_mask: gpu::ColorWrites::default(),
                 }],
                 multisample_state: gpu::MultisampleState {
-                    sample_count: path_sample_count,
+                    sample_count: PATH_SAMPLE_COUNT,
                     ..Default::default()
                 },
             }),
@@ -319,7 +322,6 @@ pub struct BladeRenderer {
     atlas_sampler: gpu::Sampler,
     #[cfg(target_os = "macos")]
     core_video_texture_cache: CVMetalTextureCache,
-    path_sample_count: u32,
 }
 
 impl BladeRenderer {
@@ -341,33 +343,17 @@ impl BladeRenderer {
             .create_surface_configured(window, surface_config)
             .unwrap();
 
-        // macOS use 4x MSAA, all devices support it.
-        // https://developer.apple.com/documentation/metal/mtldevice/1433355-supportstexturesamplecount
-        #[cfg(target_os = "macos")]
-        let path_sample_count = 4;
-
-        // Determine on non-macOS platforms, until Blade supports querying sample counts.
-        #[cfg(not(target_os = "macos"))]
-        let mut path_sample_count = 1;
-        #[cfg(not(target_os = "macos"))]
-        for &n in &[4, 2] {
-            if context.gpu.supports_texture_sample_count(n) {
-                path_sample_count = n as _;
-                break;
-            }
-        }
-
         let command_encoder = context.gpu.create_command_encoder(gpu::CommandEncoderDesc {
             name: "main",
             buffer_count: 2,
         });
-        let pipelines = BladePipelines::new(&context.gpu, surface.info(), path_sample_count);
+        let pipelines = BladePipelines::new(&context.gpu, surface.info());
         let instance_belt = BufferBelt::new(BufferBeltDescriptor {
             memory: gpu::Memory::Shared,
             min_chunk_size: 0x1000,
             alignment: 0x40, // Vulkan `minStorageBufferOffsetAlignment` on Intel Xe
         });
-        let atlas = Arc::new(BladeAtlas::new(&context.gpu, path_sample_count));
+        let atlas = Arc::new(BladeAtlas::new(&context.gpu, PATH_SAMPLE_COUNT));
         let atlas_sampler = context.gpu.create_sampler(gpu::SamplerDesc {
             name: "atlas",
             mag_filter: gpu::FilterMode::Linear,
@@ -396,7 +382,6 @@ impl BladeRenderer {
             atlas_sampler,
             #[cfg(target_os = "macos")]
             core_video_texture_cache,
-            path_sample_count,
         })
     }
 
@@ -443,8 +428,7 @@ impl BladeRenderer {
             self.gpu
                 .reconfigure_surface(&mut self.surface, self.surface_config);
             self.pipelines.destroy(&self.gpu);
-            self.pipelines =
-                BladePipelines::new(&self.gpu, self.surface.info(), self.path_sample_count);
+            self.pipelines = BladePipelines::new(&self.gpu, self.surface.info());
         }
     }
 
