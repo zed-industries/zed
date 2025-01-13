@@ -126,7 +126,7 @@ impl EditorLspTestContext {
 
         let window = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let workspace = window.root_view(cx).unwrap();
+        let workspace = window.root_model(cx).unwrap();
 
         let mut cx = VisualTestContext::from_window(*window.deref(), cx);
         project

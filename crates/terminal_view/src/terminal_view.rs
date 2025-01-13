@@ -1665,7 +1665,7 @@ mod tests {
         let project = Project::test(params.fs.clone(), [], cx).await;
         let workspace = cx
             .add_window(|window, cx| Workspace::test_new(project.clone(), window, cx))
-            .root_view(cx)
+            .root_model(cx)
             .unwrap();
 
         (project, workspace)

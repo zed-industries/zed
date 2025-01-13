@@ -6353,8 +6353,8 @@ pub fn client_side_decorations(
                     if new_edge != edge.map(|edge| edge.0) {
                         window
                             .window_handle()
-                            .update(cx, |workspace, window, cx| {
-                                window.notify(Some(workspace.entity_id()), cx)
+                            .update(cx, |workspace, _, cx| {
+                                cx.notify(workspace.entity_id());
                             })
                             .ok();
                     }

@@ -238,7 +238,7 @@ impl TestAppContext {
             )
             .unwrap();
         drop(cx);
-        let view = window.root_view(self).unwrap();
+        let view = window.root_model(self).unwrap();
         let cx = VisualTestContext::from_window(*window.deref(), self).as_mut();
         cx.run_until_parked();
 

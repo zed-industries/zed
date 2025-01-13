@@ -185,15 +185,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
 
     /// Tell GPUI that this model has changed and observers of it should be notified.
     pub fn notify(&mut self) {
-        if self
-            .app
-            .pending_notifications
-            .insert(self.model_state.entity_id)
-        {
-            self.app.pending_effects.push_back(Effect::Notify {
-                emitter: self.model_state.entity_id,
-            });
-        }
+        self.app.notify(self.model_state.entity_id);
     }
 
     /// Spawn the future returned by the given function.

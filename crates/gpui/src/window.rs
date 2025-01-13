@@ -522,7 +522,7 @@ pub struct Window {
     rem_size_override_stack: SmallVec<[Pixels; 8]>,
     pub(crate) viewport_size: Size<Pixels>,
     layout_engine: Option<TaffyLayoutEngine>,
-    pub(crate) root_view: Option<AnyView>,
+    pub(crate) root_model: Option<AnyView>,
     pub(crate) element_id_stack: SmallVec<[ElementId; 32]>,
     pub(crate) text_style_stack: Vec<TextStyleRefinement>,
     pub(crate) element_offset_stack: Vec<Point<Pixels>>,
@@ -801,7 +801,7 @@ impl Window {
             rem_size_override_stack: SmallVec::new(),
             viewport_size: content_size,
             layout_engine: Some(TaffyLayoutEngine::new()),
-            root_view: None,
+            root_model: None,
             element_id_stack: SmallVec::default(),
             text_style_stack: Vec::new(),
             element_offset_stack: Vec::new(),
@@ -885,7 +885,7 @@ impl Window {
     /// Indicate that a view has changed, which will invoke any observers and also mark the window as dirty.
     /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
     /// Note that this method will always cause a redraw, the entire window is refreshed if view_id is None.
-    pub fn notify(&mut self, entity_id: Option<EntityId>, cx: &mut AppContext) {
+    pub(crate) fn notify(&mut self, entity_id: Option<EntityId>, cx: &mut AppContext) {
         let Some(view_id) = entity_id else {
             self.refresh();
             return;
@@ -934,7 +934,7 @@ impl Window {
         V: 'static + Render,
     {
         let view = cx.new_model(|cx| build_view(self, cx));
-        self.root_view = Some(view.clone().into());
+        self.root_model = Some(view.clone().into());
         self.refresh();
         view
     }
@@ -943,7 +943,7 @@ impl Window {
     where
         V: 'static + Render,
     {
-        self.root_view
+        self.root_model
             .as_ref()
             .map(|view| view.clone().downcast::<V>().ok())
     }
@@ -1538,7 +1538,7 @@ impl Window {
         self.tooltip_bounds.take();
 
         // Layout all root elements.
-        let mut root_element = self.root_view.as_ref().unwrap().clone().into_any();
+        let mut root_element = self.root_model.as_ref().unwrap().clone().into_any();
         root_element.prepaint_as_root(Point::default(), self.viewport_size.into(), self, cx);
 
         let mut sorted_deferred_draws =
@@ -3868,7 +3868,7 @@ impl<V: 'static + Render> WindowHandle<V> {
             .and_then(|window| {
                 window
                     .as_ref()
-                    .and_then(|window| window.root_view.clone())
+                    .and_then(|window| window.root_model.clone())
                     .map(|root_view| root_view.downcast::<V>())
             })
             .ok_or_else(|| anyhow!("window not found"))?
@@ -3890,7 +3890,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     /// Read the root view pointer off of this window.
     ///
     /// This will fail if the window is closed or if the root view's type does not match `V`.
-    pub fn root_view<C>(&self, cx: &C) -> Result<Model<V>>
+    pub fn root_model<C>(&self, cx: &C) -> Result<Model<V>>
     where
         C: Context,
     {

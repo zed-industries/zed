@@ -321,7 +321,7 @@ impl InlineCompletionButton {
                 None,
                 move |window, cx| {
                     if let Some(workspace) = window.window_handle().downcast::<Workspace>() {
-                        if let Ok(workspace) = workspace.root_view(cx) {
+                        if let Ok(workspace) = workspace.root_model(cx) {
                             let workspace = workspace.downgrade();
                             window
                                 .spawn(cx, |cx| {

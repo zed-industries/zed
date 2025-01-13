@@ -2364,7 +2364,7 @@ mod tests {
             .unwrap();
 
         assert_eq!(
-            opened_workspace.root_view(cx).unwrap().entity_id(),
+            opened_workspace.root_model(cx).unwrap().entity_id(),
             workspace.entity_id(),
             "Excluded files in subfolders of a workspace root should be opened in the workspace"
         );

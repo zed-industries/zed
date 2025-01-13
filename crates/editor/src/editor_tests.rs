@@ -9897,13 +9897,15 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
     let is_still_following = Rc::new(RefCell::new(true));
     let follower_edit_event_count = Rc::new(RefCell::new(0));
     let pending_update = Rc::new(RefCell::new(None));
+    let leader_model = leader.root_model(cx).unwrap();
+    let follower_model = follower.root_model(cx).unwrap();
     _ = follower.update(cx, {
         let update = pending_update.clone();
         let is_still_following = is_still_following.clone();
         let follower_edit_event_count = follower_edit_event_count.clone();
         |_, window, cx| {
             cx.subscribe_in(
-                &leader.root_view(cx).unwrap(),
+                &leader_model,
                 window,
                 move |_, leader, event, window, cx| {
                     leader.read(cx).add_event_to_update_proto(
@@ -9917,7 +9919,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
             .detach();
 
             cx.subscribe_in(
-                &follower.root_view(cx).unwrap(),
+                &follower_model,
                 window,
                 move |_, _, event: &EditorEvent, _window, _cx| {
                     if matches!(Editor::to_follow_event(event), Some(FollowEvent::Unfollow)) {
@@ -10083,10 +10085,11 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     // Start following the editor when it has no excerpts.
     let mut state_message =
         leader.update_in(cx, |leader, window, cx| leader.to_state_proto(window, cx));
+    let workspace_model = workspace.root_model(cx).unwrap();
     let follower_1 = cx
         .update_window(*workspace.deref(), |_, window, cx| {
             Editor::from_state_proto(
-                workspace.root_view(cx).unwrap(),
+                workspace_model,
                 ViewId {
                     creator: Default::default(),
                     id: 0,
@@ -10184,10 +10187,11 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
     // Start following separately after it already has excerpts.
     let mut state_message =
         leader.update_in(cx, |leader, window, cx| leader.to_state_proto(window, cx));
+    let workspace_model = workspace.root_model(cx).unwrap();
     let follower_2 = cx
         .update_window(*workspace.deref(), |_, window, cx| {
             Editor::from_state_proto(
-                workspace.root_view(cx).unwrap().clone(),
+                workspace_model,
                 ViewId {
                     creator: Default::default(),
                     id: 0,
