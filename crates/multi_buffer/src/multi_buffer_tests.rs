@@ -2175,52 +2175,6 @@ fn test_history(cx: &mut AppContext) {
     });
 }
 
-fn validate_excerpts(
-    actual: &[(ExcerptId, BufferId, Range<Anchor>)],
-    expected: &Vec<(ExcerptId, BufferId, Range<Anchor>)>,
-) {
-    assert_eq!(actual.len(), expected.len());
-
-    actual
-        .iter()
-        .zip(expected)
-        .map(|(actual, expected)| {
-            assert_eq!(actual.0, expected.0);
-            assert_eq!(actual.1, expected.1);
-            assert_eq!(actual.2.start, expected.2.start);
-            assert_eq!(actual.2.end, expected.2.end);
-        })
-        .collect_vec();
-}
-
-fn map_range_from_excerpt(
-    snapshot: &MultiBufferSnapshot,
-    excerpt_id: ExcerptId,
-    excerpt_buffer: &BufferSnapshot,
-    range: Range<usize>,
-) -> Range<Anchor> {
-    snapshot
-        .anchor_in_excerpt(excerpt_id, excerpt_buffer.anchor_before(range.start))
-        .unwrap()
-        ..snapshot
-            .anchor_in_excerpt(excerpt_id, excerpt_buffer.anchor_after(range.end))
-            .unwrap()
-}
-
-fn make_expected_excerpt_info(
-    snapshot: &MultiBufferSnapshot,
-    cx: &mut AppContext,
-    excerpt_id: ExcerptId,
-    buffer: &Model<Buffer>,
-    range: Range<usize>,
-) -> (ExcerptId, BufferId, Range<Anchor>) {
-    (
-        excerpt_id,
-        buffer.read(cx).remote_id(),
-        map_range_from_excerpt(snapshot, excerpt_id, &buffer.read(cx).snapshot(), range),
-    )
-}
-
 fn format_diff(text: &str, row_infos: &Vec<RowInfo>) -> String {
     let has_diff = row_infos.iter().any(|info| info.diff_status.is_some());
     text.split('\n')

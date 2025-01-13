@@ -265,7 +265,7 @@ fn show_hover(
 
             let local_diagnostic = snapshot
                 .buffer_snapshot
-                .diagnostics_in_range::<_, usize>(anchor..anchor, false)
+                .diagnostics_in_range::<_, usize>(anchor..anchor)
                 // Find the entry with the most specific range
                 .min_by_key(|entry| entry.range.len());
 

@@ -9201,18 +9201,20 @@ impl Editor {
         };
         let snapshot = self.snapshot(cx);
         loop {
-            let diagnostics = if direction == Direction::Prev {
-                buffer
-                    .diagnostics_in_range::<_, usize>(0..search_start, true)
-                    .collect::<Vec<_>>()
+            let mut diagnostics;
+            if direction == Direction::Prev {
+                diagnostics = buffer
+                    .diagnostics_in_range::<_, usize>(0..search_start)
+                    .collect::<Vec<_>>();
+                diagnostics.reverse();
             } else {
-                buffer
-                    .diagnostics_in_range::<_, usize>(search_start..buffer.len(), false)
-                    .collect::<Vec<_>>()
-            }
-            .into_iter()
-            .filter(|diagnostic| !snapshot.intersects_fold(diagnostic.range.start));
+                diagnostics = buffer
+                    .diagnostics_in_range::<_, usize>(search_start..buffer.len())
+                    .collect::<Vec<_>>();
+            };
             let group = diagnostics
+                .into_iter()
+                .filter(|diagnostic| !snapshot.intersects_fold(diagnostic.range.start))
                 // relies on diagnostics_in_range to return diagnostics with the same starting range to
                 // be sorted in a stable way
                 // skip until we are at current active diagnostic, if it exists
@@ -10316,7 +10318,7 @@ impl Editor {
             let buffer = self.buffer.read(cx).snapshot(cx);
             let primary_range_start = active_diagnostics.primary_range.start.to_offset(&buffer);
             let is_valid = buffer
-                .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone(), false)
+                .diagnostics_in_range::<_, usize>(active_diagnostics.primary_range.clone())
                 .any(|entry| {
                     entry.diagnostic.is_primary
                         && !entry.range.is_empty()

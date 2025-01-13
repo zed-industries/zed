@@ -11,7 +11,7 @@ use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
 use futures::{channel::mpsc, SinkExt};
-use gpui::{px, AppContext, EntityId, EventEmitter, Model, ModelContext, Task};
+use gpui::{AppContext, EntityId, EventEmitter, Model, ModelContext, Task};
 use itertools::Itertools;
 use language::{
     language_settings::{language_settings, LanguageSettings},
@@ -3300,45 +3300,6 @@ impl MultiBufferSnapshot {
         result
     }
 
-    pub fn buffer_regions_in_range<'a>(
-        &'a self,
-        range: Range<usize>,
-        reversed: bool,
-    ) -> impl Iterator<Item = MultiBufferRegion<'a, usize>> {
-        let mut cursor = self.cursor::<usize>();
-
-        if reversed {
-            cursor.seek(&range.end)
-        } else {
-            cursor.seek(&range.start)
-        }
-
-        iter::from_fn(move || loop {
-            let mut region = cursor.region()?;
-            if reversed {
-                cursor.prev()
-            } else {
-                cursor.next()
-            }
-
-            if !region.is_main_buffer {
-                continue;
-            }
-            if region.range.start > range.end || region.range.end < range.start {
-                return None;
-            }
-
-            let start_overshoot = range.start.saturating_sub(region.range.start);
-            let end_undershoot = region.range.end.saturating_sub(range.end);
-            region.range.start += start_overshoot;
-            region.buffer_range.start += start_overshoot;
-            region.range.end -= end_undershoot;
-            region.buffer_range.end -= end_undershoot;
-
-            return Some(region);
-        })
-    }
-
     /// Retrieves buffer metadata for the given range, and converts it into multi-buffer
     /// coordinates.
     ///
@@ -5035,36 +4996,20 @@ impl MultiBufferSnapshot {
     pub fn diagnostics_in_range<'a, T, O>(
         &'a self,
         range: Range<T>,
-        reversed: bool,
     ) -> impl Iterator<Item = DiagnosticEntry<O>> + 'a
     where
         T: 'a + ToOffset,
         O: 'a + text::FromAnchor + Copy + TextDimension + Ord + Sub<O, Output = O> + fmt::Debug,
     {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
-
-        self.buffer_regions_in_range(range, reversed)
-            .flat_map(move |region| {
-                region
-                    .buffer
-                    .diagnostics_in_range::<_, usize>(
-                        region.buffer_range.start..region.buffer_range.end,
-                        reversed,
-                    )
-                    .map(move |entry| {
-                        let start = entry.range.start.saturating_sub(region.buffer_range.start)
-                            + region.range.start;
-                        let end = entry.range.end.saturating_sub(region.buffer_range.start)
-                            + region.range.start;
-
-                        let multibuffer_start = self.text_summary_for_range(0..start);
-                        let multibuffer_end = self.text_summary_for_range(0..end);
-                        DiagnosticEntry {
-                            range: multibuffer_start..multibuffer_end,
-                            diagnostic: entry.diagnostic,
-                        }
-                    })
-            })
+        self.lift_buffer_metadata(range, |_this, buffer, buffer_range| {
+            Some(
+                buffer
+                    .diagnostics_in_range(buffer_range.start..buffer_range.end, false)
+                    .map(|entry| (entry.range, entry.diagnostic)),
+            )
+        })
+        .map(|(range, diagnostic, _)| DiagnosticEntry { diagnostic, range })
     }
 
     pub fn syntax_ancestor<T: ToOffset>(

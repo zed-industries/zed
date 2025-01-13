@@ -20,7 +20,6 @@ use language::{
     SelectionGoal,
 };
 use lsp::DiagnosticSeverity;
-use multi_buffer::AnchorRangeExt;
 use project::{
     lsp_store::FormatTrigger, project_settings::ProjectSettings, search::SearchQuery, Project,
     ProjectItem as _, ProjectPath,
