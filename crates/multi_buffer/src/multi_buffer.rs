@@ -2674,7 +2674,7 @@ impl MultiBuffer {
                                         || base_text_summary != previous_expanded_summary
                                     {
                                         let hunk_overshoot =
-                                            (hunk_excerpt_start - cursor.start().0).value;
+                                            (hunk_excerpt_old_start - cursor.start().0).value;
                                         let old_start = cursor.start().1 + hunk_overshoot;
                                         let old_end = old_start + previous_expanded_summary.len;
                                         let new_start = new_transforms.summary().output.len;
@@ -6645,9 +6645,13 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
             self.diff_transforms.next(&());
         }
 
+        let diff_transform_start = self.diff_transforms.start().0;
+        let diff_transform_end = self.diff_transforms.end(&()).0;
+        debug_assert!(self.range.start < diff_transform_end);
+
         let diff_transform = self.diff_transforms.item()?;
         match diff_transform {
-            DiffTransform::BufferContent { summary, .. } => {
+            DiffTransform::BufferContent { .. } => {
                 let chunk = if let Some(chunk) = &mut self.buffer_chunk {
                     chunk
                 } else {
@@ -6656,12 +6660,12 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                 };
 
                 let chunk_end = self.range.start + chunk.text.len();
-                let transform_end =
-                    (self.diff_transforms.start().0 + summary.len).min(self.range.end);
+                let diff_transform_end = diff_transform_end.min(self.range.end);
 
-                if transform_end < chunk_end {
-                    let (before, after) = chunk.text.split_at(transform_end - self.range.start);
-                    self.range.start = transform_end;
+                if diff_transform_end < chunk_end {
+                    let (before, after) =
+                        chunk.text.split_at(diff_transform_end - self.range.start);
+                    self.range.start = diff_transform_end;
                     chunk.text = after;
                     Some(Chunk {
                         text: before,
@@ -6678,29 +6682,25 @@ impl<'a> Iterator for MultiBufferChunks<'a> {
                 has_trailing_newline,
                 ..
             } => {
-                let hunk_start_offset = self.diff_transforms.start().0;
-                let base_text_start_offset = base_text_byte_range.start;
-                let base_text_end_offset = base_text_byte_range.end;
-                let diff_base_end_offset = base_text_end_offset
-                    .min(base_text_start_offset + self.range.end - hunk_start_offset);
-                let diff_base_start_offset =
-                    base_text_start_offset + self.range.start - hunk_start_offset;
+                let base_text_start =
+                    base_text_byte_range.start + self.range.start - diff_transform_start;
+                let base_text_end =
+                    base_text_byte_range.start + self.range.end - diff_transform_start;
+                let base_text_end = base_text_end.min(base_text_byte_range.end);
 
                 let mut chunks = if let Some((_, mut chunks)) = self
                     .diff_base_chunks
                     .take()
                     .filter(|(id, _)| id == buffer_id)
                 {
-                    if chunks.offset() != diff_base_start_offset {
-                        chunks.seek(diff_base_start_offset..diff_base_end_offset);
+                    if chunks.range().start != base_text_start || chunks.range().end < base_text_end
+                    {
+                        chunks.seek(base_text_start..base_text_end);
                     }
                     chunks
                 } else {
                     let base_buffer = &self.diffs.get(&buffer_id)?.base_text;
-                    base_buffer.chunks(
-                        diff_base_start_offset..diff_base_end_offset,
-                        self.language_aware,
-                    )
+                    base_buffer.chunks(base_text_start..base_text_end, self.language_aware)
                 };
 
                 let chunk = if let Some(chunk) = chunks.next() {

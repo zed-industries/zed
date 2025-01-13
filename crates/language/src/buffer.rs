@@ -4242,6 +4242,10 @@ impl<'a> BufferChunks<'a> {
         self.range.start
     }
 
+    pub fn range(&self) -> Range<usize> {
+        self.range.clone()
+    }
+
     fn update_diagnostic_depths(&mut self, endpoint: DiagnosticEndpoint) {
         let depth = match endpoint.severity {
             DiagnosticSeverity::ERROR => &mut self.error_depth,
