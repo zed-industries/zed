@@ -12,7 +12,7 @@ use language::{
 use rpc::{proto, AnyProtoClient, TypedEnvelope};
 use settings::{watch_config_file, SettingsLocation};
 use task::{TaskContext, TaskVariables, VariableName};
-use text::BufferId;
+use text::{BufferId, OffsetRangeExt};
 use util::ResultExt;
 
 use crate::{
@@ -125,12 +125,10 @@ impl TaskStore {
                         .filter_map(|(k, v)| Some((k.parse().log_err()?, v))),
                 );
 
-                for range in location
-                    .buffer
-                    .read(cx)
-                    .snapshot()
-                    .runnable_ranges(location.range.clone())
-                {
+                let snapshot = location.buffer.read(cx).snapshot();
+                let range = location.range.to_offset(&snapshot);
+
+                for range in snapshot.runnable_ranges(range) {
                     for (capture_name, value) in range.extra_captures {
                         variables.insert(VariableName::Custom(capture_name.into()), value);
                     }

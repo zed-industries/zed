@@ -3577,10 +3577,8 @@ impl BufferSnapshot {
 
     pub fn runnable_ranges(
         &self,
-        range: Range<Anchor>,
+        offset_range: Range<usize>,
     ) -> impl Iterator<Item = RunnableRange> + '_ {
-        let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
-
         let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
             grammar.runnable_config.as_ref().map(|config| &config.query)
         });

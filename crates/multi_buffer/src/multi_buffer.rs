@@ -3338,12 +3338,11 @@ impl MultiBufferSnapshot {
     fn lift_buffer_metadata<'a, D, M, I>(
         &'a self,
         range: Range<usize>,
-        get_buffer_metadata: fn(&'a Self, &'a BufferSnapshot, Range<usize>) -> Option<I>,
+        get_buffer_metadata: impl 'a + Fn(&'a Self, &'a BufferSnapshot, Range<usize>) -> Option<I>,
     ) -> impl Iterator<Item = (M, &'a Excerpt, Range<D>)> + 'a
     where
         I: Iterator<Item = (M, Range<D>)> + 'a,
         D: TextDimension + Ord + Copy + Sub<D, Output = D> + std::fmt::Debug,
-        M: Clone,
     {
         let max_position = D::from_text_summary(&self.text_summary());
         let mut current_excerpt_metadata: Option<(ExcerptId, I)> = None;
@@ -4885,16 +4884,14 @@ impl MultiBufferSnapshot {
         redaction_enabled: impl Fn(Option<&Arc<dyn File>>) -> bool + 'a,
     ) -> impl Iterator<Item = Range<usize>> + 'a {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
-        self.excerpts_for_range(range.clone())
-            .filter(move |excerpt| redaction_enabled(excerpt.buffer().file()))
-            .flat_map(move |excerpt| {
-                excerpt
-                    .buffer()
-                    .redacted_ranges(excerpt.buffer_range().clone())
-                    .map(move |redacted_range| excerpt.map_range_from_buffer(redacted_range))
-                    .skip_while(move |redacted_range| redacted_range.end < range.start)
-                    .take_while(move |redacted_range| redacted_range.start < range.end)
-            })
+        self.lift_buffer_metadata(range, move |_, buffer, range| {
+            if redaction_enabled(buffer.file()) {
+                Some(buffer.redacted_ranges(range).map(|range| ((), range)))
+            } else {
+                None
+            }
+        })
+        .map(|(_, _, range)| range)
     }
 
     pub fn runnable_ranges(
@@ -4902,35 +4899,24 @@ impl MultiBufferSnapshot {
         range: Range<Anchor>,
     ) -> impl Iterator<Item = language::RunnableRange> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
-        self.excerpts_for_range(range.clone())
-            .flat_map(move |excerpt| {
-                let excerpt_buffer_start =
-                    excerpt.buffer_range().start.to_offset(&excerpt.buffer());
-
-                excerpt
-                    .buffer()
-                    .runnable_ranges(excerpt.buffer_range())
-                    .filter_map(move |mut runnable| {
-                        // Re-base onto the excerpts coordinates in the multibuffer
-                        //
-                        // The node matching our runnables query might partially overlap with
-                        // the provided range. If the run indicator is outside of excerpt bounds, do not actually show it.
-                        if runnable.run_range.start < excerpt_buffer_start {
-                            return None;
-                        }
-                        if language::ToPoint::to_point(&runnable.run_range.end, &excerpt.buffer())
-                            .row
-                            > excerpt.max_buffer_row()
-                        {
-                            return None;
-                        }
-                        runnable.run_range = excerpt.map_range_from_buffer(runnable.run_range);
-
-                        Some(runnable)
+        self.lift_buffer_metadata(range, |_, buffer, range| {
+            Some(
+                buffer
+                    .runnable_ranges(range.clone())
+                    .filter(move |runnable| {
+                        runnable.run_range.start >= range.start
+                            && runnable.run_range.end < range.end
                     })
-                    .skip_while(move |runnable| runnable.run_range.end < range.start)
-                    .take_while(move |runnable| runnable.run_range.start < range.end)
-            })
+                    .map(|runnable| {
+                        let run_range = runnable.run_range.clone();
+                        (runnable, run_range)
+                    }),
+            )
+        })
+        .map(|(runnable, _, range)| language::RunnableRange {
+            run_range: range,
+            ..runnable
+        })
     }
 
     pub fn indent_guides_in_range(
