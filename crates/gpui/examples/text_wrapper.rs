@@ -59,10 +59,30 @@ impl Render for HelloWorld {
                 div()
                     .text_xl()
                     .overflow_hidden()
+                    .text_ellipsis()
+                    .line_clamp(2)
+                    .border_1()
+                    .border_color(gpui::red())
+                    .child("ELLIPSIS 2 lines: ".to_owned() + text),
+            )
+            .child(
+                div()
+                    .text_xl()
+                    .overflow_hidden()
                     .truncate()
                     .border_1()
                     .border_color(gpui::green())
                     .child("TRUNCATE: ".to_owned() + text),
+            )
+            .child(
+                div()
+                    .text_xl()
+                    .overflow_hidden()
+                    .truncate()
+                    .line_clamp(3)
+                    .border_1()
+                    .border_color(gpui::green())
+                    .child("TRUNCATE 3 lines: ".to_owned() + text),
             )
             .child(
                 div()

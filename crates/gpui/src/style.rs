@@ -338,6 +338,8 @@ pub struct TextStyle {
 
     /// The text should be truncated if it overflows the width of the element
     pub truncate: Option<Truncate>,
+    /// The number of lines to display before truncating the text
+    pub line_clamp: Option<usize>,
 }
 
 impl Default for TextStyle {
@@ -363,6 +365,7 @@ impl Default for TextStyle {
             strikethrough: None,
             white_space: WhiteSpace::Normal,
             truncate: None,
+            line_clamp: None,
         }
     }
 }

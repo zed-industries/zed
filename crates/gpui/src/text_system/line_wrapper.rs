@@ -117,7 +117,7 @@ impl LineWrapper {
         let mut char_indices = line.char_indices();
         let mut truncate_ix = 0;
         for (ix, c) in char_indices {
-            if width + ellipsis_width <= truncate_width {
+            if width + ellipsis_width < truncate_width {
                 truncate_ix = ix;
             }
 

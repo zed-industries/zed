@@ -77,6 +77,15 @@ pub trait Styled: Sized {
         self
     }
 
+    /// Sets number of lines to show before truncating the text.
+    /// [Docs](https://tailwindcss.com/docs/line-clamp)
+    fn line_clamp(mut self, lines: usize) -> Self {
+        self.text_style()
+            .get_or_insert_with(Default::default)
+            .line_clamp = Some(lines);
+        self
+    }
+
     /// Sets the flex direction of the element to `column`.
     /// [Docs](https://tailwindcss.com/docs/flex-direction#column)
     fn flex_col(mut self) -> Self {

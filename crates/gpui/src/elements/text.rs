@@ -284,7 +284,10 @@ impl TextLayout {
 
                 let (truncate_width, ellipsis) = if let Some(truncate) = text_style.truncate {
                     let width = known_dimensions.width.or(match available_space.width {
-                        crate::AvailableSpace::Definite(x) => Some(x),
+                        crate::AvailableSpace::Definite(x) => match text_style.line_clamp {
+                            Some(lines) => Some(x * lines),
+                            None => Some(x),
+                        },
                         _ => None,
                     });
 
