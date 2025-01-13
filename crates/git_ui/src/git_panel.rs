@@ -832,7 +832,7 @@ impl GitPanel {
                     )
                     .child(if self.all_staged.unwrap_or(false) {
                         self.panel_button("unstage-all", "Unstage All").on_click(
-                            cx.listener(move |_, _, cx| cx.dispatch_action(Box::new(RevertAll))),
+                            cx.listener(move |_, _, cx| cx.dispatch_action(Box::new(UnstageAll))),
                         )
                     } else {
                         self.panel_button("stage-all", "Stage All").on_click(
