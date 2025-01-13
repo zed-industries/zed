@@ -15,6 +15,7 @@ use gpui::{
 use language::Bias;
 use persistence::TERMINAL_DB;
 use project::{search::SearchQuery, terminals::TerminalKind, Fs, Metadata, Project};
+use schemars::JsonSchema;
 use terminal::{
     alacritty_terminal::{
         index::Point,
@@ -66,14 +67,14 @@ const CURSOR_BLINK_INTERVAL: Duration = Duration::from_millis(500);
 
 const GIT_DIFF_PATH_PREFIXES: &[char] = &['a', 'b'];
 
-///Event to transmit the scroll from the element to the view
+/// Event to transmit the scroll from the element to the view
 #[derive(Clone, Debug, PartialEq)]
 pub struct ScrollTerminal(pub i32);
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq)]
 pub struct SendText(String);
 
-#[derive(Clone, Debug, Default, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Default, Deserialize, JsonSchema, PartialEq)]
 pub struct SendKeystroke(String);
 
 impl_actions!(terminal, [SendText, SendKeystroke]);

@@ -10,6 +10,7 @@ use language::{LanguageRegistry, LanguageToolchainStore, LspAdapter, LspAdapterD
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
 use project::{lsp_store::language_server_settings, ContextProviderWithTasks};
+use schemars::gen::SchemaSettings;
 use serde_json::{json, Value};
 use settings::{KeymapFile, SettingsJsonSchemaParams, SettingsStore};
 use smol::{
@@ -75,9 +76,6 @@ impl JsonLspAdapter {
     }
 
     fn get_workspace_config(language_names: Vec<String>, cx: &mut AppContext) -> Value {
-        let action_names = cx.all_action_names();
-        let deprecations = cx.action_deprecations();
-
         let font_names = &cx.text_system().all_font_names();
         let settings_schema = cx.global::<SettingsStore>().json_schema(
             &SettingsJsonSchemaParams {
@@ -117,7 +115,7 @@ impl JsonLspAdapter {
                     },
                     {
                         "fileMatch": [schema_file_match(paths::keymap_file())],
-                        "schema": KeymapFile::generate_json_schema(action_names, deprecations),
+                        "schema": Self::generate_keymap_schema(cx),
                     },
                     {
                         "fileMatch": [
@@ -130,6 +128,16 @@ impl JsonLspAdapter {
                 ]
             }
         })
+    }
+
+    fn generate_keymap_schema(cx: &mut AppContext) -> Value {
+        let mut generator = SchemaSettings::draft07()
+            .with(|settings| settings.option_add_null_type = false)
+            .into_generator();
+
+        let action_schemas = cx.action_schemas(&mut generator);
+        let deprecations = cx.action_deprecations();
+        KeymapFile::generate_json_schema(generator, action_schemas, deprecations)
     }
 }
 

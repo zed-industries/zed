@@ -1,11 +1,11 @@
 use crate::{settings_store::parse_json_with_comments, SettingsAssets};
 use anyhow::{anyhow, Context, Result};
-use collections::BTreeMap;
+use collections::{BTreeMap, HashMap};
 use gpui::{Action, AppContext, KeyBinding, SharedString};
 use schemars::{
-    gen::{SchemaGenerator, SchemaSettings},
-    schema::{ArrayValidation, InstanceType, Schema, SchemaObject, SubschemaValidation},
-    JsonSchema, Map,
+    gen::SchemaGenerator,
+    schema::{ArrayValidation, InstanceType, Metadata, Schema, SchemaObject, SubschemaValidation},
+    JsonSchema,
 };
 use serde::Deserialize;
 use serde_json::Value;
@@ -140,74 +140,117 @@ impl KeymapFile {
     }
 
     pub fn generate_json_schema(
-        action_names: &[SharedString],
-        deprecations: &[(SharedString, SharedString)],
+        generator: SchemaGenerator,
+        action_schemas: Vec<(SharedString, Option<Schema>)>,
+        deprecations: &HashMap<SharedString, SharedString>,
     ) -> serde_json::Value {
-        let mut gen = SchemaSettings::draft07()
-            .with(|settings| settings.option_add_null_type = false)
-            .into_generator();
+        fn set<I, O>(input: I) -> Option<O>
+        where
+            I: Into<O>,
+        {
+            Some(input.into())
+        }
 
-        let mut alternatives = vec![
-            SchemaObject {
-                instance_type: Some(InstanceType::String.into()),
-                enum_values: Some(
-                    action_names
-                        .iter()
-                        .map(|name| Value::String(name.to_string()))
-                        .collect(),
-                ),
-                ..Default::default()
-            }
-            .into(),
-            SchemaObject {
-                instance_type: Some(InstanceType::Array.into()),
-                array: Some(
-                    ArrayValidation {
-                        items: Some(vec![String::json_schema(&mut gen), Schema::Bool(true)].into()),
-                        min_items: Some(2),
-                        max_items: Some(2),
-                        ..Default::default()
-                    }
-                    .into(),
-                ),
-                ..Default::default()
-            }
-            .into(),
-            SchemaObject {
-                instance_type: Some(InstanceType::Null.into()),
-                ..Default::default()
-            }
-            .into(),
-        ];
-        for (old, new) in deprecations {
-            alternatives.push(
-                SchemaObject {
-                    instance_type: Some(InstanceType::String.into()),
-                    const_value: Some(Value::String(old.to_string())),
-                    extensions: Map::from_iter([(
-                        // deprecationMessage is not part of the JSON Schema spec,
-                        // but json-language-server recognizes it.
-                        "deprecationMessage".to_owned(),
-                        format!("Deprecated, use {new}").into(),
-                    )]),
-                    ..Default::default()
-                }
-                .into(),
+        fn add_deprecation_notice(schema_object: &mut SchemaObject, new_name: &SharedString) {
+            schema_object.extensions.insert(
+                // deprecationMessage is not part of the JSON Schema spec,
+                // but json-language-server recognizes it.
+                "deprecationMessage".to_owned(),
+                format!("Deprecated, use {new_name}").into(),
             );
         }
-        let action_schema = SchemaObject {
-            subschemas: Some(
-                SubschemaValidation {
-                    one_of: Some(alternatives),
+
+        let empty_object: SchemaObject = SchemaObject {
+            instance_type: set(InstanceType::Object),
+            ..Default::default()
+        };
+
+        let mut keymap_action_alternatives = Vec::new();
+        for (name, action_schema) in action_schemas.iter() {
+            let schema = if let Some(Schema::Object(schema)) = action_schema {
+                Some(schema.clone())
+            } else {
+                None
+            };
+
+            // If the type has a description, also apply it to the value. Ideally it would be
+            // removed and applied to the overall array, but `json-language-server` does not show
+            // these descriptions.
+            let description = schema.as_ref().and_then(|schema| {
+                schema
+                    .metadata
+                    .as_ref()
+                    .and_then(|metadata| metadata.description.as_ref())
+            });
+            let mut matches_action_name = SchemaObject {
+                const_value: Some(Value::String(name.to_string())),
+                ..Default::default()
+            };
+            if let Some(description) = description {
+                matches_action_name.metadata = set(Metadata {
+                    description: Some(description.clone()),
                     ..Default::default()
+                });
+            }
+
+            // Add an alternative for plain action names.
+            let deprecation = deprecations.get(name);
+            let mut plain_action = SchemaObject {
+                instance_type: set(InstanceType::String),
+                const_value: Some(Value::String(name.to_string())),
+                ..Default::default()
+            };
+            if let Some(new_name) = deprecation {
+                add_deprecation_notice(&mut plain_action, new_name);
+            }
+            keymap_action_alternatives.push(plain_action.into());
+
+            // When all fields are skipped or an empty struct is added with impl_actions! /
+            // impl_actions_as! an empty struct is produced. The action should be invoked without
+            // data in this case.
+            if let Some(schema) = schema {
+                if schema != empty_object {
+                    let mut action_with_data = SchemaObject {
+                        instance_type: set(InstanceType::Array),
+                        array: Some(
+                            ArrayValidation {
+                                items: set(vec![matches_action_name.into(), schema.into()]),
+                                min_items: Some(2),
+                                max_items: Some(2),
+                                ..Default::default()
+                            }
+                            .into(),
+                        ),
+                        ..Default::default()
+                    };
+                    if let Some(new_name) = deprecation {
+                        add_deprecation_notice(&mut action_with_data, new_name);
+                    }
+                    keymap_action_alternatives.push(action_with_data.into());
                 }
-                .into(),
-            ),
+            }
+        }
+
+        // Placing null first causes json-language-server to default assuming actions should be
+        // null, so place it last.
+        keymap_action_alternatives.push(
+            SchemaObject {
+                instance_type: set(InstanceType::Null),
+                ..Default::default()
+            }
+            .into(),
+        );
+
+        let action_schema = SchemaObject {
+            subschemas: set(SubschemaValidation {
+                one_of: Some(keymap_action_alternatives),
+                ..Default::default()
+            }),
             ..Default::default()
         }
         .into();
 
-        let mut root_schema = gen.into_root_schema_for::<KeymapFile>();
+        let mut root_schema = generator.into_root_schema_for::<KeymapFile>();
         root_schema
             .definitions
             .insert("KeymapAction".to_owned(), action_schema);

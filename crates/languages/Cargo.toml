@@ -56,6 +56,7 @@ project.workspace = true
 regex.workspace = true
 rope.workspace = true
 rust-embed.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
