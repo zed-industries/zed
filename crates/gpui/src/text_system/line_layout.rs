@@ -7,7 +7,6 @@ use std::{
     hash::{Hash, Hasher},
     ops::Range,
     sync::Arc,
-    usize,
 };
 
 use super::LineWrapper;
