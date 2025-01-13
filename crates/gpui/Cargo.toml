@@ -117,8 +117,8 @@ rand.workspace = true
 util = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 unicode-segmentation.workspace = true
-tiny-skia = "0.11.4"
-tiny-skia-path = "0.11.4"
+tiny-skia = "0.11"
+tiny-skia-path = "0.11"
 
 [build-dependencies]
 embed-resource = "3.0"

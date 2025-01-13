@@ -1,32 +1,71 @@
 use gpui::{
-    canvas, div, point, prelude::*, px, size, App, AppContext, Bounds, MouseDownEvent, Path,
-    Pixels, Point, Render, ViewContext, WindowOptions,
+    canvas, div, point, prelude::*, px, rgb, size, App, AppContext, Bounds, Hsla, MouseDownEvent,
+    Path, Pixels, Point, Render, ViewContext, WindowContext, WindowOptions,
 };
+
 struct PaintingViewer {
-    default_lines: Vec<Path<Pixels>>,
+    default_lines: Vec<(Path<Pixels>, Hsla)>,
     lines: Vec<Vec<Point<Pixels>>>,
     start: Point<Pixels>,
     _painting: bool,
 }
 
+/// Build tiny-skia PathBuilder into a Path with stroke
+fn stroke_path(
+    builder: tiny_skia::PathBuilder,
+    stroke: &tiny_skia::Stroke,
+    cx: &WindowContext,
+) -> Option<Path<Pixels>> {
+    let skia_path = builder.finish()?;
+    let skia_path = skia_path.stroke(stroke, cx.scale_factor())?;
+    let first_p = skia_path.points().first()?;
+    let mut path = Path::new(point(px(first_p.x), px(first_p.y)));
+    for segment in skia_path.segments() {
+        match segment {
+            tiny_skia::PathSegment::MoveTo(p) => {
+                path.move_to(point(px(p.x), px(p.y)));
+            }
+            tiny_skia::PathSegment::LineTo(p) => {
+                path.line_to(point(px(p.x), px(p.y)));
+            }
+            tiny_skia::PathSegment::QuadTo(p1, p2) => {
+                path.curve_to(point(px(p1.x), px(p1.y)), point(px(p2.x), px(p2.y)));
+            }
+            tiny_skia::PathSegment::CubicTo(_p1, _p2, _p3) => {
+                // TODO: convert cubic to quadratic
+            }
+            _ => {}
+        }
+    }
+    Some(path)
+}
+
 impl PaintingViewer {
-    fn new() -> Self {
+    fn new(cx: &WindowContext) -> Self {
         let mut lines = vec![];
 
         // draw a line
-        let mut path = Path::new(point(px(50.), px(180.)));
-        path.line_to(point(px(100.), px(120.)));
-        // go back to close the path
-        path.line_to(point(px(100.), px(121.)));
-        path.line_to(point(px(50.), px(181.)));
-        lines.push(path);
+        let stroke = tiny_skia::Stroke {
+            width: 4.0,
+            ..Default::default()
+        };
+        let mut builder = tiny_skia::PathBuilder::new();
+        builder.move_to(50.0, 180.);
+        builder.line_to(100.0, 120.);
+        let path = stroke_path(builder, &stroke, cx).unwrap();
+        let mut builder = tiny_skia::PathBuilder::new();
+        lines.push((path, rgb(0xdc2626).into()));
+        builder.move_to(50.0, 120.);
+        builder.line_to(100.0, 180.);
+        let path = stroke_path(builder, &stroke, cx).unwrap();
+        lines.push((path, rgb(0xdc2626).into()));
 
         // draw a lightening bolt ⚡
         let mut path = Path::new(point(px(150.), px(200.)));
         path.line_to(point(px(200.), px(125.)));
         path.line_to(point(px(200.), px(175.)));
         path.line_to(point(px(250.), px(100.)));
-        lines.push(path);
+        lines.push((path, rgb(0x1d4ed8).into()));
 
         // draw a ⭐
         let mut path = Path::new(point(px(350.), px(100.)));
@@ -40,7 +79,7 @@ impl PaintingViewer {
         path.line_to(point(px(270.), px(160.)));
         path.line_to(point(px(330.), px(160.)));
         path.line_to(point(px(350.), px(100.)));
-        lines.push(path);
+        lines.push((path, rgb(0xfacc15).into()));
 
         let square_bounds = Bounds {
             origin: point(px(450.), px(100.)),
@@ -60,7 +99,28 @@ impl PaintingViewer {
             square_bounds.top_right() + point(px(0.0), vertical_offset),
         );
         path.line_to(square_bounds.bottom_left());
-        lines.push(path);
+        lines.push((path, rgb(0x16a34a).into()));
+
+        // draw a wave
+        let mut builder = tiny_skia::PathBuilder::new();
+        builder.move_to(40.0, 320.);
+        for i in 0..80 {
+            builder.line_to(
+                40.0 + i as f32 * 10.0,
+                320.0 + (i as f32 * 10.0).sin() * 40.0,
+            );
+        }
+        let path = stroke_path(
+            builder,
+            &tiny_skia::Stroke {
+                width: 1.0,
+                line_cap: tiny_skia::LineCap::Round,
+                ..Default::default()
+            },
+            cx,
+        )
+        .unwrap();
+        lines.push((path, rgb(0xe00b00).into()));
 
         Self {
             default_lines: lines.clone(),
@@ -116,11 +176,11 @@ impl Render for PaintingViewer {
                             move |_, _| {},
                             move |_, _, cx| {
 
-                                for path in default_lines {
-                                    cx.paint_path(path, gpui::black());
+                                for (path, color) in default_lines {
+                                    cx.paint_path(path, color);
                                 }
 
-                                let stroke =tiny_skia::Stroke {
+                                let stroke = tiny_skia::Stroke {
                                     width: 1.0,
                                     ..Default::default()
                                 };
@@ -137,26 +197,9 @@ impl Render for PaintingViewer {
                                         builder.line_to(p.x.0, p.y.0);
                                     }
 
-                                    let path = builder.finish().unwrap();
-                                    let stroke_path = tiny_skia::PathStroker::new().stroke(&path, &stroke, cx.scale_factor());
-                                    if let Some(stroke_path) = stroke_path {
-                                        let Some(first_p) = stroke_path.points().first() else {
-                                            break;
-                                        };
-
-                                        let mut path = Path::new(point(px(first_p.x), px(first_p.y)));
-                                        for i in 1..stroke_path.len() - 1 {
-                                            let p = stroke_path.points()[i];
-                                            let verb = stroke_path.verbs()[i];
-                                            match verb {
-                                                tiny_skia_path::PathVerb::Move => path.move_to(point(px(p.x), px(p.y))),
-                                                tiny_skia_path::PathVerb::Line => path.line_to(point(px(p.x), px(p.y))),
-                                                    _ => {}
-                                            }
-                                        }
+                                    if let Some(path) = stroke_path(builder, &stroke, cx) {
                                         cx.paint_path(path, gpui::black());
                                     }
-
                                 }
                             },
                         )
@@ -212,7 +255,7 @@ fn main() {
                 focus: true,
                 ..Default::default()
             },
-            |cx| cx.new_view(|_| PaintingViewer::new()),
+            |cx| cx.new_view(|cx| PaintingViewer::new(cx)),
         )
         .unwrap();
         cx.activate(true);
