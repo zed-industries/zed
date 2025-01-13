@@ -450,7 +450,7 @@ runtimelib = { version = "0.25.0", default-features = false, features = [
     "async-dispatcher-runtime",
 ] }
 rustc-demangle = "0.1.23"
-rust-embed = { version = "8.4", features = ["include-exclude"] }
+rust-embed = { version = "8.5", features = ["include-exclude"] }
 rustc-hash = "2.1.0"
 rustls = "0.21.12"
 rustls-native-certs = "0.8.0"
