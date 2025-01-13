@@ -91,16 +91,9 @@ pub struct GitPanel {
     /// At this point it doesn't matter what repository the entry belongs to,
     /// as only one repositories' entries are visible in the list at a time.
     visible_entries: Vec<GitListEntry>,
+    all_staged: Option<bool>,
     width: Option<Pixels>,
     reveal_in_editor: Task<()>,
-}
-
-fn status_to_toggle_state(status: &GitStatusPair) -> ToggleState {
-    match status.is_staged() {
-        Some(true) => ToggleState::Selected,
-        Some(false) => ToggleState::Unselected,
-        None => ToggleState::Indeterminate,
-    }
 }
 
 impl GitPanel {
@@ -314,6 +307,7 @@ impl GitPanel {
                 fs,
                 pending_serialization: Task::ready(None),
                 visible_entries: Vec::new(),
+                all_staged: None,
                 current_modifiers: cx.modifiers(),
                 width: Some(px(360.)),
                 scrollbar_state: ScrollbarState::new(scroll_handle.clone()).parent_view(cx.view()),
@@ -639,11 +633,6 @@ impl GitPanel {
         println!("Commit all changes triggered");
     }
 
-    fn all_staged(&self) -> bool {
-        // TODO: Implement all_staged
-        true
-    }
-
     fn no_entries(&self) -> bool {
         self.visible_entries.is_empty()
     }
@@ -705,10 +694,19 @@ impl GitPanel {
         let path_set = HashSet::from_iter(repo.status().map(|entry| entry.repo_path));
 
         // Second pass - create entries with proper depth calculation
-        for entry in repo.status() {
+        let mut all_staged = None;
+        for (ix, entry) in repo.status().enumerate() {
             let (depth, difference) =
                 Self::calculate_depth_and_difference(&entry.repo_path, &path_set);
-            let toggle_state = status_to_toggle_state(&entry.status);
+            let is_staged = entry.status.is_staged();
+            all_staged = if ix == 0 {
+                is_staged
+            } else {
+                match (all_staged, is_staged) {
+                    (None, _) | (_, None) => None,
+                    (Some(a), Some(b)) => (a == b).then_some(a),
+                }
+            };
 
             let display_name = if difference > 1 {
                 // Show partial path for deeply nested files
@@ -734,11 +732,12 @@ impl GitPanel {
                 display_name,
                 repo_path: entry.repo_path,
                 status: entry.status,
-                toggle_state,
+                toggle_state: is_staged.map_or(ToggleState::Indeterminate, ToggleState::from),
             };
 
             self.visible_entries.push(entry);
         }
+        self.all_staged = all_staged;
 
         // Sort entries by path to maintain consistent order
         self.visible_entries
@@ -805,7 +804,11 @@ impl GitPanel {
             .child(
                 h_flex()
                     .gap_2()
-                    .child(Checkbox::new("all-changes", true.into()).disabled(true))
+                    .child(Checkbox::new(
+                        "all-changes",
+                        self.all_staged
+                            .map_or(ToggleState::Indeterminate, ToggleState::from),
+                    ))
                     .child(div().text_buffer(cx).text_ui_sm(cx).child(changes_string)),
             )
             .child(div().flex_grow())
@@ -827,7 +830,7 @@ impl GitPanel {
                             .icon_size(IconSize::Small)
                             .disabled(true),
                     )
-                    .child(if self.all_staged() {
+                    .child(if self.all_staged.unwrap_or(false) {
                         self.panel_button("unstage-all", "Unstage All").on_click(
                             cx.listener(move |_, _, cx| cx.dispatch_action(Box::new(RevertAll))),
                         )
