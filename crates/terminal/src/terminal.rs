@@ -376,7 +376,7 @@ impl TerminalBuilder {
                 working_directory: working_directory
                     .clone()
                     .or_else(|| Some(home_dir().to_path_buf())),
-                hold: false,
+                drain_on_exit: true,
                 env: env.into_iter().collect(),
             }
         };
@@ -441,7 +441,7 @@ impl TerminalBuilder {
             term.clone(),
             ZedListener(events_tx.clone()),
             pty,
-            pty_options.hold,
+            pty_options.drain_on_exit,
             false,
         )?;
 
