@@ -207,7 +207,10 @@ impl Vim {
                 }
                 Some(Operator::AddSurrounds { target: None }) => {
                     waiting_operator = Some(Operator::AddSurrounds {
-                        target: Some(SurroundsType::Object(object, around)),
+                        target: Some(SurroundsType::Object {
+                            target: object,
+                            around,
+                        }),
                     });
                 }
                 Some(Operator::ToggleComments) => self.toggle_comments_object(object, around, cx),
