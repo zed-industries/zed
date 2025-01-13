@@ -487,6 +487,41 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_delete_to_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.simulate(
+            "d 3 shift-g",
+            indoc! {"
+            The quick
+            brownˇ fox
+            jumps over
+            the lazy"},
+        )
+        .await
+        .assert_matches();
+        cx.simulate(
+            "d 3 shift-g",
+            indoc! {"
+            The quick
+            brown fox
+            jumps over
+            the lˇazy"},
+        )
+        .await
+        .assert_matches();
+        cx.simulate(
+            "d 2 shift-g",
+            indoc! {"
+            The quick
+            brown fox
+            jumps over
+            ˇ"},
+        )
+        .await
+        .assert_matches();
+    }
+
+    #[gpui::test]
     async fn test_delete_gg(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.simulate(

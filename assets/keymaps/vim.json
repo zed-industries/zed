@@ -435,6 +435,12 @@
     }
   },
   {
+    "context": "vim_operator == d && VimCount",
+    "bindings": {
+      "shift-g": "vim::StartOfDocument" // "d x G"
+    }
+  },
+  {
     "context": "vim_operator == gu",
     "bindings": {
       "g u": "vim::CurrentLine",
