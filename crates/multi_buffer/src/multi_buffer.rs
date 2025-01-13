@@ -364,6 +364,13 @@ pub struct MultiBufferChunks<'a> {
     language_aware: bool,
 }
 
+pub struct ReversedMultiBufferChunks<'a> {
+    cursor: MultiBufferCursor<'a, usize>,
+    current_chunks: Option<rope::Chunks<'a>>,
+    start: usize,
+    offset: usize,
+}
+
 pub struct MultiBufferBytes<'a> {
     range: Range<usize>,
     cursor: MultiBufferCursor<'a, usize>,
@@ -374,8 +381,7 @@ pub struct MultiBufferBytes<'a> {
 
 pub struct ReversedMultiBufferBytes<'a> {
     range: Range<usize>,
-    excerpts: Cursor<'a, Excerpt, usize>,
-    excerpt_bytes: Option<ExcerptBytes<'a>>,
+    chunks: ReversedMultiBufferChunks<'a>,
     chunk: &'a [u8],
 }
 
@@ -400,12 +406,6 @@ struct ExcerptChunks<'a> {
     excerpt_id: ExcerptId,
     content_chunks: BufferChunks<'a>,
     footer_height: usize,
-}
-
-struct ExcerptBytes<'a> {
-    content_bytes: text::Bytes<'a>,
-    padding_height: usize,
-    reversed: bool,
 }
 
 #[derive(Debug)]
@@ -3153,40 +3153,26 @@ impl MultiBufferSnapshot {
     }
 
     pub fn reversed_chars_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = char> + '_ {
-        let mut offset = position.to_offset(self);
-        let mut cursor = self.cursor::<usize>();
-        cursor.seek(&offset);
-        let mut current_region = cursor.region();
-        let mut current_chunks = current_region.as_ref().map(|region| {
-            let overshoot = offset - region.range.start;
-            let end = region.buffer_range.start + overshoot;
-            region
-                .buffer
-                .reversed_chunks_in_range(region.buffer_range.start..end)
-        });
-        iter::from_fn(move || {
-            let mut region = current_region.as_ref()?;
-            if offset == region.range.start {
-                cursor.prev();
-                current_region = cursor.region();
-                region = current_region.as_ref()?;
-                current_chunks = Some(
-                    region
-                        .buffer
-                        .reversed_chunks_in_range(region.buffer_range.clone()),
-                );
-            }
+        self.reversed_chunks_in_range(0..position.to_offset(self))
+            .flat_map(|c| c.chars().rev())
+    }
 
-            if offset == region.range.end && region.has_trailing_newline {
-                offset -= 1;
-                Some("\n")
-            } else {
-                let chunk = current_chunks.as_mut().unwrap().next().unwrap();
-                offset -= chunk.len();
-                Some(chunk)
-            }
-        })
-        .flat_map(|c| c.chars().rev())
+    fn reversed_chunks_in_range(&self, range: Range<usize>) -> ReversedMultiBufferChunks {
+        let mut cursor = self.cursor::<usize>();
+        cursor.seek(&range.end);
+        let current_chunks = cursor.region().as_ref().map(|region| {
+            let start_overshoot = range.start.saturating_sub(region.range.start);
+            let end_overshoot = range.end - region.range.start;
+            let end = (region.buffer_range.start + end_overshoot).min(region.buffer_range.end);
+            let start = region.buffer_range.start + start_overshoot;
+            region.buffer.reversed_chunks_in_range(start..end)
+        });
+        ReversedMultiBufferChunks {
+            cursor,
+            current_chunks,
+            start: range.start,
+            offset: range.end,
+        }
     }
 
     pub fn chars_at<T: ToOffset>(&self, position: T) -> impl Iterator<Item = char> + '_ {
@@ -3676,24 +3662,11 @@ impl MultiBufferSnapshot {
         range: Range<T>,
     ) -> ReversedMultiBufferBytes {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let mut excerpts = self.excerpts.cursor::<usize>(&());
-        excerpts.seek(&range.end, Bias::Left, &());
-
-        let mut chunk = &[][..];
-        let excerpt_bytes = if let Some(excerpt) = excerpts.item() {
-            let mut excerpt_bytes = excerpt.reversed_bytes_in_range(
-                range.start.saturating_sub(*excerpts.start())..range.end - *excerpts.start(),
-            );
-            chunk = excerpt_bytes.next().unwrap_or(&[][..]);
-            Some(excerpt_bytes)
-        } else {
-            None
-        };
-
+        let mut chunks = self.reversed_chunks_in_range(range.clone());
+        let chunk = chunks.next().map_or(&[][..], |c| c.as_bytes());
         ReversedMultiBufferBytes {
             range,
-            excerpts,
-            excerpt_bytes,
+            chunks,
             chunk,
         }
     }
@@ -5900,27 +5873,6 @@ impl Excerpt {
         };
     }
 
-    fn reversed_bytes_in_range(&self, range: Range<usize>) -> ExcerptBytes {
-        let content_start = self.range.context.start.to_offset(&self.buffer);
-        let bytes_start = content_start + range.start;
-        let bytes_end = content_start + cmp::min(range.end, self.text_summary.len);
-        let footer_height = if self.has_trailing_newline
-            && range.start <= self.text_summary.len
-            && range.end > self.text_summary.len
-        {
-            1
-        } else {
-            0
-        };
-        let content_bytes = self.buffer.reversed_bytes_in_range(bytes_start..bytes_end);
-
-        ExcerptBytes {
-            content_bytes,
-            padding_height: footer_height,
-            reversed: true,
-        }
-    }
-
     fn clip_anchor(&self, text_anchor: text::Anchor) -> text::Anchor {
         if text_anchor
             .cmp(&self.range.context.start, &self.buffer)
@@ -6613,6 +6565,31 @@ impl<'a> MultiBufferChunks<'a> {
     }
 }
 
+impl<'a> Iterator for ReversedMultiBufferChunks<'a> {
+    type Item = &'a str;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let mut region = self.cursor.region()?;
+        if self.offset == region.range.start {
+            self.cursor.prev();
+            region = self.cursor.region()?;
+            let start_overshoot = self.start.saturating_sub(region.range.start);
+            self.current_chunks = Some(region.buffer.reversed_chunks_in_range(
+                region.buffer_range.start + start_overshoot..region.buffer_range.end,
+            ));
+        }
+
+        if self.offset == region.range.end && region.has_trailing_newline {
+            self.offset -= 1;
+            Some("\n")
+        } else {
+            let chunk = self.current_chunks.as_mut().unwrap().next().unwrap();
+            self.offset -= chunk.len();
+            Some(chunk)
+        }
+    }
+}
+
 impl<'a> Iterator for MultiBufferChunks<'a> {
     type Item = Chunk<'a>;
 
@@ -6758,63 +6735,21 @@ impl<'a> io::Read for MultiBufferBytes<'a> {
     }
 }
 
-impl<'a> ReversedMultiBufferBytes<'a> {
-    fn consume(&mut self, len: usize) {
-        self.range.end -= len;
-        self.chunk = &self.chunk[..self.chunk.len() - len];
-
-        if !self.range.is_empty() && self.chunk.is_empty() {
-            if let Some(chunk) = self.excerpt_bytes.as_mut().and_then(|bytes| bytes.next()) {
-                self.chunk = chunk;
-            } else {
-                self.excerpts.prev(&());
-                if let Some(excerpt) = self.excerpts.item() {
-                    let mut excerpt_bytes = excerpt.reversed_bytes_in_range(
-                        self.range.start.saturating_sub(*self.excerpts.start())..usize::MAX,
-                    );
-                    self.chunk = excerpt_bytes.next().unwrap();
-                    self.excerpt_bytes = Some(excerpt_bytes);
-                }
-            }
-        }
-    }
-}
-
 impl<'a> io::Read for ReversedMultiBufferBytes<'a> {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         let len = cmp::min(buf.len(), self.chunk.len());
         buf[..len].copy_from_slice(&self.chunk[..len]);
         buf[..len].reverse();
         if len > 0 {
-            self.consume(len);
-        }
-        Ok(len)
-    }
-}
-
-impl<'a> Iterator for ExcerptBytes<'a> {
-    type Item = &'a [u8];
-
-    fn next(&mut self) -> Option<Self::Item> {
-        if self.reversed && self.padding_height > 0 {
-            let result = &NEWLINES[..self.padding_height];
-            self.padding_height = 0;
-            return Some(result);
-        }
-
-        if let Some(chunk) = self.content_bytes.next() {
-            if !chunk.is_empty() {
-                return Some(chunk);
+            self.range.end -= len;
+            self.chunk = &self.chunk[..self.chunk.len() - len];
+            if !self.range.is_empty() && self.chunk.is_empty() {
+                if let Some(chunk) = self.chunks.next() {
+                    self.chunk = chunk.as_bytes();
+                }
             }
         }
-
-        if self.padding_height > 0 {
-            let result = &NEWLINES[..self.padding_height];
-            self.padding_height = 0;
-            return Some(result);
-        }
-
-        None
+        Ok(len)
     }
 }
 
