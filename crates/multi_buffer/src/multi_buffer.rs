@@ -3254,6 +3254,13 @@ impl MultiBufferSnapshot {
         })
     }
 
+    pub fn ranges_to_buffer_ranges<'a, T: ToOffset>(
+        &'a self,
+        ranges: impl Iterator<Item = Range<T>>,
+    ) -> impl Iterator<Item = (&'a BufferSnapshot, Range<usize>, ExcerptId)> {
+        ranges.flat_map(|range| self.range_to_buffer_ranges(range).into_iter())
+    }
+
     pub fn range_to_buffer_ranges<'a, T: ToOffset>(
         &'a self,
         range: Range<T>,
@@ -5266,47 +5273,6 @@ impl MultiBufferSnapshot {
         } else {
             None
         }
-    }
-
-    /// Returns excerpts overlapping the given ranges. If range spans multiple excerpts returns one range for each excerpt
-    ///
-    /// The ranges are specified in the coordinate space of the multibuffer, not the individual excerpted buffers.
-    /// Each returned excerpt's range is in the coordinate space of its source buffer.
-    pub fn excerpts_in_ranges(
-        &self,
-        ranges: impl IntoIterator<Item = Range<Anchor>>,
-    ) -> impl Iterator<Item = (ExcerptId, &BufferSnapshot, Range<usize>)> {
-        let mut ranges = ranges.into_iter().map(|range| range.to_offset(self));
-        let mut cursor = self.excerpts.cursor::<(usize, Point)>(&());
-        cursor.next(&());
-        let mut current_range = ranges.next();
-        iter::from_fn(move || {
-            let range = current_range.clone()?;
-            if range.start >= cursor.end(&()).0 {
-                cursor.seek_forward(&range.start, Bias::Right, &());
-                if range.start == self.len() {
-                    cursor.prev(&());
-                }
-            }
-
-            let excerpt = cursor.item()?;
-            let range_start_in_excerpt = cmp::max(range.start, cursor.start().0);
-            let range_end_in_excerpt = if excerpt.has_trailing_newline {
-                cmp::min(range.end, cursor.end(&()).0 - 1)
-            } else {
-                cmp::min(range.end, cursor.end(&()).0)
-            };
-            let buffer_range = MultiBufferExcerpt::new(excerpt, *cursor.start())
-                .map_range_to_buffer(range_start_in_excerpt..range_end_in_excerpt);
-
-            if range.end > cursor.end(&()).0 {
-                cursor.next(&());
-            } else {
-                current_range = ranges.next();
-            }
-
-            Some((excerpt.id, &excerpt.buffer, buffer_range))
-        })
     }
 
     pub fn selections_in_range<'a>(

@@ -1443,25 +1443,23 @@ impl SearchableItem for Editor {
                 search_within_ranges
             };
 
-            for search_range in search_within_ranges {
-                for (search_buffer, search_range, excerpt_id) in
-                    buffer.range_to_buffer_ranges(search_range)
-                {
-                    ranges.extend(
-                        query
-                            .search(search_buffer, Some(search_range.clone()))
-                            .await
-                            .into_iter()
-                            .map(|match_range| {
-                                let start = search_buffer
-                                    .anchor_after(search_range.start + match_range.start);
-                                let end = search_buffer
-                                    .anchor_before(search_range.start + match_range.end);
-                                Anchor::in_buffer(excerpt_id, search_buffer.remote_id(), start)
-                                    ..Anchor::in_buffer(excerpt_id, search_buffer.remote_id(), end)
-                            }),
-                    );
-                }
+            for (search_buffer, search_range, excerpt_id) in
+                buffer.ranges_to_buffer_ranges(search_within_ranges.into_iter())
+            {
+                ranges.extend(
+                    query
+                        .search(search_buffer, Some(search_range.clone()))
+                        .await
+                        .into_iter()
+                        .map(|match_range| {
+                            let start =
+                                search_buffer.anchor_after(search_range.start + match_range.start);
+                            let end =
+                                search_buffer.anchor_before(search_range.start + match_range.end);
+                            Anchor::in_buffer(excerpt_id, search_buffer.remote_id(), start)
+                                ..Anchor::in_buffer(excerpt_id, search_buffer.remote_id(), end)
+                        }),
+                );
             }
 
             ranges
