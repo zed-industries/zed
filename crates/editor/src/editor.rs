@@ -11012,9 +11012,19 @@ impl Editor {
         });
     }
 
-    pub fn toggle_hunk_diff(&mut self, _: &ToggleHunkDiff, cx: &mut ViewContext<Self>) {
+    pub fn toggle_selected_diff_hunks(
+        &mut self,
+        _: &ToggleSelectedDiffHunks,
+        cx: &mut ViewContext<Self>,
+    ) {
         let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
         self.toggle_diff_hunks_in_ranges(ranges, cx);
+    }
+
+    pub fn expand_selected_diff_hunks(&mut self, cx: &mut ViewContext<Self>) {
+        let ranges: Vec<_> = self.selections.disjoint.iter().map(|s| s.range()).collect();
+        self.buffer
+            .update(cx, |buffer, cx| buffer.expand_diff_hunks(ranges, cx))
     }
 
     pub fn clear_expanded_diff_hunks(&mut self, cx: &mut ViewContext<Self>) -> bool {

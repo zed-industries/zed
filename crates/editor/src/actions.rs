@@ -372,7 +372,7 @@ gpui::actions!(
         ToggleAutoSignatureHelp,
         ToggleGitBlame,
         ToggleGitBlameInline,
-        ToggleHunkDiff,
+        ToggleSelectedDiffHunks,
         ToggleIndentGuides,
         ToggleInlayHints,
         ToggleInlineCompletions,

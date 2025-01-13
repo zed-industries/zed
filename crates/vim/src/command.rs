@@ -668,7 +668,8 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         VimCommand::new(("foldc", "lose"), editor::actions::Fold)
             .bang(editor::actions::FoldRecursive)
             .range(act_on_range),
-        VimCommand::new(("dif", "fupdate"), editor::actions::ToggleHunkDiff).range(act_on_range),
+        VimCommand::new(("dif", "fupdate"), editor::actions::ToggleSelectedDiffHunks)
+            .range(act_on_range),
         VimCommand::new(("rev", "ert"), editor::actions::RevertSelectedHunks).range(act_on_range),
         VimCommand::new(("d", "elete"), VisualDeleteLine).range(select_range),
         VimCommand::new(("y", "ank"), gpui::NoAction).range(|_, range| {

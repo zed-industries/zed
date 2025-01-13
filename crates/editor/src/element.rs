@@ -392,7 +392,7 @@ impl EditorElement {
         register_action(view, cx, Editor::copy_file_location);
         register_action(view, cx, Editor::toggle_git_blame);
         register_action(view, cx, Editor::toggle_git_blame_inline);
-        register_action(view, cx, Editor::toggle_hunk_diff);
+        register_action(view, cx, Editor::toggle_selected_diff_hunks);
         register_action(view, cx, Editor::expand_all_diff_hunks);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.format(action, cx) {
@@ -3677,7 +3677,7 @@ impl EditorElement {
                     let y = display_row_range.start.as_f32() * line_height
                         + text_hitbox.bounds.top()
                         - scroll_pixel_position.y;
-                    let x = text_hitbox.bounds.right() - px(120.);
+                    let x = text_hitbox.bounds.right() - px(100.);
 
                     let mut element =
                         diff_hunk_controls(multi_buffer_range.clone(), line_height, &editor, cx);
@@ -8183,6 +8183,7 @@ fn diff_hunk_controls(
 ) -> AnyElement {
     h_flex()
         .h(line_height)
+        .mr_1()
         .gap_1()
         .px_1()
         .pb_1()
@@ -8207,6 +8208,7 @@ fn diff_hunk_controls(
                             let snapshot = editor.snapshot(cx);
                             let position = hunk_range.end.to_point(&snapshot.buffer_snapshot);
                             editor.go_to_hunk_after_position(&snapshot, position, cx);
+                            editor.expand_selected_diff_hunks(cx);
                         });
                     }
                 }),
@@ -8229,6 +8231,7 @@ fn diff_hunk_controls(
                             let snapshot = editor.snapshot(cx);
                             let point = hunk_range.start.to_point(&snapshot.buffer_snapshot);
                             editor.go_to_hunk_before_position(&snapshot, point, cx);
+                            editor.expand_selected_diff_hunks(cx);
                         });
                     }
                 }),

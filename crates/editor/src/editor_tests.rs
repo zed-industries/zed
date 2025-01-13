@@ -12158,7 +12158,10 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
+async fn test_toggle_selected_diff_hunks(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -12196,7 +12199,7 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
 
     cx.update_editor(|editor, cx| {
         editor.go_to_next_hunk(&GoToHunk, cx);
-        editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
+        editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, cx);
     });
     executor.run_until_parked();
     cx.assert_state_with_diff(
@@ -12218,7 +12221,7 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
     cx.update_editor(|editor, cx| {
         for _ in 0..2 {
             editor.go_to_next_hunk(&GoToHunk, cx);
-            editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
+            editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, cx);
         }
     });
     executor.run_until_parked();
@@ -12241,7 +12244,7 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
 
     cx.update_editor(|editor, cx| {
         editor.go_to_next_hunk(&GoToHunk, cx);
-        editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
+        editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, cx);
     });
     executor.run_until_parked();
     cx.assert_state_with_diff(
@@ -12524,7 +12527,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
 
     cx.update_editor(|editor, cx| {
         editor.select_all(&SelectAll, cx);
-        editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
+        editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, cx);
     });
     cx.executor().run_until_parked();
 
