@@ -543,8 +543,29 @@ impl EditorElement {
                         // and run the selection logic.
                         modifiers.alt = false;
                     } else {
+                        let scroll_position_row =
+                            position_map.scroll_pixel_position.y / position_map.line_height;
+                        let display_row = (((event.position - gutter_hitbox.bounds.origin).y
+                            + position_map.scroll_pixel_position.y)
+                            / position_map.line_height)
+                            as u32;
+                        let multi_buffer_row = position_map
+                            .snapshot
+                            .display_point_to_point(
+                                DisplayPoint::new(DisplayRow(display_row), 0),
+                                Bias::Right,
+                            )
+                            .row;
+                        let line_offset_from_top = display_row - scroll_position_row as u32;
                         // if double click is made without alt, open the corresponding excerp
-                        editor.open_excerpts(&OpenExcerpts, cx);
+                        editor.open_excerpts_common(
+                            Some(JumpData::MultiBufferRow {
+                                row: MultiBufferRow(multi_buffer_row),
+                                line_offset_from_top,
+                            }),
+                            false,
+                            cx,
+                        );
                         return;
                     }
                 }
