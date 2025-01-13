@@ -1067,7 +1067,7 @@ fn editor_blocks(
                             let name: SharedString = match block {
                                 Block::Custom(block) => {
                                     let mut element = block.render(&mut BlockContext {
-                                        context: cx,
+                                        app: cx,
                                         window,
                                         anchor_x: px(0.),
                                         gutter_dimensions: &GutterDimensions::default(),

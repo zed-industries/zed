@@ -127,7 +127,7 @@ impl EditorBlock {
     ) -> RenderBlock {
         Arc::new(move |cx: &mut BlockContext| {
             let execution_view = execution_view.clone();
-            let text_style = crate::outputs::plain::text_style(cx.window, cx.context);
+            let text_style = crate::outputs::plain::text_style(cx.window, cx.app);
 
             let gutter = cx.gutter_dimensions;
 

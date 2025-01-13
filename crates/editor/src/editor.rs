@@ -10695,10 +10695,10 @@ impl Editor {
                                                 status: cx.editor_style.status.clone(),
                                                 inlay_hints_style: HighlightStyle {
                                                     font_weight: Some(FontWeight::BOLD),
-                                                    ..make_inlay_hints_style(cx.window, cx.context)
+                                                    ..make_inlay_hints_style(cx.window, cx.app)
                                                 },
                                                 inline_completion_styles: make_suggestion_styles(
-                                                    cx.window, cx.context,
+                                                    cx.window, cx.app,
                                                 ),
                                                 ..EditorStyle::default()
                                             },
@@ -15647,7 +15647,7 @@ pub fn diagnostic_block_renderer(
         let icon_size = buttons(&diagnostic).into_any_element().layout_as_root(
             AvailableSpace::min_size(),
             cx.window,
-            cx.context,
+            cx.app,
         );
 
         h_flex()

@@ -239,7 +239,7 @@ pub struct AppContext {
     http_client: Arc<dyn HttpClient>,
     pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
-    pub(crate) windows_accessed: Vec<WindowId>,
+    pub(crate) window_update_stack: Vec<WindowId>,
     pub(crate) new_model_observers: SubscriberSet<TypeId, NewModelListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
@@ -305,7 +305,7 @@ impl AppContext {
                 entities,
                 new_model_observers: SubscriberSet::new(),
                 windows: SlotMap::with_key(),
-                windows_accessed: Vec::new(),
+                window_update_stack: Vec::new(),
                 window_handles: FxHashMap::default(),
                 focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
                 keymap: Rc::new(RefCell::new(Keymap::default())),
@@ -599,9 +599,9 @@ impl AppContext {
             let handle = WindowHandle::new(id);
             match Window::new(handle.into(), options, cx) {
                 Ok(mut window) => {
-                    cx.windows_accessed.push(id);
+                    cx.window_update_stack.push(id);
                     let root_view = build_root_view(&mut window, cx);
-                    cx.windows_accessed.pop();
+                    cx.window_update_stack.pop();
                     window.root_view.replace(root_view.into());
                     window.defer(cx, |window: &mut Window, cx| window.appearance_changed(cx));
                     cx.window_handles.insert(id, window.handle);
@@ -993,9 +993,9 @@ impl AppContext {
 
             let root_view = window.root_view.clone().unwrap();
 
-            cx.windows_accessed.push(window.handle.id);
+            cx.window_update_stack.push(window.handle.id);
             let result = update(root_view, &mut window, cx);
-            cx.windows_accessed.pop();
+            cx.window_update_stack.pop();
 
             if window.removed {
                 cx.window_handles.remove(&id);
@@ -1558,7 +1558,7 @@ impl Context for AppContext {
             cx.push_effect(Effect::ModelCreated {
                 entity: model.clone().into_any(),
                 tid: TypeId::of::<T>(),
-                window: cx.windows_accessed.last().cloned(),
+                window: cx.window_update_stack.last().cloned(),
             });
 
             cx.entities.insert(slot, entity);

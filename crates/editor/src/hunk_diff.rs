@@ -892,7 +892,7 @@ impl Editor {
             priority: 0,
             render: Arc::new(move |cx| {
                 let width = EditorElement::diff_hunk_strip_width(cx.window.line_height());
-                let gutter_dimensions = editor.read(cx.context).gutter_dimensions;
+                let gutter_dimensions = editor.read(cx.app).gutter_dimensions;
 
                 h_flex()
                     .id(cx.block_id)

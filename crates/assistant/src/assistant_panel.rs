@@ -2434,7 +2434,7 @@ impl ContextEditor {
                         let block_id = cx.block_id;
                         let selected = cx.selected;
                         let window = &mut *cx.window;
-                        this.update(cx.context, |this, cx| {
+                        this.update(cx.app, |this, cx| {
                             this.render_patch_block(
                                 patch_range.clone(),
                                 max_width,
@@ -2878,7 +2878,7 @@ impl ContextEditor {
                                             .into_any_element(),
                                     );
                                     note = Some(
-                                        Self::esc_kbd(cx.window, cx.context).into_any_element(),
+                                        Self::esc_kbd(cx.window, cx.app).into_any_element(),
                                     );
                                 }
                                 (animated_label, spinner, note)

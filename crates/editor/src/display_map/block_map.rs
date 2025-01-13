@@ -227,8 +227,7 @@ pub enum BlockStyle {
 
 pub struct BlockContext<'a, 'b> {
     pub window: &'a mut Window,
-    // todo! rename to app
-    pub context: &'b mut AppContext,
+    pub app: &'b mut AppContext,
     pub anchor_x: Pixels,
     pub max_width: Pixels,
     pub gutter_dimensions: &'b GutterDimensions,
@@ -1935,13 +1934,13 @@ impl<'a> Deref for BlockContext<'a, '_> {
     type Target = AppContext;
 
     fn deref(&self) -> &Self::Target {
-        self.context
+        self.app
     }
 }
 
 impl DerefMut for BlockContext<'_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.context
+        self.app
     }
 }
 
