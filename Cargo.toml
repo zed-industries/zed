@@ -69,6 +69,7 @@ members = [
     "crates/livekit_client",
     "crates/livekit_client_macos",
     "crates/livekit_server",
+    "crates/lmstudio",
     "crates/lsp",
     "crates/markdown",
     "crates/markdown_preview",
@@ -79,7 +80,6 @@ members = [
     "crates/notifications",
     "crates/ollama",
     "crates/open_ai",
-    "crates/lmstudio",
     "crates/outline",
     "crates/outline_panel",
     "crates/paths",
@@ -256,6 +256,7 @@ languages = { path = "crates/languages" }
 livekit_client = { path = "crates/livekit_client" }
 livekit_client_macos = { path = "crates/livekit_client_macos" }
 livekit_server = { path = "crates/livekit_server" }
+lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
@@ -266,7 +267,6 @@ node_runtime = { path = "crates/node_runtime" }
 notifications = { path = "crates/notifications" }
 ollama = { path = "crates/ollama" }
 open_ai = { path = "crates/open_ai" }
-lmstudio = { path = "crates/lmstudio" }
 outline = { path = "crates/outline" }
 outline_panel = { path = "crates/outline_panel" }
 paths = { path = "crates/paths" }
@@ -616,10 +616,10 @@ image_viewer = { codegen-units = 1 }
 inline_completion_button = { codegen-units = 1 }
 install_cli = { codegen-units = 1 }
 journal = { codegen-units = 1 }
+lmstudio = { codegen-units = 1 }
 menu = { codegen-units = 1 }
 notifications = { codegen-units = 1 }
 ollama = { codegen-units = 1 }
-lmstudio = { codegen-units = 1 }
 outline = { codegen-units = 1 }
 paths = { codegen-units = 1 }
 prettier = { codegen-units = 1 }
