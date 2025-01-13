@@ -14,7 +14,7 @@ use language_model::Role;
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings as _;
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{prelude::*, Divider};
 use workspace::Workspace;
 
 use crate::thread::{MessageId, Thread, ThreadError, ThreadEvent};
@@ -134,7 +134,7 @@ impl ActiveThread {
                 background: Some(colors.editor_background.into()),
                 border_color: Some(colors.border_variant),
                 border_widths: EdgesRefinement {
-                    top: Some(AbsoluteLength::Pixels(Pixels(1.0))),
+                    top: Some(AbsoluteLength::Pixels(Pixels(1.))),
                     left: Some(AbsoluteLength::Pixels(Pixels(1.))),
                     right: Some(AbsoluteLength::Pixels(Pixels(1.))),
                     bottom: Some(AbsoluteLength::Pixels(Pixels(1.))),
@@ -325,20 +325,24 @@ impl Render for ActiveThread {
         let panel_bg = cx.theme().colors().panel_background;
 
         let esc_to_cancel = h_flex()
-            .items_center()
+            .pl_0p5()
             .gap_1()
-            .child(Label::new("Hit").size(LabelSize::Small).color(Color::Muted))
             .child(
-                h_flex()
+                Label::new("Hit")
+                    .size(LabelSize::Small)
+                    .color(Color::Accent),
+            )
+            .child(
+                div()
                     .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
                     .text_size(TextSize::Small.rems(cx))
-                    .text_color(cx.theme().colors().text_muted)
+                    .text_color(cx.theme().colors().text_accent)
                     .child("esc"),
             )
             .child(
                 Label::new("to cancel")
                     .size(LabelSize::Small)
-                    .color(Color::Muted),
+                    .color(Color::Accent),
             );
 
         v_flex()
@@ -348,7 +352,7 @@ impl Render for ActiveThread {
                 parent.child(
                     h_flex()
                         .w_full()
-                        .pb_4()
+                        .pb_2p5()
                         .absolute()
                         .bottom_0()
                         .flex_shrink()
@@ -361,8 +365,7 @@ impl Render for ActiveThread {
                         .child(
                             h_flex()
                                 .flex_none()
-                                .py_1()
-                                .px_1p5()
+                                .p_1p5()
                                 .bg(cx.theme().colors().editor_background)
                                 .border_1()
                                 .border_color(cx.theme().colors().border)
@@ -388,7 +391,7 @@ impl Render for ActiveThread {
                                         .size(LabelSize::Small)
                                         .color(Color::Muted),
                                 )
-                                .child(ui::Divider::vertical())
+                                .child(Divider::vertical())
                                 .child(esc_to_cancel),
                         ),
                 )
