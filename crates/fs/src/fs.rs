@@ -5,6 +5,7 @@ mod mac_watcher;
 pub mod fs_watcher;
 
 use anyhow::{anyhow, Result};
+#[cfg(any(test, feature = "test-support"))]
 use git::status::FileStatus;
 use git::GitHostingProviderRegistry;
 
