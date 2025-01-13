@@ -6,7 +6,7 @@ use call::ActiveCall;
 use collections::{BTreeMap, HashMap};
 use editor::Bias;
 use fs::{FakeFs, Fs as _};
-use git::repository::GitFileStatus;
+use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{BackgroundExecutor, Model, TestAppContext};
 use language::{
     range_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, PointUtf16,
@@ -28,6 +28,19 @@ use std::{
     sync::Arc,
 };
 use util::ResultExt;
+
+const FILE_MODIFIED: FileStatus = FileStatus::Tracked(TrackedStatus {
+    worktree_status: StatusCode::Modified,
+    index_status: StatusCode::Unmodified,
+});
+const FILE_ADDED: FileStatus = FileStatus::Tracked(TrackedStatus {
+    worktree_status: StatusCode::Added,
+    index_status: StatusCode::Unmodified,
+});
+const FILE_CONFLICT: FileStatus = FileStatus::Unmerged(UnmergedStatus {
+    first_head: UnmergedStatusCode::Updated,
+    second_head: UnmergedStatusCode::Updated,
+});
 
 #[gpui::test(
     iterations = 100,
@@ -127,7 +140,7 @@ enum GitOperation {
     },
     WriteGitStatuses {
         repo_path: PathBuf,
-        statuses: Vec<(PathBuf, GitFileStatus)>,
+        statuses: Vec<(PathBuf, FileStatus)>,
         git_operation: bool,
     },
 }
@@ -1462,9 +1475,9 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
                     (
                         paths,
                         match rng.gen_range(0..3_u32) {
-                            0 => GitFileStatus::Added,
-                            1 => GitFileStatus::Modified,
-                            2 => GitFileStatus::Conflict,
+                            0 => FILE_ADDED,
+                            1 => FILE_MODIFIED,
+                            2 => FILE_CONFLICT,
                             _ => unreachable!(),
                         },
                     )

@@ -6,8 +6,9 @@ use crate::{
 use anyhow::{Context as _, Result};
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
-use git::repository::{GitFileStatus, RepoPath};
-use git::status::GitStatusPair;
+use git::repository::RepoPath;
+
+use git::status::FileStatus;
 use gpui::*;
 use language::Buffer;
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
@@ -68,7 +69,7 @@ pub struct GitListEntry {
     depth: usize,
     display_name: String,
     repo_path: RepoPath,
-    status: GitStatusPair,
+    status: FileStatus,
     toggle_state: ToggleState,
 }
 
@@ -95,7 +96,7 @@ pub struct GitPanel {
     reveal_in_editor: Task<()>,
 }
 
-fn status_to_toggle_state(status: &GitStatusPair) -> ToggleState {
+fn status_to_toggle_state(status: FileStatus) -> ToggleState {
     match status.is_staged() {
         Some(true) => ToggleState::Selected,
         Some(false) => ToggleState::Unselected,
@@ -666,7 +667,7 @@ impl GitPanel {
             .skip(range.start)
             .take(range.end - range.start)
         {
-            let status = entry.status.clone();
+            let status = entry.status;
             let filename = entry
                 .repo_path
                 .file_name()
@@ -708,7 +709,7 @@ impl GitPanel {
         for entry in repo.status() {
             let (depth, difference) =
                 Self::calculate_depth_and_difference(&entry.repo_path, &path_set);
-            let toggle_state = status_to_toggle_state(&entry.status);
+            let toggle_state = status_to_toggle_state(entry.status);
 
             let display_name = if difference > 1 {
                 // Show partial path for deeply nested files
@@ -1001,8 +1002,7 @@ impl GitPanel {
         let repo_path = entry_details.repo_path.clone();
         let selected = self.selected_entry == Some(ix);
 
-        // TODO revisit, maybe use a different status here?
-        let status = entry_details.status.combined();
+        let status = entry_details.status;
         let entry_id = ElementId::Name(format!("entry_{}", entry_details.display_name).into());
         let checkbox_id =
             ElementId::Name(format!("checkbox_{}", entry_details.display_name).into());
@@ -1077,7 +1077,7 @@ impl GitPanel {
             .child(git_status_icon(status))
             .child(
                 h_flex()
-                    .when(status == GitFileStatus::Deleted, |this| {
+                    .when(status.is_deleted(), |this| {
                         this.text_color(cx.theme().colors().text_disabled)
                             .line_through()
                     })
@@ -1086,7 +1086,7 @@ impl GitPanel {
                         if !parent_str.is_empty() {
                             this.child(
                                 div()
-                                    .when(status != GitFileStatus::Deleted, |this| {
+                                    .when(!status.is_deleted(), |this| {
                                         this.text_color(cx.theme().colors().text_muted)
                                     })
                                     .child(format!("{}/", parent_str)),

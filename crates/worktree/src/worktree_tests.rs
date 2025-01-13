@@ -4,7 +4,12 @@ use crate::{
 };
 use anyhow::Result;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
-use git::{repository::GitFileStatus, GITIGNORE};
+use git::{
+    status::{
+        FileStatus, GitSummary, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
+    },
+    GITIGNORE,
+};
 use gpui::{BorrowAppContext, ModelContext, Task, TestAppContext};
 use parking_lot::Mutex;
 use postage::stream::Stream;
@@ -738,7 +743,7 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
 
     fs.set_status_for_repo_via_working_copy_change(
         Path::new("/root/tree/.git"),
-        &[(Path::new("tracked-dir/tracked-file2"), GitFileStatus::Added)],
+        &[(Path::new("tracked-dir/tracked-file2"), FILE_ADDED)],
     );
 
     fs.create_file(
@@ -766,7 +771,7 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
         assert_entry_git_state(
             tree,
             "tracked-dir/tracked-file2",
-            Some(GitFileStatus::Added),
+            Some(StatusCode::Added),
             false,
         );
         assert_entry_git_state(tree, "tracked-dir/ancestor-ignored-file2", None, false);
@@ -822,14 +827,14 @@ async fn test_update_gitignore(cx: &mut TestAppContext) {
 
     fs.set_status_for_repo_via_working_copy_change(
         Path::new("/root/.git"),
-        &[(Path::new("b.txt"), GitFileStatus::Added)],
+        &[(Path::new("b.txt"), FILE_ADDED)],
     );
 
     cx.executor().run_until_parked();
     cx.read(|cx| {
         let tree = tree.read(cx);
         assert_entry_git_state(tree, "a.xml", None, true);
-        assert_entry_git_state(tree, "b.txt", Some(GitFileStatus::Added), false);
+        assert_entry_git_state(tree, "b.txt", Some(StatusCode::Added), false);
     });
 }
 
@@ -1492,7 +1497,7 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
     // detected.
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/.git"),
-        &[(Path::new("b/c.txt"), GitFileStatus::Modified)],
+        &[(Path::new("b/c.txt"), FILE_MODIFIED)],
     );
     cx.executor().run_until_parked();
 
@@ -1501,9 +1506,9 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new(""), Some(GitFileStatus::Modified)),
-            (Path::new("a.txt"), None),
-            (Path::new("b/c.txt"), Some(GitFileStatus::Modified)),
+            (Path::new(""), MODIFIED),
+            (Path::new("a.txt"), UNCHANGED),
+            (Path::new("b/c.txt"), MODIFIED),
         ],
     );
 }
@@ -2142,6 +2147,24 @@ fn random_filename(rng: &mut impl Rng) -> String {
         .collect()
 }
 
+const FILE_MODIFIED: FileStatus = FileStatus::Tracked(TrackedStatus {
+    worktree_status: StatusCode::Modified,
+    index_status: StatusCode::Unmodified,
+});
+const FILE_UNTRACKED: FileStatus = FileStatus::Untracked;
+const FILE_ADDED: FileStatus = FileStatus::Tracked(TrackedStatus {
+    worktree_status: StatusCode::Added,
+    index_status: StatusCode::Unmodified,
+});
+const FILE_CONFLICT: FileStatus = FileStatus::Unmerged(UnmergedStatus {
+    first_head: UnmergedStatusCode::Updated,
+    second_head: UnmergedStatusCode::Updated,
+});
+const FILE_DELETED: FileStatus = FileStatus::Tracked(TrackedStatus {
+    worktree_status: StatusCode::Deleted,
+    index_status: StatusCode::Unmodified,
+});
+
 #[gpui::test]
 async fn test_rename_work_directory(cx: &mut TestAppContext) {
     init_test(cx);
@@ -2183,11 +2206,11 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
         assert_eq!(repo.path.as_ref(), Path::new("projects/project1"));
         assert_eq!(
             tree.status_for_file(Path::new("projects/project1/a")),
-            Some(GitFileStatus::Modified)
+            Some(FILE_MODIFIED),
         );
         assert_eq!(
             tree.status_for_file(Path::new("projects/project1/b")),
-            Some(GitFileStatus::Untracked)
+            Some(FILE_UNTRACKED),
         );
     });
 
@@ -2204,11 +2227,11 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
         assert_eq!(repo.path.as_ref(), Path::new("projects/project2"));
         assert_eq!(
             tree.status_for_file(Path::new("projects/project2/a")),
-            Some(GitFileStatus::Modified)
+            Some(FILE_MODIFIED),
         );
         assert_eq!(
             tree.status_for_file(Path::new("projects/project2/b")),
-            Some(GitFileStatus::Untracked)
+            Some(FILE_UNTRACKED),
         );
     });
 }
@@ -2387,11 +2410,11 @@ async fn test_file_status(cx: &mut TestAppContext) {
 
         assert_eq!(
             snapshot.status_for_file(project_path.join(B_TXT)),
-            Some(GitFileStatus::Untracked)
+            Some(FILE_UNTRACKED),
         );
         assert_eq!(
             snapshot.status_for_file(project_path.join(F_TXT)),
-            Some(GitFileStatus::Untracked)
+            Some(FILE_UNTRACKED),
         );
     });
 
@@ -2405,7 +2428,7 @@ async fn test_file_status(cx: &mut TestAppContext) {
         let snapshot = tree.snapshot();
         assert_eq!(
             snapshot.status_for_file(project_path.join(A_TXT)),
-            Some(GitFileStatus::Modified)
+            Some(FILE_MODIFIED),
         );
     });
 
@@ -2421,7 +2444,7 @@ async fn test_file_status(cx: &mut TestAppContext) {
         let snapshot = tree.snapshot();
         assert_eq!(
             snapshot.status_for_file(project_path.join(F_TXT)),
-            Some(GitFileStatus::Untracked)
+            Some(FILE_UNTRACKED),
         );
         assert_eq!(snapshot.status_for_file(project_path.join(B_TXT)), None);
         assert_eq!(snapshot.status_for_file(project_path.join(A_TXT)), None);
@@ -2443,11 +2466,11 @@ async fn test_file_status(cx: &mut TestAppContext) {
         assert_eq!(snapshot.status_for_file(project_path.join(A_TXT)), None);
         assert_eq!(
             snapshot.status_for_file(project_path.join(B_TXT)),
-            Some(GitFileStatus::Untracked)
+            Some(FILE_UNTRACKED),
         );
         assert_eq!(
             snapshot.status_for_file(project_path.join(E_TXT)),
-            Some(GitFileStatus::Modified)
+            Some(FILE_MODIFIED),
         );
     });
 
@@ -2482,7 +2505,7 @@ async fn test_file_status(cx: &mut TestAppContext) {
         let snapshot = tree.snapshot();
         assert_eq!(
             snapshot.status_for_file(project_path.join(renamed_dir_name).join(RENAMED_FILE)),
-            Some(GitFileStatus::Untracked)
+            Some(FILE_UNTRACKED),
         );
     });
 
@@ -2506,7 +2529,7 @@ async fn test_file_status(cx: &mut TestAppContext) {
                     .join(Path::new(renamed_dir_name))
                     .join(RENAMED_FILE)
             ),
-            Some(GitFileStatus::Untracked)
+            Some(FILE_UNTRACKED),
         );
     });
 }
@@ -2559,11 +2582,11 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
 
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].repo_path.as_ref(), Path::new("a.txt"));
-        assert_eq!(entries[0].worktree_status(), Some(GitFileStatus::Modified));
+        assert_eq!(entries[0].status, FILE_MODIFIED);
         assert_eq!(entries[1].repo_path.as_ref(), Path::new("b.txt"));
-        assert_eq!(entries[1].worktree_status(), Some(GitFileStatus::Untracked));
+        assert_eq!(entries[1].status, FILE_UNTRACKED);
         assert_eq!(entries[2].repo_path.as_ref(), Path::new("d.txt"));
-        assert_eq!(entries[2].worktree_status(), Some(GitFileStatus::Deleted));
+        assert_eq!(entries[2].status, FILE_DELETED);
     });
 
     std::fs::write(work_dir.join("c.txt"), "some changes").unwrap();
@@ -2581,14 +2604,14 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
 
         std::assert_eq!(entries.len(), 4, "entries: {entries:?}");
         assert_eq!(entries[0].repo_path.as_ref(), Path::new("a.txt"));
-        assert_eq!(entries[0].worktree_status(), Some(GitFileStatus::Modified));
+        assert_eq!(entries[0].status, FILE_MODIFIED);
         assert_eq!(entries[1].repo_path.as_ref(), Path::new("b.txt"));
-        assert_eq!(entries[1].worktree_status(), Some(GitFileStatus::Untracked));
+        assert_eq!(entries[1].status, FILE_UNTRACKED);
         // Status updated
         assert_eq!(entries[2].repo_path.as_ref(), Path::new("c.txt"));
-        assert_eq!(entries[2].worktree_status(), Some(GitFileStatus::Modified));
+        assert_eq!(entries[2].status, FILE_MODIFIED);
         assert_eq!(entries[3].repo_path.as_ref(), Path::new("d.txt"));
-        assert_eq!(entries[3].worktree_status(), Some(GitFileStatus::Deleted));
+        assert_eq!(entries[3].status, FILE_DELETED);
     });
 
     git_add("a.txt", &repo);
@@ -2621,7 +2644,7 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
             &entries
         );
         assert_eq!(entries[0].repo_path.as_ref(), Path::new("a.txt"));
-        assert_eq!(entries[0].worktree_status(), Some(GitFileStatus::Deleted));
+        assert_eq!(entries[0].status, FILE_DELETED);
     });
 }
 
@@ -2690,10 +2713,7 @@ async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
         );
 
         assert_eq!(snapshot.status_for_file("c.txt"), None);
-        assert_eq!(
-            snapshot.status_for_file("d/e.txt"),
-            Some(GitFileStatus::Untracked)
-        );
+        assert_eq!(snapshot.status_for_file("d/e.txt"), Some(FILE_UNTRACKED));
     });
 
     // Now we simulate FS events, but ONLY in the .git folder that's outside
@@ -2744,17 +2764,17 @@ async fn test_traverse_with_git_status(cx: &mut TestAppContext) {
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/x/.git"),
         &[
-            (Path::new("x2.txt"), GitFileStatus::Modified),
-            (Path::new("z.txt"), GitFileStatus::Added),
+            (Path::new("x2.txt"), FILE_MODIFIED),
+            (Path::new("z.txt"), FILE_ADDED),
         ],
     );
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/x/y/.git"),
-        &[(Path::new("y1.txt"), GitFileStatus::Conflict)],
+        &[(Path::new("y1.txt"), FILE_CONFLICT)],
     );
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/z/.git"),
-        &[(Path::new("z2.txt"), GitFileStatus::Added)],
+        &[(Path::new("z2.txt"), FILE_ADDED)],
     );
 
     let tree = Worktree::local(
@@ -2780,25 +2800,25 @@ async fn test_traverse_with_git_status(cx: &mut TestAppContext) {
 
     let entry = traversal.next().unwrap();
     assert_eq!(entry.path.as_ref(), Path::new("x/x1.txt"));
-    assert_eq!(entry.git_status, None);
+    assert_eq!(entry.git_summary, UNCHANGED);
     let entry = traversal.next().unwrap();
     assert_eq!(entry.path.as_ref(), Path::new("x/x2.txt"));
-    assert_eq!(entry.git_status, Some(GitFileStatus::Modified));
+    assert_eq!(entry.git_summary, MODIFIED);
     let entry = traversal.next().unwrap();
     assert_eq!(entry.path.as_ref(), Path::new("x/y/y1.txt"));
-    assert_eq!(entry.git_status, Some(GitFileStatus::Conflict));
+    assert_eq!(entry.git_summary, CONFLICT);
     let entry = traversal.next().unwrap();
     assert_eq!(entry.path.as_ref(), Path::new("x/y/y2.txt"));
-    assert_eq!(entry.git_status, None);
+    assert_eq!(entry.git_summary, UNCHANGED);
     let entry = traversal.next().unwrap();
     assert_eq!(entry.path.as_ref(), Path::new("x/z.txt"));
-    assert_eq!(entry.git_status, Some(GitFileStatus::Added));
+    assert_eq!(entry.git_summary, ADDED);
     let entry = traversal.next().unwrap();
     assert_eq!(entry.path.as_ref(), Path::new("z/z1.txt"));
-    assert_eq!(entry.git_status, None);
+    assert_eq!(entry.git_summary, UNCHANGED);
     let entry = traversal.next().unwrap();
     assert_eq!(entry.path.as_ref(), Path::new("z/z2.txt"));
-    assert_eq!(entry.git_status, Some(GitFileStatus::Added));
+    assert_eq!(entry.git_summary, ADDED);
 }
 
 #[gpui::test]
@@ -2834,9 +2854,9 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/.git"),
         &[
-            (Path::new("a/b/c1.txt"), GitFileStatus::Added),
-            (Path::new("a/d/e2.txt"), GitFileStatus::Modified),
-            (Path::new("g/h2.txt"), GitFileStatus::Conflict),
+            (Path::new("a/b/c1.txt"), FILE_ADDED),
+            (Path::new("a/d/e2.txt"), FILE_MODIFIED),
+            (Path::new("g/h2.txt"), FILE_CONFLICT),
         ],
     );
 
@@ -2859,52 +2879,52 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new(""), Some(GitFileStatus::Conflict)),
-            (Path::new("g"), Some(GitFileStatus::Conflict)),
-            (Path::new("g/h2.txt"), Some(GitFileStatus::Conflict)),
+            (Path::new(""), CONFLICT + MODIFIED + ADDED),
+            (Path::new("g"), CONFLICT),
+            (Path::new("g/h2.txt"), CONFLICT),
         ],
     );
 
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new(""), Some(GitFileStatus::Conflict)),
-            (Path::new("a"), Some(GitFileStatus::Modified)),
-            (Path::new("a/b"), Some(GitFileStatus::Added)),
-            (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
-            (Path::new("a/b/c2.txt"), None),
-            (Path::new("a/d"), Some(GitFileStatus::Modified)),
-            (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
-            (Path::new("f"), None),
-            (Path::new("f/no-status.txt"), None),
-            (Path::new("g"), Some(GitFileStatus::Conflict)),
-            (Path::new("g/h2.txt"), Some(GitFileStatus::Conflict)),
+            (Path::new(""), CONFLICT + ADDED + MODIFIED),
+            (Path::new("a"), ADDED + MODIFIED),
+            (Path::new("a/b"), ADDED),
+            (Path::new("a/b/c1.txt"), ADDED),
+            (Path::new("a/b/c2.txt"), UNCHANGED),
+            (Path::new("a/d"), MODIFIED),
+            (Path::new("a/d/e2.txt"), MODIFIED),
+            (Path::new("f"), UNCHANGED),
+            (Path::new("f/no-status.txt"), UNCHANGED),
+            (Path::new("g"), CONFLICT),
+            (Path::new("g/h2.txt"), CONFLICT),
         ],
     );
 
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new("a/b"), Some(GitFileStatus::Added)),
-            (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
-            (Path::new("a/b/c2.txt"), None),
-            (Path::new("a/d"), Some(GitFileStatus::Modified)),
-            (Path::new("a/d/e1.txt"), None),
-            (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
-            (Path::new("f"), None),
-            (Path::new("f/no-status.txt"), None),
-            (Path::new("g"), Some(GitFileStatus::Conflict)),
+            (Path::new("a/b"), ADDED),
+            (Path::new("a/b/c1.txt"), ADDED),
+            (Path::new("a/b/c2.txt"), UNCHANGED),
+            (Path::new("a/d"), MODIFIED),
+            (Path::new("a/d/e1.txt"), UNCHANGED),
+            (Path::new("a/d/e2.txt"), MODIFIED),
+            (Path::new("f"), UNCHANGED),
+            (Path::new("f/no-status.txt"), UNCHANGED),
+            (Path::new("g"), CONFLICT),
         ],
     );
 
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new("a/b/c1.txt"), Some(GitFileStatus::Added)),
-            (Path::new("a/b/c2.txt"), None),
-            (Path::new("a/d/e1.txt"), None),
-            (Path::new("a/d/e2.txt"), Some(GitFileStatus::Modified)),
-            (Path::new("f/no-status.txt"), None),
+            (Path::new("a/b/c1.txt"), ADDED),
+            (Path::new("a/b/c2.txt"), UNCHANGED),
+            (Path::new("a/d/e1.txt"), UNCHANGED),
+            (Path::new("a/d/e2.txt"), MODIFIED),
+            (Path::new("f/no-status.txt"), UNCHANGED),
         ],
     );
 }
@@ -2937,18 +2957,18 @@ async fn test_propagate_statuses_for_repos_under_project(cx: &mut TestAppContext
 
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/x/.git"),
-        &[(Path::new("x1.txt"), GitFileStatus::Added)],
+        &[(Path::new("x1.txt"), FILE_ADDED)],
     );
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/y/.git"),
         &[
-            (Path::new("y1.txt"), GitFileStatus::Conflict),
-            (Path::new("y2.txt"), GitFileStatus::Modified),
+            (Path::new("y1.txt"), FILE_CONFLICT),
+            (Path::new("y2.txt"), FILE_MODIFIED),
         ],
     );
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/z/.git"),
-        &[(Path::new("z2.txt"), GitFileStatus::Modified)],
+        &[(Path::new("z2.txt"), FILE_MODIFIED)],
     );
 
     let tree = Worktree::local(
@@ -2970,49 +2990,43 @@ async fn test_propagate_statuses_for_repos_under_project(cx: &mut TestAppContext
 
     check_git_statuses(
         &snapshot,
+        &[(Path::new("x"), ADDED), (Path::new("x/x1.txt"), ADDED)],
+    );
+
+    check_git_statuses(
+        &snapshot,
         &[
-            (Path::new("x"), Some(GitFileStatus::Added)),
-            (Path::new("x/x1.txt"), Some(GitFileStatus::Added)),
+            (Path::new("y"), CONFLICT + MODIFIED),
+            (Path::new("y/y1.txt"), CONFLICT),
+            (Path::new("y/y2.txt"), MODIFIED),
         ],
     );
 
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new("y"), Some(GitFileStatus::Conflict)),
-            (Path::new("y/y1.txt"), Some(GitFileStatus::Conflict)),
-            (Path::new("y/y2.txt"), Some(GitFileStatus::Modified)),
+            (Path::new("z"), MODIFIED),
+            (Path::new("z/z2.txt"), MODIFIED),
         ],
     );
 
     check_git_statuses(
         &snapshot,
-        &[
-            (Path::new("z"), Some(GitFileStatus::Modified)),
-            (Path::new("z/z2.txt"), Some(GitFileStatus::Modified)),
-        ],
+        &[(Path::new("x"), ADDED), (Path::new("x/x1.txt"), ADDED)],
     );
 
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new("x"), Some(GitFileStatus::Added)),
-            (Path::new("x/x1.txt"), Some(GitFileStatus::Added)),
-        ],
-    );
-
-    check_git_statuses(
-        &snapshot,
-        &[
-            (Path::new("x"), Some(GitFileStatus::Added)),
-            (Path::new("x/x1.txt"), Some(GitFileStatus::Added)),
-            (Path::new("x/x2.txt"), None),
-            (Path::new("y"), Some(GitFileStatus::Conflict)),
-            (Path::new("y/y1.txt"), Some(GitFileStatus::Conflict)),
-            (Path::new("y/y2.txt"), Some(GitFileStatus::Modified)),
-            (Path::new("z"), Some(GitFileStatus::Modified)),
-            (Path::new("z/z1.txt"), None),
-            (Path::new("z/z2.txt"), Some(GitFileStatus::Modified)),
+            (Path::new("x"), ADDED),
+            (Path::new("x/x1.txt"), ADDED),
+            (Path::new("x/x2.txt"), UNCHANGED),
+            (Path::new("y"), CONFLICT + MODIFIED),
+            (Path::new("y/y1.txt"), CONFLICT),
+            (Path::new("y/y2.txt"), MODIFIED),
+            (Path::new("z"), MODIFIED),
+            (Path::new("z/z1.txt"), UNCHANGED),
+            (Path::new("z/z2.txt"), MODIFIED),
         ],
     );
 }
@@ -3047,18 +3061,18 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/x/.git"),
         &[
-            (Path::new("x2.txt"), GitFileStatus::Modified),
-            (Path::new("z.txt"), GitFileStatus::Added),
+            (Path::new("x2.txt"), FILE_MODIFIED),
+            (Path::new("z.txt"), FILE_ADDED),
         ],
     );
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/x/y/.git"),
-        &[(Path::new("y1.txt"), GitFileStatus::Conflict)],
+        &[(Path::new("y1.txt"), FILE_CONFLICT)],
     );
 
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/z/.git"),
-        &[(Path::new("z2.txt"), GitFileStatus::Added)],
+        &[(Path::new("z2.txt"), FILE_ADDED)],
     );
 
     let tree = Worktree::local(
@@ -3082,17 +3096,17 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new("x/y"), Some(GitFileStatus::Conflict)), // the y git repository has conflict file in it, and so should have a conflict status
-            (Path::new("x/y/y1.txt"), Some(GitFileStatus::Conflict)),
-            (Path::new("x/y/y2.txt"), None),
+            (Path::new("x/y"), CONFLICT),
+            (Path::new("x/y/y1.txt"), CONFLICT),
+            (Path::new("x/y/y2.txt"), UNCHANGED),
         ],
     );
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new("z"), Some(GitFileStatus::Added)),
-            (Path::new("z/z1.txt"), None),
-            (Path::new("z/z2.txt"), Some(GitFileStatus::Added)),
+            (Path::new("z"), ADDED),
+            (Path::new("z/z1.txt"), UNCHANGED),
+            (Path::new("z/z2.txt"), ADDED),
         ],
     );
 
@@ -3100,9 +3114,9 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new("x"), Some(GitFileStatus::Modified)),
-            (Path::new("x/y"), Some(GitFileStatus::Conflict)),
-            (Path::new("x/y/y1.txt"), Some(GitFileStatus::Conflict)),
+            (Path::new("x"), MODIFIED + ADDED),
+            (Path::new("x/y"), CONFLICT),
+            (Path::new("x/y/y1.txt"), CONFLICT),
         ],
     );
 
@@ -3110,13 +3124,13 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new("x"), Some(GitFileStatus::Modified)),
-            (Path::new("x/x1.txt"), None),
-            (Path::new("x/x2.txt"), Some(GitFileStatus::Modified)),
-            (Path::new("x/y"), Some(GitFileStatus::Conflict)),
-            (Path::new("x/y/y1.txt"), Some(GitFileStatus::Conflict)),
-            (Path::new("x/y/y2.txt"), None),
-            (Path::new("x/z.txt"), Some(GitFileStatus::Added)),
+            (Path::new("x"), MODIFIED + ADDED),
+            (Path::new("x/x1.txt"), UNCHANGED),
+            (Path::new("x/x2.txt"), MODIFIED),
+            (Path::new("x/y"), CONFLICT),
+            (Path::new("x/y/y1.txt"), CONFLICT),
+            (Path::new("x/y/y2.txt"), UNCHANGED),
+            (Path::new("x/z.txt"), ADDED),
         ],
     );
 
@@ -3124,9 +3138,9 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new(""), None),
-            (Path::new("x"), Some(GitFileStatus::Modified)),
-            (Path::new("x/x1.txt"), None),
+            (Path::new(""), UNCHANGED),
+            (Path::new("x"), MODIFIED + ADDED),
+            (Path::new("x/x1.txt"), UNCHANGED),
         ],
     );
 
@@ -3134,17 +3148,17 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new(""), None),
-            (Path::new("x"), Some(GitFileStatus::Modified)),
-            (Path::new("x/x1.txt"), None),
-            (Path::new("x/x2.txt"), Some(GitFileStatus::Modified)),
-            (Path::new("x/y"), Some(GitFileStatus::Conflict)),
-            (Path::new("x/y/y1.txt"), Some(GitFileStatus::Conflict)),
-            (Path::new("x/y/y2.txt"), None),
-            (Path::new("x/z.txt"), Some(GitFileStatus::Added)),
-            (Path::new("z"), Some(GitFileStatus::Added)),
-            (Path::new("z/z1.txt"), None),
-            (Path::new("z/z2.txt"), Some(GitFileStatus::Added)),
+            (Path::new(""), UNCHANGED),
+            (Path::new("x"), MODIFIED + ADDED),
+            (Path::new("x/x1.txt"), UNCHANGED),
+            (Path::new("x/x2.txt"), MODIFIED),
+            (Path::new("x/y"), CONFLICT),
+            (Path::new("x/y/y1.txt"), CONFLICT),
+            (Path::new("x/y/y2.txt"), UNCHANGED),
+            (Path::new("x/z.txt"), ADDED),
+            (Path::new("z"), ADDED),
+            (Path::new("z/z1.txt"), UNCHANGED),
+            (Path::new("z/z2.txt"), ADDED),
         ],
     );
 }
@@ -3173,7 +3187,7 @@ async fn test_private_single_file_worktree(cx: &mut TestAppContext) {
 }
 
 #[track_caller]
-fn check_git_statuses(snapshot: &Snapshot, expected_statuses: &[(&Path, Option<GitFileStatus>)]) {
+fn check_git_statuses(snapshot: &Snapshot, expected_statuses: &[(&Path, GitSummary)]) {
     let mut traversal = snapshot
         .traverse_from_path(true, true, false, "".as_ref())
         .with_git_statuses();
@@ -3182,12 +3196,40 @@ fn check_git_statuses(snapshot: &Snapshot, expected_statuses: &[(&Path, Option<G
         .map(|&(path, _)| {
             let git_entry = traversal
                 .find(|git_entry| &*git_entry.path == path)
-                .expect("Traversal has no entry for {path:?}");
-            (path, git_entry.git_status)
+                .expect(&format!("Traversal has no entry for {path:?}"));
+            (path, git_entry.git_summary)
         })
         .collect::<Vec<_>>();
     assert_eq!(found_statuses, expected_statuses);
 }
+
+const ADDED: GitSummary = GitSummary {
+    added: 1,
+    modified: 0,
+    conflict: 0,
+    untracked: 0,
+};
+
+const MODIFIED: GitSummary = GitSummary {
+    added: 0,
+    modified: 1,
+    conflict: 0,
+    untracked: 0,
+};
+
+const CONFLICT: GitSummary = GitSummary {
+    added: 0,
+    modified: 0,
+    conflict: 1,
+    untracked: 0,
+};
+
+const UNCHANGED: GitSummary = GitSummary {
+    added: 0,
+    modified: 0,
+    conflict: 0,
+    untracked: 0,
+};
 
 #[track_caller]
 fn git_init(path: &Path) -> git2::Repository {
@@ -3330,14 +3372,21 @@ fn init_test(cx: &mut gpui::TestAppContext) {
 fn assert_entry_git_state(
     tree: &Worktree,
     path: &str,
-    git_status: Option<GitFileStatus>,
+    worktree_status: Option<StatusCode>,
     is_ignored: bool,
 ) {
     let entry = tree.entry_for_path(path).expect("entry {path} not found");
+    let status = tree.status_for_file(Path::new(path));
+    let expected = worktree_status.map(|worktree_status| {
+        TrackedStatus {
+            worktree_status,
+            index_status: StatusCode::Unmodified,
+        }
+        .into()
+    });
     assert_eq!(
-        tree.status_for_file(Path::new(path)),
-        git_status,
-        "expected {path} to have git status: {git_status:?}"
+        status, expected,
+        "expected {path} to have git status: {expected:?}"
     );
     assert_eq!(
         entry.is_ignored, is_ignored,
