@@ -51,7 +51,7 @@
       "ctrl-l": "editor::ScrollCursorCenterTopBottom", // recenter-top-bottom
       "ctrl-s": "buffer_search::Deploy", // isearch-forward
       "alt-^": "editor::JoinLines", // join-line
-      "alt-/": "editor::ShowCompletions"
+      "alt-/": "editor::ShowCompletions" // dabbrev-expand
     }
   },
   // Extend selection with movement bindings
