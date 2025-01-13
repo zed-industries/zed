@@ -594,6 +594,7 @@ impl PlatformWindow for WindowsWindow {
                     };
                     config.pszWindowTitle = title;
                     config.Anonymous1.pszMainIcon = main_icon;
+                    config.dwFlags = TDF_ALLOW_DIALOG_CANCELLATION;
                     let instruction = msg.encode_utf16().chain(Some(0)).collect_vec();
                     config.pszMainInstruction = PCWSTR::from_raw(instruction.as_ptr());
                     let hints_encoded;
