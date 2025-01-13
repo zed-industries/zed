@@ -69,7 +69,7 @@ pub struct GitListEntry {
     display_name: String,
     repo_path: RepoPath,
     status: GitStatusPair,
-    toggle_state: ToggleState,
+    is_staged: Option<bool>,
 }
 
 pub struct GitPanel {
@@ -596,10 +596,26 @@ impl GitPanel {
     }
 
     fn stage_all(&mut self, _: &StageAll, cx: &mut ViewContext<Self>) {
-        self.git_state.update(cx, |state, _| state.stage_all());
+        let to_stage = self
+            .visible_entries
+            .iter_mut()
+            .filter_map(|entry| {
+                let is_unstaged = !entry.is_staged.unwrap_or(false);
+                entry.is_staged = Some(true);
+                is_unstaged.then(|| entry.repo_path.clone())
+            })
+            .collect();
+        self.all_staged = Some(true);
+        self.git_state
+            .update(cx, |state, _| state.stage_entries(to_stage));
     }
 
     fn unstage_all(&mut self, _: &UnstageAll, cx: &mut ViewContext<Self>) {
+        // This should only be called when all entries are staged.
+        for entry in &mut self.visible_entries {
+            entry.is_staged = Some(false);
+        }
+        self.all_staged = Some(false);
         self.git_state.update(cx, |state, _| {
             state.unstage_all();
         });
@@ -667,7 +683,7 @@ impl GitPanel {
                 status,
                 depth: 0,
                 display_name: filename,
-                toggle_state: entry.toggle_state,
+                is_staged: entry.is_staged,
             };
 
             callback(ix, details, cx);
@@ -732,7 +748,7 @@ impl GitPanel {
                 display_name,
                 repo_path: entry.repo_path,
                 status: entry.status,
-                toggle_state: is_staged.map_or(ToggleState::Indeterminate, ToggleState::from),
+                is_staged,
             };
 
             self.visible_entries.push(entry);
@@ -817,27 +833,54 @@ impl GitPanel {
                     .gap_2()
                     .child(
                         IconButton::new("discard-changes", IconName::Undo)
-                            .tooltip(move |cx| {
+                            .tooltip({
                                 let focus_handle = focus_handle.clone();
-
-                                Tooltip::for_action_in(
-                                    "Discard all changes",
-                                    &RevertAll,
-                                    &focus_handle,
-                                    cx,
-                                )
+                                move |cx| {
+                                    Tooltip::for_action_in(
+                                        "Discard all changes",
+                                        &RevertAll,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
                             })
                             .icon_size(IconSize::Small)
                             .disabled(true),
                     )
                     .child(if self.all_staged.unwrap_or(false) {
-                        self.panel_button("unstage-all", "Unstage All").on_click(
-                            cx.listener(move |_, _, cx| cx.dispatch_action(Box::new(UnstageAll))),
-                        )
+                        self.panel_button("unstage-all", "Unstage All")
+                            .tooltip({
+                                let focus_handle = focus_handle.clone();
+                                move |cx| {
+                                    Tooltip::for_action_in(
+                                        "Unstage all changes",
+                                        &UnstageAll,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .on_click(
+                                cx.listener(move |_, _, cx| {
+                                    cx.dispatch_action(Box::new(UnstageAll))
+                                }),
+                            )
                     } else {
-                        self.panel_button("stage-all", "Stage All").on_click(
-                            cx.listener(move |_, _, cx| cx.dispatch_action(Box::new(StageAll))),
-                        )
+                        self.panel_button("stage-all", "Stage All")
+                            .tooltip({
+                                let focus_handle = focus_handle.clone();
+                                move |cx| {
+                                    Tooltip::for_action_in(
+                                        "Stage all changes",
+                                        &StageAll,
+                                        &focus_handle,
+                                        cx,
+                                    )
+                                }
+                            })
+                            .on_click(
+                                cx.listener(move |_, _, cx| cx.dispatch_action(Box::new(StageAll))),
+                            )
                     }),
             )
     }
@@ -1052,30 +1095,39 @@ impl GitPanel {
 
         entry = entry
             .child(
-                Checkbox::new(checkbox_id, entry_details.toggle_state)
-                    .fill()
-                    .elevation(ElevationIndex::Surface)
-                    .on_click({
-                        let handle = handle.clone();
-                        let repo_path = repo_path.clone();
-                        move |toggle, cx| {
-                            let Some(this) = handle.upgrade() else {
-                                return;
-                            };
-                            this.update(cx, |this, _| {
-                                this.visible_entries[ix].toggle_state = *toggle;
-                            });
-                            state.update(cx, {
-                                let repo_path = repo_path.clone();
-                                move |state, _| match toggle {
-                                    ToggleState::Selected | ToggleState::Indeterminate => {
-                                        state.stage_entry(repo_path);
-                                    }
-                                    ToggleState::Unselected => state.unstage_entry(repo_path),
+                Checkbox::new(
+                    checkbox_id,
+                    entry_details
+                        .is_staged
+                        .map_or(ToggleState::Indeterminate, ToggleState::from),
+                )
+                .fill()
+                .elevation(ElevationIndex::Surface)
+                .on_click({
+                    let handle = handle.clone();
+                    let repo_path = repo_path.clone();
+                    move |toggle, cx| {
+                        let Some(this) = handle.upgrade() else {
+                            return;
+                        };
+                        this.update(cx, |this, _| {
+                            this.visible_entries[ix].is_staged = match *toggle {
+                                ToggleState::Selected => Some(true),
+                                ToggleState::Unselected => Some(false),
+                                ToggleState::Indeterminate => None,
+                            }
+                        });
+                        state.update(cx, {
+                            let repo_path = repo_path.clone();
+                            move |state, _| match toggle {
+                                ToggleState::Selected | ToggleState::Indeterminate => {
+                                    state.stage_entry(repo_path);
                                 }
-                            });
-                        }
-                    }),
+                                ToggleState::Unselected => state.unstage_entry(repo_path),
+                            }
+                        });
+                    }
+                }),
             )
             .child(git_status_icon(status))
             .child(
