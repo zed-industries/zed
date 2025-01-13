@@ -336,7 +336,7 @@ zeta = { path = "crates/zeta" }
 #
 
 aho-corasick = "1.1"
-alacritty_terminal = "0.24"
+alacritty_terminal = { git = "https://github.com/aborg-dev/alacritty.git", rev = "a72f6d66e3dec2251af4de522f4d9801aab9ff4e" }
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
