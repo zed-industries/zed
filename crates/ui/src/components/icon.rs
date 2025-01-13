@@ -230,6 +230,7 @@ pub enum IconName {
     PanelRight,
     Pencil,
     Person,
+    PersonCircle,
     PhoneIncoming,
     Pin,
     Play,
