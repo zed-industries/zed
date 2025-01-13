@@ -9171,7 +9171,14 @@ impl Editor {
         // If there is an active Diagnostic Popover jump to its diagnostic instead.
         if direction == Direction::Next {
             if let Some(popover) = self.hover_state.diagnostic_popover.as_ref() {
-                self.activate_diagnostics(popover.group_id(), cx);
+                let Some(buffer_id) = popover.local_diagnostic.range.start.buffer_id else {
+                    return;
+                };
+                self.activate_diagnostics(
+                    buffer_id,
+                    popover.local_diagnostic.diagnostic.group_id,
+                    cx,
+                );
                 if let Some(active_diagnostics) = self.active_diagnostics.as_ref() {
                     let primary_range_start = active_diagnostics.primary_range.start;
                     self.change_selections(Some(Autoscroll::fit()), cx, |s| {
@@ -9242,7 +9249,10 @@ impl Editor {
                 });
 
             if let Some((primary_range, group_id)) = group {
-                self.activate_diagnostics(group_id, cx);
+                let Some(buffer_id) = buffer.anchor_after(primary_range.start).buffer_id else {
+                    return;
+                };
+                self.activate_diagnostics(buffer_id, group_id, cx);
                 if self.active_diagnostics.is_some() {
                     self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.select(vec![Selection {
@@ -10342,7 +10352,12 @@ impl Editor {
         }
     }
 
-    fn activate_diagnostics(&mut self, group_id: usize, cx: &mut ViewContext<Self>) {
+    fn activate_diagnostics(
+        &mut self,
+        buffer_id: BufferId,
+        group_id: usize,
+        cx: &mut ViewContext<Self>,
+    ) {
         self.dismiss_diagnostics(cx);
         let snapshot = self.snapshot(cx);
         self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
@@ -10350,20 +10365,16 @@ impl Editor {
 
             let mut primary_range = None;
             let mut primary_message = None;
-            let mut group_end = Point::zero();
             let diagnostic_group = buffer
-                .diagnostic_group(group_id)
+                .diagnostic_group(buffer_id, group_id)
                 .filter_map(|entry| {
-                    let start = entry.range.start.to_point(&buffer);
-                    let end = entry.range.end.to_point(&buffer);
+                    let start = entry.range.start;
+                    let end = entry.range.end;
                     if snapshot.is_line_folded(MultiBufferRow(start.row))
                         && (start.row == end.row
                             || snapshot.is_line_folded(MultiBufferRow(end.row)))
                     {
                         return None;
-                    }
-                    if end > group_end {
-                        group_end = end;
                     }
                     if entry.diagnostic.is_primary {
                         primary_range = Some(entry.range.clone());
@@ -10397,7 +10408,8 @@ impl Editor {
                 .collect();
 
             Some(ActiveDiagnosticGroup {
-                primary_range,
+                primary_range: buffer.anchor_before(primary_range.start)
+                    ..buffer.anchor_after(primary_range.end),
                 primary_message,
                 group_id,
                 blocks,

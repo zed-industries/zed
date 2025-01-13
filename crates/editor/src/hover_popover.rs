@@ -776,7 +776,7 @@ impl InfoPopover {
 
 #[derive(Debug, Clone)]
 pub struct DiagnosticPopover {
-    local_diagnostic: DiagnosticEntry<Anchor>,
+    pub(crate) local_diagnostic: DiagnosticEntry<Anchor>,
     parsed_content: Option<View<Markdown>>,
     border_color: Option<Hsla>,
     background_color: Option<Hsla>,

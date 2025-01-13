@@ -4987,10 +4987,20 @@ impl MultiBufferSnapshot {
 
     pub fn diagnostic_group(
         &self,
-        _group_id: usize,
-    ) -> impl Iterator<Item = DiagnosticEntry<Anchor>> + '_ {
-        todo!();
-        [].into_iter()
+        buffer_id: BufferId,
+        group_id: usize,
+    ) -> impl Iterator<Item = DiagnosticEntry<Point>> + '_ {
+        self.lift_buffer_metadata(0..self.len(), move |_this, buffer, _| {
+            if buffer.remote_id() != buffer_id {
+                return None;
+            };
+            Some(
+                buffer
+                    .diagnostic_group(group_id)
+                    .map(move |DiagnosticEntry { diagnostic, range }| (range, diagnostic)),
+            )
+        })
+        .map(|(range, diagnostic, _)| DiagnosticEntry { diagnostic, range })
     }
 
     pub fn diagnostics_in_range<'a, T, O>(
