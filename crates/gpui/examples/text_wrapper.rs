@@ -1,5 +1,6 @@
 use gpui::{
-    div, prelude::*, px, size, App, AppContext, Bounds, ViewContext, WindowBounds, WindowOptions,
+    div, prelude::*, px, size, App, AppContext, Bounds, TextOverflow, ViewContext, WindowBounds,
+    WindowOptions,
 };
 
 struct HelloWorld {}
@@ -51,8 +52,7 @@ impl Render for HelloWorld {
                 div()
                     .flex_shrink_0()
                     .text_xl()
-                    .overflow_hidden()
-                    .text_ellipsis()
+                    .truncate()
                     .border_1()
                     .border_color(gpui::blue())
                     .child("ELLIPSIS: ".to_owned() + text),
@@ -73,7 +73,7 @@ impl Render for HelloWorld {
                     .flex_shrink_0()
                     .text_xl()
                     .overflow_hidden()
-                    .truncate()
+                    .text_overflow(TextOverflow::Ellipsis(""))
                     .border_1()
                     .border_color(gpui::green())
                     .child("TRUNCATE: ".to_owned() + text),
@@ -83,7 +83,7 @@ impl Render for HelloWorld {
                     .flex_shrink_0()
                     .text_xl()
                     .overflow_hidden()
-                    .truncate()
+                    .text_overflow(TextOverflow::Ellipsis(""))
                     .line_clamp(3)
                     .border_1()
                     .border_color(gpui::green())
