@@ -157,30 +157,15 @@ impl FileStatus {
     }
 
     pub fn summary(self) -> GitSummary {
-        let summary = if self.is_conflicted() {
-            GitSummary {
-                conflict: 1,
-                ..Default::default()
-            }
-        } else if self.is_untracked() {
-            GitSummary {
-                untracked: 1,
-                ..Default::default()
-            }
-        } else if self.is_modified() {
-            GitSummary {
-                modified: 1,
-                ..Default::default()
-            }
-        } else if self.is_created() {
-            GitSummary {
-                added: 1,
-                ..Default::default()
-            }
-        } else {
-            Default::default()
-        };
-        summary
+        match self {
+            FileStatus::Ignored => GitSummary::UNCHANGED,
+            FileStatus::Untracked => GitSummary::UNTRACKED,
+            FileStatus::Unmerged(_) => GitSummary::CONFLICT,
+            FileStatus::Tracked(TrackedStatus {
+                index_status,
+                worktree_status,
+            }) => index_status.summary() + worktree_status.summary(),
+        }
     }
 }
 
@@ -195,6 +180,17 @@ impl StatusCode {
             b'C' => Ok(StatusCode::Copied),
             b' ' => Ok(StatusCode::Unmodified),
             _ => Err(anyhow!("Invalid status code: {byte}")),
+        }
+    }
+
+    fn summary(self) -> GitSummary {
+        match self {
+            StatusCode::Modified | StatusCode::TypeChanged => GitSummary::MODIFIED,
+            StatusCode::Added => GitSummary::ADDED,
+            StatusCode::Deleted => GitSummary::DELETED,
+            StatusCode::Renamed | StatusCode::Copied | StatusCode::Unmodified => {
+                GitSummary::UNCHANGED
+            }
         }
     }
 }
@@ -216,13 +212,42 @@ pub struct GitSummary {
     pub modified: usize,
     pub conflict: usize,
     pub untracked: usize,
-    // TODO add a deleted count
+    pub deleted: usize,
 }
 
 impl GitSummary {
-    pub fn is_modified(self) -> bool {
-        self.modified > 0
-    }
+    pub const ADDED: Self = Self {
+        added: 1,
+        ..Self::UNCHANGED
+    };
+
+    pub const MODIFIED: Self = Self {
+        modified: 1,
+        ..Self::UNCHANGED
+    };
+
+    pub const CONFLICT: Self = Self {
+        conflict: 1,
+        ..Self::UNCHANGED
+    };
+
+    pub const DELETED: Self = Self {
+        deleted: 1,
+        ..Self::UNCHANGED
+    };
+
+    pub const UNTRACKED: Self = Self {
+        untracked: 1,
+        ..Self::UNCHANGED
+    };
+
+    pub const UNCHANGED: Self = Self {
+        added: 0,
+        modified: 0,
+        conflict: 0,
+        untracked: 0,
+        deleted: 0,
+    };
 }
 
 impl From<FileStatus> for GitSummary {
@@ -246,13 +271,9 @@ impl sum_tree::Summary for GitSummary {
 impl std::ops::Add<Self> for GitSummary {
     type Output = Self;
 
-    fn add(self, rhs: Self) -> Self {
-        GitSummary {
-            added: self.added + rhs.added,
-            modified: self.modified + rhs.modified,
-            conflict: self.conflict + rhs.conflict,
-            untracked: self.untracked + rhs.untracked,
-        }
+    fn add(mut self, rhs: Self) -> Self {
+        self += rhs;
+        self
     }
 }
 
@@ -262,6 +283,7 @@ impl std::ops::AddAssign for GitSummary {
         self.modified += rhs.modified;
         self.conflict += rhs.conflict;
         self.untracked += rhs.untracked;
+        self.deleted += rhs.deleted;
     }
 }
 
@@ -274,6 +296,7 @@ impl std::ops::Sub for GitSummary {
             modified: self.modified - rhs.modified,
             conflict: self.conflict - rhs.conflict,
             untracked: self.untracked - rhs.untracked,
+            deleted: self.deleted - rhs.deleted,
         }
     }
 }
