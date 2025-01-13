@@ -80,6 +80,12 @@ impl ActiveThread {
         self.thread.read(cx).summary_or_default()
     }
 
+    pub fn cancel_last_completion(&mut self, cx: &mut AppContext) -> bool {
+        self.last_error.take();
+        self.thread
+            .update(cx, |thread, _cx| thread.cancel_last_completion())
+    }
+
     pub fn last_error(&self) -> Option<ThreadError> {
         self.last_error.clone()
     }

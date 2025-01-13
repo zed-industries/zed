@@ -143,6 +143,11 @@ impl AssistantPanel {
         &self.thread_store
     }
 
+    fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
+        self.thread
+            .update(cx, |thread, cx| thread.cancel_last_completion(cx));
+    }
+
     fn new_thread(&mut self, cx: &mut ViewContext<Self>) {
         let thread = self
             .thread_store
@@ -611,6 +616,7 @@ impl Render for AssistantPanel {
             .key_context("AssistantPanel2")
             .justify_between()
             .size_full()
+            .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(|this, _: &NewThread, cx| {
                 this.new_thread(cx);
             }))
