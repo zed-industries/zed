@@ -1260,7 +1260,7 @@ impl LanguageServer {
         }
     }
 
-    pub fn workspace_folders<'a>(&'a self) -> impl Deref<Target = BTreeSet<Url>> + 'a {
+    pub fn workspace_folders(&self) -> impl Deref<Target = BTreeSet<Url>> + '_ {
         self.workspace_folders.lock()
     }
 }
@@ -1595,7 +1595,10 @@ mod tests {
             .detach();
 
         let server = cx
-            .update(|cx| server.initialize(server.default_initialize_params(cx), cx))
+            .update(|cx| {
+                let params = server.default_initialize_params(cx);
+                server.initialize(params, cx)
+            })
             .await
             .unwrap();
         server

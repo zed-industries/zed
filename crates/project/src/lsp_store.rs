@@ -1807,7 +1807,29 @@ impl LocalLspStore {
             .filter_map(|server_node| {
                 let server_id = server_node.server_id_or_init(
                     |adapter_name, attach, project_path| match attach {
-                        language::Attach::InstancePerRoot => todo!(),
+                        language::Attach::InstancePerRoot => {
+                            // todo: handle instance per root proper.
+                            if let Some(server_ids) = self
+                                .language_server_ids
+                                .get(&(worktree_id, adapter_name.clone()))
+                            {
+                                server_ids.iter().cloned().next().unwrap()
+                            } else {
+                                let language_name = language.name();
+                                self.start_language_server(
+                                    &worktree,
+                                    delegate.clone(),
+                                    self.languages
+                                        .lsp_adapters(&language_name)
+                                        .into_iter()
+                                        .find(|adapter| &adapter.name() == adapter_name)
+                                        .expect("To find LSP adapter"),
+                                    language_name,
+                                    cx,
+                                )
+                                .expect("Language initialization to succeed")
+                            }
+                        }
                         language::Attach::Shared => {
                             if let Some(server_ids) = self
                                 .language_server_ids
