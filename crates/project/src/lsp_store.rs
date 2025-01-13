@@ -3101,11 +3101,7 @@ impl LspStore {
             LspStoreMode::Local(LocalLspStore {
                 current_lsp_settings,
                 ..
-            }) => {
-                let ret = mem::take(current_lsp_settings);
-                *current_lsp_settings = new_settings;
-                Some(ret)
-            }
+            }) => Some(mem::replace(current_lsp_settings, new_settings)),
             LspStoreMode::Remote(_) => None,
         }
     }

@@ -19,13 +19,14 @@ pub(super) struct RootPathTrie<Label> {
     children: BTreeMap<Arc<OsStr>, RootPathTrie<Label>>,
 }
 
-/// Label presence is a marker that allows to optimize searches within [RootPathTrie]; node label can either be:
+/// Label presence is a marker that allows to optimize searches within [RootPathTrie]; node label can be:
 /// - Present; we know there's definitely a project root at this node and it is the only label of that kind on the path to the root of a worktree
 /// (none of it's ancestors or descendants can contain the same present label)
 /// - Known Absent - we know there's definitely no project root at this node and none of it's ancestors are Present (descendants can be present though!).
+/// - Forbidden - we know there's definitely no project root at this node and none of it's ancestors or descendants can be Present.
 /// The distinction is there to optimize searching; when we encounter a node with unknown status, we don't need to look at it's full path
 /// to the root of the worktree; it's sufficient to explore only the path between last node with a KnownAbsent state and the directory of a path, since we run searches
-/// from the leaf up to the root of the worktree.
+/// from the leaf up to the root of the worktree. When any of the ancestors is forbidden, we don't need to look at the node or its ancestors.
 /// When there's a present labeled node on the path to the root, we don't need to ask the adapter to run the search at all.
 ///
 /// In practical terms, it means that by storing label presence we don't need to do a project discovery on a given folder more than once
@@ -40,7 +41,7 @@ pub(super) enum LabelPresence {
     Present,
 }
 
-impl<Label: Ord> RootPathTrie<Label> {
+impl<Label: Ord + Clone> RootPathTrie<Label> {
     pub(super) fn new() -> Self {
         Self::new_with_key(Arc::from(Path::new("")))
     }
@@ -51,7 +52,13 @@ impl<Label: Ord> RootPathTrie<Label> {
             children: Default::default(),
         }
     }
-    pub(super) fn insert(&mut self, path: &TriePath, value: Label, presence: LabelPresence) {
+    // Internal implementation of inner that allows one to visit descendants of insertion point for a node.
+    fn insert_inner(
+        &mut self,
+        path: &TriePath,
+        value: Label,
+        presence: LabelPresence,
+    ) -> &mut Self {
         let mut current = self;
 
         let mut path_so_far = PathBuf::new();
@@ -65,6 +72,14 @@ impl<Label: Ord> RootPathTrie<Label> {
         }
         let _previous_value = current.labels.insert(value, presence);
         debug_assert_eq!(_previous_value, None);
+        current
+    }
+    pub(super) fn insert(&mut self, path: &TriePath, value: Label, presence: LabelPresence) {
+        self.insert_inner(path, value, presence);
+    }
+    pub(super) fn forbid(&mut self, path: &TriePath, value: Label) {
+        let descendants_of = self.insert_inner(path, value.clone(), LabelPresence::Forbidden);
+        descendants_of.remove_labels(&value);
     }
     pub(super) fn walk<'a>(
         &'a self,
@@ -103,6 +118,14 @@ impl<Label: Ord> RootPathTrie<Label> {
         if let Some(final_entry_name) = path.0.last() {
             current.children.remove(final_entry_name);
         }
+    }
+    fn remove_labels(&mut self, label: &Label) {
+        self.labels.remove(&label);
+        self.children.retain(|_, child| {
+            child.remove_labels(label);
+            // Remove children if they're empty leaf nodes.
+            !child.children.is_empty() || !child.labels.is_empty()
+        });
     }
 }
 

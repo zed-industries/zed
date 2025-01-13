@@ -24,7 +24,6 @@ use crate::{LanguageServerId, ProjectPath};
 use super::{AdapterWrapper, ProjectTree};
 
 pub struct LanguageServerTree {
-    /// Language servers for which we can just update workspaceFolders when we detect a new project root
     project_tree: Model<ProjectTree>,
     instances: HashMap<ProjectPath, BTreeMap<LanguageServerName, LanguageServerTreeNode>>,
     attach_kind_cache: HashMap<LanguageServerName, Attach>,
