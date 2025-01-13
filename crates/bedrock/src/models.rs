@@ -5,6 +5,7 @@ use strum::EnumIter;
 #[cfg_attr(feature = "schemars", derive(schemars::JsonSchema))]
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, EnumIter)]
 pub enum Model {
+    // Anthropic models (already included)
     #[default]
     #[serde(rename = "claude-3-5-sonnet", alias = "claude-3-5-sonnet-latest")]
     Claude3_5Sonnet,
@@ -29,7 +30,6 @@ pub enum Model {
     AI21JambaInstructV1,
     AI21Jamba15LargeV1,
     AI21Jamba15MiniV1,
-    // Anthropic models (already included)
     // Cohere models
     CohereCommandTextV14_4k,
     CohereCommandRV1,

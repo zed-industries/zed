@@ -3,13 +3,14 @@ pub mod github;
 
 pub use anyhow::{anyhow, Result};
 pub use async_body::{AsyncBody, Inner};
-use aws_smithy_runtime_api::http::StatusCode as AwsStatusCode;
 use derive_more::Deref;
 pub use http::{self, Method, Request, Response, StatusCode, Uri};
 use std::fmt;
 
-use aws_smithy_runtime_api::client::http::{HttpConnector, HttpConnectorFuture};
-use aws_smithy_runtime_api::client::orchestrator::{HttpRequest as AwsRequest, HttpRequest, HttpResponse as AwsResponse};
+use aws_smithy_runtime_api::http::StatusCode as AwsStatusCode;
+use aws_smithy_runtime_api::client::orchestrator::{HttpRequest as AwsRequest, HttpResponse as AwsResponse, HttpResponse};
+use aws_smithy_runtime_api::client::http::{HttpClient as AwsClient, HttpConnector, HttpConnectorFuture, HttpConnectorSettings, SharedHttpClient, SharedHttpConnector};
+use std::io::Read;
 use futures::future::BoxFuture;
 use http::request::Builder;
 
@@ -331,78 +332,56 @@ impl HttpClient for BlockedHttpClient {
     }
 }
 
-#[derive(Debug)]
 pub struct AwsHttpClient {
-    client: HttpClientWithProxy
+    client: HttpClientWithProxy,
 }
 
-impl HttpConnector for AwsHttpClient {
+#[derive(Debug)]
+struct ZedClientConnector{
+    client: &'static AwsHttpClient
+}
+
+impl HttpConnector for ZedClientConnector {
     fn call(&self, request: AwsRequest) -> HttpConnectorFuture {
-        let request = convert_aws_request(request).unwrap();
+        // Take the AwsRequest, convert it to a Zed HttpRequest,
+        // SEND
+        // Take Zed HttpResponse, convert it to an AwsResponse
+        // RETURN
 
-        let response = self.client.send(request);
+        let mut pure_req = match request.try_into_http02x() {
+            Ok(req) => req,
+            Err(e) => return HttpConnectorFuture::ready(Err(anyhow!(e.into()))),
+        };
 
-        let response = response.map(|response| {
-            response.map(|response| convert_to_aws_response(response).unwrap())
-        });
+        let final_req: Request<AsyncBody> = Request::from_parts(pure_req.into_parts().0, pure_req.body().bytes().into());
 
+        let fut = self.client.client.send(final_req);
+
+        HttpConnectorFuture::new(async move {
+            let response = fut
+                .await
+                .map_err(|e|Err(anyhow!(e.into())))?;
+
+            match AwsResponse::try_from(response) {
+                Ok(resp) => Ok(resp),
+                Err(e) => Err(anyhow!(e.into())),
+            }
+        })
     }
 }
 
-// Helper to convert AWS SDK request to your HttpClient request
-fn convert_aws_request(aws_request: AwsRequest) -> Result<Request<AsyncBody>, anyhow::Error> {
-    let owned_request = match aws_request.try_clone() {
-        Some(req) => req,
-        None => {
-            return Err(anyhow!(
-                "Failed to clone the AWS request, this is likely a bug in the SDK"
-            ))
-        }
-    };
-
-    // Convert the request details
-    let mut builder = http::Request::builder()
-        .method(owned_request.method())
-        .uri(owned_request.uri());
-
-    // Add headers
-    for (name, value) in owned_request.headers() {
-        builder = builder.header(name, value);
+impl crate::fmt::Debug for AwsHttpClient {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
+        todo!()
     }
-
-    // Convert body
-    let body = AsyncBody::from(owned_request.body());
-
-    Ok(builder.body(body)?)
 }
 
-// Helper to convert your response to AWS SDK response
-fn convert_to_aws_response(
-    response: Response<AsyncBody>,
-) -> Result<AwsResponse, anyhow::Error> {
-    let (parts, body) = response.into_parts();
-
-    let mut aws_response =
-        AwsResponse::new(AwsStatusCode::from(parts.status), body);
-
-    // Copy headers
-    for (name, value) in parts.headers {
-        let val = match value.to_str() {
-            Ok(val) => val,
-            Err(e) => {
-                return Err(anyhow!("Failed to convert header value to string: {}", e));
-            }
-        };
-        let header_name = match name {
-            None => {
-                return Err(anyhow!("Failed to convert header name to string"));
-            }
-            Some(header) => header.as_str(),
-        };
-        aws_response.headers_mut().insert(header_name, val);
+impl AwsClient for AwsHttpClient {
+    fn http_connector(&self, settings: &HttpConnectorSettings, components: &RuntimeComponents) -> SharedHttpConnector {
+        SharedHttpConnector::new(ZedClientConnector{
+            client: self
+        })
     }
-
-    Ok(aws_response)
 }
 
 #[cfg(feature = "test-support")]
