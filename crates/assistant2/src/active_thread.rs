@@ -120,10 +120,10 @@ impl ActiveThread {
             selection_background_color: cx.theme().players().local().selection,
             code_block: StyleRefinement {
                 margin: EdgesRefinement {
-                    top: Some(Length::Definite(rems(1.0).into())),
+                    top: Some(Length::Definite(rems(0.).into())),
                     left: Some(Length::Definite(rems(0.).into())),
                     right: Some(Length::Definite(rems(0.).into())),
-                    bottom: Some(Length::Definite(rems(1.).into())),
+                    bottom: Some(Length::Definite(rems(0.5).into())),
                 },
                 padding: EdgesRefinement {
                     top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
@@ -131,8 +131,8 @@ impl ActiveThread {
                     right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
                     bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
                 },
-                background: Some(colors.editor_foreground.opacity(0.01).into()),
-                border_color: Some(colors.border_variant.opacity(0.3)),
+                background: Some(colors.editor_background.into()),
+                border_color: Some(colors.border_variant),
                 border_widths: EdgesRefinement {
                     top: Some(AbsoluteLength::Pixels(Pixels(1.0))),
                     left: Some(AbsoluteLength::Pixels(Pixels(1.))),
@@ -260,46 +260,108 @@ impl ActiveThread {
             Role::System => (IconName::Settings, "System", Color::Default),
         };
 
-        div()
-            .id(("message-container", ix))
-            .py_1()
-            .px_2()
-            .child(
-                v_flex()
-                    .border_1()
-                    .border_color(colors.border_variant)
-                    .bg(colors.editor_background)
-                    .rounded_md()
-                    .child(
+        let message_content = v_flex()
+            // .child(
+            //     h_flex()
+            //         .py_1p5()
+            //         .px_2p5()
+            //         .border_b_1()
+            //         .border_color(colors.border_variant)
+            //         .justify_between()
+            //         .child(
+            //             h_flex()
+            //                 .gap_1p5()
+            //                 .child(
+            //                     Icon::new(role_icon)
+            //                         .size(IconSize::XSmall)
+            //                         .color(role_color),
+            //                 )
+            //                 .child(
+            //                     Label::new(role_name)
+            //                         .size(LabelSize::XSmall)
+            //                         .color(role_color),
+            //                 ),
+            //         ),
+            // )
+            .child(div().p_2p5().text_ui(cx).child(markdown.clone()))
+            .when_some(context, |parent, context| {
+                if !context.is_empty() {
+                    parent.child(
+                        h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
+                            context
+                                .into_iter()
+                                .map(|context| ContextPill::new_added(context, false, None)),
+                        ),
+                    )
+                } else {
+                    parent
+                }
+            });
+
+        let styled_message = div().relative().debug_bg_blue().child(match message.role {
+            Role::User => v_flex()
+                .id(("message-container", ix))
+                .py_1()
+                // .debug_bg_cyan()
+                .px_2p5()
+                .child(
+                    v_flex()
+                        // .bg(colors.editor_foreground.opacity(0.05))
+                        .bg(colors.editor_background)
+                        .shadow_sm()
+                        .rounded_lg()
+                        .border_1()
+                        .border_color(colors.border)
+                        .overflow_hidden()
+                        .child(
+                            h_flex()
+                                .py_1()
+                                .px_2()
+                                .border_b_1()
+                                .border_color(colors.border)
+                                .justify_between()
+                                .child(
+                                    h_flex()
+                                        .gap_1p5()
+                                        .child(
+                                            Icon::new(IconName::PersonCircle)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new("You")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        ),
+                                ),
+                        )
+                        .child(message_content),
+                ),
+            Role::Assistant => div()
+                .id(("message-container", ix))
+                .relative()
+                // .py_1()
+                // .debug_bg_red()
+                // .px_2()
+                .when(is_streaming_completion, |parent| {
+                    parent.child(
                         h_flex()
-                            .py_1p5()
-                            .px_2p5()
-                            .border_b_1()
-                            .border_color(colors.border_variant)
-                            .justify_between()
+                            .absolute()
+                            .bottom_2()
+                            .right_0()
+                            .left_0()
+                            .justify_center()
                             .child(
                                 h_flex()
-                                    .gap_1p5()
-                                    .child(
-                                        Icon::new(role_icon)
-                                            .size(IconSize::XSmall)
-                                            .color(role_color),
-                                    )
-                                    .child(
-                                        Label::new(role_name)
-                                            .size(LabelSize::XSmall)
-                                            .color(role_color),
-                                    ),
-                            ),
-                    )
-                    .child(div().p_2p5().text_ui(cx).child(markdown.clone()))
-                    .when(
-                        message.role == Role::Assistant && is_streaming_completion,
-                        |parent| {
-                            parent.child(
-                                h_flex()
+                                    .flex_none()
+                                    .p_1()
+                                    .bg(colors.editor_background)
+                                    .border_1()
+                                    .border_color(colors.border_focused)
+                                    .rounded_md()
+                                    .shadow_lg()
                                     .gap_1()
-                                    .p_2p5()
+                                    // .debug_bg_blue()
                                     .child(
                                         Icon::new(IconName::ArrowCircle)
                                             .size(IconSize::Small)
@@ -318,25 +380,26 @@ impl ActiveThread {
                                         Label::new("Generating…")
                                             .size(LabelSize::Small)
                                             .color(Color::Muted),
-                                    ),
-                            )
-                        },
+                                    )
+                                    .child(Label::new("esc to cancel")),
+                            ),
                     )
-                    .when_some(context, |parent, context| {
-                        if !context.is_empty() {
-                            parent.child(
-                                h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
-                                    context.into_iter().map(|context| {
-                                        ContextPill::new_added(context, false, None)
-                                    }),
-                                ),
-                            )
-                        } else {
-                            parent
-                        }
-                    }),
-            )
-            .into_any()
+                })
+                .child(
+                    v_flex()
+                        // .bg(colors.editor_background)
+                        // .rounded_md()
+                        .child(message_content),
+                ),
+            Role::System => div().id(("message-container", ix)).py_1().px_2().child(
+                v_flex()
+                    .bg(colors.editor_background)
+                    .rounded_md()
+                    .child(message_content),
+            ),
+        });
+
+        styled_message.into_any()
     }
 }
 
