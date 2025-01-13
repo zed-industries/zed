@@ -132,6 +132,10 @@ impl Thread {
         self.messages.iter()
     }
 
+    pub fn is_streaming(&self) -> bool {
+        !self.pending_completions.is_empty()
+    }
+
     pub fn tools(&self) -> &Arc<ToolWorkingSet> {
         &self.tools
     }

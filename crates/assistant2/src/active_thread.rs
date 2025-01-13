@@ -1,11 +1,13 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use gpui::{
-    list, AbsoluteLength, AnyElement, AppContext, DefiniteLength, EdgesRefinement, Empty, Length,
-    ListAlignment, ListOffset, ListState, Model, StyleRefinement, Subscription,
-    TextStyleRefinement, UnderlineStyle, View, WeakView,
+    list, percentage, AbsoluteLength, Animation, AnimationExt, AnyElement, AppContext,
+    DefiniteLength, EdgesRefinement, Empty, Length, ListAlignment, ListOffset, ListState, Model,
+    StyleRefinement, Subscription, TextStyleRefinement, Transformation, UnderlineStyle, View,
+    WeakView,
 };
 use language::LanguageRegistry;
 use language_model::Role;
@@ -248,6 +250,7 @@ impl ActiveThread {
             return Empty.into_any();
         };
 
+        let is_streaming_completion = self.thread.read(cx).is_streaming();
         let context = self.thread.read(cx).context_for_message(message_id);
         let colors = cx.theme().colors();
 
@@ -290,6 +293,35 @@ impl ActiveThread {
                             ),
                     )
                     .child(div().p_2p5().text_ui(cx).child(markdown.clone()))
+                    .when(
+                        message.role == Role::Assistant && is_streaming_completion,
+                        |parent| {
+                            parent.child(
+                                h_flex()
+                                    .gap_1()
+                                    .p_2p5()
+                                    .child(
+                                        Icon::new(IconName::ArrowCircle)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted)
+                                            .with_animation(
+                                                "arrow-circle",
+                                                Animation::new(Duration::from_secs(2)).repeat(),
+                                                |icon, delta| {
+                                                    icon.transform(Transformation::rotate(
+                                                        percentage(delta),
+                                                    ))
+                                                },
+                                            ),
+                                    )
+                                    .child(
+                                        Label::new("Generating…")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    ),
+                            )
+                        },
+                    )
                     .when_some(context, |parent, context| {
                         if !context.is_empty() {
                             parent.child(
