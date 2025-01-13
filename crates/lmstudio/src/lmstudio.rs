@@ -77,7 +77,7 @@ pub enum ChatMessage {
         #[serde(default)]
         content: Option<String>,
         #[serde(default)]
-        tool_calls: Option<Vec<LMStudioToolCall>>,
+        tool_calls: Option<Vec<LmStudioToolCall>>,
     },
     User {
         content: String,
@@ -89,18 +89,18 @@ pub enum ChatMessage {
 
 #[derive(Serialize, Deserialize, Debug)]
 #[serde(rename_all = "lowercase")]
-pub enum LMStudioToolCall {
-    Function(LMStudioFunctionCall),
+pub enum LmStudioToolCall {
+    Function(LmStudioFunctionCall),
 }
 
 #[derive(Serialize, Deserialize, Debug)]
-pub struct LMStudioFunctionCall {
+pub struct LmStudioFunctionCall {
     pub name: String,
     pub arguments: Box<RawValue>,
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
-pub struct LMStudioFunctionTool {
+pub struct LmStudioFunctionTool {
     pub name: String,
     pub description: Option<String>,
     pub parameters: Option<Value>,
@@ -108,8 +108,8 @@ pub struct LMStudioFunctionTool {
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]
 #[serde(tag = "type", rename_all = "lowercase")]
-pub enum LMStudioTool {
-    Function { function: LMStudioFunctionTool },
+pub enum LmStudioTool {
+    Function { function: LmStudioFunctionTool },
 }
 
 #[derive(Serialize, Debug)]
@@ -120,7 +120,7 @@ pub struct ChatCompletionRequest {
     pub max_tokens: Option<i32>,
     pub stop: Option<Vec<String>>,
     pub temperature: Option<f32>,
-    pub tools: Vec<LMStudioTool>,
+    pub tools: Vec<LmStudioTool>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]

@@ -5,7 +5,7 @@ use anthropic::Model as AnthropicModel;
 use feature_flags::FeatureFlagAppExt;
 use gpui::{AppContext, Pixels};
 use language_model::{CloudModel, LanguageModel};
-use lmstudio::Model as LMStudioModel;
+use lmstudio::Model as LmStudioModel;
 use ollama::Model as OllamaModel;
 use schemars::{schema::Schema, JsonSchema};
 use serde::{Deserialize, Serialize};
@@ -41,8 +41,8 @@ pub enum AssistantProviderContentV1 {
         default_model: Option<OllamaModel>,
         api_url: Option<String>,
     },
-    LMStudio {
-        default_model: Option<LMStudioModel>,
+    LmStudio {
+        default_model: Option<LmStudioModel>,
         api_url: Option<String>,
     },
 }
@@ -142,7 +142,7 @@ impl AssistantSettingsContent {
                                     model: model.id().to_string(),
                                 })
                             }
-                            AssistantProviderContentV1::LMStudio { default_model, .. } => {
+                            AssistantProviderContentV1::LmStudio { default_model, .. } => {
                                 default_model.map(|model| LanguageModelSelection {
                                     provider: "lmstudio".to_string(),
                                     model: model.id().to_string(),
@@ -227,12 +227,12 @@ impl AssistantSettingsContent {
                     }
                     "lmstudio" => {
                         let api_url = match &settings.provider {
-                            Some(AssistantProviderContentV1::LMStudio { api_url, .. }) => {
+                            Some(AssistantProviderContentV1::LmStudio { api_url, .. }) => {
                                 api_url.clone()
                             }
                             _ => None,
                         };
-                        settings.provider = Some(AssistantProviderContentV1::LMStudio {
+                        settings.provider = Some(AssistantProviderContentV1::LmStudio {
                             default_model: Some(lmstudio::Model::new(&model, None, None)),
                             api_url,
                         });

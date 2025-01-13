@@ -29,7 +29,7 @@ const PROVIDER_ID: &str = "lmstudio";
 const PROVIDER_NAME: &str = "LM Studio";
 
 #[derive(Default, Debug, Clone, PartialEq)]
-pub struct LMStudioSettings {
+pub struct LmStudioSettings {
     pub api_url: String,
     pub available_models: Vec<AvailableModel>,
 }
@@ -44,7 +44,7 @@ pub struct AvailableModel {
     pub max_tokens: usize,
 }
 
-pub struct LMStudioLanguageModelProvider {
+pub struct LmStudioLanguageModelProvider {
     http_client: Arc<dyn HttpClient>,
     state: gpui::Model<State>,
 }
@@ -99,7 +99,7 @@ impl State {
     }
 }
 
-impl LMStudioLanguageModelProvider {
+impl LmStudioLanguageModelProvider {
     pub fn new(http_client: Arc<dyn HttpClient>, cx: &mut AppContext) -> Self {
         let this = Self {
             http_client: http_client.clone(),
@@ -130,7 +130,7 @@ impl LMStudioLanguageModelProvider {
     }
 }
 
-impl LanguageModelProviderState for LMStudioLanguageModelProvider {
+impl LanguageModelProviderState for LmStudioLanguageModelProvider {
     type ObservableEntity = State;
 
     fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>> {
@@ -138,7 +138,7 @@ impl LanguageModelProviderState for LMStudioLanguageModelProvider {
     }
 }
 
-impl LanguageModelProvider for LMStudioLanguageModelProvider {
+impl LanguageModelProvider for LmStudioLanguageModelProvider {
     fn id(&self) -> LanguageModelProviderId {
         LanguageModelProviderId(PROVIDER_ID.into())
     }
@@ -148,7 +148,7 @@ impl LanguageModelProvider for LMStudioLanguageModelProvider {
     }
 
     fn icon(&self) -> IconName {
-        IconName::AiLMStudio
+        IconName::AiLmStudio
     }
 
     fn provided_models(&self, cx: &AppContext) -> Vec<Arc<dyn LanguageModel>> {
@@ -178,7 +178,7 @@ impl LanguageModelProvider for LMStudioLanguageModelProvider {
         models
             .into_values()
             .map(|model| {
-                Arc::new(LMStudioLanguageModel {
+                Arc::new(LmStudioLanguageModel {
                     id: LanguageModelId::from(model.name.clone()),
                     model: model.clone(),
                     http_client: self.http_client.clone(),
@@ -215,14 +215,14 @@ impl LanguageModelProvider for LMStudioLanguageModelProvider {
     }
 }
 
-pub struct LMStudioLanguageModel {
+pub struct LmStudioLanguageModel {
     id: LanguageModelId,
     model: lmstudio::Model,
     http_client: Arc<dyn HttpClient>,
     request_limiter: RateLimiter,
 }
 
-impl LMStudioLanguageModel {
+impl LmStudioLanguageModel {
     fn to_lmstudio_request(&self, request: LanguageModelRequest) -> ChatCompletionRequest {
         ChatCompletionRequest {
             model: self.model.name.clone(),
@@ -251,7 +251,7 @@ impl LMStudioLanguageModel {
     }
 }
 
-impl LanguageModel for LMStudioLanguageModel {
+impl LanguageModel for LmStudioLanguageModel {
     fn id(&self) -> LanguageModelId {
         self.id.clone()
     }

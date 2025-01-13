@@ -14,7 +14,7 @@ use crate::provider::{
     cloud::{self, ZedDotDevSettings},
     copilot_chat::CopilotChatSettings,
     google::GoogleSettings,
-    lmstudio::LMStudioSettings,
+    lmstudio::LmStudioSettings,
     ollama::OllamaSettings,
     open_ai::OpenAiSettings,
 };
@@ -59,14 +59,14 @@ pub struct AllLanguageModelSettings {
     pub zed_dot_dev: ZedDotDevSettings,
     pub google: GoogleSettings,
     pub copilot_chat: CopilotChatSettings,
-    pub lmstudio: LMStudioSettings,
+    pub lmstudio: LmStudioSettings,
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct AllLanguageModelSettingsContent {
     pub anthropic: Option<AnthropicSettingsContent>,
     pub ollama: Option<OllamaSettingsContent>,
-    pub lmstudio: Option<LMStudioSettingsContent>,
+    pub lmstudio: Option<LmStudioSettingsContent>,
     pub openai: Option<OpenAiSettingsContent>,
     #[serde(rename = "zed.dev")]
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
@@ -156,7 +156,7 @@ pub struct OllamaSettingsContent {
 }
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
-pub struct LMStudioSettingsContent {
+pub struct LmStudioSettingsContent {
     pub api_url: Option<String>,
     pub available_models: Option<Vec<provider::lmstudio::AvailableModel>>,
 }
@@ -286,7 +286,7 @@ impl settings::Settings for AllLanguageModelSettings {
                 ollama.as_ref().and_then(|s| s.available_models.clone()),
             );
 
-            // LMStudio
+            // LmStudio
             let lmstudio = value.lmstudio.clone();
 
             merge(
