@@ -11,8 +11,8 @@ use futures::{
 use fuzzy::StringMatchCandidate;
 use gpui::{
     actions, point, size, transparent_black, Action, AppContext, BackgroundExecutor, Bounds,
-    EventEmitter, FocusableView, Global, Model, PromptLevel, ReadGlobal, Subscription, Task,
-    TextStyle, TitlebarOptions, UpdateGlobal, WindowBounds, WindowHandle, WindowOptions,
+    EventEmitter, Focusable, Global, Model, PromptLevel, ReadGlobal, Subscription, Task, TextStyle,
+    TitlebarOptions, UpdateGlobal, WindowBounds, WindowHandle, WindowOptions,
 };
 use heed::{
     types::{SerdeBincode, SerdeJson, Str},
@@ -110,9 +110,7 @@ pub fn open_prompt_library(
                         ..Default::default()
                     },
                     |window, cx| {
-                        window.new_view(cx, |window, cx| {
-                            PromptLibrary::new(store, language_registry, window, cx)
-                        })
+                        cx.new_model(|cx| PromptLibrary::new(store, language_registry, window, cx))
                     },
                 )
             })?
@@ -351,7 +349,7 @@ impl PromptLibrary {
             matches: Vec::new(),
         };
 
-        let picker = window.new_view(cx, |window, cx| {
+        let picker = cx.new_model(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx)
                 .modal(false)
                 .max_height(None);
@@ -549,7 +547,7 @@ impl PromptLibrary {
                 let markdown = language_registry.language_for_name("Markdown").await;
                 this.update_in(&mut cx, |this, window, cx| match prompt {
                     Ok(prompt) => {
-                        let title_editor = window.new_view(cx, |window, cx| {
+                        let title_editor = cx.new_model(|cx| {
                             let mut editor = Editor::auto_width(window, cx);
                             editor.set_placeholder_text("Untitled", cx);
                             editor.set_text(prompt_metadata.title.unwrap_or_default(), window, cx);
@@ -559,7 +557,7 @@ impl PromptLibrary {
                             }
                             editor
                         });
-                        let body_editor = window.new_view(cx, |window, cx| {
+                        let body_editor = cx.new_model(|cx| {
                             let buffer = cx.new_model(|cx| {
                                 let mut buffer = Buffer::local(prompt, cx);
                                 buffer.set_language(markdown.log_err(), cx);
@@ -813,7 +811,7 @@ impl PromptLibrary {
     ) {
         if let Some(prompt_id) = self.active_prompt_id {
             if let Some(prompt_editor) = self.prompt_editors.get(&prompt_id) {
-                window.focus_view(&prompt_editor.body_editor, cx);
+                window.focus(&prompt_editor.body_editor.focus_handle(cx));
             }
         }
     }
@@ -826,7 +824,7 @@ impl PromptLibrary {
     ) {
         if let Some(prompt_id) = self.active_prompt_id {
             if let Some(prompt_editor) = self.prompt_editors.get(&prompt_id) {
-                window.focus_view(&prompt_editor.title_editor, cx);
+                window.focus(&prompt_editor.title_editor.focus_handle(cx));
             }
         }
     }

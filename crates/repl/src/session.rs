@@ -67,9 +67,8 @@ impl EditorBlock {
             .workspace()
             .ok_or_else(|| anyhow::anyhow!("workspace dropped"))?;
 
-        let execution_view = window.new_view(cx, |window, cx| {
-            ExecutionView::new(status, workspace.downgrade(), window, cx)
-        });
+        let execution_view =
+            cx.new_model(|cx| ExecutionView::new(status, workspace.downgrade(), window, cx));
 
         let (block_id, invalidation_anchor) = editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().clone();

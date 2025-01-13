@@ -3,7 +3,7 @@ use std::sync::Arc;
 use crate::active_item_selection_properties;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    rems, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusableView,
+    rems, Action, AnyElement, AppContext, Context as _, DismissEvent, EventEmitter, Focusable,
     InteractiveElement, Model, ModelContext, ParentElement, Render, SharedString, Styled,
     Subscription, Task, WeakModel, Window,
 };
@@ -128,7 +128,7 @@ impl TasksModal {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let picker = window.new_view(cx, |window, cx| {
+        let picker = cx.new_model(|cx| {
             Picker::uniform_list(
                 TasksModalDelegate::new(task_store, task_context, task_overrides, workspace),
                 window,
@@ -160,7 +160,7 @@ impl Render for TasksModal {
 
 impl EventEmitter<DismissEvent> for TasksModal {}
 
-impl FocusableView for TasksModal {
+impl Focusable for TasksModal {
     fn focus_handle(&self, cx: &gpui::AppContext) -> gpui::FocusHandle {
         self.picker.read(cx).focus_handle(cx)
     }

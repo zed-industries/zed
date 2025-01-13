@@ -1,6 +1,6 @@
 use crate::{
     seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, Bounds, ContentMask, Element,
-    ElementId, Entity, EntityId, Flatten, FocusHandle, FocusableView, GlobalElementId, IntoElement,
+    ElementId, Entity, EntityId, Flatten, FocusHandle, Focusable, GlobalElementId, IntoElement,
     LayoutId, Model, ModelContext, PaintIndex, Pixels, PrepaintStateIndex, Render, Style,
     StyleRefinement, TextStyle, VisualContext, WeakModel,
 };

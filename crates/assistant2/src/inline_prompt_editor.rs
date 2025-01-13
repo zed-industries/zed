@@ -17,8 +17,8 @@ use feature_flags::{FeatureFlagAppExt as _, ZedPro};
 use fs::Fs;
 use gpui::{
     anchored, deferred, point, AnyElement, AppContext, ClickEvent, CursorStyle, EventEmitter,
-    FocusHandle, FocusableView, FontWeight, Model, ModelContext, Subscription, TextStyle,
-    WeakModel, Window,
+    FocusHandle, Focusable, FontWeight, Model, ModelContext, Subscription, TextStyle, WeakModel,
+    Window,
 };
 use language_model::{LanguageModel, LanguageModelRegistry};
 use language_model_selector::LanguageModelSelector;
@@ -192,7 +192,7 @@ impl<T: 'static> Render for PromptEditor<T> {
     }
 }
 
-impl<T: 'static> FocusableView for PromptEditor<T> {
+impl<T: 'static> Focusable for PromptEditor<T> {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.editor.focus_handle(cx)
     }
@@ -231,7 +231,7 @@ impl<T: 'static> PromptEditor<T> {
     pub fn unlink(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         let prompt = self.prompt(cx);
         let focus = self.editor.focus_handle(cx).contains_focused(window, cx);
-        self.editor = window.new_view(cx, |window, cx| {
+        self.editor = cx.new_model(|cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(
                 language::language_settings::SoftWrap::EditorWidth,
@@ -284,7 +284,7 @@ impl<T: 'static> PromptEditor<T> {
     ) {
         self.show_rate_limit_notice = !self.show_rate_limit_notice;
         if self.show_rate_limit_notice {
-            window.focus_view(&self.editor, cx);
+            window.focus(&self.editor.focus_handle(cx));
         }
         cx.notify();
     }
@@ -612,21 +612,21 @@ impl<T: 'static> PromptEditor<T> {
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |window, cx| {
-                            window
-                                .new_view(cx, |window, cx| {
-                                    let mut tooltip = Tooltip::new("Previous Alternative")
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &CyclePreviousInlineAssist,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        ));
-                                    if !disabled && current_index != 0 {
-                                        tooltip = tooltip.meta(prev_model_name.clone());
-                                    }
-                                    tooltip
-                                })
-                                .into()
+                            cx.new_model(|cx| {
+                                let mut tooltip = Tooltip::new("Previous Alternative").key_binding(
+                                    KeyBinding::for_action_in(
+                                        &CyclePreviousInlineAssist,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    ),
+                                );
+                                if !disabled && current_index != 0 {
+                                    tooltip = tooltip.meta(prev_model_name.clone());
+                                }
+                                tooltip
+                            })
+                            .into()
                         }
                     })
                     .on_click(cx.listener(|this, _, window, cx| {
@@ -654,22 +654,21 @@ impl<T: 'static> PromptEditor<T> {
                     .tooltip({
                         let focus_handle = self.editor.focus_handle(cx);
                         move |window, cx| {
-                            window
-                                .new_view(cx, |window, cx| {
-                                    let mut tooltip = Tooltip::new("Next Alternative").key_binding(
-                                        KeyBinding::for_action_in(
-                                            &CycleNextInlineAssist,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        ),
-                                    );
-                                    if !disabled && current_index != total_models - 1 {
-                                        tooltip = tooltip.meta(next_model_name.clone());
-                                    }
-                                    tooltip
-                                })
-                                .into()
+                            cx.new_model(|cx| {
+                                let mut tooltip = Tooltip::new("Next Alternative").key_binding(
+                                    KeyBinding::for_action_in(
+                                        &CycleNextInlineAssist,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    ),
+                                );
+                                if !disabled && current_index != total_models - 1 {
+                                    tooltip = tooltip.meta(next_model_name.clone());
+                                }
+                                tooltip
+                            })
+                            .into()
                         }
                     })
                     .on_click(cx.listener(|this, _, window, cx| {
@@ -827,7 +826,7 @@ impl PromptEditor<BufferCodegen> {
             gutter_dimensions,
         };
 
-        let prompt_editor = window.new_view(cx, |window, cx| {
+        let prompt_editor = cx.new_model(|cx| {
             let mut editor = Editor::new(
                 EditorMode::AutoHeight {
                     max_lines: Self::MAX_LINES as usize,
@@ -855,7 +854,7 @@ impl PromptEditor<BufferCodegen> {
 
         let mut this: PromptEditor<BufferCodegen> = PromptEditor {
             editor: prompt_editor.clone(),
-            context_strip: window.new_view(cx, |window, cx| {
+            context_strip: cx.new_model(|cx| {
                 ContextStrip::new(
                     context_store,
                     workspace.clone(),
@@ -867,7 +866,7 @@ impl PromptEditor<BufferCodegen> {
                 )
             }),
             context_picker_menu_handle,
-            model_selector: window.new_view(cx, |window, cx| {
+            model_selector: cx.new_model(|cx| {
                 AssistantModelSelector::new(fs, model_selector_menu_handle.clone(), window, cx)
             }),
             model_selector_menu_handle,
@@ -978,7 +977,7 @@ impl PromptEditor<TerminalCodegen> {
             height_in_lines: 1,
         };
 
-        let prompt_editor = window.new_view(cx, |window, cx| {
+        let prompt_editor = cx.new_model(|cx| {
             let mut editor = Editor::new(
                 EditorMode::AutoHeight {
                     max_lines: Self::MAX_LINES as usize,
@@ -1002,7 +1001,7 @@ impl PromptEditor<TerminalCodegen> {
 
         let mut this = Self {
             editor: prompt_editor.clone(),
-            context_strip: window.new_view(cx, |window, cx| {
+            context_strip: cx.new_model(|cx| {
                 ContextStrip::new(
                     context_store,
                     workspace.clone(),
@@ -1014,7 +1013,7 @@ impl PromptEditor<TerminalCodegen> {
                 )
             }),
             context_picker_menu_handle,
-            model_selector: window.new_view(cx, |window, cx| {
+            model_selector: cx.new_model(|cx| {
                 AssistantModelSelector::new(fs, model_selector_menu_handle.clone(), window, cx)
             }),
             model_selector_menu_handle,

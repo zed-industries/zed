@@ -263,7 +263,7 @@ impl<T: PopoverTrigger> RenderOnce for KernelSelector<T> {
             selected_kernelspec,
         };
 
-        let picker_view = window.new_view(cx, |window, cx| {
+        let picker_view = cx.new_model(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx)
                 .width(rems(30.))
                 .max_height(Some(rems(20.).into()));

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use editor::{Editor, EditorEvent};
-use gpui::{prelude::*, AppContext, FocusHandle, FocusableView, Model};
+use gpui::{prelude::*, AppContext, FocusHandle, Focusable, Model};
 use ui::prelude::*;
 
 /// The head of a [`Picker`](crate::Picker).
@@ -21,7 +21,7 @@ impl Head {
         window: &mut Window,
         cx: &mut ModelContext<V>,
     ) -> Self {
-        let editor = window.new_view(cx, |window, cx| {
+        let editor = cx.new_model(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text(placeholder_text, cx);
             editor
@@ -35,7 +35,7 @@ impl Head {
         window: &mut Window,
         cx: &mut ModelContext<V>,
     ) -> Self {
-        let head = window.new_view(cx, EmptyHead::new);
+        let head = cx.new_model(|cx| EmptyHead::new(window, cx));
         cx.on_blur(&head.focus_handle(cx), window, blur_handler)
             .detach();
         Self::Empty(head)
@@ -61,7 +61,7 @@ impl Render for EmptyHead {
     }
 }
 
-impl FocusableView for EmptyHead {
+impl Focusable for EmptyHead {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }

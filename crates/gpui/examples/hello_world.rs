@@ -46,7 +46,7 @@ fn main() {
                 ..Default::default()
             },
             |window, cx| {
-                window.new_view(cx, |_window, _cx| HelloWorld {
+                cx.new_model(|cx| HelloWorld {
                     text: "World".into(),
                 })
             },

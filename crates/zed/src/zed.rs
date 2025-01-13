@@ -22,7 +22,7 @@ use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
-    actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem, Model,
+    actions, point, px, AppContext, AsyncAppContext, Context, Focusable, MenuItem, Model,
     ModelContext, PathPromptOptions, PromptLevel, ReadGlobal, Task, TitlebarOptions, Window,
     WindowKind, WindowOptions,
 };
@@ -133,7 +133,7 @@ pub fn initialize_workspace(
     prompt_builder: Arc<PromptBuilder>,
     cx: &mut AppContext,
 ) {
-    cx.observe_new_views(move |workspace: &mut Workspace, window, cx| {
+    cx.observe_new_window_models(move |workspace: &mut Workspace, window, cx| {
         let workspace_handle = cx.model().clone();
         let center_pane = workspace.active_pane().clone();
         initialize_pane(workspace, &center_pane, window, cx);
@@ -160,7 +160,7 @@ pub fn initialize_workspace(
             show_software_emulation_warning_if_needed(specs, window, cx);
         }
 
-        let inline_completion_button = window.new_view(cx, |window, cx| {
+        let inline_completion_button = cx.new_model(|cx| {
             inline_completion_button::InlineCompletionButton::new(
                 workspace.weak_handle(),
                 app_state.fs.clone(),
@@ -169,25 +169,21 @@ pub fn initialize_workspace(
             )
         });
 
-        let diagnostic_summary = window.new_view(cx, |window, cx| {
-            diagnostics::items::DiagnosticIndicator::new(workspace, window, cx)
-        });
+        let diagnostic_summary =
+            cx.new_model(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, window, cx));
         let activity_indicator = activity_indicator::ActivityIndicator::new(
             workspace,
             app_state.languages.clone(),
             window,
             cx,
         );
-        let active_buffer_language = window.new_view(cx, |_, _| {
-            language_selector::ActiveBufferLanguage::new(workspace)
-        });
-        let active_toolchain_language = window.new_view(cx, |window, cx| {
-            toolchain_selector::ActiveToolchain::new(workspace, window, cx)
-        });
-        let vim_mode_indicator = window.new_view(cx, vim::ModeIndicator::new);
-        let cursor_position = window.new_view(cx, |_, _| {
-            go_to_line::cursor_position::CursorPosition::new(workspace)
-        });
+        let active_buffer_language =
+            cx.new_model(|cx| language_selector::ActiveBufferLanguage::new(workspace));
+        let active_toolchain_language =
+            cx.new_model(|cx| toolchain_selector::ActiveToolchain::new(workspace, window, cx));
+        let vim_mode_indicator = cx.new_model(|cx| vim::ModeIndicator::new(window, cx));
+        let cursor_position =
+            cx.new_model(|cx| go_to_line::cursor_position::CursorPosition::new(workspace));
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(diagnostic_summary, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
@@ -744,30 +740,26 @@ fn initialize_pane(
 ) {
     pane.update(cx, |pane, cx| {
         pane.toolbar().update(cx, |toolbar, cx| {
-            let multibuffer_hint = window.new_view(cx, |_, _| MultibufferHint::new());
+            let multibuffer_hint = cx.new_model(|cx| MultibufferHint::new());
             toolbar.add_item(multibuffer_hint, window, cx);
-            let breadcrumbs = window.new_view(cx, |_, _| Breadcrumbs::new());
+            let breadcrumbs = cx.new_model(|cx| Breadcrumbs::new());
             toolbar.add_item(breadcrumbs, window, cx);
-            let buffer_search_bar = window.new_view(cx, search::BufferSearchBar::new);
+            let buffer_search_bar = cx.new_model(|cx| search::BufferSearchBar::new(window, cx));
             toolbar.add_item(buffer_search_bar.clone(), window, cx);
 
-            let proposed_change_bar =
-                window.new_view(cx, |_, _| ProposedChangesEditorToolbar::new());
+            let proposed_change_bar = cx.new_model(|cx| ProposedChangesEditorToolbar::new());
             toolbar.add_item(proposed_change_bar, window, cx);
-            let quick_action_bar = window.new_view(cx, |window, cx| {
-                QuickActionBar::new(buffer_search_bar, workspace, window, cx)
-            });
+            let quick_action_bar =
+                cx.new_model(|cx| QuickActionBar::new(buffer_search_bar, workspace, window, cx));
             toolbar.add_item(quick_action_bar, window, cx);
-            let diagnostic_editor_controls =
-                window.new_view(cx, |_, _| diagnostics::ToolbarControls::new());
+            let diagnostic_editor_controls = cx.new_model(|cx| diagnostics::ToolbarControls::new());
             toolbar.add_item(diagnostic_editor_controls, window, cx);
-            let project_search_bar = window.new_view(cx, |_, _| ProjectSearchBar::new());
+            let project_search_bar = cx.new_model(|cx| ProjectSearchBar::new());
             toolbar.add_item(project_search_bar, window, cx);
-            let lsp_log_item =
-                window.new_view(cx, |_, _| language_tools::LspLogToolbarItemView::new());
+            let lsp_log_item = cx.new_model(|cx| language_tools::LspLogToolbarItemView::new());
             toolbar.add_item(lsp_log_item, window, cx);
             let syntax_tree_item =
-                window.new_view(cx, |_, _| language_tools::SyntaxTreeToolbarItemView::new());
+                cx.new_model(|cx| language_tools::SyntaxTreeToolbarItemView::new());
             toolbar.add_item(syntax_tree_item, window, cx);
         })
     });
@@ -955,7 +947,7 @@ fn open_log_file(workspace: &mut Workspace, window: &mut Window, cx: &mut ModelC
                         let buffer = cx.new_model(|cx| {
                             MultiBuffer::singleton(buffer, cx).with_title("Log".into())
                         });
-                        let editor = window.new_view(cx, |window, cx| {
+                        let editor = cx.new_model(|cx| {
                             let mut editor =
                                 Editor::for_multibuffer(buffer, Some(project), true, window, cx);
                             editor.set_breadcrumb_header(format!(
@@ -1192,9 +1184,7 @@ fn open_local_file(
         struct NoOpenFolders;
 
         workspace.show_notification(NotificationId::unique::<NoOpenFolders>(), cx, |cx| {
-            window.new_view(cx, |_, _| {
-                MessageNotification::new("This project has no folders open.")
-            })
+            cx.new_model(|cx| MessageNotification::new("This project has no folders open."))
         })
     }
 }
@@ -1235,7 +1225,7 @@ fn open_telemetry_log_file(
                     MultiBuffer::singleton(buffer, cx).with_title("Telemetry Log".into())
                 });
                 workspace.add_item_to_active_pane(
-                    Box::new(window.new_view(cx, |window, cx| {
+                    Box::new(cx.new_model(|cx| {
                         let mut editor = Editor::for_multibuffer(buffer, Some(project), true, window, cx);
                         editor.set_breadcrumb_header("Telemetry Log".into());
                         editor
@@ -1274,7 +1264,7 @@ fn open_bundled_file(
                         MultiBuffer::singleton(buffer, cx).with_title(title.into())
                     });
                     workspace.add_item_to_active_pane(
-                        Box::new(window.new_view(cx, |window, cx| {
+                        Box::new(cx.new_model(|cx| {
                             let mut editor = Editor::for_multibuffer(
                                 buffer,
                                 Some(project.clone()),

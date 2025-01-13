@@ -13,9 +13,9 @@ use client::{
 };
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, FocusableView,
-    Font, HighlightStyle, Model, ModelContext, Pixels, Point, Render, SharedString, Task,
-    WeakModel, Window,
+    AnyElement, AnyView, AppContext, Entity, EntityId, EventEmitter, FocusHandle, Focusable, Font,
+    HighlightStyle, Model, ModelContext, Pixels, Point, Render, SharedString, Task, WeakModel,
+    Window,
 };
 use project::{Project, ProjectEntryId, ProjectPath};
 use schemars::JsonSchema;
@@ -178,7 +178,7 @@ impl TabContentParams {
     }
 }
 
-pub trait Item: FocusableView + EventEmitter<Self::Event> + Render + Sized {
+pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     type Event;
 
     /// Returns the tab contents.
@@ -556,7 +556,6 @@ impl<T: Item> ItemHandle for Model<T> {
         })
     }
 
-    // todo! rename back to focus_handle?
     fn item_focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.read(cx).focus_handle(cx)
     }
@@ -840,7 +839,7 @@ impl<T: Item> ItemHandle for Model<T> {
             ));
 
             cx.on_blur(
-                &self.item_focus_handle(cx),
+                &self.read(cx).focus_handle(cx),
                 window,
                 move |workspace, window, cx| {
                     if let Some(item) = weak_item.upgrade() {
@@ -1220,7 +1219,7 @@ pub mod test {
     use super::{Item, ItemEvent, SerializableItem, TabContentParams};
     use crate::{ItemId, ItemNavHistory, Workspace, WorkspaceId};
     use gpui::{
-        AnyElement, AppContext, Context as _, EntityId, EventEmitter, FocusableView,
+        AnyElement, AppContext, Context as _, EntityId, EventEmitter, Focusable,
         InteractiveElement, IntoElement, Model, ModelContext, Render, SharedString, Task,
         VisualContext, WeakModel, Window,
     };
@@ -1389,7 +1388,7 @@ pub mod test {
 
     impl EventEmitter<ItemEvent> for TestItem {}
 
-    impl FocusableView for TestItem {
+    impl Focusable for TestItem {
         fn focus_handle(&self, _: &AppContext) -> gpui::FocusHandle {
             self.focus_handle.clone()
         }
@@ -1474,7 +1473,7 @@ pub mod test {
         where
             Self: Sized,
         {
-            Some(window.new_view(cx, |window, cx| Self {
+            Some(cx.new_model(|cx| Self {
                 state: self.state.clone(),
                 label: self.label.clone(),
                 save_count: self.save_count,
@@ -1558,9 +1557,7 @@ pub mod test {
             window: &mut Window,
             cx: &mut AppContext,
         ) -> Task<anyhow::Result<Model<Self>>> {
-            let view = window.new_view(cx, |window, cx| {
-                Self::new_deserialized(workspace_id, window, cx)
-            });
+            let view = cx.new_model(|cx| Self::new_deserialized(workspace_id, window, cx));
             Task::ready(Ok(view))
         }
 

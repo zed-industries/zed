@@ -30,7 +30,7 @@ impl ContextStrip {
     ) -> Self {
         Self {
             context_store: context_store.clone(),
-            context_picker: window.new_view(cx, |window, cx| {
+            context_picker: cx.new_model(|cx| {
                 ContextPicker::new(
                     workspace.clone(),
                     thread_store.clone(),

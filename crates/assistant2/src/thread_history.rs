@@ -1,5 +1,5 @@
 use gpui::{
-    uniform_list, AppContext, FocusHandle, FocusableView, Model, UniformListScrollHandle, WeakModel,
+    uniform_list, AppContext, FocusHandle, Focusable, Model, UniformListScrollHandle, WeakModel,
 };
 use time::{OffsetDateTime, UtcOffset};
 use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing, Tooltip};
@@ -31,7 +31,7 @@ impl ThreadHistory {
     }
 }
 
-impl FocusableView for ThreadHistory {
+impl Focusable for ThreadHistory {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }

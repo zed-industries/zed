@@ -7,9 +7,9 @@ use db::kvp::KEY_VALUE_STORE;
 use futures::StreamExt;
 use gpui::{
     actions, div, img, list, px, AnyElement, AppContext, AsyncWindowContext, CursorStyle,
-    DismissEvent, Element, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
-    IntoElement, ListAlignment, ListScrollEvent, ListState, Model, ModelContext, ParentElement,
-    Render, StatefulInteractiveElement, Styled, Task, VisualContext, WeakModel, Window,
+    DismissEvent, Element, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
+    ListAlignment, ListScrollEvent, ListState, Model, ModelContext, ParentElement, Render,
+    StatefulInteractiveElement, Styled, Task, VisualContext, WeakModel, Window,
 };
 use notifications::{NotificationEntry, NotificationEvent, NotificationStore};
 use project::Fs;
@@ -75,7 +75,7 @@ pub struct NotificationPresenter {
 actions!(notification_panel, [ToggleFocus]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, _, _| {
+    cx.observe_new_window_models(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<NotificationPanel>(window, cx);
         });
@@ -94,12 +94,12 @@ impl NotificationPanel {
         let user_store = workspace.app_state().user_store.clone();
         let workspace_handle = workspace.weak_handle();
 
-        window.new_view(cx, |window: &mut Window, cx: &mut ModelContext<Self>| {
+        cx.new_model(|cx| {
             let mut status = client.status();
             cx.spawn_in(window, |this, mut cx| async move {
                 while (status.next().await).is_some() {
                     if this
-                        .update(&mut cx, |_, cx| {
+                        .update(&mut cx, |_: &mut Self, cx| {
                             cx.notify();
                         })
                         .is_err()
@@ -698,7 +698,7 @@ impl Render for NotificationPanel {
     }
 }
 
-impl FocusableView for NotificationPanel {
+impl Focusable for NotificationPanel {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }

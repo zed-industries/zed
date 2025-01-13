@@ -1,5 +1,5 @@
 use fs::Fs;
-use gpui::{FocusableView, Model};
+use gpui::{Focusable, Model};
 use language_model::LanguageModelRegistry;
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use settings::update_settings_file;
@@ -21,7 +21,7 @@ impl AssistantModelSelector {
         cx: &mut AppContext,
     ) -> Self {
         Self {
-            selector: window.new_view(cx, |window, cx| {
+            selector: cx.new_model(|cx| {
                 let fs = fs.clone();
                 LanguageModelSelector::new(
                     move |model, cx| {

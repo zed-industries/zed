@@ -6,10 +6,10 @@
 use gpui::{
     actions, bounds, div, point,
     prelude::{FluentBuilder as _, IntoElement},
-    px, rgb, size, AsyncAppContext, Bounds, InteractiveElement, KeyBinding, Menu, MenuItem, Model,
-    ModelContext, ParentElement, Pixels, Render, ScreenCaptureStream, SharedString,
-    StatefulInteractiveElement as _, Styled, Task, VisualContext, Window, WindowBounds,
-    WindowHandle, WindowOptions,
+    px, rgb, size, AsyncAppContext, Bounds, Context, InteractiveElement, KeyBinding, Menu,
+    MenuItem, Model, ModelContext, ParentElement, Pixels, Render, ScreenCaptureStream,
+    SharedString, StatefulInteractiveElement as _, Styled, Task, VisualContext, Window,
+    WindowBounds, WindowHandle, WindowOptions,
 };
 #[cfg(not(target_os = "windows"))]
 use livekit_client::{
@@ -140,7 +140,7 @@ impl LivekitWindow {
                     ..Default::default()
                 },
                 |window, cx| {
-                    window.new_view(cx, |window, cx| {
+                    cx.new_model(|cx| {
                         let _events_task = cx.spawn_in(window, |this, mut cx| async move {
                             while let Some(event) = events.recv().await {
                                 cx.update(|window, cx| {
@@ -217,9 +217,7 @@ impl LivekitWindow {
                     RemoteTrack::Video(track) => {
                         output.screen_share_output_view = Some((
                             track.clone(),
-                            window.new_view(cx, |window, cx| {
-                                RemoteVideoTrackView::new(track, window, cx)
-                            }),
+                            cx.new_model(|cx| RemoteVideoTrackView::new(track, window, cx)),
                         ));
                     }
                 }

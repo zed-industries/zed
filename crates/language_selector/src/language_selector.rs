@@ -7,8 +7,8 @@ use file_finder::file_finder_settings::FileFinderSettings;
 use file_icons::FileIcons;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
-    ModelContext, ParentElement, Render, Styled, VisualContext, WeakModel, Window,
+    actions, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model, ModelContext,
+    ParentElement, Render, Styled, VisualContext, WeakModel, Window,
 };
 use language::{Buffer, LanguageMatcher, LanguageName, LanguageRegistry};
 use picker::{Picker, PickerDelegate};
@@ -22,7 +22,8 @@ use workspace::{ModalView, Workspace};
 actions!(language_selector, [Toggle]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(LanguageSelector::register).detach();
+    cx.observe_new_window_models(LanguageSelector::register)
+        .detach();
 }
 
 pub struct LanguageSelector {
@@ -69,7 +70,7 @@ impl LanguageSelector {
             language_registry,
         );
 
-        let picker = window.new_view(cx, |window, cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new_model(|cx| Picker::uniform_list(delegate, window, cx));
         Self { picker }
     }
 }
@@ -80,7 +81,7 @@ impl Render for LanguageSelector {
     }
 }
 
-impl FocusableView for LanguageSelector {
+impl Focusable for LanguageSelector {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }

@@ -8,9 +8,9 @@ use editor::{
 use git::{diff::DiffHunk, repository::GitFileStatus};
 use gpui::{
     actions, prelude::*, uniform_list, Action, AppContext, AsyncWindowContext, ClickEvent,
-    CursorStyle, EventEmitter, FocusHandle, FocusableView, KeyContext,
-    ListHorizontalSizingBehavior, ListSizingBehavior, Model, Modifiers, ModifiersChangedEvent,
-    MouseButton, ScrollStrategy, Stateful, Task, UniformListScrollHandle, WeakModel,
+    CursorStyle, EventEmitter, FocusHandle, Focusable, KeyContext, ListHorizontalSizingBehavior,
+    ListSizingBehavior, Model, Modifiers, ModifiersChangedEvent, MouseButton, ScrollStrategy,
+    Stateful, Task, UniformListScrollHandle, WeakModel,
 };
 use language::{Buffer, BufferRow, OffsetRangeExt};
 use menu::{SelectNext, SelectPrev};
@@ -48,7 +48,7 @@ const GIT_PANEL_KEY: &str = "GitPanel";
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(
+    cx.observe_new_window_models(
         |workspace: &mut Workspace, _window: &mut Window, _cx: &mut ModelContext<Workspace>| {
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
                 workspace.toggle_panel_focus::<GitPanel>(window, cx);
@@ -161,7 +161,7 @@ impl GitPanel {
         let weak_workspace = workspace.weak_handle();
         let project = workspace.project().clone();
 
-        let git_panel = window.new_view(cx, |window: &mut Window, cx: &mut ModelContext<Self>| {
+        let git_panel = cx.new_model(|cx| {
             let focus_handle = cx.focus_handle();
             cx.on_focus(&focus_handle, window, Self::focus_in).detach();
             cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
@@ -1248,7 +1248,7 @@ impl Render for GitPanel {
     }
 }
 
-impl FocusableView for GitPanel {
+impl Focusable for GitPanel {
     fn focus_handle(&self, _: &AppContext) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
@@ -1313,7 +1313,7 @@ impl Panel for GitPanel {
 }
 
 fn diff_display_editor(window: &mut Window, cx: &mut AppContext) -> Model<Editor> {
-    window.new_view(cx, |window, cx| {
+    cx.new_model(|cx| {
         let multi_buffer = cx.new_model(|_| {
             MultiBuffer::new(language::Capability::ReadWrite).with_title("Project diff".to_string())
         });

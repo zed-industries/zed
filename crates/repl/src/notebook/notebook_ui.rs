@@ -9,7 +9,7 @@ use feature_flags::{FeatureFlagAppExt as _, NotebookFeatureFlag};
 use futures::future::Shared;
 use futures::FutureExt;
 use gpui::{
-    actions, list, prelude::*, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView,
+    actions, list, prelude::*, AnyElement, AppContext, EventEmitter, FocusHandle, Focusable,
     ListScrollEvent, ListState, Model, Point, Task,
 };
 use language::{Language, LanguageRegistry};
@@ -545,7 +545,7 @@ impl Render for NotebookEditor {
     }
 }
 
-impl FocusableView for NotebookEditor {
+impl Focusable for NotebookEditor {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
@@ -717,7 +717,7 @@ impl Item for NotebookEditor {
     where
         Self: Sized,
     {
-        Some(window.new_view(cx, |window, cx| {
+        Some(cx.new_model(|cx| {
             Self::new(self.project.clone(), self.notebook_item.clone(), window, cx)
         }))
     }

@@ -3,7 +3,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use git::repository::Branch;
 use gpui::{
     rems, AnyElement, AppContext, AsyncAppContext, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Render,
+    Focusable, InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Render,
     SharedString, Styled, Subscription, Task, VisualContext, WeakModel, Window,
 };
 use picker::{Picker, PickerDelegate};
@@ -16,7 +16,7 @@ use workspace::{ModalView, Workspace};
 use zed_actions::branches::OpenRecent;
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, _, _| {
+    cx.observe_new_window_models(|workspace: &mut Workspace, _, _| {
         workspace.register_action(BranchList::open);
     })
     .detach();
@@ -57,7 +57,7 @@ impl BranchList {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let picker = window.new_view(cx, |window, cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new_model(|cx| Picker::uniform_list(delegate, window, cx));
         let _subscription =
             cx.subscribe_in(&picker, window, |_, _, _, window, cx| cx.emit(DismissEvent));
         Self {
@@ -70,7 +70,7 @@ impl BranchList {
 impl ModalView for BranchList {}
 impl EventEmitter<DismissEvent> for BranchList {}
 
-impl FocusableView for BranchList {
+impl Focusable for BranchList {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }

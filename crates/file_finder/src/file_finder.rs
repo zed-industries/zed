@@ -14,9 +14,9 @@ use file_finder_settings::{FileFinderSettings, FileFinderWidth};
 use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
-    actions, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, KeyContext, Model, ModelContext, Modifiers, ModifiersChangedEvent,
-    ParentElement, Render, Styled, Task, VisualContext, WeakModel, Window,
+    actions, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable,
+    KeyContext, Model, ModelContext, Modifiers, ModifiersChangedEvent, ParentElement, Render,
+    Styled, Task, VisualContext, WeakModel, Window,
 };
 use new_path_prompt::NewPathPrompt;
 use open_path_prompt::OpenPathPrompt;
@@ -69,9 +69,11 @@ pub fn init_settings(cx: &mut AppContext) {
 
 pub fn init(cx: &mut AppContext) {
     init_settings(cx);
-    cx.observe_new_views(FileFinder::register).detach();
-    cx.observe_new_views(NewPathPrompt::register).detach();
-    cx.observe_new_views(OpenPathPrompt::register).detach();
+    cx.observe_new_window_models(FileFinder::register).detach();
+    cx.observe_new_window_models(NewPathPrompt::register)
+        .detach();
+    cx.observe_new_window_models(OpenPathPrompt::register)
+        .detach();
 }
 
 impl FileFinder {
@@ -164,7 +166,7 @@ impl FileFinder {
     }
 
     fn new(delegate: FileFinderDelegate, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
-        let picker = window.new_view(cx, |window, cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new_model(|cx| Picker::uniform_list(delegate, window, cx));
         let picker_focus_handle = picker.focus_handle(cx);
         picker.update(cx, |picker, _| {
             picker.delegate.focus_handle = picker_focus_handle.clone();
@@ -307,7 +309,7 @@ impl FileFinder {
 
 impl EventEmitter<DismissEvent> for FileFinder {}
 
-impl FocusableView for FileFinder {
+impl Focusable for FileFinder {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
         self.picker_focus_handle.clone()
     }

@@ -1,6 +1,6 @@
 use crate::{seal::Sealed, AppContext, Context, Entity, ModelContext, VisualContext, Window};
 use anyhow::{anyhow, Result};
-use collections::{FxHashSet, HashSet};
+use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use slotmap::{KeyData, SecondaryMap, SlotMap};
@@ -12,7 +12,6 @@ use std::{
     marker::PhantomData,
     mem,
     num::NonZeroU64,
-    ops::Deref,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
         Arc, Weak,
@@ -459,7 +458,7 @@ impl<T: 'static> Model<T> {
     where
         C: VisualContext,
     {
-        cx.update_view(self, update)
+        cx.update_window_model(self, update)
     }
 }
 

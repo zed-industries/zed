@@ -4,7 +4,7 @@ use crate::{DraggedDock, Event, Pane};
 use client::proto;
 use gpui::{
     deferred, div, px, Action, AnyView, AppContext, Axis, Corner, Entity, EntityId, EventEmitter,
-    FocusHandle, FocusableView, IntoElement, KeyContext, Model, ModelContext, MouseButton,
+    FocusHandle, Focusable, IntoElement, KeyContext, Model, ModelContext, MouseButton,
     MouseDownEvent, MouseUpEvent, ParentElement, Render, SharedString, StyleRefinement, Styled,
     Subscription, VisualContext, WeakModel, Window,
 };
@@ -26,7 +26,7 @@ pub enum PanelEvent {
 
 pub use proto::PanelId;
 
-pub trait Panel: FocusableView + EventEmitter<PanelEvent> + Render + Sized {
+pub trait Panel: Focusable + EventEmitter<PanelEvent> + Render + Sized {
     fn persistent_name() -> &'static str;
     fn position(&self, window: &Window, cx: &AppContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition) -> bool;
@@ -183,7 +183,7 @@ pub struct Dock {
     _subscriptions: [Subscription; 2],
 }
 
-impl FocusableView for Dock {
+impl Focusable for Dock {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
@@ -231,22 +231,19 @@ impl Dock {
     ) -> Model<Self> {
         let focus_handle = cx.focus_handle();
         let workspace = cx.model().clone();
-        let dock = window.new_view(cx, |window: &mut Window, cx: &mut ModelContext<Self>| {
-            let focus_subscription = cx.on_focus(&focus_handle, window, |dock, window, cx| {
-                if let Some(active_entry) = dock.active_panel_entry() {
-                    active_entry.panel.panel_focus_handle(cx).focus(window)
+        let dock = cx.new_model(|cx| {
+            let focus_subscription =
+                cx.on_focus(&focus_handle, window, |dock: &mut Dock, window, cx| {
+                    if let Some(active_entry) = dock.active_panel_entry() {
+                        active_entry.panel.panel_focus_handle(cx).focus(window)
+                    }
+                });
+            let zoom_subscription = cx.subscribe(&workspace, |dock, workspace, e: &Event, cx| {
+                if matches!(e, Event::ZoomChanged) {
+                    let is_zoomed = workspace.read(cx).zoomed.is_some();
+                    dock.resizeable = !is_zoomed;
                 }
             });
-            let zoom_subscription = cx.subscribe_in(
-                &workspace,
-                window,
-                |dock, workspace, e: &Event, window, cx| {
-                    if matches!(e, Event::ZoomChanged) {
-                        let is_zoomed = workspace.read(cx).zoomed.is_some();
-                        dock.resizeable = !is_zoomed;
-                    }
-                },
-            );
             Self {
                 position,
                 panel_entries: Default::default(),
@@ -446,10 +443,9 @@ impl Dock {
                 move |this, panel, event, window, cx| match event {
                     PanelEvent::ZoomIn => {
                         this.set_panel_zoomed(&panel.to_any(), true, window, cx);
-                        // todo! remove disambiguation here if we can
                         if !PanelHandle::panel_focus_handle(panel, cx).contains_focused(window, cx)
                         {
-                            window.focus_view(&panel, cx);
+                            window.focus(&panel.focus_handle(cx));
                         }
                         workspace
                             .update(cx, |workspace, cx| {
@@ -481,7 +477,7 @@ impl Dock {
                         {
                             this.set_open(true, window, cx);
                             this.activate_panel(ix, window, cx);
-                            window.focus_view(panel, cx);
+                            window.focus(&panel.read(cx).focus_handle(cx));
                         }
                     }
                     PanelEvent::Close => {
@@ -696,7 +692,7 @@ impl Render for Dock {
                     .id("resize-handle")
                     .on_drag(DraggedDock(position), |dock, _, window, cx| {
                         cx.stop_propagation();
-                        window.new_view(cx, |_, _| dock.clone())
+                        cx.new_model(|_| dock.clone())
                     })
                     .on_mouse_down(
                         MouseButton::Left,
@@ -987,7 +983,7 @@ pub mod test {
         }
     }
 
-    impl FocusableView for TestPanel {
+    impl Focusable for TestPanel {
         fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
             self.focus_handle.clone()
         }

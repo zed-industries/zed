@@ -1,7 +1,7 @@
 use crate::{request::PromptUserDeviceFlow, Copilot, Status};
 use gpui::{
     div, AppContext, ClipboardItem, DismissEvent, Element, EventEmitter, FocusHandle,
-    FocusableView, InteractiveElement, IntoElement, Model, ModelContext, MouseDownEvent,
+    Focusable, InteractiveElement, IntoElement, Model, ModelContext, MouseDownEvent,
     ParentElement, Render, Styled, Subscription, Window,
 };
 use ui::{prelude::*, Button, Label, Vector, VectorName};
@@ -87,7 +87,7 @@ pub struct CopilotCodeVerification {
     _subscription: Subscription,
 }
 
-impl FocusableView for CopilotCodeVerification {
+impl Focusable for CopilotCodeVerification {
     fn focus_handle(&self, _: &AppContext) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }

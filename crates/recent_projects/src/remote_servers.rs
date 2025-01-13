@@ -12,7 +12,7 @@ use gpui::ClipboardItem;
 use gpui::Task;
 use gpui::WeakModel;
 use gpui::{
-    AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
+    AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model,
     ModelContext, PromptLevel, ScrollHandle, Window,
 };
 use picker::Picker;
@@ -62,7 +62,7 @@ struct CreateRemoteServer {
 
 impl CreateRemoteServer {
     fn new(window: &mut Window, cx: &mut AppContext) -> Self {
-        let address_editor = window.new_view(cx, Editor::single_line);
+        let address_editor = cx.new_model(|cx| Editor::single_line(window, cx));
         address_editor.update(cx, |this, cx| {
             this.focus_handle(cx).focus(window);
         });
@@ -91,7 +91,7 @@ impl EditNicknameState {
     fn new(index: usize, window: &mut Window, cx: &mut AppContext) -> Self {
         let this = Self {
             index,
-            editor: window.new_view(cx, Editor::single_line),
+            editor: cx.new_model(|cx| Editor::single_line(window, cx)),
         };
         let starting_text = SshSettings::get_global(cx)
             .ssh_connections()
@@ -109,7 +109,7 @@ impl EditNicknameState {
     }
 }
 
-impl FocusableView for ProjectPicker {
+impl Focusable for ProjectPicker {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
@@ -129,7 +129,7 @@ impl ProjectPicker {
         let query = lister.default_query(cx);
         let delegate = file_finder::OpenPathDelegate::new(tx, lister);
 
-        let picker = window.new_view(cx, |window, cx| {
+        let picker = cx.new_model(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx)
                 .width(rems(34.))
                 .modal(false);
@@ -200,7 +200,7 @@ impl ProjectPicker {
                                 None
                             });
 
-                        window.new_view(cx, |window, cx| {
+                        cx.new_model(|cx| {
                             let workspace = Workspace::new(
                                 None,
                                 project.clone(),
@@ -226,7 +226,7 @@ impl ProjectPicker {
                 }
             })
             .shared();
-        window.new_view(cx, |_, _| Self {
+        cx.new_model(|cx| Self {
             _path_task,
             picker,
             connection_string,
@@ -404,9 +404,7 @@ impl RemoteServerProjects {
                 return;
             }
         };
-        let ssh_prompt = window.new_view(cx, |window, cx| {
-            SshPrompt::new(&connection_options, window, cx)
-        });
+        let ssh_prompt = cx.new_model(|cx| SshPrompt::new(&connection_options, window, cx));
 
         let connection = connect_over_ssh(
             ConnectionIdentifier::setup(),
@@ -1432,7 +1430,7 @@ fn get_text(element: &Model<Editor>, window: &mut Window, cx: &mut AppContext) -
 
 impl ModalView for RemoteServerProjects {}
 
-impl FocusableView for RemoteServerProjects {
+impl Focusable for RemoteServerProjects {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         match &self.mode {
             Mode::ProjectPicker(picker) => picker.focus_handle(cx),

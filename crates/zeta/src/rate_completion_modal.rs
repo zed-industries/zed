@@ -1,7 +1,7 @@
 use crate::{InlineCompletion, InlineCompletionRating, Zeta};
 use editor::Editor;
 use gpui::{
-    actions, prelude::*, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
+    actions, prelude::*, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable,
     HighlightStyle, Model, ModelContext, StyledText, TextStyle, Window,
 };
 use language::{language_settings, OffsetRangeExt};
@@ -27,7 +27,7 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(move |workspace: &mut Workspace, window, _cx| {
+    cx.observe_new_window_models(move |workspace: &mut Workspace, window, _cx| {
         workspace.register_action(|workspace, _: &RateCompletions, window, cx| {
             RateCompletionModal::toggle(workspace, window, cx);
         });
@@ -308,7 +308,7 @@ impl RateCompletionModal {
             if let Some(prev_completion) = self.active_completion.as_ref() {
                 if completion.id == prev_completion.completion.id {
                     if focus {
-                        window.focus_view(&prev_completion.feedback_editor, cx);
+                        window.focus(&prev_completion.feedback_editor.focus_handle(cx));
                     }
                     return;
                 }
@@ -317,7 +317,7 @@ impl RateCompletionModal {
 
         self.active_completion = completion.map(|completion| ActiveCompletion {
             completion,
-            feedback_editor: window.new_view(cx, |window, cx| {
+            feedback_editor: cx.new_model(|cx| {
                 let mut editor = Editor::multi_line(window, cx);
                 editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, window, cx);
                 editor.set_show_line_numbers(false, window, cx);
@@ -667,7 +667,7 @@ impl Render for RateCompletionModal {
 
 impl EventEmitter<DismissEvent> for RateCompletionModal {}
 
-impl FocusableView for RateCompletionModal {
+impl Focusable for RateCompletionModal {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }

@@ -105,7 +105,7 @@ async fn test_host_disconnect(
         .unwrap();
 
     //TODO: focus
-    assert!(cx_b.update_view(&editor_b, |editor, window, cx| editor.is_focused(window)));
+    assert!(cx_b.update_window_model(&editor_b, |editor, window, cx| editor.is_focused(window)));
     editor_b.update_in(cx_b, |editor, window, cx| editor.insert("X", window, cx));
 
     cx_b.update(|window, cx| {
@@ -208,8 +208,8 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
         .await
         .unwrap();
     let cx_a = cx_a.add_empty_window();
-    let editor_a =
-        cx_a.new_view(|window, cx| Editor::for_buffer(buffer_a, Some(project_a), window, cx));
+    let editor_a = cx_a
+        .new_window_model(|window, cx| Editor::for_buffer(buffer_a, Some(project_a), window, cx));
 
     let mut editor_cx_a = EditorTestContext {
         cx: cx_a.clone(),
@@ -224,8 +224,8 @@ async fn test_newline_above_or_below_does_not_move_guest_cursor(
         .update(cx_b, |p, cx| p.open_buffer((worktree_id, "a.txt"), cx))
         .await
         .unwrap();
-    let editor_b =
-        cx_b.new_view(|window, cx| Editor::for_buffer(buffer_b, Some(project_b), window, cx));
+    let editor_b = cx_b
+        .new_window_model(|window, cx| Editor::for_buffer(buffer_b, Some(project_b), window, cx));
 
     let mut editor_cx_b = EditorTestContext {
         cx: cx_b.clone(),
@@ -328,7 +328,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         .await
         .unwrap();
     let cx_b = cx_b.add_empty_window();
-    let editor_b = cx_b.new_view(|window, cx| {
+    let editor_b = cx_b.new_window_model(|window, cx| {
         Editor::for_buffer(buffer_b.clone(), Some(project_b.clone()), window, cx)
     });
 
@@ -344,7 +344,7 @@ async fn test_collaborating_with_completion(cx_a: &mut TestAppContext, cx_b: &mu
         editor.change_selections(None, window, cx, |s| s.select_ranges([13..13]));
         editor.handle_input(".", window, cx);
     });
-    cx_b.focus_view(&editor_b);
+    cx_b.focus(&editor_b);
 
     // Receive a completion request as the host's language server.
     // Return some completions from the host's language server.
@@ -610,7 +610,7 @@ async fn test_collaborating_with_code_actions(
             s.select_ranges([Point::new(1, 31)..Point::new(1, 31)])
         });
     });
-    cx_b.focus_view(&editor_b);
+    cx_b.focus(&editor_b);
 
     let mut requests = fake_language_server
         .handle_request::<lsp::request::CodeActionRequest, _, _>(|params, _| async move {
@@ -1206,7 +1206,8 @@ async fn test_share_project(
         .await
         .unwrap();
 
-    let editor_b = cx_b.new_view(|window, cx| Editor::for_buffer(buffer_b, None, window, cx));
+    let editor_b =
+        cx_b.new_window_model(|window, cx| Editor::for_buffer(buffer_b, None, window, cx));
 
     // Client A sees client B's selection
     executor.run_until_parked();
@@ -1313,8 +1314,9 @@ async fn test_on_input_format_from_host_to_guest(
         .await
         .unwrap();
     let cx_a = cx_a.add_empty_window();
-    let editor_a = cx_a
-        .new_view(|window, cx| Editor::for_buffer(buffer_a, Some(project_a.clone()), window, cx));
+    let editor_a = cx_a.new_window_model(|window, cx| {
+        Editor::for_buffer(buffer_a, Some(project_a.clone()), window, cx)
+    });
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
     executor.run_until_parked();
@@ -1346,7 +1348,7 @@ async fn test_on_input_format_from_host_to_guest(
         .unwrap();
 
     // Type a on type formatting trigger character as the guest.
-    cx_a.focus_view(&editor_a);
+    cx_a.focus(&editor_a);
     editor_a.update_in(cx_a, |editor, window, cx| {
         editor.change_selections(None, window, cx, |s| s.select_ranges([13..13]));
         editor.handle_input(">", window, cx);
@@ -1434,14 +1436,15 @@ async fn test_on_input_format_from_guest_to_host(
         .await
         .unwrap();
     let cx_b = cx_b.add_empty_window();
-    let editor_b = cx_b
-        .new_view(|window, cx| Editor::for_buffer(buffer_b, Some(project_b.clone()), window, cx));
+    let editor_b = cx_b.new_window_model(|window, cx| {
+        Editor::for_buffer(buffer_b, Some(project_b.clone()), window, cx)
+    });
 
     let fake_language_server = fake_language_servers.next().await.unwrap();
     executor.run_until_parked();
 
     // Type a on type formatting trigger character as the guest.
-    cx_b.focus_view(&editor_b);
+    cx_b.focus(&editor_b);
     editor_b.update_in(cx_b, |editor, window, cx| {
         editor.change_selections(None, window, cx, |s| s.select_ranges([13..13]));
         editor.handle_input(":", window, cx);
@@ -1691,7 +1694,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         editor.change_selections(None, window, cx, |s| s.select_ranges([13..13].clone()));
         editor.handle_input(":", window, cx);
     });
-    cx_b.focus_view(&editor_b);
+    cx_b.focus(&editor_b);
 
     executor.run_until_parked();
     editor_a.update(cx_a, |editor, _| {
@@ -1716,7 +1719,7 @@ async fn test_mutual_editor_inlay_hint_cache_update(
         editor.change_selections(None, window, cx, |s| s.select_ranges([13..13]));
         editor.handle_input("a change to increment both buffers' versions", window, cx);
     });
-    cx_a.focus_view(&editor_a);
+    cx_a.focus(&editor_a);
 
     executor.run_until_parked();
     editor_a.update(cx_a, |editor, _| {
@@ -2225,11 +2228,12 @@ async fn test_collaborating_with_editorconfig(
         .await
         .unwrap();
     let cx_a = cx_a.add_empty_window();
-    let main_editor_a = cx_a.new_view(|window, cx| {
+    let main_editor_a = cx_a.new_window_model(|window, cx| {
         Editor::for_buffer(main_buffer_a, Some(project_a.clone()), window, cx)
     });
-    let other_editor_a =
-        cx_a.new_view(|window, cx| Editor::for_buffer(other_buffer_a, Some(project_a), window, cx));
+    let other_editor_a = cx_a.new_window_model(|window, cx| {
+        Editor::for_buffer(other_buffer_a, Some(project_a), window, cx)
+    });
     let mut main_editor_cx_a = EditorTestContext {
         cx: cx_a.clone(),
         window: cx_a.window_handle(),
@@ -2258,10 +2262,10 @@ async fn test_collaborating_with_editorconfig(
         .await
         .unwrap();
     let cx_b = cx_b.add_empty_window();
-    let main_editor_b = cx_b.new_view(|window, cx| {
+    let main_editor_b = cx_b.new_window_model(|window, cx| {
         Editor::for_buffer(main_buffer_b, Some(project_b.clone()), window, cx)
     });
-    let other_editor_b = cx_b.new_view(|window, cx| {
+    let other_editor_b = cx_b.new_window_model(|window, cx| {
         Editor::for_buffer(other_buffer_b, Some(project_b.clone()), window, cx)
     });
     let mut main_editor_cx_b = EditorTestContext {

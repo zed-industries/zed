@@ -1,6 +1,6 @@
 use gpui::{
-    div, green, red, AppContext, HighlightStyle, InteractiveText, IntoElement, Model, ModelContext,
-    ParentElement, Render, Styled, StyledText, VisualContext, Window,
+    div, green, red, AppContext, Context as _, HighlightStyle, InteractiveText, IntoElement, Model,
+    ModelContext, ParentElement, Render, Styled, StyledText, Window,
 };
 use indoc::indoc;
 use story::*;
@@ -9,7 +9,7 @@ pub struct TextStory;
 
 impl TextStory {
     pub fn view(window: &mut Window, cx: &mut AppContext) -> Model<Self> {
-        window.new_view(cx, |_window, _cx| Self)
+        cx.new_model(|cx| Self)
     }
 }
 

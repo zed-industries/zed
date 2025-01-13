@@ -85,7 +85,7 @@ fn main() {
             };
             cx.open_window(options, |window, cx| {
                 cx.activate(false);
-                window.new_view(cx, |_window, _cx| AnimationExample {})
+                cx.new_model(|cx| AnimationExample {})
             })
             .unwrap();
         });

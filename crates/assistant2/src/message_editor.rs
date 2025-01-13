@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
-use gpui::{AppContext, DismissEvent, FocusableView, Model, Subscription, TextStyle, WeakModel};
+use gpui::{AppContext, DismissEvent, Focusable, Model, Subscription, TextStyle, WeakModel};
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::LanguageModelSelector;
 use rope::Point;
@@ -50,14 +50,14 @@ impl MessageEditor {
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
-        let editor = window.new_view(cx, |window, cx| {
+        let editor = cx.new_model(|cx| {
             let mut editor = Editor::auto_height(10, window, cx);
             editor.set_placeholder_text("Ask anything…", cx);
             editor.set_show_indent_guides(false, window, cx);
 
             editor
         });
-        let inline_context_picker = window.new_view(cx, |window, cx| {
+        let inline_context_picker = cx.new_model(|cx| {
             ContextPicker::new(
                 workspace.clone(),
                 Some(thread_store.clone()),
@@ -80,7 +80,7 @@ impl MessageEditor {
             thread,
             editor: editor.clone(),
             context_store: context_store.clone(),
-            context_strip: window.new_view(cx, |window, cx| {
+            context_strip: cx.new_model(|cx| {
                 ContextStrip::new(
                     context_store,
                     workspace.clone(),
@@ -94,7 +94,7 @@ impl MessageEditor {
             context_picker_menu_handle,
             inline_context_picker,
             inline_context_picker_menu_handle,
-            model_selector: window.new_view(cx, |window, cx| {
+            model_selector: cx.new_model(|cx| {
                 AssistantModelSelector::new(fs, model_selector_menu_handle.clone(), window, cx)
             }),
             model_selector_menu_handle,
@@ -210,7 +210,7 @@ impl MessageEditor {
     }
 }
 
-impl FocusableView for MessageEditor {
+impl Focusable for MessageEditor {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
         self.editor.focus_handle(cx)
     }

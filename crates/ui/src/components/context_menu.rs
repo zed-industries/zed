@@ -4,7 +4,7 @@ use crate::{
     List, ListItem, ListSeparator, ListSubHeader,
 };
 use gpui::{
-    px, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
+    px, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable,
     IntoElement, Model, Render, Subscription, VisualContext,
 };
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
@@ -42,7 +42,7 @@ pub struct ContextMenu {
     _on_blur_subscription: Subscription,
 }
 
-impl FocusableView for ContextMenu {
+impl Focusable for ContextMenu {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
@@ -58,7 +58,7 @@ impl ContextMenu {
         cx: &mut AppContext,
         f: impl FnOnce(Self, &mut Window, &mut ModelContext<Self>) -> Self,
     ) -> Model<Self> {
-        window.new_view(cx, |window, cx| {
+        cx.new_model(|cx| {
             let focus_handle = cx.focus_handle();
             let _on_blur_subscription = cx.on_blur(
                 &focus_handle,

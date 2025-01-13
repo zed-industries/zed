@@ -5,9 +5,9 @@ use collections::HashMap;
 use editor::items::entry_git_aware_label_color;
 use gpui::{
     actions, impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, EntityId,
-    EventEmitter, FocusHandle, FocusableView, Model, ModelContext, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseUpEvent, ParentElement, Render, Styled, Task,
-    VisualContext, WeakModel, Window,
+    EventEmitter, FocusHandle, Focusable, Model, ModelContext, Modifiers, ModifiersChangedEvent,
+    MouseButton, MouseUpEvent, ParentElement, Render, Styled, Task, VisualContext, WeakModel,
+    Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::Project;
@@ -41,7 +41,7 @@ pub struct TabSwitcher {
 impl ModalView for TabSwitcher {}
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(TabSwitcher::register).detach();
+    cx.observe_new_window_models(TabSwitcher::register).detach();
 }
 
 impl TabSwitcher {
@@ -105,9 +105,7 @@ impl TabSwitcher {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         Self {
-            picker: window.new_view(cx, |window, cx| {
-                Picker::nonsearchable_uniform_list(delegate, window, cx)
-            }),
+            picker: cx.new_model(|cx| Picker::nonsearchable_uniform_list(delegate, window, cx)),
             init_modifiers: window.modifiers().modified().then_some(window.modifiers()),
         }
     }
@@ -147,7 +145,7 @@ impl TabSwitcher {
 
 impl EventEmitter<DismissEvent> for TabSwitcher {}
 
-impl FocusableView for TabSwitcher {
+impl Focusable for TabSwitcher {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }

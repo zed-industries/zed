@@ -3,7 +3,7 @@ use std::ops::Deref;
 use futures::channel::oneshot;
 
 use crate::{
-    div, opaque_grey, white, AnyView, AppContext, EventEmitter, FocusHandle, FocusableView,
+    div, opaque_grey, white, AnyView, AppContext, Context, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, Model, ModelContext, ParentElement, PromptLevel, Render,
     StatefulInteractiveElement, Styled, VisualContext,
 };
@@ -16,9 +16,9 @@ use super::Window;
 pub struct PromptResponse(pub usize);
 
 /// A prompt that can be rendered in the window.
-pub trait Prompt: EventEmitter<PromptResponse> + FocusableView {}
+pub trait Prompt: EventEmitter<PromptResponse> + Focusable {}
 
-impl<V: EventEmitter<PromptResponse> + FocusableView> Prompt for V {}
+impl<V: EventEmitter<PromptResponse> + Focusable> Prompt for V {}
 
 /// A handle to a prompt that can be used to interact with it.
 pub struct PromptHandle {
@@ -55,7 +55,7 @@ impl PromptHandle {
         })
         .detach();
 
-        window.focus_view(&view, cx);
+        window.focus(&view.focus_handle(cx));
 
         RenderablePromptHandle {
             view: Box::new(view),
@@ -79,14 +79,12 @@ pub fn fallback_prompt_renderer(
     window: &mut Window,
     cx: &mut AppContext,
 ) -> RenderablePromptHandle {
-    let renderer = window.new_view(cx, {
-        |window, cx| FallbackPromptRenderer {
-            _level: level,
-            message: message.to_string(),
-            detail: detail.map(ToString::to_string),
-            actions: actions.iter().map(ToString::to_string).collect(),
-            focus: cx.focus_handle(),
-        }
+    let renderer = cx.new_model(|cx| FallbackPromptRenderer {
+        _level: level,
+        message: message.to_string(),
+        detail: detail.map(ToString::to_string),
+        actions: actions.iter().map(ToString::to_string).collect(),
+        focus: cx.focus_handle(),
     });
 
     handle.with_view(renderer, window, cx)
@@ -180,7 +178,7 @@ impl Render for FallbackPromptRenderer {
 
 impl EventEmitter<PromptResponse> for FallbackPromptRenderer {}
 
-impl FocusableView for FallbackPromptRenderer {
+impl Focusable for FallbackPromptRenderer {
     fn focus_handle(&self, _: &crate::AppContext) -> FocusHandle {
         self.focus.clone()
     }

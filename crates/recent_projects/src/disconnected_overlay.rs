@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use gpui::{ClickEvent, DismissEvent, EventEmitter, FocusHandle, FocusableView, Render, WeakModel};
+use gpui::{ClickEvent, DismissEvent, EventEmitter, FocusHandle, Focusable, Render, WeakModel};
 use project::project_settings::ProjectSettings;
 use remote::SshConnectionOptions;
 use settings::Settings;
@@ -26,7 +26,7 @@ pub struct DisconnectedOverlay {
 }
 
 impl EventEmitter<DismissEvent> for DisconnectedOverlay {}
-impl FocusableView for DisconnectedOverlay {
+impl Focusable for DisconnectedOverlay {
     fn focus_handle(&self, _cx: &gpui::AppContext) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }

@@ -574,7 +574,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |window, cx| window.new_view(cx, |_window, _cx| Shadow {}),
+            |window, cx| cx.new_model(|cx| Shadow {}),
         )
         .unwrap();
 

@@ -1,6 +1,6 @@
 #![allow(unused, dead_code)]
 use gpui::{
-    actions, hsla, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, Hsla, Model,
+    actions, hsla, AnyElement, AppContext, EventEmitter, FocusHandle, Focusable, Hsla, Model,
 };
 use strum::IntoEnumIterator;
 use theme::all_theme_colors;
@@ -16,9 +16,9 @@ use crate::{Item, Workspace};
 actions!(debug, [OpenThemePreview]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, _, _| {
+    cx.observe_new_window_models(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &OpenThemePreview, window, cx| {
-            let theme_preview = window.new_view(cx, ThemePreview::new);
+            let theme_preview = cx.new_model(|cx| ThemePreview::new(window, cx));
             workspace.add_item_to_active_pane(Box::new(theme_preview), None, true, window, cx)
         });
     })
@@ -75,7 +75,7 @@ impl ThemePreview {
 
 impl EventEmitter<()> for ThemePreview {}
 
-impl FocusableView for ThemePreview {
+impl Focusable for ThemePreview {
     fn focus_handle(&self, _: &AppContext) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
@@ -105,7 +105,7 @@ impl Item for ThemePreview {
     where
         Self: Sized,
     {
-        Some(window.new_view(cx, Self::new))
+        Some(cx.new_model(|cx| Self::new(window, cx)))
     }
 }
 

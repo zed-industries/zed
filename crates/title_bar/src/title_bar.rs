@@ -51,10 +51,8 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, window, cx| {
-        let item = window.new_view(cx, |window, cx| {
-            TitleBar::new("title-bar", workspace, window, cx)
-        });
+    cx.observe_new_window_models(|workspace: &mut Workspace, window, cx| {
+        let item = cx.new_model(|cx| TitleBar::new("title-bar", workspace, window, cx));
         workspace.set_titlebar_item(item.into(), window, cx)
     })
     .detach();
@@ -236,13 +234,13 @@ impl TitleBar {
         let application_menu = match platform_style {
             PlatformStyle::Mac => {
                 if option_env!("ZED_USE_CROSS_PLATFORM_MENU").is_some() {
-                    Some(window.new_view(cx, ApplicationMenu::new))
+                    Some(cx.new_model(|cx| ApplicationMenu::new(window, cx)))
                 } else {
                     None
                 }
             }
             PlatformStyle::Linux | PlatformStyle::Windows => {
-                Some(window.new_view(cx, ApplicationMenu::new))
+                Some(cx.new_model(|cx| ApplicationMenu::new(window, cx)))
             }
         };
 

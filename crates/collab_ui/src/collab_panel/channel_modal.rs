@@ -6,7 +6,7 @@ use client::{
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, anchored, deferred, div, AppContext, ClipboardItem, DismissEvent, EventEmitter,
-    FocusableView, Model, ModelContext, ParentElement, Render, Styled, Subscription, Task,
+    Focusable, Model, ModelContext, ParentElement, Render, Styled, Subscription, Task,
     VisualContext, WeakModel, Window,
 };
 use picker::{Picker, PickerDelegate};
@@ -43,7 +43,7 @@ impl ChannelModal {
         cx.observe_in(&channel_store, window, |_, _, window, cx| cx.notify())
             .detach();
         let channel_modal = cx.model().downgrade();
-        let picker = window.new_view(cx, |window, cx| {
+        let picker = cx.new_model(|cx| {
             Picker::uniform_list(
                 ChannelModalDelegate {
                     channel_modal,
@@ -121,7 +121,7 @@ impl ChannelModal {
 impl EventEmitter<DismissEvent> for ChannelModal {}
 impl ModalView for ChannelModal {}
 
-impl FocusableView for ChannelModal {
+impl Focusable for ChannelModal {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
         self.picker.focus_handle(cx)
     }
@@ -641,7 +641,7 @@ impl ChannelModalDelegate {
             });
             menu
         });
-        window.focus_view(&context_menu, cx);
+        window.focus(&context_menu.focus_handle(cx));
         let subscription = cx.subscribe_in(
             &context_menu,
             window,

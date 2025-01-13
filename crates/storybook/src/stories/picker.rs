@@ -124,7 +124,7 @@ impl PickerDelegate for Delegate {
 
 impl PickerStory {
     pub fn new(window: &mut Window, cx: &mut AppContext) -> Model<Self> {
-        window.new_view(cx, |window, cx| {
+        cx.new_model(|cx| {
             cx.bind_keys([
                 KeyBinding::new("up", menu::SelectPrev, Some("picker")),
                 KeyBinding::new("pageup", menu::SelectFirst, Some("picker")),
@@ -144,7 +144,7 @@ impl PickerStory {
             ]);
 
             PickerStory {
-                picker: window.new_view(cx, |window, cx| {
+                picker: cx.new_model(|cx| {
                     let mut delegate = Delegate::new(&[
                         "Baguette (France)",
                         "Baklava (Turkey)",

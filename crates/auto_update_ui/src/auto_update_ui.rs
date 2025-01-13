@@ -17,7 +17,7 @@ use crate::update_notification::UpdateNotification;
 actions!(auto_update, [ViewReleaseNotesLocally]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new_window_models(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|workspace, _: &ViewReleaseNotesLocally, window, cx| {
             view_release_notes_locally(workspace, window, cx);
         });
@@ -93,7 +93,7 @@ fn view_release_notes_locally(
                             let buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
 
                             let tab_description = SharedString::from(body.title.to_string());
-                            let editor = window.new_view(cx, |window, cx| {
+                            let editor = cx.new_model(|cx| {
                                 Editor::for_multibuffer(buffer, Some(project), true, window, cx)
                             });
                             let workspace_handle = workspace.weak_handle();

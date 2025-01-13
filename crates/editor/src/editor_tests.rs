@@ -629,7 +629,7 @@ fn test_clone(cx: &mut TestAppContext) {
     let cloned_editor = editor
         .update(cx, |editor, window, cx| {
             cx.open_window(Default::default(), |window, cx| {
-                window.new_view(cx, |window, cx| editor.clone(window, cx))
+                cx.new_model(|cx| editor.clone(window, cx))
             })
         })
         .unwrap()
@@ -688,7 +688,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
         .unwrap();
 
     _ = workspace.update(cx, |_v, window, cx| {
-        window.new_view(cx, |window, cx| {
+        cx.new_model(|cx| {
             let buffer = MultiBuffer::build_simple(&sample_text(300, 5, 'a'), cx);
             let mut editor = build_editor(buffer.clone(), window, cx);
             let handle = cx.model();
@@ -7290,7 +7290,7 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
         );
         multi_buffer
     });
-    let multi_buffer_editor = cx.new_view(|window, cx| {
+    let multi_buffer_editor = cx.new_window_model(|window, cx| {
         Editor::new(
             EditorMode::Full,
             multi_buffer,
@@ -9889,7 +9889,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
                 ))),
                 ..Default::default()
             },
-            |window, cx| window.new_view(cx, |window, cx| build_editor(buffer.clone(), window, cx)),
+            |window, cx| cx.new_model(|cx| build_editor(buffer.clone(), window, cx)),
         )
         .unwrap()
     });
@@ -10077,9 +10077,7 @@ async fn test_following_with_multiple_excerpts(cx: &mut gpui::TestAppContext) {
 
     let leader = pane.update_in(cx, |_, window, cx| {
         let multibuffer = cx.new_model(|_| MultiBuffer::new(ReadWrite));
-        window.new_view(cx, |window, cx| {
-            build_editor(multibuffer.clone(), window, cx)
-        })
+        cx.new_model(|cx| build_editor(multibuffer.clone(), window, cx))
     });
 
     // Start following the editor when it has no excerpts.
@@ -12262,7 +12260,7 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
     let project = Project::test(fs, ["/a".as_ref()], cx).await;
     let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
     let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
-    let multi_buffer_editor = cx.new_view(|window, cx| {
+    let multi_buffer_editor = cx.new_window_model(|window, cx| {
         Editor::new(
             EditorMode::Full,
             multi_buffer,
@@ -14374,7 +14372,7 @@ async fn test_find_enclosing_node_with_task(cx: &mut gpui::TestAppContext) {
     let buffer = cx.new_model(|cx| Buffer::local(text, cx).with_language(language, cx));
     let multi_buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
-    let editor = cx.new_view(|window, cx| {
+    let editor = cx.new_window_model(|window, cx| {
         Editor::new(
             EditorMode::Full,
             multi_buffer,
@@ -14528,7 +14526,7 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
         );
         multi_buffer
     });
-    let multi_buffer_editor = cx.new_view(|window, cx| {
+    let multi_buffer_editor = cx.new_window_model(|window, cx| {
         Editor::new(
             EditorMode::Full,
             multi_buffer,
@@ -14683,7 +14681,7 @@ async fn test_multi_buffer_single_excerpts_folding(cx: &mut gpui::TestAppContext
         multi_buffer
     });
 
-    let multi_buffer_editor = cx.new_view(|window, cx| {
+    let multi_buffer_editor = cx.new_window_model(|window, cx| {
         Editor::new(
             EditorMode::Full,
             multi_buffer,
@@ -14803,7 +14801,7 @@ async fn test_multi_buffer_with_single_excerpt_folding(cx: &mut gpui::TestAppCon
         );
         multi_buffer
     });
-    let multi_buffer_editor = cx.new_view(|window, cx| {
+    let multi_buffer_editor = cx.new_window_model(|window, cx| {
         Editor::new(
             EditorMode::Full,
             multi_buffer,

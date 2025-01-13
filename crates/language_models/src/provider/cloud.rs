@@ -364,11 +364,10 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
     }
 
     fn configuration_view(&self, window: &mut Window, cx: &mut AppContext) -> AnyView {
-        window
-            .new_view(cx, |_window, _cx| ConfigurationView {
-                state: self.state.clone(),
-            })
-            .into()
+        cx.new_model(|_| ConfigurationView {
+            state: self.state.clone(),
+        })
+        .into()
     }
 
     fn must_accept_terms(&self, cx: &AppContext) -> bool {

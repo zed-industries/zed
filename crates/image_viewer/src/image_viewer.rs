@@ -4,7 +4,7 @@ use anyhow::Context as _;
 use editor::items::entry_git_aware_label_color;
 use gpui::{
     canvas, div, fill, img, opaque_grey, point, size, AnyElement, AppContext, Bounds, EventEmitter,
-    FocusHandle, FocusableView, InteractiveElement, IntoElement, Model, ModelContext, ObjectFit,
+    FocusHandle, Focusable, InteractiveElement, IntoElement, Model, ModelContext, ObjectFit,
     ParentElement, Render, Styled, Task, VisualContext, WeakModel, Window,
 };
 use persistence::IMAGE_VIEWER;
@@ -159,7 +159,7 @@ impl Item for ImageView {
     where
         Self: Sized,
     {
-        Some(window.new_view(cx, |window, cx| Self {
+        Some(cx.new_model(|cx| Self {
             image_item: self.image_item.clone(),
             project: self.project.clone(),
             focus_handle: cx.focus_handle(),
@@ -220,9 +220,7 @@ impl SerializableItem for ImageView {
                 .await?;
 
             cx.update(|window, cx| {
-                Ok(window.new_view(cx, |window, cx| {
-                    ImageView::new(image_item, project, window, cx)
-                }))
+                Ok(cx.new_model(|cx| ImageView::new(image_item, project, window, cx)))
             })?
         })
     }
@@ -264,7 +262,7 @@ impl SerializableItem for ImageView {
 }
 
 impl EventEmitter<()> for ImageView {}
-impl FocusableView for ImageView {
+impl Focusable for ImageView {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }

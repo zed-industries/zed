@@ -1,6 +1,6 @@
 use client::{ContactRequestStatus, User, UserStore};
 use gpui::{
-    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, ModelContext,
+    AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model, ModelContext,
     ParentElement as _, Render, Styled, Task, VisualContext, WeakModel, Window,
 };
 use picker::{Picker, PickerDelegate};
@@ -25,9 +25,7 @@ impl ContactFinder {
             potential_contacts: Arc::from([]),
             selected_index: 0,
         };
-        let picker = window.new_view(cx, |window, cx| {
-            Picker::uniform_list(delegate, window, cx).modal(false)
-        });
+        let picker = cx.new_model(|cx| Picker::uniform_list(delegate, window, cx).modal(false));
 
         Self { picker }
     }
@@ -68,7 +66,7 @@ pub struct ContactFinderDelegate {
 impl EventEmitter<DismissEvent> for ContactFinder {}
 impl ModalView for ContactFinder {}
 
-impl FocusableView for ContactFinder {
+impl Focusable for ContactFinder {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }

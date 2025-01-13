@@ -22,7 +22,7 @@ impl ModeIndicator {
 
         let handle = cx.model().clone();
         let window_handle = window.window_handle();
-        cx.observe_new_views::<Vim>(move |_, window, cx| {
+        cx.observe_new_window_models::<Vim>(move |_, window, cx| {
             if window.window_handle() != window_handle {
                 return;
             }

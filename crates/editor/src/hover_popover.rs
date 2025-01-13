@@ -6,10 +6,10 @@ use crate::{
     Hover, RangeToAnchorExt,
 };
 use gpui::{
-    div, px, AnyElement, AsyncWindowContext, FocusableView as _, FontWeight, Hsla,
-    InteractiveElement, IntoElement, Model, ModelContext, MouseButton, ParentElement, Pixels,
-    ScrollHandle, Size, Stateful, StatefulInteractiveElement, StyleRefinement, Styled, Task,
-    TextStyleRefinement, Window,
+    div, px, AnyElement, AsyncWindowContext, Focusable as _, FontWeight, Hsla, InteractiveElement,
+    IntoElement, Model, ModelContext, MouseButton, ParentElement, Pixels, ScrollHandle, Size,
+    Stateful, StatefulInteractiveElement, StyleRefinement, Styled, Task, TextStyleRefinement,
+    Window,
 };
 use itertools::Itertools;
 use language::{Diagnostic, DiagnosticEntry, Language, LanguageRegistry};
@@ -350,7 +350,7 @@ fn show_hover(
                 let mut background_color: Option<Hsla> = None;
 
                 let parsed_content = cx
-                    .new_view(|window, cx| {
+                    .new_window_model(|window, cx| {
                         let status_colors = cx.theme().status();
 
                         match local_diagnostic.diagnostic.severity {
@@ -565,7 +565,7 @@ async fn parse_blocks(
         .join("\n\n");
 
     let rendered_block = cx
-        .new_view(|window, cx| {
+        .new_window_model(|window, cx| {
             let settings = ThemeSettings::get_global(cx);
             let ui_font_family = settings.ui_font.family.clone();
             let ui_font_fallbacks = settings.ui_font.fallbacks.clone();

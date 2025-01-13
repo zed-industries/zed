@@ -1,6 +1,6 @@
 use crate::{
     AnyView, AnyWindowHandle, AppContext, AsyncAppContext, Context, DispatchPhase, Effect, Entity,
-    EntityId, EventEmitter, FocusHandle, FocusOutEvent, FocusableView, Global, KeystrokeObserver,
+    EntityId, EventEmitter, FocusHandle, FocusOutEvent, Focusable, Global, KeystrokeObserver,
     Model, Reservation, SubscriberSet, Subscription, Task, WeakFocusHandle, WeakModel, Window,
     WindowHandle,
 };
@@ -225,7 +225,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     }
 
     /// Focus the given view in the given window. View type is required to implement FocusableView.
-    pub fn focus_view<W: FocusableView>(&mut self, view: &Model<W>, window: &mut Window) {
+    pub fn focus_view<W: Focusable>(&mut self, view: &Model<W>, window: &mut Window) {
         window.focus(&view.focus_handle(self));
     }
 
@@ -668,7 +668,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     /// Move focus to the current view, assuming it implements [`FocusableView`].
     pub fn focus_self(&mut self, window: &mut Window)
     where
-        T: FocusableView,
+        T: Focusable,
     {
         let view = self.model();
         window.defer(self, move |window, cx| {

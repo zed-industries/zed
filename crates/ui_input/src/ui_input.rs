@@ -6,7 +6,7 @@
 //!
 
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{AppContext, FocusHandle, FocusableView, FontStyle, Hsla, Model, TextStyle};
+use gpui::{AppContext, FocusHandle, Focusable, FontStyle, Hsla, Model, TextStyle};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::prelude::*;
@@ -48,7 +48,7 @@ pub struct TextField {
     disabled: bool,
 }
 
-impl FocusableView for TextField {
+impl Focusable for TextField {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.editor.focus_handle(cx)
     }
@@ -63,7 +63,7 @@ impl TextField {
     ) -> Self {
         let placeholder_text = placeholder.into();
 
-        let editor = window.new_view(cx, |window, cx| {
+        let editor = cx.new_model(|cx| {
             let mut input = Editor::single_line(window, cx);
             input.set_placeholder_text(placeholder_text.clone(), cx);
             input

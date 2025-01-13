@@ -7,7 +7,7 @@ use call::participant::{Frame, RemoteVideoTrack};
 use client::{proto::PeerId, User};
 use futures::StreamExt;
 use gpui::{
-    div, surface, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement, Model,
+    div, surface, AppContext, EventEmitter, FocusHandle, Focusable, InteractiveElement, Model,
     ModelContext, ParentElement, Render, SharedString, Styled, Task, VisualContext, Window,
 };
 use std::sync::{Arc, Weak};
@@ -60,7 +60,7 @@ impl SharedScreen {
 
 impl EventEmitter<Event> for SharedScreen {}
 
-impl FocusableView for SharedScreen {
+impl Focusable for SharedScreen {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
         self.focus.clone()
     }
@@ -121,9 +121,7 @@ impl Item for SharedScreen {
         cx: &mut ModelContext<Self>,
     ) -> Option<Model<Self>> {
         let track = self.track.upgrade()?;
-        Some(window.new_view(cx, |window, cx| {
-            Self::new(track, self.peer_id, self.user.clone(), window, cx)
-        }))
+        Some(cx.new_model(|cx| Self::new(track, self.peer_id, self.user.clone(), window, cx)))
     }
 
     fn to_item_events(event: &Self::Event, mut f: impl FnMut(ItemEvent)) {

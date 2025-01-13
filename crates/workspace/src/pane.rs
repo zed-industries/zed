@@ -16,7 +16,7 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     actions, anchored, deferred, impl_actions, prelude::*, Action, AnyElement, AppContext,
     AsyncWindowContext, ClickEvent, ClipboardItem, Corner, Div, DragMoveEvent, EntityId,
-    EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext, Model,
+    EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, Focusable, KeyContext, Model,
     ModelContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel,
     Render, ScrollHandle, Subscription, Task, VisualContext, WeakFocusHandle, WeakModel, Window,
 };
@@ -423,7 +423,7 @@ impl Pane {
                 pane: handle.clone(),
                 next_timestamp,
             }))),
-            toolbar: window.new_view(cx, |_, _| Toolbar::new()),
+            toolbar: cx.new_model(|_| Toolbar::new()),
             tab_bar_scroll_handle: ScrollHandle::new(),
             drag_split_direction: None,
             workspace,
@@ -2270,7 +2270,7 @@ impl Pane {
                     is_active,
                     ix,
                 },
-                |tab, _, window, cx| window.new_view(cx, |_, _| tab.clone()),
+                |tab, _, window, cx| cx.new_model(|_| tab.clone()),
             )
             .drag_over::<DraggedTab>(|tab, _, window, cx| {
                 tab.bg(cx.theme().colors().drop_target_background)
@@ -3048,7 +3048,7 @@ impl Pane {
     }
 }
 
-impl FocusableView for Pane {
+impl Focusable for Pane {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
@@ -3663,9 +3663,7 @@ mod tests {
         set_labeled_items(&pane, ["A", "B*", "C"], cx);
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(
-                    window.new_view(cx, |window, cx| TestItem::new(window, cx).with_label("D")),
-                ),
+                Box::new(cx.new_model(|cx| TestItem::new(window, cx).with_label("D"))),
                 false,
                 false,
                 Some(0),
@@ -3679,9 +3677,7 @@ mod tests {
         set_labeled_items(&pane, ["A", "B*", "C"], cx);
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(
-                    window.new_view(cx, |window, cx| TestItem::new(window, cx).with_label("D")),
-                ),
+                Box::new(cx.new_model(|cx| TestItem::new(window, cx).with_label("D"))),
                 false,
                 false,
                 Some(2),
@@ -3695,9 +3691,7 @@ mod tests {
         set_labeled_items(&pane, ["A", "B*", "C"], cx);
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(
-                    window.new_view(cx, |window, cx| TestItem::new(window, cx).with_label("D")),
-                ),
+                Box::new(cx.new_model(|cx| TestItem::new(window, cx).with_label("D"))),
                 false,
                 false,
                 Some(5),
@@ -3712,9 +3706,7 @@ mod tests {
         set_labeled_items(&pane, ["A*", "B", "C"], cx);
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(
-                    window.new_view(cx, |window, cx| TestItem::new(window, cx).with_label("D")),
-                ),
+                Box::new(cx.new_model(|cx| TestItem::new(window, cx).with_label("D"))),
                 false,
                 false,
                 None,
@@ -3728,9 +3720,7 @@ mod tests {
         set_labeled_items(&pane, ["A", "B", "C*"], cx);
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(
-                    window.new_view(cx, |window, cx| TestItem::new(window, cx).with_label("D")),
-                ),
+                Box::new(cx.new_model(|cx| TestItem::new(window, cx).with_label("D"))),
                 false,
                 false,
                 None,
@@ -3830,7 +3820,7 @@ mod tests {
         // singleton view
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(window.new_view(cx, |window, cx| {
+                Box::new(cx.new_model(|cx| {
                     TestItem::new(window, cx)
                         .with_singleton(true)
                         .with_label("buffer 1")
@@ -3848,7 +3838,7 @@ mod tests {
         // new singleton view with the same project entry
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(window.new_view(cx, |window, cx| {
+                Box::new(cx.new_model(|cx| {
                     TestItem::new(window, cx)
                         .with_singleton(true)
                         .with_label("buffer 1")
@@ -3866,7 +3856,7 @@ mod tests {
         // new singleton view with different project entry
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(window.new_view(cx, |window, cx| {
+                Box::new(cx.new_model(|cx| {
                     TestItem::new(window, cx)
                         .with_singleton(true)
                         .with_label("buffer 2")
@@ -3884,7 +3874,7 @@ mod tests {
         // new multibuffer view with the same project entry
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(window.new_view(cx, |window, cx| {
+                Box::new(cx.new_model(|cx| {
                     TestItem::new(window, cx)
                         .with_singleton(false)
                         .with_label("multibuffer 1")
@@ -3902,7 +3892,7 @@ mod tests {
         // another multibuffer view with the same project entry
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(window.new_view(cx, |window, cx| {
+                Box::new(cx.new_model(|cx| {
                     TestItem::new(window, cx)
                         .with_singleton(false)
                         .with_label("multibuffer 1b")
@@ -4394,7 +4384,7 @@ mod tests {
         cx: &mut VisualTestContext,
     ) -> Box<Model<TestItem>> {
         pane.update_in(cx, |pane, window, cx| {
-            let labeled_item = Box::new(window.new_view(cx, |window, cx| {
+            let labeled_item = Box::new(cx.new_model(|cx| {
                 TestItem::new(window, cx)
                     .with_label(label)
                     .with_dirty(is_dirty)
@@ -4420,9 +4410,8 @@ mod tests {
                     active_item_index = index;
                 }
 
-                let labeled_item = Box::new(
-                    window.new_view(cx, |window, cx| TestItem::new(window, cx).with_label(label)),
-                );
+                let labeled_item =
+                    Box::new(cx.new_model(|cx| TestItem::new(window, cx).with_label(label)));
                 pane.add_item(labeled_item.clone(), false, false, None, window, cx);
                 index += 1;
                 labeled_item

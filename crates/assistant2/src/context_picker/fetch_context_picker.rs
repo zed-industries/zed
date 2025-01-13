@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context as _, Result};
 use futures::AsyncReadExt as _;
-use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Model, Task, WeakModel};
+use gpui::{AppContext, DismissEvent, FocusHandle, Focusable, Model, Task, WeakModel};
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http_client::{AsyncBody, HttpClientWithUrl};
 use picker::{Picker, PickerDelegate};
@@ -34,13 +34,13 @@ impl FetchContextPicker {
             context_store,
             confirm_behavior,
         );
-        let picker = window.new_view(cx, |window, cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new_model(|cx| Picker::uniform_list(delegate, window, cx));
 
         Self { picker }
     }
 }
 
-impl FocusableView for FetchContextPicker {
+impl Focusable for FetchContextPicker {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }

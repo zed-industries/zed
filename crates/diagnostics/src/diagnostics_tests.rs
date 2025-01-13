@@ -150,7 +150,7 @@ async fn test_diagnostics(cx: &mut TestAppContext) {
     });
 
     // Open the project diagnostics view while there are already diagnostics.
-    let view = window.build_view(cx, |window, cx| {
+    let view = window.build_model(cx, |window, cx| {
         ProjectDiagnosticsEditor::new_with_context(
             1,
             true,
@@ -482,7 +482,7 @@ async fn test_diagnostics_multiple_servers(cx: &mut TestAppContext) {
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let workspace = window.root(cx).unwrap();
 
-    let view = window.build_view(cx, |window, cx| {
+    let view = window.build_model(cx, |window, cx| {
         ProjectDiagnosticsEditor::new_with_context(
             1,
             true,
@@ -760,7 +760,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     let cx = &mut VisualTestContext::from_window(*window, cx);
     let workspace = window.root(cx).unwrap();
 
-    let mutated_view = window.build_view(cx, |window, cx| {
+    let mutated_view = window.build_model(cx, |window, cx| {
         ProjectDiagnosticsEditor::new_with_context(
             1,
             true,
@@ -867,7 +867,7 @@ async fn test_random_diagnostics(cx: &mut TestAppContext, mut rng: StdRng) {
     cx.run_until_parked();
 
     log::info!("constructing reference diagnostics view");
-    let reference_view = window.build_view(cx, |window, cx| {
+    let reference_view = window.build_model(cx, |window, cx| {
         ProjectDiagnosticsEditor::new_with_context(
             1,
             true,

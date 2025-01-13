@@ -19,13 +19,12 @@ impl Tooltip {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> AnyView {
-        window
-            .new_view(cx, |_window, _cx| Self {
-                title: title.into(),
-                meta: None,
-                key_binding: None,
-            })
-            .into()
+        cx.new_model(|_| Self {
+            title: title.into(),
+            meta: None,
+            key_binding: None,
+        })
+        .into()
     }
 
     pub fn for_action(
@@ -34,13 +33,12 @@ impl Tooltip {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> AnyView {
-        window
-            .new_view(cx, |window, cx| Self {
-                title: title.into(),
-                meta: None,
-                key_binding: KeyBinding::for_action(action, window, cx),
-            })
-            .into()
+        cx.new_model(|cx| Self {
+            title: title.into(),
+            meta: None,
+            key_binding: KeyBinding::for_action(action, window, cx),
+        })
+        .into()
     }
 
     pub fn for_action_in(
@@ -50,13 +48,12 @@ impl Tooltip {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> AnyView {
-        window
-            .new_view(cx, |window, cx| Self {
-                title: title.into(),
-                meta: None,
-                key_binding: KeyBinding::for_action_in(action, focus_handle, window, cx),
-            })
-            .into()
+        cx.new_model(|cx| Self {
+            title: title.into(),
+            meta: None,
+            key_binding: KeyBinding::for_action_in(action, focus_handle, window, cx),
+        })
+        .into()
     }
 
     pub fn with_meta(
@@ -66,13 +63,12 @@ impl Tooltip {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> AnyView {
-        window
-            .new_view(cx, |window, cx| Self {
-                title: title.into(),
-                meta: Some(meta.into()),
-                key_binding: action.and_then(|action| KeyBinding::for_action(action, window, cx)),
-            })
-            .into()
+        cx.new_model(|cx| Self {
+            title: title.into(),
+            meta: Some(meta.into()),
+            key_binding: action.and_then(|action| KeyBinding::for_action(action, window, cx)),
+        })
+        .into()
     }
 
     pub fn with_meta_in(
@@ -83,14 +79,13 @@ impl Tooltip {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> AnyView {
-        window
-            .new_view(cx, |window, cx| Self {
-                title: title.into(),
-                meta: Some(meta.into()),
-                key_binding: action
-                    .and_then(|action| KeyBinding::for_action_in(action, focus_handle, window, cx)),
-            })
-            .into()
+        cx.new_model(|cx| Self {
+            title: title.into(),
+            meta: Some(meta.into()),
+            key_binding: action
+                .and_then(|action| KeyBinding::for_action_in(action, focus_handle, window, cx)),
+        })
+        .into()
     }
 
     pub fn new(title: impl Into<SharedString>) -> Self {
@@ -167,11 +162,10 @@ impl LinkPreview {
             }
             wrapped_url.push(ch);
         }
-        window
-            .new_view(cx, |_window, _cx| LinkPreview {
-                link: wrapped_url.into(),
-            })
-            .into()
+        cx.new_model(|cx| LinkPreview {
+            link: wrapped_url.into(),
+        })
+        .into()
     }
 }
 

@@ -1,5 +1,5 @@
 use gpui::{
-    actions, Action, AppContext, EventEmitter, FocusHandle, FocusableView,
+    actions, Action, AppContext, Context as _, EventEmitter, FocusHandle, Focusable,
     KeyBindingContextPredicate, KeyContext, Keystroke, Model, MouseButton, Render, Subscription,
 };
 use itertools::Itertools;
@@ -17,9 +17,9 @@ use workspace::Workspace;
 actions!(debug, [OpenKeyContextView]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, _, _| {
+    cx.observe_new_window_models(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &OpenKeyContextView, window, cx| {
-            let key_context_view = window.new_view(cx, KeyContextView::new);
+            let key_context_view = cx.new_model(|cx| KeyContextView::new(window, cx));
             workspace.add_item_to_active_pane(Box::new(key_context_view), None, true, window, cx)
         });
     })
@@ -109,7 +109,7 @@ impl KeyContextView {
 
 impl EventEmitter<()> for KeyContextView {}
 
-impl FocusableView for KeyContextView {
+impl Focusable for KeyContextView {
     fn focus_handle(&self, _: &AppContext) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
@@ -167,7 +167,7 @@ impl Item for KeyContextView {
     where
         Self: Sized,
     {
-        Some(window.new_view(cx, Self::new))
+        Some(cx.new_model(|cx| KeyContextView::new(window, cx)))
     }
 }
 

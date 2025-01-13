@@ -60,11 +60,11 @@ impl ActivityIndicator {
     ) -> Model<ActivityIndicator> {
         let project = workspace.project().clone();
         let auto_updater = AutoUpdater::get(cx);
-        let this = window.new_view(cx, |window: &mut Window, cx: &mut ModelContext<Self>| {
+        let this = cx.new_model(|cx| {
             let mut status_events = languages.language_server_binary_statuses();
-            cx.spawn_in(window, |this, mut cx| async move {
+            cx.spawn(|this, mut cx| async move {
                 while let Some((name, status)) = status_events.next().await {
-                    this.update(&mut cx, |this, cx| {
+                    this.update(&mut cx, |this: &mut ActivityIndicator, cx| {
                         this.statuses.retain(|s| s.name != name);
                         this.statuses.push(LspStatus { name, status });
                         cx.notify();
@@ -109,7 +109,7 @@ impl ActivityIndicator {
                     })?;
                     workspace.update_in(&mut cx, |workspace, window, cx| {
                         workspace.add_item_to_active_pane(
-                            Box::new(window.new_view(cx, |window, cx| {
+                            Box::new(cx.new_model(|cx| {
                                 Editor::for_buffer(buffer, Some(project.clone()), window, cx)
                             })),
                             None,

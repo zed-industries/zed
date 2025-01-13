@@ -2,7 +2,7 @@ use anyhow::Result;
 use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     actions, div, impl_actions, list, prelude::*, uniform_list, AnyElement, AppContext, ClickEvent,
-    DismissEvent, EventEmitter, FocusHandle, FocusableView, Length, ListSizingBehavior, ListState,
+    DismissEvent, EventEmitter, FocusHandle, Focusable, Length, ListSizingBehavior, ListState,
     Model, ModelContext, MouseButton, MouseUpEvent, Render, ScrollStrategy, Task,
     UniformListScrollHandle, Window,
 };
@@ -196,7 +196,7 @@ pub trait PickerDelegate: Sized + 'static {
     }
 }
 
-impl<D: PickerDelegate> FocusableView for Picker<D> {
+impl<D: PickerDelegate> Focusable for Picker<D> {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         match &self.head {
             Head::Editor(editor) => editor.focus_handle(cx),

@@ -2,7 +2,8 @@ use crate::track::RemoteVideoTrack;
 use anyhow::Result;
 use futures::StreamExt as _;
 use gpui::{
-    Empty, EventEmitter, IntoElement, Model, ModelContext, Render, Task, VisualContext as _, Window,
+    Context as _, Empty, EventEmitter, IntoElement, Model, ModelContext, Render, Task,
+    VisualContext as _, Window,
 };
 
 pub struct RemoteVideoTrackView {
@@ -61,7 +62,7 @@ impl RemoteVideoTrackView {
     }
 
     pub fn clone(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Model<Self> {
-        window.new_view(cx, |window, cx| Self::new(self.track.clone(), window, cx))
+        cx.new_model(|cx| Self::new(self.track.clone(), window, cx))
     }
 }
 

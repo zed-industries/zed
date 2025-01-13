@@ -11,7 +11,7 @@ use command_palette_hooks::{
 };
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    Action, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Global, Model,
+    Action, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Global, Model,
     ModelContext, ParentElement, Render, Styled, Task, UpdateGlobal, VisualContext, WeakModel,
     Window,
 };
@@ -28,7 +28,8 @@ pub fn init(cx: &mut AppContext) {
     client::init_settings(cx);
     cx.set_global(HitCounts::default());
     command_palette_hooks::init(cx);
-    cx.observe_new_views(CommandPalette::register).detach();
+    cx.observe_new_window_models(CommandPalette::register)
+        .detach();
 }
 
 impl ModalView for CommandPalette {}
@@ -107,7 +108,7 @@ impl CommandPalette {
         let delegate =
             CommandPaletteDelegate::new(cx.model().downgrade(), commands, previous_focus_handle);
 
-        let picker = window.new_view(cx, |window, cx| {
+        let picker = cx.new_model(|cx| {
             let picker = Picker::uniform_list(delegate, window, cx);
             picker.set_query(query, window, cx);
             picker
@@ -123,7 +124,7 @@ impl CommandPalette {
 
 impl EventEmitter<DismissEvent> for CommandPalette {}
 
-impl FocusableView for CommandPalette {
+impl Focusable for CommandPalette {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
@@ -517,7 +518,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let editor = cx.new_view(|window, cx| {
+        let editor = cx.new_window_model(|window, cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_text("abc", window, cx);
             editor
@@ -588,7 +589,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
-        let editor = cx.new_view(|window, cx| {
+        let editor = cx.new_window_model(|window, cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_text("abc", window, cx);
             editor

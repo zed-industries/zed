@@ -1,8 +1,8 @@
 use super::base_keymap_setting::BaseKeymap;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, AppContext, DismissEvent, EventEmitter, FocusableView, Model, ModelContext, Render,
-    Task, VisualContext, WeakModel, Window,
+    actions, AppContext, DismissEvent, EventEmitter, Focusable, Model, ModelContext, Render, Task,
+    VisualContext, WeakModel, Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::Fs;
@@ -15,7 +15,7 @@ use workspace::{ui::HighlightedLabel, ModalView, Workspace};
 actions!(welcome, [ToggleBaseKeymapSelector]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, window, _cx| {
+    cx.observe_new_window_models(|workspace: &mut Workspace, window, _cx| {
         workspace.register_action(toggle);
     })
     .detach();
@@ -41,7 +41,7 @@ pub struct BaseKeymapSelector {
     picker: Model<Picker<BaseKeymapSelectorDelegate>>,
 }
 
-impl FocusableView for BaseKeymapSelector {
+impl Focusable for BaseKeymapSelector {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
         self.picker.focus_handle(cx)
     }
@@ -56,7 +56,7 @@ impl BaseKeymapSelector {
         window: &mut Window,
         cx: &mut ModelContext<BaseKeymapSelector>,
     ) -> Self {
-        let picker = window.new_view(cx, |window, cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new_model(|cx| Picker::uniform_list(delegate, window, cx));
         Self { picker }
     }
 }

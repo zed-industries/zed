@@ -87,7 +87,7 @@ impl Render for WindowDemo {
                         ..Default::default()
                     },
                     |window, cx| {
-                        window.new_view(cx, |_window, _cx| SubWindow {
+                        cx.new_model(|cx| SubWindow {
                             custom_titlebar: false,
                         })
                     },
@@ -102,7 +102,7 @@ impl Render for WindowDemo {
                         ..Default::default()
                     },
                     |window, cx| {
-                        window.new_view(cx, |_window, _cx| SubWindow {
+                        cx.new_model(|cx| SubWindow {
                             custom_titlebar: false,
                         })
                     },
@@ -117,7 +117,7 @@ impl Render for WindowDemo {
                         ..Default::default()
                     },
                     |window, cx| {
-                        window.new_view(cx, |_window, _cx| SubWindow {
+                        cx.new_model(|cx| SubWindow {
                             custom_titlebar: true,
                         })
                     },
@@ -132,7 +132,7 @@ impl Render for WindowDemo {
                         ..Default::default()
                     },
                     |window, cx| {
-                        window.new_view(cx, |_window, _cx| SubWindow {
+                        cx.new_model(|cx| SubWindow {
                             custom_titlebar: false,
                         })
                     },
@@ -148,7 +148,7 @@ impl Render for WindowDemo {
                         ..Default::default()
                     },
                     |window, cx| {
-                        window.new_view(cx, |_window, _cx| SubWindow {
+                        cx.new_model(|cx| SubWindow {
                             custom_titlebar: false,
                         })
                     },
@@ -179,7 +179,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |window, cx| window.new_view(cx, |_window, _cx| WindowDemo {}),
+            |window, cx| cx.new_model(|cx| WindowDemo {}),
         )
         .unwrap();
     });

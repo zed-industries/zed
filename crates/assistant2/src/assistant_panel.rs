@@ -6,7 +6,7 @@ use client::zed_urls;
 use fs::Fs;
 use gpui::{
     prelude::*, px, svg, Action, AnyElement, AppContext, AsyncWindowContext, EventEmitter,
-    FocusHandle, FocusableView, FontWeight, Model, ModelContext, Pixels, Task, WeakModel, Window,
+    FocusHandle, Focusable, FontWeight, Model, ModelContext, Pixels, Task, WeakModel, Window,
 };
 use language::LanguageRegistry;
 use settings::Settings;
@@ -24,7 +24,7 @@ use crate::thread_store::ThreadStore;
 use crate::{NewThread, OpenHistory, ToggleFocus};
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(
+    cx.observe_new_window_models(
         |workspace: &mut Workspace, _window: &mut Window, _cx: &mut ModelContext<Workspace>| {
             workspace
                 .register_action(|workspace, _: &ToggleFocus, window, cx| {
@@ -106,7 +106,7 @@ impl AssistantPanel {
             fs: fs.clone(),
             language_registry: language_registry.clone(),
             thread_store: thread_store.clone(),
-            thread: window.new_view(cx, |window, cx| {
+            thread: cx.new_model(|cx| {
                 ActiveThread::new(
                     thread.clone(),
                     workspace.clone(),
@@ -116,7 +116,7 @@ impl AssistantPanel {
                     cx,
                 )
             }),
-            message_editor: window.new_view(cx, |window, cx| {
+            message_editor: cx.new_model(|cx| {
                 MessageEditor::new(
                     fs.clone(),
                     workspace,
@@ -131,9 +131,7 @@ impl AssistantPanel {
                 chrono::Local::now().offset().local_minus_utc(),
             )
             .unwrap(),
-            history: window.new_view(cx, |window, cx| {
-                ThreadHistory::new(weak_self, thread_store, window, cx)
-            }),
+            history: cx.new_model(|cx| ThreadHistory::new(weak_self, thread_store, window, cx)),
             width: None,
             height: None,
         }
@@ -153,7 +151,7 @@ impl AssistantPanel {
             .update(cx, |this, cx| this.create_thread(cx));
 
         self.active_view = ActiveView::Thread;
-        self.thread = window.new_view(cx, |window, cx| {
+        self.thread = cx.new_model(|cx| {
             ActiveThread::new(
                 thread.clone(),
                 self.workspace.clone(),
@@ -163,7 +161,7 @@ impl AssistantPanel {
                 cx,
             )
         });
-        self.message_editor = window.new_view(cx, |window, cx| {
+        self.message_editor = cx.new_model(|cx| {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
@@ -196,7 +194,7 @@ impl AssistantPanel {
         };
 
         self.active_view = ActiveView::Thread;
-        self.thread = window.new_view(cx, |window, cx| {
+        self.thread = cx.new_model(|cx| {
             ActiveThread::new(
                 thread.clone(),
                 self.workspace.clone(),
@@ -206,7 +204,7 @@ impl AssistantPanel {
                 cx,
             )
         });
-        self.message_editor = window.new_view(cx, |window, cx| {
+        self.message_editor = cx.new_model(|cx| {
             MessageEditor::new(
                 self.fs.clone(),
                 self.workspace.clone(),
@@ -230,7 +228,7 @@ impl AssistantPanel {
     }
 }
 
-impl FocusableView for AssistantPanel {
+impl Focusable for AssistantPanel {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         match self.active_view {
             ActiveView::Thread => self.message_editor.focus_handle(cx),

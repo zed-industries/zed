@@ -191,7 +191,7 @@ impl TestAppContext {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |window, cx| window.new_view(cx, build_window),
+            |window, cx| cx.new_model(|cx| build_window(window, cx)),
         )
         .unwrap()
     }
@@ -206,7 +206,7 @@ impl TestAppContext {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |window, cx| window.new_view(cx, |_, _| Empty),
+                |window, cx| cx.new_model(|_| Empty),
             )
             .unwrap();
         drop(cx);
@@ -234,7 +234,7 @@ impl TestAppContext {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |window, cx| window.new_view(cx, build_root_view),
+                |window, cx| cx.new_model(|cx| build_root_view(window, cx)),
             )
             .unwrap();
         drop(cx);
@@ -918,28 +918,25 @@ impl VisualContext for VisualTestContext {
         self.window
     }
 
-    fn new_view<V>(
+    fn new_window_model<T: 'static>(
         &mut self,
-        build_view: impl FnOnce(&mut Window, &mut ModelContext<V>) -> V,
-    ) -> Self::Result<Model<V>>
-    where
-        V: 'static + Render,
-    {
+        build_model: impl FnOnce(&mut Window, &mut ModelContext<'_, T>) -> T,
+    ) -> Self::Result<Model<T>> {
         self.window
             .update(&mut self.cx, |_, window, cx| {
-                window.new_view(cx, build_view)
+                cx.new_model(|cx| build_model(window, cx))
             })
             .unwrap()
     }
 
-    fn update_view<V: 'static, R>(
+    fn update_window_model<V: 'static, R>(
         &mut self,
         view: &Model<V>,
         update: impl FnOnce(&mut V, &mut Window, &mut ModelContext<V>) -> R,
     ) -> Self::Result<R> {
         self.window
             .update(&mut self.cx, |_, window, cx| {
-                window.update_view(view, cx, update)
+                view.update(cx, |v, cx| update(v, window, cx))
             })
             .unwrap()
     }
@@ -953,26 +950,15 @@ impl VisualContext for VisualTestContext {
     {
         self.window
             .update(&mut self.cx, |_, window, cx| {
-                window.replace_root_view(cx, build_view)
+                window.replace_root_model(cx, build_view)
             })
             .unwrap()
     }
 
-    fn focus_view<V: crate::FocusableView>(&mut self, view: &Model<V>) -> Self::Result<()> {
+    fn focus<V: crate::Focusable>(&mut self, view: &Model<V>) -> Self::Result<()> {
         self.window
             .update(&mut self.cx, |_, window, cx| {
                 view.read(cx).focus_handle(cx).clone().focus(window)
-            })
-            .unwrap()
-    }
-
-    fn dismiss_view<V>(&mut self, view: &Model<V>) -> Self::Result<()>
-    where
-        V: crate::ManagedView,
-    {
-        self.window
-            .update(&mut self.cx, |_, window, cx| {
-                view.update(cx, |_, cx| cx.emit(crate::DismissEvent))
             })
             .unwrap()
     }
@@ -980,12 +966,14 @@ impl VisualContext for VisualTestContext {
 
 impl AnyWindowHandle {
     /// Creates the given view in this window.
-    pub fn build_view<V: Render + 'static>(
+    pub fn build_model<V: Render + 'static>(
         &self,
         cx: &mut TestAppContext,
         build_view: impl FnOnce(&mut Window, &mut ModelContext<V>) -> V,
     ) -> Model<V> {
-        self.update(cx, |_, window, cx| window.new_view(cx, build_view))
-            .unwrap()
+        self.update(cx, |_, window, cx| {
+            cx.new_model(|cx| build_view(window, cx))
+        })
+        .unwrap()
     }
 }

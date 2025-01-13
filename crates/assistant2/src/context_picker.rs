@@ -6,7 +6,7 @@ mod thread_context_picker;
 use std::sync::Arc;
 
 use gpui::{
-    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, SharedString, Task,
+    AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model, SharedString, Task,
     WeakModel,
 };
 use picker::{Picker, PickerDelegate};
@@ -92,7 +92,7 @@ impl ContextPicker {
             selected_ix: 0,
         };
 
-        let picker = window.new_view(cx, |window, cx| {
+        let picker = cx.new_model(|cx| {
             Picker::nonsearchable_uniform_list(delegate, window, cx)
                 .max_height(Some(rems(20.).into()))
         });
@@ -110,7 +110,7 @@ impl ContextPicker {
 
 impl EventEmitter<DismissEvent> for ContextPicker {}
 
-impl FocusableView for ContextPicker {
+impl Focusable for ContextPicker {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         match &self.mode {
             ContextPickerMode::Default => self.picker.focus_handle(cx),
@@ -201,57 +201,53 @@ impl PickerDelegate for ContextPickerDelegate {
                 .update(cx, |this, cx| {
                     match entry.kind {
                         ContextKind::File => {
-                            this.mode =
-                                ContextPickerMode::File(window.new_view(cx, |window, cx| {
-                                    FileContextPicker::new(
-                                        self.context_picker.clone(),
-                                        self.workspace.clone(),
-                                        self.context_store.clone(),
-                                        self.confirm_behavior,
-                                        window,
-                                        cx,
-                                    )
-                                }));
+                            this.mode = ContextPickerMode::File(cx.new_model(|cx| {
+                                FileContextPicker::new(
+                                    self.context_picker.clone(),
+                                    self.workspace.clone(),
+                                    self.context_store.clone(),
+                                    self.confirm_behavior,
+                                    window,
+                                    cx,
+                                )
+                            }));
                         }
                         ContextKind::Directory => {
-                            this.mode =
-                                ContextPickerMode::Directory(window.new_view(cx, |window, cx| {
-                                    DirectoryContextPicker::new(
-                                        self.context_picker.clone(),
-                                        self.workspace.clone(),
-                                        self.context_store.clone(),
-                                        self.confirm_behavior,
-                                        window,
-                                        cx,
-                                    )
-                                }));
+                            this.mode = ContextPickerMode::Directory(cx.new_model(|cx| {
+                                DirectoryContextPicker::new(
+                                    self.context_picker.clone(),
+                                    self.workspace.clone(),
+                                    self.context_store.clone(),
+                                    self.confirm_behavior,
+                                    window,
+                                    cx,
+                                )
+                            }));
                         }
                         ContextKind::FetchedUrl => {
-                            this.mode =
-                                ContextPickerMode::Fetch(window.new_view(cx, |window, cx| {
-                                    FetchContextPicker::new(
-                                        self.context_picker.clone(),
-                                        self.workspace.clone(),
-                                        self.context_store.clone(),
-                                        self.confirm_behavior,
-                                        window,
-                                        cx,
-                                    )
-                                }));
+                            this.mode = ContextPickerMode::Fetch(cx.new_model(|cx| {
+                                FetchContextPicker::new(
+                                    self.context_picker.clone(),
+                                    self.workspace.clone(),
+                                    self.context_store.clone(),
+                                    self.confirm_behavior,
+                                    window,
+                                    cx,
+                                )
+                            }));
                         }
                         ContextKind::Thread => {
                             if let Some(thread_store) = self.thread_store.as_ref() {
-                                this.mode =
-                                    ContextPickerMode::Thread(window.new_view(cx, |window, cx| {
-                                        ThreadContextPicker::new(
-                                            thread_store.clone(),
-                                            self.context_picker.clone(),
-                                            self.context_store.clone(),
-                                            self.confirm_behavior,
-                                            window,
-                                            cx,
-                                        )
-                                    }));
+                                this.mode = ContextPickerMode::Thread(cx.new_model(|cx| {
+                                    ThreadContextPicker::new(
+                                        thread_store.clone(),
+                                        self.context_picker.clone(),
+                                        self.context_store.clone(),
+                                        self.confirm_behavior,
+                                        window,
+                                        cx,
+                                    )
+                                }));
                             }
                         }
                     }

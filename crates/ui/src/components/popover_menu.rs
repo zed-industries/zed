@@ -4,7 +4,7 @@ use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
     anchored, deferred, div, point, prelude::FluentBuilder, px, size, AnyElement, AppContext,
-    Bounds, Corner, DismissEvent, DispatchPhase, Element, ElementId, FocusableView as _,
+    Bounds, Corner, DismissEvent, DispatchPhase, Element, ElementId, Focusable as _,
     GlobalElementId, HitboxId, InteractiveElement, IntoElement, LayoutId, Length, ManagedView,
     Model, MouseDownEvent, ParentElement, Pixels, Point, Style, VisualContext, Window,
 };
@@ -204,7 +204,7 @@ fn show_menu<M: ManagedView>(
             window.refresh();
         })
         .detach();
-    window.focus_view(&new_menu, cx);
+    window.focus(&new_menu.focus_handle(cx));
     *menu.borrow_mut() = Some(new_menu);
     window.refresh();
 }

@@ -184,7 +184,7 @@ impl Output {
 
                                 if let Some(buffer_content) = buffer_content.as_ref() {
                                     let buffer = buffer_content.clone();
-                                    let editor = Box::new(window.new_view(cx, |window, cx| {
+                                    let editor = Box::new(cx.new_model(|cx| {
                                         let multibuffer = cx.new_model(|cx| {
                                             let mut multi_buffer =
                                                 MultiBuffer::singleton(buffer.clone(), cx);
@@ -287,13 +287,11 @@ impl Output {
     ) -> Self {
         match data.richest(rank_mime_type) {
             Some(MimeType::Plain(text)) => Output::Plain {
-                content: window.new_view(cx, |window, cx| TerminalOutput::from(text, window, cx)),
+                content: cx.new_model(|cx| TerminalOutput::from(text, window, cx)),
                 display_id,
             },
             Some(MimeType::Markdown(text)) => {
-                let view = window.new_view(cx, |window, cx| {
-                    MarkdownView::from(text.clone(), window, cx)
-                });
+                let view = cx.new_model(|cx| MarkdownView::from(text.clone(), window, cx));
                 Output::Markdown {
                     content: view,
                     display_id,
@@ -301,13 +299,13 @@ impl Output {
             }
             Some(MimeType::Png(data)) | Some(MimeType::Jpeg(data)) => match ImageView::from(data) {
                 Ok(view) => Output::Image {
-                    content: window.new_view(cx, |_, _| view),
+                    content: cx.new_model(|_| view),
                     display_id,
                 },
                 Err(error) => Output::Message(format!("Failed to load image: {}", error)),
             },
             Some(MimeType::DataTable(data)) => Output::Table {
-                content: window.new_view(cx, |window, cx| TableView::new(data, window, cx)),
+                content: cx.new_model(|cx| TableView::new(data, window, cx)),
                 display_id,
             },
             // Any other media types are not supported
@@ -383,9 +381,8 @@ impl ExecutionView {
                 }
             }
             JupyterMessageContent::ErrorOutput(result) => {
-                let terminal = window.new_view(cx, |window, cx| {
-                    TerminalOutput::from(&result.traceback.join("\n"), window, cx)
-                });
+                let terminal = cx
+                    .new_model(|cx| TerminalOutput::from(&result.traceback.join("\n"), window, cx));
 
                 Output::ErrorOutput(ErrorView {
                     ename: result.ename.clone(),
@@ -485,7 +482,7 @@ impl ExecutionView {
         }
 
         Some(Output::Stream {
-            content: window.new_view(cx, |window, cx| TerminalOutput::from(text, window, cx)),
+            content: cx.new_model(|cx| TerminalOutput::from(text, window, cx)),
         })
     }
 }

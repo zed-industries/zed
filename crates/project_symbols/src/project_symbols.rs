@@ -16,7 +16,7 @@ use workspace::{
 };
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(
+    cx.observe_new_window_models(
         |workspace: &mut Workspace, _window: &mut Window, _: &mut ModelContext<Workspace>| {
             workspace.register_action(
                 |workspace, _: &workspace::ToggleProjectSymbols, window, cx| {
@@ -355,7 +355,7 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         // Create the project symbols view.
-        let symbols = cx.new_view(|window, cx| {
+        let symbols = cx.new_window_model(|window, cx| {
             Picker::uniform_list(
                 ProjectSymbolsDelegate::new(workspace.downgrade(), project.clone()),
                 window,

@@ -127,8 +127,7 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
 
     fn configuration_view(&self, window: &mut Window, cx: &mut AppContext) -> AnyView {
         let state = self.state.clone();
-        window
-            .new_view(cx, |window, cx| ConfigurationView::new(state, window, cx))
+        cx.new_model(|cx| ConfigurationView::new(state, window, cx))
             .into()
     }
 

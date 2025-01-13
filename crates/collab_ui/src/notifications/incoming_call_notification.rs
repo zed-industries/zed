@@ -37,7 +37,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                     {
                         let window = cx
                             .open_window(options, |window, cx| {
-                                window.new_view(cx, |_, _| {
+                                cx.new_model(|cx| {
                                     IncomingCallNotification::new(
                                         incoming_call.clone(),
                                         app_state.clone(),

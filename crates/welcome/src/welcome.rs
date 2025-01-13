@@ -5,7 +5,7 @@ mod multibuffer_hint;
 use client::{telemetry::Telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
 use gpui::{
-    actions, svg, Action, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    actions, svg, Action, AppContext, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     Model, ModelContext, ParentElement, Render, Styled, Subscription, Task, VisualContext,
     WeakModel, Window,
 };
@@ -31,7 +31,7 @@ const BOOK_ONBOARDING: &str = "https://dub.sh/zed-onboarding";
 pub fn init(cx: &mut AppContext) {
     BaseKeymap::register(cx);
 
-    cx.observe_new_views(|workspace: &mut Workspace, window, _cx| {
+    cx.observe_new_window_models(|workspace: &mut Workspace, window, _cx| {
         workspace.register_action(|workspace, _: &Welcome, window, cx| {
             let welcome_page = WelcomePage::new(workspace, window, cx);
             workspace.add_item_to_active_pane(Box::new(welcome_page), None, true, window, cx)
@@ -57,7 +57,9 @@ pub fn show_welcome_view(
             workspace.toggle_dock(DockPosition::Left, window, cx);
             let welcome_page = WelcomePage::new(workspace, window, cx);
             workspace.add_item_to_center(Box::new(welcome_page.clone()), window, cx);
-            window.focus_view(&welcome_page, cx);
+
+            window.focus(&welcome_page.focus_handle(cx));
+
             cx.notify();
 
             db::write_and_log(cx, || {
@@ -352,7 +354,7 @@ impl WelcomePage {
         window: &mut Window,
         cx: &mut ModelContext<Workspace>,
     ) -> Model<Self> {
-        let this = window.new_view(cx, |window, cx| {
+        let this = cx.new_model(|cx| {
             cx.on_release(|this: &mut Self, _| {
                 this.telemetry
                     .report_app_event("welcome page: close".to_string());
@@ -403,7 +405,7 @@ impl WelcomePage {
 
 impl EventEmitter<ItemEvent> for WelcomePage {}
 
-impl FocusableView for WelcomePage {
+impl Focusable for WelcomePage {
     fn focus_handle(&self, _: &AppContext) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
@@ -430,7 +432,7 @@ impl Item for WelcomePage {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<Model<Self>> {
-        Some(window.new_view(cx, |window, cx| WelcomePage {
+        Some(cx.new_model(|cx| WelcomePage {
             focus_handle: cx.focus_handle(),
             workspace: self.workspace.clone(),
             telemetry: self.telemetry.clone(),

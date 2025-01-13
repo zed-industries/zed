@@ -200,10 +200,7 @@ impl LanguageModelProvider for GoogleLanguageModelProvider {
     }
 
     fn configuration_view(&self, window: &mut Window, cx: &mut AppContext) -> AnyView {
-        window
-            .new_view(cx, |window, cx| {
-                ConfigurationView::new(self.state.clone(), window, cx)
-            })
+        cx.new_model(|cx| ConfigurationView::new(self.state.clone(), window, cx))
             .into()
     }
 
@@ -360,7 +357,7 @@ impl ConfigurationView {
         }));
 
         Self {
-            api_key_editor: window.new_view(cx, |window, cx| {
+            api_key_editor: cx.new_model(|cx| {
                 let mut editor = Editor::single_line(window, cx);
                 editor.set_placeholder_text("AIzaSy...", cx);
                 editor

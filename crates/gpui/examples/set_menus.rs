@@ -31,7 +31,7 @@ fn main() {
             items: vec![MenuItem::action("Quit", Quit)],
         }]);
         cx.open_window(WindowOptions::default(), |window, cx| {
-            window.new_view(cx, |_window, _cx| SetMenus {})
+            cx.new_model(|cx| SetMenus {})
         })
         .unwrap();
     });

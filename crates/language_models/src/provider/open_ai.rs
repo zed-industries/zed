@@ -203,10 +203,7 @@ impl LanguageModelProvider for OpenAiLanguageModelProvider {
     }
 
     fn configuration_view(&self, window: &mut Window, cx: &mut AppContext) -> AnyView {
-        window
-            .new_view(cx, |window, cx| {
-                ConfigurationView::new(self.state.clone(), window, cx)
-            })
+        cx.new_model(|cx| ConfigurationView::new(self.state.clone(), window, cx))
             .into()
     }
 
@@ -384,7 +381,7 @@ struct ConfigurationView {
 
 impl ConfigurationView {
     fn new(state: gpui::Model<State>, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
-        let api_key_editor = window.new_view(cx, |window, cx| {
+        let api_key_editor = cx.new_model(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("sk-000000000000000000000000000000000000000000000000", cx);
             editor

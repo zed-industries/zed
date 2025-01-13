@@ -23,8 +23,8 @@ use fs::Fs;
 use util::ResultExt;
 
 use gpui::{
-    point, AppContext, FocusableView, Global, HighlightStyle, Model, ModelContext, Subscription,
-    Task, UpdateGlobal, WeakModel, Window,
+    point, AppContext, Focusable, Global, HighlightStyle, Model, ModelContext, Subscription, Task,
+    UpdateGlobal, WeakModel, Window,
 };
 use language::{Buffer, Point, Selection, TransactionId};
 use language_model::LanguageModelRegistry;
@@ -49,7 +49,7 @@ pub fn init(
     cx: &mut AppContext,
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
-    cx.observe_new_views(|_workspace: &mut Workspace, window, cx| {
+    cx.observe_new_window_models(|_workspace: &mut Workspace, window, cx| {
         let workspace = cx.model().clone();
         InlineAssistant::update_global(cx, |inline_assistant, cx| {
             inline_assistant.register_workspace(&workspace, window, cx)
@@ -377,7 +377,7 @@ impl InlineAssistant {
             });
 
             let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
-            let prompt_editor = window.new_view(cx, |window, cx| {
+            let prompt_editor = cx.new_model(|cx| {
                 PromptEditor::new_buffer(
                     assist_id,
                     gutter_dimensions.clone(),
@@ -491,7 +491,7 @@ impl InlineAssistant {
         });
 
         let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
-        let prompt_editor = window.new_view(cx, |window, cx| {
+        let prompt_editor = cx.new_model(|cx| {
             PromptEditor::new_buffer(
                 assist_id,
                 gutter_dimensions.clone(),
@@ -1350,7 +1350,7 @@ impl InlineAssistant {
                     ))
                     .unwrap();
 
-                let deleted_lines_editor = window.new_view(cx, |window, cx| {
+                let deleted_lines_editor = cx.new_model(|cx| {
                     let multi_buffer = cx.new_model(|_| {
                         MultiBuffer::without_headers(language::Capability::ReadOnly)
                     });

@@ -33,12 +33,11 @@ use gpui::{
     anchored, deferred, div, fill, linear_color_stop, linear_gradient, outline, point, px, quad,
     relative, size, svg, transparent_black, Action, AnyElement, AppContext, AvailableSpace, Axis,
     Bounds, ClickEvent, ClipboardItem, ContentMask, Corner, Corners, CursorStyle, DispatchPhase,
-    Edges, Element, ElementInputHandler, Entity, FocusableView as _, FontId, GlobalElementId,
-    Hitbox, Hsla, InteractiveElement, IntoElement, Length, Model, ModelContext,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
-    ParentElement, Pixels, ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size,
-    StatefulInteractiveElement, Style, Styled, Subscription, TextRun, TextStyleRefinement,
-    WeakModel, Window,
+    Edges, Element, ElementInputHandler, Entity, Focusable as _, FontId, GlobalElementId, Hitbox,
+    Hsla, InteractiveElement, IntoElement, Length, Model, ModelContext, ModifiersChangedEvent,
+    MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad, ParentElement, Pixels,
+    ScrollDelta, ScrollWheelEvent, ShapedLine, SharedString, Size, StatefulInteractiveElement,
+    Style, Styled, Subscription, TextRun, TextStyleRefinement, WeakModel, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -5451,9 +5450,7 @@ fn render_inline_blame_entry(
 
     let details = blame.read(cx).details_for_entry(&blame_entry);
 
-    let tooltip = window.new_view(cx, |_, _| {
-        BlameEntryTooltip::new(blame_entry, details, style, workspace)
-    });
+    let tooltip = cx.new_model(|_| BlameEntryTooltip::new(blame_entry, details, style, workspace));
 
     h_flex()
         .id("inline-blame")
@@ -5504,7 +5501,7 @@ fn render_blame_entry(
 
     let workspace = editor.read(cx).workspace.as_ref().map(|(w, _)| w.clone());
 
-    let tooltip = window.new_view(cx, |_, _| {
+    let tooltip = cx.new_model(|_| {
         BlameEntryTooltip::new(blame_entry.clone(), details.clone(), style, workspace)
     });
 

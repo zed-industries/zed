@@ -13,7 +13,7 @@ use editor::{Editor, EditorElement, EditorStyle};
 use extension_host::{ExtensionManifest, ExtensionOperation, ExtensionStore};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
-    actions, uniform_list, Action, AppContext, ClipboardItem, EventEmitter, Flatten, FocusableView,
+    actions, uniform_list, Action, AppContext, ClipboardItem, EventEmitter, Flatten, Focusable,
     InteractiveElement, KeyContext, Model, ModelContext, ParentElement, Render, Styled, Task,
     TextStyle, UniformListScrollHandle, VisualContext, WeakModel, Window,
 };
@@ -37,7 +37,7 @@ use crate::extension_version_selector::{
 actions!(zed, [InstallDevExtension]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(move |workspace: &mut Workspace, window, cx| {
+    cx.observe_new_window_models(move |workspace: &mut Workspace, window, cx| {
         workspace
             .register_action(move |workspace, _: &zed_actions::Extensions, window, cx| {
                 let existing = workspace
@@ -206,11 +206,11 @@ impl ExtensionsPage {
         window: &mut Window,
         cx: &mut ModelContext<Workspace>,
     ) -> Model<Self> {
-        window.new_view(cx, |window: &mut Window, cx: &mut ModelContext<Self>| {
+        cx.new_model(|cx| {
             let store = ExtensionStore::global(cx);
             let workspace_handle = workspace.weak_handle();
             let subscriptions = [
-                cx.observe_in(&store, window, |_, _, window, cx| cx.notify()),
+                cx.observe(&store, |_: &mut Self, _, cx| cx.notify()),
                 cx.subscribe_in(
                     &store,
                     window,
@@ -230,7 +230,7 @@ impl ExtensionsPage {
                 ),
             ];
 
-            let query_editor = window.new_view(cx, |window, cx| {
+            let query_editor = cx.new_model(|cx| {
                 let mut input = Editor::single_line(window, cx);
                 input.set_placeholder_text("Search extensions...", cx);
                 input
@@ -1203,7 +1203,7 @@ impl Render for ExtensionsPage {
 
 impl EventEmitter<ItemEvent> for ExtensionsPage {}
 
-impl FocusableView for ExtensionsPage {
+impl Focusable for ExtensionsPage {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
         self.query_editor.read(cx).focus_handle(cx)
     }

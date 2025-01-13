@@ -13,7 +13,7 @@ use editor::{
 use fs::Fs;
 use futures::{channel::mpsc, SinkExt, StreamExt};
 use gpui::{
-    AppContext, Context, EventEmitter, FocusHandle, FocusableView, Global, Model, ModelContext,
+    AppContext, Context, EventEmitter, FocusHandle, Focusable, Global, Model, ModelContext,
     Subscription, Task, TextStyle, UpdateGlobal, WeakModel,
 };
 use language::Buffer;
@@ -101,7 +101,7 @@ impl TerminalInlineAssistant {
         let prompt_buffer = cx.new_model(|cx| MultiBuffer::singleton(prompt_buffer, cx));
         let codegen = cx.new_model(|_| Codegen::new(terminal, self.telemetry.clone()));
 
-        let prompt_editor = window.new_view(cx, |window, cx| {
+        let prompt_editor = cx.new_model(|cx| {
             PromptEditor::new(
                 assist_id,
                 self.prompt_history.clone(),
@@ -710,7 +710,7 @@ impl Render for PromptEditor {
     }
 }
 
-impl FocusableView for PromptEditor {
+impl Focusable for PromptEditor {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.editor.focus_handle(cx)
     }
@@ -731,7 +731,7 @@ impl PromptEditor {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let prompt_editor = window.new_view(cx, |window, cx| {
+        let prompt_editor = cx.new_model(|cx| {
             let mut editor = Editor::new(
                 EditorMode::AutoHeight {
                     max_lines: Self::MAX_LINES as usize,
@@ -764,7 +764,7 @@ impl PromptEditor {
             id,
             height_in_lines: 1,
             editor: prompt_editor,
-            language_model_selector: window.new_view(cx, |window, cx| {
+            language_model_selector: cx.new_model(|cx| {
                 let fs = fs.clone();
                 LanguageModelSelector::new(
                     move |model, cx| {

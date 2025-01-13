@@ -11,8 +11,8 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::{Editor, EditorEvent};
 use futures::AsyncReadExt;
 use gpui::{
-    div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
-    ModelContext, PromptLevel, Render, Task, Window,
+    div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model, ModelContext,
+    PromptLevel, Render, Task, Window,
 };
 use http_client::HttpClient;
 use language::Buffer;
@@ -83,7 +83,7 @@ pub struct FeedbackModal {
     character_count: i32,
 }
 
-impl FocusableView for FeedbackModal {
+impl Focusable for FeedbackModal {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.feedback_editor.focus_handle(cx)
     }
@@ -176,7 +176,7 @@ impl FeedbackModal {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let email_address_editor = window.new_view(cx, |window, cx| {
+        let email_address_editor = cx.new_model(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Email address (optional)", cx);
 
@@ -187,7 +187,7 @@ impl FeedbackModal {
             editor
         });
 
-        let feedback_editor = window.new_view(cx, |window, cx| {
+        let feedback_editor = cx.new_model(|cx| {
             let mut editor = Editor::for_buffer(buffer, Some(project.clone()), window, cx);
             editor.set_placeholder_text(
                 "You can use markdown to organize your feedback with code and links.",

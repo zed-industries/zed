@@ -11,9 +11,7 @@ use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
 use editor::{actions::SelectAll, MultiBuffer};
 use fs::Fs;
-use gpui::{
-    AppContext, Context, FocusableView, Global, Model, Subscription, UpdateGlobal, WeakModel,
-};
+use gpui::{AppContext, Context, Focusable, Global, Model, Subscription, UpdateGlobal, WeakModel};
 use language::Buffer;
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
@@ -81,7 +79,7 @@ impl TerminalInlineAssistant {
         let context_store = cx.new_model(|_cx| ContextStore::new());
         let codegen = cx.new_model(|_| TerminalCodegen::new(terminal, self.telemetry.clone()));
 
-        let prompt_editor = window.new_view(cx, |window, cx| {
+        let prompt_editor = cx.new_model(|cx| {
             PromptEditor::new_terminal(
                 assist_id,
                 self.prompt_history.clone(),

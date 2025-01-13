@@ -14,7 +14,7 @@ use git::{
     repository::GitFileStatus,
 };
 use gpui::{
-    actions, AnyElement, AnyView, AppContext, EventEmitter, FocusHandle, FocusableView,
+    actions, AnyElement, AnyView, AppContext, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, Model, Render, Subscription, Task, WeakModel,
 };
 use language::{Buffer, BufferRow};
@@ -34,7 +34,8 @@ use crate::{Editor, EditorEvent, DEFAULT_MULTIBUFFER_CONTEXT};
 actions!(project_diff, [Deploy]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(ProjectDiffEditor::register).detach();
+    cx.observe_new_window_models(ProjectDiffEditor::register)
+        .detach();
 }
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
@@ -78,7 +79,7 @@ impl ProjectDiffEditor {
             workspace.activate_item(&existing, true, true, window, cx);
         } else {
             let workspace_handle = cx.model().downgrade();
-            let project_diff = window.new_view(cx, |window, cx| {
+            let project_diff = cx.new_model(|cx| {
                 Self::new(workspace.project().clone(), workspace_handle, window, cx)
             });
             workspace.add_item_to_active_pane(Box::new(project_diff), None, true, window, cx);
@@ -154,7 +155,7 @@ impl ProjectDiffEditor {
 
         let excerpts = cx.new_model(|cx| MultiBuffer::new(project.read(cx).capability()));
 
-        let editor = window.new_view(cx, |window, cx| {
+        let editor = cx.new_model(|cx| {
             let mut diff_display_editor =
                 Editor::for_multibuffer(excerpts.clone(), Some(project.clone()), true, window, cx);
             diff_display_editor.set_expand_all_diff_hunks();
@@ -920,7 +921,7 @@ impl ProjectDiffEditor {
 
 impl EventEmitter<EditorEvent> for ProjectDiffEditor {}
 
-impl FocusableView for ProjectDiffEditor {
+impl Focusable for ProjectDiffEditor {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
@@ -1037,7 +1038,7 @@ impl Item for ProjectDiffEditor {
     where
         Self: Sized,
     {
-        Some(window.new_view(cx, |window, cx| {
+        Some(cx.new_model(|cx| {
             ProjectDiffEditor::new(self.project.clone(), self.workspace.clone(), window, cx)
         }))
     }

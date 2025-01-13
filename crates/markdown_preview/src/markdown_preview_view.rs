@@ -6,7 +6,7 @@ use anyhow::Result;
 use editor::scroll::{Autoscroll, AutoscrollStrategy};
 use editor::{Editor, EditorEvent};
 use gpui::{
-    list, AppContext, ClickEvent, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
+    list, AppContext, ClickEvent, EventEmitter, FocusHandle, Focusable, InteractiveElement,
     IntoElement, ListState, Model, ModelContext, ParentElement, Render, Styled, Subscription, Task,
     WeakModel, Window,
 };
@@ -92,7 +92,7 @@ impl MarkdownPreviewView {
                         pane.add_item(Box::new(view.clone()), false, false, None, window, cx)
                     }
                 });
-                editor.item_focus_handle(cx).focus(window);
+                editor.focus_handle(cx).focus(window);
                 cx.notify();
             }
         });
@@ -147,7 +147,7 @@ impl MarkdownPreviewView {
         window: &mut Window,
         cx: &mut ModelContext<Workspace>,
     ) -> Model<Self> {
-        window.new_view(cx, |window: &mut Window, cx: &mut ModelContext<Self>| {
+        cx.new_model(|cx| {
             let view = cx.model().downgrade();
 
             let list_state = ListState::new(
@@ -156,7 +156,7 @@ impl MarkdownPreviewView {
                 px(1000.),
                 move |ix, window, cx| {
                     if let Some(view) = view.upgrade() {
-                        view.update(cx, |this, cx| {
+                        view.update(cx, |this: &mut Self, cx| {
                             let Some(contents) = &this.contents else {
                                 return div().into_any();
                             };
@@ -479,7 +479,7 @@ impl MarkdownPreviewView {
     }
 }
 
-impl FocusableView for MarkdownPreviewView {
+impl Focusable for MarkdownPreviewView {
     fn focus_handle(&self, _: &AppContext) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }

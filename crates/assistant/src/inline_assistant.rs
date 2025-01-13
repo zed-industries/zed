@@ -25,8 +25,8 @@ use futures::{
 };
 use gpui::{
     anchored, deferred, point, AnyElement, AppContext, ClickEvent, CursorStyle, EventEmitter,
-    FocusHandle, FocusableView, FontWeight, Global, HighlightStyle, Model, ModelContext,
-    Subscription, Task, TextStyle, UpdateGlobal, WeakModel, Window,
+    FocusHandle, Focusable, FontWeight, Global, HighlightStyle, Model, ModelContext, Subscription,
+    Task, TextStyle, UpdateGlobal, WeakModel, Window,
 };
 use language::{Buffer, IndentKind, Point, Selection, TransactionId};
 use language_model::{
@@ -69,7 +69,7 @@ pub fn init(
     cx: &mut AppContext,
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
-    cx.observe_new_views(|_, window, cx| {
+    cx.observe_new_window_models(|_, window, cx| {
         let workspace = cx.model().clone();
         InlineAssistant::update_global(cx, |inline_assistant, cx| {
             inline_assistant.register_workspace(&workspace, window, cx)
@@ -292,7 +292,7 @@ impl InlineAssistant {
             });
 
             let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
-            let prompt_editor = window.new_view(cx, |window, cx| {
+            let prompt_editor = cx.new_model(|cx| {
                 PromptEditor::new(
                     assist_id,
                     gutter_dimensions.clone(),
@@ -402,7 +402,7 @@ impl InlineAssistant {
         });
 
         let gutter_dimensions = Arc::new(Mutex::new(GutterDimensions::default()));
-        let prompt_editor = window.new_view(cx, |window, cx| {
+        let prompt_editor = cx.new_model(|cx| {
             PromptEditor::new(
                 assist_id,
                 gutter_dimensions.clone(),
@@ -1697,9 +1697,9 @@ impl Render for PromptEditor {
     }
 }
 
-impl FocusableView for PromptEditor {
+impl Focusable for PromptEditor {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.editor.item_focus_handle(cx)
+        self.editor.focus_handle(cx)
     }
 }
 
@@ -1720,7 +1720,7 @@ impl PromptEditor {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let prompt_editor = window.new_view(cx, |window, cx| {
+        let prompt_editor = cx.new_model(|cx| {
             let mut editor = Editor::new(
                 EditorMode::AutoHeight {
                     max_lines: Self::MAX_LINES as usize,
@@ -1761,7 +1761,7 @@ impl PromptEditor {
         let mut this = Self {
             id,
             editor: prompt_editor,
-            language_model_selector: window.new_view(cx, |window, cx| {
+            language_model_selector: cx.new_model(|cx| {
                 let fs = fs.clone();
                 LanguageModelSelector::new(
                     move |model, cx| {
@@ -1816,11 +1816,8 @@ impl PromptEditor {
 
     fn unlink(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         let prompt = self.prompt(cx);
-        let focus = self
-            .editor
-            .item_focus_handle(cx)
-            .contains_focused(window, cx);
-        self.editor = window.new_view(cx, |window, cx| {
+        let focus = self.editor.focus_handle(cx).contains_focused(window, cx);
+        self.editor = cx.new_model(|cx| {
             let mut editor = Editor::auto_height(Self::MAX_LINES as usize, window, cx);
             editor.set_soft_wrap_mode(
                 language::language_settings::SoftWrap::EditorWidth,
@@ -1867,7 +1864,7 @@ impl PromptEditor {
     ) {
         self.show_rate_limit_notice = !self.show_rate_limit_notice;
         if self.show_rate_limit_notice {
-            window.focus_view(&self.editor, cx);
+            window.focus(&self.editor.focus_handle(cx));
         }
         cx.notify();
     }
@@ -2141,23 +2138,23 @@ impl PromptEditor {
                     .disabled(disabled || current_index == 0)
                     .shape(IconButtonShape::Square)
                     .tooltip({
-                        let focus_handle = self.editor.item_focus_handle(cx);
+                        let focus_handle = self.editor.focus_handle(cx);
                         move |window, cx| {
-                            window
-                                .new_view(cx, |window, cx| {
-                                    let mut tooltip = Tooltip::new("Previous Alternative")
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &CyclePreviousInlineAssist,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        ));
-                                    if !disabled && current_index != 0 {
-                                        tooltip = tooltip.meta(prev_model_name.clone());
-                                    }
-                                    tooltip
-                                })
-                                .into()
+                            cx.new_model(|cx| {
+                                let mut tooltip = Tooltip::new("Previous Alternative").key_binding(
+                                    KeyBinding::for_action_in(
+                                        &CyclePreviousInlineAssist,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    ),
+                                );
+                                if !disabled && current_index != 0 {
+                                    tooltip = tooltip.meta(prev_model_name.clone());
+                                }
+                                tooltip
+                            })
+                            .into()
                         }
                     })
                     .on_click(cx.listener(|this, _, window, cx| {
@@ -2184,24 +2181,23 @@ impl PromptEditor {
                     .disabled(disabled || current_index == total_models - 1)
                     .shape(IconButtonShape::Square)
                     .tooltip({
-                        let focus_handle = self.editor.item_focus_handle(cx);
+                        let focus_handle = self.editor.focus_handle(cx);
                         move |window, cx| {
-                            window
-                                .new_view(cx, |window, cx| {
-                                    let mut tooltip = Tooltip::new("Next Alternative").key_binding(
-                                        KeyBinding::for_action_in(
-                                            &CycleNextInlineAssist,
-                                            &focus_handle,
-                                            window,
-                                            cx,
-                                        ),
-                                    );
-                                    if !disabled && current_index != total_models - 1 {
-                                        tooltip = tooltip.meta(next_model_name.clone());
-                                    }
-                                    tooltip
-                                })
-                                .into()
+                            cx.new_model(|cx| {
+                                let mut tooltip = Tooltip::new("Next Alternative").key_binding(
+                                    KeyBinding::for_action_in(
+                                        &CycleNextInlineAssist,
+                                        &focus_handle,
+                                        window,
+                                        cx,
+                                    ),
+                                );
+                                if !disabled && current_index != total_models - 1 {
+                                    tooltip = tooltip.meta(next_model_name.clone());
+                                }
+                                tooltip
+                            })
+                            .into()
                         }
                     })
                     .on_click(cx.listener(|this, _, window, cx| {

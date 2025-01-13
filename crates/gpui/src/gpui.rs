@@ -231,20 +231,18 @@ pub trait VisualContext: Context {
     /// Returns the handle of the window associated with this context.
     fn window_handle(&self) -> AnyWindowHandle;
 
-    /// Construct a new view in the window referenced by this context.
-    fn new_view<V>(
+    /// Update a view with the given callback
+    fn update_window_model<T: 'static, R>(
         &mut self,
-        build_view: impl FnOnce(&mut Window, &mut ModelContext<V>) -> V,
-    ) -> Self::Result<Model<V>>
-    where
-        V: 'static + Render;
+        model: &Model<T>,
+        update: impl FnOnce(&mut T, &mut Window, &mut ModelContext<T>) -> R,
+    ) -> Self::Result<R>;
 
     /// Update a view with the given callback
-    fn update_view<V: 'static, R>(
+    fn new_window_model<T: 'static>(
         &mut self,
-        view: &Model<V>,
-        update: impl FnOnce(&mut V, &mut Window, &mut ModelContext<V>) -> R,
-    ) -> Self::Result<R>;
+        build_model: impl FnOnce(&mut Window, &mut ModelContext<'_, T>) -> T,
+    ) -> Self::Result<Model<T>>;
 
     /// Replace the root view of a window with a new view.
     fn replace_root_view<V>(
@@ -254,15 +252,10 @@ pub trait VisualContext: Context {
     where
         V: 'static + Render;
 
-    /// Focus a view in the window, if it implements the [`FocusableView`] trait.
-    fn focus_view<V>(&mut self, view: &Model<V>) -> Self::Result<()>
+    /// Focus a model in the window, if it implements the [`FocusableView`] trait.
+    fn focus<V>(&mut self, model: &Model<V>) -> Self::Result<()>
     where
-        V: FocusableView;
-
-    /// Dismiss a view in the window, if it implements the [`ManagedView`] trait.
-    fn dismiss_view<V>(&mut self, view: &Model<V>) -> Self::Result<()>
-    where
-        V: ManagedView;
+        V: Focusable;
 }
 
 /// A trait that allows models and views to be interchangeable in certain operations

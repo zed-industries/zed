@@ -4,7 +4,7 @@ use cursor_position::LineIndicatorFormat;
 use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, Model, ModelContext, Render, SharedString, Styled, Subscription, VisualContext,
+    Focusable, Model, ModelContext, Render, SharedString, Styled, Subscription, VisualContext,
     Window,
 };
 use settings::Settings;
@@ -16,7 +16,7 @@ use workspace::ModalView;
 
 pub fn init(cx: &mut AppContext) {
     LineIndicatorFormat::register(cx);
-    cx.observe_new_views(GoToLine::register).detach();
+    cx.observe_new_window_models(GoToLine::register).detach();
 }
 
 pub struct GoToLine {
@@ -29,7 +29,7 @@ pub struct GoToLine {
 
 impl ModalView for GoToLine {}
 
-impl FocusableView for GoToLine {
+impl Focusable for GoToLine {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.line_editor.focus_handle(cx)
     }
@@ -69,7 +69,7 @@ impl GoToLine {
         let line = cursor.row + 1;
         let column = cursor.column + 1;
 
-        let line_editor = window.new_view(cx, |window, cx| {
+        let line_editor = cx.new_model(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text(format!("{line}{FILE_ROW_COLUMN_DELIMITER}{column}"), cx);
             editor
@@ -361,7 +361,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         workspace.update_in(cx, |workspace, window, cx| {
-            let cursor_position = window.new_view(cx, |_window, cx| CursorPosition::new(workspace));
+            let cursor_position = cx.new_model(|cx| CursorPosition::new(workspace));
             workspace.status_bar().update(cx, |status_bar, cx| {
                 status_bar.add_right_item(cursor_position, window, cx);
             });

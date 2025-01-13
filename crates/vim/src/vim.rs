@@ -26,8 +26,8 @@ use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
 };
 use gpui::{
-    actions, impl_actions, Action, AppContext, Axis, Entity, EventEmitter, KeyContext,
-    KeystrokeEvent, Model, ModelContext, Render, Subscription, WeakModel, Window,
+    actions, impl_actions, Action, AppContext, Axis, Context as _, Entity, EventEmitter,
+    KeyContext, KeystrokeEvent, Model, ModelContext, Render, Subscription, WeakModel, Window,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -42,7 +42,7 @@ use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
-use ui::{px, IntoElement, VisualContext};
+use ui::{px, IntoElement};
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, ResizeIntent, Workspace};
 
@@ -100,10 +100,12 @@ pub fn init(cx: &mut AppContext) {
     VimSettings::register(cx);
     VimGlobals::register(cx);
 
-    cx.observe_new_views(|editor: &mut Editor, window, cx| Vim::register(editor, window, cx))
-        .detach();
+    cx.observe_new_window_models(|editor: &mut Editor, window, cx| {
+        Vim::register(editor, window, cx)
+    })
+    .detach();
 
-    cx.observe_new_views(|workspace: &mut Workspace, window, _| {
+    cx.observe_new_window_models(|workspace: &mut Workspace, window, _| {
         workspace.register_action(|workspace, _: &ToggleVimMode, window, cx| {
             let fs = workspace.app_state().fs.clone();
             let currently_enabled = Vim::enabled(cx);
@@ -244,7 +246,7 @@ impl Vim {
     pub fn new(window: &mut Window, cx: &mut ModelContext<Editor>) -> Model<Self> {
         let editor = cx.model().clone();
 
-        window.new_view(cx, |window, cx| Vim {
+        cx.new_model(|cx| Vim {
             mode: Mode::Normal,
             last_mode: Mode::Normal,
             temp_mode: false,

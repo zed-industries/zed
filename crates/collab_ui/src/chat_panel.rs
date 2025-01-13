@@ -8,7 +8,7 @@ use db::kvp::KEY_VALUE_STORE;
 use editor::{actions, Editor};
 use gpui::{
     actions, div, list, prelude::*, px, Action, AppContext, AsyncWindowContext, ClipboardItem,
-    CursorStyle, DismissEvent, ElementId, EventEmitter, FocusHandle, FocusableView, FontWeight,
+    CursorStyle, DismissEvent, ElementId, EventEmitter, FocusHandle, Focusable, FontWeight,
     HighlightStyle, ListOffset, ListScrollEvent, ListState, Model, ModelContext, Render, Stateful,
     Subscription, Task, VisualContext, WeakModel, Window,
 };
@@ -37,7 +37,7 @@ const MESSAGE_LOADING_THRESHOLD: usize = 50;
 const CHAT_PANEL_KEY: &str = "ChatPanel";
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, window, _| {
+    cx.observe_new_window_models(|workspace: &mut Workspace, window, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<ChatPanel>(window, cx);
         });
@@ -85,18 +85,18 @@ impl ChatPanel {
         let user_store = workspace.app_state().user_store.clone();
         let languages = workspace.app_state().languages.clone();
 
-        let input_editor = window.new_view(cx, |window, cx| {
+        let input_editor = cx.new_model(|cx| {
             MessageEditor::new(
                 languages.clone(),
                 user_store.clone(),
                 None,
-                window.new_view(cx, |window, cx| Editor::auto_height(4, window, cx)),
+                cx.new_model(|cx| Editor::auto_height(4, window, cx)),
                 window,
                 cx,
             )
         });
 
-        window.new_view(cx, |window: &mut Window, cx: &mut ModelContext<Self>| {
+        cx.new_model(|cx| {
             let view = cx.model().downgrade();
             let message_list = ListState::new(
                 0,
@@ -104,7 +104,7 @@ impl ChatPanel {
                 px(1000.),
                 move |ix, window, cx| {
                     if let Some(view) = view.upgrade() {
-                        view.update(cx, |view, cx| {
+                        view.update(cx, |view: &mut Self, cx| {
                             view.render_message(ix, window, cx).into_any_element()
                         })
                     } else {
@@ -1137,7 +1137,7 @@ impl Render for ChatPanel {
     }
 }
 
-impl FocusableView for ChatPanel {
+impl Focusable for ChatPanel {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
         if self.active_chat.is_some() {
             self.message_editor.read(cx).focus_handle(cx)

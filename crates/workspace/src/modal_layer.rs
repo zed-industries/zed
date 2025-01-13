@@ -1,4 +1,4 @@
-use gpui::{AnyView, DismissEvent, FocusHandle, ManagedView, Model, Subscription};
+use gpui::{AnyView, DismissEvent, FocusHandle, Focusable as _, ManagedView, Model, Subscription};
 use ui::prelude::*;
 
 pub enum DismissDecision {
@@ -82,7 +82,7 @@ impl ModalLayer {
                 return;
             }
         }
-        let new_modal = window.new_view(cx, build_view);
+        let new_modal = cx.new_model(|cx| build_view(window, cx));
         self.show_modal(new_modal, window, cx);
     }
 
@@ -115,7 +115,7 @@ impl ModalLayer {
             focus_handle,
         });
         cx.defer_in(window, move |_, window, cx| {
-            window.focus_view(&new_modal, cx);
+            window.focus(&new_modal.focus_handle(cx));
         });
         cx.notify();
     }

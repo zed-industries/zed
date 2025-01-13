@@ -125,7 +125,7 @@ impl FollowableItem for Editor {
                     multibuffer
                 });
 
-                window.new_view(cx, |window, cx| {
+                cx.new_model(|cx| {
                     let mut editor = Editor::for_multibuffer(
                         multibuffer,
                         Some(project.clone()),
@@ -709,7 +709,7 @@ impl Item for Editor {
     where
         Self: Sized,
     {
-        Some(window.new_view(cx, |window, cx| self.clone(window, cx)))
+        Some(cx.new_model(|cx| self.clone(window, cx)))
     }
 
     fn set_nav_history(
@@ -1070,7 +1070,7 @@ impl SerializableItem for Editor {
                     })?;
 
                     cx.update(|window, cx| {
-                        window.new_view(cx, |window, cx| {
+                        cx.new_model(|cx| {
                             let mut editor = Editor::for_buffer(buffer, Some(project), window, cx);
 
                             editor.read_scroll_position_from_db(item_id, workspace_id, window, cx);
@@ -1124,7 +1124,7 @@ impl SerializableItem for Editor {
                             }
 
                             cx.update(|window, cx| {
-                                window.new_view(cx, |window, cx| {
+                                cx.new_model(|cx| {
                                     let mut editor =
                                         Editor::for_buffer(buffer, Some(project), window, cx);
 

@@ -467,8 +467,8 @@ impl PlatformInput {
 mod test {
 
     use crate::{
-        self as gpui, div, FocusHandle, InteractiveElement, IntoElement, KeyBinding, Keystroke,
-        ModelContext, ParentElement, Render, TestAppContext, VisualContext, Window,
+        self as gpui, div, Context, FocusHandle, InteractiveElement, IntoElement, KeyBinding,
+        Keystroke, ModelContext, ParentElement, Render, TestAppContext, VisualContext, Window,
     };
 
     struct TestView {
@@ -507,7 +507,7 @@ mod test {
     fn test_on_events(cx: &mut TestAppContext) {
         let window = cx.update(|cx| {
             cx.open_window(Default::default(), |window, cx| {
-                window.new_view(cx, |window, cx| TestView {
+                cx.new_model(|cx| TestView {
                     saw_key_down: false,
                     saw_action: false,
                     focus_handle: cx.focus_handle(),

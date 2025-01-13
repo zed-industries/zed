@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use fuzzy::StringMatchCandidate;
-use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Model, Task, WeakModel};
+use gpui::{AppContext, DismissEvent, FocusHandle, Focusable, Model, Task, WeakModel};
 use picker::{Picker, PickerDelegate};
 use ui::{prelude::*, ListItem};
 
@@ -30,13 +30,13 @@ impl ThreadContextPicker {
             context_store,
             confirm_behavior,
         );
-        let picker = window.new_view(cx, |window, cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new_model(|cx| Picker::uniform_list(delegate, window, cx));
 
         ThreadContextPicker { picker }
     }
 }
 
-impl FocusableView for ThreadContextPicker {
+impl Focusable for ThreadContextPicker {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }

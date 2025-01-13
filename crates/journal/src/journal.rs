@@ -58,7 +58,7 @@ impl settings::Settings for JournalSettings {
 pub fn init(_: Arc<AppState>, cx: &mut AppContext) {
     JournalSettings::register(cx);
 
-    cx.observe_new_views(
+    cx.observe_new_window_models(
         |workspace: &mut Workspace, _window: &mut Window, _cx: &mut ModelContext<Workspace>| {
             workspace.register_action(|workspace, _: &NewJournalEntry, window, cx| {
                 new_journal_entry(workspace, window, cx);

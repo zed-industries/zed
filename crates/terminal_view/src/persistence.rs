@@ -2,7 +2,7 @@ use anyhow::Result;
 use async_recursion::async_recursion;
 use collections::HashSet;
 use futures::{stream::FuturesUnordered, StreamExt as _};
-use gpui::{AsyncWindowContext, Axis, Model, Task, WeakModel};
+use gpui::{AsyncWindowContext, Axis, Context as _, Model, Task, WeakModel};
 use project::{terminals::TerminalKind, Project};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
@@ -102,7 +102,7 @@ pub(crate) fn deserialize_terminal_panel(
 ) -> Task<anyhow::Result<Model<TerminalPanel>>> {
     window.spawn(cx, move |mut cx| async move {
         let terminal_panel = workspace.update_in(&mut cx, |workspace, window, cx| {
-            window.new_view(cx, |window, cx| {
+            cx.new_model(|cx| {
                 let mut panel = TerminalPanel::new(workspace, window, cx);
                 panel.height = serialized_panel.height.map(|h| h.round());
                 panel.width = serialized_panel.width.map(|w| w.round());
@@ -263,7 +263,7 @@ async fn deserialize_pane_group(
             if let Some(terminal) = terminal {
                 let terminal = terminal.await.ok()?;
                 pane.update_in(cx, |pane, window, cx| {
-                    let terminal_view = Box::new(window.new_view(cx, |window, cx| {
+                    let terminal_view = Box::new(cx.new_model(|cx| {
                         TerminalView::new(
                             terminal,
                             workspace.clone(),

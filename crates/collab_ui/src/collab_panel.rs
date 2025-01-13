@@ -13,10 +13,9 @@ use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, anchored, canvas, deferred, div, fill, list, point, prelude::*, px, AnyElement,
     AppContext, AsyncWindowContext, Bounds, ClickEvent, ClipboardItem, DismissEvent, Div,
-    EventEmitter, FocusHandle, FocusableView, FontStyle, InteractiveElement, IntoElement,
-    ListOffset, ListState, Model, ModelContext, MouseDownEvent, ParentElement, Pixels, Point,
-    PromptLevel, Render, SharedString, Styled, Subscription, Task, TextStyle, VisualContext,
-    WeakModel, Window,
+    EventEmitter, FocusHandle, Focusable, FontStyle, InteractiveElement, IntoElement, ListOffset,
+    ListState, Model, ModelContext, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel,
+    Render, SharedString, Styled, Subscription, Task, TextStyle, VisualContext, WeakModel, Window,
 };
 use menu::{Cancel, Confirm, SecondaryConfirm, SelectNext, SelectPrev};
 use project::{Fs, Project};
@@ -63,7 +62,7 @@ struct ChannelMoveClipboard {
 const COLLABORATION_PANEL_KEY: &str = "CollaborationPanel";
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, _, _| {
+    cx.observe_new_window_models(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<CollabPanel>(window, cx);
         });
@@ -196,8 +195,8 @@ impl CollabPanel {
         window: &mut Window,
         cx: &mut ModelContext<Workspace>,
     ) -> Model<Self> {
-        window.new_view(cx, |window, cx| {
-            let filter_editor = window.new_view(cx, |window, cx| {
+        cx.new_model(|cx| {
+            let filter_editor = cx.new_model(|cx| {
                 let mut editor = Editor::single_line(window, cx);
                 editor.set_placeholder_text("Filter...", cx);
                 editor
@@ -224,7 +223,7 @@ impl CollabPanel {
             )
             .detach();
 
-            let channel_name_editor = window.new_view(cx, Editor::single_line);
+            let channel_name_editor = cx.new_model(|cx| Editor::single_line(window, cx));
 
             cx.subscribe_in(
                 &channel_name_editor,
@@ -1153,7 +1152,7 @@ impl CollabPanel {
             context_menu
         });
 
-        window.focus_view(&context_menu, cx);
+        window.focus(&context_menu.focus_handle(cx));
         let subscription = cx.subscribe_in(
             &context_menu,
             window,
@@ -1325,7 +1324,7 @@ impl CollabPanel {
             context_menu
         });
 
-        window.focus_view(&context_menu, cx);
+        window.focus(&context_menu.focus_handle(cx));
         let subscription = cx.subscribe_in(
             &context_menu,
             window,
@@ -1388,7 +1387,7 @@ impl CollabPanel {
             })
         });
 
-        window.focus_view(&context_menu, cx);
+        window.focus(&context_menu.focus_handle(cx));
         let subscription = cx.subscribe_in(
             &context_menu,
             window,
@@ -1424,7 +1423,7 @@ impl CollabPanel {
 
     fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
         if self.take_editing_state(window, cx) {
-            window.focus_view(&self.filter_editor, cx);
+            window.focus(&self.filter_editor.focus_handle(cx));
         } else if !self.reset_filter_editor_text(window, cx) {
             self.focus_handle.focus(window);
         }
@@ -1742,7 +1741,7 @@ impl CollabPanel {
         });
         self.update_entries(false, window, cx);
         self.select_channel_editor();
-        window.focus_view(&self.channel_name_editor, cx);
+        window.focus(&self.channel_name_editor.focus_handle(cx));
         cx.notify();
     }
 
@@ -1767,7 +1766,7 @@ impl CollabPanel {
         });
         self.update_entries(false, window, cx);
         self.select_channel_editor();
-        window.focus_view(&self.channel_name_editor, cx);
+        window.focus(&self.channel_name_editor.focus_handle(cx));
         cx.notify();
     }
 
@@ -1821,7 +1820,7 @@ impl CollabPanel {
                 editor.set_text(channel.name.clone(), window, cx);
                 editor.select_all(&Default::default(), window, cx);
             });
-            window.focus_view(&self.channel_name_editor, cx);
+            window.focus(&self.channel_name_editor.focus_handle(cx));
             self.update_entries(false, window, cx);
             self.select_channel_editor();
         }
@@ -2735,7 +2734,7 @@ impl CollabPanel {
             .w_full()
             .when(!channel.is_root_channel(), |el| {
                 el.on_drag(channel.clone(), move |channel, _, window, cx| {
-                    window.new_view(cx, |_, _| DraggedChannelView {
+                    cx.new_model(|cx| DraggedChannelView {
                         channel: channel.clone(),
                         width,
                     })
@@ -2861,13 +2860,12 @@ impl CollabPanel {
             .tooltip({
                 let channel_store = self.channel_store.clone();
                 move |window, cx| {
-                    window
-                        .new_view(cx, |_, _| JoinChannelTooltip {
-                            channel_store: channel_store.clone(),
-                            channel_id,
-                            has_notes_notification,
-                        })
-                        .into()
+                    cx.new_model(|_| JoinChannelTooltip {
+                        channel_store: channel_store.clone(),
+                        channel_id,
+                        has_notes_notification,
+                    })
+                    .into()
                 }
             })
     }
@@ -3037,7 +3035,7 @@ impl Panel for CollabPanel {
     }
 }
 
-impl FocusableView for CollabPanel {
+impl Focusable for CollabPanel {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
         self.filter_editor.focus_handle(cx).clone()
     }

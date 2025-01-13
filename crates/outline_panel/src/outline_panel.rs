@@ -24,8 +24,8 @@ use file_icons::FileIcons;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions, anchored, deferred, div, point, px, size, uniform_list, Action, AnyElement,
-    AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent, Div,
-    ElementId, EventEmitter, FocusHandle, FocusableView, HighlightStyle, InteractiveElement,
+    AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, Context as _, DismissEvent,
+    Div, ElementId, EventEmitter, FocusHandle, Focusable, HighlightStyle, InteractiveElement,
     IntoElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model, ModelContext,
     MouseButton, MouseDownEvent, ParentElement, Pixels, Point, Render, ScrollStrategy,
     SharedString, Stateful, StatefulInteractiveElement as _, Styled, Subscription, Task,
@@ -580,7 +580,7 @@ pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     init_settings(cx);
     file_icons::init(assets, cx);
 
-    cx.observe_new_views(|workspace: &mut Workspace, _, _| {
+    cx.observe_new_window_models(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<OutlinePanel>(window, cx);
         });
@@ -625,8 +625,8 @@ impl OutlinePanel {
     ) -> Model<Self> {
         let project = workspace.project().clone();
         let workspace_handle = cx.model().downgrade();
-        let outline_panel = window.new_view(cx, |window, cx| {
-            let filter_editor = window.new_view(cx, |window, cx| {
+        let outline_panel = cx.new_model(|cx| {
+            let filter_editor = cx.new_model(|cx| {
                 let mut editor = Editor::single_line(window, cx);
                 editor.set_placeholder_text("Filter...", cx);
                 editor
@@ -674,7 +674,7 @@ impl OutlinePanel {
                 },
             );
 
-            let icons_subscription = cx.observe_global_in::<FileIcons>(window, |_, window, cx| {
+            let icons_subscription = cx.observe_global::<FileIcons>(|_, cx| {
                 cx.notify();
             });
 
@@ -776,7 +776,7 @@ impl OutlinePanel {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("OutlinePanel");
         dispatch_context.add("menu");
-        let identifier = if self.filter_editor.item_focus_handle(cx).is_focused(window) {
+        let identifier = if self.filter_editor.focus_handle(cx).is_focused(window) {
             "editing"
         } else {
             "not_editing"
@@ -833,7 +833,7 @@ impl OutlinePanel {
     }
 
     fn open(&mut self, _: &Open, window: &mut Window, cx: &mut ModelContext<Self>) {
-        if self.filter_editor.item_focus_handle(cx).is_focused(window) {
+        if self.filter_editor.focus_handle(cx).is_focused(window) {
             cx.propagate()
         } else if let Some(selected_entry) = self.selected_entry().cloned() {
             self.toggle_expanded(&selected_entry, window, cx);
@@ -842,10 +842,10 @@ impl OutlinePanel {
     }
 
     fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
-        if self.filter_editor.item_focus_handle(cx).is_focused(window) {
+        if self.filter_editor.focus_handle(cx).is_focused(window) {
             self.focus_handle.focus(window);
         } else {
-            self.filter_editor.item_focus_handle(cx).focus(window);
+            self.filter_editor.focus_handle(cx).focus(window);
         }
 
         if self.context_menu.is_some() {
@@ -860,7 +860,7 @@ impl OutlinePanel {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        if self.filter_editor.item_focus_handle(cx).is_focused(window) {
+        if self.filter_editor.focus_handle(cx).is_focused(window) {
             cx.propagate()
         } else if let Some((active_editor, selected_entry)) =
             self.active_editor().zip(self.selected_entry().cloned())
@@ -876,7 +876,7 @@ impl OutlinePanel {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        if self.filter_editor.item_focus_handle(cx).is_focused(window) {
+        if self.filter_editor.focus_handle(cx).is_focused(window) {
             cx.propagate()
         } else if let Some((active_editor, selected_entry)) =
             self.active_editor().zip(self.selected_entry().cloned())
@@ -1022,7 +1022,7 @@ impl OutlinePanel {
                 }
 
                 if change_focus {
-                    active_editor.item_focus_handle(cx).focus(window);
+                    active_editor.focus_handle(cx).focus(window);
                 } else {
                     self.focus_handle.focus(window);
                 }
@@ -1258,7 +1258,7 @@ impl OutlinePanel {
                 .action("Copy Path", Box::new(CopyPath))
                 .action("Copy Relative Path", Box::new(CopyRelativePath))
         });
-        window.focus_view(&context_menu, cx);
+        window.focus(&context_menu.focus_handle(cx));
         let subscription = cx.subscribe_in(
             &context_menu,
             window,
@@ -4673,9 +4673,9 @@ impl Panel for OutlinePanel {
     }
 }
 
-impl FocusableView for OutlinePanel {
+impl Focusable for OutlinePanel {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.filter_editor.item_focus_handle(cx).clone()
+        self.filter_editor.focus_handle(cx).clone()
     }
 }
 

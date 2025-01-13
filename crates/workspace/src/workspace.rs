@@ -34,7 +34,7 @@ use gpui::{
     action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size,
     transparent_black, Action, AnyView, AnyWeakView, AppContext, AsyncAppContext,
     AsyncWindowContext, Bounds, CursorStyle, Decorations, DragMoveEvent, Entity as _, EntityId,
-    EventEmitter, Flatten, FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke,
+    EventEmitter, Flatten, FocusHandle, Focusable, Global, Hsla, KeyContext, Keystroke,
     ManagedView, Model, ModelContext, MouseButton, PathPromptOptions, Point, PromptLevel, Render,
     ResizeEdge, Size, Stateful, Subscription, Task, Tiling, WeakModel, WindowBounds, WindowHandle,
     WindowId, WindowOptions,
@@ -413,9 +413,9 @@ pub fn register_project_item<I: ProjectItem>(cx: &mut AppContext) {
                 project_item.read_with(&cx, project::ProjectItem::entry_id)?;
             let build_workspace_item =
                 Box::new(|window: &mut Window, cx: &mut ModelContext<Pane>| {
-                    Box::new(window.new_view(cx, |window, cx| {
-                        I::for_project_item(project, project_item, window, cx)
-                    })) as Box<dyn ItemHandle>
+                    Box::new(
+                        cx.new_model(|cx| I::for_project_item(project, project_item, window, cx)),
+                    ) as Box<dyn ItemHandle>
                 }) as Box<_>;
             Ok((project_entry_id, build_workspace_item))
         }))
@@ -931,7 +931,7 @@ impl Workspace {
         let weak_handle = cx.model().downgrade();
         let pane_history_timestamp = Arc::new(AtomicUsize::new(0));
 
-        let center_pane = window.new_view(cx, |window, cx| {
+        let center_pane = cx.new_model(|cx| {
             let mut center_pane = Pane::new(
                 weak_handle.clone(),
                 project.clone(),
@@ -947,7 +947,8 @@ impl Workspace {
         cx.subscribe_in(&center_pane, window, Self::handle_pane_event)
             .detach();
 
-        window.focus_view(&center_pane, cx);
+        window.focus(&center_pane.focus_handle(cx));
+
         cx.emit(Event::PaneAdded(center_pane.clone()));
 
         let window_handle = window.window_handle().downcast::<Workspace>().unwrap();
@@ -988,16 +989,12 @@ impl Workspace {
         let left_dock = Dock::new(DockPosition::Left, window, cx);
         let bottom_dock = Dock::new(DockPosition::Bottom, window, cx);
         let right_dock = Dock::new(DockPosition::Right, window, cx);
-        let left_dock_buttons = window.new_view(cx, |window, cx| {
-            PanelButtons::new(left_dock.clone(), window, cx)
-        });
-        let bottom_dock_buttons = window.new_view(cx, |window, cx| {
-            PanelButtons::new(bottom_dock.clone(), window, cx)
-        });
-        let right_dock_buttons = window.new_view(cx, |window, cx| {
-            PanelButtons::new(right_dock.clone(), window, cx)
-        });
-        let status_bar = window.new_view(cx, |window, cx| {
+        let left_dock_buttons = cx.new_model(|cx| PanelButtons::new(left_dock.clone(), window, cx));
+        let bottom_dock_buttons =
+            cx.new_model(|cx| PanelButtons::new(bottom_dock.clone(), window, cx));
+        let right_dock_buttons =
+            cx.new_model(|cx| PanelButtons::new(right_dock.clone(), window, cx));
+        let status_bar = cx.new_model(|cx| {
             let mut status_bar = StatusBar::new(&center_pane.clone(), window, cx);
             status_bar.add_left_item(left_dock_buttons, window, cx);
             status_bar.add_right_item(right_dock_buttons, window, cx);
@@ -1005,7 +1002,7 @@ impl Workspace {
             status_bar
         });
 
-        let modal_layer = window.new_view(cx, |_, _| ModalLayer::new());
+        let modal_layer = cx.new_model(|_| ModalLayer::new());
 
         let session_id = app_state.session.read(cx).id().to_owned();
 
@@ -1227,7 +1224,7 @@ impl Workspace {
             }
             let window = if let Some(window) = requesting_window {
                 cx.update_window(window.into(), |_, window, cx| {
-                    window.replace_root_view(cx, |window, cx| {
+                    window.replace_root_model(cx, |window, cx| {
                         Workspace::new(
                             Some(workspace_id),
                             project_handle.clone(),
@@ -1270,7 +1267,7 @@ impl Workspace {
                     let app_state = app_state.clone();
                     let project_handle = project_handle.clone();
                     move |window, cx| {
-                        window.new_view(cx, |window, cx| {
+                        cx.new_model(|cx| {
                             let mut workspace = Workspace::new(
                                 Some(workspace_id),
                                 project_handle,
@@ -2610,7 +2607,7 @@ impl Workspace {
     }
 
     fn add_pane(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> Model<Pane> {
-        let pane = window.new_view(cx, |window, cx| {
+        let pane = cx.new_model(|cx| {
             let mut pane = Pane::new(
                 self.weak_handle(),
                 self.project.clone(),
@@ -2626,7 +2623,9 @@ impl Workspace {
         cx.subscribe_in(&pane, window, Self::handle_pane_event)
             .detach();
         self.panes.push(pane.clone());
-        window.focus_view(&pane, cx);
+
+        window.focus(&pane.focus_handle(cx));
+
         cx.emit(Event::PaneAdded(pane.clone()));
         pane
     }
@@ -2946,9 +2945,8 @@ impl Workspace {
             return item;
         }
 
-        let item = window.new_view(cx, |window, cx| {
-            T::for_project_item(self.project().clone(), project_item, window, cx)
-        });
+        let item = cx
+            .new_model(|cx| T::for_project_item(self.project().clone(), project_item, window, cx));
         let item_id = item.item_id();
         let mut destination_index = None;
         pane.update(cx, |pane, cx| {
@@ -3020,7 +3018,7 @@ impl Workspace {
     ) {
         let panes = self.center.panes();
         if let Some(pane) = panes.get(action.0).map(|p| (*p).clone()) {
-            window.focus_view(&pane, cx);
+            window.focus(&pane.focus_handle(cx));
         } else {
             self.split_and_clone(self.active_pane.clone(), SplitDirection::Right, window, cx);
         }
@@ -3050,7 +3048,7 @@ impl Workspace {
         if let Some(ix) = panes.iter().position(|pane| **pane == self.active_pane) {
             let next_ix = (ix + 1) % panes.len();
             let next_pane = panes[next_ix].clone();
-            window.focus_view(&next_pane, cx);
+            window.focus(&next_pane.focus_handle(cx));
         }
     }
 
@@ -3059,7 +3057,7 @@ impl Workspace {
         if let Some(ix) = panes.iter().position(|pane| **pane == self.active_pane) {
             let prev_ix = cmp::min(ix.wrapping_sub(1), panes.len() - 1);
             let prev_pane = panes[prev_ix].clone();
-            window.focus_view(&prev_pane, cx);
+            window.focus(&prev_pane.focus_handle(cx));
         }
     }
 
@@ -3152,7 +3150,9 @@ impl Workspace {
         };
 
         match target {
-            Some(ActivateInDirectionTarget::Pane(pane)) => window.focus_view(&pane, cx),
+            Some(ActivateInDirectionTarget::Pane(pane)) => {
+                window.focus(&pane.focus_handle(cx));
+            }
             Some(ActivateInDirectionTarget::Dock(dock)) => {
                 dock.update(cx, |dock, cx| {
                     if let Some(panel) = dock.active_panel() {
@@ -3691,7 +3691,8 @@ impl Workspace {
 
         // if you're already following, find the right pane and focus it.
         if let Some(follower_state) = self.follower_states.get(&leader_id) {
-            window.focus_view(follower_state.pane(), cx);
+            window.focus(&follower_state.pane().focus_handle(cx));
+
             return;
         }
 
@@ -4278,9 +4279,7 @@ impl Workspace {
             }
         }
 
-        Some(window.new_view(cx, |window, cx| {
-            SharedScreen::new(track, peer_id, user.clone(), window, cx)
-        }))
+        Some(cx.new_model(|cx| SharedScreen::new(track, peer_id, user.clone(), window, cx)))
     }
 
     pub fn on_window_activation_changed(
@@ -5126,7 +5125,7 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
         .log_err();
 }
 
-impl FocusableView for Workspace {
+impl Focusable for Workspace {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.active_pane.focus_handle(cx)
     }
@@ -6071,7 +6070,7 @@ pub fn open_ssh_project(
         }
 
         cx.update_window(window.into(), |_, window, cx| {
-            window.replace_root_view(cx, |window, cx| {
+            window.replace_root_model(cx, |window, cx| {
                 let mut workspace =
                     Workspace::new(Some(workspace_id), project, app_state.clone(), window, cx);
 
@@ -6193,7 +6192,7 @@ pub fn join_in_room_project(
                 let mut options = (app_state.build_window_options)(None, cx);
                 options.window_bounds = window_bounds_override.map(WindowBounds::Windowed);
                 cx.open_window(options, |window, cx| {
-                    window.new_view(cx, |window, cx| {
+                    cx.new_model(|cx| {
                         Workspace::new(Default::default(), project, app_state.clone(), window, cx)
                     })
                 })
@@ -6651,7 +6650,7 @@ mod tests {
     };
     use fs::FakeFs;
     use gpui::{
-        px, DismissEvent, Empty, EventEmitter, FocusHandle, FocusableView, Render, TestAppContext,
+        px, DismissEvent, Empty, EventEmitter, FocusHandle, Focusable, Render, TestAppContext,
         UpdateGlobal, VisualTestContext,
     };
     use project::{Project, ProjectEntryId};
@@ -6668,7 +6667,7 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         // Adding an item with no ambiguity renders the tab without detail.
-        let item1 = cx.new_view(|window, cx| {
+        let item1 = cx.new_window_model(|window, cx| {
             let mut item = TestItem::new(window, cx);
             item.tab_descriptions = Some(vec!["c", "b1/c", "a/b1/c"]);
             item
@@ -6680,7 +6679,7 @@ mod tests {
 
         // Adding an item that creates ambiguity increases the level of detail on
         // both tabs.
-        let item2 = cx.new_view(|window, cx| {
+        let item2 = cx.new_window_model(|window, cx| {
             let mut item = TestItem::new(window, cx);
             item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
             item
@@ -6694,7 +6693,7 @@ mod tests {
         // Adding an item that creates ambiguity increases the level of detail only
         // on the ambiguous tabs. In this case, the ambiguity can't be resolved so
         // we stop at the highest detail available.
-        let item3 = cx.new_view(|window, cx| {
+        let item3 = cx.new_window_model(|window, cx| {
             let mut item = TestItem::new(window, cx);
             item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
             item
@@ -6736,10 +6735,10 @@ mod tests {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
 
-        let item1 = cx.new_view(|window, cx| {
+        let item1 = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx).with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
         });
-        let item2 = cx.new_view(|window, cx| {
+        let item2 = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx).with_project_items(&[TestProjectItem::new(2, "two.txt", cx)])
         });
 
@@ -6814,7 +6813,7 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         // When there are no dirty items, there's nothing to do.
-        let item1 = cx.new_view(TestItem::new);
+        let item1 = cx.new_window_model(TestItem::new);
         workspace.update_in(cx, |w, window, cx| {
             w.add_item_to_active_pane(Box::new(item1.clone()), None, true, window, cx)
         });
@@ -6825,8 +6824,8 @@ mod tests {
 
         // When there are dirty untitled items, prompt to save each one. If the user
         // cancels any prompt, then abort.
-        let item2 = cx.new_view(|window, cx| TestItem::new(window, cx).with_dirty(true));
-        let item3 = cx.new_view(|window, cx| {
+        let item2 = cx.new_window_model(|window, cx| TestItem::new(window, cx).with_dirty(true));
+        let item3 = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_dirty(true)
                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
@@ -6864,12 +6863,12 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         // When there are dirty untitled items, but they can serialize, then there is no prompt.
-        let item1 = cx.new_view(|window, cx| {
+        let item1 = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_dirty(true)
                 .with_serialize(|| Some(Task::ready(Ok(()))))
         });
-        let item2 = cx.new_view(|window, cx| {
+        let item2 = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_dirty(true)
                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
@@ -6895,24 +6894,24 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
-        let item1 = cx.new_view(|window, cx| {
+        let item1 = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_dirty(true)
                 .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
         });
-        let item2 = cx.new_view(|window, cx| {
+        let item2 = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_dirty(true)
                 .with_conflict(true)
                 .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
         });
-        let item3 = cx.new_view(|window, cx| {
+        let item3 = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_dirty(true)
                 .with_conflict(true)
                 .with_project_items(&[dirty_project_item(3, "3.txt", cx)])
         });
-        let item4 = cx.new_view(|window, cx| {
+        let item4 = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_dirty(true)
                 .with_project_items(&[{
@@ -7009,7 +7008,7 @@ mod tests {
         // workspace items with multiple project entries.
         let single_entry_items = (0..=4)
             .map(|project_entry_id| {
-                cx.new_view(|window, cx| {
+                cx.new_window_model(|window, cx| {
                     TestItem::new(window, cx)
                         .with_dirty(true)
                         .with_project_items(&[dirty_project_item(
@@ -7020,7 +7019,7 @@ mod tests {
                 })
             })
             .collect::<Vec<_>>();
-        let item_2_3 = cx.new_view(|window, cx| {
+        let item_2_3 = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_dirty(true)
                 .with_singleton(false)
@@ -7029,7 +7028,7 @@ mod tests {
                     single_entry_items[3].read(cx).project_items[0].clone(),
                 ])
         });
-        let item_3_4 = cx.new_view(|window, cx| {
+        let item_3_4 = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_dirty(true)
                 .with_singleton(false)
@@ -7067,7 +7066,7 @@ mod tests {
             left_pane
         });
 
-        cx.focus_view(&left_pane);
+        cx.focus(&left_pane);
 
         // When closing all of the items in the left pane, we should be prompted twice:
         // once for project entry 0, and once for project entry 2. Project entries 1,
@@ -7118,7 +7117,7 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
-        let item = cx.new_view(|window, cx| {
+        let item = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
         let item_id = item.entity_id();
@@ -7242,7 +7241,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
-        let item = cx.new_view(|window, cx| {
+        let item = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
@@ -7299,9 +7298,7 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         let panel = workspace.update_in(cx, |workspace, window, cx| {
-            let panel = window.new_view(cx, |window, cx| {
-                TestPanel::new(DockPosition::Right, window, cx)
-            });
+            let panel = cx.new_model(|cx| TestPanel::new(DockPosition::Right, window, cx));
             workspace.add_panel(panel.clone(), window, cx);
 
             workspace
@@ -7313,7 +7310,7 @@ mod tests {
 
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
         pane.update_in(cx, |pane, window, cx| {
-            let item = window.new_view(cx, TestItem::new);
+            let item = cx.new_model(|cx| TestItem::new(window, cx));
             pane.add_item(Box::new(item), true, true, None, window, cx);
         });
 
@@ -7461,27 +7458,27 @@ mod tests {
         // |        bottom         |
         // +-----------------------+
 
-        let top_item = cx.new_view(|window, cx| {
+        let top_item = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx).with_project_items(&[TestProjectItem::new(1, "top.txt", cx)])
         });
-        let bottom_item = cx.new_view(|window, cx| {
+        let bottom_item = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx).with_project_items(&[TestProjectItem::new(
                 2,
                 "bottom.txt",
                 cx,
             )])
         });
-        let left_item = cx.new_view(|window, cx| {
+        let left_item = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx).with_project_items(&[TestProjectItem::new(3, "left.txt", cx)])
         });
-        let right_item = cx.new_view(|window, cx| {
+        let right_item = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx).with_project_items(&[TestProjectItem::new(
                 4,
                 "right.txt",
                 cx,
             )])
         });
-        let center_item = cx.new_view(|window, cx| {
+        let center_item = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx).with_project_items(&[TestProjectItem::new(
                 5,
                 "center.txt",
@@ -7634,7 +7631,7 @@ mod tests {
         workspace: &Model<Workspace>,
         item_id: u64,
     ) -> Model<TestItem> {
-        let item = cx.new_view(|window, cx| {
+        let item = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx).with_project_items(&[TestProjectItem::new(
                 item_id,
                 "item{item_id}.txt",
@@ -7718,7 +7715,7 @@ mod tests {
 
     impl EventEmitter<DismissEvent> for TestModal {}
 
-    impl FocusableView for TestModal {
+    impl Focusable for TestModal {
         fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
             self.0.clone()
         }
@@ -7746,14 +7743,10 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
         let (panel_1, panel_2) = workspace.update_in(cx, |workspace, window, cx| {
-            let panel_1 = window.new_view(cx, |window, cx| {
-                TestPanel::new(DockPosition::Left, window, cx)
-            });
+            let panel_1 = cx.new_model(|cx| TestPanel::new(DockPosition::Left, window, cx));
             workspace.add_panel(panel_1.clone(), window, cx);
             workspace.toggle_dock(DockPosition::Left, window, cx);
-            let panel_2 = window.new_view(cx, |window, cx| {
-                TestPanel::new(DockPosition::Right, window, cx)
-            });
+            let panel_2 = cx.new_model(|cx| TestPanel::new(DockPosition::Right, window, cx));
             workspace.add_panel(panel_2.clone(), window, cx);
             workspace.toggle_dock(DockPosition::Right, window, cx);
 
@@ -7985,19 +7978,19 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
-        let dirty_regular_buffer = cx.new_view(|window, cx| {
+        let dirty_regular_buffer = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_dirty(true)
                 .with_label("1.txt")
                 .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
         });
-        let dirty_regular_buffer_2 = cx.new_view(|window, cx| {
+        let dirty_regular_buffer_2 = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_dirty(true)
                 .with_label("2.txt")
                 .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
         });
-        let dirty_multi_buffer_with_both = cx.new_view(|window, cx| {
+        let dirty_multi_buffer_with_both = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_dirty(true)
                 .with_singleton(false)
@@ -8131,25 +8124,25 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
-        let dirty_regular_buffer = cx.new_view(|window, cx| {
+        let dirty_regular_buffer = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_dirty(true)
                 .with_label("1.txt")
                 .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
         });
-        let dirty_regular_buffer_2 = cx.new_view(|window, cx| {
+        let dirty_regular_buffer_2 = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_dirty(true)
                 .with_label("2.txt")
                 .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
         });
-        let clear_regular_buffer = cx.new_view(|window, cx| {
+        let clear_regular_buffer = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_label("3.txt")
                 .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
         });
 
-        let dirty_multi_buffer_with_both = cx.new_view(|window, cx| {
+        let dirty_multi_buffer_with_both = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_dirty(true)
                 .with_singleton(false)
@@ -8236,25 +8229,25 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
-        let dirty_regular_buffer = cx.new_view(|window, cx| {
+        let dirty_regular_buffer = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_dirty(true)
                 .with_label("1.txt")
                 .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
         });
-        let dirty_regular_buffer_2 = cx.new_view(|window, cx| {
+        let dirty_regular_buffer_2 = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_dirty(true)
                 .with_label("2.txt")
                 .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
         });
-        let clear_regular_buffer = cx.new_view(|window, cx| {
+        let clear_regular_buffer = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_label("3.txt")
                 .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
         });
 
-        let dirty_multi_buffer_with_both = cx.new_view(|window, cx| {
+        let dirty_multi_buffer_with_both = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_dirty(true)
                 .with_singleton(false)
@@ -8319,25 +8312,25 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
-        let dirty_regular_buffer = cx.new_view(|window, cx| {
+        let dirty_regular_buffer = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_dirty(true)
                 .with_label("1.txt")
                 .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
         });
-        let dirty_regular_buffer_2 = cx.new_view(|window, cx| {
+        let dirty_regular_buffer_2 = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_dirty(true)
                 .with_label("2.txt")
                 .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
         });
-        let clear_regular_buffer = cx.new_view(|window, cx| {
+        let clear_regular_buffer = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_label("3.txt")
                 .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
         });
 
-        let dirty_multi_buffer = cx.new_view(|window, cx| {
+        let dirty_multi_buffer = cx.new_window_model(|window, cx| {
             TestItem::new(window, cx)
                 .with_dirty(true)
                 .with_singleton(false)
@@ -8461,7 +8454,7 @@ mod tests {
             type Event = ();
         }
         impl EventEmitter<()> for TestPngItemView {}
-        impl FocusableView for TestPngItemView {
+        impl Focusable for TestPngItemView {
             fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
                 self.focus_handle.clone()
             }
@@ -8532,7 +8525,7 @@ mod tests {
             type Event = ();
         }
         impl EventEmitter<()> for TestIpynbItemView {}
-        impl FocusableView for TestIpynbItemView {
+        impl Focusable for TestIpynbItemView {
             fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
                 self.focus_handle.clone()
             }
@@ -8575,7 +8568,7 @@ mod tests {
         }
 
         impl EventEmitter<()> for TestAlternatePngItemView {}
-        impl FocusableView for TestAlternatePngItemView {
+        impl Focusable for TestAlternatePngItemView {
             fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
                 self.focus_handle.clone()
             }

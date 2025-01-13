@@ -23,7 +23,7 @@ use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
     AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
-    Div, DragMoveEvent, EventEmitter, ExternalPaths, FocusHandle, FocusableView, Hsla,
+    Div, DragMoveEvent, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
     InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model,
     ModelContext, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
     ScrollStrategy, Stateful, Styled, Subscription, Task, UniformListScrollHandle,
@@ -220,7 +220,7 @@ pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     init_settings(cx);
     file_icons::init(assets, cx);
 
-    cx.observe_new_views(|workspace: &mut Workspace, _, _| {
+    cx.observe_new_window_models(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
         });
@@ -281,139 +281,137 @@ impl ProjectPanel {
         cx: &mut ModelContext<Workspace>,
     ) -> Model<Self> {
         let project = workspace.project().clone();
-        let project_panel =
-            window.new_view(cx, |window: &mut Window, cx: &mut ModelContext<Self>| {
-                let focus_handle = cx.focus_handle();
-                cx.on_focus(&focus_handle, window, Self::focus_in).detach();
-                cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
-                    this.focus_out(window, cx);
-                    this.hide_scrollbar(window, cx);
-                })
-                .detach();
-                cx.subscribe(&project, |this, project, event, cx| match event {
-                    project::Event::ActiveEntryChanged(Some(entry_id)) => {
-                        if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
-                            this.reveal_entry(project.clone(), *entry_id, true, cx);
-                        }
+        let project_panel = cx.new_model(|cx| {
+            let focus_handle = cx.focus_handle();
+            cx.on_focus(&focus_handle, window, Self::focus_in).detach();
+            cx.on_focus_out(&focus_handle, window, |this, _, window, cx| {
+                this.focus_out(window, cx);
+                this.hide_scrollbar(window, cx);
+            })
+            .detach();
+            cx.subscribe(&project, |this, project, event, cx| match event {
+                project::Event::ActiveEntryChanged(Some(entry_id)) => {
+                    if ProjectPanelSettings::get_global(cx).auto_reveal_entries {
+                        this.reveal_entry(project.clone(), *entry_id, true, cx);
                     }
-                    project::Event::RevealInProjectPanel(entry_id) => {
-                        this.reveal_entry(project.clone(), *entry_id, false, cx);
-                        cx.emit(PanelEvent::Activate);
-                    }
-                    project::Event::ActivateProjectPanel => {
-                        cx.emit(PanelEvent::Activate);
-                    }
-                    project::Event::DiskBasedDiagnosticsFinished { .. }
-                    | project::Event::DiagnosticsUpdated { .. } => {
-                        if ProjectPanelSettings::get_global(cx).show_diagnostics
-                            != ShowDiagnostics::Off
-                        {
-                            this.update_diagnostics(cx);
-                            cx.notify();
-                        }
-                    }
-                    project::Event::WorktreeRemoved(id) => {
-                        this.expanded_dir_ids.remove(id);
-                        this.update_visible_entries(None, cx);
-                        cx.notify();
-                    }
-                    project::Event::WorktreeUpdatedEntries(_, _)
-                    | project::Event::WorktreeAdded(_)
-                    | project::Event::WorktreeOrderChanged => {
-                        this.update_visible_entries(None, cx);
-                        cx.notify();
-                    }
-                    _ => {}
-                })
-                .detach();
-
-                let trash_action = [TypeId::of::<Trash>()];
-                let is_remote = project.read(cx).is_via_collab();
-
-                if is_remote {
-                    CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                        filter.hide_action_types(&trash_action);
-                    });
                 }
-
-                let filename_editor = window.new_view(cx, Editor::single_line);
-
-                cx.subscribe_in(
-                    &filename_editor,
-                    window,
-                    |project_panel, _, editor_event, window, cx| match editor_event {
-                        EditorEvent::BufferEdited | EditorEvent::SelectionsChanged { .. } => {
-                            project_panel.autoscroll(cx);
-                        }
-                        EditorEvent::Blurred => {
-                            if project_panel
-                                .edit_state
-                                .as_ref()
-                                .map_or(false, |state| state.processing_filename.is_none())
-                            {
-                                project_panel.edit_state = None;
-                                project_panel.update_visible_entries(None, cx);
-                                cx.notify();
-                            }
-                        }
-                        _ => {}
-                    },
-                )
-                .detach();
-
-                cx.observe_global_in::<FileIcons>(window, |_, window, cx| {
-                    cx.notify();
-                })
-                .detach();
-
-                let mut project_panel_settings = *ProjectPanelSettings::get_global(cx);
-                cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
-                    let new_settings = *ProjectPanelSettings::get_global(cx);
-                    if project_panel_settings != new_settings {
-                        project_panel_settings = new_settings;
+                project::Event::RevealInProjectPanel(entry_id) => {
+                    this.reveal_entry(project.clone(), *entry_id, false, cx);
+                    cx.emit(PanelEvent::Activate);
+                }
+                project::Event::ActivateProjectPanel => {
+                    cx.emit(PanelEvent::Activate);
+                }
+                project::Event::DiskBasedDiagnosticsFinished { .. }
+                | project::Event::DiagnosticsUpdated { .. } => {
+                    if ProjectPanelSettings::get_global(cx).show_diagnostics != ShowDiagnostics::Off
+                    {
                         this.update_diagnostics(cx);
                         cx.notify();
                     }
-                })
-                .detach();
+                }
+                project::Event::WorktreeRemoved(id) => {
+                    this.expanded_dir_ids.remove(id);
+                    this.update_visible_entries(None, cx);
+                    cx.notify();
+                }
+                project::Event::WorktreeUpdatedEntries(_, _)
+                | project::Event::WorktreeAdded(_)
+                | project::Event::WorktreeOrderChanged => {
+                    this.update_visible_entries(None, cx);
+                    cx.notify();
+                }
+                _ => {}
+            })
+            .detach();
 
-                let scroll_handle = UniformListScrollHandle::new();
-                let mut this = Self {
-                    project: project.clone(),
-                    hover_scroll_task: None,
-                    fs: workspace.app_state().fs.clone(),
-                    focus_handle,
-                    visible_entries: Default::default(),
-                    ancestors: Default::default(),
-                    last_worktree_root_id: Default::default(),
-                    last_external_paths_drag_over_entry: None,
-                    expanded_dir_ids: Default::default(),
-                    unfolded_dir_ids: Default::default(),
-                    selection: None,
-                    marked_entries: Default::default(),
-                    edit_state: None,
-                    context_menu: None,
-                    filename_editor,
-                    clipboard: None,
-                    _dragged_entry_destination: None,
-                    workspace: workspace.weak_handle(),
-                    width: None,
-                    pending_serialization: Task::ready(None),
-                    show_scrollbar: !Self::should_autohide_scrollbar(cx),
-                    hide_scrollbar_task: None,
-                    vertical_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
-                        .parent_view(&cx.model()),
-                    horizontal_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
-                        .parent_view(&cx.model()),
-                    max_width_item_index: None,
-                    diagnostics: Default::default(),
-                    scroll_handle,
-                    mouse_down: false,
-                };
-                this.update_visible_entries(None, cx);
+            let trash_action = [TypeId::of::<Trash>()];
+            let is_remote = project.read(cx).is_via_collab();
 
-                this
-            });
+            if is_remote {
+                CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                    filter.hide_action_types(&trash_action);
+                });
+            }
+
+            let filename_editor = cx.new_model(|cx| Editor::single_line(window, cx));
+
+            cx.subscribe_in(
+                &filename_editor,
+                window,
+                |project_panel, _, editor_event, window, cx| match editor_event {
+                    EditorEvent::BufferEdited | EditorEvent::SelectionsChanged { .. } => {
+                        project_panel.autoscroll(cx);
+                    }
+                    EditorEvent::Blurred => {
+                        if project_panel
+                            .edit_state
+                            .as_ref()
+                            .map_or(false, |state| state.processing_filename.is_none())
+                        {
+                            project_panel.edit_state = None;
+                            project_panel.update_visible_entries(None, cx);
+                            cx.notify();
+                        }
+                    }
+                    _ => {}
+                },
+            )
+            .detach();
+
+            cx.observe_global_in::<FileIcons>(window, |_, window, cx| {
+                cx.notify();
+            })
+            .detach();
+
+            let mut project_panel_settings = *ProjectPanelSettings::get_global(cx);
+            cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
+                let new_settings = *ProjectPanelSettings::get_global(cx);
+                if project_panel_settings != new_settings {
+                    project_panel_settings = new_settings;
+                    this.update_diagnostics(cx);
+                    cx.notify();
+                }
+            })
+            .detach();
+
+            let scroll_handle = UniformListScrollHandle::new();
+            let mut this = Self {
+                project: project.clone(),
+                hover_scroll_task: None,
+                fs: workspace.app_state().fs.clone(),
+                focus_handle,
+                visible_entries: Default::default(),
+                ancestors: Default::default(),
+                last_worktree_root_id: Default::default(),
+                last_external_paths_drag_over_entry: None,
+                expanded_dir_ids: Default::default(),
+                unfolded_dir_ids: Default::default(),
+                selection: None,
+                marked_entries: Default::default(),
+                edit_state: None,
+                context_menu: None,
+                filename_editor,
+                clipboard: None,
+                _dragged_entry_destination: None,
+                workspace: workspace.weak_handle(),
+                width: None,
+                pending_serialization: Task::ready(None),
+                show_scrollbar: !Self::should_autohide_scrollbar(cx),
+                hide_scrollbar_task: None,
+                vertical_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
+                    .parent_view(&cx.model()),
+                horizontal_scrollbar_state: ScrollbarState::new(scroll_handle.clone())
+                    .parent_view(&cx.model()),
+                max_width_item_index: None,
+                diagnostics: Default::default(),
+                scroll_handle,
+                mouse_down: false,
+            };
+            this.update_visible_entries(None, cx);
+
+            this
+        });
 
         cx.subscribe_in(&project_panel, window, {
             let project_panel = project_panel.downgrade();
@@ -709,7 +707,7 @@ impl ProjectPanel {
                 })
             });
 
-            window.focus_view(&context_menu, cx);
+            window.focus(&context_menu.focus_handle(cx));
             let subscription = cx.subscribe_in(
                 &context_menu,
                 window,
@@ -3454,7 +3452,7 @@ impl ProjectPanel {
             .on_drag(
                 dragged_selection,
                 move |selection, click_offset, window, cx| {
-                    window.new_view(cx, |_, _| DraggedProjectEntryView {
+                    cx.new_model(|_| DraggedProjectEntryView {
                         details: details.clone(),
                         width,
                         click_offset,
@@ -4482,7 +4480,7 @@ impl Panel for ProjectPanel {
     }
 }
 
-impl FocusableView for ProjectPanel {
+impl Focusable for ProjectPanel {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
@@ -8375,7 +8373,7 @@ mod tests {
 
     impl EventEmitter<()> for TestProjectItemView {}
 
-    impl FocusableView for TestProjectItemView {
+    impl Focusable for TestProjectItemView {
         fn focus_handle(&self, _: &AppContext) -> FocusHandle {
             self.focus_handle.clone()
         }

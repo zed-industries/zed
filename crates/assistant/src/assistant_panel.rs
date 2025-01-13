@@ -41,10 +41,10 @@ use futures::FutureExt;
 use gpui::{
     canvas, div, img, percentage, point, prelude::*, pulsating_between, size, Action, Animation,
     AnimationExt, AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry,
-    ClipboardItem, CursorStyle, Empty, Entity, EventEmitter, ExternalPaths, FocusHandle,
-    FocusableView, FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels,
-    Render, RenderImage, SharedString, Size, StatefulInteractiveElement, Styled, Subscription,
-    Task, Transformation, UpdateGlobal, WeakModel,
+    ClipboardItem, CursorStyle, Empty, Entity, EventEmitter, ExternalPaths, FocusHandle, Focusable,
+    FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels, Render, RenderImage,
+    SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
+    UpdateGlobal, WeakModel,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{
@@ -97,7 +97,7 @@ use zed_actions::InlineAssist;
 
 pub fn init(cx: &mut AppContext) {
     workspace::FollowableViewRegistry::register::<ContextEditor>(cx);
-    cx.observe_new_views(
+    cx.observe_new_window_models(
         |workspace: &mut Workspace, _window: &mut Window, _cx: &mut ModelContext<Workspace>| {
             workspace
                 .register_action(|workspace, _: &ToggleFocus, window, cx| {
@@ -119,7 +119,7 @@ pub fn init(cx: &mut AppContext) {
     )
     .detach();
 
-    cx.observe_new_views(
+    cx.observe_new_window_models(
         |terminal_panel: &mut TerminalPanel,
          window: &mut Window,
          cx: &mut ModelContext<TerminalPanel>| {
@@ -353,8 +353,8 @@ impl AssistantPanel {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let model_selector_menu_handle = PopoverMenuHandle::default();
-        let model_summary_editor = window.new_view(cx, Editor::single_line);
-        let context_editor_toolbar = window.new_view(cx, |window, cx| {
+        let model_summary_editor = cx.new_model(|cx| Editor::single_line(window, cx));
+        let context_editor_toolbar = cx.new_model(|cx| {
             ContextEditorToolbarItem::new(
                 workspace,
                 model_selector_menu_handle.clone(),
@@ -364,7 +364,7 @@ impl AssistantPanel {
             )
         });
 
-        let pane = window.new_view(cx, |window, cx| {
+        let pane = cx.new_model(|cx| {
             let mut pane = Pane::new(
                 workspace.weak_handle(),
                 workspace.project().clone(),
@@ -514,7 +514,11 @@ impl AssistantPanel {
             });
             pane.toolbar().update(cx, |toolbar, cx| {
                 toolbar.add_item(context_editor_toolbar.clone(), window, cx);
-                toolbar.add_item(window.new_view(cx, BufferSearchBar::new), window, cx)
+                toolbar.add_item(
+                    cx.new_model(|cx| BufferSearchBar::new(window, cx)),
+                    window,
+                    cx,
+                )
             });
             pane
         });
@@ -743,7 +747,7 @@ impl AssistantPanel {
             .flatten();
 
         let assistant_panel = cx.model().downgrade();
-        let editor = window.new_view(cx, |window, cx| {
+        let editor = cx.new_model(|cx| {
             let mut editor = ContextEditor::for_context(
                 context,
                 self.fs.clone(),
@@ -1068,7 +1072,7 @@ impl AssistantPanel {
                 .flatten();
 
             let assistant_panel = cx.model().downgrade();
-            let editor = window.new_view(cx, |window, cx| {
+            let editor = cx.new_model(|cx| {
                 let mut editor = ContextEditor::for_context(
                     context,
                     self.fs.clone(),
@@ -1208,7 +1212,7 @@ impl AssistantPanel {
                 pane.activate_item(configuration_item_ix, true, true, window, cx);
             });
         } else {
-            let configuration = window.new_view(cx, ConfigurationView::new);
+            let configuration = cx.new_model(|cx| ConfigurationView::new(window, cx));
             self.configuration_subscription = Some(cx.subscribe_in(
                 &configuration,
                 window,
@@ -1255,7 +1259,7 @@ impl AssistantPanel {
             });
         } else {
             let assistant_panel = cx.model().downgrade();
-            let history = window.new_view(cx, |window, cx| {
+            let history = cx.new_model(|cx| {
                 ContextHistory::new(
                     self.project.clone(),
                     self.context_store.clone(),
@@ -1576,7 +1580,7 @@ impl Panel for AssistantPanel {
 impl EventEmitter<PanelEvent> for AssistantPanel {}
 impl EventEmitter<AssistantPanelEvent> for AssistantPanel {}
 
-impl FocusableView for AssistantPanel {
+impl Focusable for AssistantPanel {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.pane.focus_handle(cx)
     }
@@ -1666,7 +1670,7 @@ impl ContextEditor {
             Some(workspace.clone()),
         );
 
-        let editor = window.new_view(cx, |window, cx| {
+        let editor = cx.new_model(|cx| {
             let mut editor =
                 Editor::for_buffer(context.read(cx).buffer().clone(), None, window, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, window, cx);
@@ -1760,7 +1764,8 @@ impl ContextEditor {
                 .as_ref()
                 .and_then(|state| state.editor.upgrade())
             {
-                window.focus_view(&editor, cx);
+                window.focus(&editor.focus_handle(cx));
+
                 return true;
             }
         }
@@ -2661,7 +2666,7 @@ impl ContextEditor {
         let project = this.update(&mut cx, |this, _| this.project.clone())?;
         let resolved_patch = patch.resolve(project.clone(), &mut cx).await;
 
-        let editor = cx.new_view(|window, cx| {
+        let editor = cx.new_window_model(|window, cx| {
             let editor = ProposedChangesEditor::new(
                 patch.title.clone(),
                 resolved_patch
@@ -4444,9 +4449,9 @@ impl Render for ContextEditor {
     }
 }
 
-impl FocusableView for ContextEditor {
+impl Focusable for ContextEditor {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        self.editor.item_focus_handle(cx)
+        self.editor.focus_handle(cx)
     }
 }
 
@@ -4744,7 +4749,7 @@ impl ContextEditorToolbarItem {
         Self {
             active_context_editor: None,
             model_summary_editor,
-            language_model_selector: window.new_view(cx, |window, cx| {
+            language_model_selector: cx.new_model(|cx| {
                 let fs = workspace.app_state().fs.clone();
                 LanguageModelSelector::new(
                     move |model, cx| {
@@ -4957,7 +4962,7 @@ impl ContextHistory {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let picker = window.new_view(cx, |window, cx| {
+        let picker = cx.new_model(|cx| {
             Picker::uniform_list(
                 SavedContextPickerDelegate::new(project, context_store.clone()),
                 window,
@@ -5021,7 +5026,7 @@ impl Render for ContextHistory {
     }
 }
 
-impl FocusableView for ContextHistory {
+impl Focusable for ContextHistory {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
@@ -5215,7 +5220,7 @@ pub enum ConfigurationViewEvent {
 
 impl EventEmitter<ConfigurationViewEvent> for ConfigurationView {}
 
-impl FocusableView for ConfigurationView {
+impl Focusable for ConfigurationView {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }

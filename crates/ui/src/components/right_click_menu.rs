@@ -4,9 +4,9 @@ use std::{cell::RefCell, rc::Rc};
 
 use gpui::{
     anchored, deferred, div, px, AnyElement, AppContext, Bounds, Corner, DismissEvent,
-    DispatchPhase, Element, ElementId, FocusableView as _, GlobalElementId, Hitbox,
-    InteractiveElement, IntoElement, LayoutId, ManagedView, Model, MouseButton, MouseDownEvent,
-    ParentElement, Pixels, Point, Render, VisualContext, Window,
+    DispatchPhase, Element, ElementId, Focusable as _, GlobalElementId, Hitbox, InteractiveElement,
+    IntoElement, LayoutId, ManagedView, Model, MouseButton, MouseDownEvent, ParentElement, Pixels,
+    Point, Render, VisualContext, Window,
 };
 
 pub struct RightClickMenu<M: ManagedView> {
@@ -251,7 +251,7 @@ impl<M: ManagedView> Element for RightClickMenu<M> {
                                 window.refresh();
                             })
                             .detach();
-                        window.focus_view(&new_menu, cx);
+                        window.focus(&new_menu.focus_handle(cx));
                         *menu.borrow_mut() = Some(new_menu);
                         *position.borrow_mut() = if let Some(child_bounds) = child_bounds {
                             if let Some(attach) = attach {

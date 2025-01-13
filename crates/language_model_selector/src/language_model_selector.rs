@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use feature_flags::ZedPro;
 use gpui::{
-    Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
+    Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model,
     Task, WeakModel,
 };
 use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
@@ -55,7 +55,7 @@ impl LanguageModelSelector {
             selected_index: 0,
         };
 
-        let picker = window.new_view(cx, |window, cx| {
+        let picker = cx.new_model(|cx| {
             Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()))
         });
 
@@ -65,7 +65,7 @@ impl LanguageModelSelector {
 
 impl EventEmitter<DismissEvent> for LanguageModelSelector {}
 
-impl FocusableView for LanguageModelSelector {
+impl Focusable for LanguageModelSelector {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }

@@ -8,9 +8,8 @@ use extension_host::ExtensionStore;
 use futures::channel::oneshot;
 use gpui::{
     percentage, Animation, AnimationExt, AnyWindowHandle, AppContext, AsyncAppContext,
-    DismissEvent, EventEmitter, FocusableView, FontFeatures, Model, ParentElement as _,
-    PromptLevel, Render, SemanticVersion, SharedString, Task, TextStyleRefinement, Transformation,
-    WeakModel,
+    DismissEvent, EventEmitter, Focusable, FontFeatures, Model, ParentElement as _, PromptLevel,
+    Render, SemanticVersion, SharedString, Task, TextStyleRefinement, Transformation, WeakModel,
 };
 
 use language::CursorShape;
@@ -158,7 +157,7 @@ impl SshPrompt {
         Self {
             connection_string,
             nickname,
-            editor: window.new_view(cx, Editor::single_line),
+            editor: cx.new_model(|cx| Editor::single_line(window, cx)),
             status_message: None,
             cancellation: None,
             prompt: None,
@@ -203,12 +202,11 @@ impl SshPrompt {
             selection_background_color: cx.theme().players().local().selection,
             ..Default::default()
         };
-        let markdown = window.new_view(cx, |window, cx| {
-            Markdown::new_text(prompt, markdown_style, None, None, window, cx)
-        });
+        let markdown =
+            cx.new_model(|cx| Markdown::new_text(prompt, markdown_style, None, None, window, cx));
         self.prompt = Some((markdown, tx));
         self.status_message.take();
-        window.focus_view(&self.editor, cx);
+        window.focus(&self.editor.focus_handle(cx));
         cx.notify();
     }
 
@@ -284,9 +282,7 @@ impl SshConnectionModal {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         Self {
-            prompt: window.new_view(cx, |window, cx| {
-                SshPrompt::new(connection_options, window, cx)
-            }),
+            prompt: cx.new_model(|cx| SshPrompt::new(connection_options, window, cx)),
             finished: false,
             paths,
         }
@@ -404,7 +400,7 @@ impl Render for SshConnectionModal {
     }
 }
 
-impl FocusableView for SshConnectionModal {
+impl Focusable for SshConnectionModal {
     fn focus_handle(&self, cx: &gpui::AppContext) -> gpui::FocusHandle {
         self.prompt.read(cx).editor.focus_handle(cx)
     }
@@ -572,9 +568,7 @@ pub async fn open_ssh_project(
                 None,
                 cx,
             );
-            window.new_view(cx, |window, cx| {
-                Workspace::new(None, project, app_state.clone(), window, cx)
-            })
+            cx.new_model(|cx| Workspace::new(None, project, app_state.clone(), window, cx))
         })?
     };
 

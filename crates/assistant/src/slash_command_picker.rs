@@ -196,9 +196,7 @@ impl PickerDelegate for SlashCommandDelegate {
                     .tooltip({
                         let description = info.description.clone();
                         move |window, cx| {
-                            window
-                                .new_view(cx, |_, _| Tooltip::new(description.clone()))
-                                .into()
+                            cx.new_model(|cx| Tooltip::new(description.clone())).into()
                         }
                     })
                     .child(
@@ -326,7 +324,7 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
             selected_index: 0,
         };
 
-        let picker_view = window.new_view(cx, |window, cx| {
+        let picker_view = cx.new_model(|cx| {
             let picker =
                 Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()));
             picker

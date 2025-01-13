@@ -5,7 +5,7 @@ use collections::HashSet;
 use editor::{AnchorRangeExt, CompletionProvider, Editor, EditorElement, EditorStyle};
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    AsyncWindowContext, FocusableView, FontStyle, FontWeight, HighlightStyle, IntoElement, Model,
+    AsyncWindowContext, Focusable, FontStyle, FontWeight, HighlightStyle, IntoElement, Model,
     ModelContext, Render, Task, TextStyle, WeakModel, Window,
 };
 use language::{

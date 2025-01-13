@@ -1,7 +1,7 @@
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, AppContext, DismissEvent, EventEmitter, FocusableView, Model, ModelContext, Render,
+    actions, AppContext, DismissEvent, EventEmitter, Focusable, Model, ModelContext, Render,
     UpdateGlobal, VisualContext, WeakModel, Window,
 };
 use picker::{Picker, PickerDelegate};
@@ -16,7 +16,7 @@ use zed_actions::theme_selector::Toggle;
 actions!(theme_selector, [Reload]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(
+    cx.observe_new_window_models(
         |workspace: &mut Workspace, _window: &mut Window, _cx: &mut ModelContext<Workspace>| {
             workspace.register_action(toggle);
         },
@@ -51,7 +51,7 @@ pub struct ThemeSelector {
 
 impl EventEmitter<DismissEvent> for ThemeSelector {}
 
-impl FocusableView for ThemeSelector {
+impl Focusable for ThemeSelector {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
         self.picker.focus_handle(cx)
     }
@@ -69,7 +69,7 @@ impl ThemeSelector {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let picker = window.new_view(cx, |window, cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new_model(|cx| Picker::uniform_list(delegate, window, cx));
         Self { picker }
     }
 }

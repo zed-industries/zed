@@ -1,7 +1,7 @@
 use crate::ProjectIndex;
 use gpui::{
     canvas, div, list, uniform_list, AnyElement, AppContext, CursorStyle, EventEmitter,
-    FocusHandle, FocusableView, IntoElement, ListOffset, ListState, Model, MouseMoveEvent, Render,
+    FocusHandle, Focusable, IntoElement, ListOffset, ListState, Model, MouseMoveEvent, Render,
     UniformListScrollHandle,
 };
 use project::WorktreeId;
@@ -311,11 +311,11 @@ impl Item for ProjectIndexDebugView {
     where
         Self: Sized,
     {
-        Some(window.new_view(cx, |window, cx| Self::new(self.index.clone(), window, cx)))
+        Some(cx.new_model(|cx| Self::new(self.index.clone(), window, cx)))
     }
 }
 
-impl FocusableView for ProjectIndexDebugView {
+impl Focusable for ProjectIndexDebugView {
     fn focus_handle(&self, _: &AppContext) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }

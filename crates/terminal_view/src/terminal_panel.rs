@@ -13,8 +13,8 @@ use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
     actions, Action, AnyView, AppContext, AsyncWindowContext, Corner, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, FocusableView, IntoElement, Model, ModelContext, ParentElement,
-    Pixels, Render, Styled, Task, WeakModel, Window,
+    ExternalPaths, FocusHandle, Focusable, IntoElement, Model, ModelContext, ParentElement, Pixels,
+    Render, Styled, Task, WeakModel, Window,
 };
 use itertools::Itertools;
 use project::{terminals::TerminalKind, Fs, Project, ProjectEntryId};
@@ -49,7 +49,7 @@ const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
 actions!(terminal_panel, [ToggleFocus]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(
+    cx.observe_new_window_models(
         |workspace: &mut Workspace, _window: &mut Window, _: &mut ModelContext<Workspace>| {
             workspace.register_action(TerminalPanel::new_terminal);
             workspace.register_action(TerminalPanel::open_terminal);
@@ -82,7 +82,7 @@ impl TerminalPanel {
         let project = workspace.project();
         let pane = new_terminal_pane(workspace.weak_handle(), project.clone(), false, window, cx);
         let center = PaneGroup::new(pane.clone());
-        window.focus_view(&pane, cx);
+        window.focus(&pane.focus_handle(cx));
         let terminal_panel = Self {
             center,
             active_pane: pane,
@@ -115,8 +115,7 @@ impl TerminalPanel {
                 .map(|item| item.item_focus_handle(cx))
                 .unwrap_or(self.focus_handle(cx));
             self.assistant_tab_bar_button = Some(
-                window
-                    .new_view(cx, move |_, _| InlineAssistTabBarButton { focus_handle })
+                cx.new_model(move |_| InlineAssistTabBarButton { focus_handle })
                     .into(),
             );
         } else {
@@ -242,23 +241,23 @@ impl TerminalPanel {
             .log_err()
             .flatten();
 
-        let terminal_panel =
-            workspace
-                .update_in(&mut cx, |workspace, window, cx| {
-                    match serialized_panel.zip(workspace.database_id()) {
-                        Some((serialized_panel, database_id)) => deserialize_terminal_panel(
-                            workspace.weak_handle(),
-                            workspace.project().clone(),
-                            database_id,
-                            serialized_panel,
-                            window,
-                            cx,
-                        ),
-                        None => Task::ready(Ok(window
-                            .new_view(cx, |window, cx| TerminalPanel::new(workspace, window, cx)))),
-                    }
-                })?
-                .await?;
+        let terminal_panel = workspace
+            .update_in(&mut cx, |workspace, window, cx| {
+                match serialized_panel.zip(workspace.database_id()) {
+                    Some((serialized_panel, database_id)) => deserialize_terminal_panel(
+                        workspace.weak_handle(),
+                        workspace.project().clone(),
+                        database_id,
+                        serialized_panel,
+                        window,
+                        cx,
+                    ),
+                    None => Task::ready(Ok(
+                        cx.new_model(|cx| TerminalPanel::new(workspace, window, cx))
+                    )),
+                }
+            })?
+            .await?;
 
         if let Some(workspace) = workspace.upgrade() {
             terminal_panel
@@ -358,7 +357,7 @@ impl TerminalPanel {
                 let pane = pane.clone();
                 let direction = *direction;
                 self.center.split(&pane, &new_pane, direction).log_err();
-                window.focus_view(&new_pane, cx);
+                window.focus(&new_pane.focus_handle(cx));
             }
             pane::Event::Focus => {
                 self.active_pane = pane.clone();
@@ -401,7 +400,7 @@ impl TerminalPanel {
             })
             .ok()?;
 
-        let terminal_view = Box::new(window.new_view(cx, |window, cx| {
+        let terminal_view = Box::new(cx.new_model(|cx| {
             TerminalView::new(
                 terminal.clone(),
                 weak_workspace.clone(),
@@ -734,7 +733,7 @@ impl TerminalPanel {
                 .await?;
 
             workspace.update_in(&mut cx, |workspace, window, cx| {
-                let view = window.new_view(cx, |window, cx| {
+                let view = cx.new_model(|cx| {
                     TerminalView::new(
                         terminal.clone(),
                         workspace.weak_handle(),
@@ -776,7 +775,7 @@ impl TerminalPanel {
                 })?
                 .await?;
             let result = workspace.update_in(&mut cx, |workspace, window, cx| {
-                let terminal_view = Box::new(window.new_view(cx, |window, cx| {
+                let terminal_view = Box::new(cx.new_model(|cx| {
                     TerminalView::new(
                         terminal.clone(),
                         workspace.weak_handle(),
@@ -993,7 +992,7 @@ pub fn new_terminal_pane(
 ) -> Model<Pane> {
     let is_local = project.read(cx).is_local();
     let terminal_panel = cx.model().clone();
-    let pane = window.new_view(cx, |window, cx| {
+    let pane = cx.new_model(|cx| {
         let mut pane = Pane::new(
             workspace.clone(),
             project.clone(),
@@ -1038,8 +1037,8 @@ pub fn new_terminal_pane(
             false
         })));
 
-        let buffer_search_bar = window.new_view(cx, search::BufferSearchBar::new);
-        let breadcrumbs = window.new_view(cx, |_, _| Breadcrumbs::new());
+        let buffer_search_bar = cx.new_model(|cx| search::BufferSearchBar::new(window, cx));
+        let breadcrumbs = cx.new_model(|_| Breadcrumbs::new());
         pane.toolbar().update(cx, |toolbar, cx| {
             toolbar.add_item(buffer_search_bar, window, cx);
             toolbar.add_item(breadcrumbs, window, cx);
@@ -1180,7 +1179,7 @@ fn add_paths_to_terminal(
         .active_item()
         .and_then(|item| item.downcast::<TerminalView>())
     {
-        window.focus_view(&terminal_view, cx);
+        window.focus(&terminal_view.focus_handle(cx));
         let mut new_text = paths.iter().map(|path| format!(" {path:?}")).join("");
         new_text.push(' ');
         terminal_view.update(cx, |terminal_view, cx| {
@@ -1232,7 +1231,7 @@ impl Render for TerminalPanel {
                                 action.0,
                                 cx,
                             ) {
-                                window.focus_view(&pane, cx);
+                                window.focus(&pane.focus_handle(cx));
                             } else {
                                 terminal_panel
                                     .workspace
@@ -1252,7 +1251,7 @@ impl Render for TerminalPanel {
                             .position(|pane| **pane == terminal_panel.active_pane)
                         {
                             let next_ix = (ix + 1) % panes.len();
-                            window.focus_view(&panes[next_ix], cx);
+                            window.focus(&panes[next_ix].focus_handle(cx));
                         }
                     }),
                 )
@@ -1264,7 +1263,7 @@ impl Render for TerminalPanel {
                             .position(|pane| **pane == terminal_panel.active_pane)
                         {
                             let prev_ix = cmp::min(ix.wrapping_sub(1), panes.len() - 1);
-                            window.focus_view(&panes[prev_ix], cx);
+                            window.focus(&panes[prev_ix].focus_handle(cx));
                         }
                     },
                 ))
@@ -1272,7 +1271,7 @@ impl Render for TerminalPanel {
                     cx.listener(|terminal_panel, action: &ActivatePane, window, cx| {
                         let panes = terminal_panel.center.panes();
                         if let Some(&pane) = panes.get(action.0) {
-                            window.focus_view(pane, cx);
+                            window.focus(&pane.read(cx).focus_handle(cx));
                         } else {
                             if let Some(new_pane) =
                                 terminal_panel.new_pane_with_cloned_active_terminal(window, cx)
@@ -1285,7 +1284,7 @@ impl Render for TerminalPanel {
                                         SplitDirection::Right,
                                     )
                                     .log_err();
-                                window.focus_view(&new_pane, cx);
+                                window.focus(&new_pane.focus_handle(cx));
                             }
                         }
                     }),
@@ -1342,7 +1341,7 @@ impl Render for TerminalPanel {
     }
 }
 
-impl FocusableView for TerminalPanel {
+impl Focusable for TerminalPanel {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.active_pane.focus_handle(cx)
     }

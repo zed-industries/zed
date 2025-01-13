@@ -5,7 +5,7 @@ use std::any::TypeId;
 use command_palette_hooks::CommandPaletteFilter;
 use editor::EditorSettingsControls;
 use feature_flags::{FeatureFlag, FeatureFlagViewExt};
-use gpui::{actions, AppContext, EventEmitter, FocusHandle, FocusableView, Model};
+use gpui::{actions, AppContext, EventEmitter, FocusHandle, Focusable, Model};
 use ui::prelude::*;
 use workspace::item::{Item, ItemEvent};
 use workspace::Workspace;
@@ -21,7 +21,7 @@ impl FeatureFlag for SettingsUiFeatureFlag {
 actions!(zed, [OpenSettingsEditor]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, window, cx| {
+    cx.observe_new_window_models(|workspace: &mut Workspace, window, cx| {
         workspace.register_action(|workspace, _: &OpenSettingsEditor, window, cx| {
             let existing = workspace
                 .active_pane()
@@ -72,7 +72,7 @@ impl SettingsPage {
         window: &mut Window,
         cx: &mut ModelContext<Workspace>,
     ) -> Model<Self> {
-        window.new_view(cx, |window, cx| Self {
+        cx.new_model(|cx| Self {
             focus_handle: cx.focus_handle(),
         })
     }
@@ -80,7 +80,7 @@ impl SettingsPage {
 
 impl EventEmitter<ItemEvent> for SettingsPage {}
 
-impl FocusableView for SettingsPage {
+impl Focusable for SettingsPage {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }

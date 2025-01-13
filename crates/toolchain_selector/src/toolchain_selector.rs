@@ -4,8 +4,8 @@ pub use active_toolchain::ActiveToolchain;
 use editor::Editor;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
-    ModelContext, ParentElement, Render, Styled, Task, VisualContext, WeakModel, Window,
+    actions, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model, ModelContext,
+    ParentElement, Render, Styled, Task, VisualContext, WeakModel, Window,
 };
 use language::{LanguageName, Toolchain, ToolchainList};
 use picker::{Picker, PickerDelegate};
@@ -18,7 +18,8 @@ use workspace::{ModalView, Workspace};
 actions!(toolchain, [Select]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(ToolchainSelector::register).detach();
+    cx.observe_new_window_models(ToolchainSelector::register)
+        .detach();
 }
 
 pub struct ToolchainSelector {
@@ -92,7 +93,7 @@ impl ToolchainSelector {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let view = cx.model().downgrade();
-        let picker = window.new_view(cx, |window, cx| {
+        let picker = cx.new_model(|cx| {
             let delegate = ToolchainSelectorDelegate::new(
                 active_toolchain,
                 view,
@@ -116,7 +117,7 @@ impl Render for ToolchainSelector {
     }
 }
 
-impl FocusableView for ToolchainSelector {
+impl Focusable for ToolchainSelector {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }

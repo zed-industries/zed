@@ -11,7 +11,7 @@ use editor::{
     EditorEvent,
 };
 use gpui::{
-    actions, AnyView, AppContext, ClipboardItem, Entity as _, EventEmitter, FocusableView, Model,
+    actions, AnyView, AppContext, ClipboardItem, Entity as _, EventEmitter, Focusable, Model,
     ModelContext, Pixels, Point, Render, Subscription, Task, VisualContext as _, WeakModel, Window,
 };
 use project::Project;
@@ -180,7 +180,7 @@ impl ChannelView {
                 })
             })?;
 
-            cx.new_view(|window, cx| {
+            cx.new_window_model(|window, cx| {
                 let mut this = Self::new(
                     project,
                     weak_workspace,
@@ -205,7 +205,7 @@ impl ChannelView {
     ) -> Self {
         let buffer = channel_buffer.read(cx).buffer();
         let this = cx.model().downgrade();
-        let editor = window.new_view(cx, |window, cx| {
+        let editor = cx.new_model(|cx| {
             let mut editor = Editor::for_buffer(buffer, None, window, cx);
             editor.set_collaboration_hub(Box::new(ChannelBufferCollaborationHub(
                 channel_buffer.clone(),
@@ -412,7 +412,7 @@ impl Render for ChannelView {
     }
 }
 
-impl FocusableView for ChannelView {
+impl Focusable for ChannelView {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
         self.editor.read(cx).focus_handle(cx)
     }
@@ -494,7 +494,7 @@ impl Item for ChannelView {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<Model<Self>> {
-        Some(window.new_view(cx, |window, cx| {
+        Some(cx.new_model(|cx| {
             Self::new(
                 self.project.clone(),
                 self.workspace.clone(),

@@ -150,7 +150,7 @@ impl ActiveThread {
             ..Default::default()
         };
 
-        let markdown = window.new_view(cx, |window, cx| {
+        let markdown = cx.new_model(|cx| {
             Markdown::new(
                 text,
                 markdown_style,

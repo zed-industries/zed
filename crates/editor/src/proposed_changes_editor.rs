@@ -1,7 +1,7 @@
 use crate::{ApplyAllDiffHunks, Editor, EditorEvent, SemanticsProvider};
 use collections::HashSet;
 use futures::{channel::mpsc, future::join_all};
-use gpui::{AppContext, EventEmitter, FocusableView, Model, Render, Subscription, Task};
+use gpui::{AppContext, EventEmitter, Focusable, Model, Render, Subscription, Task};
 use language::{Buffer, BufferEvent, Capability};
 use multi_buffer::{ExcerptRange, MultiBuffer};
 use project::{buffer_store::BufferChangeSet, Project};
@@ -60,7 +60,7 @@ impl ProposedChangesEditor {
         let multibuffer = cx.new_model(|_| MultiBuffer::new(Capability::ReadWrite));
         let (recalculate_diffs_tx, mut recalculate_diffs_rx) = mpsc::unbounded();
         let mut this = Self {
-            editor: window.new_view(cx, |window, cx| {
+            editor: cx.new_model(|cx| {
                 let mut editor =
                     Editor::for_multibuffer(multibuffer.clone(), project, true, window, cx);
                 editor.set_expand_all_diff_hunks();
@@ -280,9 +280,9 @@ impl Render for ProposedChangesEditor {
     }
 }
 
-impl FocusableView for ProposedChangesEditor {
+impl Focusable for ProposedChangesEditor {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
-        self.editor.item_focus_handle(cx)
+        self.editor.focus_handle(cx)
     }
 }
 
@@ -394,7 +394,7 @@ impl Render for ProposedChangesEditorToolbar {
 
         match &self.current_editor {
             Some(editor) => {
-                let focus_handle = editor.item_focus_handle(cx);
+                let focus_handle = editor.focus_handle(cx);
                 let keybinding =
                     KeyBinding::for_action_in(&ApplyAllDiffHunks, &focus_handle, window, cx)
                         .map(|binding| binding.into_any_element());

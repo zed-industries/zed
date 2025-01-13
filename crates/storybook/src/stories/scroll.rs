@@ -6,7 +6,7 @@ pub struct ScrollStory;
 
 impl ScrollStory {
     pub fn view(window: &mut Window, cx: &mut AppContext) -> Model<ScrollStory> {
-        window.new_view(cx, |_window, _cx| ScrollStory)
+        cx.new_model(|cx| ScrollStory)
     }
 }
 

@@ -14,7 +14,7 @@ use editor::{
 use futures::channel::oneshot;
 use gpui::{
     actions, div, impl_actions, Action, AppContext, ClickEvent, EventEmitter, FocusHandle,
-    FocusableView, Hsla, InteractiveElement as _, IntoElement, KeyContext, Model, ModelContext,
+    Focusable, Hsla, InteractiveElement as _, IntoElement, KeyContext, Model, ModelContext,
     ParentElement as _, Render, ScrollHandle, Styled, Subscription, Task, TextStyle,
     VisualContext as _, Window,
 };
@@ -72,8 +72,10 @@ pub enum Event {
 }
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, _, _| BufferSearchBar::register(workspace))
-        .detach();
+    cx.observe_new_window_models(|workspace: &mut Workspace, _, _| {
+        BufferSearchBar::register(workspace)
+    })
+    .detach();
 }
 
 pub struct BufferSearchBar {
@@ -192,10 +194,7 @@ impl Render for BufferSearchBar {
             })
             .unwrap_or_else(|| "0/0".to_string());
         let should_show_replace_input = self.replace_enabled && supported_options.replacement;
-        let in_replace = self
-            .replacement_editor
-            .item_focus_handle(cx)
-            .is_focused(window);
+        let in_replace = self.replacement_editor.focus_handle(cx).is_focused(window);
 
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("BufferSearchBar");
@@ -493,9 +492,9 @@ impl Render for BufferSearchBar {
     }
 }
 
-impl FocusableView for BufferSearchBar {
+impl Focusable for BufferSearchBar {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
-        self.query_editor.item_focus_handle(cx)
+        self.query_editor.focus_handle(cx)
     }
 }
 
@@ -604,10 +603,10 @@ impl BufferSearchBar {
     }
 
     pub fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
-        let query_editor = window.new_view(cx, Editor::single_line);
+        let query_editor = cx.new_model(|cx| Editor::single_line(window, cx));
         cx.subscribe_in(&query_editor, window, Self::on_query_editor_event)
             .detach();
-        let replacement_editor = window.new_view(cx, Editor::single_line);
+        let replacement_editor = cx.new_model(|cx| Editor::single_line(window, cx));
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
 
@@ -689,10 +688,10 @@ impl BufferSearchBar {
             self.replace_enabled = deploy.replace_enabled;
             self.selection_search_enabled = deploy.selection_search_enabled;
             if deploy.focus {
-                let mut handle = self.query_editor.item_focus_handle(cx).clone();
+                let mut handle = self.query_editor.focus_handle(cx).clone();
                 let mut select_query = true;
                 if deploy.replace_enabled && handle.is_focused(window) {
-                    handle = self.replacement_editor.item_focus_handle(cx).clone();
+                    handle = self.replacement_editor.focus_handle(cx).clone();
                     select_query = false;
                 };
 
@@ -1242,7 +1241,7 @@ impl BufferSearchBar {
     fn tab(&mut self, _: &Tab, window: &mut Window, cx: &mut ModelContext<Self>) {
         // Search -> Replace -> Editor
         let focus_handle = if self.replace_enabled && self.query_editor_focused {
-            self.replacement_editor.item_focus_handle(cx)
+            self.replacement_editor.focus_handle(cx)
         } else if let Some(item) = self.active_searchable_item.as_ref() {
             item.item_focus_handle(cx)
         } else {
@@ -1255,9 +1254,9 @@ impl BufferSearchBar {
     fn tab_prev(&mut self, _: &TabPrev, window: &mut Window, cx: &mut ModelContext<Self>) {
         // Search -> Replace -> Search
         let focus_handle = if self.replace_enabled && self.query_editor_focused {
-            self.replacement_editor.item_focus_handle(cx)
+            self.replacement_editor.focus_handle(cx)
         } else if self.replacement_editor_focused {
-            self.query_editor.item_focus_handle(cx)
+            self.query_editor.focus_handle(cx)
         } else {
             return;
         };
@@ -1325,9 +1324,9 @@ impl BufferSearchBar {
         if self.active_searchable_item.is_some() {
             self.replace_enabled = !self.replace_enabled;
             let handle = if self.replace_enabled {
-                self.replacement_editor.item_focus_handle(cx)
+                self.replacement_editor.focus_handle(cx)
             } else {
-                self.query_editor.item_focus_handle(cx)
+                self.query_editor.focus_handle(cx)
             };
             self.focus(&handle, window, cx);
             cx.notify();
@@ -1463,9 +1462,10 @@ mod tests {
             )
         });
         let cx = cx.add_empty_window();
-        let editor = cx.new_view(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+        let editor =
+            cx.new_window_model(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
 
-        let search_bar = cx.new_view(|window, cx| {
+        let search_bar = cx.new_window_model(|window, cx| {
             let mut search_bar = BufferSearchBar::new(window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
             search_bar.show(window, cx);
@@ -1830,11 +1830,11 @@ mod tests {
         let buffer = cx.new_model(|cx| Buffer::local(buffer_text, cx));
         let window = cx.add_window(|_, _| gpui::Empty);
 
-        let editor = window.build_view(cx, |window, cx| {
+        let editor = window.build_model(cx, |window, cx| {
             Editor::for_buffer(buffer.clone(), None, window, cx)
         });
 
-        let search_bar = window.build_view(cx, |window, cx| {
+        let search_bar = window.build_model(cx, |window, cx| {
             let mut search_bar = BufferSearchBar::new(window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
             search_bar.show(window, cx);
@@ -2039,9 +2039,10 @@ mod tests {
         let buffer = cx.new_model(|cx| Buffer::local(buffer_text, cx));
         let cx = cx.add_empty_window();
 
-        let editor = cx.new_view(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+        let editor =
+            cx.new_window_model(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
 
-        let search_bar = cx.new_view(|window, cx| {
+        let search_bar = cx.new_window_model(|window, cx| {
             let mut search_bar = BufferSearchBar::new(window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
             search_bar.show(window, cx);
@@ -2112,9 +2113,10 @@ mod tests {
         let buffer = cx.new_model(|cx| Buffer::local(buffer_text, cx));
         let cx = cx.add_empty_window();
 
-        let editor = cx.new_view(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+        let editor =
+            cx.new_window_model(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
 
-        let search_bar = cx.new_view(|window, cx| {
+        let search_bar = cx.new_window_model(|window, cx| {
             let mut search_bar = BufferSearchBar::new(window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
             search_bar.show(window, cx);
@@ -2491,9 +2493,10 @@ mod tests {
             )
         });
         let cx = cx.add_empty_window();
-        let editor = cx.new_view(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
+        let editor =
+            cx.new_window_model(|window, cx| Editor::for_buffer(buffer.clone(), None, window, cx));
 
-        let search_bar = cx.new_view(|window, cx| {
+        let search_bar = cx.new_window_model(|window, cx| {
             let mut search_bar = BufferSearchBar::new(window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
             search_bar.show(window, cx);
@@ -2559,7 +2562,7 @@ mod tests {
         .unindent();
 
         let cx = cx.add_empty_window();
-        let editor = cx.new_view(|window, cx| {
+        let editor = cx.new_window_model(|window, cx| {
             let multibuffer = MultiBuffer::build_multi(
                 [
                     (
@@ -2576,7 +2579,7 @@ mod tests {
             Editor::for_multibuffer(multibuffer, None, false, window, cx)
         });
 
-        let search_bar = cx.new_view(|window, cx| {
+        let search_bar = cx.new_window_model(|window, cx| {
             let mut search_bar = BufferSearchBar::new(window, cx);
             search_bar.set_active_pane_item(Some(&editor), window, cx);
             search_bar.show(window, cx);

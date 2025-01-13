@@ -10,7 +10,7 @@ use editor::actions::{
 };
 use editor::{Editor, EditorSettings};
 use gpui::{
-    Action, ClickEvent, Corner, ElementId, EventEmitter, FocusHandle, FocusableView,
+    Action, ClickEvent, Corner, ElementId, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, Model, ModelContext, ParentElement, Render, Styled, Subscription,
     WeakModel, Window,
 };
@@ -163,7 +163,7 @@ impl Render for QuickActionBar {
         );
 
         let editor_selections_dropdown = selection_menu_enabled.then(|| {
-            let focus = editor.item_focus_handle(cx);
+            let focus = editor.focus_handle(cx);
 
             PopoverMenu::new("editor-selections-dropdown")
                 .trigger(

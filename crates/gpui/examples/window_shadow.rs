@@ -213,7 +213,7 @@ fn main() {
                 ..Default::default()
             },
             |window, cx| {
-                window.new_view(cx, |window, cx| {
+                cx.new_model(|cx| {
                     cx.observe_window_appearance(window, |_, window, cx| {
                         window.refresh();
                     })

@@ -113,7 +113,7 @@ pub fn main() {
 
         cx.activate(true);
         cx.open_window(WindowOptions::default(), |window, cx| {
-            window.new_view(cx, |window, cx| {
+            cx.new_model(|cx| {
                 let markdown_style = MarkdownStyle {
                     base_text_style: gpui::TextStyle {
                         font_family: "Zed Plex Sans".into(),
@@ -179,9 +179,8 @@ impl MarkdownExample {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Self {
-        let markdown = window.new_view(cx, |window, cx| {
-            Markdown::new(text, style, Some(language_registry), None, window, cx)
-        });
+        let markdown = cx
+            .new_model(|cx| Markdown::new(text, style, Some(language_registry), None, window, cx));
         Self { markdown }
     }
 }

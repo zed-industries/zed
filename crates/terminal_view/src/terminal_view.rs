@@ -7,7 +7,7 @@ use editor::{actions::SelectAll, scroll::Autoscroll, Editor};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     anchored, deferred, div, impl_actions, AnyElement, AppContext, DismissEvent, EventEmitter,
-    FocusHandle, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
+    FocusHandle, Focusable, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
     MouseDownEvent, Pixels, Render, ScrollWheelEvent, Styled, Subscription, Task, VisualContext,
     WeakModel,
 };
@@ -77,7 +77,7 @@ pub fn init(cx: &mut AppContext) {
 
     register_serializable_item::<TerminalView>(cx);
 
-    cx.observe_new_views(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new_window_models(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(TerminalView::deploy);
     })
     .detach();
@@ -121,7 +121,7 @@ impl EventEmitter<Event> for TerminalView {}
 impl EventEmitter<ItemEvent> for TerminalView {}
 impl EventEmitter<SearchEvent> for TerminalView {}
 
-impl FocusableView for TerminalView {
+impl Focusable for TerminalView {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
@@ -240,7 +240,7 @@ impl TerminalView {
                 .action("Close", Box::new(CloseActiveItem { save_intent: None }))
         });
 
-        window.focus_view(&context_menu, cx);
+        window.focus(&context_menu.focus_handle(cx));
         let subscription = cx.subscribe_in(
             &context_menu,
             window,
@@ -1203,7 +1203,7 @@ impl Item for TerminalView {
             .ok()?
             .log_err()?;
 
-        Some(window.new_view(cx, |window, cx| {
+        Some(cx.new_model(|cx| {
             TerminalView::new(
                 terminal,
                 self.workspace.clone(),
@@ -1351,7 +1351,7 @@ impl SerializableItem for TerminalView {
                 })?
                 .await?;
             cx.update(|window, cx| {
-                window.new_view(cx, |window, cx| {
+                cx.new_model(|cx| {
                     TerminalView::new(
                         terminal,
                         workspace,

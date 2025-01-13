@@ -1,7 +1,7 @@
 use crate::{
     AnyView, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, BorrowAppContext, Context,
-    DismissEvent, FocusableView, ForegroundExecutor, Global, Model, ModelContext, PromptLevel,
-    Render, Reservation, Result, Task, VisualContext, Window, WindowHandle,
+    DismissEvent, Focusable, ForegroundExecutor, Global, Model, ModelContext, PromptLevel, Render,
+    Reservation, Result, Task, VisualContext, Window, WindowHandle,
 };
 use anyhow::{anyhow, Context as _};
 use derive_more::{Deref, DerefMut};
@@ -253,10 +253,10 @@ impl AsyncWindowContext {
         self.app.update_window(self.window, update)
     }
 
-    /// A convenience method for [`WindowContext::on_next_frame`].
+    /// A convenience method for [`Window::on_next_frame`].
     pub fn on_next_frame(&mut self, f: impl FnOnce(&mut Window, &mut AppContext) + 'static) {
         self.window
-            .update(self, |_, window, cx| window.on_next_frame(f))
+            .update(self, |_, window, _| window.on_next_frame(f))
             .ok();
     }
 
@@ -322,11 +322,11 @@ impl Context for AsyncWindowContext {
         T: 'static,
     {
         self.window
-            .update(self, |_, window, cx| cx.new_model(build_model))
+            .update(self, |_, _, cx| cx.new_model(build_model))
     }
 
     fn reserve_model<T: 'static>(&mut self) -> Result<Reservation<T>> {
-        self.window.update(self, |_, window, cx| cx.reserve_model())
+        self.window.update(self, |_, _, cx| cx.reserve_model())
     }
 
     fn insert_model<T: 'static>(
@@ -334,9 +334,8 @@ impl Context for AsyncWindowContext {
         reservation: Reservation<T>,
         build_model: impl FnOnce(&mut ModelContext<'_, T>) -> T,
     ) -> Self::Result<Model<T>> {
-        self.window.update(self, |_, window, cx| {
-            cx.insert_model(reservation, build_model)
-        })
+        self.window
+            .update(self, |_, _, cx| cx.insert_model(reservation, build_model))
     }
 
     fn update_model<T: 'static, R>(
@@ -345,7 +344,7 @@ impl Context for AsyncWindowContext {
         update: impl FnOnce(&mut T, &mut ModelContext<'_, T>) -> R,
     ) -> Result<R> {
         self.window
-            .update(self, |_, window, cx| cx.update_model(handle, update))
+            .update(self, |_, _, cx| cx.update_model(handle, update))
     }
 
     fn read_model<T, R>(
@@ -383,22 +382,19 @@ impl VisualContext for AsyncWindowContext {
         self.window.clone()
     }
 
-    fn new_view<V>(
+    fn new_window_model<T: 'static>(
         &mut self,
-        build_view_state: impl FnOnce(&mut Window, &mut ModelContext<V>) -> V,
-    ) -> Self::Result<Model<V>>
-    where
-        V: 'static + Render,
-    {
+        build_model: impl FnOnce(&mut Window, &mut ModelContext<T>) -> T,
+    ) -> Self::Result<Model<T>> {
         self.window.update(self, |_, window, cx| {
-            cx.new_model(|cx| build_view_state(window, cx))
+            cx.new_model(|cx| build_model(window, cx))
         })
     }
 
-    fn update_view<V: 'static, R>(
+    fn update_window_model<T: 'static, R>(
         &mut self,
-        view: &Model<V>,
-        update: impl FnOnce(&mut V, &mut Window, &mut ModelContext<V>) -> R,
+        view: &Model<T>,
+        update: impl FnOnce(&mut T, &mut Window, &mut ModelContext<T>) -> R,
     ) -> Self::Result<R> {
         self.window.update(self, |_, window, cx| {
             view.update(cx, |model, cx| update(model, window, cx))
@@ -413,23 +409,16 @@ impl VisualContext for AsyncWindowContext {
         V: 'static + Render,
     {
         self.window.update(self, |_, window, cx| {
-            window.replace_root_view(cx, build_view)
+            window.replace_root_model(cx, build_view)
         })
     }
 
-    fn focus_view<V>(&mut self, view: &Model<V>) -> Self::Result<()>
+    fn focus<V>(&mut self, view: &Model<V>) -> Self::Result<()>
     where
-        V: FocusableView,
+        V: Focusable,
     {
         self.window.update(self, |_, window, cx| {
             view.read(cx).focus_handle(cx).clone().focus(window);
         })
-    }
-
-    fn dismiss_view<V>(&mut self, view: &Model<V>) -> Self::Result<()>
-    where
-        V: crate::ManagedView,
-    {
-        view.update(self, |_, cx| cx.emit(DismissEvent))
     }
 }

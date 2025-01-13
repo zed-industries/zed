@@ -4,10 +4,10 @@ use crate::parser::CodeBlockKind;
 use futures::FutureExt;
 use gpui::{
     actions, point, quad, AnyElement, AppContext, Bounds, ClipboardItem, CursorStyle,
-    DispatchPhase, Edges, FocusHandle, FocusableView, FontStyle, FontWeight, GlobalElementId,
-    Hitbox, Hsla, KeyContext, Length, Model, MouseDownEvent, MouseEvent, MouseMoveEvent,
-    MouseUpEvent, Point, Render, StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout,
-    TextRun, TextStyle, TextStyleRefinement,
+    DispatchPhase, Edges, FocusHandle, Focusable, FontStyle, FontWeight,
+    GlobalElementId, Hitbox, Hsla, KeyContext, Length, Model, MouseDownEvent, MouseEvent,
+    MouseMoveEvent, MouseUpEvent, Point, Render, StrikethroughStyle, StyleRefinement, StyledText,
+    Task, TextLayout, TextRun, TextStyle, TextStyleRefinement,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_links_only, parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
@@ -210,7 +210,7 @@ impl Render for Markdown {
     }
 }
 
-impl FocusableView for Markdown {
+impl Focusable for Markdown {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }

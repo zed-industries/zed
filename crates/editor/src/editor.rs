@@ -79,7 +79,7 @@ use git::blame::GitBlame;
 use gpui::{
     div, impl_actions, point, prelude::*, px, relative, size, Action, AnyElement, AppContext,
     AsyncWindowContext, AvailableSpace, Bounds, ClipboardEntry, ClipboardItem, Context,
-    DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusOutEvent, FocusableView, FontId,
+    DispatchPhase, ElementId, EventEmitter, FocusHandle, FocusOutEvent, Focusable, FontId,
     FontWeight, Global, HighlightStyle, Hsla, InteractiveText, KeyContext, Model, ModelContext,
     MouseButton, PaintQuad, ParentElement, Pixels, Render, SharedString, Size, Styled, StyledText,
     Subscription, Task, TextStyle, TextStyleRefinement, UTF16Selection, UnderlineStyle,
@@ -307,7 +307,7 @@ pub fn init(cx: &mut AppContext) {
     workspace::FollowableViewRegistry::register::<Editor>(cx);
     workspace::register_serializable_item::<Editor>(cx);
 
-    cx.observe_new_views(
+    cx.observe_new_window_models(
         |workspace: &mut Workspace, _window: &mut Window, _cx: &mut ModelContext<Workspace>| {
             workspace.register_action(Editor::new_file);
             workspace.register_action(Editor::new_file_vertical);
@@ -1534,9 +1534,8 @@ impl Editor {
         cx.spawn_in(window, |workspace, mut cx| async move {
             let buffer = create.await?;
             workspace.update_in(&mut cx, |workspace, window, cx| {
-                let editor = window.new_view(cx, |window, cx| {
-                    Editor::for_buffer(buffer, Some(project.clone()), window, cx)
-                });
+                let editor = cx
+                    .new_model(|cx| Editor::for_buffer(buffer, Some(project.clone()), window, cx));
                 workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
                 editor
             })
@@ -1580,7 +1579,7 @@ impl Editor {
             workspace.update_in(&mut cx, move |workspace, window, cx| {
                 workspace.split_item(
                     direction,
-                    Box::new(window.new_view(cx, |window, cx| {
+                    Box::new(cx.new_model(|cx| {
                         Editor::for_buffer(buffer, Some(project.clone()), window, cx)
                     })),
                     window,
@@ -4401,7 +4400,7 @@ impl Editor {
 
         workspace.update_in(&mut cx, |workspace, window, cx| {
             let project = workspace.project().clone();
-            let editor = window.new_view(cx, |window, cx| {
+            let editor = cx.new_model(|cx| {
                 Editor::for_multibuffer(excerpt_buffer, Some(project), true, window, cx)
             });
             workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
@@ -10486,7 +10485,7 @@ impl Editor {
             multibuffer.with_title(title)
         });
 
-        let editor = window.new_view(cx, |window, cx| {
+        let editor = cx.new_model(|cx| {
             Editor::for_multibuffer(
                 excerpt_buffer,
                 Some(workspace.project().clone()),
@@ -10608,7 +10607,7 @@ impl Editor {
 
                     // Position the selection in the rename editor so that it matches the current selection.
                     this.show_local_selections = false;
-                    let rename_editor = window.new_view(cx, |window, cx| {
+                    let rename_editor = cx.new_model(|cx| {
                         let mut editor = Editor::single_line(window, cx);
                         editor.buffer.update(cx, |buffer, cx| {
                             buffer.edit([(0..0, old_name.clone())], None, cx)
@@ -10666,7 +10665,7 @@ impl Editor {
                         },
                         cx,
                     );
-                    let rename_focus_handle = rename_editor.item_focus_handle(cx);
+                    let rename_focus_handle = rename_editor.focus_handle(cx);
                     window.focus(&rename_focus_handle);
                     let block_id = this.insert_blocks(
                         [BlockProperties {
@@ -10781,7 +10780,7 @@ impl Editor {
         cx: &mut ModelContext<Self>,
     ) -> Option<RenameState> {
         let rename = self.pending_rename.take()?;
-        if rename.editor.item_focus_handle(cx).is_focused(window) {
+        if rename.editor.focus_handle(cx).is_focused(window) {
             window.focus(&self.focus_handle);
         }
 
@@ -13331,7 +13330,7 @@ impl Editor {
             .into_iter()
             .map(|(buffer, ranges)| ProposedChangeLocation { buffer, ranges })
             .collect::<Vec<_>>();
-        let proposed_changes_editor = window.new_view(cx, |window, cx| {
+        let proposed_changes_editor = cx.new_model(|cx| {
             ProposedChangesEditor::new(
                 "Proposed changes",
                 proposed_changes_buffers,
@@ -15152,7 +15151,7 @@ pub enum EditorEvent {
 
 impl EventEmitter<EditorEvent> for Editor {}
 
-impl FocusableView for Editor {
+impl Focusable for Editor {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }

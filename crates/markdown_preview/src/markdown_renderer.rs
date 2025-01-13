@@ -5,10 +5,10 @@ use crate::markdown_elements::{
     ParsedMarkdownTableAlignment, ParsedMarkdownTableRow,
 };
 use gpui::{
-    div, img, px, rems, AbsoluteLength, AnyElement, AppContext, ClipboardItem, DefiniteLength, Div,
-    Element, ElementId, HighlightStyle, Hsla, ImageSource, InteractiveText, IntoElement, Keystroke,
-    Length, Model, Modifiers, ParentElement, Render, Resource, SharedString, Styled, StyledText,
-    TextStyle, WeakModel, Window,
+    div, img, px, rems, AbsoluteLength, AnyElement, AppContext, ClipboardItem, Context,
+    DefiniteLength, Div, Element, ElementId, HighlightStyle, Hsla, ImageSource, InteractiveText,
+    IntoElement, Keystroke, Length, Model, Modifiers, ParentElement, Render, Resource,
+    SharedString, Styled, StyledText, TextStyle, WeakModel, Window,
 };
 use settings::Settings;
 use std::{
@@ -583,7 +583,7 @@ impl InteractiveMarkdownElementTooltip {
     ) -> Model<Self> {
         let tooltip_text = tooltip_text.map(|t| util::truncate_and_trailoff(&t, 50).into());
 
-        window.new_view(cx, |_, _| Self {
+        cx.new_model(|cx| Self {
             tooltip_text,
             action_text: action_text.to_string(),
         })

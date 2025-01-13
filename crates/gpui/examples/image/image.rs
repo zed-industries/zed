@@ -156,7 +156,7 @@ fn main() {
             };
 
             cx.open_window(window_options, |window, cx| {
-                window.new_view(cx, |_window, _cx| ImageShowcase {
+                cx.new_model(|cx| ImageShowcase {
                     // Relative path to your root project path
                     local_resource: PathBuf::from_str("crates/gpui/examples/image/app-icon.png")
                         .unwrap()

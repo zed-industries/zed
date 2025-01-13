@@ -59,7 +59,7 @@ impl SemanticDb {
             .context("opening database connection")?;
 
         cx.update(|cx| {
-            cx.observe_new_views(
+            cx.observe_new_window_models(
                 |workspace: &mut Workspace,
                  _window: &mut Window,
                  cx: &mut ModelContext<Workspace>| {

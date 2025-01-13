@@ -14,7 +14,7 @@ pub use modal::{Rerun, Spawn};
 
 pub fn init(cx: &mut AppContext) {
     settings::TaskSettings::register(cx);
-    cx.observe_new_views(
+    cx.observe_new_window_models(
         |workspace: &mut Workspace, _window: &mut Window, _: &mut ModelContext<Workspace>| {
             workspace
                 .register_action(spawn_task_or_modal)
@@ -352,8 +352,9 @@ mod tests {
         buffer1.update(cx, |this, cx| {
             this.set_language(Some(typescript_language), cx)
         });
-        let editor1 = cx
-            .new_view(|window, cx| Editor::for_buffer(buffer1, Some(project.clone()), window, cx));
+        let editor1 = cx.new_window_model(|window, cx| {
+            Editor::for_buffer(buffer1, Some(project.clone()), window, cx)
+        });
         let buffer2 = workspace
             .update(cx, |this, cx| {
                 this.project().update(cx, |this, cx| {
@@ -363,8 +364,8 @@ mod tests {
             .await
             .unwrap();
         buffer2.update(cx, |this, cx| this.set_language(Some(rust_language), cx));
-        let editor2 =
-            cx.new_view(|window, cx| Editor::for_buffer(buffer2, Some(project), window, cx));
+        let editor2 = cx
+            .new_window_model(|window, cx| Editor::for_buffer(buffer2, Some(project), window, cx));
 
         let first_context = workspace
             .update_in(cx, |workspace, window, cx| {

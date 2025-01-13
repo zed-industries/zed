@@ -69,15 +69,15 @@ impl VimTestContext {
         cx.update_workspace(|workspace, window, cx| {
             workspace.active_pane().update(cx, |pane, cx| {
                 pane.toolbar().update(cx, |toolbar, cx| {
-                    let buffer_search_bar = window.new_view(cx, BufferSearchBar::new);
+                    let buffer_search_bar = cx.new_model(|cx| BufferSearchBar::new(window, cx));
                     toolbar.add_item(buffer_search_bar, window, cx);
 
-                    let project_search_bar = window.new_view(cx, |_, _| ProjectSearchBar::new());
+                    let project_search_bar = cx.new_model(|_| ProjectSearchBar::new());
                     toolbar.add_item(project_search_bar, window, cx);
                 })
             });
             workspace.status_bar().update(cx, |status_bar, cx| {
-                let vim_mode_indicator = window.new_view(cx, ModeIndicator::new);
+                let vim_mode_indicator = cx.new_model(|cx| ModeIndicator::new(window, cx));
                 status_bar.add_right_item(vim_mode_indicator, window, cx);
             });
         });

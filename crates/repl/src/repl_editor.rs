@@ -44,9 +44,8 @@ pub fn assign_kernelspec(
         });
     }
 
-    let session = window.new_view(cx, |window, cx| {
-        Session::new(weak_editor.clone(), fs, kernel_specification, window, cx)
-    });
+    let session =
+        cx.new_model(|cx| Session::new(weak_editor.clone(), fs, kernel_specification, window, cx));
 
     weak_editor
         .update(cx, |_editor, cx| {
@@ -117,9 +116,8 @@ pub fn run(
             session
         } else {
             let weak_editor = editor.downgrade();
-            let session = window.new_view(cx, |window, cx| {
-                Session::new(weak_editor, fs, kernel_specification, window, cx)
-            });
+            let session =
+                cx.new_model(|cx| Session::new(weak_editor, fs, kernel_specification, window, cx));
 
             editor.update(cx, |_editor, cx| {
                 cx.notify();

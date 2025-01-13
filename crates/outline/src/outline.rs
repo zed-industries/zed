@@ -7,7 +7,7 @@ use std::{
 use editor::{scroll::Autoscroll, Anchor, AnchorRangeExt, Editor, EditorMode};
 use fuzzy::StringMatch;
 use gpui::{
-    div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, HighlightStyle,
+    div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, HighlightStyle,
     Model, ModelContext, ParentElement, Point, Render, Styled, StyledText, Task, TextStyle,
     VisualContext, WeakModel, Window,
 };
@@ -21,7 +21,7 @@ use util::ResultExt;
 use workspace::{DismissDecision, ModalView};
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(OutlineView::register).detach();
+    cx.observe_new_window_models(OutlineView::register).detach();
     zed_actions::outline::TOGGLE_OUTLINE
         .set(|view, window, cx| {
             let Ok(view) = view.downcast::<Editor>() else {
@@ -59,7 +59,7 @@ pub struct OutlineView {
     picker: Model<Picker<OutlineViewDelegate>>,
 }
 
-impl FocusableView for OutlineView {
+impl Focusable for OutlineView {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
@@ -107,7 +107,7 @@ impl OutlineView {
     ) -> OutlineView {
         let delegate =
             OutlineViewDelegate::new(cx.model().downgrade(), outline, editor, window, cx);
-        let picker = window.new_view(cx, |window, cx| {
+        let picker = cx.new_model(|cx| {
             Picker::uniform_list(delegate, window, cx).max_height(Some(vh(0.75, window, cx)))
         });
         OutlineView { picker }

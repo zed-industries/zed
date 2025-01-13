@@ -7,7 +7,7 @@ use crate::{
 };
 use gpui::prelude::FluentBuilder;
 use gpui::{
-    DismissEvent, FocusableView as _, Model, ModelContext, Pixels, Point, Subscription, Window,
+    DismissEvent, Focusable as _, Model, ModelContext, Pixels, Point, Subscription, Window,
 };
 use std::ops::Range;
 use text::PointUtf16;

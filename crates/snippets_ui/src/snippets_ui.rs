@@ -1,7 +1,7 @@
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
-    actions, AppContext, DismissEvent, EventEmitter, FocusableView, Model, ModelContext,
-    ParentElement, Render, Styled, VisualContext, WeakModel, Window,
+    actions, AppContext, DismissEvent, EventEmitter, Focusable, Model, ModelContext, ParentElement,
+    Render, Styled, VisualContext, WeakModel, Window,
 };
 use language::LanguageRegistry;
 use paths::config_dir;
@@ -14,7 +14,7 @@ use workspace::{notifications::NotifyResultExt, ModalView, Workspace};
 actions!(snippets, [ConfigureSnippets, OpenFolder]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(register).detach();
+    cx.observe_new_window_models(register).detach();
 }
 
 fn register(workspace: &mut Workspace, _window: &mut Window, _: &mut ModelContext<Workspace>) {
@@ -60,7 +60,7 @@ impl ScopeSelector {
         let delegate =
             ScopeSelectorDelegate::new(workspace, cx.model().downgrade(), language_registry);
 
-        let picker = window.new_view(cx, |window, cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new_model(|cx| Picker::uniform_list(delegate, window, cx));
 
         Self { picker }
     }
@@ -70,7 +70,7 @@ impl ModalView for ScopeSelector {}
 
 impl EventEmitter<DismissEvent> for ScopeSelector {}
 
-impl FocusableView for ScopeSelector {
+impl Focusable for ScopeSelector {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
         self.picker.focus_handle(cx)
     }

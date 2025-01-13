@@ -1,6 +1,6 @@
 use editor::Editor;
 use gpui::{
-    actions, prelude::*, AnyElement, AppContext, EventEmitter, FocusHandle, FocusableView, Model,
+    actions, prelude::*, AnyElement, AppContext, EventEmitter, FocusHandle, Focusable, Model,
     Subscription,
 };
 use project::ProjectItem as _;
@@ -28,7 +28,7 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(
+    cx.observe_new_window_models(
         |workspace: &mut Workspace, _window: &mut Window, _cx: &mut ModelContext<Workspace>| {
             workspace.register_action(|workspace, _: &Sessions, window, cx| {
                 let existing = workspace
@@ -61,7 +61,7 @@ pub fn init(cx: &mut AppContext) {
     )
     .detach();
 
-    cx.observe_new_views(
+    cx.observe_new_window_models(
         move |editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Editor>| {
             if !editor.use_modal_editing() || !editor.buffer().read(cx).is_singleton() {
                 return;
@@ -145,7 +145,7 @@ pub struct ReplSessionsPage {
 
 impl ReplSessionsPage {
     pub fn new(window: &mut Window, cx: &mut ModelContext<Workspace>) -> Model<Self> {
-        window.new_view(cx, |window: &mut Window, cx: &mut ModelContext<Self>| {
+        cx.new_model(|cx| {
             let focus_handle = cx.focus_handle();
 
             let subscriptions = vec![
@@ -165,7 +165,7 @@ impl ReplSessionsPage {
 
 impl EventEmitter<ItemEvent> for ReplSessionsPage {}
 
-impl FocusableView for ReplSessionsPage {
+impl Focusable for ReplSessionsPage {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }

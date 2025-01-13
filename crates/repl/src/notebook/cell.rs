@@ -92,8 +92,7 @@ fn convert_outputs(
         .into_iter()
         .map(|output| match output {
             nbformat::v4::Output::Stream { text, .. } => Output::Stream {
-                content: window
-                    .new_view(cx, |window, cx| TerminalOutput::from(&text.0, window, cx)),
+                content: cx.new_model(|cx| TerminalOutput::from(&text.0, window, cx)),
             },
             nbformat::v4::Output::DisplayData(display_data) => {
                 Output::new(&display_data.data, None, window, cx)
@@ -104,9 +103,8 @@ fn convert_outputs(
             nbformat::v4::Output::Error(error) => Output::ErrorOutput(ErrorView {
                 ename: error.ename.clone(),
                 evalue: error.evalue.clone(),
-                traceback: window.new_view(cx, |window, cx| {
-                    TerminalOutput::from(&error.traceback.join("\n"), window, cx)
-                }),
+                traceback: cx
+                    .new_model(|cx| TerminalOutput::from(&error.traceback.join("\n"), window, cx)),
             }),
         })
         .collect()
@@ -129,7 +127,7 @@ impl Cell {
             } => {
                 let source = source.join("");
 
-                let view = window.new_view(cx, |window, cx| {
+                let view = cx.new_model(|cx| {
                     let markdown_parsing_task = {
                         let languages = languages.clone();
                         let source = source.clone();
@@ -169,13 +167,13 @@ impl Cell {
                 execution_count,
                 source,
                 outputs,
-            } => Cell::Code(window.new_view(cx, |window, cx| {
+            } => Cell::Code(cx.new_model(|cx| {
                 let text = source.join("");
 
                 let buffer = cx.new_model(|cx| Buffer::local(text.clone(), cx));
                 let multi_buffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
 
-                let editor_view = window.new_view(cx, |window, cx| {
+                let editor_view = cx.new_model(|cx| {
                     let mut editor = Editor::new(
                         EditorMode::AutoHeight { max_lines: 1024 },
                         multi_buffer,
@@ -228,7 +226,7 @@ impl Cell {
                 id,
                 metadata,
                 source,
-            } => Cell::Raw(window.new_view(cx, |_, _| RawCell {
+            } => Cell::Raw(cx.new_model(|_| RawCell {
                 id: id.clone(),
                 metadata: metadata.clone(),
                 source: source.join(""),

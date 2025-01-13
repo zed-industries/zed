@@ -6,7 +6,7 @@ pub use ssh_connections::{is_connecting_over_ssh, open_ssh_project};
 use disconnected_overlay::DisconnectedOverlay;
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
+    Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model,
     ModelContext, Subscription, Task, WeakModel, Window,
 };
 use itertools::Itertools;
@@ -32,10 +32,12 @@ use zed_actions::{OpenRecent, OpenRemote};
 
 pub fn init(cx: &mut AppContext) {
     SshSettings::register(cx);
-    cx.observe_new_views(RecentProjects::register).detach();
-    cx.observe_new_views(RemoteServerProjects::register)
+    cx.observe_new_window_models(RecentProjects::register)
         .detach();
-    cx.observe_new_views(DisconnectedOverlay::register).detach();
+    cx.observe_new_window_models(RemoteServerProjects::register)
+        .detach();
+    cx.observe_new_window_models(DisconnectedOverlay::register)
+        .detach();
 }
 
 pub struct RecentProjects {
@@ -53,7 +55,7 @@ impl RecentProjects {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let picker = window.new_view(cx, |window, cx| {
+        let picker = cx.new_model(|cx| {
             // We want to use a list when we render paths, because the items can have different heights (multiple paths).
             if delegate.render_paths {
                 Picker::list(delegate, window, cx)
@@ -123,7 +125,7 @@ impl RecentProjects {
 
 impl EventEmitter<DismissEvent> for RecentProjects {}
 
-impl FocusableView for RecentProjects {
+impl Focusable for RecentProjects {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
@@ -472,11 +474,10 @@ impl PickerDelegate for RecentProjectsDelegate {
                 })
                 .tooltip(move |window, cx| {
                     let tooltip_highlighted_location = highlighted_match.clone();
-                    window
-                        .new_view(cx, move |_, _| MatchTooltip {
-                            highlighted_location: tooltip_highlighted_location,
-                        })
-                        .into()
+                    cx.new_model(|cx| MatchTooltip {
+                        highlighted_location: tooltip_highlighted_location,
+                    })
+                    .into()
                 }),
         )
     }

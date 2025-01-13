@@ -3,10 +3,10 @@ use std::ops::Range;
 use gpui::{
     actions, black, div, fill, hsla, opaque_grey, point, prelude::*, px, relative, rgb, rgba, size,
     white, yellow, App, AppContext, Bounds, ClipboardItem, CursorStyle, ElementId,
-    ElementInputHandler, FocusHandle, FocusableView, GlobalElementId, KeyBinding, Keystroke,
-    LayoutId, Model, ModelContext, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    PaintQuad, Pixels, Point, ShapedLine, SharedString, Style, TextRun, UTF16Selection,
-    UnderlineStyle, ViewInputHandler, Window, WindowBounds, WindowOptions,
+    ElementInputHandler, FocusHandle, Focusable, GlobalElementId, KeyBinding, Keystroke, LayoutId,
+    Model, ModelContext, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent, PaintQuad,
+    Pixels, Point, ShapedLine, SharedString, Style, TextRun, UTF16Selection, UnderlineStyle,
+    ViewInputHandler, Window, WindowBounds, WindowOptions,
 };
 use unicode_segmentation::*;
 
@@ -583,7 +583,7 @@ impl Render for TextInput {
     }
 }
 
-impl FocusableView for TextInput {
+impl Focusable for TextInput {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
@@ -595,7 +595,7 @@ struct InputExample {
     focus_handle: FocusHandle,
 }
 
-impl FocusableView for InputExample {
+impl Focusable for InputExample {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
@@ -688,7 +688,7 @@ fn main() {
                     ..Default::default()
                 },
                 |window, cx| {
-                    let text_input = window.new_view(cx, |window, cx| TextInput {
+                    let text_input = cx.new_model(|cx| TextInput {
                         focus_handle: cx.focus_handle(),
                         content: "".into(),
                         placeholder: "Type here...".into(),
@@ -699,7 +699,7 @@ fn main() {
                         last_bounds: None,
                         is_selecting: false,
                     });
-                    window.new_view(cx, |window, cx| InputExample {
+                    cx.new_model(|cx| InputExample {
                         text_input,
                         recent_keystrokes: vec![],
                         focus_handle: cx.focus_handle(),
@@ -724,7 +724,7 @@ fn main() {
 
         window
             .update(cx, |view, window, cx| {
-                window.focus_view(&view.text_input, cx);
+                window.focus(&view.text_input.focus_handle(cx));
                 cx.activate(true);
             })
             .unwrap();

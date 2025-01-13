@@ -3,9 +3,8 @@ use copilot::Copilot;
 use editor::{actions::MoveToEnd, Editor, EditorEvent};
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
-    actions, div, AppContext, Context, Corner, EventEmitter, FocusHandle, FocusableView,
-    IntoElement, Model, ModelContext, ParentElement, Render, Styled, Subscription, WeakModel,
-    Window,
+    actions, div, AppContext, Context, Corner, EventEmitter, FocusHandle, Focusable, IntoElement,
+    Model, ModelContext, ParentElement, Render, Styled, Subscription, WeakModel, Window,
 };
 use language::LanguageServerId;
 use lsp::{
@@ -208,7 +207,7 @@ actions!(debug, [OpenLanguageServerLogs]);
 pub fn init(cx: &mut AppContext) {
     let log_store = cx.new_model(LogStore::new);
 
-    cx.observe_new_views(move |workspace: &mut Workspace, window, cx| {
+    cx.observe_new_window_models(move |workspace: &mut Workspace, window, cx| {
         let project = workspace.project();
         if project.read(cx).is_local() || project.read(cx).is_via_ssh() {
             log_store.update(cx, |store, cx| {
@@ -222,7 +221,7 @@ pub fn init(cx: &mut AppContext) {
             if project.is_local() || project.is_via_ssh() {
                 workspace.split_item(
                     SplitDirection::Right,
-                    Box::new(window.new_view(cx, |window, cx| {
+                    Box::new(cx.new_model(|cx| {
                         LspLogView::new(workspace.project().clone(), log_store.clone(), window, cx)
                     })),
                     window,
@@ -676,7 +675,7 @@ impl LspLogView {
 
         let focus_handle = cx.focus_handle();
         let focus_subscription = cx.on_focus(&focus_handle, window, |log_view, window, cx| {
-            window.focus_view(&log_view.editor, cx);
+            window.focus(&log_view.editor.focus_handle(cx));
         });
 
         let mut this = Self {
@@ -704,7 +703,7 @@ impl LspLogView {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> (Model<Editor>, Vec<Subscription>) {
-        let editor = window.new_view(cx, |window, cx| {
+        let editor = cx.new_model(|cx| {
             let mut editor = Editor::multi_line(window, cx);
             editor.set_text(log_contents, window, cx);
             editor.move_to_end(&MoveToEnd, window, cx);
@@ -734,7 +733,7 @@ impl LspLogView {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> (Model<Editor>, Vec<Subscription>) {
-        let editor = window.new_view(cx, |window, cx| {
+        let editor = cx.new_model(|cx| {
             let mut editor = Editor::multi_line(window, cx);
             editor.set_text(
                 serde_json::to_string_pretty(&capabilities).unwrap(),
@@ -1030,7 +1029,7 @@ impl Render for LspLogView {
     }
 }
 
-impl FocusableView for LspLogView {
+impl Focusable for LspLogView {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
@@ -1064,7 +1063,7 @@ impl Item for LspLogView {
     where
         Self: Sized,
     {
-        Some(window.new_view(cx, |window, cx| {
+        Some(cx.new_model(|cx| {
             let mut new_view = Self::new(self.project.clone(), self.log_store.clone(), window, cx);
             if let Some(server_id) = self.current_server_id {
                 match self.active_entry_kind {

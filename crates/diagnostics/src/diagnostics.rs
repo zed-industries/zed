@@ -17,7 +17,7 @@ use editor::{
 use feature_flags::FeatureFlagAppExt;
 use gpui::{
     actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
-    FocusableView, Global, HighlightStyle, InteractiveElement, IntoElement, Model, ModelContext,
+    Focusable, Global, HighlightStyle, InteractiveElement, IntoElement, Model, ModelContext,
     ParentElement, Render, SharedString, Styled, StyledText, Subscription, Task, VisualContext,
     WeakModel, Window,
 };
@@ -55,7 +55,7 @@ impl Global for IncludeWarnings {}
 
 pub fn init(cx: &mut AppContext) {
     ProjectDiagnosticsSettings::register(cx);
-    cx.observe_new_views(ProjectDiagnosticsEditor::register)
+    cx.observe_new_window_models(ProjectDiagnosticsEditor::register)
         .detach();
 }
 
@@ -148,7 +148,7 @@ impl ProjectDiagnosticsEditor {
                     this.summary = project.read(cx).diagnostic_summary(false, cx);
                     cx.emit(EditorEvent::TitleChanged);
 
-                    if this.editor.item_focus_handle(cx).contains_focused(window, cx) || this.focus_handle.contains_focused(window, cx) {
+                    if this.editor.focus_handle(cx).contains_focused(window, cx) || this.focus_handle.contains_focused(window, cx) {
                         log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. recording change");
                     } else {
                         log::debug!("diagnostics updated for server {language_server_id}, path {path:?}. updating excerpts");
@@ -169,7 +169,7 @@ impl ProjectDiagnosticsEditor {
         .detach();
 
         let excerpts = cx.new_model(|cx| MultiBuffer::new(project_handle.read(cx).capability()));
-        let editor = window.new_view(cx, |window, cx| {
+        let editor = cx.new_model(|cx| {
             let mut editor = Editor::for_multibuffer(
                 excerpts.clone(),
                 Some(project_handle.clone()),
@@ -290,7 +290,7 @@ impl ProjectDiagnosticsEditor {
                 None => ProjectDiagnosticsSettings::get_global(cx).include_warnings,
             };
 
-            let diagnostics = window.new_view(cx, |window, cx| {
+            let diagnostics = cx.new_model(|cx| {
                 ProjectDiagnosticsEditor::new(
                     workspace.project().clone(),
                     include_warnings,
@@ -317,13 +317,12 @@ impl ProjectDiagnosticsEditor {
 
     fn focus_in(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         if self.focus_handle.is_focused(window) && !self.path_states.is_empty() {
-            self.editor.item_focus_handle(cx).focus(window)
+            self.editor.focus_handle(cx).focus(window)
         }
     }
 
     fn focus_out(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        if !self.focus_handle.is_focused(window)
-            && !self.editor.item_focus_handle(cx).is_focused(window)
+        if !self.focus_handle.is_focused(window) && !self.editor.focus_handle(cx).is_focused(window)
         {
             self.update_stale_excerpts(window, cx);
         }
@@ -650,11 +649,11 @@ impl ProjectDiagnosticsEditor {
         });
 
         if self.path_states.is_empty() {
-            if self.editor.item_focus_handle(cx).is_focused(window) {
+            if self.editor.focus_handle(cx).is_focused(window) {
                 window.focus(&self.focus_handle);
             }
         } else if self.focus_handle.is_focused(window) {
-            let focus_handle = self.editor.item_focus_handle(cx);
+            let focus_handle = self.editor.focus_handle(cx);
             window.focus(&focus_handle);
         }
 
@@ -685,7 +684,7 @@ impl ProjectDiagnosticsEditor {
     }
 }
 
-impl FocusableView for ProjectDiagnosticsEditor {
+impl Focusable for ProjectDiagnosticsEditor {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
@@ -797,7 +796,7 @@ impl Item for ProjectDiagnosticsEditor {
     where
         Self: Sized,
     {
-        Some(window.new_view(cx, |window, cx| {
+        Some(cx.new_model(|cx| {
             ProjectDiagnosticsEditor::new(
                 self.project.clone(),
                 self.include_warnings,

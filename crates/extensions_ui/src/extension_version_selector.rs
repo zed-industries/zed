@@ -5,9 +5,7 @@ use client::ExtensionMetadata;
 use extension_host::{ExtensionSettings, ExtensionStore};
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
-use gpui::{
-    prelude::*, AppContext, DismissEvent, EventEmitter, FocusableView, Model, Task, WeakModel,
-};
+use gpui::{prelude::*, AppContext, DismissEvent, EventEmitter, Focusable, Model, Task, WeakModel};
 use picker::{Picker, PickerDelegate};
 use release_channel::ReleaseChannel;
 use semantic_version::SemanticVersion;
@@ -24,7 +22,7 @@ impl ModalView for ExtensionVersionSelector {}
 
 impl EventEmitter<DismissEvent> for ExtensionVersionSelector {}
 
-impl FocusableView for ExtensionVersionSelector {
+impl Focusable for ExtensionVersionSelector {
     fn focus_handle(&self, cx: &AppContext) -> gpui::FocusHandle {
         self.picker.focus_handle(cx)
     }
@@ -42,7 +40,7 @@ impl ExtensionVersionSelector {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let picker = window.new_view(cx, |window, cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new_model(|cx| Picker::uniform_list(delegate, window, cx));
         Self { picker }
     }
 }

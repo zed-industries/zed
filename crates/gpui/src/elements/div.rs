@@ -579,10 +579,10 @@ pub trait InteractiveElement: Sized {
     /// Track the focus state of the given focus handle on this element.
     /// If the focus handle is focused by the application, this element will
     /// apply its focused styles.
-    fn track_focus(mut self, focus_handle: &FocusHandle) -> Focusable<Self> {
+    fn track_focus(mut self, focus_handle: &FocusHandle) -> FocusableWrapper<Self> {
         self.interactivity().focusable = true;
         self.interactivity().tracked_focus_handle = Some(focus_handle.clone());
-        Focusable { element: self }
+        FocusableWrapper { element: self }
     }
 
     /// Set the keymap context for this element. This will be used to determine
@@ -941,9 +941,9 @@ pub trait InteractiveElement: Sized {
 /// that require state.
 pub trait StatefulInteractiveElement: InteractiveElement {
     /// Set this element to focusable.
-    fn focusable(mut self) -> Focusable<Self> {
+    fn focusable(mut self) -> FocusableWrapper<Self> {
         self.interactivity().focusable = true;
-        Focusable { element: self }
+        FocusableWrapper { element: self }
     }
 
     /// Set the overflow x and y to scroll.
@@ -2400,14 +2400,14 @@ impl GroupHitboxes {
 }
 
 /// A wrapper around an element that can be focused.
-pub struct Focusable<E> {
+pub struct FocusableWrapper<E> {
     /// The element that is focusable
     pub element: E,
 }
 
-impl<E: InteractiveElement> FocusableElement for Focusable<E> {}
+impl<E: InteractiveElement> FocusableElement for FocusableWrapper<E> {}
 
-impl<E> InteractiveElement for Focusable<E>
+impl<E> InteractiveElement for FocusableWrapper<E>
 where
     E: InteractiveElement,
 {
@@ -2416,9 +2416,9 @@ where
     }
 }
 
-impl<E: StatefulInteractiveElement> StatefulInteractiveElement for Focusable<E> {}
+impl<E: StatefulInteractiveElement> StatefulInteractiveElement for FocusableWrapper<E> {}
 
-impl<E> Styled for Focusable<E>
+impl<E> Styled for FocusableWrapper<E>
 where
     E: Styled,
 {
@@ -2427,7 +2427,7 @@ where
     }
 }
 
-impl<E> Element for Focusable<E>
+impl<E> Element for FocusableWrapper<E>
 where
     E: Element,
 {
@@ -2472,7 +2472,7 @@ where
     }
 }
 
-impl<E> IntoElement for Focusable<E>
+impl<E> IntoElement for FocusableWrapper<E>
 where
     E: IntoElement,
 {
@@ -2483,7 +2483,7 @@ where
     }
 }
 
-impl<E> ParentElement for Focusable<E>
+impl<E> ParentElement for FocusableWrapper<E>
 where
     E: ParentElement,
 {

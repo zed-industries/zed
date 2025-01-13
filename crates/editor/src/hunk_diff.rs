@@ -1,7 +1,7 @@
 use collections::{HashMap, HashSet};
 use git::diff::DiffHunkStatus;
 use gpui::{
-    Action, AppContext, Corner, CursorStyle, FocusableView as _, Hsla, Model, MouseButton,
+    Action, AppContext, Corner, CursorStyle, Focusable as _, Hsla, Model, MouseButton,
     Subscription, Task,
 };
 use language::{Buffer, BufferId, Point};
@@ -1235,7 +1235,7 @@ fn editor_with_deleted_text(
     cx: &mut ModelContext<Editor>,
 ) -> (u32, Model<Editor>) {
     let parent_editor = cx.model().downgrade();
-    let editor = window.new_view(cx, |window, cx| {
+    let editor = cx.new_model(|cx| {
         let multi_buffer =
             cx.new_model(|_| MultiBuffer::without_headers(language::Capability::ReadOnly));
         multi_buffer.update(cx, |multi_buffer, cx| {

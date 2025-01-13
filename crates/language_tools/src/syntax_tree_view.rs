@@ -1,9 +1,9 @@
 use editor::{scroll::Autoscroll, Anchor, Editor, ExcerptId};
 use gpui::{
-    actions, div, rems, uniform_list, AppContext, Div, EventEmitter, FocusHandle, FocusableView,
-    Hsla, InteractiveElement, IntoElement, Model, ModelContext, MouseButton, MouseDownEvent,
-    MouseMoveEvent, ParentElement, Render, ScrollStrategy, SharedString, Styled,
-    UniformListScrollHandle, VisualContext, WeakModel, Window,
+    actions, div, rems, uniform_list, AppContext, Context as _, Div, EventEmitter, FocusHandle,
+    Focusable, Hsla, InteractiveElement, IntoElement, Model, ModelContext, MouseButton,
+    MouseDownEvent, MouseMoveEvent, ParentElement, Render, ScrollStrategy, SharedString, Styled,
+    UniformListScrollHandle, WeakModel, Window,
 };
 use language::{Buffer, OwnedSyntaxLayer};
 use std::{mem, ops::Range};
@@ -18,13 +18,12 @@ use workspace::{
 actions!(debug, [OpenSyntaxTreeView]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_views(|workspace: &mut Workspace, _, _| {
+    cx.observe_new_window_models(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &OpenSyntaxTreeView, window, cx| {
             let active_item = workspace.active_item(cx);
             let workspace_handle = workspace.weak_handle();
-            let syntax_tree_view = window.new_view(cx, |window, cx| {
-                SyntaxTreeView::new(workspace_handle, active_item, window, cx)
-            });
+            let syntax_tree_view =
+                cx.new_model(|cx| SyntaxTreeView::new(workspace_handle, active_item, window, cx));
             workspace.split_item(
                 SplitDirection::Right,
                 Box::new(syntax_tree_view),
@@ -391,7 +390,7 @@ impl Render for SyntaxTreeView {
 
 impl EventEmitter<()> for SyntaxTreeView {}
 
-impl FocusableView for SyntaxTreeView {
+impl Focusable for SyntaxTreeView {
     fn focus_handle(&self, _: &AppContext) -> gpui::FocusHandle {
         self.focus_handle.clone()
     }
@@ -419,7 +418,7 @@ impl Item for SyntaxTreeView {
     where
         Self: Sized,
     {
-        Some(window.new_view(cx, |window, cx| {
+        Some(cx.new_model(|cx| {
             let mut clone = Self::new(self.workspace_handle.clone(), None, window, cx);
             if let Some(editor) = &self.editor {
                 clone.set_editor(editor.editor.clone(), window, cx)

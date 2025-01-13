@@ -194,7 +194,6 @@ impl FocusHandle {
         }
     }
 
-    // todo! Inline this?
     /// Moves the focus to the element associated with this handle.
     pub fn focus(&self, window: &mut Window) {
         window.focus(self)
@@ -293,14 +292,14 @@ impl PartialEq<WeakFocusHandle> for FocusHandle {
     }
 }
 
-/// FocusableView allows users of your view to easily
+/// Focusable allows users of your view to easily
 /// focus it (using cx.focus_view(view))
-pub trait FocusableView: 'static {
+pub trait Focusable: 'static {
     /// Returns the focus handle associated with this view.
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
 }
 
-impl<V: FocusableView> FocusableView for Model<V> {
+impl<V: Focusable> Focusable for Model<V> {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.read(cx).focus_handle(cx)
     }
@@ -308,9 +307,9 @@ impl<V: FocusableView> FocusableView for Model<V> {
 
 /// ManagedView is a view (like a Modal, Popover, Menu, etc.)
 /// where the lifecycle of the view is handled by another view.
-pub trait ManagedView: FocusableView + EventEmitter<DismissEvent> + Render {}
+pub trait ManagedView: Focusable + EventEmitter<DismissEvent> + Render {}
 
-impl<M: FocusableView + EventEmitter<DismissEvent> + Render> ManagedView for M {}
+impl<M: Focusable + EventEmitter<DismissEvent> + Render> ManagedView for M {}
 
 /// Emitted by implementers of [`ManagedView`] to indicate the view should be dismissed, such as when a view is presented as a modal.
 pub struct DismissEvent;
@@ -883,19 +882,6 @@ impl ContentMask<Pixels> {
 }
 
 impl Window {
-    // todo! remove this
-    /// Builds a new view
-    pub fn new_view<V>(
-        &mut self,
-        cx: &mut AppContext,
-        build_view_state: impl FnOnce(&mut Window, &mut ModelContext<V>) -> V,
-    ) -> Model<V>
-    where
-        V: 'static + Render,
-    {
-        cx.new_model(|cx| build_view_state(self, cx))
-    }
-
     /// Indicate that a view has changed, which will invoke any observers and also mark the window as dirty.
     /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
     /// Note that this method will always cause a redraw, the entire window is refreshed if view_id is None.
@@ -923,32 +909,6 @@ impl Window {
         }
     }
 
-    // todo! remove this
-    /// Builds a view in the window
-    pub fn update_view<V: 'static, R>(
-        &mut self,
-        view: &Model<V>,
-        cx: &mut AppContext,
-        update: impl FnOnce(&mut V, &mut Window, &mut ModelContext<V>) -> R,
-    ) -> R {
-        view.update(cx, |model, cx| update(model, self, cx))
-    }
-
-    // todo! remove this? seems trivial
-    pub fn focus_view<V: crate::FocusableView>(&mut self, view: &Model<V>, cx: &AppContext) {
-        self.focus(&view.read(cx).focus_handle(cx));
-    }
-
-    // todo! remove this or simplify? seems trivial
-    pub fn dismiss_view<V>(&mut self, view: &Model<V>, cx: &mut AppContext)
-    where
-        V: ManagedView,
-    {
-        view.update(cx, |_model, cx| {
-            cx.emit(DismissEvent);
-        });
-    }
-
     /// Registers a callback to be invoked when the window appearance changes.
     pub fn observe_window_appearance(
         &self,
@@ -965,7 +925,7 @@ impl Window {
         subscription
     }
 
-    pub fn replace_root_view<V>(
+    pub fn replace_root_model<V>(
         &mut self,
         cx: &mut AppContext,
         build_view: impl FnOnce(&mut Window, &mut ModelContext<'_, V>) -> V,
@@ -973,7 +933,7 @@ impl Window {
     where
         V: 'static + Render,
     {
-        let view = self.new_view(cx, |window, cx| build_view(window, cx));
+        let view = cx.new_model(|cx| build_view(self, cx));
         self.root_view = Some(view.clone().into());
         self.refresh();
         view

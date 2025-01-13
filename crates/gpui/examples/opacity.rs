@@ -169,7 +169,7 @@ fn main() {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |window, cx| window.new_view(cx, HelloWorld::new),
+                |window, cx| cx.new_model(|cx| HelloWorld::new(window, cx)),
             )
             .unwrap();
         });
