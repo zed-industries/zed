@@ -97,7 +97,6 @@ impl LanguageServerTree {
         let roots = self.project_tree.update(cx, |this, cx| {
             this.root_for_path(path, &language, delegate, cx)
         });
-
         roots.into_iter().map(|(adapter, root_path)| {
             let attach = self.attach_kind(&adapter);
             self.instances

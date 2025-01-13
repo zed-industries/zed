@@ -131,12 +131,11 @@ impl ProjectTree {
             worktree_id,
             path: Arc::from("".as_ref()),
         };
-        let mut roots = BTreeMap::from_iter(adapters.into_iter().map(|adapter| {
-            (
-                AdapterWrapper(adapter),
-                (empty_path.clone(), LabelPresence::KnownAbsent),
-            )
-        }));
+        let mut roots = BTreeMap::from_iter(
+            adapters
+                .into_iter()
+                .map(|adapter| (AdapterWrapper(adapter), (None, LabelPresence::KnownAbsent))),
+        );
         let worktree_roots = match self.root_points.entry(worktree_id) {
             Entry::Occupied(occupied_entry) => occupied_entry.get().clone(),
             Entry::Vacant(vacant_entry) => {
@@ -163,7 +162,7 @@ impl ProjectTree {
                         if *current_presence > *presence {
                             debug_assert!(false, "RootPathTrie precondition violation; while walking the tree label presence is only allowed to increase");
                         }
-                        *marked_path = ProjectPath {worktree_id, path: path.clone()};
+                        *marked_path = Some(ProjectPath {worktree_id, path: path.clone()});
                         *current_presence = *presence;
                     }
 
@@ -175,14 +174,18 @@ impl ProjectTree {
             if *presence == LabelPresence::Present {
                 continue;
             }
-            let depth = path
-                .strip_prefix(&root_path.path)
-                .unwrap()
-                .components()
-                .count();
+
+            let depth = root_path
+                .as_ref()
+                .map(|root_path| {
+                    path.strip_prefix(&root_path.path)
+                        .unwrap()
+                        .components()
+                        .count()
+                })
+                .unwrap_or_else(|| path.components().count() + 1);
 
             if depth > 0 {
-                dbg!(&path, &root_path.path, depth);
                 let root = adapter.0.find_project_root(&path, depth, &delegate);
                 match root {
                     Some(known_root) => worktree_roots.update(cx, |this, _| {
@@ -190,10 +193,10 @@ impl ProjectTree {
                         this.roots
                             .insert(&root, adapter.0.name(), LabelPresence::Present);
                         *presence = LabelPresence::Present;
-                        *root_path = ProjectPath {
+                        *root_path = Some(ProjectPath {
                             worktree_id,
                             path: known_root,
-                        };
+                        });
                     }),
                     None => worktree_roots.update(cx, |this, _| {
                         this.roots
@@ -206,6 +209,7 @@ impl ProjectTree {
         roots
             .into_iter()
             .filter_map(|(k, (path, presence))| {
+                let path = path?;
                 presence.eq(&LabelPresence::Present).then(|| (k, path))
             })
             .collect()

@@ -176,15 +176,15 @@ impl LocalLspStore {
         delegate: Arc<LocalLspAdapterDelegate>,
         adapter: Arc<CachedLspAdapter>,
         language: LanguageName,
-        cx: &mut ModelContext<LspStore>,
-    ) {
+        cx: &mut AppContext,
+    ) -> Option<LanguageServerId> {
         let worktree = worktree_handle.read(cx);
         let worktree_id = worktree.id();
         let root_path = worktree.abs_path();
         let key = (worktree_id, adapter.name.clone());
 
         if self.language_server_ids.contains_key(&key) {
-            return;
+            return None;
         }
 
         let project_settings = ProjectSettings::get(
@@ -212,7 +212,7 @@ impl LocalLspStore {
             let server_name = adapter.name.clone();
             let stderr_capture = stderr_capture.clone();
 
-            move |_lsp_store, cx| async move {
+            move |cx| async move {
                 let binary = binary.await?;
 
                 #[cfg(any(test, feature = "test-support"))]
@@ -249,8 +249,8 @@ impl LocalLspStore {
             let language = language.clone();
             let key = key.clone();
             let adapter = adapter.clone();
-
-            cx.spawn(move |this, mut cx| async move {
+            let this = self.weak.clone();
+            cx.spawn(move |mut cx| async move {
                 let result = {
                     let delegate = delegate.clone();
                     let adapter = adapter.clone();
@@ -353,6 +353,7 @@ impl LocalLspStore {
             .entry(key)
             .or_default()
             .insert(server_id);
+        Some(server_id)
     }
 
     fn start_language_servers(
@@ -433,7 +434,7 @@ impl LocalLspStore {
         adapter: Arc<CachedLspAdapter>,
         delegate: Arc<dyn LspAdapterDelegate>,
         allow_binary_download: bool,
-        cx: &mut ModelContext<LspStore>,
+        cx: &mut AppContext,
     ) -> Task<Result<LanguageServerBinary>> {
         let settings = ProjectSettings::get(
             Some(SettingsLocation {
@@ -448,7 +449,7 @@ impl LocalLspStore {
 
         if settings.as_ref().is_some_and(|b| b.path.is_some()) {
             let settings = settings.unwrap();
-            return cx.spawn(|_, _| async move {
+            return cx.spawn(|_| async move {
                 Ok(LanguageServerBinary {
                     path: PathBuf::from(&settings.path.unwrap()),
                     env: Some(delegate.shell_env().await),
@@ -469,7 +470,7 @@ impl LocalLspStore {
             allow_binary_download,
         };
         let toolchains = self.toolchain_store.read(cx).as_language_toolchain_store();
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(|mut cx| async move {
             let binary_result = adapter
                 .clone()
                 .get_language_server_command(
@@ -1783,42 +1784,73 @@ impl LocalLspStore {
             return;
         };
         let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
-        self.lsp_tree.update(cx, |this, cx| {
-            let servers = this
-                .get(
-                    ProjectPath { worktree_id, path },
-                    language.name(),
-                    delegate,
-                    cx,
-                )
-                .filter_map(|server_node| {
-                    let server_state = self.language_servers.get(&server_node.server_id()?)?;
-                    if let LanguageServerState::Running { server, .. } = server_state {
-                        Some(server.clone())
-                    } else {
-                        None
-                    }
-                });
-            for server in servers {
-                buffer_handle.update(cx, |buffer, cx| {
-                    buffer.set_completion_triggers(
-                        server.server_id(),
-                        server
-                            .capabilities()
-                            .completion_provider
-                            .as_ref()
-                            .and_then(|provider| {
-                                provider
-                                    .trigger_characters
-                                    .as_ref()
-                                    .map(|characters| characters.iter().cloned().collect())
-                            })
-                            .unwrap_or_default(),
-                        cx,
-                    );
-                });
-            }
+        let servers = self.lsp_tree.clone().update(cx, |this, cx| {
+            this.get(
+                ProjectPath { worktree_id, path },
+                language.name(),
+                delegate.clone(),
+                cx,
+            )
+            .collect::<Vec<_>>()
         });
+
+        let servers = servers
+            .into_iter()
+            .filter_map(|server_node| {
+                let server_id =
+                    server_node.server_id_or_init(|adapter_name, attach, path| match attach {
+                        language::Attach::InstancePerRoot => todo!(),
+                        language::Attach::Shared => {
+                            if let Some(server_ids) = self
+                                .language_server_ids
+                                .get(&(worktree_id, adapter_name.clone()))
+                            {
+                                assert_eq!(server_ids.len(), 1);
+                                server_ids.iter().cloned().next().unwrap()
+                            } else {
+                                let language_name = language.name();
+                                self.start_language_server(
+                                    &worktree,
+                                    delegate.clone(),
+                                    self.languages
+                                        .lsp_adapters(&language_name)
+                                        .into_iter()
+                                        .find(|adapter| &adapter.name() == adapter_name)
+                                        .expect("To find LSP adapter"),
+                                    language_name,
+                                    cx,
+                                )
+                                .expect("Language initialization to succeed")
+                            }
+                        }
+                    });
+                let server_state = self.language_servers.get(&server_id)?;
+                if let LanguageServerState::Running { server, .. } = server_state {
+                    Some(server.clone())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+        for server in servers {
+            buffer_handle.update(cx, |buffer, cx| {
+                buffer.set_completion_triggers(
+                    server.server_id(),
+                    server
+                        .capabilities()
+                        .completion_provider
+                        .as_ref()
+                        .and_then(|provider| {
+                            provider
+                                .trigger_characters
+                                .as_ref()
+                                .map(|characters| characters.iter().cloned().collect())
+                        })
+                        .unwrap_or_default(),
+                    cx,
+                );
+            });
+        }
     }
 
     pub(crate) fn reset_buffer(
