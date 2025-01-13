@@ -861,9 +861,7 @@ impl GitPanel {
                                 }
                             })
                             .on_click(
-                                cx.listener(move |_, _, cx| {
-                                    cx.dispatch_action(Box::new(UnstageAll))
-                                }),
+                                cx.listener(move |this, _, cx| this.unstage_all(&UnstageAll, cx)),
                             )
                     } else {
                         self.panel_button("stage-all", "Stage All")
@@ -878,9 +876,7 @@ impl GitPanel {
                                     )
                                 }
                             })
-                            .on_click(
-                                cx.listener(move |_, _, cx| cx.dispatch_action(Box::new(StageAll))),
-                            )
+                            .on_click(cx.listener(move |this, _, cx| this.stage_all(&StageAll, cx)))
                     }),
             )
     }
