@@ -265,6 +265,8 @@ impl KeymapFile {
             .definitions
             .insert("KeymapAction".to_owned(), action_schema);
 
+        // This and other json schemas can be viewed via `debug: open language server logs` ->
+        // `json-language-server` -> `Server Info`.
         serde_json::to_value(root_schema).unwrap()
     }
 

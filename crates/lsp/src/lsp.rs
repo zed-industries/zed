@@ -84,6 +84,10 @@ pub struct LanguageServer {
     process_name: Arc<str>,
     binary: LanguageServerBinary,
     capabilities: RwLock<ServerCapabilities>,
+    /// Configuration sent to the server, stored for display in the language server logs
+    /// buffer. This is represented as the message sent to the LSP in order to avoid cloning it (can
+    /// be large in cases like sending schemas to the json server).
+    configuration: Arc<DidChangeConfigurationParams>,
     code_action_kinds: Option<Vec<CodeActionKind>>,
     notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
     response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
@@ -459,6 +463,11 @@ impl LanguageServer {
             .log_err()
         });
 
+        let configuration = DidChangeConfigurationParams {
+            settings: Value::Null,
+        }
+        .into();
+
         Self {
             server_id,
             notification_handlers,
@@ -472,6 +481,7 @@ impl LanguageServer {
                 .unwrap_or_default(),
             binary,
             capabilities: Default::default(),
+            configuration,
             code_action_kinds,
             next_id: Default::default(),
             outbound_tx,
@@ -800,6 +810,7 @@ impl LanguageServer {
     pub fn initialize(
         mut self,
         initialize_params: Option<InitializeParams>,
+        configuration: Arc<DidChangeConfigurationParams>,
         cx: &AppContext,
     ) -> Task<Result<Arc<Self>>> {
         let params = if let Some(params) = initialize_params {
@@ -814,6 +825,7 @@ impl LanguageServer {
                 self.process_name = info.name.into();
             }
             self.capabilities = RwLock::new(response.capabilities);
+            self.configuration = configuration;
 
             self.notify::<notification::Initialized>(&InitializedParams {})?;
             Ok(Arc::new(self))
@@ -1047,6 +1059,10 @@ impl LanguageServer {
 
     pub fn update_capabilities(&self, update: impl FnOnce(&mut ServerCapabilities)) {
         update(self.capabilities.write().deref_mut());
+    }
+
+    pub fn configuration(&self) -> &Value {
+        &self.configuration.settings
     }
 
     /// Get the id of the running language server.
@@ -1538,7 +1554,14 @@ mod tests {
             })
             .detach();
 
-        let server = cx.update(|cx| server.initialize(None, cx)).await.unwrap();
+        let initialize_params = None;
+        let configuration = DidChangeConfigurationParams {
+            settings: Default::default(),
+        };
+        let server = cx
+            .update(|cx| server.initialize(initialize_params, configuration.into(), cx))
+            .await
+            .unwrap();
         server
             .notify::<notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(
