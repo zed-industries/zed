@@ -1,6 +1,3 @@
-use std::borrow::BorrowMut;
-use std::{fmt::Display, ops::Range, sync::Arc};
-
 use crate::command::command_interceptor;
 use crate::normal::repeat::Replayer;
 use crate::surrounds::SurroundsType;
@@ -13,12 +10,15 @@ use gpui::{
     Action, AppContext, BorrowAppContext, ClipboardEntry, ClipboardItem, Global, View, WeakView,
 };
 use language::Point;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
+use std::borrow::BorrowMut;
+use std::{fmt::Display, ops::Range, sync::Arc};
 use ui::{SharedString, ViewContext};
 use workspace::searchable::Direction;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema, Serialize)]
 pub enum Mode {
     Normal,
     Insert,
@@ -59,22 +59,39 @@ impl Default for Mode {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
 pub enum Operator {
     Change,
     Delete,
     Yank,
     Replace,
-    Object { around: bool },
-    FindForward { before: bool },
-    FindBackward { after: bool },
-    Sneak { first_char: Option<char> },
-    SneakBackward { first_char: Option<char> },
-    AddSurrounds { target: Option<SurroundsType> },
-    ChangeSurrounds { target: Option<Object> },
+    Object {
+        around: bool,
+    },
+    FindForward {
+        before: bool,
+    },
+    FindBackward {
+        after: bool,
+    },
+    Sneak {
+        first_char: Option<char>,
+    },
+    SneakBackward {
+        first_char: Option<char>,
+    },
+    AddSurrounds {
+        #[serde(skip)]
+        target: Option<SurroundsType>,
+    },
+    ChangeSurrounds {
+        target: Option<Object>,
+    },
     DeleteSurrounds,
     Mark,
-    Jump { line: bool },
+    Jump {
+        line: bool,
+    },
     Indent,
     Outdent,
     AutoIndent,
@@ -82,8 +99,12 @@ pub enum Operator {
     Lowercase,
     Uppercase,
     OppositeCase,
-    Digraph { first_char: Option<char> },
-    Literal { prefix: Option<String> },
+    Digraph {
+        first_char: Option<char>,
+    },
+    Literal {
+        prefix: Option<String>,
+    },
     Register,
     RecordRegister,
     ReplayRegister,

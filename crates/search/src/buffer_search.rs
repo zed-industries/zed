@@ -22,6 +22,7 @@ use project::{
     search::SearchQuery,
     search_history::{SearchHistory, SearchHistoryCursor},
 };
+use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
@@ -43,7 +44,7 @@ use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
 
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
 
-#[derive(PartialEq, Clone, Deserialize)]
+#[derive(PartialEq, Clone, Deserialize, JsonSchema)]
 pub struct Deploy {
     #[serde(default = "util::serde::default_true")]
     pub focus: bool,

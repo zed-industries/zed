@@ -10,15 +10,14 @@ use editor::{
     movement::{self, FindRange},
     Bias, DisplayPoint, Editor,
 };
-
-use itertools::Itertools;
-
 use gpui::{actions, impl_actions, ViewContext};
+use itertools::Itertools;
 use language::{BufferSnapshot, CharKind, Point, Selection, TextObject, TreeSitterOptions};
 use multi_buffer::MultiBufferRow;
+use schemars::JsonSchema;
 use serde::Deserialize;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
 pub enum Object {
     Word { ignore_punctuation: bool },
     Sentence,
@@ -40,13 +39,14 @@ pub enum Object {
     Comment,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct Word {
     #[serde(default)]
     ignore_punctuation: bool,
 }
-#[derive(Clone, Deserialize, PartialEq)]
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct IndentObj {
     #[serde(default)]

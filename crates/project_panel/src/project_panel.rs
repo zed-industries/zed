@@ -1,10 +1,10 @@
 mod project_panel_settings;
 mod utils;
 
+use anyhow::{anyhow, Context as _, Result};
 use client::{ErrorCode, ErrorExt};
-use language::DiagnosticSeverity;
-use settings::{Settings, SettingsStore};
-
+use collections::{hash_map, BTreeSet, HashMap};
+use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
     items::{
@@ -15,10 +15,6 @@ use editor::{
     Editor, EditorEvent, EditorSettings, ShowScrollbar,
 };
 use file_icons::FileIcons;
-
-use anyhow::{anyhow, Context as _, Result};
-use collections::{hash_map, BTreeSet, HashMap};
-use command_palette_hooks::CommandPaletteFilter;
 use git::repository::GitFileStatus;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
@@ -30,6 +26,7 @@ use gpui::{
     VisualContext as _, WeakView, WindowContext,
 };
 use indexmap::IndexMap;
+use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::{
     relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
@@ -38,7 +35,9 @@ use project::{
 use project_panel_settings::{
     ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics, ShowIndentGuides,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::{Settings, SettingsStore};
 use smallvec::SmallVec;
 use std::any::TypeId;
 use std::{
@@ -152,13 +151,13 @@ struct EntryDetails {
     canonical_path: Option<Box<Path>>,
 }
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize)]
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
 struct Delete {
     #[serde(default)]
     pub skip_prompt: bool,
 }
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize)]
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
 struct Trash {
     #[serde(default)]
     pub skip_prompt: bool,
