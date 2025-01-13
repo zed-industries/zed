@@ -8313,7 +8313,8 @@ impl DiagnosticSummary {
 }
 
 fn glob_literal_prefix(glob: &str) -> &str {
-    let is_absolute = glob.starts_with(path::MAIN_SEPARATOR);
+    // let is_absolute = glob.starts_with(path::MAIN_SEPARATOR);
+    let is_absolute = Path::new(glob).is_absolute();
 
     let mut literal_end = is_absolute as usize;
     for (i, part) in glob.split(path::MAIN_SEPARATOR).enumerate() {
@@ -8708,8 +8709,25 @@ fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
 #[cfg(test)]
 #[test]
 fn test_glob_literal_prefix() {
-    assert_eq!(glob_literal_prefix("**/*.js"), "");
-    assert_eq!(glob_literal_prefix("node_modules/**/*.js"), "node_modules");
-    assert_eq!(glob_literal_prefix("foo/{bar,baz}.js"), "foo");
-    assert_eq!(glob_literal_prefix("foo/bar/baz.js"), "foo/bar/baz.js");
+    fn to_path_string(path: &str) -> String {
+        if cfg!(target_os = "windows") {
+            path.replace("/", "\\")
+        } else {
+            path.to_string()
+        }
+    }
+
+    assert_eq!(glob_literal_prefix(&to_path_string("**/*.js")), "");
+    assert_eq!(
+        glob_literal_prefix(&to_path_string("node_modules/**/*.js")),
+        "node_modules"
+    );
+    assert_eq!(
+        glob_literal_prefix(&to_path_string("foo/{bar,baz}.js")),
+        "foo"
+    );
+    assert_eq!(
+        glob_literal_prefix(&to_path_string("foo/bar/baz.js")),
+        to_path_string("foo/bar/baz.js")
+    );
 }
