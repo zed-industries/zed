@@ -963,7 +963,7 @@ impl LspLogView {
             });
 
             server
-                .notify::<SetTrace>(SetTraceParams { value: level })
+                .notify::<SetTrace>(&SetTraceParams { value: level })
                 .ok();
         }
     }
