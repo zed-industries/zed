@@ -254,24 +254,12 @@ impl ActiveThread {
         let context = self.thread.read(cx).context_for_message(message_id);
         let colors = cx.theme().colors();
 
-        let (role_icon, role_name, role_color) = match message.role {
-            Role::User => (IconName::Person, "You", Color::Muted),
-            Role::Assistant => (IconName::ZedAssistant, "Assistant", Color::Accent),
-            Role::System => (IconName::Settings, "System", Color::Default),
-        };
-
         let esc_to_cancel = h_flex()
             .items_center()
             .gap_1()
             .child(Label::new("Hit").size(LabelSize::Small).color(Color::Muted))
             .child(
                 h_flex()
-                    // .rounded_md()
-                    // .px_1()
-                    // .mr_0p5()
-                    // .border_1()
-                    // .border_color(theme::color_alpha(colors.border_variant, 0.6))
-                    // .bg(theme::color_alpha(colors.element_background, 0.6))
                     .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
                     .text_size(TextSize::Small.rems(cx))
                     .text_color(colors.text_muted)
@@ -284,28 +272,6 @@ impl ActiveThread {
             );
 
         let message_content = v_flex()
-            // .child(
-            //     h_flex()
-            //         .py_1p5()
-            //         .px_2p5()
-            //         .border_b_1()
-            //         .border_color(colors.border_variant)
-            //         .justify_between()
-            //         .child(
-            //             h_flex()
-            //                 .gap_1p5()
-            //                 .child(
-            //                     Icon::new(role_icon)
-            //                         .size(IconSize::XSmall)
-            //                         .color(role_color),
-            //                 )
-            //                 .child(
-            //                     Label::new(role_name)
-            //                         .size(LabelSize::XSmall)
-            //                         .color(role_color),
-            //                 ),
-            //         ),
-            // )
             .child(div().p_2p5().text_ui(cx).child(markdown.clone()))
             .when_some(context, |parent, context| {
                 if !context.is_empty() {
@@ -369,10 +335,17 @@ impl ActiveThread {
                                 .right_0()
                                 .left_0()
                                 .justify_center()
+                                .bg(gpui::linear_gradient(
+                                    45.,
+                                    gpui::linear_color_stop(gpui::red(), 0.),
+                                    gpui::linear_color_stop(gpui::blue(), 1.),
+                                ))
                                 .child(
                                     h_flex()
                                         .flex_none()
-                                        .p_1()
+                                        .h_8()
+                                        .py_1()
+                                        .px_1p5()
                                         .bg(colors.editor_background)
                                         .border_1()
                                         .border_color(colors.border_focused)
@@ -398,12 +371,12 @@ impl ActiveThread {
                                                 .size(LabelSize::Small)
                                                 .color(Color::Muted),
                                         )
+                                        .child(ui::Divider::vertical())
                                         .child(esc_to_cancel),
                                 ),
                         )
                     },
-                ), // .bg(colors.editor_background)
-                   // .rounded_md()
+                ),
             ),
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
