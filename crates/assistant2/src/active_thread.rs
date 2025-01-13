@@ -4,10 +4,10 @@ use std::time::Duration;
 use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use gpui::{
-    list, percentage, AbsoluteLength, Animation, AnimationExt, AnyElement, AppContext,
-    DefiniteLength, EdgesRefinement, Empty, Length, ListAlignment, ListOffset, ListState, Model,
-    StyleRefinement, Subscription, TextStyleRefinement, Transformation, UnderlineStyle, View,
-    WeakView,
+    linear_color_stop, linear_gradient, list, percentage, AbsoluteLength, Animation, AnimationExt,
+    AnyElement, AppContext, DefiniteLength, EdgesRefinement, Empty, Length, ListAlignment,
+    ListOffset, ListState, Model, StyleRefinement, Subscription, TextStyleRefinement,
+    Transformation, UnderlineStyle, View, WeakView,
 };
 use language::LanguageRegistry;
 use language_model::Role;
@@ -242,7 +242,6 @@ impl ActiveThread {
 
     fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
         let message_id = self.messages[ix];
-        let is_last_message = ix == self.messages.len() - 1;
         let Some(message) = self.thread.read(cx).message(message_id) else {
             return Empty.into_any();
         };
@@ -251,26 +250,8 @@ impl ActiveThread {
             return Empty.into_any();
         };
 
-        let is_streaming_completion = self.thread.read(cx).is_streaming();
         let context = self.thread.read(cx).context_for_message(message_id);
         let colors = cx.theme().colors();
-
-        let esc_to_cancel = h_flex()
-            .items_center()
-            .gap_1()
-            .child(Label::new("Hit").size(LabelSize::Small).color(Color::Muted))
-            .child(
-                h_flex()
-                    .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                    .text_size(TextSize::Small.rems(cx))
-                    .text_color(colors.text_muted)
-                    .child("esc"),
-            )
-            .child(
-                Label::new("to cancel")
-                    .size(LabelSize::Small)
-                    .color(Color::Muted),
-            );
 
         let message_content = v_flex()
             .child(div().p_2p5().text_ui(cx).child(markdown.clone()))
@@ -325,60 +306,7 @@ impl ActiveThread {
                         )
                         .child(message_content),
                 ),
-            Role::Assistant => div().id(("message-container", ix)).child(
-                v_flex().relative().child(message_content).when(
-                    is_streaming_completion && is_last_message,
-                    |parent| {
-                        parent.child(
-                            h_flex()
-                                .absolute()
-                                .bottom_2()
-                                .right_0()
-                                .left_0()
-                                .justify_center()
-                                .bg(gpui::linear_gradient(
-                                    45.,
-                                    gpui::linear_color_stop(gpui::red(), 0.),
-                                    gpui::linear_color_stop(gpui::blue(), 1.),
-                                ))
-                                .child(
-                                    h_flex()
-                                        .flex_none()
-                                        .h_8()
-                                        .py_1()
-                                        .px_1p5()
-                                        .bg(colors.editor_background)
-                                        .border_1()
-                                        .border_color(colors.border_focused)
-                                        .rounded_md()
-                                        .shadow_lg()
-                                        .gap_1()
-                                        .child(
-                                            Icon::new(IconName::ArrowCircle)
-                                                .size(IconSize::Small)
-                                                .color(Color::Muted)
-                                                .with_animation(
-                                                    "arrow-circle",
-                                                    Animation::new(Duration::from_secs(2)).repeat(),
-                                                    |icon, delta| {
-                                                        icon.transform(Transformation::rotate(
-                                                            percentage(delta),
-                                                        ))
-                                                    },
-                                                ),
-                                        )
-                                        .child(
-                                            Label::new("Generating…")
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        )
-                                        .child(ui::Divider::vertical())
-                                        .child(esc_to_cancel),
-                                ),
-                        )
-                    },
-                ),
-            ),
+            Role::Assistant => div().id(("message-container", ix)).child(message_content),
             Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
                     .bg(colors.editor_background)
@@ -394,28 +322,76 @@ impl ActiveThread {
 impl Render for ActiveThread {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let is_streaming_completion = self.thread.read(cx).is_streaming();
+        let panel_bg = cx.theme().colors().panel_background;
+
+        let esc_to_cancel = h_flex()
+            .items_center()
+            .gap_1()
+            .child(Label::new("Hit").size(LabelSize::Small).color(Color::Muted))
+            .child(
+                h_flex()
+                    .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                    .text_size(TextSize::Small.rems(cx))
+                    .text_color(cx.theme().colors().text_muted)
+                    .child("esc"),
+            )
+            .child(
+                Label::new("to cancel")
+                    .size(LabelSize::Small)
+                    .color(Color::Muted),
+            );
 
         v_flex()
             .size_full()
             .child(list(self.list_state.clone()).flex_grow())
-            .child(
-                h_flex()
-                    .absolute()
-                    .bottom_1()
-                    .flex_shrink()
-                    .justify_center()
-                    .w_full()
-                    .when(is_streaming_completion, |parent| {
-                        parent.child(
+            .when(is_streaming_completion, |parent| {
+                parent.child(
+                    h_flex()
+                        .w_full()
+                        .pb_4()
+                        .absolute()
+                        .bottom_0()
+                        .flex_shrink()
+                        .justify_center()
+                        .bg(linear_gradient(
+                            180.,
+                            linear_color_stop(panel_bg.opacity(0.0), 0.),
+                            linear_color_stop(panel_bg, 1.),
+                        ))
+                        .child(
                             h_flex()
-                                .gap_2()
-                                .p_1p5()
+                                .flex_none()
+                                .py_1()
+                                .px_1p5()
+                                .bg(cx.theme().colors().editor_background)
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
                                 .rounded_md()
-                                .bg(cx.theme().colors().elevated_surface_background)
-                                .child(Label::new("Generating…").size(LabelSize::Small))
-                                .child(Label::new("esc to cancel").size(LabelSize::Small)),
-                        )
-                    }),
-            )
+                                .shadow_lg()
+                                .gap_1()
+                                .child(
+                                    Icon::new(IconName::ArrowCircle)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted)
+                                        .with_animation(
+                                            "arrow-circle",
+                                            Animation::new(Duration::from_secs(2)).repeat(),
+                                            |icon, delta| {
+                                                icon.transform(Transformation::rotate(percentage(
+                                                    delta,
+                                                )))
+                                            },
+                                        ),
+                                )
+                                .child(
+                                    Label::new("Generating…")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(ui::Divider::vertical())
+                                .child(esc_to_cancel),
+                        ),
+                )
+            })
     }
 }
