@@ -212,6 +212,8 @@ impl LocalLspStore {
             let adapter = adapter.clone();
             let server_name = adapter.name.clone();
             let stderr_capture = stderr_capture.clone();
+            #[cfg(any(test, feature = "test-support"))]
+            let lsp_store = self.weak.clone();
 
             move |cx| async move {
                 let binary = binary.await?;
