@@ -365,6 +365,8 @@ fn main() {
 
         zed::init(cx);
         project::Project::init(&client, cx);
+        debugger_ui::init(cx);
+        debugger_tools::init(cx);
         client::init(&client, cx);
         let telemetry = client.telemetry();
         telemetry.start(

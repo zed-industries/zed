@@ -1,5 +1,6 @@
 use crate::{
     buffer_store::{BufferStore, BufferStoreEvent},
+    dap_store::DapStore,
     deserialize_code_actions,
     environment::ProjectEnvironment,
     lsp_command::{self, *},
@@ -147,6 +148,7 @@ pub struct LocalLspStore {
         HashMap<LanguageServerId, HashMap<String, Vec<FileSystemWatcher>>>,
     supplementary_language_servers:
         HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
+    dap_store: Model<DapStore>,
     prettier_store: Model<PrettierStore>,
     current_lsp_settings: HashMap<LanguageServerName, LspSettings>,
     next_diagnostic_group_id: usize,
@@ -2930,6 +2932,7 @@ impl LspStore {
     pub fn new_local(
         buffer_store: Model<BufferStore>,
         worktree_store: Model<WorktreeStore>,
+        dap_store: Model<DapStore>,
         prettier_store: Model<PrettierStore>,
         toolchain_store: Model<ToolchainStore>,
         environment: Model<ProjectEnvironment>,
@@ -2970,6 +2973,7 @@ impl LspStore {
                 buffers_being_formatted: Default::default(),
                 buffer_snapshots: Default::default(),
                 prettier_store,
+                dap_store,
                 environment,
                 http_client,
                 fs,
@@ -3207,6 +3211,10 @@ impl LspStore {
         self.detect_language_for_buffer(buffer, cx);
         if let Some(local) = self.as_local_mut() {
             local.initialize_buffer(buffer, cx);
+
+            local.dap_store.update(cx, |store, cx| {
+                store.sync_open_breakpoints_to_closed_breakpoints(buffer, cx);
+            });
         }
 
         Ok(())

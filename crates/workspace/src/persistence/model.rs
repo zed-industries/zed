@@ -4,12 +4,14 @@ use crate::{
 };
 use anyhow::{Context, Result};
 use async_recursion::async_recursion;
+use collections::HashMap;
 use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
 use gpui::{AsyncWindowContext, Model, View, WeakView};
 use itertools::Itertools as _;
+use project::dap_store::SerializedBreakpoint;
 use project::Project;
 use remote::ssh_session::SshProjectId;
 use serde::{Deserialize, Serialize};
@@ -263,6 +265,8 @@ pub(crate) struct SerializedWorkspace {
     pub(crate) display: Option<Uuid>,
     pub(crate) docks: DockStructure,
     pub(crate) session_id: Option<String>,
+    /// The key of this hashmap is an absolute worktree path that owns the breakpoint
+    pub(crate) breakpoints: HashMap<Arc<Path>, Vec<SerializedBreakpoint>>,
     pub(crate) window_id: Option<u64>,
 }
 

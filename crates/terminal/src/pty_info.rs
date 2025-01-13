@@ -154,4 +154,8 @@ impl PtyProcessInfo {
         }
         has_changed
     }
+
+    pub fn pid(&self) -> Option<Pid> {
+        self.pid_getter.pid()
+    }
 }

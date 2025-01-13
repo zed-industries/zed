@@ -292,6 +292,11 @@ pub struct ThemeColorsContent {
     #[serde(rename = "icon.accent")]
     pub icon_accent: Option<String>,
 
+    /// Color used to accent some of the debuggers elements
+    /// Only accent breakpoint & breakpoint related symbols right now
+    #[serde(rename = "debugger.accent")]
+    pub debugger_accent: Option<String>,
+
     #[serde(rename = "status_bar.background")]
     pub status_bar_background: Option<String>,
 
@@ -381,6 +386,10 @@ pub struct ThemeColorsContent {
 
     #[serde(rename = "editor.highlighted_line.background")]
     pub editor_highlighted_line_background: Option<String>,
+
+    /// Background of active line of debugger
+    #[serde(rename = "editor.debugger_active_line.background")]
+    pub editor_debugger_active_line_background: Option<String>,
 
     /// Text Color. Used for the text of the line number in the editor gutter.
     #[serde(rename = "editor.line_number")]
@@ -679,6 +688,10 @@ impl ThemeColorsContent {
                 .icon_accent
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
+            debugger_accent: self
+                .debugger_accent
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
             status_bar_background: self
                 .status_bar_background
                 .as_ref()
@@ -787,6 +800,10 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok()),
             editor_highlighted_line_background: self
                 .editor_highlighted_line_background
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            editor_debugger_active_line_background: self
+                .editor_debugger_active_line_background
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
             editor_line_number: self

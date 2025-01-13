@@ -1,5 +1,5 @@
 use anyhow::Context as _;
-
+use collections::{HashMap, HashSet};
 use util::ResultExt;
 
 use super::*;
@@ -549,6 +549,256 @@ impl Database {
         .await
     }
 
+    pub async fn update_debug_adapter(
+        &self,
+        connection_id: ConnectionId,
+        update: &proto::UpdateDebugAdapter,
+    ) -> Result<TransactionGuard<HashSet<ConnectionId>>> {
+        let project_id = ProjectId::from_proto(update.project_id);
+        self.project_transaction(project_id, |tx| async move {
+            let mut debug_panel_items = debug_panel_items::Entity::find()
+                .filter(
+                    Condition::all()
+                        .add(debug_panel_items::Column::ProjectId.eq(project_id))
+                        .add(debug_panel_items::Column::SessionId.eq(update.session_id))
+                        .add(debug_panel_items::Column::Id.eq(update.client_id)),
+                )
+                .all(&*tx)
+                .await?;
+
+            if let Some(thread_id) = update.thread_id {
+                debug_panel_items.retain(|item| item.thread_id == thread_id as i64);
+            }
+
+            for mut item in debug_panel_items {
+                item.update_panel_item(&update)?;
+
+                debug_panel_items::Entity::update(debug_panel_items::ActiveModel {
+                    id: ActiveValue::Unchanged(item.id),
+                    project_id: ActiveValue::Unchanged(item.project_id),
+                    session_id: ActiveValue::Unchanged(item.session_id),
+                    thread_id: ActiveValue::Unchanged(item.thread_id),
+                    active_thread_item: ActiveValue::Unchanged(item.active_thread_item),
+                    seassion_name: ActiveValue::Unchanged(item.seassion_name),
+                    console: ActiveValue::Unchanged(item.console),
+                    module_list: ActiveValue::Set(item.module_list),
+                    thread_state: ActiveValue::Set(item.thread_state),
+                    variable_list: ActiveValue::Set(item.variable_list),
+                    stack_frame_list: ActiveValue::Set(item.stack_frame_list),
+                    loaded_source_list: ActiveValue::Unchanged(item.loaded_source_list),
+                })
+                .exec(&*tx)
+                .await?;
+            }
+
+            self.internal_project_connection_ids(project_id, connection_id, true, &tx)
+                .await
+        })
+        .await
+    }
+
+    pub async fn shutdown_debug_client(
+        &self,
+        connection_id: ConnectionId,
+        update: &proto::ShutdownDebugClient,
+    ) -> Result<TransactionGuard<HashSet<ConnectionId>>> {
+        let project_id = ProjectId::from_proto(update.project_id);
+        self.project_transaction(project_id, |tx| async move {
+            debug_clients::Entity::delete_by_id((
+                update.client_id as i64,
+                ProjectId::from_proto(update.project_id),
+                update.session_id as i64,
+            ))
+            .exec(&*tx)
+            .await?;
+
+            self.internal_project_connection_ids(project_id, connection_id, true, &tx)
+                .await
+        })
+        .await
+    }
+
+    pub async fn set_debug_client_panel_item(
+        &self,
+        connection_id: ConnectionId,
+        update: &proto::SetDebuggerPanelItem,
+    ) -> Result<TransactionGuard<HashSet<ConnectionId>>> {
+        let project_id = ProjectId::from_proto(update.project_id);
+        self.project_transaction(project_id, |tx| async move {
+            let debug_client = debug_clients::Entity::find()
+                .filter(
+                    Condition::all()
+                        .add(debug_clients::Column::ProjectId.eq(project_id))
+                        .add(debug_clients::Column::SessionId.eq(update.session_id)),
+                )
+                .one(&*tx)
+                .await?;
+
+            if debug_client.is_none() {
+                let new_debug_client = debug_clients::ActiveModel {
+                    id: ActiveValue::Set(update.client_id as i64),
+                    project_id: ActiveValue::Set(project_id),
+                    session_id: ActiveValue::Set(update.session_id as i64),
+                    capabilities: ActiveValue::Set(0),
+                };
+                new_debug_client.insert(&*tx).await?;
+            }
+
+            let mut debug_panel_item = debug_panel_items::Entity::find()
+                .filter(
+                    Condition::all()
+                        .add(debug_panel_items::Column::ProjectId.eq(project_id))
+                        .add(debug_panel_items::Column::SessionId.eq(update.session_id as i64))
+                        .add(debug_panel_items::Column::ThreadId.eq(update.thread_id as i64))
+                        .add(debug_panel_items::Column::Id.eq(update.client_id as i64)),
+                )
+                .one(&*tx)
+                .await?;
+
+            if debug_panel_item.is_none() {
+                let new_debug_panel_item = debug_panel_items::ActiveModel {
+                    id: ActiveValue::Set(update.client_id as i64),
+                    project_id: ActiveValue::Set(project_id),
+                    session_id: ActiveValue::Set(update.session_id as i64),
+                    thread_id: ActiveValue::Set(update.thread_id as i64),
+                    seassion_name: ActiveValue::Set(update.session_name.clone()),
+                    active_thread_item: ActiveValue::Set(0),
+                    console: ActiveValue::Set(Vec::new()),
+                    module_list: ActiveValue::Set(Vec::new()),
+                    thread_state: ActiveValue::Set(Vec::new()),
+                    variable_list: ActiveValue::Set(Vec::new()),
+                    stack_frame_list: ActiveValue::Set(Vec::new()),
+                    loaded_source_list: ActiveValue::Set(Vec::new()),
+                };
+
+                debug_panel_item = Some(new_debug_panel_item.insert(&*tx).await?);
+            };
+
+            let mut debug_panel_item = debug_panel_item.unwrap();
+
+            debug_panel_item.set_panel_item(&update);
+            debug_panel_items::Entity::update(debug_panel_items::ActiveModel {
+                id: ActiveValue::Unchanged(debug_panel_item.id),
+                project_id: ActiveValue::Unchanged(debug_panel_item.project_id),
+                session_id: ActiveValue::Unchanged(debug_panel_item.session_id),
+                thread_id: ActiveValue::Unchanged(debug_panel_item.thread_id),
+                seassion_name: ActiveValue::Unchanged(debug_panel_item.seassion_name),
+                active_thread_item: ActiveValue::Set(debug_panel_item.active_thread_item),
+                console: ActiveValue::Set(debug_panel_item.console),
+                module_list: ActiveValue::Set(debug_panel_item.module_list),
+                thread_state: ActiveValue::Set(debug_panel_item.thread_state),
+                variable_list: ActiveValue::Set(debug_panel_item.variable_list),
+                stack_frame_list: ActiveValue::Set(debug_panel_item.stack_frame_list),
+                loaded_source_list: ActiveValue::Set(debug_panel_item.loaded_source_list),
+            })
+            .exec(&*tx)
+            .await?;
+
+            self.internal_project_connection_ids(project_id, connection_id, true, &tx)
+                .await
+        })
+        .await
+    }
+
+    pub async fn update_debug_client_capabilities(
+        &self,
+        connection_id: ConnectionId,
+        update: &proto::SetDebugClientCapabilities,
+    ) -> Result<TransactionGuard<HashSet<ConnectionId>>> {
+        let project_id = ProjectId::from_proto(update.project_id);
+        self.project_transaction(project_id, |tx| async move {
+            let mut debug_client = debug_clients::Entity::find()
+                .filter(
+                    Condition::all()
+                        .add(debug_clients::Column::ProjectId.eq(project_id))
+                        .add(debug_clients::Column::SessionId.eq(update.session_id)),
+                )
+                .one(&*tx)
+                .await?;
+
+            if debug_client.is_none() {
+                let new_debug_client = debug_clients::ActiveModel {
+                    id: ActiveValue::Set(update.client_id as i64),
+                    project_id: ActiveValue::Set(project_id),
+                    session_id: ActiveValue::Set(update.session_id as i64),
+                    capabilities: ActiveValue::Set(0),
+                };
+                debug_client = Some(new_debug_client.insert(&*tx).await?);
+            }
+
+            let mut debug_client = debug_client.unwrap();
+
+            debug_client.set_capabilities(update);
+
+            debug_clients::Entity::update(debug_clients::ActiveModel {
+                id: ActiveValue::Unchanged(debug_client.id),
+                project_id: ActiveValue::Unchanged(debug_client.project_id),
+                session_id: ActiveValue::Unchanged(debug_client.session_id),
+                capabilities: ActiveValue::Set(debug_client.capabilities),
+            })
+            .exec(&*tx)
+            .await?;
+
+            self.internal_project_connection_ids(project_id, connection_id, true, &tx)
+                .await
+        })
+        .await
+    }
+
+    pub async fn update_breakpoints(
+        &self,
+        connection_id: ConnectionId,
+        update: &proto::SynchronizeBreakpoints,
+    ) -> Result<TransactionGuard<HashSet<ConnectionId>>> {
+        let project_id = ProjectId::from_proto(update.project_id);
+        self.project_transaction(project_id, |tx| async move {
+            let project_path = update
+                .project_path
+                .as_ref()
+                .ok_or_else(|| anyhow!("invalid project path"))?;
+
+            // Ensure the update comes from the host.
+            let project = project::Entity::find_by_id(project_id)
+                .one(&*tx)
+                .await?
+                .ok_or_else(|| anyhow!("no such project"))?;
+
+            // remove all existing breakpoints
+            breakpoints::Entity::delete_many()
+                .filter(breakpoints::Column::ProjectId.eq(project.id))
+                .exec(&*tx)
+                .await?;
+
+            if !update.breakpoints.is_empty() {
+                breakpoints::Entity::insert_many(update.breakpoints.iter().map(|breakpoint| {
+                    breakpoints::ActiveModel {
+                        id: ActiveValue::NotSet,
+                        project_id: ActiveValue::Set(project_id),
+                        worktree_id: ActiveValue::Set(project_path.worktree_id as i64),
+                        path: ActiveValue::Set(project_path.path.clone()),
+                        kind: match proto::BreakpointKind::from_i32(breakpoint.kind) {
+                            Some(proto::BreakpointKind::Log) => {
+                                ActiveValue::Set(breakpoints::BreakpointKind::Log)
+                            }
+                            Some(proto::BreakpointKind::Standard) => {
+                                ActiveValue::Set(breakpoints::BreakpointKind::Standard)
+                            }
+                            None => ActiveValue::Set(breakpoints::BreakpointKind::Standard),
+                        },
+                        log_message: ActiveValue::Set(breakpoint.message.clone()),
+                        position: ActiveValue::Set(breakpoint.cached_position as i32),
+                    }
+                }))
+                .exec_without_returning(&*tx)
+                .await?;
+            }
+
+            self.internal_project_connection_ids(project_id, connection_id, true, &tx)
+                .await
+        })
+        .await
+    }
+
     /// Updates the worktree settings for the given connection.
     pub async fn update_worktree_settings(
         &self,
@@ -817,6 +1067,75 @@ impl Database {
             }
         }
 
+        let project_id = project.id.to_proto();
+        let debug_clients = project.find_related(debug_clients::Entity).all(tx).await?;
+        let mut debug_sessions: HashMap<_, Vec<_>> = HashMap::default();
+
+        for debug_client in debug_clients {
+            debug_sessions
+                .entry(debug_client.session_id)
+                .or_default()
+                .push(debug_client);
+        }
+
+        let mut sessions: Vec<_> = Vec::default();
+
+        for (session_id, clients) in debug_sessions.into_iter() {
+            let mut debug_clients = Vec::default();
+
+            for debug_client in clients.into_iter() {
+                let debug_panel_items = debug_client
+                    .find_related(debug_panel_items::Entity)
+                    .all(tx)
+                    .await?
+                    .into_iter()
+                    .map(|item| item.panel_item())
+                    .collect();
+
+                debug_clients.push(proto::DebugClient {
+                    client_id: debug_client.id as u64,
+                    capabilities: Some(debug_client.capabilities()),
+                    debug_panel_items,
+                    active_debug_line: None,
+                });
+            }
+
+            sessions.push(proto::DebuggerSession {
+                project_id,
+                session_id: session_id as u64,
+                clients: debug_clients,
+            });
+        }
+
+        let debug_sessions = sessions;
+
+        let mut breakpoints: HashMap<proto::ProjectPath, HashSet<proto::Breakpoint>> =
+            HashMap::default();
+
+        let db_breakpoints = project.find_related(breakpoints::Entity).all(tx).await?;
+
+        for breakpoint in db_breakpoints.iter() {
+            let project_path = proto::ProjectPath {
+                worktree_id: breakpoint.worktree_id as u64,
+                path: breakpoint.path.clone(),
+            };
+
+            breakpoints
+                .entry(project_path)
+                .or_default()
+                .insert(proto::Breakpoint {
+                    position: None,
+                    cached_position: breakpoint.position as u32,
+                    kind: match breakpoint.kind {
+                        breakpoints::BreakpointKind::Standard => {
+                            proto::BreakpointKind::Standard.into()
+                        }
+                        breakpoints::BreakpointKind::Log => proto::BreakpointKind::Log.into(),
+                    },
+                    message: breakpoint.log_message.clone(),
+                });
+        }
+
         // Populate language servers.
         let language_servers = project
             .find_related(language_server::Entity)
@@ -844,6 +1163,8 @@ impl Database {
                     worktree_id: None,
                 })
                 .collect(),
+            breakpoints,
+            debug_sessions,
         };
         Ok((project, replica_id as ReplicaId))
     }
@@ -1071,39 +1392,50 @@ impl Database {
         exclude_dev_server: bool,
     ) -> Result<TransactionGuard<HashSet<ConnectionId>>> {
         self.project_transaction(project_id, |tx| async move {
-            let project = project::Entity::find_by_id(project_id)
-                .one(&*tx)
-                .await?
-                .ok_or_else(|| anyhow!("no such project"))?;
-
-            let mut collaborators = project_collaborator::Entity::find()
-                .filter(project_collaborator::Column::ProjectId.eq(project_id))
-                .stream(&*tx)
-                .await?;
-
-            let mut connection_ids = HashSet::default();
-            if let Some(host_connection) = project.host_connection().log_err() {
-                if !exclude_dev_server {
-                    connection_ids.insert(host_connection);
-                }
-            }
-
-            while let Some(collaborator) = collaborators.next().await {
-                let collaborator = collaborator?;
-                connection_ids.insert(collaborator.connection());
-            }
-
-            if connection_ids.contains(&connection_id)
-                || Some(connection_id) == project.host_connection().ok()
-            {
-                Ok(connection_ids)
-            } else {
-                Err(anyhow!(
-                    "can only send project updates to a project you're in"
-                ))?
-            }
+            self.internal_project_connection_ids(project_id, connection_id, exclude_dev_server, &tx)
+                .await
         })
         .await
+    }
+
+    async fn internal_project_connection_ids(
+        &self,
+        project_id: ProjectId,
+        connection_id: ConnectionId,
+        exclude_dev_server: bool,
+        tx: &DatabaseTransaction,
+    ) -> Result<HashSet<ConnectionId>> {
+        let project = project::Entity::find_by_id(project_id)
+            .one(tx)
+            .await?
+            .ok_or_else(|| anyhow!("no such project"))?;
+
+        let mut collaborators = project_collaborator::Entity::find()
+            .filter(project_collaborator::Column::ProjectId.eq(project_id))
+            .stream(tx)
+            .await?;
+
+        let mut connection_ids = HashSet::default();
+        if let Some(host_connection) = project.host_connection().log_err() {
+            if !exclude_dev_server {
+                connection_ids.insert(host_connection);
+            }
+        }
+
+        while let Some(collaborator) = collaborators.next().await {
+            let collaborator = collaborator?;
+            connection_ids.insert(collaborator.connection());
+        }
+
+        if connection_ids.contains(&connection_id)
+            || Some(connection_id) == project.host_connection().ok()
+        {
+            Ok(connection_ids)
+        } else {
+            Err(anyhow!(
+                "can only send project updates to a project you're in"
+            ))?
+        }
     }
 
     async fn project_guest_connection_ids(
