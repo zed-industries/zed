@@ -445,7 +445,7 @@ mod tests {
 
     use super::*;
     use editor::Editor;
-    use go_to::go_to_line::GoToLine;
+    use go_to_line::GoToLine;
     use gpui::TestAppContext;
     use language::Point;
     use project::Project;

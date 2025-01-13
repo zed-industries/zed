@@ -19,6 +19,7 @@ mod state;
 mod surrounds;
 mod visual;
 
+use crate::state::ReplayableAction;
 use anyhow::Result;
 use collections::HashMap;
 use editor::{
@@ -34,6 +35,7 @@ use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
 pub use mode_indicator::ModeIndicator;
 use motion::Motion;
 use normal::search::SearchSubmit;
+use project::{FileNumber, Project, RelativeFileNumber};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_derive::Serialize;
@@ -45,8 +47,6 @@ use theme::ThemeSettings;
 use ui::{px, IntoElement, VisualContext};
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, ResizeIntent, Workspace};
-
-use crate::state::ReplayableAction;
 
 /// Used to resize the current pane
 #[derive(Clone, Deserialize, PartialEq)]
@@ -69,6 +69,17 @@ struct Number(usize);
 
 #[derive(Clone, Deserialize, PartialEq)]
 struct SelectRegister(String);
+
+/// Used to resize the current pane
+#[derive(Clone, Copy, Deserialize, PartialEq)]
+pub struct GoToFileByNumber(pub NumberedFileNavigation);
+
+#[derive(Clone, Copy, Deserialize, PartialEq)]
+pub enum NumberedFileNavigation {
+    Up,
+    Down,
+    Exact,
+}
 
 actions!(
     vim,
@@ -93,7 +104,14 @@ actions!(workspace, [ToggleVimMode]);
 
 impl_actions!(
     vim,
-    [ResizePane, SwitchMode, PushOperator, Number, SelectRegister]
+    [
+        ResizePane,
+        SwitchMode,
+        PushOperator,
+        Number,
+        SelectRegister,
+        GoToFileByNumber
+    ]
 );
 
 /// Initializes the `vim` crate.
@@ -177,6 +195,26 @@ pub fn init(cx: &mut AppContext) {
             let Some(vim) = vim else { return };
             vim.view
                 .update(cx, |_, cx| cx.defer(|vim, cx| vim.search_submit(cx)))
+        });
+
+        workspace.register_action(move |workspace, action: &GoToFileByNumber, cx| {
+            dbg!("go to file");
+            let count = Vim::take_count(cx).unwrap_or(1) as usize;
+            dbg!(count);
+            let navigation = action.0;
+
+            let file_number = match navigation {
+                NumberedFileNavigation::Up => FileNumber::Relative(RelativeFileNumber::Up(count)),
+                NumberedFileNavigation::Down => {
+                    FileNumber::Relative(RelativeFileNumber::Down(count))
+                }
+                NumberedFileNavigation::Exact => FileNumber::Absolute(count),
+            };
+
+            let project = workspace.project().clone();
+            project.update(cx, |_, cx| {
+                cx.emit(project::Event::OpenNumberedFile(file_number))
+            });
         });
     })
     .detach();

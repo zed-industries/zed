@@ -33,7 +33,7 @@ use indexmap::IndexMap;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::{
     relativize_path, Entry, EntryKind, FileNumber, Fs, Project, ProjectEntryId, ProjectPath,
-    Worktree, WorktreeId,
+    RelativeFileNumber, Worktree, WorktreeId,
 };
 use project_panel_settings::{
     ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics, ShowFileNumbers,
@@ -3298,13 +3298,6 @@ impl ProjectPanel {
             } else {
                 item_colors.default
             };
-        let (bg_color, border_color) = match (is_hovered, is_marked || is_active, self.mouse_down) {
-            (true, _, true) => (item_colors.marked_active, item_colors.hover),
-            (true, false, false) => (item_colors.hover, item_colors.hover),
-            (true, true, false) => (item_colors.hover, item_colors.marked_active),
-            (false, true, _) => (item_colors.marked_active, item_colors.marked_active),
-            _ => (item_colors.default, item_colors.default),
-        };
 
         let file_number = self.get_file_number(worktree_id, entry_id, settings.show_file_numbers);
 
@@ -3318,6 +3311,14 @@ impl ProjectPanel {
             .border_r_2()
             .border_color(border_color)
             .hover(|style| style.bg(bg_hover_color))
+            .h_flex()
+            .when_some(file_number, |this, file_number| {
+                this.child(
+                    div()
+                        .px(px(8.))
+                        .child(Label::new(format!("{}", file_number)).color(filename_text_color)),
+                )
+            })
             .when(is_local, |div| {
                 div.on_drag_move::<ExternalPaths>(cx.listener(
                     move |this, event: &DragMoveEvent<ExternalPaths>, cx| {
@@ -3483,11 +3484,6 @@ impl ProjectPanel {
                                 .into_any_element(),
                         )
                     })
-                    .when_some(file_number, |this, file_number| {
-                        this.child(div().px(px(8.)).w(px(40.)).child(
-                            Label::new(format!("{}", file_number)).color(filename_text_color),
-                        ))
-                    })
                     .child(if let Some(icon) = &icon {
                         // Check if there's a diagnostic severity and get the decoration color
                         if let Some((_, decoration_color)) =
@@ -3630,7 +3626,7 @@ impl ProjectPanel {
                         },
                     ))
                     .overflow_x(),
-            );
+            )
     }
 
     fn render_vertical_scrollbar(&self, cx: &mut ViewContext<Self>) -> Option<Stateful<Div>> {
@@ -3946,24 +3942,27 @@ impl ProjectPanel {
         let file_index = match variant {
             ShowFileNumbers::Absolute => match file_number {
                 FileNumber::Absolute(number) => number,
-                FileNumber::Relative(_, _) => return,
+                FileNumber::Relative(_) => return,
             },
             ShowFileNumbers::Relative => match file_number {
-                FileNumber::Relative(number, down) => {
+                FileNumber::Relative(relative_file_number) => {
                     let selection_line_number = if let Some(selection) = self.selection {
                         self.index_for_selection(selection).unwrap_or_default().2
                     } else {
                         0
                     };
-                    if down {
-                        let number = selection_line_number.saturating_add(number);
-                        if number > total_entries {
-                            total_entries
-                        } else {
-                            number
+                    match relative_file_number {
+                        RelativeFileNumber::Down(count) => {
+                            let number = selection_line_number.saturating_add(count);
+                            if number > total_entries {
+                                total_entries
+                            } else {
+                                number
+                            }
                         }
-                    } else {
-                        selection_line_number.saturating_sub(number)
+                        RelativeFileNumber::Up(count) => {
+                            selection_line_number.saturating_sub(count)
+                        }
                     }
                 }
                 FileNumber::Absolute(_) => return,

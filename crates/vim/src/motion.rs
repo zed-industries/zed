@@ -311,7 +311,7 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     Vim::action(editor, cx, |vim, action: &Down, cx| {
         vim.motion(
             Motion::Down {
-                display_lines: action.display_lines,
+                display_lines: dbg!(action.display_lines),
             },
             cx,
         )

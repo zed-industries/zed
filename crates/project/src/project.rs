@@ -562,7 +562,13 @@ impl DirectoryLister {
 #[derive(Debug, Clone, PartialEq, PartialOrd, Eq)]
 pub enum FileNumber {
     Absolute(usize),
-    Relative(usize, bool),
+    Relative(RelativeFileNumber),
+}
+
+#[derive(Debug, Clone, PartialEq, PartialOrd, Eq)]
+pub enum RelativeFileNumber {
+    Up(usize),
+    Down(usize),
 }
 
 #[cfg(any(test, feature = "test-support"))]

@@ -2755,7 +2755,7 @@ dependencies = [
  "editor",
  "env_logger 0.11.6",
  "fuzzy",
- "go_to",
+ "go_to_line",
  "gpui",
  "language",
  "menu",
@@ -5163,7 +5163,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "go_to"
+name = "go_to_line"
 version = "0.1.0"
 dependencies = [
  "anyhow",
@@ -5173,7 +5173,6 @@ dependencies = [
  "language",
  "menu",
  "project",
- "project_panel",
  "rope",
  "schemars",
  "serde",
@@ -5186,7 +5185,6 @@ dependencies = [
  "ui",
  "util",
  "workspace",
- "zed_actions",
 ]
 
 [[package]]
@@ -14195,6 +14193,7 @@ dependencies = [
  "multi_buffer",
  "nvim-rs",
  "parking_lot",
+ "project",
  "regex",
  "release_channel",
  "schemars",
@@ -16110,7 +16109,7 @@ dependencies = [
  "git",
  "git_hosting_providers",
  "git_ui",
- "go_to",
+ "go_to_line",
  "gpui",
  "http_client",
  "image_viewer",

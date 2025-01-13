@@ -1,5 +1,5 @@
 [package]
-name = "go_to"
+name = "go_to_line"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/lib.rs"
+path = "src/go_to_line.rs"
 doctest = false
 
 [dependencies]
@@ -25,9 +25,6 @@ theme.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
-project.workspace = true
-project_panel.workspace = true
-zed_actions.workspace = true
 
 [dev-dependencies]
 editor = { workspace = true, features = ["test-support"] }

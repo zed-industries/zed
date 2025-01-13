@@ -12,8 +12,6 @@ use ui::{
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
-use crate::go_to_line::GoToLine;
-
 #[derive(Copy, Clone, Debug, Default, PartialOrd, PartialEq)]
 pub(crate) struct SelectionStats {
     pub lines: usize,
@@ -185,7 +183,8 @@ impl Render for CursorPosition {
                                     .active_item(cx)
                                     .and_then(|item| item.act_as::<Editor>(cx))
                                 {
-                                    workspace.toggle_modal(cx, |cx| GoToLine::new(editor, cx))
+                                    workspace
+                                        .toggle_modal(cx, |cx| crate::GoToLine::new(editor, cx))
                                 }
                             });
                         }

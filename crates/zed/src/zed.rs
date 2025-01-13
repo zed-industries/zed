@@ -179,7 +179,7 @@ pub fn initialize_workspace(
             cx.new_view(|cx| toolchain_selector::ActiveToolchain::new(workspace, cx));
         let vim_mode_indicator = cx.new_view(vim::ModeIndicator::new);
         let cursor_position =
-            cx.new_view(|_| go_to::cursor_position::CursorPosition::new(workspace));
+            cx.new_view(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(diagnostic_summary, cx);
             status_bar.add_left_item(activity_indicator, cx);

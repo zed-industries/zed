@@ -1,13 +1,22 @@
+pub mod cursor_position;
+
+use cursor_position::LineIndicatorFormat;
 use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
     FocusableView, Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext,
 };
+use settings::Settings;
 use text::{Bias, Point};
 use theme::ActiveTheme;
 use ui::prelude::*;
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
 use workspace::ModalView;
+
+pub fn init(cx: &mut AppContext) {
+    LineIndicatorFormat::register(cx);
+    cx.observe_new_views(GoToLine::register).detach();
+}
 
 pub struct GoToLine {
     line_editor: View<Editor>,
@@ -29,7 +38,7 @@ impl EventEmitter<DismissEvent> for GoToLine {}
 enum GoToLineRowHighlights {}
 
 impl GoToLine {
-    pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
+    fn register(editor: &mut Editor, cx: &mut ViewContext<Editor>) {
         let handle = cx.view().downgrade();
         editor
             .register_action(move |_: &editor::actions::ToggleGoToLine, cx| {
@@ -205,7 +214,7 @@ impl Render for GoToLine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cursor_position::{CursorPosition, SelectionStats};
+    use cursor_position::{CursorPosition, SelectionStats};
     use editor::actions::SelectAll;
     use gpui::{TestAppContext, VisualTestContext};
     use indoc::indoc;
