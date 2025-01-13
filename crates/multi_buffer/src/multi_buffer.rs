@@ -4545,7 +4545,22 @@ impl MultiBufferSnapshot {
         // Find the given position in the diff transforms. Determine the corresponding
         // offset in the excerpts, and whether the position is within a deleted hunk.
         let mut diff_transform_cursor = self.diff_transforms.cursor::<(usize, ExcerptOffset)>(&());
-        diff_transform_cursor.seek(&offset, bias, &());
+        diff_transform_cursor.seek(&offset, Bias::Right, &());
+
+        if offset == diff_transform_cursor.start().0 && bias == Bias::Left {
+            if let Some(prev_item) = diff_transform_cursor.prev_item() {
+                match prev_item {
+                    DiffTransform::DeletedHunk {
+                        has_trailing_newline: true,
+                        ..
+                    } => {}
+                    _ => {
+                        diff_transform_cursor.prev(&());
+                    }
+                }
+            }
+        }
+
         let offset_in_transform = offset - diff_transform_cursor.start().0;
         let mut excerpt_offset = diff_transform_cursor.start().1;
         let mut diff_base_anchor = None;
