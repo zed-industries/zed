@@ -200,7 +200,6 @@ impl MessageEditor {
                         let char_behind_cursor = snapshot.chars_at(behind_cursor).next();
                         if char_behind_cursor == Some('@') {
                             self.inline_context_picker_menu_handle.show(cx);
-                            // TODO az
                         }
                     }
                 });
