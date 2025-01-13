@@ -5,10 +5,7 @@ use std::{
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
     rc::{Rc, Weak},
-    sync::{
-        atomic::{AtomicUsize, Ordering::SeqCst},
-        Arc,
-    },
+    sync::{atomic::Ordering::SeqCst, Arc},
     time::Duration,
 };
 
@@ -34,8 +31,8 @@ use util::ResultExt;
 use crate::{
     current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
     Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
-    Entity, EventEmitter, FocusHandle, FocusId, FocusMap, ForegroundExecutor, Global, KeyBinding,
-    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
+    Entity, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, Keymap,
+    Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
     PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
     Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
@@ -220,8 +217,8 @@ pub(crate) type KeystrokeObserver =
     Box<dyn FnMut(&KeystrokeEvent, &mut Window, &mut AppContext) -> bool + 'static>;
 type QuitHandler = Box<dyn FnOnce(&mut AppContext) -> LocalBoxFuture<'static, ()> + 'static>;
 type ReleaseListener = Box<dyn FnOnce(&mut dyn Any, &mut AppContext) + 'static>;
-type NewViewListener = Box<dyn FnMut(AnyView, &mut Window, &mut AppContext) + 'static>;
-type NewModelListener = Box<dyn FnMut(AnyModel, &mut AppContext) + 'static>;
+type NewModelListener =
+    Box<dyn FnMut(AnyModel, &mut Option<&mut Window>, &mut AppContext) + 'static>;
 
 /// Contains the state of the full application, and passed as a reference to a variety of callbacks.
 /// Other contexts such as [ModelContext], [WindowContext], and [ViewContext] deref to this type, making it the most general context type.
@@ -242,8 +239,8 @@ pub struct AppContext {
     http_client: Arc<dyn HttpClient>,
     pub(crate) globals_by_type: FxHashMap<TypeId, Box<dyn Any>>,
     pub(crate) entities: EntityMap,
+    pub(crate) windows_accessed: Vec<WindowId>,
     pub(crate) new_model_observers: SubscriberSet<TypeId, NewModelListener>,
-    pub(crate) new_view_observers: SubscriberSet<TypeId, NewViewListener>,
     pub(crate) windows: SlotMap<WindowId, Option<Window>>,
     pub(crate) window_handles: FxHashMap<WindowId, AnyWindowHandle>,
     pub(crate) focus_handles: Arc<FocusMap>,
@@ -306,9 +303,9 @@ impl AppContext {
                 http_client,
                 globals_by_type: FxHashMap::default(),
                 entities,
-                new_view_observers: SubscriberSet::new(),
                 new_model_observers: SubscriberSet::new(),
                 windows: SlotMap::with_key(),
+                windows_accessed: Vec::new(),
                 window_handles: FxHashMap::default(),
                 focus_handles: Arc::new(RwLock::new(SlotMap::with_key())),
                 keymap: Rc::new(RefCell::new(Keymap::default())),
@@ -588,7 +585,9 @@ impl AppContext {
             let handle = WindowHandle::new(id);
             match Window::new(handle.into(), options, cx) {
                 Ok(mut window) => {
+                    cx.windows_accessed.push(id);
                     let root_view = build_root_view(&mut window, cx);
+                    cx.windows_accessed.pop();
                     window.root_view.replace(root_view.into());
                     window.defer(cx, |window: &mut Window, cx| window.appearance_changed(cx));
                     cx.window_handles.insert(id, window.handle);
@@ -834,6 +833,13 @@ impl AppContext {
                     Effect::Defer { callback } => {
                         self.apply_defer_effect(callback);
                     }
+                    Effect::ModelCreated {
+                        entity,
+                        tid,
+                        window,
+                    } => {
+                        self.apply_model_created_effect(entity, tid, window);
+                    }
                 }
             } else {
                 #[cfg(any(test, feature = "test-support"))]
@@ -886,7 +892,7 @@ impl AppContext {
                 if count.load(SeqCst) == 0 {
                     for window_handle in self.windows() {
                         window_handle
-                            .update(self, |_, window, cx| {
+                            .update(self, |_, window, _| {
                                 if window.focus == Some(handle_id) {
                                     window.blur();
                                 }
@@ -939,6 +945,57 @@ impl AppContext {
         callback(self);
     }
 
+    fn apply_model_created_effect(
+        &mut self,
+        entity: AnyModel,
+        tid: TypeId,
+        window: Option<WindowId>,
+    ) {
+        self.new_model_observers.clone().retain(&tid, |observer| {
+            if let Some(id) = window {
+                self.update_window_id(id, {
+                    let entity = entity.clone();
+                    |_, window, cx| (observer)(entity, &mut Some(window), cx)
+                })
+                .expect("All windows should be off the stack when flushing effects");
+            } else {
+                (observer)(entity.clone(), &mut None, self)
+            }
+            true
+        });
+    }
+
+    fn update_window_id<T, F>(&mut self, id: WindowId, update: F) -> Result<T>
+    where
+        F: FnOnce(AnyView, &mut Window, &mut AppContext) -> T,
+    {
+        self.update(|cx| {
+            let mut window = cx
+                .windows
+                .get_mut(id)
+                .ok_or_else(|| anyhow!("window not found"))?
+                .take()
+                .ok_or_else(|| anyhow!("window not found"))?;
+
+            let root_view = window.root_view.clone().unwrap();
+
+            cx.windows_accessed.push(window.handle.id);
+            let result = update(root_view, &mut window, cx);
+            cx.windows_accessed.pop();
+
+            if window.removed {
+                cx.window_handles.remove(&id);
+                cx.windows.remove(id);
+            } else {
+                cx.windows
+                    .get_mut(id)
+                    .ok_or_else(|| anyhow!("window not found"))?
+                    .replace(window);
+            }
+
+            Ok(result)
+        })
+    }
     /// Creates an `AsyncAppContext`, which can be cloned and has a static lifetime
     /// so it can be held across `await` points.
     pub fn to_async(&self) -> AsyncAppContext {
@@ -1092,27 +1149,23 @@ impl AppContext {
         self.globals_by_type.insert(global_type, lease.global);
     }
 
-    pub(crate) fn new_view_observer(&self, key: TypeId, value: NewViewListener) -> Subscription {
-        let (subscription, activate) = self.new_view_observers.insert(key, value);
-        activate();
-        subscription
-    }
-
     /// Arrange for the given function to be invoked whenever a view of the specified type is created.
     /// The function will be passed a mutable reference to the view along with an appropriate context.
     pub fn observe_new_views<V: 'static>(
         &self,
         on_new: impl 'static + Fn(&mut V, &mut Window, &mut ModelContext<V>),
     ) -> Subscription {
-        self.new_view_observer(
+        self.new_model_observer(
             TypeId::of::<V>(),
             Box::new(
-                move |any_view: AnyView, window: &mut Window, cx: &mut AppContext| {
+                move |any_view: AnyModel, window: &mut Option<&mut Window>, cx: &mut AppContext| {
+                    let Some(window) = window else { return };
+
                     any_view
                         .downcast::<V>()
                         .unwrap()
                         .update(cx, |view_state, cx| {
-                            on_new(view_state, window, cx);
+                            on_new(view_state, *window, cx);
                         })
                 },
             ),
@@ -1133,14 +1186,16 @@ impl AppContext {
     ) -> Subscription {
         self.new_model_observer(
             TypeId::of::<T>(),
-            Box::new(move |any_model: AnyModel, cx: &mut AppContext| {
-                any_model
-                    .downcast::<T>()
-                    .unwrap()
-                    .update(cx, |model_state, cx| {
-                        on_new(model_state, cx);
-                    })
-            }),
+            Box::new(
+                move |any_model: AnyModel, _: &mut Option<&mut Window>, cx: &mut AppContext| {
+                    any_model
+                        .downcast::<T>()
+                        .unwrap()
+                        .update(cx, |model_state, cx| {
+                            on_new(model_state, cx);
+                        })
+                },
+            ),
         )
     }
 
@@ -1296,8 +1351,8 @@ impl AppContext {
     pub(crate) fn clear_pending_keystrokes(&mut self) {
         for window in self.windows() {
             window
-                .update(self, |_, window, cx| {
-                    cx.clear_pending_keystrokes();
+                .update(self, |_, window, _| {
+                    window.clear_pending_keystrokes();
                 })
                 .ok();
         }
@@ -1309,7 +1364,7 @@ impl AppContext {
         let mut action_available = false;
         if let Some(window) = self.active_window() {
             if let Ok(window_action_available) =
-                window.update(self, |_, window, cx| cx.is_action_available(action))
+                window.update(self, |_, window, cx| window.is_action_available(action, cx))
             {
                 action_available = window_action_available;
             }
@@ -1485,18 +1540,14 @@ impl Context for AppContext {
             let slot = cx.entities.reserve();
             let model = slot.clone();
             let entity = build_model(&mut ModelContext::new(cx, slot.downgrade()));
+
+            cx.push_effect(Effect::ModelCreated {
+                entity: model.clone().into_any(),
+                tid: TypeId::of::<T>(),
+                window: cx.windows_accessed.last().cloned(),
+            });
+
             cx.entities.insert(slot, entity);
-
-            // Non-generic part to avoid leaking SubscriberSet to invokers of `new_view`.
-            fn notify_observers(cx: &mut AppContext, tid: TypeId, model: AnyModel) {
-                cx.new_model_observers.clone().retain(&tid, |observer| {
-                    let any_model = model.clone();
-                    (observer)(any_model, cx);
-                    true
-                });
-            }
-            notify_observers(cx, TypeId::of::<T>(), AnyModel::from(model.clone()));
-
             model
         })
     }
@@ -1548,31 +1599,7 @@ impl Context for AppContext {
     where
         F: FnOnce(AnyView, &mut Window, &mut AppContext) -> T,
     {
-        //
-
-        self.update(|cx| {
-            let mut window = cx
-                .windows
-                .get_mut(handle.id)
-                .ok_or_else(|| anyhow!("window not found"))?
-                .take()
-                .ok_or_else(|| anyhow!("window not found"))?;
-
-            let root_view = window.root_view.clone().unwrap();
-            let result = update(root_view, &mut window, cx);
-
-            if window.removed {
-                cx.window_handles.remove(&handle.id);
-                cx.windows.remove(handle.id);
-            } else {
-                cx.windows
-                    .get_mut(handle.id)
-                    .ok_or_else(|| anyhow!("window not found"))?
-                    .replace(window);
-            }
-
-            Ok(result)
-        })
+        self.update_window_id(handle.id, update)
     }
 
     fn read_window<T, R>(
@@ -1615,6 +1642,11 @@ pub(crate) enum Effect {
     },
     Defer {
         callback: Box<dyn FnOnce(&mut AppContext) + 'static>,
+    },
+    ModelCreated {
+        entity: AnyModel,
+        tid: TypeId,
+        window: Option<WindowId>,
     },
 }
 

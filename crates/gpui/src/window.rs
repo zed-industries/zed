@@ -893,23 +893,7 @@ impl Window {
     where
         V: 'static + Render,
     {
-        let model = cx.new_model(|cx| build_view_state(self, cx));
-        cx.update(|cx| {
-            fn notify_observers(
-                tid: TypeId,
-                model: AnyView,
-                window: &mut Window,
-                cx: &mut AppContext,
-            ) {
-                cx.new_view_observers.clone().retain(&tid, |observer| {
-                    let any_model = model.clone();
-                    (observer)(any_model, window, cx);
-                    true
-                });
-            }
-            notify_observers(TypeId::of::<V>(), AnyView::from(model.clone()), self, cx);
-        });
-        model
+        cx.new_model(|cx| build_view_state(self, cx))
     }
 
     /// Indicate that a view has changed, which will invoke any observers and also mark the window as dirty.
