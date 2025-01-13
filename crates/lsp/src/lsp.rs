@@ -1233,6 +1233,33 @@ impl LanguageServer {
             self.notify::<DidChangeWorkspaceFolders>(params).log_err();
         }
     }
+    pub fn set_workspace_folders(&self, folders: BTreeSet<Url>) {
+        let mut workspace_folders = self.workspace_folders.lock();
+        let added: Vec<_> = folders
+            .iter()
+            .map(|uri| WorkspaceFolder {
+                uri: uri.clone(),
+                name: String::default(),
+            })
+            .collect();
+
+        let removed: Vec<_> = std::mem::replace(&mut *workspace_folders, folders)
+            .into_iter()
+            .map(|uri| WorkspaceFolder {
+                uri: uri.clone(),
+                name: String::default(),
+            })
+            .collect();
+        let should_notify = !added.is_empty() || !removed.is_empty();
+
+        if should_notify {
+            let params = DidChangeWorkspaceFoldersParams {
+                event: WorkspaceFoldersChangeEvent { added, removed },
+            };
+            self.notify::<DidChangeWorkspaceFolders>(params).log_err();
+        }
+    }
+
     pub fn workspace_folders<'a>(&'a self) -> impl Deref<Target = BTreeSet<Url>> + 'a {
         self.workspace_folders.lock()
     }

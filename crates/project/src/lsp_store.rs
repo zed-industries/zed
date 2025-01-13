@@ -244,13 +244,15 @@ impl LocalLspStore {
             }
         });
 
-        let state = LanguageServerState::Starting({
+        let pending_workspace_folders: Arc<Mutex<BTreeSet<Url>>> = Default::default();
+        let startup = {
             let server_name = adapter.name.0.clone();
             let delegate = delegate as Arc<dyn LspAdapterDelegate>;
             let language = language.clone();
             let key = key.clone();
             let adapter = adapter.clone();
             let this = self.weak.clone();
+            let pending_workspace_folders = pending_workspace_folders.clone();
             cx.spawn(move |mut cx| async move {
                 let result = {
                     let delegate = delegate.clone();
@@ -325,6 +327,7 @@ impl LocalLspStore {
                                 server.clone(),
                                 server_id,
                                 key,
+                                pending_workspace_folders,
                                 &mut cx,
                             );
                         })
@@ -347,7 +350,11 @@ impl LocalLspStore {
                     }
                 }
             })
-        });
+        };
+        let state = LanguageServerState::Starting {
+            startup,
+            pending_workspace_folders,
+        };
 
         self.language_servers.insert(server_id, state);
         self.language_server_ids
@@ -999,7 +1006,7 @@ impl LocalLspStore {
                 use LanguageServerState::*;
                 match server_state {
                     Running { server, .. } => server.shutdown()?.await,
-                    Starting(task) => task.await?.shutdown()?.await,
+                    Starting { startup, .. } => startup.await?.shutdown()?.await,
                 }
             })
             .collect::<Vec<_>>();
@@ -1809,14 +1816,12 @@ impl LocalLspStore {
                                 debug_assert_eq!(server_ids.len(), 1);
                                 let server_id = server_ids.iter().cloned().next().unwrap();
 
-                                if let Some(LanguageServerState::Running { server, .. }) =
-                                    self.language_servers.get(&server_id)
-                                {
+                                if let Some(state) = self.language_servers.get(&server_id) {
                                     let uri = Url::from_directory_path(
                                         worktree.read(cx).abs_path().join(&project_path.path),
                                     );
                                     if let Ok(uri) = uri {
-                                        server.add_workspace_folder(uri);
+                                        state.add_workspace_folder(uri);
                                     };
                                 }
                                 server_id
@@ -5334,7 +5339,7 @@ impl LspStore {
                                 let states = local.language_servers.get(server_id)?;
 
                                 match states {
-                                    LanguageServerState::Starting(_) => None,
+                                    LanguageServerState::Starting { .. } => None,
                                     LanguageServerState::Running {
                                         adapter, server, ..
                                     } => Some((
@@ -7234,14 +7239,14 @@ impl LspStore {
         cx: AsyncAppContext,
     ) {
         let server = match server_state {
-            Some(LanguageServerState::Starting(task)) => {
+            Some(LanguageServerState::Starting { startup, .. }) => {
                 let mut timer = cx
                     .background_executor()
                     .timer(SERVER_LAUNCHING_BEFORE_SHUTDOWN_TIMEOUT)
                     .fuse();
 
                 select! {
-                    server = task.fuse() => server,
+                    server = startup.fuse() => server,
                     _ = timer => {
                         log::info!(
                             "timeout waiting for language server {} to finish launching before stopping",
@@ -7579,6 +7584,7 @@ impl LspStore {
         language_server: Arc<LanguageServer>,
         server_id: LanguageServerId,
         key: (WorktreeId, LanguageServerName),
+        workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
         cx: &mut ModelContext<Self>,
     ) {
         let Some(local) = self.as_local_mut() else {
@@ -7599,12 +7605,13 @@ impl LspStore {
         // indicating that the server is up and running and ready
         local.language_servers.insert(
             server_id,
-            LanguageServerState::Running {
-                adapter: adapter.clone(),
-                language: language.clone(),
-                server: language_server.clone(),
-                simulate_disk_based_diagnostics_completion: None,
-            },
+            LanguageServerState::running(
+                language.clone(),
+                workspace_folders.lock().clone(),
+                adapter.clone(),
+                language_server.clone(),
+                None,
+            ),
         );
         if let Some(file_ops_caps) = language_server
             .capabilities()
@@ -8408,7 +8415,11 @@ impl LanguageServerLogType {
 }
 
 pub enum LanguageServerState {
-    Starting(Task<Option<Arc<LanguageServer>>>),
+    Starting {
+        startup: Task<Option<Arc<LanguageServer>>>,
+        /// List of language servers that will be added to the workspace once it's initialization completes.
+        pending_workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
+    },
 
     Running {
         language: LanguageName,
@@ -8418,10 +8429,52 @@ pub enum LanguageServerState {
     },
 }
 
+impl LanguageServerState {
+    fn add_workspace_folder(&self, uri: Url) {
+        match self {
+            LanguageServerState::Starting {
+                pending_workspace_folders,
+                ..
+            } => {
+                pending_workspace_folders.lock().insert(uri);
+            }
+            LanguageServerState::Running { server, .. } => {
+                server.add_workspace_folder(uri);
+            }
+        }
+    }
+    fn remove_workspace_folder(&self, uri: Url) {
+        match self {
+            LanguageServerState::Starting {
+                pending_workspace_folders,
+                ..
+            } => {
+                pending_workspace_folders.lock().remove(&uri);
+            }
+            LanguageServerState::Running { server, .. } => server.remove_workspace_folder(uri),
+        }
+    }
+    fn running(
+        language: LanguageName,
+        workspace_folders: BTreeSet<Url>,
+        adapter: Arc<CachedLspAdapter>,
+        server: Arc<LanguageServer>,
+        simulate_disk_based_diagnostics_completion: Option<Task<()>>,
+    ) -> Self {
+        server.set_workspace_folders(workspace_folders);
+        Self::Running {
+            language,
+            adapter,
+            server,
+            simulate_disk_based_diagnostics_completion,
+        }
+    }
+}
+
 impl std::fmt::Debug for LanguageServerState {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LanguageServerState::Starting(_) => {
+            LanguageServerState::Starting { .. } => {
                 f.debug_struct("LanguageServerState::Starting").finish()
             }
             LanguageServerState::Running { language, .. } => f
