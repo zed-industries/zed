@@ -12,7 +12,7 @@ use std::{
     sync::Arc,
 };
 
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use gpui::{AppContext, Context as _, Model, ModelContext, Subscription};
 use language::{CachedLspAdapter, LanguageName, LanguageRegistry, LspAdapterDelegate};
 use lsp::LanguageServerName;
