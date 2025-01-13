@@ -242,6 +242,7 @@ impl ActiveThread {
 
     fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
         let message_id = self.messages[ix];
+        let is_last_message = ix == self.messages.len() - 1;
         let Some(message) = self.thread.read(cx).message(message_id) else {
             return Empty.into_any();
         };
@@ -326,7 +327,7 @@ impl ActiveThread {
                 ),
             Role::Assistant => div().id(("message-container", ix)).child(
                 v_flex().relative().child(message_content).when(
-                    is_streaming_completion,
+                    is_streaming_completion && is_last_message,
                     |parent| {
                         parent.child(
                             h_flex()
