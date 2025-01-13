@@ -746,10 +746,12 @@ impl ExtensionImports for WasmState {
                         .await?;
                 }
                 DownloadedFileType::Zip => {
-                    futures::pin_mut!(body);
-                    node_runtime::extract_zip(&destination_path, body)
-                        .await
-                        .with_context(|| format!("failed to unzip {} archive", path.display()))?;
+                    if self.host.fs.metadata(&destination_path).await.is_err() {
+                        futures::pin_mut!(body);
+                        node_runtime::extract_zip(&destination_path, body)
+                            .await
+                            .with_context(|| format!("failed to unzip {} archive", path.display()))?;
+                    }
                 }
             }
 
