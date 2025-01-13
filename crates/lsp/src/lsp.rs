@@ -815,7 +815,7 @@ impl LanguageServer {
             }
             self.capabilities = RwLock::new(response.capabilities);
 
-            self.notify::<notification::Initialized>(InitializedParams {})?;
+            self.notify::<notification::Initialized>(&InitializedParams {})?;
             Ok(Arc::new(self))
         })
     }
@@ -835,7 +835,7 @@ impl LanguageServer {
                 &executor,
                 (),
             );
-            let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, ());
+            let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, &());
             outbound_tx.close();
 
             let server = self.server.clone();
@@ -1146,7 +1146,7 @@ impl LanguageServer {
                 if let Some(outbound_tx) = outbound_tx.upgrade() {
                     Self::notify_internal::<notification::Cancel>(
                         &outbound_tx,
-                        CancelParams {
+                        &CancelParams {
                             id: NumberOrString::Number(id),
                         },
                     )
@@ -1174,13 +1174,13 @@ impl LanguageServer {
     /// Sends a RPC notification to the language server.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#notificationMessage)
-    pub fn notify<T: notification::Notification>(&self, params: T::Params) -> Result<()> {
+    pub fn notify<T: notification::Notification>(&self, params: &T::Params) -> Result<()> {
         Self::notify_internal::<T>(&self.outbound_tx, params)
     }
 
     fn notify_internal<T: notification::Notification>(
         outbound_tx: &channel::Sender<String>,
-        params: T::Params,
+        params: &T::Params,
     ) -> Result<()> {
         let message = serde_json::to_string(&Notification {
             jsonrpc: JSON_RPC_VERSION,
@@ -1372,7 +1372,7 @@ impl LanguageServer {
 #[cfg(any(test, feature = "test-support"))]
 impl FakeLanguageServer {
     /// See [`LanguageServer::notify`].
-    pub fn notify<T: notification::Notification>(&self, params: T::Params) {
+    pub fn notify<T: notification::Notification>(&self, params: &T::Params) {
         self.server.notify::<T>(params).ok();
     }
 
@@ -1480,7 +1480,7 @@ impl FakeLanguageServer {
         })
         .await
         .unwrap();
-        self.notify::<notification::Progress>(ProgressParams {
+        self.notify::<notification::Progress>(&ProgressParams {
             token: NumberOrString::String(token),
             value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(progress)),
         });
@@ -1488,7 +1488,7 @@ impl FakeLanguageServer {
 
     /// Simulate that the server has completed work and notifies about that with the specified token.
     pub fn end_progress(&self, token: impl Into<String>) {
-        self.notify::<notification::Progress>(ProgressParams {
+        self.notify::<notification::Progress>(&ProgressParams {
             token: NumberOrString::String(token.into()),
             value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(Default::default())),
         });
@@ -1540,7 +1540,7 @@ mod tests {
 
         let server = cx.update(|cx| server.initialize(None, cx)).await.unwrap();
         server
-            .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
+            .notify::<notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(
                     Url::from_str("file://a/b").unwrap(),
                     "rust".to_string(),
@@ -1558,11 +1558,11 @@ mod tests {
             "file://a/b"
         );
 
-        fake.notify::<notification::ShowMessage>(ShowMessageParams {
+        fake.notify::<notification::ShowMessage>(&ShowMessageParams {
             typ: MessageType::ERROR,
             message: "ok".to_string(),
         });
-        fake.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
+        fake.notify::<notification::PublishDiagnostics>(&PublishDiagnosticsParams {
             uri: Url::from_str("file://b/c").unwrap(),
             version: Some(5),
             diagnostics: vec![],
