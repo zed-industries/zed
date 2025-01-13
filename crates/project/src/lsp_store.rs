@@ -1904,8 +1904,6 @@ impl LocalLspStore {
         buffer.update(cx, |buffer, cx| {
             let worktree_id = old_file.worktree_id(cx);
 
-            let ids = &self.language_server_ids;
-
             if let Some(language) = buffer.language().cloned() {
                 let Some(worktree) = self
                     .worktree_store
