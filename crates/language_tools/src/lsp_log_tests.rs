@@ -71,7 +71,7 @@ async fn test_lsp_logs(cx: &mut TestAppContext) {
     let log_view = window.root(cx).unwrap();
     let mut cx = VisualTestContext::from_window(*window, cx);
 
-    language_server.notify::<lsp::notification::LogMessage>(lsp::LogMessageParams {
+    language_server.notify::<lsp::notification::LogMessage>(&lsp::LogMessageParams {
         message: "hello from the server".into(),
         typ: lsp::MessageType::INFO,
     });

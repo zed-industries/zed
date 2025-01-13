@@ -75,9 +75,7 @@ impl JsonLspAdapter {
     }
 
     fn get_workspace_config(language_names: Vec<String>, cx: &mut AppContext) -> Value {
-        let action_names = cx.all_action_names();
-        let deprecations = cx.action_deprecations();
-
+        let keymap_schema = KeymapFile::generate_json_schema_for_registered_actions(cx);
         let font_names = &cx.text_system().all_font_names();
         let settings_schema = cx.global::<SettingsStore>().json_schema(
             &SettingsJsonSchemaParams {
@@ -90,6 +88,8 @@ impl JsonLspAdapter {
         let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
         let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();
 
+        // This can be viewed via `debug: open language server logs` -> `json-language-server` ->
+        // `Server Info`
         serde_json::json!({
             "json": {
                 "format": {
@@ -117,7 +117,7 @@ impl JsonLspAdapter {
                     },
                     {
                         "fileMatch": [schema_file_match(paths::keymap_file())],
-                        "schema": KeymapFile::generate_json_schema(action_names, deprecations),
+                        "schema": keymap_schema,
                     },
                     {
                         "fileMatch": [

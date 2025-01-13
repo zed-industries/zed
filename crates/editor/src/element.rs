@@ -314,38 +314,32 @@ impl EditorElement {
         register_action(view, cx, Editor::go_to_next_hunk);
         register_action(view, cx, Editor::go_to_prev_hunk);
         register_action(view, cx, |editor, a, cx| {
-            editor.go_to_definition(a, cx).detach_and_notify_err(cx);
+            editor.go_to_definition(a, cx).detach_and_log_err(cx);
         });
         register_action(view, cx, |editor, a, cx| {
-            editor
-                .go_to_definition_split(a, cx)
-                .detach_and_notify_err(cx);
+            editor.go_to_definition_split(a, cx).detach_and_log_err(cx);
         });
         register_action(view, cx, |editor, a, cx| {
-            editor.go_to_declaration(a, cx).detach_and_notify_err(cx);
+            editor.go_to_declaration(a, cx).detach_and_log_err(cx);
         });
         register_action(view, cx, |editor, a, cx| {
-            editor
-                .go_to_declaration_split(a, cx)
-                .detach_and_notify_err(cx);
+            editor.go_to_declaration_split(a, cx).detach_and_log_err(cx);
         });
         register_action(view, cx, |editor, a, cx| {
-            editor.go_to_implementation(a, cx).detach_and_notify_err(cx);
+            editor.go_to_implementation(a, cx).detach_and_log_err(cx);
         });
         register_action(view, cx, |editor, a, cx| {
             editor
                 .go_to_implementation_split(a, cx)
-                .detach_and_notify_err(cx);
+                .detach_and_log_err(cx);
         });
         register_action(view, cx, |editor, a, cx| {
-            editor
-                .go_to_type_definition(a, cx)
-                .detach_and_notify_err(cx);
+            editor.go_to_type_definition(a, cx).detach_and_log_err(cx);
         });
         register_action(view, cx, |editor, a, cx| {
             editor
                 .go_to_type_definition_split(a, cx)
-                .detach_and_notify_err(cx);
+                .detach_and_log_err(cx);
         });
         register_action(view, cx, Editor::open_url);
         register_action(view, cx, Editor::open_selected_filename);
@@ -440,7 +434,7 @@ impl EditorElement {
         });
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.find_all_references(action, cx) {
-                task.detach_and_notify_err(cx);
+                task.detach_and_log_err(cx);
             } else {
                 cx.propagate();
             }
@@ -549,8 +543,29 @@ impl EditorElement {
                         // and run the selection logic.
                         modifiers.alt = false;
                     } else {
+                        let scroll_position_row =
+                            position_map.scroll_pixel_position.y / position_map.line_height;
+                        let display_row = (((event.position - gutter_hitbox.bounds.origin).y
+                            + position_map.scroll_pixel_position.y)
+                            / position_map.line_height)
+                            as u32;
+                        let multi_buffer_row = position_map
+                            .snapshot
+                            .display_point_to_point(
+                                DisplayPoint::new(DisplayRow(display_row), 0),
+                                Bias::Right,
+                            )
+                            .row;
+                        let line_offset_from_top = display_row - scroll_position_row as u32;
                         // if double click is made without alt, open the corresponding excerp
-                        editor.open_excerpts(&OpenExcerpts, cx);
+                        editor.open_excerpts_common(
+                            Some(JumpData::MultiBufferRow {
+                                row: MultiBufferRow(multi_buffer_row),
+                                line_offset_from_top,
+                            }),
+                            false,
+                            cx,
+                        );
                         return;
                     }
                 }

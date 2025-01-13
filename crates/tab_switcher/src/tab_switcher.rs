@@ -10,6 +10,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use project::Project;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
@@ -23,7 +24,7 @@ use workspace::{
 
 const PANEL_WIDTH_REMS: f32 = 28.;
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Default)]
 pub struct Toggle {
     #[serde(default)]
     pub select_last: bool,
