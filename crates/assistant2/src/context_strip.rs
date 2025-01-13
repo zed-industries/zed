@@ -1,12 +1,11 @@
 use std::rc::Rc;
 
-use anyhow::Result;
 use collections::HashSet;
 use editor::Editor;
 use file_icons::FileIcons;
 use gpui::{
-    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, ModelContext,
-    Subscription, Task, View, WeakModel, WeakView,
+    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, Subscription, View,
+    WeakModel, WeakView,
 };
 use itertools::Itertools;
 use language::Buffer;
@@ -26,7 +25,7 @@ use crate::{
 
 pub struct ContextStrip {
     context_store: Model<ContextStore>,
-    context_picker: View<ContextPicker>,
+    pub context_picker: View<ContextPicker>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     focus_handle: FocusHandle,
     suggest_context_kind: SuggestContextKind,
@@ -135,7 +134,7 @@ impl ContextStrip {
         }
 
         Some(SuggestedContext::Thread {
-            name: active_thread.summary().unwrap_or("New Thread".into()),
+            name: active_thread.summary_or_default(),
             thread: weak_active_thread,
         })
     }
@@ -254,7 +253,13 @@ impl Render for ContextStrip {
             .on_action(cx.listener(Self::remove_focused_context))
             .child(
                 PopoverMenu::new("context-picker")
-                    .menu(move |_cx| Some(context_picker.clone()))
+                    .menu(move |cx| {
+                        context_picker.update(cx, |this, cx| {
+                            this.reset_mode(cx);
+                        });
+
+                        Some(context_picker.clone())
+                    })
                     .trigger(
                         IconButton::new("add-context", IconName::Plus)
                             .icon_size(IconSize::Small)
@@ -276,7 +281,7 @@ impl Render for ContextStrip {
                     .anchor(gpui::Corner::BottomLeft)
                     .offset(gpui::Point {
                         x: px(0.0),
-                        y: px(-16.0),
+                        y: px(-2.0),
                     })
                     .with_handle(self.context_picker_menu_handle.clone()),
             )
@@ -325,7 +330,7 @@ impl Render for ContextStrip {
                         let context_store = self.context_store.clone();
                         Rc::new(cx.listener(move |this, _event, cx| {
                             let task = context_store.update(cx, |context_store, cx| {
-                                suggested.accept(context_store, cx)
+                                context_store.accept_suggested_context(&suggested, cx)
                             });
 
                             let workspace = this.workspace.clone();
@@ -421,30 +426,6 @@ impl SuggestedContext {
             Self::File { icon_path, .. } => icon_path.clone(),
             Self::Thread { .. } => None,
         }
-    }
-
-    pub fn accept(
-        &self,
-        context_store: &mut ContextStore,
-        cx: &mut ModelContext<ContextStore>,
-    ) -> Task<Result<()>> {
-        match self {
-            Self::File {
-                buffer,
-                icon_path: _,
-                name: _,
-            } => {
-                if let Some(buffer) = buffer.upgrade() {
-                    return context_store.add_file_from_buffer(buffer, cx);
-                };
-            }
-            Self::Thread { thread, name: _ } => {
-                if let Some(thread) = thread.upgrade() {
-                    context_store.insert_thread(thread, cx);
-                };
-            }
-        }
-        Task::ready(Ok(()))
     }
 
     pub fn kind(&self) -> ContextKind {

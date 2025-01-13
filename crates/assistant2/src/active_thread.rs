@@ -1,11 +1,13 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use gpui::{
-    list, AbsoluteLength, AnyElement, AppContext, DefiniteLength, EdgesRefinement, Empty, Length,
-    ListAlignment, ListOffset, ListState, Model, StyleRefinement, Subscription,
-    TextStyleRefinement, UnderlineStyle, View, WeakView,
+    list, percentage, AbsoluteLength, Animation, AnimationExt, AnyElement, AppContext,
+    DefiniteLength, EdgesRefinement, Empty, Length, ListAlignment, ListOffset, ListState, Model,
+    StyleRefinement, Subscription, TextStyleRefinement, Transformation, UnderlineStyle, View,
+    WeakView,
 };
 use language::LanguageRegistry;
 use language_model::Role;
@@ -74,6 +76,16 @@ impl ActiveThread {
 
     pub fn summary(&self, cx: &AppContext) -> Option<SharedString> {
         self.thread.read(cx).summary()
+    }
+
+    pub fn summary_or_default(&self, cx: &AppContext) -> SharedString {
+        self.thread.read(cx).summary_or_default()
+    }
+
+    pub fn cancel_last_completion(&mut self, cx: &mut AppContext) -> bool {
+        self.last_error.take();
+        self.thread
+            .update(cx, |thread, _cx| thread.cancel_last_completion())
     }
 
     pub fn last_error(&self) -> Option<ThreadError> {
@@ -238,6 +250,7 @@ impl ActiveThread {
             return Empty.into_any();
         };
 
+        let is_streaming_completion = self.thread.read(cx).is_streaming();
         let context = self.thread.read(cx).context_for_message(message_id);
         let colors = cx.theme().colors();
 
@@ -280,6 +293,35 @@ impl ActiveThread {
                             ),
                     )
                     .child(div().p_2p5().text_ui(cx).child(markdown.clone()))
+                    .when(
+                        message.role == Role::Assistant && is_streaming_completion,
+                        |parent| {
+                            parent.child(
+                                h_flex()
+                                    .gap_1()
+                                    .p_2p5()
+                                    .child(
+                                        Icon::new(IconName::ArrowCircle)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted)
+                                            .with_animation(
+                                                "arrow-circle",
+                                                Animation::new(Duration::from_secs(2)).repeat(),
+                                                |icon, delta| {
+                                                    icon.transform(Transformation::rotate(
+                                                        percentage(delta),
+                                                    ))
+                                                },
+                                            ),
+                                    )
+                                    .child(
+                                        Label::new("Generating…")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    ),
+                            )
+                        },
+                    )
                     .when_some(context, |parent, context| {
                         if !context.is_empty() {
                             parent.child(h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(

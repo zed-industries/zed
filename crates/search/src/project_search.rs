@@ -29,6 +29,7 @@ use std::{
     mem,
     ops::{Not, Range},
     path::Path,
+    pin::pin,
 };
 use theme::ThemeSettings;
 use ui::{
@@ -249,7 +250,7 @@ impl ProjectSearch {
         self.active_query = Some(query);
         self.match_ranges.clear();
         self.pending_search = Some(cx.spawn(|this, mut cx| async move {
-            let mut matches = search.ready_chunks(1024);
+            let mut matches = pin!(search.ready_chunks(1024));
             let this = this.upgrade()?;
             this.update(&mut cx, |this, cx| {
                 this.match_ranges.clear();

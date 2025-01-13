@@ -132,7 +132,7 @@ use project::{
     lsp_store::{FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Location, LocationLink,
-    LspStore, Project, ProjectItem, ProjectTransaction, TaskSourceKind,
+    LspStore, PrepareRenameResponse, Project, ProjectItem, ProjectTransaction, TaskSourceKind,
 };
 use rand::prelude::*;
 use rpc::{proto::*, ErrorExt};
@@ -10901,6 +10901,20 @@ impl Editor {
         self.fold_creases(ranges, true, cx);
     }
 
+    pub fn fold_ranges<T: ToOffset + Clone>(
+        &mut self,
+        ranges: Vec<Range<T>>,
+        auto_scroll: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let ranges = ranges
+            .into_iter()
+            .map(|r| Crease::simple(r, display_map.fold_placeholder.clone()))
+            .collect::<Vec<_>>();
+        self.fold_creases(ranges, auto_scroll, cx);
+    }
+
     pub fn fold_creases<T: ToOffset + Clone>(
         &mut self,
         creases: Vec<Crease<T>>,
@@ -13927,7 +13941,28 @@ impl SemanticsProvider for Model<Project> {
         cx: &mut AppContext,
     ) -> Option<Task<Result<Option<Range<text::Anchor>>>>> {
         Some(self.update(cx, |project, cx| {
-            project.prepare_rename(buffer.clone(), position, cx)
+            let buffer = buffer.clone();
+            let task = project.prepare_rename(buffer.clone(), position, cx);
+            cx.spawn(|_, mut cx| async move {
+                Ok(match task.await? {
+                    PrepareRenameResponse::Success(range) => Some(range),
+                    PrepareRenameResponse::InvalidPosition => None,
+                    PrepareRenameResponse::OnlyUnpreparedRenameSupported => {
+                        // Fallback on using TreeSitter info to determine identifier range
+                        buffer.update(&mut cx, |buffer, _| {
+                            let snapshot = buffer.snapshot();
+                            let (range, kind) = snapshot.surrounding_word(position);
+                            if kind != Some(CharKind::Word) {
+                                return None;
+                            }
+                            Some(
+                                snapshot.anchor_before(range.start)
+                                    ..snapshot.anchor_after(range.end),
+                            )
+                        })?
+                    }
+                })
+            })
         }))
     }
 

@@ -73,7 +73,7 @@ use ui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 use util::{RangeExt, ResultExt};
-use workspace::{item::Item, Workspace};
+use workspace::{item::Item, notifications::NotifyTaskExt, Workspace};
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -382,14 +382,14 @@ impl EditorElement {
         register_action(view, cx, Editor::expand_all_hunk_diffs);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.format(action, cx) {
-                task.detach_and_log_err(cx);
+                task.detach_and_notify_err(cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.format_selections(action, cx) {
-                task.detach_and_log_err(cx);
+                task.detach_and_notify_err(cx);
             } else {
                 cx.propagate();
             }
@@ -399,35 +399,35 @@ impl EditorElement {
         register_action(view, cx, Editor::show_character_palette);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.confirm_completion(action, cx) {
-                task.detach_and_log_err(cx);
+                task.detach_and_notify_err(cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.compose_completion(action, cx) {
-                task.detach_and_log_err(cx);
+                task.detach_and_notify_err(cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.confirm_code_action(action, cx) {
-                task.detach_and_log_err(cx);
+                task.detach_and_notify_err(cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.rename(action, cx) {
-                task.detach_and_log_err(cx);
+                task.detach_and_notify_err(cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.confirm_rename(action, cx) {
-                task.detach_and_log_err(cx);
+                task.detach_and_notify_err(cx);
             } else {
                 cx.propagate();
             }

@@ -4,7 +4,9 @@ use std::sync::Arc;
 
 use file_icons::FileIcons;
 use fuzzy::PathMatch;
-use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakModel, WeakView};
+use gpui::{
+    AppContext, DismissEvent, FocusHandle, FocusableView, Stateful, Task, View, WeakModel, WeakView,
+};
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use ui::{prelude::*, ListItem, Tooltip};
@@ -238,7 +240,7 @@ impl PickerDelegate for FileContextPickerDelegate {
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         self.context_picker
             .update(cx, |this, cx| {
-                this.reset_mode();
+                this.reset_mode(cx);
                 cx.emit(DismissEvent);
             })
             .ok();
@@ -252,82 +254,97 @@ impl PickerDelegate for FileContextPickerDelegate {
     ) -> Option<Self::ListItem> {
         let path_match = &self.matches[ix];
 
-        let (file_name, directory) = if path_match.path.as_ref() == Path::new("") {
-            (SharedString::from(path_match.path_prefix.clone()), None)
-        } else {
-            let file_name = path_match
-                .path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string()
-                .into();
-
-            let mut directory = format!("{}/", path_match.path_prefix);
-            if let Some(parent) = path_match
-                .path
-                .parent()
-                .filter(|parent| parent != &Path::new(""))
-            {
-                directory.push_str(&parent.to_string_lossy());
-                directory.push('/');
-            }
-
-            (file_name, Some(directory))
-        };
-
-        let added = self.context_store.upgrade().and_then(|context_store| {
-            context_store
-                .read(cx)
-                .will_include_file_path(&path_match.path, cx)
-        });
-
-        let file_icon = FileIcons::get_icon(&path_match.path.clone(), cx)
-            .map(Icon::from_path)
-            .unwrap_or_else(|| Icon::new(IconName::File));
-
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .toggle_state(selected)
-                .child(
-                    h_flex()
-                        .gap_2()
-                        .child(file_icon.size(IconSize::Small))
-                        .child(Label::new(file_name))
-                        .children(directory.map(|directory| {
-                            Label::new(directory)
-                                .size(LabelSize::Small)
-                                .color(Color::Muted)
-                        })),
-                )
-                .when_some(added, |el, added| match added {
-                    FileInclusion::Direct(_) => el.end_slot(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Icon::new(IconName::Check)
-                                    .size(IconSize::Small)
-                                    .color(Color::Success),
-                            )
-                            .child(Label::new("Added").size(LabelSize::Small)),
-                    ),
-                    FileInclusion::InDirectory(dir_name) => {
-                        let dir_name = dir_name.to_string_lossy().into_owned();
-
-                        el.end_slot(
-                            h_flex()
-                                .gap_1()
-                                .child(
-                                    Icon::new(IconName::Check)
-                                        .size(IconSize::Small)
-                                        .color(Color::Success),
-                                )
-                                .child(Label::new("Included").size(LabelSize::Small)),
-                        )
-                        .tooltip(move |cx| Tooltip::text(format!("in {dir_name}"), cx))
-                    }
-                }),
+                .child(render_file_context_entry(
+                    ElementId::NamedInteger("file-ctx-picker".into(), ix),
+                    &path_match.path,
+                    &path_match.path_prefix,
+                    self.context_store.clone(),
+                    cx,
+                )),
         )
     }
+}
+
+pub fn render_file_context_entry(
+    id: ElementId,
+    path: &Path,
+    path_prefix: &Arc<str>,
+    context_store: WeakModel<ContextStore>,
+    cx: &WindowContext,
+) -> Stateful<Div> {
+    let (file_name, directory) = if path == Path::new("") {
+        (SharedString::from(path_prefix.clone()), None)
+    } else {
+        let file_name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
+            .into();
+
+        let mut directory = format!("{}/", path_prefix);
+
+        if let Some(parent) = path.parent().filter(|parent| parent != &Path::new("")) {
+            directory.push_str(&parent.to_string_lossy());
+            directory.push('/');
+        }
+
+        (file_name, Some(directory))
+    };
+
+    let added = context_store
+        .upgrade()
+        .and_then(|context_store| context_store.read(cx).will_include_file_path(path, cx));
+
+    let file_icon = FileIcons::get_icon(&path, cx)
+        .map(Icon::from_path)
+        .unwrap_or_else(|| Icon::new(IconName::File));
+
+    h_flex()
+        .id(id)
+        .gap_1()
+        .w_full()
+        .child(file_icon.size(IconSize::Small))
+        .child(
+            h_flex()
+                .gap_2()
+                .child(Label::new(file_name))
+                .children(directory.map(|directory| {
+                    Label::new(directory)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                })),
+        )
+        .child(div().w_full())
+        .when_some(added, |el, added| match added {
+            FileInclusion::Direct(_) => el.child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::Check)
+                            .size(IconSize::Small)
+                            .color(Color::Success),
+                    )
+                    .child(Label::new("Added").size(LabelSize::Small)),
+            ),
+            FileInclusion::InDirectory(dir_name) => {
+                let dir_name = dir_name.to_string_lossy().into_owned();
+
+                el.child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Icon::new(IconName::Check)
+                                .size(IconSize::Small)
+                                .color(Color::Success),
+                        )
+                        .child(Label::new("Included").size(LabelSize::Small)),
+                )
+                .tooltip(move |cx| Tooltip::text(format!("in {dir_name}"), cx))
+            }
+        })
 }

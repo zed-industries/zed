@@ -79,6 +79,7 @@ use std::{
     borrow::Cow,
     ops::Range,
     path::{Component, Path, PathBuf},
+    pin::pin,
     str,
     sync::Arc,
     time::Duration,
@@ -304,6 +305,14 @@ impl ProjectPath {
             path: Path::new("").into(),
         }
     }
+}
+
+#[derive(Debug, Default)]
+pub enum PrepareRenameResponse {
+    Success(Range<Anchor>),
+    OnlyUnpreparedRenameSupported,
+    #[default]
+    InvalidPosition,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2907,7 +2916,7 @@ impl Project {
         buffer: Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<Range<Anchor>>>> {
+    ) -> Task<Result<PrepareRenameResponse>> {
         self.request_lsp(
             buffer,
             LanguageServerToQuery::Primary,
@@ -2920,19 +2929,19 @@ impl Project {
         buffer: Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<Range<Anchor>>>> {
+    ) -> Task<Result<PrepareRenameResponse>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.prepare_rename_impl(buffer, position, cx)
     }
 
-    fn perform_rename_impl(
+    pub fn perform_rename<T: ToPointUtf16>(
         &mut self,
         buffer: Model<Buffer>,
-        position: PointUtf16,
+        position: T,
         new_name: String,
-        push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ProjectTransaction>> {
+        let push_to_history = true;
         let position = position.to_point_utf16(buffer.read(cx));
         self.request_lsp(
             buffer,
@@ -2944,17 +2953,6 @@ impl Project {
             },
             cx,
         )
-    }
-
-    pub fn perform_rename<T: ToPointUtf16>(
-        &mut self,
-        buffer: Model<Buffer>,
-        position: T,
-        new_name: String,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<ProjectTransaction>> {
-        let position = position.to_point_utf16(buffer.read(cx));
-        self.perform_rename_impl(buffer, position, new_name, true, cx)
     }
 
     pub fn on_type_format<T: ToPointUtf16>(
@@ -3019,6 +3017,7 @@ impl Project {
             // 64 buffers at a time to avoid overwhelming the main thread. For each
             // opened buffer, we will spawn a background task that retrieves all the
             // ranges in the buffer matched by the query.
+            let mut chunks = pin!(chunks);
             'outer: while let Some(matching_buffer_chunk) = chunks.next().await {
                 let mut chunk_results = Vec::new();
                 for buffer in matching_buffer_chunk {
@@ -3748,6 +3747,7 @@ impl Project {
         // next `flush_effects()` call.
         drop(this);
 
+        let mut rx = pin!(rx);
         let answer = rx.next().await;
 
         Ok(LanguageServerPromptResponse {
@@ -3889,7 +3889,7 @@ impl Project {
                 .query
                 .ok_or_else(|| anyhow!("missing query field"))?,
         )?;
-        let mut results = this.update(&mut cx, |this, cx| {
+        let results = this.update(&mut cx, |this, cx| {
             this.find_search_candidate_buffers(&query, message.limit as _, cx)
         })?;
 
@@ -3897,7 +3897,7 @@ impl Project {
             buffer_ids: Vec::new(),
         };
 
-        while let Some(buffer) = results.next().await {
+        while let Ok(buffer) = results.recv().await {
             this.update(&mut cx, |this, cx| {
                 let buffer_id = this.create_buffer_for_peer(&buffer, peer_id, cx);
                 response.buffer_ids.push(buffer_id.to_proto());

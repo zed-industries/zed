@@ -6,7 +6,7 @@ use picker::{Picker, PickerDelegate};
 use ui::{prelude::*, ListItem};
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
-use crate::context_store;
+use crate::context_store::{self, ContextStore};
 use crate::thread::ThreadId;
 use crate::thread_store::ThreadStore;
 
@@ -47,9 +47,9 @@ impl Render for ThreadContextPicker {
 }
 
 #[derive(Debug, Clone)]
-struct ThreadContextEntry {
-    id: ThreadId,
-    summary: SharedString,
+pub struct ThreadContextEntry {
+    pub id: ThreadId,
+    pub summary: SharedString,
 }
 
 pub struct ThreadContextPickerDelegate {
@@ -103,10 +103,8 @@ impl PickerDelegate for ThreadContextPickerDelegate {
             this.threads(cx)
                 .into_iter()
                 .map(|thread| {
-                    const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Thread");
-
                     let id = thread.read(cx).id().clone();
-                    let summary = thread.read(cx).summary().unwrap_or(DEFAULT_SUMMARY);
+                    let summary = thread.read(cx).summary_or_default();
                     ThreadContextEntry { id, summary }
                 })
                 .collect::<Vec<_>>()
@@ -179,7 +177,7 @@ impl PickerDelegate for ThreadContextPickerDelegate {
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         self.context_picker
             .update(cx, |this, cx| {
-                this.reset_mode();
+                this.reset_mode(cx);
                 cx.emit(DismissEvent);
             })
             .ok();
@@ -193,27 +191,37 @@ impl PickerDelegate for ThreadContextPickerDelegate {
     ) -> Option<Self::ListItem> {
         let thread = &self.matches[ix];
 
-        let added = self.context_store.upgrade().map_or(false, |context_store| {
-            context_store.read(cx).includes_thread(&thread.id).is_some()
-        });
-
-        Some(
-            ListItem::new(ix)
-                .inset(true)
-                .toggle_state(selected)
-                .child(Label::new(thread.summary.clone()))
-                .when(added, |el| {
-                    el.end_slot(
-                        h_flex()
-                            .gap_1()
-                            .child(
-                                Icon::new(IconName::Check)
-                                    .size(IconSize::Small)
-                                    .color(Color::Success),
-                            )
-                            .child(Label::new("Added").size(LabelSize::Small)),
-                    )
-                }),
-        )
+        Some(ListItem::new(ix).inset(true).toggle_state(selected).child(
+            render_thread_context_entry(thread, self.context_store.clone(), cx),
+        ))
     }
+}
+
+pub fn render_thread_context_entry(
+    thread: &ThreadContextEntry,
+    context_store: WeakModel<ContextStore>,
+    cx: &mut WindowContext,
+) -> Div {
+    let added = context_store.upgrade().map_or(false, |ctx_store| {
+        ctx_store.read(cx).includes_thread(&thread.id).is_some()
+    });
+
+    h_flex()
+        .gap_1()
+        .w_full()
+        .child(Icon::new(IconName::MessageCircle).size(IconSize::Small))
+        .child(Label::new(thread.summary.clone()))
+        .child(div().w_full())
+        .when(added, |el| {
+            el.child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::Check)
+                            .size(IconSize::Small)
+                            .color(Color::Success),
+                    )
+                    .child(Label::new("Added").size(LabelSize::Small)),
+            )
+        })
 }

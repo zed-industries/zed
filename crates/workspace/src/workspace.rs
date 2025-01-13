@@ -61,10 +61,9 @@ use persistence::{
     SerializedWindowBounds, DB,
 };
 use postage::stream::Stream;
-use project::{
-    DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
-};
+use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree};
 use remote::{ssh_session::ConnectionIdentifier, SshClientDelegate, SshConnectionOptions};
+use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
 use settings::Settings;
@@ -119,9 +118,6 @@ static ZED_WINDOW_POSITION: LazyLock<Option<Point<Pixels>>> = LazyLock::new(|| {
         .and_then(parse_pixel_position_env_var)
 });
 
-#[derive(Clone, PartialEq)]
-pub struct RemoveWorktreeFromProject(pub WorktreeId);
-
 actions!(assistant, [ShowConfiguration]);
 
 actions!(
@@ -165,64 +161,64 @@ pub struct OpenPaths {
     pub paths: Vec<PathBuf>,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct ActivatePane(pub usize);
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct ActivatePaneInDirection(pub SplitDirection);
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct SwapPaneInDirection(pub SplitDirection);
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct MoveItemToPane {
     pub destination: usize,
     #[serde(default = "default_true")]
     pub focus: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct MoveItemToPaneInDirection {
     pub direction: SplitDirection,
     #[serde(default = "default_true")]
     pub focus: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveAll {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Save {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseAllItemsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseInactiveTabsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct SendKeystrokes(pub String);
 
-#[derive(Clone, Deserialize, PartialEq, Default)]
+#[derive(Clone, Deserialize, PartialEq, Default, JsonSchema)]
 pub struct Reload {
     pub binary_path: Option<PathBuf>,
 }
 
 action_as!(project_symbols, ToggleProjectSymbols as Toggle);
 
-#[derive(Default, PartialEq, Eq, Clone, serde::Deserialize)]
+#[derive(Default, PartialEq, Eq, Clone, Deserialize, JsonSchema)]
 pub struct ToggleFileFinder {
     #[serde(default)]
     pub separate_history: bool,
@@ -299,7 +295,7 @@ impl PartialEq for Toast {
     }
 }
 
-#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Default, Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct OpenTerminal {
     pub working_directory: PathBuf,
 }
@@ -1316,11 +1312,10 @@ impl Workspace {
         &self.project
     }
 
-    pub fn recent_navigation_history(
+    pub fn recent_navigation_history_iter(
         &self,
-        limit: Option<usize>,
         cx: &AppContext,
-    ) -> Vec<(ProjectPath, Option<PathBuf>)> {
+    ) -> impl Iterator<Item = (ProjectPath, Option<PathBuf>)> {
         let mut abs_paths_opened: HashMap<PathBuf, HashSet<ProjectPath>> = HashMap::default();
         let mut history: HashMap<ProjectPath, (Option<PathBuf>, usize)> = HashMap::default();
         for pane in &self.panes {
@@ -1353,7 +1348,7 @@ impl Workspace {
             .sorted_by_key(|(_, (_, timestamp))| *timestamp)
             .map(|(project_path, (fs_path, _))| (project_path, fs_path))
             .rev()
-            .filter(|(history_path, abs_path)| {
+            .filter(move |(history_path, abs_path)| {
                 let latest_project_path_opened = abs_path
                     .as_ref()
                     .and_then(|abs_path| abs_paths_opened.get(abs_path))
@@ -1368,6 +1363,14 @@ impl Workspace {
                     None => true,
                 }
             })
+    }
+
+    pub fn recent_navigation_history(
+        &self,
+        limit: Option<usize>,
+        cx: &AppContext,
+    ) -> Vec<(ProjectPath, Option<PathBuf>)> {
+        self.recent_navigation_history_iter(cx)
             .take(limit.unwrap_or(usize::MAX))
             .collect()
     }
@@ -2293,6 +2296,19 @@ impl Workspace {
                 Ok(())
             }))
         }
+    }
+
+    pub fn is_dock_at_position_open(
+        &self,
+        position: DockPosition,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        let dock = match position {
+            DockPosition::Left => &self.left_dock,
+            DockPosition::Bottom => &self.bottom_dock,
+            DockPosition::Right => &self.right_dock,
+        };
+        dock.read(cx).is_open()
     }
 
     pub fn toggle_dock(&mut self, dock_side: DockPosition, cx: &mut ViewContext<Self>) {

@@ -23,7 +23,7 @@ use parking_lot::RwLock;
 use slotmap::SlotMap;
 
 pub use async_context::*;
-use collections::{FxHashMap, FxHashSet, VecDeque};
+use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
 pub use entity_map::*;
 use http_client::HttpClient;
 pub use model_context::*;
@@ -1218,16 +1218,22 @@ impl AppContext {
         self.actions.build_action(name, data)
     }
 
-    /// Get a list of all action names that have been registered.
-    /// in the application. Note that registration only allows for
-    /// actions to be built dynamically, and is unrelated to binding
-    /// actions in the element tree.
+    /// Get all action names that have been registered. Note that registration only allows for
+    /// actions to be built dynamically, and is unrelated to binding actions in the element tree.
     pub fn all_action_names(&self) -> &[SharedString] {
         self.actions.all_action_names()
     }
 
+    /// Get all non-internal actions that have been registered, along with their schemas.
+    pub fn action_schemas(
+        &self,
+        generator: &mut schemars::gen::SchemaGenerator,
+    ) -> Vec<(SharedString, Option<schemars::schema::Schema>)> {
+        self.actions.action_schemas(generator)
+    }
+
     /// Get a list of all deprecated action aliases and their canonical names.
-    pub fn action_deprecations(&self) -> &[(SharedString, SharedString)] {
+    pub fn action_deprecations(&self) -> &HashMap<SharedString, SharedString> {
         self.actions.action_deprecations()
     }
 

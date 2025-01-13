@@ -850,7 +850,12 @@ impl PromptEditor<BufferCodegen> {
             context_strip,
             context_picker_menu_handle,
             model_selector: cx.new_view(|cx| {
-                AssistantModelSelector::new(fs, model_selector_menu_handle.clone(), cx)
+                AssistantModelSelector::new(
+                    fs,
+                    model_selector_menu_handle.clone(),
+                    prompt_editor.focus_handle(cx),
+                    cx,
+                )
             }),
             model_selector_menu_handle,
             edited_since_done: false,
@@ -996,7 +1001,12 @@ impl PromptEditor<TerminalCodegen> {
             context_strip,
             context_picker_menu_handle,
             model_selector: cx.new_view(|cx| {
-                AssistantModelSelector::new(fs, model_selector_menu_handle.clone(), cx)
+                AssistantModelSelector::new(
+                    fs,
+                    model_selector_menu_handle.clone(),
+                    prompt_editor.focus_handle(cx),
+                    cx,
+                )
             }),
             model_selector_menu_handle,
             edited_since_done: false,

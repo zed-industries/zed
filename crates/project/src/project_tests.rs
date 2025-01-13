@@ -1269,7 +1269,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         }
     );
 
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(&lsp::PublishDiagnosticsParams {
         uri: Url::from_file_path("/dir/a.rs").unwrap(),
         version: None,
         diagnostics: vec![lsp::Diagnostic {
@@ -1321,7 +1321,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     });
 
     // Ensure publishing empty diagnostics twice only results in one update event.
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(&lsp::PublishDiagnosticsParams {
         uri: Url::from_file_path("/dir/a.rs").unwrap(),
         version: None,
         diagnostics: Default::default(),
@@ -1334,7 +1334,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         }
     );
 
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(&lsp::PublishDiagnosticsParams {
         uri: Url::from_file_path("/dir/a.rs").unwrap(),
         version: None,
         diagnostics: Default::default(),
@@ -1453,7 +1453,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
 
     // Publish diagnostics
     let fake_server = fake_servers.next().await.unwrap();
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(&lsp::PublishDiagnosticsParams {
         uri: Url::from_file_path("/dir/a.rs").unwrap(),
         version: None,
         diagnostics: vec![lsp::Diagnostic {
@@ -1534,7 +1534,7 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
 
     // Before restarting the server, report diagnostics with an unknown buffer version.
     let fake_server = fake_servers.next().await.unwrap();
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(&lsp::PublishDiagnosticsParams {
         uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
         version: Some(10000),
         diagnostics: Vec::new(),
@@ -1784,7 +1784,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     assert!(change_notification_1.text_document.version > open_notification.text_document.version);
 
     // Report some diagnostics for the initial version of the buffer
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(&lsp::PublishDiagnosticsParams {
         uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
         version: Some(open_notification.text_document.version),
         diagnostics: vec![
@@ -1870,7 +1870,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     });
 
     // Ensure overlapping diagnostics are highlighted correctly.
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(&lsp::PublishDiagnosticsParams {
         uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
         version: Some(open_notification.text_document.version),
         diagnostics: vec![
@@ -1962,7 +1962,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     );
 
     // Handle out-of-order diagnostics
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(&lsp::PublishDiagnosticsParams {
         uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
         version: Some(change_notification_2.text_document.version),
         diagnostics: vec![
@@ -4135,7 +4135,10 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
         .next()
         .await
         .unwrap();
-    let range = response.await.unwrap().unwrap();
+    let response = response.await.unwrap();
+    let PrepareRenameResponse::Success(range) = response else {
+        panic!("{:?}", response);
+    };
     let range = buffer.update(cx, |buffer, _| range.to_offset(buffer));
     assert_eq!(range, 6..9);
 
@@ -5657,9 +5660,9 @@ async fn search(
     query: SearchQuery,
     cx: &mut gpui::TestAppContext,
 ) -> Result<HashMap<String, Vec<Range<usize>>>> {
-    let mut search_rx = project.update(cx, |project, cx| project.search(query, cx));
+    let search_rx = project.update(cx, |project, cx| project.search(query, cx));
     let mut results = HashMap::default();
-    while let Some(search_result) = search_rx.next().await {
+    while let Ok(search_result) = search_rx.recv().await {
         match search_result {
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);

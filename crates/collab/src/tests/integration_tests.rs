@@ -3900,7 +3900,7 @@ async fn test_collaborating_with_diagnostics(
         .receive_notification::<lsp::notification::DidOpenTextDocument>()
         .await;
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-        lsp::PublishDiagnosticsParams {
+        &lsp::PublishDiagnosticsParams {
             uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
             version: None,
             diagnostics: vec![lsp::Diagnostic {
@@ -3920,7 +3920,7 @@ async fn test_collaborating_with_diagnostics(
         .await
         .unwrap();
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-        lsp::PublishDiagnosticsParams {
+        &lsp::PublishDiagnosticsParams {
             uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
             version: None,
             diagnostics: vec![lsp::Diagnostic {
@@ -3994,7 +3994,7 @@ async fn test_collaborating_with_diagnostics(
 
     // Simulate a language server reporting more errors for a file.
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-        lsp::PublishDiagnosticsParams {
+        &lsp::PublishDiagnosticsParams {
             uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
             version: None,
             diagnostics: vec![
@@ -4088,7 +4088,7 @@ async fn test_collaborating_with_diagnostics(
 
     // Simulate a language server reporting no errors for a file.
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-        lsp::PublishDiagnosticsParams {
+        &lsp::PublishDiagnosticsParams {
             uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
             version: None,
             diagnostics: vec![],
@@ -4183,7 +4183,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
         })
         .await
         .unwrap();
-    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+    fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
         value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Begin(
             lsp::WorkDoneProgressBegin {
@@ -4194,7 +4194,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
     });
     for file_name in file_names {
         fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-            lsp::PublishDiagnosticsParams {
+            &lsp::PublishDiagnosticsParams {
                 uri: lsp::Url::from_file_path(Path::new("/test").join(file_name)).unwrap(),
                 version: None,
                 diagnostics: vec![lsp::Diagnostic {
@@ -4207,7 +4207,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
             },
         );
     }
-    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+    fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
         value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::End(
             lsp::WorkDoneProgressEnd { message: None },
@@ -4936,7 +4936,7 @@ async fn test_project_search(
 
     // Perform a search as the guest.
     let mut results = HashMap::default();
-    let mut search_rx = project_b.update(cx_b, |project, cx| {
+    let search_rx = project_b.update(cx_b, |project, cx| {
         project.search(
             SearchQuery::text(
                 "world",
@@ -4951,7 +4951,7 @@ async fn test_project_search(
             cx,
         )
     });
-    while let Some(result) = search_rx.next().await {
+    while let Ok(result) = search_rx.recv().await {
         match result {
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);

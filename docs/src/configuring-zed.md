@@ -996,10 +996,12 @@ WARNING: `{buffer_path}` should not be used to direct your formatter to read fro
 ```json
 {
   "formatter": [
-    {"language_server": {"name": "rust-analyzer"}},
-    {"external": {
-      "command": "sed",
-      "arguments": ["-e", "s/ *$//"]
+    { "language_server": { "name": "rust-analyzer" } },
+    {
+      "external": {
+        "command": "sed",
+        "arguments": ["-e", "s/ *$//"]
+      }
     }
   ]
 }

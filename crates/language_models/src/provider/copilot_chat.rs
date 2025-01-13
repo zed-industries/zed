@@ -179,7 +179,7 @@ impl LanguageModel for CopilotChatLanguageModel {
                     CopilotChatModel::Gpt4o => open_ai::Model::FourOmni,
                     CopilotChatModel::Gpt4 => open_ai::Model::Four,
                     CopilotChatModel::Gpt3_5Turbo => open_ai::Model::ThreePointFiveTurbo,
-                    CopilotChatModel::O1Preview | CopilotChatModel::O1Mini => open_ai::Model::Four,
+                    CopilotChatModel::O1 | CopilotChatModel::O1Mini => open_ai::Model::Four,
                     CopilotChatModel::Claude3_5Sonnet => unreachable!(),
                 };
                 count_open_ai_tokens(request, model, cx)

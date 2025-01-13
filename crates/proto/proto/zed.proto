@@ -1033,6 +1033,7 @@ message PrepareRenameResponse {
     Anchor start = 2;
     Anchor end = 3;
     repeated VectorClockEntry version = 4;
+    bool only_unprepared_rename_supported = 5;
 }
 
 message PerformRename {

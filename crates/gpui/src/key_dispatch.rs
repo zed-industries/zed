@@ -393,6 +393,8 @@ impl DispatchTree {
         false
     }
 
+    /// Returns key bindings that invoke an action on the currently focused element, in precedence
+    /// order (reverse of the order they were added to the keymap).
     pub fn bindings_for_action(
         &self,
         action: &dyn Action,

@@ -114,6 +114,11 @@ impl Thread {
         self.summary.clone()
     }
 
+    pub fn summary_or_default(&self) -> SharedString {
+        const DEFAULT: SharedString = SharedString::new_static("New Thread");
+        self.summary.clone().unwrap_or(DEFAULT)
+    }
+
     pub fn set_summary(&mut self, summary: impl Into<SharedString>, cx: &mut ModelContext<Self>) {
         self.summary = Some(summary.into());
         cx.emit(ThreadEvent::SummaryChanged);
@@ -125,6 +130,10 @@ impl Thread {
 
     pub fn messages(&self) -> impl Iterator<Item = &Message> {
         self.messages.iter()
+    }
+
+    pub fn is_streaming(&self) -> bool {
+        !self.pending_completions.is_empty()
     }
 
     pub fn tools(&self) -> &Arc<ToolWorkingSet> {
@@ -495,6 +504,17 @@ impl Thread {
             tool_use.status = PendingToolUseStatus::Running {
                 _task: insert_output_task.shared(),
             };
+        }
+    }
+
+    /// Cancels the last pending completion, if there are any pending.
+    ///
+    /// Returns whether a completion was canceled.
+    pub fn cancel_last_completion(&mut self) -> bool {
+        if let Some(_last_completion) = self.pending_completions.pop() {
+            true
+        } else {
+            false
         }
     }
 }
