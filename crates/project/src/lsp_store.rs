@@ -3500,24 +3500,30 @@ impl LspStore {
         };
         let file = File::from_dyn(buffer.file()).and_then(File::as_local);
         if let (Some(file), Some(language_server)) = (file, language_server) {
-            let lsp_params = match request.to_lsp(&file.abs_path(cx), buffer, &language_server, cx)
-            {
-                Ok(lsp_params) => lsp_params,
+            let lsp_params = match request.to_lsp_params_or_response(
+                &file.abs_path(cx),
+                buffer,
+                &language_server,
+                cx,
+            ) {
+                Ok(LspParamsOrResponse::Params(lsp_params)) => lsp_params,
+                Ok(LspParamsOrResponse::Response(response)) => return Task::ready(Ok(response)),
                 Err(err) => {
-                    log::error!(
-                        "Preparing LSP request to {} failed: {}",
+                    let message = format!(
+                        "{} via {} failed: {}",
+                        request.display_name(),
                         language_server.name(),
                         err
                     );
-                    return Task::ready(Err(err));
+                    log::warn!("{}", message);
+                    return Task::ready(Err(anyhow!(message)));
                 }
             };
             let status = request.status();
+            if !request.check_capabilities(language_server.adapter_server_capabilities()) {
+                return Task::ready(Ok(Default::default()));
+            }
             return cx.spawn(move |this, cx| async move {
-                if !request.check_capabilities(language_server.adapter_server_capabilities()) {
-                    return Ok(Default::default());
-                }
-
                 let lsp_request = language_server.request::<R::LspRequest>(lsp_params);
 
                 let id = lsp_request.id();
@@ -3560,8 +3566,14 @@ impl LspStore {
                 let result = lsp_request.await;
 
                 let response = result.map_err(|err| {
-                    log::warn!("LSP request to {} failed: {}", language_server.name(), err);
-                    err
+                    let message = format!(
+                        "{} via {} failed: {}",
+                        request.display_name(),
+                        language_server.name(),
+                        err
+                    );
+                    log::warn!("{}", message);
+                    anyhow!(message)
                 })?;
 
                 let response = request

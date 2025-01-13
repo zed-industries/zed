@@ -206,7 +206,7 @@ impl Zeta {
     }
 
     fn push_event(&mut self, event: Event) {
-        const MAX_EVENT_COUNT: usize = 20;
+        const MAX_EVENT_COUNT: usize = 16;
 
         if let Some(Event::BufferChange {
             new_snapshot: last_new_snapshot,
@@ -232,8 +232,8 @@ impl Zeta {
         }
 
         self.events.push_back(event);
-        if self.events.len() > MAX_EVENT_COUNT {
-            self.events.pop_front();
+        if self.events.len() >= MAX_EVENT_COUNT {
+            self.events.drain(..MAX_EVENT_COUNT / 2);
         }
     }
 
