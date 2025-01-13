@@ -7645,16 +7645,6 @@ impl LspStore {
                             )
                             .ok();
                     }
-
-                    if progress.is_cancellable {
-                        server
-                            .notify::<lsp::notification::WorkDoneProgressCancel>(
-                                WorkDoneProgressCancelParams {
-                                    token: lsp::NumberOrString::String(token.clone()),
-                                },
-                            )
-                            .ok();
-                    }
                 }
             }
         } else if let Some((client, project_id)) = self.upstream_client() {
