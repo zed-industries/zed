@@ -3380,13 +3380,16 @@ impl ProjectPanel {
                             return;
                         }
 
-                        let target_entry_id = entry_id;
+                        let bounds = event.bounds;
                         this.hover_expand_task = Some(cx.spawn(|this, mut cx| async move {
                             cx.background_executor()
                                 .timer(Duration::from_millis(500))
                                 .await;
                             this.update(&mut cx, |this, cx| {
-                                if this.last_selection_drag_over_entry == Some(target_entry_id) {
+                                this.hover_expand_task.take();
+                                if this.last_selection_drag_over_entry == Some(entry_id)
+                                    && bounds.contains(&cx.mouse_position())
+                                {
                                     this.expand_entry(worktree_id, entry_id, cx);
                                     this.update_visible_entries(Some((worktree_id, entry_id)), cx);
                                     cx.notify();
