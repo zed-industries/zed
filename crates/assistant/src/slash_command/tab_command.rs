@@ -75,7 +75,7 @@ impl SlashCommand for TabSlashCommand {
         let active_item_path = workspace.as_ref().and_then(|workspace| {
             workspace
                 .update(cx, |workspace, cx| {
-                    let snapshot = active_item_buffer(workspace, window, cx).ok()?;
+                    let snapshot = active_item_buffer(workspace, cx).ok()?;
                     snapshot.resolve_file_path(cx, true)
                 })
                 .ok()
@@ -176,9 +176,9 @@ fn tab_items_for_queries(
         let mut open_buffers =
             workspace
                 .context("no workspace")?
-                .update_in(&mut cx, |workspace, window, cx| {
+                .update(&mut cx, |workspace, cx| {
                     if strict_match && empty_query {
-                        let snapshot = active_item_buffer(workspace, window, cx)?;
+                        let snapshot = active_item_buffer(workspace, cx)?;
                         let full_path = snapshot.resolve_file_path(cx, true);
                         return anyhow::Ok(vec![(full_path, snapshot, 0)]);
                     }
@@ -285,7 +285,6 @@ fn tab_items_for_queries(
 
 fn active_item_buffer(
     workspace: &mut Workspace,
-    window: &mut Window,
     cx: &mut ModelContext<Workspace>,
 ) -> anyhow::Result<BufferSnapshot> {
     let active_editor = workspace

@@ -131,7 +131,7 @@ impl ActivityIndicator {
     fn show_error_message(
         &mut self,
         _: &ShowErrorMessage,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.statuses.retain(|status| {

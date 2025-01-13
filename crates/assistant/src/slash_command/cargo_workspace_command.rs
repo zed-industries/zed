@@ -125,7 +125,7 @@ impl SlashCommand for CargoWorkspaceSlashCommand {
         _context_buffer: BufferSnapshot,
         workspace: WeakModel<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         let output = workspace.update(cx, |workspace, cx| {

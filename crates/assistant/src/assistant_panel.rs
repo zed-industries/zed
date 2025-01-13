@@ -248,7 +248,7 @@ impl PickerDelegate for SavedContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let context = self.matches.get(ix)?;

@@ -54,7 +54,7 @@ impl SlashCommand for AutoCommand {
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
         workspace: Option<WeakModel<Workspace>>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         // There's no autocomplete for a prompt, since it's arbitrary text.

@@ -78,7 +78,7 @@ impl SlashCommand for ContextServerSlashCommand {
         arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakModel<Workspace>>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let Ok((arg_name, arg_value)) = completion_argument(&self.prompt, arguments) else {
@@ -131,7 +131,7 @@ impl SlashCommand for ContextServerSlashCommand {
         _context_buffer: BufferSnapshot,
         _workspace: WeakModel<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         let server_id = self.server_id.clone();

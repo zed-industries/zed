@@ -50,7 +50,7 @@ impl SlashCommand for DefaultSlashCommand {
         _context_buffer: BufferSnapshot,
         _workspace: WeakModel<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         let store = PromptStore::global(cx);

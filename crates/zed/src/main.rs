@@ -103,7 +103,7 @@ fn files_not_createad_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
     eprintln!("{message}: {error_details}");
     App::new().run(move |cx| {
         if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |window, cx| {
-            cx.new_model(|cx| gpui::Empty)
+            cx.new_model(|_| gpui::Empty)
         }) {
             window
                 .update(cx, |_, window, cx| {
