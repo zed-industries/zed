@@ -2190,7 +2190,7 @@ impl Project {
                 language_server_id: *language_server_id,
             }),
             LspStoreEvent::LanguageServerAdded(language_server_id, name, worktree_id) => cx.emit(
-                Event::LanguageServerAdded(*language_server_id, name.clone(), worktree_id.clone()),
+                Event::LanguageServerAdded(*language_server_id, name.clone(), *worktree_id),
             ),
             LspStoreEvent::LanguageServerRemoved(language_server_id) => {
                 cx.emit(Event::LanguageServerRemoved(*language_server_id))
