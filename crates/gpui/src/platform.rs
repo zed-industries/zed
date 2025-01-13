@@ -432,6 +432,7 @@ pub(crate) trait PlatformWindow: HasWindowHandle + HasDisplayHandle {
         Decorations::Server
     }
     fn set_app_id(&mut self, _app_id: &str) {}
+    fn map_window(&mut self) -> anyhow::Result<()> { Ok(()) } // We may want to set_app_id() first before map the window to display.
     fn window_controls(&self) -> WindowControls {
         WindowControls::default()
     }
