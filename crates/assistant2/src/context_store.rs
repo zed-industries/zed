@@ -15,6 +15,7 @@ use crate::context::{
     Context, ContextBuffer, ContextId, ContextSnapshot, DirectoryContext, FetchedUrlContext,
     FileContext, ThreadContext,
 };
+use crate::context_strip::SuggestedContext;
 use crate::thread::{Thread, ThreadId};
 
 pub struct ContextStore {
@@ -148,7 +149,7 @@ impl ContextStore {
         })
     }
 
-    pub fn insert_file(&mut self, context_buffer: ContextBuffer) {
+    fn insert_file(&mut self, context_buffer: ContextBuffer) {
         let id = self.next_context_id.post_inc();
         self.files.insert(context_buffer.id, id);
         self.context
@@ -239,7 +240,7 @@ impl ContextStore {
         })
     }
 
-    pub fn insert_directory(&mut self, path: &Path, context_buffers: Vec<ContextBuffer>) {
+    fn insert_directory(&mut self, path: &Path, context_buffers: Vec<ContextBuffer>) {
         let id = self.next_context_id.post_inc();
         self.directories.insert(path.to_path_buf(), id);
 
@@ -258,17 +259,22 @@ impl ContextStore {
         }
     }
 
-    pub fn insert_thread(&mut self, thread: Model<Thread>, cx: &AppContext) {
+    fn insert_thread(&mut self, thread: Model<Thread>, cx: &AppContext) {
         let id = self.next_context_id.post_inc();
-        let thread_ref = thread.read(cx);
-        let text = thread_ref.text().into();
+        let text = thread.read(cx).text().into();
 
-        self.threads.insert(thread_ref.id().clone(), id);
+        self.threads.insert(thread.read(cx).id().clone(), id);
         self.context
             .push(Context::Thread(ThreadContext { id, thread, text }));
     }
 
-    pub fn insert_fetched_url(&mut self, url: String, text: impl Into<SharedString>) {
+    pub fn add_fetched_url(&mut self, url: String, text: impl Into<SharedString>) {
+        if self.includes_url(&url).is_none() {
+            self.insert_fetched_url(url, text);
+        }
+    }
+
+    fn insert_fetched_url(&mut self, url: String, text: impl Into<SharedString>) {
         let id = self.next_context_id.post_inc();
 
         self.fetched_urls.insert(url.clone(), id);
@@ -277,6 +283,30 @@ impl ContextStore {
             url: url.into(),
             text: text.into(),
         }));
+    }
+
+    pub fn accept_suggested_context(
+        &mut self,
+        suggested: &SuggestedContext,
+        cx: &mut ModelContext<ContextStore>,
+    ) -> Task<Result<()>> {
+        match suggested {
+            SuggestedContext::File {
+                buffer,
+                icon_path: _,
+                name: _,
+            } => {
+                if let Some(buffer) = buffer.upgrade() {
+                    return self.add_file_from_buffer(buffer, cx);
+                };
+            }
+            SuggestedContext::Thread { thread, name: _ } => {
+                if let Some(thread) = thread.upgrade() {
+                    self.insert_thread(thread, cx);
+                };
+            }
+        }
+        Task::ready(Ok(()))
     }
 
     pub fn remove_context(&mut self, id: ContextId) {
@@ -499,8 +529,7 @@ pub fn refresh_context_store_text(
     cx: &AppContext,
 ) -> impl Future<Output = ()> {
     let mut tasks = Vec::new();
-    let context_store_ref = context_store.read(cx);
-    for context in &context_store_ref.context {
+    for context in &context_store.read(cx).context {
         match context {
             Context::File(file_context) => {
                 let context_store = context_store.clone();

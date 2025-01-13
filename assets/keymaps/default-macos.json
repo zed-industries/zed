@@ -806,7 +806,8 @@
     "context": "RateCompletionModal",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-enter": "zeta::ThumbsUp",
+      "cmd-shift-enter": "zeta::ThumbsUpActiveCompletion",
+      "cmd-shift-backspace": "zeta::ThumbsDownActiveCompletion",
       "shift-down": "zeta::NextEdit",
       "shift-up": "zeta::PreviousEdit",
       "right": "zeta::PreviewCompletion"
