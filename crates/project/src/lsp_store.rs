@@ -369,7 +369,6 @@ impl LocalLspStore {
     fn start_language_servers(
         &mut self,
         worktree: &Model<Worktree>,
-        buffer_path: Arc<Path>,
         language: LanguageName,
         cx: &mut ModelContext<LspStore>,
     ) {
@@ -2039,7 +2038,7 @@ impl LocalLspStore {
         let Some(language) = buffer.language().cloned() else {
             return;
         };
-        self.start_language_servers(&worktree, file.path.clone(), language.name(), cx);
+        self.start_language_servers(&worktree, language.name(), cx);
         for adapter in self.languages.lsp_adapters(&language.name()) {
             let servers = self
                 .language_server_ids
