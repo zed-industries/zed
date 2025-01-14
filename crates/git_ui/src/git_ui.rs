@@ -4,7 +4,7 @@ use futures::channel::mpsc;
 use futures::StreamExt as _;
 use git::repository::{GitFileStatus, GitRepository, RepoPath};
 use git_panel_settings::GitPanelSettings;
-use gpui::{actions, AppContext, Context, Global, Hsla, Model, ModelContext};
+use gpui::{actions, AppContext, Hsla, Model};
 use project::{Project, WorktreeId};
 use std::sync::Arc;
 use sum_tree::SumTree;
@@ -35,20 +35,14 @@ actions!(
 
 pub fn init(cx: &mut AppContext) {
     GitPanelSettings::register(cx);
-    let git_state = cx.new_model(GitState::new);
-    cx.set_global(GlobalGitState(git_state));
 }
 
-#[derive(Default, Debug, PartialEq, Eq, Clone)]
+#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
 pub enum GitViewMode {
     #[default]
     List,
     Tree,
 }
-
-struct GlobalGitState(Model<GitState>);
-
-impl Global for GlobalGitState {}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum StatusAction {
@@ -72,10 +66,10 @@ pub struct GitState {
 }
 
 impl GitState {
-    pub fn new(cx: &mut ModelContext<'_, Self>) -> Self {
+    pub fn new(cx: &AppContext) -> Self {
         let (updater_tx, mut updater_rx) =
             mpsc::unbounded::<(Arc<dyn GitRepository>, Vec<RepoPath>, StatusAction)>();
-        cx.spawn(|_, cx| async move {
+        cx.spawn(|cx| async move {
             while let Some((git_repo, paths, action)) = updater_rx.next().await {
                 cx.background_executor()
                     .spawn(async move {
@@ -96,10 +90,6 @@ impl GitState {
             list_view_mode: GitViewMode::default(),
             all_repositories: HashMap::default(),
         }
-    }
-
-    pub fn get_global(cx: &mut AppContext) -> Model<GitState> {
-        cx.global::<GlobalGitState>().0.clone()
     }
 
     pub fn activate_repository(
