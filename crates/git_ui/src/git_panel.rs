@@ -1,4 +1,8 @@
-use crate::{first_repository_in_project, first_worktree_repository};
+use crate::git_panel_settings::StatusStyle;
+use crate::{
+    first_repository_in_project, first_worktree_repository, ADDED_COLOR, MODIFIED_COLOR,
+    REMOVED_COLOR,
+};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, CommitAllChanges, CommitChanges,
     GitState, GitViewMode, RevertAll, StageAll, ToggleStaged, UnstageAll,
@@ -1067,9 +1071,26 @@ impl GitPanel {
         let state = self.git_state.clone();
         let repo_path = entry_details.repo_path.clone();
         let selected = self.selected_entry == Some(ix);
-
+        let status_style = GitPanelSettings::get_global(cx).status_style;
         // TODO revisit, maybe use a different status here?
         let status = entry_details.status.combined();
+
+        let mut label_color = cx.theme().colors().text;
+        if status_style == StatusStyle::LabelColor {
+            label_color = match status {
+                GitFileStatus::Added => cx.theme().status().created,
+                GitFileStatus::Modified => cx.theme().status().modified,
+                GitFileStatus::Conflict => cx.theme().status().conflict,
+                GitFileStatus::Deleted => cx.theme().colors().text_disabled,
+                // TODO: Should we even have this here?
+                GitFileStatus::Untracked => cx.theme().colors().text_placeholder,
+            }
+        }
+
+        let path_color = matches!(status, GitFileStatus::Deleted)
+            .then_some(cx.theme().colors().text_disabled)
+            .unwrap_or(cx.theme().colors().text_muted);
+
         let entry_id = ElementId::Name(format!("entry_{}", entry_details.display_name).into());
         let checkbox_id =
             ElementId::Name(format!("checkbox_{}", entry_details.display_name).into());
@@ -1150,21 +1171,19 @@ impl GitPanel {
                     }
                 }),
             )
-            .child(git_status_icon(status))
+            .when(status_style == StatusStyle::Icon, |this| {
+                this.child(git_status_icon(status))
+            })
             .child(
                 h_flex()
-                    .when(status == GitFileStatus::Deleted, |this| {
-                        this.text_color(cx.theme().colors().text_disabled)
-                            .line_through()
-                    })
+                    .text_color(label_color)
+                    .when(status == GitFileStatus::Deleted, |this| this.line_through())
                     .when_some(repo_path.parent(), |this, parent| {
                         let parent_str = parent.to_string_lossy();
                         if !parent_str.is_empty() {
                             this.child(
                                 div()
-                                    .when(status != GitFileStatus::Deleted, |this| {
-                                        this.text_color(cx.theme().colors().text_muted)
-                                    })
+                                    .text_color(path_color)
                                     .child(format!("{}/", parent_str)),
                             )
                         } else {
