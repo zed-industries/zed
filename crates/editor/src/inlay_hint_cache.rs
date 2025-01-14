@@ -1183,55 +1183,39 @@ fn apply_hint_update(
                     .cmp(&new_hint.position, &buffer_snapshot)
             }) {
             Ok(i) => {
-                let mut insert_position = Some(i);
-                for id in &cached_excerpt_hints.ordered_hints[i..] {
-                    let cached_hint = &cached_excerpt_hints.hints_by_id[id];
-                    if new_hint
-                        .position
-                        .cmp(&cached_hint.position, &buffer_snapshot)
-                        .is_gt()
-                    {
-                        break;
-                    }
-                    if cached_hint.text() == new_hint.text() {
-                        insert_position = None;
-                        break;
-                    } else {
-                        insert_position = insert_position.map(|i| i + 1);
-                    }
-                }
-                insert_position.map(|i| i + 1)
+                // When a hint is added to the same position where existing ones are present,
+                // do not deduplicate it: we split hint queries into non-overlapping ranges
+                // and each hint batch returned by the server should already contain unique hints.
+                i + cached_excerpt_hints.ordered_hints[i..].len() + 1
             }
-            Err(i) => Some(i),
+            Err(i) => i,
         };
 
-        if let Some(insert_position) = insert_position {
-            let new_inlay_id = post_inc(&mut editor.next_inlay_id);
-            if editor
-                .inlay_hint_cache
-                .allowed_hint_kinds
-                .contains(&new_hint.kind)
+        let new_inlay_id = post_inc(&mut editor.next_inlay_id);
+        if editor
+            .inlay_hint_cache
+            .allowed_hint_kinds
+            .contains(&new_hint.kind)
+        {
+            if let Some(new_hint_position) =
+                multi_buffer_snapshot.anchor_in_excerpt(query.excerpt_id, new_hint.position)
             {
-                if let Some(new_hint_position) =
-                    multi_buffer_snapshot.anchor_in_excerpt(query.excerpt_id, new_hint.position)
-                {
-                    splice
-                        .to_insert
-                        .push(Inlay::hint(new_inlay_id, new_hint_position, &new_hint));
-                }
+                splice
+                    .to_insert
+                    .push(Inlay::hint(new_inlay_id, new_hint_position, &new_hint));
             }
-            let new_id = InlayId::Hint(new_inlay_id);
-            cached_excerpt_hints.hints_by_id.insert(new_id, new_hint);
-            if cached_excerpt_hints.ordered_hints.len() <= insert_position {
-                cached_excerpt_hints.ordered_hints.push(new_id);
-            } else {
-                cached_excerpt_hints
-                    .ordered_hints
-                    .insert(insert_position, new_id);
-            }
-
-            cached_inlays_changed = true;
         }
+        let new_id = InlayId::Hint(new_inlay_id);
+        cached_excerpt_hints.hints_by_id.insert(new_id, new_hint);
+        if cached_excerpt_hints.ordered_hints.len() <= insert_position {
+            cached_excerpt_hints.ordered_hints.push(new_id);
+        } else {
+            cached_excerpt_hints
+                .ordered_hints
+                .insert(insert_position, new_id);
+        }
+
+        cached_inlays_changed = true;
     }
     cached_excerpt_hints.buffer_version = buffer_snapshot.version().clone();
     drop(cached_excerpt_hints);
@@ -1655,7 +1639,12 @@ pub mod tests {
         cx.executor().run_until_parked();
         rs_editor
             .update(cx, |editor, cx| {
-                let expected_hints = vec!["3".to_string()]; // TODO kb why 3 and not 2?
+                // TODO: Here, we do not get "2", because inserting another language server will trigger `RefreshInlayHints` event from the `LspStore`
+                // A project is listened in every editor, so each of them will react to this event.
+                //
+                // We do not have language server IDs for remote projects, so cannot easily say on the editor level,
+                // whether we should ignore a particular `RefreshInlayHints` event.
+                let expected_hints = vec!["3".to_string()];
                 assert_eq!(
                     expected_hints,
                     cached_hint_labels(editor),
@@ -3330,6 +3319,17 @@ pub mod tests {
                                         "paddingLeft": false,
                                         "paddingRight": true
                                     },
+                                    // not a correct syntax, but checks that same symbols at the same place
+                                    // are not deduplicated
+                                    {
+                                        "position": {
+                                            "line": 3,
+                                            "character": 16
+                                        },
+                                        "label": ")",
+                                        "paddingLeft": false,
+                                        "paddingRight": true
+                                    },
                                 ]))
                                 .unwrap(),
                             ))
@@ -3363,6 +3363,7 @@ pub mod tests {
                     "move".to_string(),
                     "(".to_string(),
                     "&x".to_string(),
+                    ") ".to_string(),
                     ") ".to_string(),
                 ];
                 assert_eq!(
