@@ -50,7 +50,7 @@ impl Vim {
                             {
                                 selection.end = next_line
                             }
-                            Motion::EndOfDocument {} => {
+                            Motion::EndOfDocument {} if times.is_none() => {
                                 // Deleting until the end of the document includes the last line, including
                                 // soft-wrapped lines.
                                 selection.end = map.max_point()
