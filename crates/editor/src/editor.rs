@@ -55,7 +55,7 @@ use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
 use client::{Collaborator, ParticipantIndex};
 use clock::ReplicaId;
-use collections::{BTreeMap, Bound, HashMap, HashSet, VecDeque};
+use collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use convert_case::{Case, Casing};
 use display_map::*;
 pub use display_map::{DisplayPoint, FoldPlaceholder};
@@ -6405,7 +6405,7 @@ impl Editor {
 
                 // Don't move lines across excerpts
                 if buffer
-                    .excerpt_containing((insertion_point..range_to_move.end))
+                    .excerpt_containing(insertion_point..range_to_move.end)
                     .is_some()
                 {
                     let text = buffer
