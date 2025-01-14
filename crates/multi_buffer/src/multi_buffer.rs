@@ -308,8 +308,11 @@ struct Excerpt {
 #[derive(Clone)]
 pub struct MultiBufferExcerpt<'a> {
     excerpt: &'a Excerpt,
-    excerpt_offset: usize,
-    excerpt_position: Point,
+    diff_transforms:
+        sum_tree::Cursor<'a, DiffTransform, (OutputDimension<usize>, ExcerptDimension<usize>)>,
+    offset: usize,
+    excerpt_offset: ExcerptDimension<usize>,
+    buffer_offset: usize,
 }
 
 #[derive(Clone, Debug)]
@@ -4644,16 +4647,27 @@ impl MultiBufferSnapshot {
 
     pub fn excerpt_before(&self, id: ExcerptId) -> Option<MultiBufferExcerpt<'_>> {
         let start_locator = self.excerpt_locator_for_id(id);
-        let mut cursor = self.excerpts.cursor::<ExcerptSummary>(&());
-        cursor.seek(start_locator, Bias::Left, &());
-        cursor.prev(&());
-        let excerpt = cursor.item()?;
-        let excerpt_offset = cursor.start().text.len;
-        let excerpt_position = cursor.start().text.lines;
+        let mut excerpts = self
+            .excerpts
+            .cursor::<(Option<&Locator>, ExcerptDimension<usize>)>(&());
+        excerpts.seek(&Some(start_locator), Bias::Left, &());
+        excerpts.prev(&());
+
+        let mut diff_transforms = self
+            .diff_transforms
+            .cursor::<(OutputDimension<usize>, ExcerptDimension<usize>)>(&());
+        diff_transforms.seek(&excerpts.start().1, Bias::Left, &());
+        if diff_transforms.end(&()).1 < excerpts.start().1 {
+            diff_transforms.next(&());
+        }
+
+        let excerpt = excerpts.item()?;
         Some(MultiBufferExcerpt {
             excerpt,
-            excerpt_offset,
-            excerpt_position,
+            offset: diff_transforms.start().0 .0,
+            buffer_offset: excerpt.range.context.start.to_offset(&excerpt.buffer),
+            excerpt_offset: excerpts.start().1.clone(),
+            diff_transforms,
         })
     }
 
@@ -4751,20 +4765,18 @@ impl MultiBufferSnapshot {
     pub fn innermost_enclosing_bracket_ranges<T: ToOffset>(
         &self,
         range: Range<T>,
-        range_filter: Option<&dyn Fn(Range<usize>, Range<usize>) -> bool>,
+        range_filter: Option<&dyn Fn(&BufferSnapshot, Range<usize>, Range<usize>) -> bool>,
     ) -> Option<(Range<usize>, Range<usize>)> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let excerpt = self.excerpt_containing(range.clone())?;
+        let mut excerpt = self.excerpt_containing(range.clone())?;
+        let buffer = excerpt.buffer();
+        let excerpt_buffer_range = excerpt.buffer_range();
 
         // Filter to ranges contained in the excerpt
         let range_filter = |open: Range<usize>, close: Range<usize>| -> bool {
-            excerpt.contains_buffer_range(open.start..close.end)
-                && range_filter.map_or(true, |filter| {
-                    filter(
-                        excerpt.map_range_from_buffer(open),
-                        excerpt.map_range_from_buffer(close),
-                    )
-                })
+            excerpt_buffer_range.contains(&open.start)
+                && excerpt_buffer_range.contains(&close.end)
+                && range_filter.map_or(true, |filter| filter(buffer, open, close))
         };
 
         let (open, close) = excerpt.buffer().innermost_enclosing_bracket_ranges(
@@ -4785,7 +4797,7 @@ impl MultiBufferSnapshot {
         range: Range<T>,
     ) -> Option<impl Iterator<Item = (Range<usize>, Range<usize>)> + '_> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let excerpt = self.excerpt_containing(range.clone())?;
+        let mut excerpt = self.excerpt_containing(range.clone())?;
 
         Some(
             excerpt
@@ -4811,7 +4823,7 @@ impl MultiBufferSnapshot {
         range: Range<T>,
     ) -> Option<impl Iterator<Item = (Range<usize>, Range<usize>)> + '_> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let excerpt = self.excerpt_containing(range.clone())?;
+        let mut excerpt = self.excerpt_containing(range.clone())?;
 
         Some(
             excerpt
@@ -5027,7 +5039,7 @@ impl MultiBufferSnapshot {
         range: Range<T>,
     ) -> Option<(tree_sitter::Node, Range<usize>)> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let excerpt = self.excerpt_containing(range.clone())?;
+        let mut excerpt = self.excerpt_containing(range.clone())?;
         let node = excerpt
             .buffer()
             .syntax_ancestor(excerpt.map_range_to_buffer(range))?;
@@ -5211,23 +5223,29 @@ impl MultiBufferSnapshot {
     /// Returns the excerpt containing range and its offset start within the multibuffer or none if `range` spans multiple excerpts
     pub fn excerpt_containing<T: ToOffset>(&self, range: Range<T>) -> Option<MultiBufferExcerpt> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut cursor = self.cursor::<usize>();
+        cursor.seek(&range.start);
 
-        let mut cursor = self.excerpts.cursor::<(usize, Point)>(&());
-        cursor.seek(&range.start, Bias::Right, &());
-        let start_excerpt = cursor.item()?;
-
-        if range.start == range.end {
-            return Some(MultiBufferExcerpt::new(start_excerpt, *cursor.start()));
+        let start_excerpt = cursor.excerpt()?;
+        if range.end != range.start {
+            cursor.seek_forward(&range.end);
+            if cursor.excerpt()?.id != start_excerpt.id {
+                return None;
+            }
         }
 
-        cursor.seek(&range.end, Bias::Right, &());
-        let end_excerpt = cursor.item()?;
-
-        if start_excerpt.id == end_excerpt.id {
-            Some(MultiBufferExcerpt::new(start_excerpt, *cursor.start()))
-        } else {
-            None
-        }
+        cursor.seek_to_start_of_current_excerpt();
+        let region = cursor.region()?;
+        let offset = region.range.start;
+        let buffer_offset = region.buffer_range.start;
+        let excerpt_offset = cursor.excerpts.start().clone();
+        Some(MultiBufferExcerpt {
+            diff_transforms: cursor.diff_transforms,
+            excerpt: start_excerpt,
+            offset,
+            buffer_offset,
+            excerpt_offset,
+        })
     }
 
     pub fn selections_in_range<'a>(
@@ -5350,21 +5368,20 @@ where
     }
 
     fn next_excerpt(&mut self) {
-        self.cached_region.take();
         self.excerpts.next(&());
-        self.diff_transforms
-            .seek_forward(self.excerpts.start(), Bias::Left, &());
-        if self.diff_transforms.end(&()).1 < *self.excerpts.start() {
-            self.diff_transforms.next(&());
-        }
+        self.seek_to_start_of_current_excerpt();
     }
 
     fn prev_excerpt(&mut self) {
-        self.cached_region.take();
         self.excerpts.prev(&());
+        self.seek_to_start_of_current_excerpt();
+    }
+
+    fn seek_to_start_of_current_excerpt(&mut self) {
+        self.cached_region.take();
         self.diff_transforms
             .seek(self.excerpts.start(), Bias::Left, &());
-        if self.diff_transforms.start().1 < *self.excerpts.start() {
+        if self.diff_transforms.end(&()).1 < *self.excerpts.start() {
             self.diff_transforms.next(&());
         }
     }
@@ -5794,11 +5811,6 @@ impl Excerpt {
         self.range.context.start.to_offset(&self.buffer)
     }
 
-    /// The [`Excerpt`]'s start point in its [`Buffer`]
-    fn buffer_start_point(&self) -> Point {
-        self.range.context.start.to_point(&self.buffer)
-    }
-
     /// The [`Excerpt`]'s end offset in its [`Buffer`]
     fn buffer_end_offset(&self) -> usize {
         self.buffer_start_offset() + self.text_summary.len
@@ -5806,14 +5818,6 @@ impl Excerpt {
 }
 
 impl<'a> MultiBufferExcerpt<'a> {
-    fn new(excerpt: &'a Excerpt, (excerpt_offset, excerpt_position): (usize, Point)) -> Self {
-        MultiBufferExcerpt {
-            excerpt,
-            excerpt_offset,
-            excerpt_position,
-        }
-    }
-
     pub fn id(&self) -> ExcerptId {
         self.excerpt.id
     }
@@ -5844,63 +5848,75 @@ impl<'a> MultiBufferExcerpt<'a> {
         &self.excerpt.buffer
     }
 
-    pub fn buffer_range(&self) -> Range<text::Anchor> {
-        self.excerpt.range.context.clone()
+    pub fn buffer_range(&self) -> Range<usize> {
+        self.buffer_offset
+            ..self
+                .excerpt
+                .range
+                .context
+                .end
+                .to_offset(&self.excerpt.buffer.text)
     }
 
     pub fn start_offset(&self) -> usize {
-        self.excerpt_offset
-    }
-
-    pub fn start_point(&self) -> Point {
-        self.excerpt_position
-    }
-
-    pub fn end_point(&self) -> Point {
-        self.excerpt_position + self.excerpt.text_summary.lines
+        self.offset
     }
 
     /// Maps an offset within the [`MultiBuffer`] to an offset within the [`Buffer`]
-    pub fn map_offset_to_buffer(&self, offset: usize) -> usize {
-        self.excerpt.buffer_start_offset()
-            + offset
-                .saturating_sub(self.excerpt_offset)
-                .min(self.excerpt.text_summary.len)
-    }
-
-    /// Maps a point within the [`MultiBuffer`] to a point within the [`Buffer`]
-    pub fn map_point_to_buffer(&self, point: Point) -> Point {
-        self.excerpt.buffer_start_point()
-            + point
-                .saturating_sub(self.excerpt_position)
-                .min(self.excerpt.text_summary.lines)
+    pub fn map_offset_to_buffer(&mut self, offset: usize) -> usize {
+        self.map_range_to_buffer(offset..offset).start
     }
 
     /// Maps a range within the [`MultiBuffer`] to a range within the [`Buffer`]
-    pub fn map_range_to_buffer(&self, range: Range<usize>) -> Range<usize> {
-        self.map_offset_to_buffer(range.start)..self.map_offset_to_buffer(range.end)
+    pub fn map_range_to_buffer(&mut self, range: Range<usize>) -> Range<usize> {
+        self.diff_transforms
+            .seek(&OutputDimension(range.start), Bias::Right, &());
+        let start = self.map_offset_to_buffer_internal(range.start);
+        let end = if range.end > range.start {
+            self.diff_transforms
+                .seek_forward(&OutputDimension(range.start), Bias::Right, &());
+            self.map_offset_to_buffer_internal(range.end)
+        } else {
+            start
+        };
+        start..end
+    }
+
+    fn map_offset_to_buffer_internal(&self, offset: usize) -> usize {
+        let mut excerpt_offset = self.diff_transforms.start().1.clone();
+        if let Some(DiffTransform::BufferContent { .. }) = self.diff_transforms.item() {
+            excerpt_offset.0 += offset - self.diff_transforms.start().0 .0;
+        };
+        let offset_in_excerpt = excerpt_offset.0.saturating_sub(self.excerpt_offset.0);
+        self.buffer_offset + offset_in_excerpt
     }
 
     /// Map an offset within the [`Buffer`] to an offset within the [`MultiBuffer`]
-    pub fn map_offset_from_buffer(&self, buffer_offset: usize) -> usize {
-        let buffer_offset_in_excerpt = buffer_offset
-            .saturating_sub(self.excerpt.buffer_start_offset())
-            .min(self.excerpt.text_summary.len);
-        self.excerpt_offset + buffer_offset_in_excerpt
-    }
-
-    /// Map a point within the [`Buffer`] to a point within the [`MultiBuffer`]
-    pub fn map_point_from_buffer(&self, buffer_position: Point) -> Point {
-        let position_in_excerpt = buffer_position.saturating_sub(self.excerpt.buffer_start_point());
-        let position_in_excerpt =
-            position_in_excerpt.min(self.excerpt.text_summary.lines + Point::new(1, 0));
-        self.excerpt_position + position_in_excerpt
+    pub fn map_offset_from_buffer(&mut self, buffer_offset: usize) -> usize {
+        self.map_range_from_buffer(buffer_offset..buffer_offset)
+            .start
     }
 
     /// Map a range within the [`Buffer`] to a range within the [`MultiBuffer`]
-    pub fn map_range_from_buffer(&self, buffer_range: Range<usize>) -> Range<usize> {
-        self.map_offset_from_buffer(buffer_range.start)
-            ..self.map_offset_from_buffer(buffer_range.end)
+    pub fn map_range_from_buffer(&mut self, buffer_range: Range<usize>) -> Range<usize> {
+        let overshoot = buffer_range.start - self.buffer_offset;
+        let excerpt_offset = ExcerptDimension(self.excerpt_offset.0 + overshoot);
+        self.diff_transforms.seek(&excerpt_offset, Bias::Right, &());
+        let overshoot = excerpt_offset.0 - self.diff_transforms.start().1 .0;
+        let start = self.diff_transforms.start().0 .0 + overshoot;
+
+        let end = if buffer_range.end > buffer_range.start {
+            let overshoot = buffer_range.end - self.buffer_offset;
+            let excerpt_offset = ExcerptDimension(self.excerpt_offset.0 + overshoot);
+            self.diff_transforms
+                .seek_forward(&excerpt_offset, Bias::Right, &());
+            let overshoot = excerpt_offset.0 - self.diff_transforms.start().1 .0;
+            self.diff_transforms.start().0 .0 + overshoot
+        } else {
+            start
+        };
+
+        start..end
     }
 
     /// Returns true if the entirety of the given range is in the buffer's excerpt
