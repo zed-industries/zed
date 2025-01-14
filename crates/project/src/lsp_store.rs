@@ -3820,8 +3820,7 @@ impl LspStore {
         else {
             return;
         };
-        for ((worktree_id, started_lsp_name), ids) in &self.as_local().unwrap().language_server_ids
-        {
+        for (worktree_id, started_lsp_name) in self.as_local().unwrap().language_server_ids.keys() {
             let language = languages.iter().find_map(|l| {
                 let adapter = self
                     .languages
@@ -3861,24 +3860,11 @@ impl LspStore {
             }
         }
 
-        for (worktree_id, adapter_name) in language_servers_to_stop {
-            todo!();
-            // self.stop_local_language_server(worktree_id, adapter_name, cx)
-            //     .detach();
-        }
-
         if let Some(prettier_store) = self.as_local().map(|s| s.prettier_store.clone()) {
             prettier_store.update(cx, |prettier_store, cx| {
                 prettier_store.on_settings_changed(language_formatters_to_check, cx)
             })
         }
-
-        // // Start all the newly-enabled language servers.
-        // for (worktree, language) in language_servers_to_start {
-        //     self.as_local_mut()
-        //         .unwrap()
-        //         .start_language_servers(&worktree, language, cx);
-        // }
 
         // Restart all language servers with changed initialization options.
         for (worktree, language) in language_servers_to_restart {
@@ -7326,21 +7312,7 @@ impl LspStore {
         log::info!("stopping language server {name}");
 
         // Remove other entries for this language server as well
-        let mut orphaned_worktrees = vec![worktree_id];
-        let other_keys = local
-            .language_server_ids
-            .keys()
-            .cloned()
-            .collect::<Vec<_>>();
-        for other_key in other_keys {
-            // local.language_server_ids.get_mut(&other_key).map(|server_ids| server_ids.remove(server_id))) {
-            todo!();
-            // }
-            // if local.language_server_ids.get(&other_key) == Some(&server_id) {
-            //     local.language_server_ids.remove(&other_key);
-            //     orphaned_worktrees.push(other_key.0);
-            // }
-        }
+        let orphaned_worktrees = vec![worktree_id];
 
         self.buffer_store.update(cx, |buffer_store, cx| {
             for buffer in buffer_store.buffers() {

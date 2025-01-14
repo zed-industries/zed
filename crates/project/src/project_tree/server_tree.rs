@@ -16,8 +16,8 @@ use std::{
 use collections::HashMap;
 use gpui::{AppContext, Context as _, Model, Subscription};
 use language::{
-    language_settings::{language_settings, AllLanguageSettings},
-    Attach, LanguageName, LanguageRegistry, LspAdapterDelegate,
+    language_settings::AllLanguageSettings, Attach, LanguageName, LanguageRegistry,
+    LspAdapterDelegate,
 };
 use lsp::LanguageServerName;
 use settings::{Settings as _, SettingsLocation};

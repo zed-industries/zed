@@ -14,7 +14,7 @@ use std::{
 
 use collections::HashMap;
 use gpui::{AppContext, Context as _, EventEmitter, Model, ModelContext, Subscription};
-use language::{CachedLspAdapter, LanguageName, LanguageRegistry, LspAdapterDelegate};
+use language::{CachedLspAdapter, LspAdapterDelegate};
 use lsp::LanguageServerName;
 use path_trie::{LabelPresence, RootPathTrie, TriePath};
 use settings::{SettingsStore, WorktreeId};
