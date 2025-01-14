@@ -2,6 +2,38 @@
 
 (identifier) @variable
 
+; Special identifiers
+
+((identifier) @type
+ (#match? @type "^[A-Z]"))
+(type_identifier) @type
+(predefined_type) @type.builtin
+
+(import_specifier
+  "type"
+  name: (identifier) @type
+  alias: (identifier) @type
+)
+
+(import_statement
+  "type"
+  (import_clause
+    (named_imports
+      (import_specifier
+        name: (identifier) @type
+        alias: (identifier) @type
+      )
+    )
+  )
+)
+
+([
+  (identifier)
+  (shorthand_property_identifier)
+  (shorthand_property_identifier_pattern)
+ ] @constant
+ (#match? @constant "^_*[A-Z_][A-Z\\d_]*$"))
+
 ; Properties
 
 (property_identifier) @property
@@ -43,23 +75,6 @@
   left: (identifier) @function
   right: [(function_expression) (arrow_function)])
 
-; Special identifiers
-
-((identifier) @constructor
- (#match? @constructor "^[A-Z]"))
-
-((identifier) @type
- (#match? @type "^[A-Z]"))
-(type_identifier) @type
-(predefined_type) @type.builtin
-
-([
-  (identifier)
-  (shorthand_property_identifier)
-  (shorthand_property_identifier_pattern)
- ] @constant
- (#match? @constant "^_*[A-Z_][A-Z\\d_]*$"))
-
 ; Literals
 
 (this) @variable.special
@@ -75,6 +90,15 @@
   (false)
 ] @boolean
 
+(literal_type
+  [
+    (null)
+    (undefined)
+    (true)
+    (false)
+  ] @type.builtin
+)
+
 (comment) @comment
 
 [
@@ -89,15 +113,6 @@
 (number) @number
 
 ; Tokens
-
-[
-  ";"
-  "?."
-  "."
-  ","
-  ":"
-  "?"
-] @punctuation.delimiter
 
 [
   "..."
@@ -147,15 +162,6 @@
   "??="
 ] @operator
 
-[
-  "("
-  ")"
-  "["
-  "]"
-  "{"
-  "}"
-]  @punctuation.bracket
-
 (ternary_expression
   [
     "?"
@@ -164,51 +170,22 @@
 )
 
 [
-  "as"
-  "async"
-  "await"
-  "break"
-  "case"
-  "catch"
-  "class"
-  "const"
-  "continue"
-  "debugger"
-  "default"
-  "delete"
-  "do"
-  "else"
-  "export"
-  "extends"
-  "finally"
-  "for"
-  "from"
-  "function"
-  "get"
-  "if"
-  "import"
-  "in"
-  "instanceof"
-  "is"
-  "let"
-  "new"
-  "of"
-  "return"
-  "satisfies"
-  "set"
-  "static"
-  "switch"
-  "target"
-  "throw"
-  "try"
-  "typeof"
-  "using"
-  "var"
-  "void"
-  "while"
-  "with"
-  "yield"
-] @keyword
+  ";"
+  "?."
+  "."
+  ","
+  ":"
+  "?"
+] @punctuation.delimiter
+
+[
+  "("
+  ")"
+  "["
+  "]"
+  "{"
+  "}"
+]  @punctuation.bracket
 
 (template_substitution
   "${" @punctuation.special
@@ -224,19 +201,63 @@
 
 ; Keywords
 
-[ "abstract"
+[
+  "abstract"
+  "as"
+  "async"
+  "await"
+  "break"
+  "case"
+  "catch"
+  "class"
+  "const"
+  "continue"
+  "debugger"
   "declare"
+  "default"
+  "delete"
+  "do"
+  "else"
   "enum"
   "export"
+  "extends"
+  "finally"
+  "for"
+  "from"
+  "function"
+  "get"
+  "if"
   "implements"
+  "import"
+  "in"
   "infer"
+  "instanceof"
   "interface"
+  "is"
   "keyof"
+  "let"
   "namespace"
+  "new"
+  "of"
+  "override"
   "private"
   "protected"
   "public"
-  "type"
   "readonly"
-  "override"
+  "return"
+  "satisfies"
+  "set"
+  "static"
+  "switch"
+  "target"
+  "throw"
+  "try"
+  "type"
+  "typeof"
+  "using"
+  "var"
+  "void"
+  "while"
+  "with"
+  "yield"
 ] @keyword

@@ -26,7 +26,7 @@ pub use context::*;
 pub use context_store::*;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
-use gpui::impl_actions;
+use gpui::impl_internal_actions;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
 pub(crate) use inline_assistant::*;
 use language_model::{
@@ -37,7 +37,7 @@ pub use prompts::PromptBuilder;
 use prompts::PromptLoadingParams;
 use semantic_index::{CloudEmbeddingProvider, SemanticDb};
 use serde::{Deserialize, Serialize};
-use settings::{update_settings_file, Settings, SettingsStore};
+use settings::{Settings, SettingsStore};
 use slash_command::search_command::SearchSlashCommandFeatureFlag;
 use slash_command::{
     auto_command, cargo_workspace_command, default_command, delta_command, diagnostics_command,
@@ -74,13 +74,13 @@ actions!(
     ]
 );
 
-#[derive(PartialEq, Clone, Deserialize)]
+#[derive(PartialEq, Clone)]
 pub enum InsertDraggedFiles {
     ProjectPaths(Vec<PathBuf>),
     ExternalFiles(Vec<PathBuf>),
 }
 
-impl_actions!(assistant, [InsertDraggedFiles]);
+impl_internal_actions!(assistant, [InsertDraggedFiles]);
 
 const DEFAULT_CONTEXT_LINES: usize = 50;
 
@@ -198,16 +198,6 @@ pub fn init(
     cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
     SlashCommandSettings::register(cx);
-
-    // TODO: remove this when 0.148.0 is released.
-    if AssistantSettings::get_global(cx).using_outdated_settings_version {
-        update_settings_file::<AssistantSettings>(fs.clone(), cx, {
-            let fs = fs.clone();
-            |content, cx| {
-                content.update_file(fs, cx);
-            }
-        });
-    }
 
     cx.spawn(|mut cx| {
         let client = client.clone();

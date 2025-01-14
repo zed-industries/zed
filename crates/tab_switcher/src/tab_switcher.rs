@@ -10,6 +10,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use project::Project;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
@@ -23,7 +24,7 @@ use workspace::{
 
 const PANEL_WIDTH_REMS: f32 = 28.;
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Default)]
 pub struct Toggle {
     #[serde(default)]
     pub select_last: bool,
@@ -253,7 +254,7 @@ impl TabSwitcherDelegate {
     fn select_item(
         &mut self,
         item_id: EntityId,
-        cx: &mut ViewContext<'_, Picker<TabSwitcherDelegate>>,
+        cx: &mut ViewContext<Picker<TabSwitcherDelegate>>,
     ) {
         let selected_idx = self
             .matches
@@ -263,7 +264,7 @@ impl TabSwitcherDelegate {
         self.set_selected_index(selected_idx, cx);
     }
 
-    fn close_item_at(&mut self, ix: usize, cx: &mut ViewContext<'_, Picker<TabSwitcherDelegate>>) {
+    fn close_item_at(&mut self, ix: usize, cx: &mut ViewContext<Picker<TabSwitcherDelegate>>) {
         let Some(tab_match) = self.matches.get(ix) else {
             return;
         };
@@ -358,13 +359,14 @@ impl PickerDelegate for TabSwitcherDelegate {
                         .item
                         .project_path(cx)
                         .as_ref()
-                        .and_then(|path| self.project.read(cx).entry_for_path(path, cx))
-                        .map(|entry| {
-                            entry_git_aware_label_color(
-                                entry.git_status,
-                                entry.is_ignored,
-                                selected,
-                            )
+                        .and_then(|path| {
+                            let project = self.project.read(cx);
+                            let entry = project.entry_for_path(path, cx)?;
+                            let git_status = project.project_path_git_status(path, cx);
+                            Some((entry, git_status))
+                        })
+                        .map(|(entry, git_status)| {
+                            entry_git_aware_label_color(git_status, entry.is_ignored, selected)
                         })
                 })
                 .flatten();

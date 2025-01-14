@@ -196,9 +196,10 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-k c": "assistant::CopyCode",
+      "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPrevMatch",
-      "cmd-shift-m": "assistant::ToggleModelSelector",
+      "cmd-alt-/": "assistant::ToggleModelSelector",
       "cmd-k h": "assistant::DeployHistory",
       "cmd-k l": "assistant::DeployPromptLibrary",
       "cmd-n": "assistant::NewContext"
@@ -225,8 +226,9 @@
     "bindings": {
       "cmd-n": "assistant2::NewThread",
       "cmd-shift-h": "assistant2::OpenHistory",
-      "cmd-shift-m": "assistant2::ToggleModelSelector",
-      "cmd-shift-a": "assistant2::ToggleContextPicker"
+      "cmd-alt-/": "assistant2::ToggleModelSelector",
+      "cmd-shift-a": "assistant2::ToggleContextPicker",
+      "cmd-alt-e": "assistant2::RemoveAllContext"
     }
   },
   {
@@ -327,6 +329,8 @@
       "cmd-w": "pane::CloseActiveItem",
       "alt-cmd-t": ["pane::CloseInactiveItems", { "close_pinned": false }],
       "ctrl-alt-cmd-w": "workspace::CloseInactiveTabsAndPanes",
+      "cmd-k e": ["pane::CloseItemsToTheLeft", { "close_pinned": false }],
+      "cmd-k t": ["pane::CloseItemsToTheRight", { "close_pinned": false }],
       "cmd-k u": ["pane::CloseCleanItems", { "close_pinned": false }],
       "cmd-k cmd-w": ["pane::CloseAllItems", { "close_pinned": false }],
       "cmd-f": "project_search::ToggleFocus",
@@ -432,7 +436,7 @@
       "ctrl--": "pane::GoBack",
       "ctrl-shift--": "pane::GoForward",
       "cmd-shift-t": "pane::ReopenClosedItem",
-      "cmd-shift-f": "project_search::ToggleFocus"
+      "cmd-shift-f": "pane::DeploySearch"
     }
   },
   {
@@ -473,7 +477,7 @@
       "ctrl-shift-tab": ["tab_switcher::Toggle", { "select_last": true }],
       "cmd-shift-p": "command_palette::Toggle",
       "cmd-shift-m": "diagnostics::Deploy",
-      "cmd-shift-e": "pane::RevealInProjectPanel",
+      "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-shift-b": "outline_panel::ToggleFocus",
       "cmd-?": "assistant::ToggleFocus",
       "cmd-alt-s": "workspace::SaveAll",
@@ -593,6 +597,7 @@
       "alt-enter": "editor::OpenExcerpts",
       "shift-enter": "editor::ExpandExcerpts",
       "cmd-k enter": "editor::OpenExcerptsSplit",
+      "cmd-shift-e": "pane::RevealInProjectPanel",
       "cmd-f8": "editor::GoToHunk",
       "cmd-shift-f8": "editor::GoToPrevHunk",
       "ctrl-enter": "assistant::InlineAssist"
@@ -611,6 +616,8 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-shift-a": "assistant2::ToggleContextPicker",
+      "cmd-alt-/": "assistant2::ToggleModelSelector",
+      "cmd-alt-e": "assistant2::RemoveAllContext",
       "ctrl-[": "assistant::CyclePreviousInlineAssist",
       "ctrl-]": "assistant::CycleNextInlineAssist"
     }
@@ -661,7 +668,6 @@
       "cmd-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-cmd-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "project_panel::OpenWithSystem",
-      "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-alt-backspace": ["project_panel::Delete", { "skip_prompt": false }],
       "cmd-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
@@ -674,6 +680,38 @@
     "use_key_equivalents": true,
     "bindings": {
       "space": "project_panel::Open"
+    }
+  },
+  {
+    "context": "GitPanel && !CommitEditor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "git_panel::Close"
+    }
+  },
+  {
+    "context": "GitPanel && ChangesList",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "menu::SelectPrev",
+      "down": "menu::SelectNext",
+      "cmd-up": "menu::SelectFirst",
+      "cmd-down": "menu::SelectLast",
+      "enter": "menu::Confirm",
+      "space": "git::ToggleStaged",
+      "cmd-shift-space": "git::StageAll",
+      "ctrl-shift-space": "git::UnstageAll",
+      "alt-down": "git_panel::FocusEditor"
+    }
+  },
+  {
+    "context": "GitPanel && CommitEditor > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "alt-up": "git_panel::FocusChanges",
+      "escape": "git_panel::FocusChanges",
+      "cmd-enter": "git::CommitChanges",
+      "cmd-alt-enter": "git::CommitAllChanges"
     }
   },
   {
@@ -800,7 +838,8 @@
     "context": "RateCompletionModal",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-enter": "zeta::ThumbsUp",
+      "cmd-shift-enter": "zeta::ThumbsUpActiveCompletion",
+      "cmd-shift-backspace": "zeta::ThumbsDownActiveCompletion",
       "shift-down": "zeta::NextEdit",
       "shift-up": "zeta::PreviousEdit",
       "right": "zeta::PreviewCompletion"

@@ -31,7 +31,7 @@ use ui::{
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
-    dock::{DockPosition, Panel, PanelEvent},
+    dock::{DockPosition, Panel, PanelEvent, PanelHandle},
     item::SerializableItem,
     move_active_item, move_item, pane,
     ui::IconName,
@@ -75,6 +75,7 @@ pub struct TerminalPanel {
     deferred_tasks: HashMap<TaskId, Task<()>>,
     assistant_enabled: bool,
     assistant_tab_bar_button: Option<AnyView>,
+    active: bool,
 }
 
 impl TerminalPanel {
@@ -82,7 +83,6 @@ impl TerminalPanel {
         let project = workspace.project();
         let pane = new_terminal_pane(workspace.weak_handle(), project.clone(), false, cx);
         let center = PaneGroup::new(pane.clone());
-        cx.focus_view(&pane);
         let terminal_panel = Self {
             center,
             active_pane: pane,
@@ -95,12 +95,13 @@ impl TerminalPanel {
             deferred_tasks: HashMap::default(),
             assistant_enabled: false,
             assistant_tab_bar_button: None,
+            active: false,
         };
         terminal_panel.apply_tab_bar_buttons(&terminal_panel.active_pane, cx);
         terminal_panel
     }
 
-    pub fn asssistant_enabled(&mut self, enabled: bool, cx: &mut ViewContext<Self>) {
+    pub fn set_assistant_enabled(&mut self, enabled: bool, cx: &mut ViewContext<Self>) {
         self.assistant_enabled = enabled;
         if enabled {
             let focus_handle = self
@@ -278,6 +279,25 @@ impl TerminalPanel {
             })?;
             if let Some(task) = cleanup_task {
                 task.await.log_err();
+            }
+        }
+
+        if let Some(workspace) = workspace.upgrade() {
+            let should_focus = workspace
+                .update(&mut cx, |workspace, cx| {
+                    workspace.active_item(cx).is_none()
+                        && workspace.is_dock_at_position_open(terminal_panel.position(cx), cx)
+                })
+                .unwrap_or(false);
+
+            if should_focus {
+                terminal_panel
+                    .update(&mut cx, |panel, cx| {
+                        panel.active_pane.update(cx, |pane, cx| {
+                            pane.focus_active_item(cx);
+                        });
+                    })
+                    .ok();
             }
         }
 
@@ -824,7 +844,7 @@ impl TerminalPanel {
         task_pane: View<Pane>,
         terminal_item_index: usize,
         terminal_to_replace: View<TerminalView>,
-        cx: &mut ViewContext<'_, Self>,
+        cx: &mut ViewContext<Self>,
     ) -> Task<Option<()>> {
         let reveal = spawn_task.reveal;
         let reveal_target = spawn_task.reveal_target;
@@ -964,19 +984,23 @@ pub fn new_terminal_pane(
         pane.set_should_display_tab_bar(|_| true);
         pane.set_zoom_out_on_close(false);
 
-        let terminal_panel_for_split_check = terminal_panel.clone();
+        let split_closure_terminal_panel = terminal_panel.downgrade();
         pane.set_can_split(Some(Arc::new(move |pane, dragged_item, cx| {
             if let Some(tab) = dragged_item.downcast_ref::<DraggedTab>() {
-                let current_pane = cx.view().clone();
-                let can_drag_away =
-                    terminal_panel_for_split_check.update(cx, |terminal_panel, _| {
+                let is_current_pane = &tab.pane == cx.view();
+                let Some(can_drag_away) = split_closure_terminal_panel
+                    .update(cx, |terminal_panel, _| {
                         let current_panes = terminal_panel.center.panes();
                         !current_panes.contains(&&tab.pane)
                             || current_panes.len() > 1
-                            || (tab.pane != current_pane || pane.items_len() > 1)
-                    });
+                            || (!is_current_pane || pane.items_len() > 1)
+                    })
+                    .ok()
+                else {
+                    return false;
+                };
                 if can_drag_away {
-                    let item = if tab.pane == current_pane {
+                    let item = if is_current_pane {
                         pane.item_for_index(tab.ix)
                     } else {
                         tab.pane.read(cx).item_for_index(tab.ix)
@@ -996,7 +1020,12 @@ pub fn new_terminal_pane(
             toolbar.add_item(breadcrumbs, cx);
         });
 
+        let drop_closure_project = project.downgrade();
+        let drop_closure_terminal_panel = terminal_panel.downgrade();
         pane.set_custom_drop_handle(cx, move |pane, dropped_item, cx| {
+            let Some(project) = drop_closure_project.upgrade() else {
+                return ControlFlow::Break(());
+            };
             if let Some(tab) = dropped_item.downcast_ref::<DraggedTab>() {
                 let this_pane = cx.view().clone();
                 let item = if tab.pane == this_pane {
@@ -1009,10 +1038,10 @@ pub fn new_terminal_pane(
                         let source = tab.pane.clone();
                         let item_id_to_move = item.item_id();
 
-                        let new_split_pane = pane
+                        let Ok(new_split_pane) = pane
                             .drag_split_direction()
                             .map(|split_direction| {
-                                terminal_panel.update(cx, |terminal_panel, cx| {
+                                drop_closure_terminal_panel.update(cx, |terminal_panel, cx| {
                                     let is_zoomed = if terminal_panel.active_pane == this_pane {
                                         pane.is_zoomed()
                                     } else {
@@ -1033,9 +1062,12 @@ pub fn new_terminal_pane(
                                     anyhow::Ok(new_pane)
                                 })
                             })
-                            .transpose();
+                            .transpose()
+                        else {
+                            return ControlFlow::Break(());
+                        };
 
-                        match new_split_pane {
+                        match new_split_pane.transpose() {
                             // Source pane may be the one currently updated, so defer the move.
                             Ok(Some(new_pane)) => cx
                                 .spawn(|_, mut cx| async move {
@@ -1110,7 +1142,7 @@ async fn wait_for_terminals_tasks(
     let _: Vec<()> = join_all(pending_tasks).await;
 }
 
-fn add_paths_to_terminal(pane: &mut Pane, paths: &[PathBuf], cx: &mut ViewContext<'_, Pane>) {
+fn add_paths_to_terminal(pane: &mut Pane, paths: &[PathBuf], cx: &mut ViewContext<Pane>) {
     if let Some(terminal_view) = pane
         .active_item()
         .and_then(|item| item.downcast::<TerminalView>())
@@ -1327,7 +1359,9 @@ impl Panel for TerminalPanel {
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if !active || !self.has_no_terminals(cx) {
+        let old_active = self.active;
+        self.active = active;
+        if !active || old_active == active || !self.has_no_terminals(cx) {
             return;
         }
         cx.defer(|this, cx| {
@@ -1380,6 +1414,10 @@ impl Panel for TerminalPanel {
 
     fn pane(&self) -> Option<View<Pane>> {
         Some(self.active_pane.clone())
+    }
+
+    fn activation_priority(&self) -> u32 {
+        1
     }
 }
 

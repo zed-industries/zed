@@ -3705,7 +3705,6 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
     "});
 
     // Test multiple line, single selection case
-    // Test code hack that covers the fact that to_case crate doesn't support '\n' as a word boundary
     cx.set_state(indoc! {"
         «The quick brown
         fox jumps over
@@ -3719,7 +3718,6 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
     "});
 
     // Test multiple line, single selection case
-    // Test code hack that covers the fact that to_case crate doesn't support '\n' as a word boundary
     cx.set_state(indoc! {"
         «The quick brown
         fox jumps over
@@ -5962,8 +5960,8 @@ async fn test_autoclose_with_embedded_language(cx: &mut gpui::TestAppContext) {
         .with_injection_query(
             r#"
             (script_element
-                (raw_text) @content
-                (#set! "language" "javascript"))
+                (raw_text) @injection.content
+                (#set! injection.language "javascript"))
             "#,
         )
         .unwrap(),
@@ -7380,7 +7378,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
             editor.perform_format(
                 project.clone(),
                 FormatTrigger::Manual,
-                FormatTarget::Buffer,
+                FormatTarget::Buffers,
                 cx,
             )
         })
@@ -7418,7 +7416,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     });
     let format = editor
         .update(cx, |editor, cx| {
-            editor.perform_format(project, FormatTrigger::Manual, FormatTarget::Buffer, cx)
+            editor.perform_format(project, FormatTrigger::Manual, FormatTarget::Buffers, cx)
         })
         .unwrap();
     cx.executor().advance_clock(super::FORMAT_TIMEOUT);
@@ -8402,7 +8400,6 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
         additional edit
     "});
 
-    handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
 
     update_test_language_settings(&mut cx, |settings| {
@@ -8474,7 +8471,7 @@ async fn test_completion_page_up_down_keys(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|editor, _| {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
-            assert_eq!(completion_menu_entries(&menu.entries), &["first", "last"]);
+            assert_eq!(completion_menu_entries(&menu), &["first", "last"]);
         } else {
             panic!("expected completion menu to be open");
         }
@@ -8567,7 +8564,7 @@ async fn test_completion_sort(cx: &mut gpui::TestAppContext) {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
-                completion_menu_entries(&menu.entries),
+                completion_menu_entries(&menu),
                 &["r", "ret", "Range", "return"]
             );
         } else {
@@ -9069,8 +9066,8 @@ async fn test_toggle_block_comment(cx: &mut gpui::TestAppContext) {
         .with_injection_query(
             r#"
             (script_element
-                (raw_text) @content
-                (#set! "language" "javascript"))
+                (raw_text) @injection.content
+                (#set! injection.language "javascript"))
             "#,
         )
         .unwrap(),
@@ -10698,10 +10695,14 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(
         ..lsp::CompletionItem::default()
     };
 
-    cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
+    let item1 = item1.clone();
+    cx.handle_request::<lsp::request::Completion, _, _>({
         let item1 = item1.clone();
-        let item2 = item2.clone();
-        async move { Ok(Some(lsp::CompletionResponse::Array(vec![item1, item2]))) }
+        move |_, _, _| {
+            let item1 = item1.clone();
+            let item2 = item2.clone();
+            async move { Ok(Some(lsp::CompletionResponse::Array(vec![item1, item2]))) }
+        }
     })
     .next()
     .await;
@@ -10728,42 +10729,40 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(
         }
     });
 
-    cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| async move {
-        Ok(lsp::CompletionItem {
-            label: "method id()".to_string(),
-            filter_text: Some("id".to_string()),
-            detail: Some("Now resolved!".to_string()),
-            documentation: Some(lsp::Documentation::String("Docs".to_string())),
-            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
-                new_text: ".id".to_string(),
-            })),
-            ..lsp::CompletionItem::default()
-        })
+    cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>({
+        let item1 = item1.clone();
+        move |_, item_to_resolve, _| {
+            let item1 = item1.clone();
+            async move {
+                if item1 == item_to_resolve {
+                    Ok(lsp::CompletionItem {
+                        label: "method id()".to_string(),
+                        filter_text: Some("id".to_string()),
+                        detail: Some("Now resolved!".to_string()),
+                        documentation: Some(lsp::Documentation::String("Docs".to_string())),
+                        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                            range: lsp::Range::new(
+                                lsp::Position::new(0, 22),
+                                lsp::Position::new(0, 22),
+                            ),
+                            new_text: ".id".to_string(),
+                        })),
+                        ..lsp::CompletionItem::default()
+                    })
+                } else {
+                    Ok(item_to_resolve)
+                }
+            }
+        }
     })
     .next()
-    .await;
+    .await
+    .unwrap();
     cx.run_until_parked();
 
     cx.update_editor(|editor, cx| {
         editor.context_menu_next(&Default::default(), cx);
     });
-
-    cx.handle_request::<lsp::request::ResolveCompletionItem, _, _>(move |_, _, _| async move {
-        Ok(lsp::CompletionItem {
-            label: "invalid changed label".to_string(),
-            detail: Some("Now resolved!".to_string()),
-            documentation: Some(lsp::Documentation::String("Docs".to_string())),
-            text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
-                range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
-                new_text: ".id".to_string(),
-            })),
-            ..lsp::CompletionItem::default()
-        })
-    })
-    .next()
-    .await;
-    cx.run_until_parked();
 
     cx.update_editor(|editor, _| {
         let context_menu = editor.context_menu.borrow_mut();
@@ -10784,6 +10783,172 @@ async fn test_completions_resolve_updates_labels_if_filter_text_matches(
             }
             CodeContextMenu::CodeActions(_) => panic!("Should show the completions menu"),
         }
+    });
+}
+
+#[gpui::test]
+async fn test_completions_resolve_happens_once(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorLspTestContext::new_rust(
+        lsp::ServerCapabilities {
+            completion_provider: Some(lsp::CompletionOptions {
+                trigger_characters: Some(vec![".".to_string()]),
+                resolve_provider: Some(true),
+                ..Default::default()
+            }),
+            ..Default::default()
+        },
+        cx,
+    )
+    .await;
+
+    cx.set_state(indoc! {"fn main() { let a = 2ˇ; }"});
+    cx.simulate_keystroke(".");
+
+    let unresolved_item_1 = lsp::CompletionItem {
+        label: "id".to_string(),
+        filter_text: Some("id".to_string()),
+        detail: None,
+        documentation: None,
+        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+            range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
+            new_text: ".id".to_string(),
+        })),
+        ..lsp::CompletionItem::default()
+    };
+    let resolved_item_1 = lsp::CompletionItem {
+        additional_text_edits: Some(vec![lsp::TextEdit {
+            range: lsp::Range::new(lsp::Position::new(0, 20), lsp::Position::new(0, 22)),
+            new_text: "!!".to_string(),
+        }]),
+        ..unresolved_item_1.clone()
+    };
+    let unresolved_item_2 = lsp::CompletionItem {
+        label: "other".to_string(),
+        filter_text: Some("other".to_string()),
+        detail: None,
+        documentation: None,
+        text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+            range: lsp::Range::new(lsp::Position::new(0, 22), lsp::Position::new(0, 22)),
+            new_text: ".other".to_string(),
+        })),
+        ..lsp::CompletionItem::default()
+    };
+    let resolved_item_2 = lsp::CompletionItem {
+        additional_text_edits: Some(vec![lsp::TextEdit {
+            range: lsp::Range::new(lsp::Position::new(0, 20), lsp::Position::new(0, 22)),
+            new_text: "??".to_string(),
+        }]),
+        ..unresolved_item_2.clone()
+    };
+
+    let resolve_requests_1 = Arc::new(AtomicUsize::new(0));
+    let resolve_requests_2 = Arc::new(AtomicUsize::new(0));
+    cx.lsp
+        .server
+        .on_request::<lsp::request::ResolveCompletionItem, _, _>({
+            let unresolved_item_1 = unresolved_item_1.clone();
+            let resolved_item_1 = resolved_item_1.clone();
+            let unresolved_item_2 = unresolved_item_2.clone();
+            let resolved_item_2 = resolved_item_2.clone();
+            let resolve_requests_1 = resolve_requests_1.clone();
+            let resolve_requests_2 = resolve_requests_2.clone();
+            move |unresolved_request, _| {
+                let unresolved_item_1 = unresolved_item_1.clone();
+                let resolved_item_1 = resolved_item_1.clone();
+                let unresolved_item_2 = unresolved_item_2.clone();
+                let resolved_item_2 = resolved_item_2.clone();
+                let resolve_requests_1 = resolve_requests_1.clone();
+                let resolve_requests_2 = resolve_requests_2.clone();
+                async move {
+                    if unresolved_request == unresolved_item_1 {
+                        resolve_requests_1.fetch_add(1, atomic::Ordering::Release);
+                        Ok(resolved_item_1.clone())
+                    } else if unresolved_request == unresolved_item_2 {
+                        resolve_requests_2.fetch_add(1, atomic::Ordering::Release);
+                        Ok(resolved_item_2.clone())
+                    } else {
+                        panic!("Unexpected completion item {unresolved_request:?}")
+                    }
+                }
+            }
+        })
+        .detach();
+
+    cx.handle_request::<lsp::request::Completion, _, _>(move |_, _, _| {
+        let unresolved_item_1 = unresolved_item_1.clone();
+        let unresolved_item_2 = unresolved_item_2.clone();
+        async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                unresolved_item_1,
+                unresolved_item_2,
+            ])))
+        }
+    })
+    .next()
+    .await;
+
+    cx.condition(|editor, _| editor.context_menu_visible())
+        .await;
+    cx.update_editor(|editor, _| {
+        let context_menu = editor.context_menu.borrow_mut();
+        let context_menu = context_menu
+            .as_ref()
+            .expect("Should have the context menu deployed");
+        match context_menu {
+            CodeContextMenu::Completions(completions_menu) => {
+                let completions = completions_menu.completions.borrow_mut();
+                assert_eq!(
+                    completions
+                        .iter()
+                        .map(|completion| &completion.label.text)
+                        .collect::<Vec<_>>(),
+                    vec!["id", "other"]
+                )
+            }
+            CodeContextMenu::CodeActions(_) => panic!("Should show the completions menu"),
+        }
+    });
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, cx| {
+        editor.context_menu_next(&ContextMenuNext, cx);
+    });
+    cx.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        editor.context_menu_prev(&ContextMenuPrev, cx);
+    });
+    cx.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        editor.context_menu_next(&ContextMenuNext, cx);
+    });
+    cx.run_until_parked();
+    cx.update_editor(|editor, cx| {
+        editor
+            .compose_completion(&ComposeCompletion::default(), cx)
+            .expect("No task returned")
+    })
+    .await
+    .expect("Completion failed");
+    cx.run_until_parked();
+
+    cx.update_editor(|editor, cx| {
+        assert_eq!(
+            resolve_requests_1.load(atomic::Ordering::Acquire),
+            1,
+            "Should always resolve once despite multiple selections"
+        );
+        assert_eq!(
+            resolve_requests_2.load(atomic::Ordering::Acquire),
+            1,
+            "Should always resolve once after multiple selections and applying the completion"
+        );
+        assert_eq!(
+            editor.text(cx),
+            "fn main() { let a = ??.other; }",
+            "Should use resolved data when applying the completion"
+        );
     });
 }
 
@@ -10913,6 +11078,7 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
                 assert_eq!(
                     completions_menu
                         .entries
+                        .borrow()
                         .iter()
                         .flat_map(|c| match c {
                             CompletionEntry::Match(mat) => Some(mat.string.clone()),
@@ -10950,15 +11116,10 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
     // Completions that have already been resolved are skipped.
     assert_eq!(
         *resolved_items.lock(),
-        [
-            // Selected item is always resolved even if it was resolved before.
-            &items_out[items_out.len() - 1..items_out.len()],
-            &items_out[items_out.len() - 16..items_out.len() - 4]
-        ]
-        .concat()
-        .iter()
-        .cloned()
-        .collect::<Vec<lsp::CompletionItem>>()
+        items_out[items_out.len() - 16..items_out.len() - 4]
+            .iter()
+            .cloned()
+            .collect::<Vec<lsp::CompletionItem>>()
     );
     resolved_items.lock().clear();
 }
@@ -11028,7 +11189,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
-                completion_menu_entries(&menu.entries),
+                completion_menu_entries(&menu),
                 &["bg-red", "bg-blue", "bg-yellow"]
             );
         } else {
@@ -11041,10 +11202,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.update_editor(|editor, _| {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
-            assert_eq!(
-                completion_menu_entries(&menu.entries),
-                &["bg-blue", "bg-yellow"]
-            );
+            assert_eq!(completion_menu_entries(&menu), &["bg-blue", "bg-yellow"]);
         } else {
             panic!("expected completion menu to be open");
         }
@@ -11058,18 +11216,19 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.update_editor(|editor, _| {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
-            assert_eq!(completion_menu_entries(&menu.entries), &["bg-yellow"]);
+            assert_eq!(completion_menu_entries(&menu), &["bg-yellow"]);
         } else {
             panic!("expected completion menu to be open");
         }
     });
 }
 
-fn completion_menu_entries(entries: &[CompletionEntry]) -> Vec<&str> {
+fn completion_menu_entries(menu: &CompletionsMenu) -> Vec<String> {
+    let entries = menu.entries.borrow();
     entries
         .iter()
         .flat_map(|e| match e {
-            CompletionEntry::Match(mat) => Some(mat.string.as_str()),
+            CompletionEntry::Match(mat) => Some(mat.string.clone()),
             _ => None,
         })
         .collect()
@@ -11098,7 +11257,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
             },
             ..Default::default()
         },
-        Some(tree_sitter_rust::LANGUAGE.into()),
+        Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
     )));
     update_test_language_settings(cx, |settings| {
         settings.defaults.prettier = Some(PrettierSettings {
@@ -11132,7 +11291,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
             editor.perform_format(
                 project.clone(),
                 FormatTrigger::Manual,
-                FormatTarget::Buffer,
+                FormatTarget::Buffers,
                 cx,
             )
         })
@@ -11151,7 +11310,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
         editor.perform_format(
             project.clone(),
             FormatTrigger::Manual,
-            FormatTarget::Buffer,
+            FormatTarget::Buffers,
             cx,
         )
     });
@@ -14568,6 +14727,145 @@ fn test_inline_completion_text_with_deletions(cx: &mut TestAppContext) {
             })
             .unwrap();
     }
+}
+
+#[gpui::test]
+async fn test_rename_with_duplicate_edits(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let capabilities = lsp::ServerCapabilities {
+        rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        })),
+        ..Default::default()
+    };
+    let mut cx = EditorLspTestContext::new_rust(capabilities, cx).await;
+
+    cx.set_state(indoc! {"
+        struct Fˇoo {}
+    "});
+
+    cx.update_editor(|editor, cx| {
+        let highlight_range = Point::new(0, 7)..Point::new(0, 10);
+        let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
+        editor.highlight_background::<DocumentHighlightRead>(
+            &[highlight_range],
+            |c| c.editor_document_highlight_read_background,
+            cx,
+        );
+    });
+
+    let mut prepare_rename_handler =
+        cx.handle_request::<lsp::request::PrepareRenameRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range {
+                start: lsp::Position {
+                    line: 0,
+                    character: 7,
+                },
+                end: lsp::Position {
+                    line: 0,
+                    character: 10,
+                },
+            })))
+        });
+    let prepare_rename_task = cx
+        .update_editor(|e, cx| e.rename(&Rename, cx))
+        .expect("Prepare rename was not started");
+    prepare_rename_handler.next().await.unwrap();
+    prepare_rename_task.await.expect("Prepare rename failed");
+
+    let mut rename_handler =
+        cx.handle_request::<lsp::request::Rename, _, _>(move |url, _, _| async move {
+            let edit = lsp::TextEdit {
+                range: lsp::Range {
+                    start: lsp::Position {
+                        line: 0,
+                        character: 7,
+                    },
+                    end: lsp::Position {
+                        line: 0,
+                        character: 10,
+                    },
+                },
+                new_text: "FooRenamed".to_string(),
+            };
+            Ok(Some(lsp::WorkspaceEdit::new(
+                // Specify the same edit twice
+                std::collections::HashMap::from_iter(Some((url, vec![edit.clone(), edit]))),
+            )))
+        });
+    let rename_task = cx
+        .update_editor(|e, cx| e.confirm_rename(&ConfirmRename, cx))
+        .expect("Confirm rename was not started");
+    rename_handler.next().await.unwrap();
+    rename_task.await.expect("Confirm rename failed");
+    cx.run_until_parked();
+
+    // Despite two edits, only one is actually applied as those are identical
+    cx.assert_editor_state(indoc! {"
+        struct FooRenamedˇ {}
+    "});
+}
+
+#[gpui::test]
+async fn test_rename_without_prepare(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    // These capabilities indicate that the server does not support prepare rename.
+    let capabilities = lsp::ServerCapabilities {
+        rename_provider: Some(lsp::OneOf::Left(true)),
+        ..Default::default()
+    };
+    let mut cx = EditorLspTestContext::new_rust(capabilities, cx).await;
+
+    cx.set_state(indoc! {"
+        struct Fˇoo {}
+    "});
+
+    cx.update_editor(|editor, cx| {
+        let highlight_range = Point::new(0, 7)..Point::new(0, 10);
+        let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
+        editor.highlight_background::<DocumentHighlightRead>(
+            &[highlight_range],
+            |c| c.editor_document_highlight_read_background,
+            cx,
+        );
+    });
+
+    cx.update_editor(|e, cx| e.rename(&Rename, cx))
+        .expect("Prepare rename was not started")
+        .await
+        .expect("Prepare rename failed");
+
+    let mut rename_handler =
+        cx.handle_request::<lsp::request::Rename, _, _>(move |url, _, _| async move {
+            let edit = lsp::TextEdit {
+                range: lsp::Range {
+                    start: lsp::Position {
+                        line: 0,
+                        character: 7,
+                    },
+                    end: lsp::Position {
+                        line: 0,
+                        character: 10,
+                    },
+                },
+                new_text: "FooRenamed".to_string(),
+            };
+            Ok(Some(lsp::WorkspaceEdit::new(
+                std::collections::HashMap::from_iter(Some((url, vec![edit]))),
+            )))
+        });
+    let rename_task = cx
+        .update_editor(|e, cx| e.confirm_rename(&ConfirmRename, cx))
+        .expect("Confirm rename was not started");
+    rename_handler.next().await.unwrap();
+    rename_task.await.expect("Confirm rename failed");
+    cx.run_until_parked();
+
+    // Correct range is renamed, as `surrounding_word` is used to find it.
+    cx.assert_editor_state(indoc! {"
+        struct FooRenamedˇ {}
+    "});
 }
 
 fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {

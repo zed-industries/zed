@@ -16,7 +16,7 @@ use language::{
 };
 use node_runtime::NodeRuntime;
 use project::{
-    lsp_store::{FormatTarget, FormatTrigger},
+    lsp_store::{FormatTrigger, LspFormatTarget},
     ProjectPath,
 };
 use remote::SshRemoteClient;
@@ -229,6 +229,10 @@ async fn test_ssh_collaboration_git_branches(
         .await;
 
     let branches = ["main", "dev", "feature-1"];
+    let branches_set = branches
+        .iter()
+        .map(ToString::to_string)
+        .collect::<HashSet<_>>();
     remote_fs.insert_branches(Path::new("/project/.git"), &branches);
 
     // User A connects to the remote project via SSH.
@@ -281,10 +285,10 @@ async fn test_ssh_collaboration_git_branches(
 
     let branches_b = branches_b
         .into_iter()
-        .map(|branch| branch.name)
-        .collect::<Vec<_>>();
+        .map(|branch| branch.name.to_string())
+        .collect::<HashSet<_>>();
 
-    assert_eq!(&branches_b, &branches);
+    assert_eq!(&branches_b, &branches_set);
 
     cx_b.update(|cx| {
         project_b.update(cx, |project, cx| {
@@ -468,9 +472,9 @@ async fn test_ssh_collaboration_formatting_with_prettier(
         .update(cx_b, |project, cx| {
             project.format(
                 HashSet::from_iter([buffer_b.clone()]),
+                LspFormatTarget::Buffers,
                 true,
                 FormatTrigger::Save,
-                FormatTarget::Buffer,
                 cx,
             )
         })
@@ -505,9 +509,9 @@ async fn test_ssh_collaboration_formatting_with_prettier(
         .update(cx_a, |project, cx| {
             project.format(
                 HashSet::from_iter([buffer_a.clone()]),
+                LspFormatTarget::Buffers,
                 true,
                 FormatTrigger::Manual,
-                FormatTarget::Buffer,
                 cx,
             )
         })

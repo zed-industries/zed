@@ -5,19 +5,24 @@ let
   inherit (pkgs) lib;
 in
 pkgs.mkShell rec {
-  packages = [
-    pkgs.clang
-    pkgs.curl
-    pkgs.cmake
-    pkgs.perl
-    pkgs.pkg-config
-    pkgs.protobuf
-    pkgs.rustPlatform.bindgenHook
-    pkgs.rust-analyzer
-  ];
+  packages =
+    [
+      pkgs.clang
+      pkgs.curl
+      pkgs.cmake
+      pkgs.perl
+      pkgs.pkg-config
+      pkgs.protobuf
+      pkgs.rustPlatform.bindgenHook
+      pkgs.rust-analyzer
+    ]
+    ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
+      pkgs.mold
+    ];
 
   buildInputs =
     [
+      pkgs.bzip2
       pkgs.curl
       pkgs.fontconfig
       pkgs.freetype
@@ -31,8 +36,13 @@ pkgs.mkShell rec {
     ++ lib.optionals pkgs.stdenv.hostPlatform.isLinux [
       pkgs.alsa-lib
       pkgs.libxkbcommon
+      pkgs.wayland
+      pkgs.xorg.libxcb
+      pkgs.vulkan-loader
     ]
     ++ lib.optional pkgs.stdenv.hostPlatform.isDarwin pkgs.apple-sdk_15;
+
+  LD_LIBRARY_PATH = "${pkgs.stdenv.cc.cc.lib}/lib";
 
   # We set SDKROOT and DEVELOPER_DIR to the Xcode ones instead of the nixpkgs ones,
   # because we need Swift 6.0 and nixpkgs doesn't have it.

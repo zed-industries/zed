@@ -1586,6 +1586,19 @@ impl<'a> WindowContext<'a> {
             }
         }
 
+        // Element's parent can get hidden (e.g. via the `visible_on_hover` method),
+        // and element's `paint` won't be called (ergo, mouse listeners also won't be active) to detect that the tooltip has to be removed.
+        // Ensure it's not stuck around in such cases.
+        let invalidate_tooltip = !tooltip_request
+            .tooltip
+            .origin_bounds
+            .contains(&self.mouse_position())
+            && (!tooltip_request.tooltip.hoverable
+                || !tooltip_bounds.contains(&self.mouse_position()));
+        if invalidate_tooltip {
+            return None;
+        }
+
         self.with_absolute_element_offset(tooltip_bounds.origin, |cx| element.prepaint(cx));
 
         self.window.tooltip_bounds = Some(TooltipBounds {
@@ -1753,17 +1766,12 @@ impl<'a> WindowContext<'a> {
                 .iter_mut()
                 .map(|listener| listener.take()),
         );
-        if let Some(element_states) = window
-            .rendered_frame
-            .accessed_element_states
-            .get(range.start.accessed_element_states_index..range.end.accessed_element_states_index)
-        {
-            window.next_frame.accessed_element_states.extend(
-                element_states
-                    .iter()
-                    .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
-            );
-        }
+        window.next_frame.accessed_element_states.extend(
+            window.rendered_frame.accessed_element_states[range.start.accessed_element_states_index
+                ..range.end.accessed_element_states_index]
+                .iter()
+                .map(|(id, type_id)| (GlobalElementId(id.0.clone()), *type_id)),
+        );
 
         window
             .text_system
@@ -3069,7 +3077,8 @@ impl<'a> WindowContext<'a> {
         false
     }
 
-    /// Represent this action as a key binding string, to display in the UI.
+    /// Return a key binding string for an action, to display in the UI. Uses the highest precedence
+    /// binding for the action (last binding added to the keymap).
     pub fn keystroke_text_for(&self, action: &dyn Action) -> String {
         self.bindings_for_action(action)
             .into_iter()
@@ -3726,7 +3735,8 @@ impl<'a> WindowContext<'a> {
         actions
     }
 
-    /// Returns key bindings that invoke the given action on the currently focused element.
+    /// Returns key bindings that invoke an action on the currently focused element, in precedence
+    /// order (reverse of the order they were added to the keymap).
     pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
         self.window
             .rendered_frame
@@ -3737,12 +3747,16 @@ impl<'a> WindowContext<'a> {
             )
     }
 
-    /// Returns key bindings that invoke the given action on the currently focused element.
+    /// Returns key bindings that invoke the given action on the currently focused element, without
+    /// checking context. Bindings are returned returned in precedence order (reverse of the order
+    /// they were added to the keymap).
     pub fn all_bindings_for_input(&self, input: &[Keystroke]) -> Vec<KeyBinding> {
         RefCell::borrow(&self.keymap).all_bindings_for_input(input)
     }
 
-    /// Returns any bindings that would invoke the given action on the given focus handle if it were focused.
+    /// Returns any bindings that would invoke an action on the given focus handle if it were
+    /// focused. Bindings are returned returned in precedence order (reverse of the order
+    /// they were added to the keymap).
     pub fn bindings_for_action_in(
         &self,
         action: &dyn Action,
@@ -4872,6 +4886,8 @@ pub enum ElementId {
     FocusHandle(FocusId),
     /// A combination of a name and an integer.
     NamedInteger(SharedString, usize),
+    /// A path
+    Path(Arc<std::path::Path>),
 }
 
 impl Display for ElementId {
@@ -4883,6 +4899,7 @@ impl Display for ElementId {
             ElementId::FocusHandle(_) => write!(f, "FocusHandle")?,
             ElementId::NamedInteger(s, i) => write!(f, "{}-{}", s, i)?,
             ElementId::Uuid(uuid) => write!(f, "{}", uuid)?,
+            ElementId::Path(path) => write!(f, "{}", path.display())?,
         }
 
         Ok(())
@@ -4916,6 +4933,12 @@ impl From<i32> for ElementId {
 impl From<SharedString> for ElementId {
     fn from(name: SharedString) -> Self {
         ElementId::Name(name)
+    }
+}
+
+impl From<Arc<std::path::Path>> for ElementId {
+    fn from(path: Arc<std::path::Path>) -> Self {
+        ElementId::Path(path)
     }
 }
 

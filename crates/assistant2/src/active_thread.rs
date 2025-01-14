@@ -1,11 +1,13 @@
 use std::sync::Arc;
+use std::time::Duration;
 
 use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use gpui::{
-    list, AbsoluteLength, AnyElement, AppContext, CornersRefinement, DefiniteLength,
-    EdgesRefinement, Empty, Length, ListAlignment, ListState, Model, StyleRefinement, Subscription,
-    TextStyleRefinement, View, WeakView,
+    list, percentage, AbsoluteLength, Animation, AnimationExt, AnyElement, AppContext,
+    DefiniteLength, EdgesRefinement, Empty, Length, ListAlignment, ListOffset, ListState, Model,
+    StyleRefinement, Subscription, TextStyleRefinement, Transformation, UnderlineStyle, View,
+    WeakView,
 };
 use language::LanguageRegistry;
 use language_model::Role;
@@ -22,7 +24,7 @@ pub struct ActiveThread {
     workspace: WeakView<Workspace>,
     language_registry: Arc<LanguageRegistry>,
     tools: Arc<ToolWorkingSet>,
-    thread: Model<Thread>,
+    pub(crate) thread: Model<Thread>,
     messages: Vec<MessageId>,
     list_state: ListState,
     rendered_messages_by_id: HashMap<MessageId, View<Markdown>>,
@@ -76,6 +78,16 @@ impl ActiveThread {
         self.thread.read(cx).summary()
     }
 
+    pub fn summary_or_default(&self, cx: &AppContext) -> SharedString {
+        self.thread.read(cx).summary_or_default()
+    }
+
+    pub fn cancel_last_completion(&mut self, cx: &mut AppContext) -> bool {
+        self.last_error.take();
+        self.thread
+            .update(cx, |thread, _cx| thread.cancel_last_completion())
+    }
+
     pub fn last_error(&self) -> Option<ThreadError> {
         self.last_error.clone()
     }
@@ -108,7 +120,7 @@ impl ActiveThread {
             selection_background_color: cx.theme().players().local().selection,
             code_block: StyleRefinement {
                 margin: EdgesRefinement {
-                    top: Some(Length::Definite(rems(0.5).into())),
+                    top: Some(Length::Definite(rems(1.0).into())),
                     left: Some(Length::Definite(rems(0.).into())),
                     right: Some(Length::Definite(rems(0.).into())),
                     bottom: Some(Length::Definite(rems(1.).into())),
@@ -120,18 +132,12 @@ impl ActiveThread {
                     bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
                 },
                 background: Some(colors.editor_foreground.opacity(0.01).into()),
-                border_color: Some(colors.border_variant.opacity(0.25)),
+                border_color: Some(colors.border_variant.opacity(0.3)),
                 border_widths: EdgesRefinement {
                     top: Some(AbsoluteLength::Pixels(Pixels(1.0))),
                     left: Some(AbsoluteLength::Pixels(Pixels(1.))),
                     right: Some(AbsoluteLength::Pixels(Pixels(1.))),
                     bottom: Some(AbsoluteLength::Pixels(Pixels(1.))),
-                },
-                corner_radii: CornersRefinement {
-                    top_left: Some(AbsoluteLength::Pixels(Pixels(2.))),
-                    top_right: Some(AbsoluteLength::Pixels(Pixels(2.))),
-                    bottom_right: Some(AbsoluteLength::Pixels(Pixels(2.))),
-                    bottom_left: Some(AbsoluteLength::Pixels(Pixels(2.))),
                 },
                 text: Some(TextStyleRefinement {
                     font_family: Some(theme_settings.buffer_font.family.clone()),
@@ -143,7 +149,16 @@ impl ActiveThread {
             inline_code: TextStyleRefinement {
                 font_family: Some(theme_settings.buffer_font.family.clone()),
                 font_size: Some(buffer_font_size.into()),
-                background_color: Some(colors.editor_foreground.opacity(0.01)),
+                background_color: Some(colors.editor_foreground.opacity(0.1)),
+                ..Default::default()
+            },
+            link: TextStyleRefinement {
+                background_color: Some(colors.editor_foreground.opacity(0.025)),
+                underline: Some(UnderlineStyle {
+                    color: Some(colors.text_accent.opacity(0.5)),
+                    thickness: px(1.),
+                    ..Default::default()
+                }),
                 ..Default::default()
             },
             ..Default::default()
@@ -159,6 +174,10 @@ impl ActiveThread {
             )
         });
         self.rendered_messages_by_id.insert(*id, markdown);
+        self.list_state.scroll_to(ListOffset {
+            item_ix: old_len,
+            offset_in_item: Pixels(0.0),
+        });
     }
 
     fn handle_thread_event(
@@ -223,6 +242,7 @@ impl ActiveThread {
 
     fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
         let message_id = self.messages[ix];
+        let is_last_message = ix == self.messages.len() - 1;
         let Some(message) = self.thread.read(cx).message(message_id) else {
             return Empty.into_any();
         };
@@ -231,6 +251,7 @@ impl ActiveThread {
             return Empty.into_any();
         };
 
+        let is_streaming_completion = self.thread.read(cx).is_streaming();
         let context = self.thread.read(cx).context_for_message(message_id);
         let colors = cx.theme().colors();
 
@@ -272,15 +293,50 @@ impl ActiveThread {
                                     ),
                             ),
                     )
-                    .child(v_flex().p_2p5().text_ui(cx).child(markdown.clone()))
+                    .child(div().p_2p5().text_ui(cx).child(markdown.clone()))
+                    .when(
+                        message.role == Role::Assistant
+                            && is_last_message
+                            && is_streaming_completion,
+                        |parent| {
+                            parent.child(
+                                h_flex()
+                                    .gap_1()
+                                    .p_2p5()
+                                    .child(
+                                        Icon::new(IconName::ArrowCircle)
+                                            .size(IconSize::Small)
+                                            .color(Color::Muted)
+                                            .with_animation(
+                                                "arrow-circle",
+                                                Animation::new(Duration::from_secs(2)).repeat(),
+                                                |icon, delta| {
+                                                    icon.transform(Transformation::rotate(
+                                                        percentage(delta),
+                                                    ))
+                                                },
+                                            ),
+                                    )
+                                    .child(
+                                        Label::new("Generating…")
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    ),
+                            )
+                        },
+                    )
                     .when_some(context, |parent, context| {
-                        parent.child(
-                            h_flex().flex_wrap().gap_1().p_1p5().children(
-                                context
-                                    .iter()
-                                    .map(|context| ContextPill::new(context.clone())),
-                            ),
-                        )
+                        if !context.is_empty() {
+                            parent.child(
+                                h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
+                                    context.into_iter().map(|context| {
+                                        ContextPill::new_added(context, false, None)
+                                    }),
+                                ),
+                            )
+                        } else {
+                            parent
+                        }
                     }),
             )
             .into_any()
@@ -288,7 +344,30 @@ impl ActiveThread {
 }
 
 impl Render for ActiveThread {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        list(self.list_state.clone()).flex_1().py_1()
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let is_streaming_completion = self.thread.read(cx).is_streaming();
+
+        v_flex()
+            .size_full()
+            .child(list(self.list_state.clone()).flex_grow())
+            .child(
+                h_flex()
+                    .absolute()
+                    .bottom_1()
+                    .flex_shrink()
+                    .justify_center()
+                    .w_full()
+                    .when(is_streaming_completion, |parent| {
+                        parent.child(
+                            h_flex()
+                                .gap_2()
+                                .p_1p5()
+                                .rounded_md()
+                                .bg(cx.theme().colors().elevated_surface_background)
+                                .child(Label::new("Generating…").size(LabelSize::Small))
+                                .child(Label::new("esc to cancel").size(LabelSize::Small)),
+                        )
+                    }),
+            )
     }
 }

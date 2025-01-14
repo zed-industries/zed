@@ -13,14 +13,6 @@ fn main() {
             println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
         }
 
-        if std::env::var("ZED_BUNDLE").ok().as_deref() == Some("true") {
-            // Find WebRTC.framework in the Frameworks folder when running as part of an application bundle.
-            println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path/../Frameworks");
-        } else {
-            // Find WebRTC.framework as a sibling of the executable when running outside of an application bundle.
-            println!("cargo:rustc-link-arg=-Wl,-rpath,@executable_path");
-        }
-
         // Weakly link ReplayKit to ensure Zed can be used on macOS 10.15+.
         println!("cargo:rustc-link-arg=-Wl,-weak_framework,ReplayKit");
 

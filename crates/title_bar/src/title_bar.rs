@@ -7,6 +7,10 @@ mod window_controls;
 mod stories;
 
 use crate::application_menu::ApplicationMenu;
+
+#[cfg(not(target_os = "macos"))]
+use crate::application_menu::{NavigateApplicationMenuInDirection, OpenApplicationMenu};
+
 use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
@@ -17,7 +21,7 @@ use gpui::{
     Interactivity, IntoElement, Model, MouseButton, ParentElement, Render, Stateful,
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
-use project::{Project, RepositoryEntry};
+use project::Project;
 use rpc::proto;
 use settings::Settings as _;
 use smallvec::SmallVec;
@@ -53,7 +57,39 @@ actions!(
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, cx| {
         let item = cx.new_view(|cx| TitleBar::new("title-bar", workspace, cx));
-        workspace.set_titlebar_item(item.into(), cx)
+        workspace.set_titlebar_item(item.into(), cx);
+
+        #[cfg(not(target_os = "macos"))]
+        workspace.register_action(|workspace, action: &OpenApplicationMenu, cx| {
+            if let Some(titlebar) = workspace
+                .titlebar_item()
+                .and_then(|item| item.downcast::<TitleBar>().ok())
+            {
+                titlebar.update(cx, |titlebar, cx| {
+                    if let Some(ref menu) = titlebar.application_menu {
+                        menu.update(cx, |menu, cx| menu.open_menu(action, cx));
+                    }
+                });
+            }
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        workspace.register_action(
+            |workspace, action: &NavigateApplicationMenuInDirection, cx| {
+                if let Some(titlebar) = workspace
+                    .titlebar_item()
+                    .and_then(|item| item.downcast::<TitleBar>().ok())
+                {
+                    titlebar.update(cx, |titlebar, cx| {
+                        if let Some(ref menu) = titlebar.application_menu {
+                            menu.update(cx, |menu, cx| {
+                                menu.navigate_menus_in_direction(action, cx)
+                            });
+                        }
+                    });
+                }
+            },
+        );
     })
     .detach();
 }
@@ -138,7 +174,7 @@ impl Render for TitleBar {
                                 let mut render_project_items = true;
                                 title_bar
                                     .when_some(self.application_menu.clone(), |title_bar, menu| {
-                                        render_project_items = !menu.read(cx).is_any_deployed();
+                                        render_project_items = !menu.read(cx).all_menus_shown();
                                         title_bar.child(menu)
                                     })
                                     .when(render_project_items, |title_bar| {
@@ -451,7 +487,7 @@ impl TitleBar {
         let workspace = self.workspace.upgrade()?;
         let branch_name = entry
             .as_ref()
-            .and_then(RepositoryEntry::branch)
+            .and_then(|entry| entry.branch())
             .map(|branch| util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH))?;
         Some(
             Button::new("project_branch_trigger", branch_name)

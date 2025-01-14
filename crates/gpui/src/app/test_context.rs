@@ -77,7 +77,7 @@ impl Context for TestAppContext {
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+        F: FnOnce(AnyView, &mut WindowContext) -> T,
     {
         let mut lock = self.app.borrow_mut();
         lock.update_window(window, f)
@@ -916,7 +916,7 @@ impl Context for VisualTestContext {
 
     fn update_window<T, F>(&mut self, window: AnyWindowHandle, f: F) -> Result<T>
     where
-        F: FnOnce(AnyView, &mut WindowContext<'_>) -> T,
+        F: FnOnce(AnyView, &mut WindowContext) -> T,
     {
         self.cx.update_window(window, f)
     }
@@ -936,7 +936,7 @@ impl Context for VisualTestContext {
 impl VisualContext for VisualTestContext {
     fn new_view<V>(
         &mut self,
-        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
+        build_view: impl FnOnce(&mut ViewContext<V>) -> V,
     ) -> Self::Result<View<V>>
     where
         V: 'static + Render,
@@ -949,7 +949,7 @@ impl VisualContext for VisualTestContext {
     fn update_view<V: 'static, R>(
         &mut self,
         view: &View<V>,
-        update: impl FnOnce(&mut V, &mut ViewContext<'_, V>) -> R,
+        update: impl FnOnce(&mut V, &mut ViewContext<V>) -> R,
     ) -> Self::Result<R> {
         self.window
             .update(&mut self.cx, |_, cx| cx.update_view(view, update))
@@ -958,7 +958,7 @@ impl VisualContext for VisualTestContext {
 
     fn replace_root_view<V>(
         &mut self,
-        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
+        build_view: impl FnOnce(&mut ViewContext<V>) -> V,
     ) -> Self::Result<View<V>>
     where
         V: 'static + Render,
@@ -993,7 +993,7 @@ impl AnyWindowHandle {
     pub fn build_view<V: Render + 'static>(
         &self,
         cx: &mut TestAppContext,
-        build_view: impl FnOnce(&mut ViewContext<'_, V>) -> V,
+        build_view: impl FnOnce(&mut ViewContext<V>) -> V,
     ) -> View<V> {
         self.update(cx, |_, cx| cx.new_view(build_view)).unwrap()
     }

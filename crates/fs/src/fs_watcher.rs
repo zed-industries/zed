@@ -5,12 +5,12 @@ use util::ResultExt;
 
 use crate::{PathEvent, PathEventKind, Watcher};
 
-pub struct LinuxWatcher {
+pub struct FsWatcher {
     tx: smol::channel::Sender<()>,
     pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
 }
 
-impl LinuxWatcher {
+impl FsWatcher {
     pub fn new(
         tx: smol::channel::Sender<()>,
         pending_path_events: Arc<Mutex<Vec<PathEvent>>>,
@@ -22,7 +22,7 @@ impl LinuxWatcher {
     }
 }
 
-impl Watcher for LinuxWatcher {
+impl Watcher for FsWatcher {
     fn add(&self, path: &std::path::Path) -> gpui::Result<()> {
         let root_path = path.to_path_buf();
 
@@ -69,7 +69,7 @@ impl Watcher for LinuxWatcher {
         })?;
 
         global(|g| {
-            g.inotify
+            g.watcher
                 .lock()
                 .watch(path, notify::RecursiveMode::NonRecursive)
         })??;
@@ -79,16 +79,18 @@ impl Watcher for LinuxWatcher {
 
     fn remove(&self, path: &std::path::Path) -> gpui::Result<()> {
         use notify::Watcher;
-        Ok(global(|w| w.inotify.lock().unwatch(path))??)
+        Ok(global(|w| w.watcher.lock().unwatch(path))??)
     }
 }
 
 pub struct GlobalWatcher {
-    // two mutexes because calling inotify.add triggers an inotify.event, which needs watchers.
+    // two mutexes because calling watcher.add triggers an watcher.event, which needs watchers.
     #[cfg(target_os = "linux")]
-    pub(super) inotify: Mutex<notify::INotifyWatcher>,
+    pub(super) watcher: Mutex<notify::INotifyWatcher>,
     #[cfg(target_os = "freebsd")]
-    pub(super) inotify: Mutex<notify::KqueueWatcher>,
+    pub(super) watcher: Mutex<notify::KqueueWatcher>,
+    #[cfg(target_os = "windows")]
+    pub(super) watcher: Mutex<notify::ReadDirectoryChangesWatcher>,
     pub(super) watchers: Mutex<Vec<Box<dyn Fn(&notify::Event) + Send + Sync>>>,
 }
 
@@ -98,7 +100,8 @@ impl GlobalWatcher {
     }
 }
 
-static INOTIFY_INSTANCE: OnceLock<anyhow::Result<GlobalWatcher, notify::Error>> = OnceLock::new();
+static FS_WATCHER_INSTANCE: OnceLock<anyhow::Result<GlobalWatcher, notify::Error>> =
+    OnceLock::new();
 
 fn handle_event(event: Result<notify::Event, notify::Error>) {
     let Some(event) = event.log_err() else { return };
@@ -111,9 +114,9 @@ fn handle_event(event: Result<notify::Event, notify::Error>) {
 }
 
 pub fn global<T>(f: impl FnOnce(&GlobalWatcher) -> T) -> anyhow::Result<T> {
-    let result = INOTIFY_INSTANCE.get_or_init(|| {
+    let result = FS_WATCHER_INSTANCE.get_or_init(|| {
         notify::recommended_watcher(handle_event).map(|file_watcher| GlobalWatcher {
-            inotify: Mutex::new(file_watcher),
+            watcher: Mutex::new(file_watcher),
             watchers: Default::default(),
         })
     });

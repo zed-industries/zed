@@ -96,12 +96,18 @@ impl Item for ImageView {
 
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
         let project_path = self.image_item.read(cx).project_path(cx);
+
         let label_color = if ItemSettings::get_global(cx).git_status {
+            let git_status = self
+                .project
+                .read(cx)
+                .project_path_git_status(&project_path, cx);
+
             self.project
                 .read(cx)
                 .entry_for_path(&project_path, cx)
                 .map(|entry| {
-                    entry_git_aware_label_color(entry.git_status, entry.is_ignored, params.selected)
+                    entry_git_aware_label_color(git_status, entry.is_ignored, params.selected)
                 })
                 .unwrap_or_else(|| params.text_color())
         } else {
