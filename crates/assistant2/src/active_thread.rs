@@ -261,7 +261,7 @@ impl ActiveThread {
                         h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
                             context
                                 .into_iter()
-                                .map(|context| ContextPill::new_added(context, false, None)),
+                                .map(|context| ContextPill::new_added(context, false, false, None)),
                         ),
                     )
                 } else {
@@ -278,21 +278,20 @@ impl ActiveThread {
                     v_flex()
                         .bg(colors.editor_background)
                         .ml_16()
-                        // .shadow_sm()
-                        .rounded_lg()
+                        .rounded_t_lg()
+                        .rounded_bl_lg()
+                        .rounded_br_none()
                         .border_1()
                         .border_color(colors.border)
-                        // .overflow_hidden()
                         .child(
                             h_flex()
                                 .py_1()
                                 .px_2()
-                                .bg(colors.editor_foreground.opacity(0.1))
+                                .bg(colors.editor_foreground.opacity(0.05))
                                 .border_b_1()
                                 .border_color(colors.border)
                                 .justify_between()
                                 .rounded_t(px(6.))
-                                // .rounded_lg()
                                 .child(
                                     h_flex()
                                         .gap_1p5()
