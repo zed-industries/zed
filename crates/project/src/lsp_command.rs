@@ -4,7 +4,8 @@ use crate::{
     lsp_store::{LocalLspStore, LspStore},
     CodeAction, CoreCompletion, DocumentHighlight, Hover, HoverBlock, HoverBlockKind, InlayHint,
     InlayHintLabel, InlayHintLabelPart, InlayHintLabelPartTooltip, InlayHintTooltip, Location,
-    LocationLink, LspDiagnostics, MarkupContent, PrepareRenameResponse, ProjectTransaction, ResolveState,
+    LocationLink, LspDiagnostics, MarkupContent, PrepareRenameResponse, ProjectTransaction,
+    ResolveState,
 };
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
@@ -21,10 +22,10 @@ use language::{
     OffsetRangeExt, PointUtf16, ToOffset, ToPointUtf16, Transaction, Unclipped,
 };
 use lsp::{
-    AdapterServerCapabilities, CodeActionKind, CodeActionOptions, CodeDescription, CompletionContext,
-    CompletionListItemDefaultsEditRange, CompletionTriggerKind, DocumentHighlightKind,
-    LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities, OneOf, RenameOptions,
-    ServerCapabilities,
+    AdapterServerCapabilities, CodeActionKind, CodeActionOptions, CodeDescription,
+    CompletionContext, CompletionListItemDefaultsEditRange, CompletionTriggerKind,
+    DocumentHighlightKind, LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities,
+    OneOf, RenameOptions, ServerCapabilities,
 };
 use serde_json::Value;
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
@@ -3331,6 +3332,10 @@ impl LspCommand for GetDocumentDiagnostics {
     type Response = Option<LspDiagnostics>;
     type LspRequest = lsp::request::DocumentDiagnosticRequest;
     type ProtoRequest = proto::GetDocumentDiagnostics;
+
+    fn display_name(&self) -> &str {
+        "Get diagnostics"
+    }
 
     fn check_capabilities(&self, server_capabilities: AdapterServerCapabilities) -> bool {
         server_capabilities
