@@ -4511,7 +4511,8 @@ impl Editor {
         if !user_requested
             && (!self.enable_inline_completions
                 || !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx)
-                || !self.is_focused(cx))
+                || !self.is_focused(cx)
+                || buffer.read(cx).is_empty())
         {
             self.discard_inline_completion(false, cx);
             return None;
