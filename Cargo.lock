@@ -14220,6 +14220,8 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
+ "smol",
+ "task",
  "theme",
  "tokio",
  "ui",

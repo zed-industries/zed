@@ -366,16 +366,15 @@ impl ShellBuilder {
             .into_iter()
             .fold(task_command, |mut command, arg| {
                 command.push(' ');
-                command.push_str(&self.to_windows_shell_variable(windows_shell_type, arg));
+                command.push_str(&to_windows_shell_variable(windows_shell_type, arg));
                 command
             });
 
         match self.windows_shell_type() {
-            WindowsShellType::Powershell => self.args.extend(["-C".to_owned(), combined_command]),
-            WindowsShellType::Cmd => self.args.extend(["/C".to_owned(), combined_command]),
+            WindowsShellType::Powershell => user_args.extend(["-C".to_owned(), combined_command]),
+            WindowsShellType::Cmd => user_args.extend(["/C".to_owned(), combined_command]),
             WindowsShellType::Other => {
-                self.args
-                    .extend(["-i".to_owned(), "-c".to_owned(), combined_command])
+                user_args.extend(["-i".to_owned(), "-c".to_owned(), combined_command])
             }
         }
 

@@ -27,7 +27,7 @@ use editor::{
 };
 use gpui::{
     actions, impl_actions, Action, AppContext, Axis, Entity, EventEmitter, KeyContext,
-    KeystrokeEvent, Render, Subscription, View, ViewContext, WeakView,
+    KeystrokeEvent, Render, Subscription, Task, View, ViewContext, WeakView,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -221,6 +221,7 @@ pub(crate) struct Vim {
 
     editor: WeakView<Editor>,
 
+    running_command: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -265,6 +266,7 @@ impl Vim {
             search: SearchState::default(),
 
             editor: editor.downgrade(),
+            running_command: None,
             _subscriptions: vec![
                 cx.observe_keystrokes(Self::observe_keystrokes),
                 cx.subscribe(&editor, |this, _, event, cx| {
@@ -519,6 +521,7 @@ impl Vim {
         self.mode = mode;
         self.operator_stack.clear();
         self.selected_register.take();
+        self.running_command.take();
         if mode == Mode::Normal || mode != last_mode {
             self.current_tx.take();
             self.current_anchor.take();

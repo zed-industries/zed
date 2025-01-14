@@ -1,10 +1,12 @@
 use anyhow::{anyhow, Result};
+use collections::HashMap;
 use command_palette_hooks::CommandInterceptResult;
 use editor::{
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
     display_map::ToDisplayPoint,
     Bias, Editor, ToPoint,
 };
+use futures::{AsyncReadExt, AsyncWriteExt};
 use gpui::{
     actions, impl_internal_actions, Action, AppContext, Global, ViewContext, WindowContext,
 };
@@ -17,12 +19,15 @@ use serde::Deserialize;
 use std::{
     iter::Peekable,
     ops::{Deref, Range},
+    process::Stdio,
     str::Chars,
     sync::OnceLock,
     time::Instant,
 };
+use task::{HideStrategy, RevealStrategy, SpawnInTerminal, TaskId};
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, SaveIntent};
+use zed_actions::RevealTarget;
 
 use crate::{
     motion::{EndOfDocument, Motion, StartOfDocument},
@@ -64,7 +69,14 @@ struct WrappedAction(Box<dyn Action>);
 actions!(vim, [VisualCommand, CountCommand]);
 impl_internal_actions!(
     vim,
-    [GoToLine, YankCommand, WithRange, WithCount, OnMatchingLines]
+    [
+        GoToLine,
+        YankCommand,
+        WithRange,
+        WithCount,
+        OnMatchingLines,
+        ShellExec
+    ]
 );
 
 impl PartialEq for WrappedAction {
@@ -208,6 +220,10 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     });
 
     Vim::action(editor, cx, |vim, action: &OnMatchingLines, cx| {
+        action.run(vim, cx)
+    });
+
+    Vim::action(editor, cx, |vim, action: &ShellExec, cx| {
         action.run(vim, cx)
     })
 }
@@ -817,6 +833,8 @@ pub fn command_interceptor(mut input: &str, cx: &AppContext) -> Option<CommandIn
         } else {
             None
         }
+    } else if query.contains('!') {
+        ShellExec::parse(query, range.clone())
     } else {
         None
     };
@@ -1054,6 +1072,139 @@ impl OnMatchingLines {
             })
             .detach();
         });
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShellExec {
+    command: String,
+    range: Option<CommandRange>,
+    is_read: bool,
+}
+
+impl ShellExec {
+    pub fn parse(query: &str, range: Option<CommandRange>) -> Option<Box<dyn Action>> {
+        let (before, after) = query.split_once('!')?;
+        let before = before.trim();
+
+        if !"read".starts_with(before) {
+            return None;
+        }
+
+        Some(
+            ShellExec {
+                command: after.trim().to_string(),
+                range,
+                is_read: !before.is_empty(),
+            }
+            .boxed_clone(),
+        )
+    }
+
+    pub fn run(&self, vim: &mut Vim, cx: &mut ViewContext<Vim>) {
+        let Some(workspace) = vim.workspace(cx) else {
+            return;
+        };
+        let project = workspace.read(cx).project().clone();
+        let mut process = project.read(cx).exec_in_shell(self.command.clone(), cx);
+        process.stdout(Stdio::piped());
+        process.stderr(Stdio::piped());
+
+        let Some(range) = self.range.clone() else {
+            workspace.update(cx, |workspace, cx| {
+                let project = workspace.project().read(cx);
+                let cwd = project.first_project_directory(cx);
+                let shell = project.terminal_settings(&cwd, cx).shell.clone();
+                cx.emit(workspace::Event::SpawnTask {
+                    action: Box::new(SpawnInTerminal {
+                        id: TaskId("vim".to_string()),
+                        full_label: self.command.clone(),
+                        label: self.command.clone(),
+                        command: self.command.clone(),
+                        args: Vec::new(),
+                        command_label: self.command.clone(),
+                        cwd,
+                        env: HashMap::default(),
+                        use_new_terminal: true,
+                        allow_concurrent_runs: true,
+                        reveal: RevealStrategy::NoFocus,
+                        reveal_target: RevealTarget::Dock,
+                        hide: HideStrategy::Never,
+                        shell,
+                        show_summary: false,
+                        show_command: false,
+                    }),
+                });
+            });
+            return;
+        };
+
+        let mut input_snapshot = None;
+        let mut input_range = None;
+        vim.update_editor(cx, |vim, editor, cx| {
+            let Some(range) = range.buffer_range(vim, editor, cx).log_err() else {
+                return;
+            };
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let start = Point::new(range.start.0, 0);
+            let end = snapshot.clip_point(Point::new(range.end.0 + 1, 0), Bias::Left);
+            if self.is_read {
+                input_range = Some(snapshot.anchor_after(end)..snapshot.anchor_after(end));
+            } else {
+                input_range = Some(snapshot.anchor_before(start)..snapshot.anchor_after(end));
+            }
+
+            if !self.is_read {
+                input_snapshot = Some(snapshot)
+            }
+        });
+
+        let Some(range) = input_range else { return };
+
+        if input_snapshot.is_some() {
+            process.stdin(Stdio::piped());
+        } else {
+            process.stdin(Stdio::null());
+        };
+
+        let Some(mut running) = process.spawn().log_err() else {
+            return;
+        };
+
+        if let Some(snapshot) = input_snapshot {
+            if let Some(stdin) = running.stdin.take() {
+                let range = range.clone();
+                let buffer_size = 1024;
+                let mut writer = smol::io::BufWriter::with_capacity(buffer_size, stdin);
+                cx.background_executor()
+                    .spawn(async move {
+                        for chunk in snapshot.text_for_range(range) {
+                            writer.write_all(chunk.as_bytes()).await?;
+                        }
+                        writer.flush().await?;
+                        anyhow::Ok(())
+                    })
+                    .detach_and_log_err(cx)
+            }
+        }
+
+        vim.running_command
+            .replace(cx.spawn(|vim, mut cx| async move {
+                let Some(output) = running.output().await.log_err() else {
+                    return;
+                };
+                let mut text = String::from_utf8_lossy(&output.stdout).to_string();
+                text.push_str(&String::from_utf8_lossy(&output.stderr));
+
+                vim.update(&mut cx, |vim, cx| {
+                    vim.update_editor(cx, |vim, editor, cx| {
+                        editor.transact(cx, |editor, cx| {
+                            editor.edit([(range, text)], cx);
+                        })
+                    })
+                })
+                .log_err();
+            }));
     }
 }
 
