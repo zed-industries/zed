@@ -34,7 +34,6 @@ impl LmStudioEmbeddingProvider {
 
 impl EmbeddingProvider for LmStudioEmbeddingProvider {
     fn embed<'a>(&'a self, texts: &'a [TextToEmbed<'a>]) -> BoxFuture<'a, Result<Vec<Embedding>>> {
-        //
         let model = match self.model {
             LmStudioEmbeddingModel::NomicEmbedText => "nomic-embed-text",
         };

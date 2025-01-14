@@ -287,7 +287,7 @@ impl settings::Settings for AllLanguageModelSettings {
                 ollama.as_ref().and_then(|s| s.available_models.clone()),
             );
 
-            // LmStudio
+            // LM Studio
             let lmstudio = value.lmstudio.clone();
 
             merge(

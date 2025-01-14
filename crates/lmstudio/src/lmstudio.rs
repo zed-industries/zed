@@ -136,7 +136,7 @@ pub struct ChatResponse {
 pub struct ChoiceDelta {
     pub index: u32,
     #[serde(default)]
-    pub delta: serde_json::Value, // Change from Option<ChatMessage> to serde_json::Value
+    pub delta: serde_json::Value,
     pub finish_reason: Option<String>,
 }
 
