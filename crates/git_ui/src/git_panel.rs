@@ -532,7 +532,7 @@ impl GitPanel {
         cx.notify();
     }
 
-    fn select_first_entry(&mut self, cx: &mut ViewContext<Self>) {
+    fn select_first_entry_if_none(&mut self, cx: &mut ViewContext<Self>) {
         if !self.no_entries() && self.selected_entry.is_none() {
             self.selected_entry = Some(0);
             self.scroll_to_selected_entry(cx);
@@ -541,7 +541,7 @@ impl GitPanel {
     }
 
     fn focus_changes_list(&mut self, _: &FocusChanges, cx: &mut ViewContext<Self>) {
-        self.select_first_entry(cx);
+        self.select_first_entry_if_none(cx);
 
         cx.focus_self();
         cx.notify();
@@ -779,6 +779,9 @@ impl GitPanel {
         // Sort entries by path to maintain consistent order
         self.visible_entries
             .sort_by(|a, b| a.repo_path.cmp(&b.repo_path));
+
+        self.select_first_entry_if_none(cx);
+
         cx.notify();
     }
 
@@ -833,10 +836,13 @@ impl GitPanel {
             n => format!("{} changes", n),
         };
 
+        // for our use case treat None as false
+        let all_staged = self.all_staged.unwrap_or(false);
+
         h_flex()
             .h(px(32.))
             .items_center()
-            .px_3()
+            .px_2()
             .bg(ElevationIndex::Surface.bg(cx))
             .child(
                 h_flex()
@@ -844,10 +850,26 @@ impl GitPanel {
                     .child(
                         Checkbox::new(
                             "all-changes",
-                            self.all_staged
-                                .map_or(ToggleState::Selected, ToggleState::from),
+                            if self.no_entries() {
+                                ToggleState::Selected
+                            } else {
+                                self.all_staged
+                                    .map_or(ToggleState::Indeterminate, ToggleState::from)
+                            },
                         )
-                        .disabled(self.no_entries()),
+                        .fill()
+                        .elevation(ElevationIndex::Surface)
+                        .tooltip(move |cx| {
+                            if all_staged {
+                                Tooltip::text("Unstage all changes", cx)
+                            } else {
+                                Tooltip::text("Stage all changes", cx)
+                            }
+                        })
+                        .on_click(cx.listener(move |git_panel, _, cx| match all_staged {
+                            true => git_panel.unstage_all(&UnstageAll, cx),
+                            false => git_panel.stage_all(&StageAll, cx),
+                        })),
                     )
                     .child(div().text_buffer(cx).text_ui_sm(cx).child(changes_string)),
             )
@@ -855,22 +877,23 @@ impl GitPanel {
             .child(
                 h_flex()
                     .gap_2()
-                    .child(
-                        IconButton::new("discard-changes", IconName::Undo)
-                            .tooltip({
-                                let focus_handle = focus_handle.clone();
-                                move |cx| {
-                                    Tooltip::for_action_in(
-                                        "Discard all changes",
-                                        &RevertAll,
-                                        &focus_handle,
-                                        cx,
-                                    )
-                                }
-                            })
-                            .icon_size(IconSize::Small)
-                            .disabled(true),
-                    )
+                    // TODO: Re-add once revert all is added
+                    // .child(
+                    //     IconButton::new("discard-changes", IconName::Undo)
+                    //         .tooltip({
+                    //             let focus_handle = focus_handle.clone();
+                    //             move |cx| {
+                    //                 Tooltip::for_action_in(
+                    //                     "Discard all changes",
+                    //                     &RevertAll,
+                    //                     &focus_handle,
+                    //                     cx,
+                    //                 )
+                    //             }
+                    //         })
+                    //         .icon_size(IconSize::Small)
+                    //         .disabled(true),
+                    // )
                     .child(if self.all_staged.unwrap_or(false) {
                         self.panel_button("unstage-all", "Unstage All")
                             .tooltip({
@@ -884,6 +907,11 @@ impl GitPanel {
                                     )
                                 }
                             })
+                            .key_binding(ui::KeyBinding::for_action_in(
+                                &UnstageAll,
+                                &focus_handle,
+                                cx,
+                            ))
                             .on_click(
                                 cx.listener(move |this, _, cx| this.unstage_all(&UnstageAll, cx)),
                             )
@@ -900,6 +928,11 @@ impl GitPanel {
                                     )
                                 }
                             })
+                            .key_binding(ui::KeyBinding::for_action_in(
+                                &StageAll,
+                                &focus_handle,
+                                cx,
+                            ))
                             .on_click(cx.listener(move |this, _, cx| this.stage_all(&StageAll, cx)))
                     }),
             )
@@ -1125,9 +1158,9 @@ impl GitPanel {
             });
 
         if view_mode == GitViewMode::Tree {
-            entry = entry.pl(px(12. + 12. * entry_details.depth as f32))
+            entry = entry.pl(px(8. + 12. * entry_details.depth as f32))
         } else {
-            entry = entry.pl(px(12.))
+            entry = entry.pl(px(8.))
         }
 
         if selected {
