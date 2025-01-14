@@ -67,14 +67,14 @@ pub struct AxisPair<T: Clone> {
     pub horizontal: T,
 }
 
-pub fn axis_pair<T: Clone>(horizontal: T, vertical: T) -> AxisPair<T> {
-    AxisPair {
-        vertical,
-        horizontal,
-    }
-}
-
 impl<T: Clone> AxisPair<T> {
+    pub fn new(horizontal: T, vertical: T) -> Self {
+        Self {
+            vertical,
+            horizontal,
+        }
+    }
+
     pub fn as_xy(&self) -> (&T, &T) {
         (&self.horizontal, &self.vertical)
     }
@@ -83,20 +83,20 @@ impl<T: Clone> AxisPair<T> {
 impl<T: Clone> Along for AxisPair<T> {
     type Unit = T;
 
-    fn along(&self, axis: gpui::Axis) -> Self::Unit {
+    fn along(&self, axis: Axis) -> Self::Unit {
         match axis {
-            gpui::Axis::Horizontal => self.horizontal.clone(),
-            gpui::Axis::Vertical => self.vertical.clone(),
+            Axis::Horizontal => self.horizontal.clone(),
+            Axis::Vertical => self.vertical.clone(),
         }
     }
 
-    fn apply_along(&self, axis: gpui::Axis, f: impl FnOnce(Self::Unit) -> Self::Unit) -> Self {
+    fn apply_along(&self, axis: Axis, f: impl FnOnce(Self::Unit) -> Self::Unit) -> Self {
         match axis {
-            gpui::Axis::Horizontal => Self {
+            Axis::Horizontal => Self {
                 horizontal: f(self.horizontal.clone()),
                 vertical: self.vertical.clone(),
             },
-            gpui::Axis::Vertical => Self {
+            Axis::Vertical => Self {
                 horizontal: self.horizontal.clone(),
                 vertical: f(self.vertical.clone()),
             },
@@ -106,7 +106,7 @@ impl<T: Clone> Along for AxisPair<T> {
 
 impl From<ScrollbarAxes> for AxisPair<bool> {
     fn from(value: ScrollbarAxes) -> Self {
-        axis_pair(value.horizontal, value.vertical)
+        AxisPair::new(value.horizontal, value.vertical)
     }
 }
 
@@ -194,7 +194,7 @@ impl ScrollManager {
             autoscroll_request: None,
             show_scrollbars: true,
             hide_scrollbar_task: None,
-            dragging_scrollbar: axis_pair(false, false),
+            dragging_scrollbar: AxisPair::new(false, false),
             last_autoscroll: None,
             visible_line_count: None,
             forbid_vertical_scroll: false,
