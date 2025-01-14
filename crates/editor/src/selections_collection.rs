@@ -923,20 +923,23 @@ where
     D: TextDimension + Clone + Ord + Sub<D, Output = D>,
     I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
 {
-    let (to_summarize, selections) = selections.into_iter().tee();
-    let mut summaries = map
-        .buffer_snapshot
-        .summaries_for_anchors::<D, _>(
-            to_summarize
-                .flat_map(|s| [&s.start, &s.end])
-                .collect::<Vec<_>>(),
-        )
-        .into_iter();
-    selections.map(move |s| Selection {
-        id: s.id,
-        start: summaries.next().unwrap(),
-        end: summaries.next().unwrap(),
-        reversed: s.reversed,
-        goal: s.goal,
+    let (to_convert, selections) = resolve_selections_display(selections, map).tee();
+    let mut converted_endpoints =
+        map.buffer_snapshot
+            .dimensions_from_points::<D>(to_convert.flat_map(|s| {
+                let start = map.display_point_to_point(s.start, Bias::Left);
+                let end = map.display_point_to_point(s.end, Bias::Right);
+                [start, end]
+            }));
+    selections.map(move |s| {
+        let start = converted_endpoints.next().unwrap();
+        let end = converted_endpoints.next().unwrap();
+        Selection {
+            id: s.id,
+            start,
+            end,
+            reversed: s.reversed,
+            goal: s.goal,
+        }
     })
 }

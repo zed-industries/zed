@@ -4173,7 +4173,7 @@ impl MultiBufferSnapshot {
         diff_transforms_cursor: &Cursor<DiffTransform, DiffTransformSummary>,
     ) -> D
     where
-        D: TextDimension + Sub<D, Output = D>,
+        D: TextDimension + Sub<D, Output = D> + std::fmt::Debug,
     {
         let mut position = D::from_text_summary(&diff_transforms_cursor.start().output);
         if let Some(DiffTransform::DeletedHunk {
@@ -4244,7 +4244,7 @@ impl MultiBufferSnapshot {
 
     pub fn summaries_for_anchors<'a, D, I>(&'a self, anchors: I) -> Vec<D>
     where
-        D: TextDimension + Ord + Sub<D, Output = D>,
+        D: TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug,
         I: 'a + IntoIterator<Item = &'a Anchor>,
     {
         let mut anchors = anchors.into_iter().peekable();
