@@ -327,13 +327,11 @@ impl ActiveThread {
                     )
                     .when_some(context, |parent, context| {
                         if !context.is_empty() {
-                            parent.child(
-                                h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
-                                    context.into_iter().map(|context| {
-                                        ContextPill::new_added(context, false, None)
-                                    }),
-                                ),
-                            )
+                            parent.child(h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
+                                context.into_iter().map(|context| {
+                                    ContextPill::new_added(context, false, false, None)
+                                }),
+                            ))
                         } else {
                             parent
                         }
