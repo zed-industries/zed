@@ -11,7 +11,8 @@ use parking_lot::RwLock;
 use util::ResultExt;
 
 use crate::{
-    read_user_theme, refine_theme_family, Appearance, Theme, ThemeFamily, ThemeFamilyContent,
+    read_user_theme, refine_theme_family, Appearance, IconTheme, Theme, ThemeFamily,
+    ThemeFamilyContent,
 };
 
 /// The metadata for a theme.
@@ -36,6 +37,8 @@ impl Global for GlobalThemeRegistry {}
 
 struct ThemeRegistryState {
     themes: HashMap<SharedString, Arc<Theme>>,
+    #[allow(unused)]
+    icon_themes: HashMap<SharedString, Arc<IconTheme>>,
 }
 
 /// The registry for themes.
@@ -67,6 +70,7 @@ impl ThemeRegistry {
         let registry = Self {
             state: RwLock::new(ThemeRegistryState {
                 themes: HashMap::default(),
+                icon_themes: HashMap::default(),
             }),
             assets,
         };
