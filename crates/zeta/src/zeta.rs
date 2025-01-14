@@ -1,5 +1,7 @@
+mod completion_diff_element;
 mod rate_completion_modal;
 
+pub(crate) use completion_diff_element::*;
 pub use rate_completion_modal::*;
 
 use anyhow::{anyhow, Context as _, Result};
@@ -72,6 +74,7 @@ pub struct InlineCompletion {
     id: InlineCompletionId,
     path: Arc<Path>,
     excerpt_range: Range<usize>,
+    cursor_offset: usize,
     edits: Arc<[(Range<Anchor>, String)]>,
     snapshot: BufferSnapshot,
     input_outline: Arc<str>,
@@ -155,9 +158,8 @@ pub struct Zeta {
     client: Arc<Client>,
     events: VecDeque<Event>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
-    recent_completions: VecDeque<InlineCompletion>,
+    shown_completions: VecDeque<InlineCompletion>,
     rated_completions: HashSet<InlineCompletionId>,
-    shown_completions: HashSet<InlineCompletionId>,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
 }
@@ -185,9 +187,8 @@ impl Zeta {
         Self {
             client,
             events: VecDeque::new(),
-            recent_completions: VecDeque::new(),
+            shown_completions: VecDeque::new(),
             rated_completions: HashSet::default(),
-            shown_completions: HashSet::default(),
             registered_buffers: HashMap::default(),
             llm_token: LlmApiToken::default(),
             _llm_token_subscription: cx.subscribe(
@@ -298,7 +299,7 @@ impl Zeta {
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|_, cx| async move {
             let request_sent_at = Instant::now();
 
             let (input_events, input_excerpt, input_outline) = cx
@@ -337,10 +338,11 @@ impl Zeta {
             let output_excerpt = response.output_excerpt;
             log::debug!("completion response: {}", output_excerpt);
 
-            let inline_completion = Self::process_completion_response(
+            Self::process_completion_response(
                 output_excerpt,
                 &snapshot,
                 excerpt_range,
+                offset,
                 path,
                 input_outline,
                 input_events,
@@ -348,20 +350,7 @@ impl Zeta {
                 request_sent_at,
                 &cx,
             )
-            .await?;
-
-            this.update(&mut cx, |this, cx| {
-                this.recent_completions
-                    .push_front(inline_completion.clone());
-                if this.recent_completions.len() > 50 {
-                    let completion = this.recent_completions.pop_back().unwrap();
-                    this.shown_completions.remove(&completion.id);
-                    this.rated_completions.remove(&completion.id);
-                }
-                cx.notify();
-            })?;
-
-            Ok(inline_completion)
+            .await
         })
     }
 
@@ -494,8 +483,8 @@ and then another
             }
 
             zeta.update(&mut cx, |zeta, _cx| {
-                zeta.recent_completions.get_mut(2).unwrap().edits = Arc::new([]);
-                zeta.recent_completions.get_mut(3).unwrap().edits = Arc::new([]);
+                zeta.shown_completions.get_mut(2).unwrap().edits = Arc::new([]);
+                zeta.shown_completions.get_mut(3).unwrap().edits = Arc::new([]);
             })
             .ok();
         })
@@ -578,6 +567,7 @@ and then another
         output_excerpt: String,
         snapshot: &BufferSnapshot,
         excerpt_range: Range<usize>,
+        cursor_offset: usize,
         path: Arc<Path>,
         input_outline: String,
         input_events: String,
@@ -637,6 +627,7 @@ and then another
                 id: InlineCompletionId::new(),
                 path,
                 excerpt_range,
+                cursor_offset,
                 edits: edits.into(),
                 snapshot: snapshot.clone(),
                 input_outline: input_outline.into(),
@@ -719,12 +710,13 @@ and then another
         self.rated_completions.contains(&completion_id)
     }
 
-    pub fn was_completion_shown(&self, completion_id: InlineCompletionId) -> bool {
-        self.shown_completions.contains(&completion_id)
-    }
-
-    pub fn completion_shown(&mut self, completion_id: InlineCompletionId) {
-        self.shown_completions.insert(completion_id);
+    pub fn completion_shown(&mut self, completion: &InlineCompletion, cx: &mut ModelContext<Self>) {
+        self.shown_completions.push_front(completion.clone());
+        if self.shown_completions.len() > 50 {
+            let completion = self.shown_completions.pop_back().unwrap();
+            self.rated_completions.remove(&completion.id);
+        }
+        cx.notify();
     }
 
     pub fn rate_completion(
@@ -748,12 +740,12 @@ and then another
         cx.notify();
     }
 
-    pub fn recent_completions(&self) -> impl DoubleEndedIterator<Item = &InlineCompletion> {
-        self.recent_completions.iter()
+    pub fn shown_completions(&self) -> impl DoubleEndedIterator<Item = &InlineCompletion> {
+        self.shown_completions.iter()
     }
 
-    pub fn recent_completions_len(&self) -> usize {
-        self.recent_completions.len()
+    pub fn shown_completions_len(&self) -> usize {
+        self.shown_completions.len()
     }
 
     fn report_changes_for_buffer(
@@ -1077,14 +1069,14 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                     if let Some(old_completion) = this.current_completion.as_ref() {
                         let snapshot = buffer.read(cx).snapshot();
                         if new_completion.should_replace_completion(&old_completion, &snapshot) {
-                            this.zeta.update(cx, |zeta, _cx| {
-                                zeta.completion_shown(new_completion.completion.id)
+                            this.zeta.update(cx, |zeta, cx| {
+                                zeta.completion_shown(&new_completion.completion, cx);
                             });
                             this.current_completion = Some(new_completion);
                         }
                     } else {
-                        this.zeta.update(cx, |zeta, _cx| {
-                            zeta.completion_shown(new_completion.completion.id)
+                        this.zeta.update(cx, |zeta, cx| {
+                            zeta.completion_shown(&new_completion.completion, cx);
                         });
                         this.current_completion = Some(new_completion);
                     }
@@ -1217,6 +1209,7 @@ mod tests {
             snapshot: buffer.read(cx).snapshot(),
             id: InlineCompletionId::new(),
             excerpt_range: 0..0,
+            cursor_offset: 0,
             input_outline: "".into(),
             input_events: "".into(),
             input_excerpt: "".into(),
