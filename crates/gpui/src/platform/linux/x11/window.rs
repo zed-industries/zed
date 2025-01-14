@@ -1278,7 +1278,10 @@ impl PlatformWindow for X11Window {
     }
 
     fn map_window(&mut self) -> anyhow::Result<()> {
-        check_reply(|| "X11 MapWindow failed.", self.0.xcb.map_window(self.0.x_window))?;
+        check_reply(
+            || "X11 MapWindow failed.",
+            self.0.xcb.map_window(self.0.x_window),
+        )?;
         Ok(())
     }
 
