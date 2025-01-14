@@ -1779,12 +1779,11 @@ pub mod tests {
 
         editor
             .update(cx, |editor, cx| {
-                // TODO kb
-                // assert_eq!(
-                //     lsp_request_count.load(Ordering::Relaxed),
-                //     1,
-                //     "Should query new hints once"
-                // );
+                assert_eq!(
+                    lsp_request_count.load(Ordering::Relaxed),
+                    1,
+                    "Should query new hints once"
+                );
                 assert_eq!(
                     vec![
                         "type hint".to_string(),
@@ -1813,12 +1812,11 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, cx| {
-                // TODO kb
-                // assert_eq!(
-                //     lsp_request_count.load(Ordering::Relaxed),
-                //     2,
-                //     "Should load new hints twice"
-                // );
+                assert_eq!(
+                    lsp_request_count.load(Ordering::Relaxed),
+                    2,
+                    "Should load new hints twice"
+                );
                 assert_eq!(
                     vec![
                         "type hint".to_string(),
@@ -1884,12 +1882,11 @@ pub mod tests {
             });
             cx.executor().run_until_parked();
             editor.update(cx, |editor, cx| {
-                // TODO kb
-                // assert_eq!(
-                //     lsp_request_count.load(Ordering::Relaxed),
-                //     2,
-                //     "Should not load new hints on allowed hint kinds change for hint kinds {new_allowed_hint_kinds:?}"
-                // );
+                assert_eq!(
+                    lsp_request_count.load(Ordering::Relaxed),
+                    2,
+                    "Should not load new hints on allowed hint kinds change for hint kinds {new_allowed_hint_kinds:?}"
+                );
                 assert_eq!(
                     vec![
                         "type hint".to_string(),
@@ -1928,12 +1925,11 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, cx| {
-                // TODO kb
-                // assert_eq!(
-                //     lsp_request_count.load(Ordering::Relaxed),
-                //     2,
-                //     "Should not load new hints when hints got disabled"
-                // );
+                assert_eq!(
+                    lsp_request_count.load(Ordering::Relaxed),
+                    2,
+                    "Should not load new hints when hints got disabled"
+                );
                 assert!(
                     cached_hint_labels(editor).is_empty(),
                     "Should clear the cache when hints got disabled"
@@ -1957,12 +1953,11 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, cx| {
-                // TODO kb
-                // assert_eq!(
-                //     lsp_request_count.load(Ordering::Relaxed),
-                //     2,
-                //     "Should not load new hints when they got disabled"
-                // );
+                assert_eq!(
+                    lsp_request_count.load(Ordering::Relaxed),
+                    2,
+                    "Should not load new hints when they got disabled"
+                );
                 assert!(cached_hint_labels(editor).is_empty());
                 assert!(visible_hint_labels(editor, cx).is_empty());
             })
@@ -1984,12 +1979,11 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, cx| {
-                // TODO kb
-                // assert_eq!(
-                //     lsp_request_count.load(Ordering::Relaxed),
-                //     3,
-                //     "Should query for new hints when they got re-enabled"
-                // );
+                assert_eq!(
+                    lsp_request_count.load(Ordering::Relaxed),
+                    3,
+                    "Should query for new hints when they got re-enabled"
+                );
                 assert_eq!(
                     vec![
                         "type hint".to_string(),
@@ -2019,12 +2013,11 @@ pub mod tests {
         cx.executor().run_until_parked();
         editor
             .update(cx, |editor, cx| {
-                // TODO kb
-                // assert_eq!(
-                //     lsp_request_count.load(Ordering::Relaxed),
-                //     4,
-                //     "Should query for new hints again"
-                // );
+                assert_eq!(
+                    lsp_request_count.load(Ordering::Relaxed),
+                    4,
+                    "Should query for new hints again"
+                );
                 assert_eq!(
                     vec![
                         "type hint".to_string(),
@@ -2112,12 +2105,11 @@ pub mod tests {
                         "Should apply all changes made"
                     );
                 }
-                // TODO kb
-                // assert_eq!(
-                //     lsp_request_count.load(Ordering::Relaxed),
-                //     2,
-                //     "Should query new hints twice: for editor init and for the last edit that interrupted all others"
-                // );
+                assert_eq!(
+                    lsp_request_count.load(Ordering::Relaxed),
+                    2,
+                    "Should query new hints twice: for editor init and for the last edit that interrupted all others"
+                );
                 let expected_hints = vec!["2".to_string()];
                 assert_eq!(
                     expected_hints,
@@ -2157,12 +2149,11 @@ pub mod tests {
                         "Should apply all changes made"
                     );
                 }
-                // TODO kb
-                // assert_eq!(
-                //     lsp_request_count.load(Ordering::SeqCst),
-                //     3,
-                //     "Should query new hints one more time, for the last edit only"
-                // );
+                assert_eq!(
+                    lsp_request_count.load(Ordering::SeqCst),
+                    3,
+                    "Should query new hints one more time, for the last edit only"
+                );
                 let expected_hints = vec!["3".to_string()];
                 assert_eq!(
                     expected_hints,
@@ -2298,9 +2289,8 @@ pub mod tests {
             assert_eq!(invisible_query_range.start, expected_invisible_query_start, "Should initially query visible edge of the document");
             assert_eq!(invisible_query_range.end, expected_initial_query_range_end, "Should initially query visible edge of the document");
 
-            // TODO kb
-            // let requests_count = lsp_request_count.load(Ordering::Acquire);
-            // assert_eq!(requests_count, 2, "Visible + invisible request");
+            let requests_count = lsp_request_count.load(Ordering::Acquire);
+            assert_eq!(requests_count, 2, "Visible + invisible request");
             let expected_hints = vec!["47".to_string(), "94".to_string()];
             assert_eq!(
                 expected_hints,
@@ -2361,9 +2351,8 @@ pub mod tests {
                 "Second scroll should query one more screen down after the end of the visible range"
             );
 
-                // TODO kb
-                // let lsp_requests = lsp_request_count.load(Ordering::Acquire);
-                // assert_eq!(lsp_requests, 4, "Should query for hints after every scroll");
+                let lsp_requests = lsp_request_count.load(Ordering::Acquire);
+                assert_eq!(lsp_requests, 4, "Should query for hints after every scroll");
                 let expected_hints = vec![
                     "47".to_string(),
                     "94".to_string(),
@@ -2401,8 +2390,7 @@ pub mod tests {
                 .sorted_by_key(|r| r.start)
                 .collect::<Vec<_>>();
             assert!(ranges.is_empty(), "No new ranges or LSP queries should be made after returning to the selection with cached hints");
-            // TODO kb
-            // assert_eq!(lsp_request_count.load(Ordering::Acquire), 4);
+            assert_eq!(lsp_request_count.load(Ordering::Acquire), 4);
         }).unwrap();
 
         editor
@@ -2436,9 +2424,8 @@ pub mod tests {
             assert!(below_query_range.end.line >= selection_in_cached_range.row + (visible_line_count * 3.0 / 2.0) as u32,
                 "Hints query range should contain one more screen after");
 
-            // TODO kb
-            // let lsp_requests = task_lsp_request_ranges.lock().len();
-            // assert_eq!(lsp_requests, 7, "There should be a visible range and two ranges above and below it queried");
+            let lsp_requests = lsp_request_count.load(Ordering::Acquire);
+            assert_eq!(lsp_requests, 7, "There should be a visible range and two ranges above and below it queried");
             let expected_hints = vec!["67".to_string(), "115".to_string(), "163".to_string()];
             assert_eq!(expected_hints, cached_hint_labels(editor),
                 "Should have hints from the new LSP response after the edit");
