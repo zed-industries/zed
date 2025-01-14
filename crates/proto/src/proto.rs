@@ -185,6 +185,7 @@ messages!(
     (DapNextRequest, Background),
     (DapPauseRequest, Background),
     (DapRestartRequest, Background),
+    (DapRestartStackFrameRequest, Background),
     (DapShutdownSession, Background),
     (DapStepBackRequest, Background),
     (DapStepInRequest, Background),
@@ -531,6 +532,7 @@ request_messages!(
     (DapTerminateThreadsRequest, Ack),
     (DapTerminateRequest, Ack),
     (DapRestartRequest, Ack),
+    (DapRestartStackFrameRequest, Ack),
     (DapShutdownSession, Ack),
 );
 
@@ -635,6 +637,7 @@ entity_messages!(
     DapTerminateThreadsRequest,
     DapTerminateRequest,
     DapRestartRequest,
+    DapRestartStackFrameRequest,
     DapShutdownSession,
     UpdateThreadStatus,
 );

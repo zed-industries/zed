@@ -1,8 +1,8 @@
 use crate::{
     dap_command::{
         ContinueCommand, DapCommand, DisconnectCommand, NextCommand, PauseCommand, RestartCommand,
-        StepBackCommand, StepCommand, StepInCommand, StepOutCommand, TerminateCommand,
-        TerminateThreadsCommand,
+        RestartStackFrameCommand, StepBackCommand, StepCommand, StepInCommand, StepOutCommand,
+        TerminateCommand, TerminateThreadsCommand,
     },
     project_settings::ProjectSettings,
     ProjectEnvironment, ProjectItem as _, ProjectPath,
@@ -155,6 +155,7 @@ impl DapStore {
         client.add_model_request_handler(DapStore::handle_dap_command::<TerminateThreadsCommand>);
         client.add_model_request_handler(DapStore::handle_dap_command::<TerminateCommand>);
         client.add_model_request_handler(DapStore::handle_dap_command::<RestartCommand>);
+        client.add_model_request_handler(DapStore::handle_dap_command::<RestartStackFrameCommand>);
         client.add_model_request_handler(DapStore::handle_shutdown_session);
     }
 
@@ -868,6 +869,23 @@ impl DapStore {
                 .await?
                 .stack_frames)
         })
+    }
+
+    pub fn restart_stack_frame(
+        &mut self,
+        client_id: &DebugAdapterClientId,
+        stack_frame_id: u64,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        if !self
+            .capabilities_by_id(client_id)
+            .supports_restart_frame
+            .unwrap_or_default()
+        {
+            return Task::ready(Ok(()));
+        }
+
+        self.request_dap(client_id, RestartStackFrameCommand { stack_frame_id }, cx)
     }
 
     pub fn scopes(

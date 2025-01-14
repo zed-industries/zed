@@ -344,6 +344,7 @@ pub fn capabilities_from_proto(payload: &SetDebugClientCapabilities) -> Capabili
         supports_step_back: Some(payload.supports_step_back),
         supports_stepping_granularity: Some(payload.supports_stepping_granularity),
         supports_terminate_threads_request: Some(payload.supports_terminate_threads_request),
+        supports_restart_frame: Some(payload.supports_restart_frame_request),
         ..Default::default()
     }
 }
@@ -374,6 +375,7 @@ pub fn capabilities_to_proto(
         supports_terminate_threads_request: capabilities
             .supports_terminate_threads_request
             .unwrap_or_default(),
+        supports_restart_frame_request: capabilities.supports_restart_frame.unwrap_or_default(),
     }
 }
 

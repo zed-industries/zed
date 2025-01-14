@@ -239,6 +239,14 @@ impl StackFrameList {
             .ok()?
     }
 
+    pub fn restart_stack_frame(&mut self, stack_frame_id: u64, cx: &mut ViewContext<Self>) {
+        self.dap_store.update(cx, |store, cx| {
+            store
+                .restart_stack_frame(&self.client_id, stack_frame_id, cx)
+                .detach_and_log_err(cx);
+        });
+    }
+
     fn render_entry(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
         let stack_frame = &self.stack_frames[ix];
 
@@ -251,8 +259,16 @@ impl StackFrameList {
             stack_frame.line,
         );
 
-        v_flex()
+        let supports_frame_restart = self
+            .dap_store
+            .read(cx)
+            .capabilities_by_id(&self.client_id)
+            .supports_restart_frame
+            .unwrap_or_default();
+
+        h_flex()
             .rounded_md()
+            .justify_between()
             .w_full()
             .group("")
             .id(("stack-frame", stack_frame.id))
@@ -271,20 +287,58 @@ impl StackFrameList {
                         .detach_and_log_err(cx);
                 }
             }))
-            .hover(|s| s.bg(cx.theme().colors().element_hover).cursor_pointer())
+            .hover(|style| style.bg(cx.theme().colors().element_hover).cursor_pointer())
             .child(
-                h_flex()
-                    .gap_0p5()
-                    .text_ui_sm(cx)
-                    .child(stack_frame.name.clone())
-                    .child(formatted_path),
+                v_flex()
+                    .child(
+                        h_flex()
+                            .gap_0p5()
+                            .text_ui_sm(cx)
+                            .truncate()
+                            .child(stack_frame.name.clone())
+                            .child(formatted_path),
+                    )
+                    .child(
+                        h_flex()
+                            .text_ui_xs(cx)
+                            .truncate()
+                            .text_color(cx.theme().colors().text_muted)
+                            .when_some(source.and_then(|s| s.path), |this, path| this.child(path)),
+                    ),
             )
-            .child(
-                h_flex()
-                    .text_ui_xs(cx)
-                    .text_color(cx.theme().colors().text_muted)
-                    .when_some(source.and_then(|s| s.path), |this, path| this.child(path)),
-            )
+            .when(supports_frame_restart, |this| {
+                this.child(
+                    h_flex()
+                        .id(("restart-stack-frame", stack_frame.id))
+                        .visible_on_hover("")
+                        .absolute()
+                        .right_2()
+                        .overflow_hidden()
+                        .rounded_md()
+                        .border_1()
+                        .border_color(cx.theme().colors().element_selected)
+                        .bg(cx.theme().colors().element_background)
+                        .hover(|style| {
+                            style
+                                .bg(cx.theme().colors().ghost_element_hover)
+                                .cursor_pointer()
+                        })
+                        .child(
+                            IconButton::new(
+                                ("restart-stack-frame", stack_frame.id),
+                                IconName::DebugRestart,
+                            )
+                            .icon_size(IconSize::Small)
+                            .on_click(cx.listener({
+                                let stack_frame_id = stack_frame.id;
+                                move |this, _, cx| {
+                                    this.restart_stack_frame(stack_frame_id, cx);
+                                }
+                            }))
+                            .tooltip(move |cx| Tooltip::text("Restart Stack Frame", cx)),
+                        ),
+                )
+            })
             .into_any()
     }
 }

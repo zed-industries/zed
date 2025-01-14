@@ -798,3 +798,63 @@ impl DapCommand for RestartCommand {
         Ok(())
     }
 }
+
+#[derive(Debug, Clone)]
+pub(crate) struct RestartStackFrameCommand {
+    pub stack_frame_id: u64,
+}
+
+impl DapCommand for RestartStackFrameCommand {
+    type Response = <dap::requests::RestartFrame as dap::requests::Request>::Response;
+    type DapRequest = dap::requests::RestartFrame;
+    type ProtoRequest = proto::DapRestartStackFrameRequest;
+
+    fn client_id_from_proto(request: &Self::ProtoRequest) -> DebugAdapterClientId {
+        DebugAdapterClientId::from_proto(request.client_id)
+    }
+
+    fn from_proto(request: &Self::ProtoRequest) -> Self {
+        Self {
+            stack_frame_id: request.stack_frame_id,
+        }
+    }
+
+    fn to_proto(
+        &self,
+        debug_client_id: &DebugAdapterClientId,
+        upstream_project_id: u64,
+    ) -> proto::DapRestartStackFrameRequest {
+        proto::DapRestartStackFrameRequest {
+            project_id: upstream_project_id,
+            client_id: debug_client_id.to_proto(),
+            stack_frame_id: self.stack_frame_id,
+        }
+    }
+
+    fn response_to_proto(
+        _debug_client_id: &DebugAdapterClientId,
+        _message: Self::Response,
+    ) -> <Self::ProtoRequest as proto::RequestMessage>::Response {
+        proto::Ack {}
+    }
+
+    fn to_dap(&self) -> <Self::DapRequest as dap::requests::Request>::Arguments {
+        dap::RestartFrameArguments {
+            frame_id: self.stack_frame_id,
+        }
+    }
+
+    fn response_from_dap(
+        &self,
+        _message: <Self::DapRequest as dap::requests::Request>::Response,
+    ) -> Result<Self::Response> {
+        Ok(())
+    }
+
+    fn response_from_proto(
+        self,
+        _message: <Self::ProtoRequest as proto::RequestMessage>::Response,
+    ) -> Result<Self::Response> {
+        Ok(())
+    }
+}

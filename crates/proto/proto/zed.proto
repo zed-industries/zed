@@ -328,7 +328,8 @@ message Envelope {
         DapTerminateRequest dap_terminate_request = 307;
         DapRestartRequest dap_restart_request = 308;
         DapShutdownSession dap_shutdown_session = 309;
-        UpdateThreadStatus update_thread_status = 310; // current max
+        UpdateThreadStatus update_thread_status = 310;
+        DapRestartStackFrameRequest dap_restart_stack_frame_request = 311; // current max
     }
 
     reserved 87 to 88;
@@ -2469,6 +2470,7 @@ message SetDebugClientCapabilities {
     bool supports_step_back = 9;
     bool supports_stepping_granularity = 10;
     bool supports_terminate_threads_request = 11;
+    bool supports_restart_frame_request = 12;
 }
 
 message Breakpoint {
@@ -2649,6 +2651,11 @@ message DapRestartRequest {
     bytes raw_args = 3;
 }
 
+message DapRestartStackFrameRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 stack_frame_id = 3;
+}
 
 message DapShutdownSession {
     uint64 project_id = 1;
