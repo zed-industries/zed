@@ -495,6 +495,9 @@ impl Render for RateCompletionModal {
                                                 (false, false) => (IconName::FileDiff, Color::Accent, "Edits Available"),
                                             };
 
+                                            let file_name = completion.path.file_name().map(|f| f.to_string_lossy().to_string()).unwrap_or("untitled".to_string());
+                                            let file_path = completion.path.parent().map(|p| p.to_string_lossy().to_string());
+
                                             ListItem::new(completion.id)
                                                 .inset(true)
                                                 .spacing(ListItemSpacing::Sparse)
@@ -511,7 +514,11 @@ impl Render for RateCompletionModal {
                                                         )
                                                         .child(
                                                             v_flex()
-                                                                .child(Label::new(completion.path.to_string_lossy().to_string()).size(LabelSize::Small))
+                                                                .child(
+                                                                    h_flex().gap_2()
+                                                                        .child(Label::new(file_name).size(LabelSize::Small))
+                                                                        .when_some(file_path, |this, p| this.child(Label::new(p).size(LabelSize::Small).color(Color::Muted)))
+                                                                )
                                                                 .child(Label::new(format!("{} ago, {:.2?}", format_time_ago(completion.response_received_at.elapsed()), completion.latency()))
                                                                     .color(Color::Muted)
                                                                     .size(LabelSize::XSmall)
