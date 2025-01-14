@@ -963,7 +963,7 @@ impl sum_tree::Summary for ChunkSummary {
 }
 
 /// Summary of a string of text.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 pub struct TextSummary {
     /// Length in UTF-8
     pub len: usize,
@@ -1115,7 +1115,9 @@ impl ops::AddAssign<Self> for TextSummary {
     }
 }
 
-pub trait TextDimension: 'static + Clone + Default + for<'a> Dimension<'a, ChunkSummary> {
+pub trait TextDimension:
+    'static + Clone + Copy + Default + for<'a> Dimension<'a, ChunkSummary> + std::fmt::Debug
+{
     fn from_text_summary(summary: &TextSummary) -> Self;
     fn from_chunk(chunk: ChunkSlice) -> Self;
     fn add_assign(&mut self, other: &Self);

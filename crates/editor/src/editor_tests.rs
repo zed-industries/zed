@@ -10222,18 +10222,21 @@ async fn go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext)
 
     cx.update_editor(|editor, cx| {
         editor.fold(&Fold, cx);
+    });
+
+    cx.update_editor(|editor, cx| {
         editor.go_to_next_hunk(&GoToHunk, cx);
     });
 
     cx.assert_editor_state(
         &r#"
-        use some::modified;
+        ˇuse some::modified;
 
 
         fn main() {
             println!("hello there");
 
-        ˇ    println!("around the");
+            println!("around the");
             println!("world");
         }
         "#

@@ -4328,50 +4328,35 @@ impl MultiBufferSnapshot {
         points: impl 'a + IntoIterator<Item = Point>,
     ) -> impl 'a + Iterator<Item = D>
     where
-        D: TextDimension,
+        D: TextDimension + Sub<D, Output = D>,
     {
-        let mut cursor = self.excerpts.cursor::<TextSummary>(&());
-        let mut memoized_source_start: Option<Point> = None;
+        let mut cursor = self.cursor::<DimensionPair<Point, D>>();
+        cursor.seek(&DimensionPair {
+            key: Point::default(),
+            value: None,
+        });
         let mut points = points.into_iter();
         iter::from_fn(move || {
             let point = points.next()?;
 
-            // Clear the memoized source start if the point is in a different excerpt than previous.
-            if memoized_source_start.map_or(false, |_| point >= cursor.end(&()).lines) {
-                memoized_source_start = None;
-            }
+            cursor.seek_forward(&DimensionPair {
+                key: point,
+                value: None,
+            });
 
-            // Now determine where the excerpt containing the point starts in its source buffer.
-            // We'll use this value to calculate overshoot next.
-            let source_start = if let Some(source_start) = memoized_source_start {
-                source_start
+            if let Some(region) = cursor.region() {
+                let overshoot = point - region.range.start.key;
+                let buffer_point = region.buffer_range.start.key + overshoot;
+                let mut position = region.range.start.value.unwrap();
+                position.add_assign(
+                    &region
+                        .buffer
+                        .text_summary_for_range(region.buffer_range.start.key..buffer_point),
+                );
+                return Some(position);
             } else {
-                cursor.seek_forward(&point, Bias::Right, &());
-                if let Some(excerpt) = cursor.item() {
-                    let source_start = excerpt.range.context.start.to_point(&excerpt.buffer);
-                    memoized_source_start = Some(source_start);
-                    source_start
-                } else {
-                    return Some(D::from_text_summary(cursor.start()));
-                }
-            };
-
-            // First, assume the output dimension is at least the start of the excerpt containing the point
-            let mut output = D::from_text_summary(cursor.start());
-
-            // If the point lands within its excerpt, calculate and add the overshoot in dimension D.
-            if let Some(excerpt) = cursor.item() {
-                let overshoot = point - cursor.start().lines;
-                if !overshoot.is_zero() {
-                    let end_in_excerpt = source_start + overshoot;
-                    output.add_assign(
-                        &excerpt
-                            .buffer
-                            .text_summary_for_range::<D, _>(source_start..end_in_excerpt),
-                    );
-                }
+                return Some(D::from_text_summary(&self.text_summary()));
             }
-            Some(output)
         })
     }
 
