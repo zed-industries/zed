@@ -414,7 +414,7 @@ impl Render for ContextStrip {
                     suggested.name().clone(),
                     suggested.icon_path(),
                     suggested.kind(),
-                    self.focused_index.is_some() && self.focused_index == self.last_pill_index(),
+                    self.focused_index == Some(context.len()),
                     {
                         let context_store = self.context_store.clone();
                         Rc::new(cx.listener(move |this, _event, cx| {
