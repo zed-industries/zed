@@ -503,7 +503,17 @@
     // Where to the git panel. Can be 'left' or 'right'.
     "dock": "left",
     // Default width of the git panel.
-    "default_width": 360
+    "default_width": 360,
+    // Style of the git status indicator in the panel.
+    //
+    // Default: icon
+    "status_style": "icon",
+    "scrollbar": {
+      // When to show the scrollbar in the git panel.
+      //
+      // Default: inherits editor scrollbar settings
+      "show": null
+    }
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
