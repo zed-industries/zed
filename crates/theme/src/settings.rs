@@ -330,6 +330,9 @@ pub struct ThemeSettingsContent {
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
     /// The name of the icon theme to use.
+    ///
+    /// Currently not exposed to the user.
+    #[serde(skip)]
     #[serde(default)]
     pub icon_theme: Option<String>,
 
@@ -640,10 +643,11 @@ impl settings::Settings for ThemeSettings {
                 .or(themes.get(&zed_default_dark().name))
                 .unwrap(),
             theme_overrides: None,
-            active_icon_theme: themes
-                .get_icon_theme(defaults.icon_theme.as_ref().unwrap())
-                .or_else(|_| themes.get_icon_theme(DEFAULT_ICON_THEME_ID))
-                .unwrap(),
+            active_icon_theme: defaults
+                .icon_theme
+                .as_ref()
+                .and_then(|name| themes.get_icon_theme(name).ok())
+                .unwrap_or_else(|| themes.get_icon_theme(DEFAULT_ICON_THEME_ID).unwrap()),
             ui_density: defaults.ui_density.unwrap_or(UiDensity::Default),
             unnecessary_code_fade: defaults.unnecessary_code_fade.unwrap_or(0.0),
         };
