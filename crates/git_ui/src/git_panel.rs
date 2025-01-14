@@ -486,8 +486,7 @@ impl GitPanel {
             let new_selected_entry = if selected_entry > 0 {
                 selected_entry - 1
             } else {
-                self.selected_entry = Some(item_count - 1);
-                item_count - 1
+                selected_entry
             };
 
             self.selected_entry = Some(new_selected_entry);
