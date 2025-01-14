@@ -361,7 +361,7 @@ impl Thread {
             let result = stream_completion.await;
 
             thread
-                .update(&mut cx, |_thread, cx| match result.as_ref() {
+                .update(&mut cx, |thread, cx| match result.as_ref() {
                     Ok(stop_reason) => match stop_reason {
                         StopReason::ToolUse => {
                             cx.emit(ThreadEvent::UsePendingTools);
@@ -384,6 +384,8 @@ impl Thread {
                                 SharedString::from(error_message.clone()),
                             )));
                         }
+
+                        thread.cancel_last_completion();
                     }
                 })
                 .ok();
