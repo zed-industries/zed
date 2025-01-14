@@ -23,10 +23,10 @@ use language::{
     range_from_lsp, range_to_lsp,
 };
 use lsp::{
-    AdapterServerCapabilities, CodeActionKind, CodeActionOptions, CodeDescription, CompletionContext,
-    CompletionListItemDefaultsEditRange, CompletionTriggerKind, DocumentHighlightKind,
-    LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities, OneOf, RenameOptions,
-    ServerCapabilities,
+    AdapterServerCapabilities, CodeActionKind, CodeActionOptions, CodeDescription,
+    CompletionContext, CompletionListItemDefaultsEditRange, CompletionTriggerKind,
+    DocumentHighlightKind, LanguageServer, LanguageServerId, LinkedEditingRangeServerCapabilities,
+    OneOf, RenameOptions, ServerCapabilities,
 };
 use serde_json::Value;
 use signature_help::{lsp_to_proto_signature, proto_to_lsp_signature};
@@ -3798,6 +3798,10 @@ impl LspCommand for GetDocumentDiagnostics {
     type Response = Option<LspDiagnostics>;
     type LspRequest = lsp::request::DocumentDiagnosticRequest;
     type ProtoRequest = proto::GetDocumentDiagnostics;
+
+    fn display_name(&self) -> &str {
+        "Get diagnostics"
+    }
 
     fn check_capabilities(&self, server_capabilities: AdapterServerCapabilities) -> bool {
         server_capabilities
