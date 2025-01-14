@@ -1,5 +1,7 @@
+mod completion_diff_element;
 mod rate_completion_modal;
 
+pub(crate) use completion_diff_element::*;
 pub use rate_completion_modal::*;
 
 use anyhow::{anyhow, Context as _, Result};
@@ -72,6 +74,7 @@ pub struct InlineCompletion {
     id: InlineCompletionId,
     path: Arc<Path>,
     excerpt_range: Range<usize>,
+    cursor_offset: usize,
     edits: Arc<[(Range<Anchor>, String)]>,
     snapshot: BufferSnapshot,
     input_outline: Arc<str>,
@@ -339,6 +342,7 @@ impl Zeta {
                 output_excerpt,
                 &snapshot,
                 excerpt_range,
+                offset,
                 path,
                 input_outline,
                 input_events,
@@ -563,6 +567,7 @@ and then another
         output_excerpt: String,
         snapshot: &BufferSnapshot,
         excerpt_range: Range<usize>,
+        cursor_offset: usize,
         path: Arc<Path>,
         input_outline: String,
         input_events: String,
@@ -622,6 +627,7 @@ and then another
                 id: InlineCompletionId::new(),
                 path,
                 excerpt_range,
+                cursor_offset,
                 edits: edits.into(),
                 snapshot: snapshot.clone(),
                 input_outline: input_outline.into(),
@@ -1203,6 +1209,7 @@ mod tests {
             snapshot: buffer.read(cx).snapshot(),
             id: InlineCompletionId::new(),
             excerpt_range: 0..0,
+            cursor_offset: 0,
             input_outline: "".into(),
             input_events: "".into(),
             input_excerpt: "".into(),

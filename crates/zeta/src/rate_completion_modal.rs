@@ -1,13 +1,11 @@
-use crate::{InlineCompletion, InlineCompletionRating, Zeta};
+use crate::{CompletionDiffElement, InlineCompletion, InlineCompletionRating, Zeta};
 use editor::Editor;
 use gpui::{
-    actions, prelude::*, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView,
-    HighlightStyle, Model, StyledText, TextStyle, View, ViewContext,
+    actions, prelude::*, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
+    View, ViewContext,
 };
-use language::{language_settings, OffsetRangeExt};
-use settings::Settings;
+use language::language_settings;
 use std::time::Duration;
-use theme::ThemeSettings;
 use ui::{prelude::*, KeyBinding, List, ListItem, ListItemSpacing, Tooltip};
 use workspace::{ModalView, Workspace};
 
@@ -132,7 +130,7 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn thumbs_up_active(&mut self, _: &ThumbsUpActiveCompletion, cx: &mut ViewContext<Self>) {
+    pub fn thumbs_up_active(&mut self, _: &ThumbsUpActiveCompletion, cx: &mut ViewContext<Self>) {
         self.zeta.update(cx, |zeta, cx| {
             if let Some(active) = &self.active_completion {
                 zeta.rate_completion(
@@ -155,7 +153,11 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn thumbs_down_active(&mut self, _: &ThumbsDownActiveCompletion, cx: &mut ViewContext<Self>) {
+    pub fn thumbs_down_active(
+        &mut self,
+        _: &ThumbsDownActiveCompletion,
+        cx: &mut ViewContext<Self>,
+    ) {
         if let Some(active) = &self.active_completion {
             if active.feedback_editor.read(cx).text(cx).is_empty() {
                 return;
@@ -269,59 +271,6 @@ impl RateCompletionModal {
         let completion_id = active_completion.completion.id;
         let focus_handle = &self.focus_handle(cx);
 
-        let mut diff = active_completion
-            .completion
-            .snapshot
-            .text_for_range(active_completion.completion.excerpt_range.clone())
-            .collect::<String>();
-
-        let mut delta = 0;
-        let mut diff_highlights = Vec::new();
-        for (old_range, new_text) in active_completion.completion.edits.iter() {
-            let old_range = old_range.to_offset(&active_completion.completion.snapshot);
-            let old_start_in_text =
-                old_range.start - active_completion.completion.excerpt_range.start + delta;
-            let old_end_in_text =
-                old_range.end - active_completion.completion.excerpt_range.start + delta;
-            if old_start_in_text < old_end_in_text {
-                diff_highlights.push((
-                    old_start_in_text..old_end_in_text,
-                    HighlightStyle {
-                        background_color: Some(cx.theme().status().deleted_background),
-                        strikethrough: Some(gpui::StrikethroughStyle {
-                            thickness: px(1.),
-                            color: Some(cx.theme().colors().text_muted),
-                        }),
-                        ..Default::default()
-                    },
-                ));
-            }
-
-            if !new_text.is_empty() {
-                diff.insert_str(old_end_in_text, new_text);
-                diff_highlights.push((
-                    old_end_in_text..old_end_in_text + new_text.len(),
-                    HighlightStyle {
-                        background_color: Some(cx.theme().status().created_background),
-                        ..Default::default()
-                    },
-                ));
-                delta += new_text.len();
-            }
-        }
-
-        let settings = ThemeSettings::get_global(cx).clone();
-        let text_style = TextStyle {
-            color: cx.theme().colors().editor_foreground,
-            font_size: settings.buffer_font_size(cx).into(),
-            font_family: settings.buffer_font.family,
-            font_features: settings.buffer_font.features,
-            font_fallbacks: settings.buffer_font.fallbacks,
-            line_height: relative(settings.buffer_line_height.value()),
-            font_weight: settings.buffer_font.weight,
-            font_style: settings.buffer_font.style,
-            ..Default::default()
-        };
         let border_color = cx.theme().colors().border;
         let bg_color = cx.theme().colors().editor_background;
 
@@ -346,7 +295,7 @@ impl RateCompletionModal {
                         .size_full()
                         .bg(bg_color)
                         .overflow_scroll()
-                        .child(StyledText::new(diff).with_highlights(&text_style, diff_highlights)),
+                        .child(CompletionDiffElement::new(&active_completion.completion, cx)),
                 )
                 .when_some((!rated).then(|| ()), |this, _| {
                     this.child(
