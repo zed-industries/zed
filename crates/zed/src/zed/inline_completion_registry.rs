@@ -165,7 +165,9 @@ fn assign_inline_completion_provider(
             }
         }
         language::language_settings::InlineCompletionProvider::Zeta => {
-            if cx.has_flag::<ZetaFeatureFlag>() || cfg!(debug_assertions) {
+            if cx.has_flag::<ZetaFeatureFlag>()
+                || (cfg!(debug_assertions) && client.status().borrow().is_connected())
+            {
                 let zeta = zeta::Zeta::register(client.clone(), cx);
                 if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
                     if buffer.read(cx).file().is_some() {
