@@ -53,7 +53,7 @@ struct Subword {
     #[serde(default)]
     ignore_punctuation: bool,
 }
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct IndentObj {
     #[serde(default)]
