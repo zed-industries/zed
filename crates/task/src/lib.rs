@@ -350,13 +350,13 @@ impl ShellBuilder {
     pub fn command_label(&self, command_label: &str) -> String {
         match self.windows_shell_type() {
             WindowsShellType::Powershell => {
-                format!("{} -C '{}'", self.program, spawn_task.command_label)
+                format!("{} -C '{}'", self.program, command_label)
             }
             WindowsShellType::Cmd => {
-                format!("{} /C '{}'", self.program, spawn_task.command_label)
+                format!("{} /C '{}'", self.program, command_label)
             }
             WindowsShellType::Other => {
-                format!("{} -i -c '{}'", self.program, spawn_task.command_label)
+                format!("{} -i -c '{}'", self.program, command_label)
             }
         }
     }
@@ -366,7 +366,7 @@ impl ShellBuilder {
             .into_iter()
             .fold(task_command, |mut command, arg| {
                 command.push(' ');
-                command.push_str(&self.to_windows_shell_variable(windows_shell_type, arg));
+                command.push_str(&self.to_windows_shell_variable(arg));
                 command
             });
 
