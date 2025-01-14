@@ -100,6 +100,16 @@ impl AssistantPanel {
         let workspace = workspace.weak_handle();
         let weak_self = cx.view().downgrade();
 
+        let message_editor = cx.new_view(|cx| {
+            MessageEditor::new(
+                fs.clone(),
+                workspace.clone(),
+                thread_store.downgrade(),
+                thread.clone(),
+                cx,
+            )
+        });
+
         Self {
             active_view: ActiveView::Thread,
             workspace: workspace.clone(),
@@ -109,21 +119,14 @@ impl AssistantPanel {
             thread: cx.new_view(|cx| {
                 ActiveThread::new(
                     thread.clone(),
-                    workspace.clone(),
+                    workspace,
                     language_registry,
                     tools.clone(),
+                    message_editor.focus_handle(cx),
                     cx,
                 )
             }),
-            message_editor: cx.new_view(|cx| {
-                MessageEditor::new(
-                    fs.clone(),
-                    workspace,
-                    thread_store.downgrade(),
-                    thread.clone(),
-                    cx,
-                )
-            }),
+            message_editor,
             tools,
             local_timezone: UtcOffset::from_whole_seconds(
                 chrono::Local::now().offset().local_minus_utc(),
@@ -160,6 +163,7 @@ impl AssistantPanel {
                 self.workspace.clone(),
                 self.language_registry.clone(),
                 self.tools.clone(),
+                self.focus_handle(cx),
                 cx,
             )
         });
@@ -196,6 +200,7 @@ impl AssistantPanel {
                 self.workspace.clone(),
                 self.language_registry.clone(),
                 self.tools.clone(),
+                self.focus_handle(cx),
                 cx,
             )
         });
