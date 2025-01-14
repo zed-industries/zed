@@ -842,11 +842,14 @@ impl GitPanel {
             .child(
                 h_flex()
                     .gap_2()
-                    .child(Checkbox::new(
-                        "all-changes",
-                        self.all_staged
-                            .map_or(ToggleState::Indeterminate, ToggleState::from),
-                    ))
+                    .child(
+                        Checkbox::new(
+                            "all-changes",
+                            self.all_staged
+                                .map_or(ToggleState::Selected, ToggleState::from),
+                        )
+                        .disabled(self.no_entries()),
+                    )
                     .child(div().text_buffer(cx).text_ui_sm(cx).child(changes_string)),
             )
             .child(div().flex_grow())
