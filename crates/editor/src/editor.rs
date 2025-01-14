@@ -1698,7 +1698,7 @@ impl Editor {
         self.collapse_matches = collapse_matches;
     }
 
-    pub fn register_buffers_with_language_servers(&mut self, cx: &mut ViewContext<Self>) {
+    fn register_buffers_with_language_servers(&mut self, cx: &mut ViewContext<Self>) {
         let buffers = self.buffer.read(cx).all_buffers();
         let Some(lsp_store) = self.lsp_store(cx) else {
             return;
@@ -1930,6 +1930,21 @@ impl Editor {
                     None
                 }
             };
+            if let Some(buffer_id) = new_cursor_position.buffer_id {
+                if !self.registered_buffers.contains_key(&buffer_id) {
+                    if let Some(lsp_store) = self.lsp_store(cx) {
+                        lsp_store.update(cx, |lsp_store, cx| {
+                            let Some(buffer) = self.buffer.read(cx).buffer(buffer_id) else {
+                                return;
+                            };
+                            self.registered_buffers.insert(
+                                buffer_id,
+                                lsp_store.register_buffer_with_language_servers(&buffer, cx),
+                            );
+                        })
+                    }
+                }
+            }
 
             if let Some(completion_menu) = completion_menu {
                 let cursor_position = new_cursor_position.to_offset(buffer);
