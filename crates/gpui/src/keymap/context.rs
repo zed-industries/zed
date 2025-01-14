@@ -244,7 +244,7 @@ impl KeyBindingContextPredicate {
         let source = skip_whitespace(source);
         let (predicate, rest) = Self::parse_expr(source, 0)?;
         if let Some(next) = rest.chars().next() {
-            Err(anyhow!("unexpected character {next:?}"))
+            Err(anyhow!("unexpected character '{next:?}'"))
         } else {
             Ok(predicate)
         }
@@ -333,7 +333,7 @@ impl KeyBindingContextPredicate {
         let next = source
             .chars()
             .next()
-            .ok_or_else(|| anyhow!("unexpected eof"))?;
+            .ok_or_else(|| anyhow!("unexpected end"))?;
         match next {
             '(' => {
                 source = skip_whitespace(&source[1..]);
@@ -369,7 +369,7 @@ impl KeyBindingContextPredicate {
                     source,
                 ))
             }
-            _ => Err(anyhow!("unexpected character {next:?}")),
+            _ => Err(anyhow!("unexpected character '{next:?}'")),
         }
     }
 
@@ -389,7 +389,7 @@ impl KeyBindingContextPredicate {
         if let (Self::Identifier(left), Self::Identifier(right)) = (self, other) {
             Ok(Self::Equal(left, right))
         } else {
-            Err(anyhow!("operands must be identifiers"))
+            Err(anyhow!("operands of == must be identifiers"))
         }
     }
 
@@ -397,7 +397,7 @@ impl KeyBindingContextPredicate {
         if let (Self::Identifier(left), Self::Identifier(right)) = (self, other) {
             Ok(Self::NotEqual(left, right))
         } else {
-            Err(anyhow!("operands must be identifiers"))
+            Err(anyhow!("operands of != must be identifiers"))
         }
     }
 }
@@ -504,7 +504,7 @@ mod tests {
             KeyBindingContextPredicate::parse("c == !d")
                 .unwrap_err()
                 .to_string(),
-            "operands must be identifiers"
+            "operands of == must be identifiers"
         );
     }
 

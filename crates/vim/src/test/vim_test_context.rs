@@ -1,5 +1,6 @@
 use std::ops::{Deref, DerefMut};
 
+use assets::Assets;
 use editor::test::editor_lsp_test_context::EditorLspTestContext;
 use gpui::{Context, SemanticVersion, UpdateGlobal, View, VisualContext};
 use search::{project_search::ProjectSearchBar, BufferSearchBar};
@@ -20,6 +21,7 @@ impl VimTestContext {
             cx.set_global(settings);
             release_channel::init(SemanticVersion::default(), cx);
             command_palette::init(cx);
+            project_panel::init(Assets, cx);
             crate::init(cx);
             search::init(cx);
         });
@@ -59,9 +61,16 @@ impl VimTestContext {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(enabled));
             });
-            settings::KeymapFile::load_asset("keymaps/default-macos.json", cx).unwrap();
+            let default_key_bindings = settings::KeymapFile::load_asset_allow_partial_failure(
+                "keymaps/default-macos.json",
+                cx,
+            )
+            .unwrap();
+            cx.bind_keys(default_key_bindings);
             if enabled {
-                settings::KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
+                let vim_key_bindings =
+                    settings::KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
+                cx.bind_keys(vim_key_bindings);
             }
         });
 
