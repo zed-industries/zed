@@ -327,8 +327,8 @@ impl GitPanel {
             git_panel
         });
 
-        cx.subscribe(&git_panel, {
-            let git_panel = git_panel.downgrade();
+        cx.subscribe(
+            &git_panel,
             move |workspace, _, event: &Event, cx| match event.clone() {
                 Event::OpenedEntry { path } => {
                     workspace
@@ -338,8 +338,8 @@ impl GitPanel {
                         });
                 }
                 Event::Focus => { /* TODO */ }
-            }
-        })
+            },
+        )
         .detach();
 
         git_panel
@@ -574,7 +574,7 @@ impl GitPanel {
     }
 
     fn open_entry(&self, entry: &GitListEntry, cx: &mut ViewContext<Self>) {
-        let Some((worktree_id, path)) = GitState::get_global(cx).update(cx, |state, cx| {
+        let Some((worktree_id, path)) = GitState::get_global(cx).update(cx, |state, _| {
             state.active_repository.as_ref().and_then(|(id, repo, _)| {
                 Some((*id, repo.work_directory.unrelativize(&entry.repo_path)?))
             })
