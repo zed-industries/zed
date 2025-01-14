@@ -21,7 +21,7 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 If you are developing collaborative features of Zed, you'll need to install the dependencies of zed's `collab` server:
 
 - Install [Postgres](https://www.postgresql.org/download/windows/)
-- Install [Livekit](https://github.com/livekit/livekit-cli) and [Foreman](https://theforeman.org/manuals/3.9/quickstart_guide.html)
+- Install [Livekit](https://github.com/livekit/livekit), optionally you can add the `livekit-server` binary to your `PATH`.
 
 Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose:
 
