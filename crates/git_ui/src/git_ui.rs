@@ -1,7 +1,8 @@
 use ::settings::Settings;
 use collections::HashMap;
 use futures::{future::FusedFuture, select, FutureExt};
-use git::repository::{GitFileStatus, GitRepository, RepoPath};
+use git::repository::{GitRepository, RepoPath};
+use git::status::FileStatus;
 use gpui::{actions, AppContext, Context, Global, Hsla, Model, ModelContext};
 use project::{Project, WorktreeId};
 use settings::GitPanelSettings;
@@ -299,17 +300,15 @@ const REMOVED_COLOR: Hsla = Hsla {
 };
 
 // TODO: Add updated status colors to theme
-pub fn git_status_icon(status: GitFileStatus) -> impl IntoElement {
-    match status {
-        GitFileStatus::Added | GitFileStatus::Untracked => {
-            Icon::new(IconName::SquarePlus).color(Color::Custom(ADDED_COLOR))
-        }
-        GitFileStatus::Modified => {
-            Icon::new(IconName::SquareDot).color(Color::Custom(MODIFIED_COLOR))
-        }
-        GitFileStatus::Conflict => Icon::new(IconName::Warning).color(Color::Custom(REMOVED_COLOR)),
-        GitFileStatus::Deleted => {
-            Icon::new(IconName::SquareMinus).color(Color::Custom(REMOVED_COLOR))
-        }
-    }
+pub fn git_status_icon(status: FileStatus) -> impl IntoElement {
+    let (icon_name, color) = if status.is_conflicted() {
+        (IconName::Warning, REMOVED_COLOR)
+    } else if status.is_deleted() {
+        (IconName::SquareMinus, REMOVED_COLOR)
+    } else if status.is_modified() {
+        (IconName::SquareDot, MODIFIED_COLOR)
+    } else {
+        (IconName::SquarePlus, ADDED_COLOR)
+    };
+    Icon::new(icon_name).color(Color::Custom(color))
 }

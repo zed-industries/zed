@@ -15,7 +15,7 @@ use editor::{
     Editor, EditorEvent, EditorSettings, ShowScrollbar,
 };
 use file_icons::FileIcons;
-use git::repository::GitFileStatus;
+use git::status::GitSummary;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
     AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
@@ -145,7 +145,7 @@ struct EntryDetails {
     is_cut: bool,
     filename_text_color: Color,
     diagnostic_severity: Option<DiagnosticSeverity>,
-    git_status: Option<GitFileStatus>,
+    git_status: GitSummary,
     is_private: bool,
     worktree_id: WorktreeId,
     canonical_path: Option<Box<Path>>,
@@ -1584,9 +1584,7 @@ impl ProjectPanel {
                         }
                     }))
                     && entry.is_file()
-                    && entry
-                        .git_status
-                        .is_some_and(|status| matches!(status, GitFileStatus::Modified))
+                    && entry.git_summary.modified > 0
             },
             cx,
         );
@@ -1664,9 +1662,7 @@ impl ProjectPanel {
                         }
                     }))
                     && entry.is_file()
-                    && entry
-                        .git_status
-                        .is_some_and(|status| matches!(status, GitFileStatus::Modified))
+                    && entry.git_summary.modified > 0
             },
             cx,
         );
@@ -2417,7 +2413,7 @@ impl ProjectPanel {
                             char_bag: entry.char_bag,
                             is_fifo: entry.is_fifo,
                         },
-                        git_status: entry.git_status,
+                        git_summary: entry.git_summary,
                     });
                 }
                 let worktree_abs_path = worktree.read(cx).abs_path();
@@ -2815,7 +2811,9 @@ impl ProjectPanel {
                         .collect()
                 });
                 for entry in visible_worktree_entries[entry_range].iter() {
-                    let status = git_status_setting.then_some(entry.git_status).flatten();
+                    let status = git_status_setting
+                        .then_some(entry.git_summary)
+                        .unwrap_or_default();
                     let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
                     let icon = match entry.kind {
                         EntryKind::File => {

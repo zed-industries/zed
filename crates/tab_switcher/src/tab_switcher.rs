@@ -362,7 +362,10 @@ impl PickerDelegate for TabSwitcherDelegate {
                         .and_then(|path| {
                             let project = self.project.read(cx);
                             let entry = project.entry_for_path(path, cx)?;
-                            let git_status = project.project_path_git_status(path, cx);
+                            let git_status = project
+                                .project_path_git_status(path, cx)
+                                .map(|status| status.summary())
+                                .unwrap_or_default();
                             Some((entry, git_status))
                         })
                         .map(|(entry, git_status)| {
