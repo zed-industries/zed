@@ -597,6 +597,12 @@
     }
   },
   {
+    "context": "ThreadHistory",
+    "bindings": {
+      "backspace": "assistant2::RemoveSelectedThread"
+    }
+  },
+  {
     "context": "PromptEditor",
     "bindings": {
       "ctrl-[": "assistant::CyclePreviousInlineAssist",

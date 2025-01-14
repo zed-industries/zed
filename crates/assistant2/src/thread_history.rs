@@ -7,7 +7,7 @@ use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing, Tooltip};
 
 use crate::thread::Thread;
 use crate::thread_store::ThreadStore;
-use crate::AssistantPanel;
+use crate::{AssistantPanel, RemoveSelectedThread};
 
 pub struct ThreadHistory {
     focus_handle: FocusHandle,
@@ -60,7 +60,6 @@ impl ThreadHistory {
         let count = self.thread_store.read(cx).non_empty_len(cx);
         if count > 0 {
             self.set_selected_index(0, cx);
-            cx.notify();
         }
     }
 
@@ -68,7 +67,6 @@ impl ThreadHistory {
         let count = self.thread_store.read(cx).non_empty_len(cx);
         if count > 0 {
             self.set_selected_index(count - 1, cx);
-            cx.notify();
         }
     }
 
@@ -89,6 +87,23 @@ impl ThreadHistory {
                     this.open_thread(&thread_id, cx)
                 })
                 .ok();
+
+            cx.notify();
+        }
+    }
+
+    fn remove_selected_thread(&mut self, _: &RemoveSelectedThread, cx: &mut ViewContext<Self>) {
+        let threads = self.thread_store.update(cx, |this, cx| this.threads(cx));
+
+        if let Some(thread) = threads.get(self.selected_index) {
+            self.assistant_panel
+                .update(cx, |this, cx| {
+                    let thread_id = thread.read(cx).id().clone();
+                    this.delete_thread(&thread_id, cx);
+                })
+                .ok();
+
+            cx.notify();
         }
     }
 }
@@ -106,6 +121,7 @@ impl Render for ThreadHistory {
 
         v_flex()
             .id("thread-history-container")
+            .key_context("ThreadHistory")
             .track_focus(&self.focus_handle)
             .overflow_y_scroll()
             .size_full()
@@ -115,6 +131,7 @@ impl Render for ThreadHistory {
             .on_action(cx.listener(Self::select_first))
             .on_action(cx.listener(Self::select_last))
             .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::remove_selected_thread))
             .map(|history| {
                 if threads.is_empty() {
                     history
