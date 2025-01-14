@@ -142,8 +142,9 @@ pub fn init(
 #[cfg(not(target_os = "windows"))]
 pub async fn capture_local_video_track(
     capture_source: &dyn ScreenCaptureSource,
+    show_capture: Option<futures::channel::mpsc::UnboundedSender<ScreenCaptureFrame>>,
 ) -> Result<(track::LocalVideoTrack, Box<dyn ScreenCaptureStream>)> {
-    let resolution = capture_source.resolution()?;
+    let resolution = capture_source.resolution();
     let track_source = NativeVideoSource::new(VideoResolution {
         width: resolution.width.0 as u32,
         height: resolution.height.0 as u32,
@@ -153,6 +154,10 @@ pub async fn capture_local_video_track(
         .stream({
             let track_source = track_source.clone();
             Box::new(move |frame| {
+                if let Some(show_capture) = show_capture.as_ref() {
+                    show_capture.unbounded_send(frame.clone()).unwrap();
+                }
+
                 if let Some(buffer) = video_frame_buffer_to_webrtc(frame) {
                     track_source.capture_frame(&VideoFrame {
                         rotation: VideoRotation::VideoRotation0,
