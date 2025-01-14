@@ -3231,12 +3231,19 @@ impl MultiBufferSnapshot {
                     }),
             )
         })
-        .map(|(range, hunk, excerpt)| MultiBufferDiffHunk {
-            row_range: MultiBufferRow(range.start.row)..MultiBufferRow(range.end.row),
-            buffer_id: excerpt.buffer_id,
-            excerpt_id: excerpt.id,
-            buffer_range: hunk.buffer_range.clone(),
-            diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+        .map(|(range, hunk, excerpt)| {
+            let end_row = if range.end.column == 0 {
+                range.end.row
+            } else {
+                range.end.row + 1
+            };
+            MultiBufferDiffHunk {
+                row_range: MultiBufferRow(range.start.row)..MultiBufferRow(end_row),
+                buffer_id: excerpt.buffer_id,
+                excerpt_id: excerpt.id,
+                buffer_range: hunk.buffer_range.clone(),
+                diff_base_byte_range: hunk.diff_base_byte_range.clone(),
+            }
         })
     }
 

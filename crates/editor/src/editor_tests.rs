@@ -11557,6 +11557,8 @@ async fn test_modification_reverts(cx: &mut gpui::TestAppContext) {
         &mut cx,
     );
 
+    eprintln!("==========================================================================");
+
     assert_hunk_revert(
         indoc! {r#"ˇstruct Row1.1;
                    struct Row1;
