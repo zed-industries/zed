@@ -4,17 +4,17 @@ use std::time::Duration;
 use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use gpui::{
-    list, percentage, AbsoluteLength, Animation, AnimationExt, AnyElement, AppContext,
-    DefiniteLength, EdgesRefinement, Empty, FocusHandle, Length, ListAlignment, ListOffset,
-    ListState, Model, StyleRefinement, Subscription, TextStyleRefinement, Transformation,
-    UnderlineStyle, View, WeakView,
+    linear_color_stop, linear_gradient, list, percentage, AbsoluteLength, Animation, AnimationExt,
+    AnyElement, AppContext, DefiniteLength, EdgesRefinement, Empty, FocusHandle, Length,
+    ListAlignment, ListOffset, ListState, Model, StyleRefinement, Subscription,
+    TextStyleRefinement, Transformation, UnderlineStyle, View, WeakView,
 };
 use language::LanguageRegistry;
 use language_model::Role;
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings as _;
 use theme::ThemeSettings;
-use ui::{prelude::*, ButtonLike, KeyBinding};
+use ui::{prelude::*, Divider, KeyBinding};
 use workspace::Workspace;
 
 use crate::thread::{MessageId, Thread, ThreadError, ThreadEvent};
@@ -123,10 +123,10 @@ impl ActiveThread {
             selection_background_color: cx.theme().players().local().selection,
             code_block: StyleRefinement {
                 margin: EdgesRefinement {
-                    top: Some(Length::Definite(rems(1.0).into())),
+                    top: Some(Length::Definite(rems(0.).into())),
                     left: Some(Length::Definite(rems(0.).into())),
                     right: Some(Length::Definite(rems(0.).into())),
-                    bottom: Some(Length::Definite(rems(1.).into())),
+                    bottom: Some(Length::Definite(rems(0.5).into())),
                 },
                 padding: EdgesRefinement {
                     top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
@@ -134,10 +134,10 @@ impl ActiveThread {
                     right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
                     bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
                 },
-                background: Some(colors.editor_foreground.opacity(0.01).into()),
-                border_color: Some(colors.border_variant.opacity(0.3)),
+                background: Some(colors.editor_background.into()),
+                border_color: Some(colors.border_variant),
                 border_widths: EdgesRefinement {
-                    top: Some(AbsoluteLength::Pixels(Pixels(1.0))),
+                    top: Some(AbsoluteLength::Pixels(Pixels(1.))),
                     left: Some(AbsoluteLength::Pixels(Pixels(1.))),
                     right: Some(AbsoluteLength::Pixels(Pixels(1.))),
                     bottom: Some(AbsoluteLength::Pixels(Pixels(1.))),
@@ -245,7 +245,6 @@ impl ActiveThread {
 
     fn render_message(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
         let message_id = self.messages[ix];
-        let is_last_message = ix == self.messages.len() - 1;
         let Some(message) = self.thread.read(cx).message(message_id) else {
             return Empty.into_any();
         };
@@ -254,139 +253,147 @@ impl ActiveThread {
             return Empty.into_any();
         };
 
-        let is_streaming_completion = self.thread.read(cx).is_streaming();
         let context = self.thread.read(cx).context_for_message(message_id);
         let colors = cx.theme().colors();
 
-        let (role_icon, role_name, role_color) = match message.role {
-            Role::User => (IconName::Person, "You", Color::Muted),
-            Role::Assistant => (IconName::ZedAssistant, "Assistant", Color::Accent),
-            Role::System => (IconName::Settings, "System", Color::Default),
-        };
+        let message_content = v_flex()
+            .child(div().p_2p5().text_ui(cx).child(markdown.clone()))
+            .when_some(context, |parent, context| {
+                if !context.is_empty() {
+                    parent.child(
+                        h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
+                            context
+                                .into_iter()
+                                .map(|context| ContextPill::new_added(context, false, false, None)),
+                        ),
+                    )
+                } else {
+                    parent
+                }
+            });
 
-        div()
-            .id(("message-container", ix))
-            .py_1()
-            .px_2()
-            .child(
+        let styled_message = match message.role {
+            Role::User => v_flex()
+                .id(("message-container", ix))
+                .py_1()
+                .px_2p5()
+                .child(
+                    v_flex()
+                        .bg(colors.editor_background)
+                        .ml_16()
+                        .rounded_t_lg()
+                        .rounded_bl_lg()
+                        .rounded_br_none()
+                        .border_1()
+                        .border_color(colors.border)
+                        .child(
+                            h_flex()
+                                .py_1()
+                                .px_2()
+                                .bg(colors.editor_foreground.opacity(0.05))
+                                .border_b_1()
+                                .border_color(colors.border)
+                                .justify_between()
+                                .rounded_t(px(6.))
+                                .child(
+                                    h_flex()
+                                        .gap_1p5()
+                                        .child(
+                                            Icon::new(IconName::PersonCircle)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new("You")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        ),
+                                ),
+                        )
+                        .child(message_content),
+                ),
+            Role::Assistant => div().id(("message-container", ix)).child(message_content),
+            Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
-                    .border_1()
-                    .border_color(colors.border_variant)
                     .bg(colors.editor_background)
                     .rounded_md()
-                    .child(
-                        h_flex()
-                            .py_1p5()
-                            .px_2p5()
-                            .border_b_1()
-                            .border_color(colors.border_variant)
-                            .justify_between()
-                            .child(
-                                h_flex()
-                                    .gap_1p5()
-                                    .child(
-                                        Icon::new(role_icon)
-                                            .size(IconSize::XSmall)
-                                            .color(role_color),
-                                    )
-                                    .child(
-                                        Label::new(role_name)
-                                            .size(LabelSize::XSmall)
-                                            .color(role_color),
-                                    ),
-                            ),
-                    )
-                    .child(div().p_2p5().text_ui(cx).child(markdown.clone()))
-                    .when(
-                        message.role == Role::Assistant
-                            && is_last_message
-                            && is_streaming_completion,
-                        |parent| {
-                            parent.child(
-                                h_flex()
-                                    .gap_1()
-                                    .p_2p5()
-                                    .child(
-                                        Icon::new(IconName::ArrowCircle)
-                                            .size(IconSize::Small)
-                                            .color(Color::Muted)
-                                            .with_animation(
-                                                "arrow-circle",
-                                                Animation::new(Duration::from_secs(2)).repeat(),
-                                                |icon, delta| {
-                                                    icon.transform(Transformation::rotate(
-                                                        percentage(delta),
-                                                    ))
-                                                },
-                                            ),
-                                    )
-                                    .child(
-                                        Label::new("Generating…")
-                                            .size(LabelSize::Small)
-                                            .color(Color::Muted),
-                                    ),
-                            )
-                        },
-                    )
-                    .when_some(context, |parent, context| {
-                        if !context.is_empty() {
-                            parent.child(h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
-                                context.into_iter().map(|context| {
-                                    ContextPill::new_added(context, false, false, None)
-                                }),
-                            ))
-                        } else {
-                            parent
-                        }
-                    }),
-            )
-            .into_any()
+                    .child(message_content),
+            ),
+        };
+
+        styled_message.into_any()
     }
 }
 
 impl Render for ActiveThread {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let is_streaming_completion = self.thread.read(cx).is_streaming();
-
+        let panel_bg = cx.theme().colors().panel_background;
         let focus_handle = self.focus_handle.clone();
 
         v_flex()
             .size_full()
+            .pt_1p5()
             .child(list(self.list_state.clone()).flex_grow())
-            .child(
-                h_flex()
-                    .absolute()
-                    .bottom_1()
-                    .flex_shrink()
-                    .justify_center()
-                    .w_full()
-                    .when(is_streaming_completion, |parent| {
-                        parent.child(
+            .when(is_streaming_completion, |parent| {
+                parent.child(
+                    h_flex()
+                        .w_full()
+                        .pb_2p5()
+                        .absolute()
+                        .bottom_0()
+                        .flex_shrink()
+                        .justify_center()
+                        .bg(linear_gradient(
+                            180.,
+                            linear_color_stop(panel_bg.opacity(0.0), 0.),
+                            linear_color_stop(panel_bg, 1.),
+                        ))
+                        .child(
                             h_flex()
-                                .gap_2()
+                                .flex_none()
                                 .p_1p5()
+                                .bg(cx.theme().colors().editor_background)
+                                .border_1()
+                                .border_color(cx.theme().colors().border)
                                 .rounded_md()
-                                .bg(cx.theme().colors().elevated_surface_background)
-                                .child(Label::new("Generating…").size(LabelSize::Small))
+                                .shadow_lg()
+                                .gap_1()
                                 .child(
-                                    ButtonLike::new("cancel-generation")
-                                        .style(ButtonStyle::Filled)
-                                        .child(Label::new("Cancel").size(LabelSize::Small))
-                                        .children(
-                                            KeyBinding::for_action_in(
-                                                &editor::actions::Cancel,
-                                                &self.focus_handle,
-                                                cx,
-                                            )
-                                            .map(|binding| binding.into_any_element()),
-                                        )
+                                    Icon::new(IconName::ArrowCircle)
+                                        .size(IconSize::Small)
+                                        .color(Color::Muted)
+                                        .with_animation(
+                                            "arrow-circle",
+                                            Animation::new(Duration::from_secs(2)).repeat(),
+                                            |icon, delta| {
+                                                icon.transform(Transformation::rotate(percentage(
+                                                    delta,
+                                                )))
+                                            },
+                                        ),
+                                )
+                                .child(
+                                    Label::new("Generating…")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                )
+                                .child(Divider::vertical())
+                                .child(
+                                    Button::new("cancel-generation", "Cancel")
+                                        .label_size(LabelSize::Small)
+                                        .key_binding(KeyBinding::for_action_in(
+                                            &editor::actions::Cancel,
+                                            &self.focus_handle,
+                                            cx,
+                                        ))
                                         .on_click(move |_event, cx| {
                                             focus_handle
                                                 .dispatch_action(&editor::actions::Cancel, cx);
                                         }),
                                 ),
-                        )
-                    }),
-            )
+                        ),
+                )
+            })
     }
 }
