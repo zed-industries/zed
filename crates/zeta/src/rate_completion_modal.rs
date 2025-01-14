@@ -1,8 +1,8 @@
 use crate::{CompletionDiffElement, InlineCompletion, InlineCompletionRating, Zeta};
 use editor::Editor;
 use gpui::{
-    actions, prelude::*, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
-    View, ViewContext,
+    actions, point, prelude::*, AppContext, Corner, DismissEvent, EventEmitter, FocusHandle,
+    FocusableView, Model, View, ViewContext,
 };
 use language::language_settings;
 use std::time::Duration;
@@ -331,13 +331,13 @@ impl RateCompletionModal {
                         )
                         .child(
                             PopoverMenu::new("raw-input-menu")
-                                .anchor(gpui::Corner::TopRight)
+                                .anchor(Corner::TopRight)
                                 .offset(point(
                                     px(0.),
                                     px(4.),
-                                )
+                                ))
                                 .trigger(
-                                    Button::new("details", "View Raw Input")
+                                    Button::new("details", "View raw input")
                                         .color(Color::Muted)
                                         .size(ButtonSize::Compact)
                                 )
