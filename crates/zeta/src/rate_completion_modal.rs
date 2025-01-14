@@ -73,7 +73,7 @@ impl RateCompletionModal {
         self.selected_index += 1;
         self.selected_index = usize::min(
             self.selected_index,
-            self.zeta.read(cx).recent_completions().count(),
+            self.zeta.read(cx).shown_completions().count(),
         );
         cx.notify();
     }
@@ -87,7 +87,7 @@ impl RateCompletionModal {
         let next_index = self
             .zeta
             .read(cx)
-            .recent_completions()
+            .shown_completions()
             .skip(self.selected_index)
             .enumerate()
             .skip(1) // Skip straight to the next item
@@ -102,12 +102,12 @@ impl RateCompletionModal {
 
     fn select_prev_edit(&mut self, _: &PreviousEdit, cx: &mut ViewContext<Self>) {
         let zeta = self.zeta.read(cx);
-        let completions_len = zeta.recent_completions_len();
+        let completions_len = zeta.shown_completions_len();
 
         let prev_index = self
             .zeta
             .read(cx)
-            .recent_completions()
+            .shown_completions()
             .rev()
             .skip((completions_len - 1) - self.selected_index)
             .enumerate()
@@ -128,7 +128,7 @@ impl RateCompletionModal {
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
-        self.selected_index = self.zeta.read(cx).recent_completions_len() - 1;
+        self.selected_index = self.zeta.read(cx).shown_completions_len() - 1;
         cx.notify();
     }
 
@@ -191,7 +191,7 @@ impl RateCompletionModal {
         let completion = self
             .zeta
             .read(cx)
-            .recent_completions()
+            .shown_completions()
             .skip(self.selected_index)
             .take(1)
             .next()
@@ -204,7 +204,7 @@ impl RateCompletionModal {
         let completion = self
             .zeta
             .read(cx)
-            .recent_completions()
+            .shown_completions()
             .skip(self.selected_index)
             .take(1)
             .next()
@@ -224,7 +224,7 @@ impl RateCompletionModal {
             self.selected_index = self
                 .zeta
                 .read(cx)
-                .recent_completions()
+                .shown_completions()
                 .enumerate()
                 .find(|(_, completion_b)| completion.id == completion_b.id)
                 .map(|(ix, _)| ix)
@@ -326,7 +326,6 @@ impl RateCompletionModal {
         let bg_color = cx.theme().colors().editor_background;
 
         let rated = self.zeta.read(cx).is_completion_rated(completion_id);
-        let was_shown = self.zeta.read(cx).was_completion_shown(completion_id);
         let feedback_empty = active_completion
             .feedback_editor
             .read(cx)
@@ -412,16 +411,6 @@ impl RateCompletionModal {
                                             .color(Color::Warning),
                                     )
                                     .child(Label::new("No edits produced.").color(Color::Muted)),
-                            )
-                        } else if !was_shown {
-                            Some(
-                                label_container()
-                                    .child(
-                                        Icon::new(IconName::Warning)
-                                            .size(IconSize::Small)
-                                            .color(Color::Warning),
-                                    )
-                                    .child(Label::new("Completion wasn't shown because another valid one was already on screen.")),
                             )
                         } else {
                             Some(label_container())
@@ -541,7 +530,7 @@ impl Render for RateCompletionModal {
                                             )
                                             .into_any_element(),
                                     )
-                                    .children(self.zeta.read(cx).recent_completions().cloned().enumerate().map(
+                                    .children(self.zeta.read(cx).shown_completions().cloned().enumerate().map(
                                         |(index, completion)| {
                                             let selected =
                                                 self.active_completion.as_ref().map_or(false, |selected| {
