@@ -1117,6 +1117,8 @@ mod tests {
         path::{Path, PathBuf},
     };
 
+    use crate::test::editor_test_context::assert_state_with_diff;
+
     use super::*;
 
     // TODO finish
@@ -1224,15 +1226,17 @@ mod tests {
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
         cx.run_until_parked();
+        let editor = project_diff_editor.update(cx, |view, _| view.editor.clone());
 
-        project_diff_editor.update(cx, |project_diff_editor, cx| {
-            assert_eq!(
-                // TODO assert it better: extract added text (based on the background changes) and deleted text (based on the deleted blocks added)
-                project_diff_editor.editor.read(cx).text(cx),
-                format!("{change}{old_text}"),
-                "Should have a new change shown in the beginning, and the old text shown as deleted text afterwards"
-            );
-        });
+        assert_state_with_diff(
+            &editor,
+            cx,
+            indoc::indoc! {
+            "
+                - This is file_a
+                + ˇan edit after git addThis is file_a",
+            },
+        );
     }
 
     fn init_test(cx: &mut gpui::TestAppContext) {
