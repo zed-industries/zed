@@ -1,24 +1,19 @@
 use ::settings::Settings;
 use collections::HashMap;
-use futures::{future::FusedFuture, select, FutureExt};
+use futures::channel::mpsc;
+use futures::StreamExt as _;
 use git::repository::{GitFileStatus, GitRepository, RepoPath};
 use git_panel_settings::GitPanelSettings;
 use gpui::{actions, AppContext, Context, Global, Hsla, Model, ModelContext};
 use project::{Project, WorktreeId};
-use std::sync::mpsc;
-use std::{
-    pin::{pin, Pin},
-    sync::Arc,
-    time::Duration,
-};
+use std::sync::Arc;
 use sum_tree::SumTree;
 use ui::{Color, Icon, IconName, IntoElement, SharedString};
+use util::ResultExt as _;
 use worktree::RepositoryEntry;
 
 pub mod git_panel;
 mod git_panel_settings;
-
-const GIT_TASK_DEBOUNCE: Duration = Duration::from_millis(50);
 
 actions!(
     git,
@@ -69,7 +64,7 @@ pub struct GitState {
     /// are currently being viewed or modified in the UI.
     active_repository: Option<(WorktreeId, RepositoryEntry, Arc<dyn GitRepository>)>,
 
-    updater_tx: mpsc::Sender<(Arc<dyn GitRepository>, Vec<RepoPath>, StatusAction)>,
+    updater_tx: mpsc::UnboundedSender<(Arc<dyn GitRepository>, Vec<RepoPath>, StatusAction)>,
 
     all_repositories: HashMap<WorktreeId, SumTree<RepositoryEntry>>,
 
@@ -78,84 +73,19 @@ pub struct GitState {
 
 impl GitState {
     pub fn new(cx: &mut ModelContext<'_, Self>) -> Self {
-        let (updater_tx, updater_rx) = mpsc::channel();
+        let (updater_tx, mut updater_rx) =
+            mpsc::unbounded::<(Arc<dyn GitRepository>, Vec<RepoPath>, StatusAction)>();
         cx.spawn(|_, cx| async move {
-            // Long-running task to periodically update git indices based on messages from the panel.
-
-            // We read messages from the channel in batches that refer to the same repository.
-            // When we read a message whose repository is different from the current batch's repository,
-            // the batch is finished, and since we can't un-receive this last message, we save it
-            // to begin the next batch.
-            let mut leftover_message: Option<(
-                Arc<dyn GitRepository>,
-                Vec<RepoPath>,
-                StatusAction,
-            )> = None;
-            let mut git_task = None;
-            loop {
-                let mut timer = cx.background_executor().timer(GIT_TASK_DEBOUNCE).fuse();
-                let _result = {
-                    let mut task: Pin<&mut dyn FusedFuture<Output = anyhow::Result<()>>> =
-                        match git_task.as_mut() {
-                            Some(task) => pin!(task),
-                            // If no git task is running, just wait for the timeout.
-                            None => pin!(std::future::pending().fuse()),
-                        };
-                    select! {
-                        result = task => {
-                            // Task finished.
-                            git_task = None;
-                            Some(result)
+            while let Some((git_repo, paths, action)) = updater_rx.next().await {
+                cx.background_executor()
+                    .spawn(async move {
+                        match action {
+                            StatusAction::Stage => git_repo.stage_paths(&paths),
+                            StatusAction::Unstage => git_repo.unstage_paths(&paths),
                         }
-                        _ = timer => None,
-                    }
-                };
-
-                // TODO handle failure of the git command
-
-                if git_task.is_none() {
-                    // No git task running now; let's see if we should launch a new one.
-                    let mut to_stage = Vec::new();
-                    let mut to_unstage = Vec::new();
-                    let mut current_repo = leftover_message.as_ref().map(|msg| msg.0.clone());
-                    for (git_repo, paths, action) in leftover_message
-                        .take()
-                        .into_iter()
-                        .chain(updater_rx.try_iter())
-                    {
-                        if current_repo
-                            .as_ref()
-                            .map_or(false, |repo| !Arc::ptr_eq(repo, &git_repo))
-                        {
-                            // End of a batch, save this for the next one.
-                            leftover_message = Some((git_repo.clone(), paths, action));
-                            break;
-                        } else if current_repo.is_none() {
-                            // Start of a batch.
-                            current_repo = Some(git_repo);
-                        }
-
-                        if action == StatusAction::Stage {
-                            to_stage.extend(paths);
-                        } else {
-                            to_unstage.extend(paths);
-                        }
-                    }
-
-                    // TODO handle the same path being staged and unstaged
-
-                    if to_stage.is_empty() && to_unstage.is_empty() {
-                        continue;
-                    }
-
-                    if let Some(git_repo) = current_repo {
-                        git_task = Some(
-                            cx.background_executor()
-                                .spawn(async move { git_repo.update_index(&to_stage, &to_unstage) })
-                                .fuse(),
-                        );
-                    }
-                }
+                    })
+                    .await
+                    .log_err();
             }
         })
         .detach();
@@ -197,31 +127,35 @@ impl GitState {
 
     pub fn stage_entry(&mut self, repo_path: RepoPath) {
         if let Some((_, _, git_repo)) = self.active_repository.as_ref() {
-            let _ = self
-                .updater_tx
-                .send((git_repo.clone(), vec![repo_path], StatusAction::Stage));
+            let _ = self.updater_tx.unbounded_send((
+                git_repo.clone(),
+                vec![repo_path],
+                StatusAction::Stage,
+            ));
         }
     }
 
     pub fn unstage_entry(&mut self, repo_path: RepoPath) {
         if let Some((_, _, git_repo)) = self.active_repository.as_ref() {
-            let _ =
-                self.updater_tx
-                    .send((git_repo.clone(), vec![repo_path], StatusAction::Unstage));
+            let _ = self.updater_tx.unbounded_send((
+                git_repo.clone(),
+                vec![repo_path],
+                StatusAction::Unstage,
+            ));
         }
     }
 
     pub fn stage_entries(&mut self, entries: Vec<RepoPath>) {
         if let Some((_, _, git_repo)) = self.active_repository.as_ref() {
-            let _ = self
-                .updater_tx
-                .send((git_repo.clone(), entries, StatusAction::Stage));
+            let _ =
+                self.updater_tx
+                    .unbounded_send((git_repo.clone(), entries, StatusAction::Stage));
         }
     }
 
     fn act_on_all(&mut self, action: StatusAction) {
         if let Some((_, active_repository, git_repo)) = self.active_repository.as_ref() {
-            let _ = self.updater_tx.send((
+            let _ = self.updater_tx.unbounded_send((
                 git_repo.clone(),
                 active_repository
                     .status()
