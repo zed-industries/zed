@@ -1,14 +1,15 @@
 use alacritty_terminal::tty::Pty;
-#[cfg(target_os = "windows")]
-use std::num::NonZeroU32;
+use std::fs;
+use sysinfo::{Pid, Process, ProcessRefreshKind, RefreshKind, System, UpdateKind};
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
 use std::path::PathBuf;
-
+#[cfg(target_os = "macos")]
+use std::process::Command;
+#[cfg(target_os = "windows")]
+use std::num::NonZeroU32;
 #[cfg(target_os = "windows")]
 use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
-
-use sysinfo::{Pid, Process, ProcessRefreshKind, RefreshKind, System, UpdateKind};
 
 pub struct ProcessIdGetter {
     handle: i32,
@@ -153,5 +154,61 @@ impl PtyProcessInfo {
             self.current = current;
         }
         has_changed
+    }
+    
+    pub fn tty(&self) -> Option<String> {
+        let pid = self.pid_getter.fallback_pid();
+
+        #[cfg(unix)]
+        {
+            #[cfg(target_os = "linux")]
+            {
+                let tty_path = format!("/proc/{}/fd/0", pid);
+                match fs::read_link(&tty_path) {
+                    Ok(path) => {
+                        Some(path.to_string_lossy().into_owned())
+                    }
+                    Err(e) => {
+                        None
+                    }
+                }
+            }
+
+            #[cfg(target_os = "macos")]
+            {
+                let tty_path = format!("/dev/ttys{:03}", pid % 1000);
+                match fs::read_link(&tty_path) {
+                    Ok(path) => {
+                        Some(path.to_string_lossy().into_owned())
+                    }
+                    Err(_e) => {
+                        let output = Command::new("ps")
+                            .arg("-p")
+                            .arg(pid.to_string())
+                            .arg("-o")
+                            .arg("tty")
+                            .output();
+
+                        match output {
+                            Ok(output) if !output.stdout.is_empty() => {
+                                let tty = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                                if tty != "?" {
+                                    let tty = tty.trim_start_matches("TTY").trim();
+                                    return Some(tty.to_string());
+                                }
+                            }
+                            _ => {}
+                        }
+
+                        None
+                    }
+                }
+            }
+        }
+
+        #[cfg(windows)]
+        {
+            Some("TTY on Windows not implemented".to_string())
+        }
     }
 }
