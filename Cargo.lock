@@ -437,6 +437,7 @@ dependencies = [
  "smallvec",
  "smol",
  "strum",
+ "telemetry",
  "telemetry_events",
  "terminal",
  "terminal_view",

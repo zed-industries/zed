@@ -80,6 +80,7 @@ similar.workspace = true
 smallvec.workspace = true
 smol.workspace = true
 strum.workspace = true
+telemetry.workspace = true
 telemetry_events.workspace = true
 terminal.workspace = true
 terminal_view.workspace = true
