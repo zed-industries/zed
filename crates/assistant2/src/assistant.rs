@@ -50,7 +50,8 @@ actions!(
         FocusDown,
         FocusLeft,
         FocusRight,
-        RemoveFocusedContext
+        RemoveFocusedContext,
+        AcceptSuggestedContext
     ]
 );
 

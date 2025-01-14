@@ -246,7 +246,8 @@
       "right": "assistant2::FocusRight",
       "left": "assistant2::FocusLeft",
       "down": "assistant2::FocusDown",
-      "backspace": "assistant2::RemoveFocusedContext"
+      "backspace": "assistant2::RemoveFocusedContext",
+      "enter": "assistant2::AcceptSuggestedContext"
     }
   },
   {

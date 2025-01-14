@@ -9,18 +9,19 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::Buffer;
+use terminal::alacritty_terminal::vte::ansi::C0::SO;
 use ui::{prelude::*, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip};
 use workspace::Workspace;
 
-use crate::context::ContextKind;
+use crate::context::{Context, ContextKind, ContextSnapshot};
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 use crate::thread::Thread;
 use crate::thread_store::ThreadStore;
 use crate::ui::ContextPill;
 use crate::{
-    AssistantPanel, FocusDown, FocusLeft, FocusRight, FocusUp, RemoveAllContext,
-    RemoveFocusedContext, ToggleContextPicker,
+    AcceptSuggestedContext, AssistantPanel, FocusDown, FocusLeft, FocusRight, FocusUp,
+    RemoveAllContext, RemoveFocusedContext, ToggleContextPicker,
 };
 
 pub struct ContextStrip {
@@ -290,6 +291,52 @@ impl ContextStrip {
             }
         }
     }
+
+    fn is_suggested_focused<T>(&self, context: &Vec<T>) -> bool {
+        // We only suggest one item after the actual context
+        self.focused_index == Some(context.len())
+    }
+
+    fn accept_suggested_context(&mut self, _: &AcceptSuggestedContext, cx: &mut ViewContext<Self>) {
+        if let Some(suggested) = self.suggested_context(cx) {
+            let context_store = self.context_store.read(cx);
+
+            if self.is_suggested_focused(context_store.context()) {
+                self.add_suggested_context(&suggested, cx);
+            }
+        }
+    }
+
+    fn add_suggested_context(&mut self, suggested: &SuggestedContext, cx: &mut ViewContext<Self>) {
+        let task = self.context_store.update(cx, |context_store, cx| {
+            context_store.accept_suggested_context(&suggested, cx)
+        });
+
+        let workspace = self.workspace.clone();
+
+        cx.spawn(|this, mut cx| async move {
+            match task.await {
+                Ok(()) => {
+                    if let Some(this) = this.upgrade() {
+                        this.update(&mut cx, |_, cx| cx.notify())?;
+                    }
+                }
+                Err(err) => {
+                    let Some(workspace) = workspace.upgrade() else {
+                        return anyhow::Ok(());
+                    };
+
+                    workspace.update(&mut cx, |workspace, cx| {
+                        workspace.show_error(&err, cx);
+                    })?;
+                }
+            }
+            anyhow::Ok(())
+        })
+        .detach_and_log_err(cx);
+
+        cx.notify();
+    }
 }
 
 impl FocusableView for ContextStrip {
@@ -330,6 +377,7 @@ impl Render for ContextStrip {
             .on_action(cx.listener(Self::focus_down))
             .on_action(cx.listener(Self::focus_left))
             .on_action(cx.listener(Self::remove_focused_context))
+            .on_action(cx.listener(Self::accept_suggested_context))
             .on_children_prepainted({
                 let view = cx.view().downgrade();
                 move |children_bounds, cx| {
@@ -419,39 +467,11 @@ impl Render for ContextStrip {
                         suggested.name().clone(),
                         suggested.icon_path(),
                         suggested.kind(),
-                        self.focused_index == Some(context.len()),
+                        self.is_suggested_focused(&context),
                     )
-                    .on_click({
-                        let context_store = self.context_store.clone();
-
-                        Rc::new(cx.listener(move |this, _event, cx| {
-                            let task = context_store.update(cx, |context_store, cx| {
-                                context_store.accept_suggested_context(&suggested, cx)
-                            });
-
-                            let workspace = this.workspace.clone();
-                            cx.spawn(|this, mut cx| async move {
-                                match task.await {
-                                    Ok(()) => {
-                                        if let Some(this) = this.upgrade() {
-                                            this.update(&mut cx, |_, cx| cx.notify())?;
-                                        }
-                                    }
-                                    Err(err) => {
-                                        let Some(workspace) = workspace.upgrade() else {
-                                            return anyhow::Ok(());
-                                        };
-
-                                        workspace.update(&mut cx, |workspace, cx| {
-                                            workspace.show_error(&err, cx);
-                                        })?;
-                                    }
-                                }
-                                anyhow::Ok(())
-                            })
-                            .detach_and_log_err(cx);
-                        }))
-                    }),
+                    .on_click(Rc::new(cx.listener(move |this, _event, cx| {
+                        this.add_suggested_context(&suggested, cx);
+                    }))),
                 )
             })
             .when(!context.is_empty(), {
