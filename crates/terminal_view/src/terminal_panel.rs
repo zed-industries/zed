@@ -471,63 +471,44 @@ impl TerminalPanel {
             return;
         }
 
-        let terminals_for_task = self.terminals_for_task(&task.full_label, cx);
-        if terminals_for_task.is_empty() {
+        let mut terminals_for_task = self.terminals_for_task(&task.full_label, cx);
+        let Some(existing) = terminals_for_task.pop() else {
             self.spawn_in_new_terminal(task, cx).detach_and_log_err(cx);
             return;
+        };
+
+        let (existing_item_index, task_pane, existing_terminal) = existing;
+        if task.allow_concurrent_runs {
+            self.replace_terminal(task, task_pane, existing_item_index, existing_terminal, cx)
+                .detach();
+            return;
         }
-        let (existing_item_index, task_pane, existing_terminal) = terminals_for_task
-            .last()
-            .expect("covered no terminals case above")
-            .clone();
-        let id = task.id.clone();
-        cx.spawn(move |this, mut cx| async move {
-            if task.allow_concurrent_runs {
-                this.update(&mut cx, |terminal_panel, cx| {
-                    terminal_panel.replace_terminal(
-                        task,
-                        task_pane,
-                        existing_item_index,
-                        existing_terminal,
-                        cx,
-                    )
-                })?
-                .await;
-            } else {
-                this.update(&mut cx, |this, cx| {
-                    this.deferred_tasks.insert(
-                        id,
-                        cx.spawn(|terminal_panel, mut cx| async move {
-                            wait_for_terminals_tasks(terminals_for_task, &mut cx).await;
-                            let Ok(Some(new_terminal_task)) =
-                                terminal_panel.update(&mut cx, |terminal_panel, cx| {
-                                    if task.use_new_terminal {
-                                        terminal_panel
-                                            .spawn_in_new_terminal(task, cx)
-                                            .detach_and_log_err(cx);
-                                        None
-                                    } else {
-                                        Some(terminal_panel.replace_terminal(
-                                            task,
-                                            task_pane,
-                                            existing_item_index,
-                                            existing_terminal,
-                                            cx,
-                                        ))
-                                    }
-                                })
-                            else {
-                                return;
-                            };
-                            new_terminal_task.await;
-                        }),
-                    );
-                })
-                .ok();
-            }
-            anyhow::Result::<_, anyhow::Error>::Ok(())
-        })
-        .detach()
+
+        self.deferred_tasks.insert(
+            task.id.clone(),
+            cx.spawn(|terminal_panel, mut cx| async move {
+                wait_for_terminals_tasks(terminals_for_task, &mut cx).await;
+                let task = terminal_panel.update(&mut cx, |terminal_panel, cx| {
+                    if task.use_new_terminal {
+                        terminal_panel
+                            .spawn_in_new_terminal(task, cx)
+                            .detach_and_log_err(cx);
+                        None
+                    } else {
+                        Some(terminal_panel.replace_terminal(
+                            task,
+                            task_pane,
+                            existing_item_index,
+                            existing_terminal,
+                            cx,
+                        ))
+                    }
+                });
+                if let Ok(Some(task)) = task {
+                    task.await;
+                }
+            }),
+        );
     }
 
     pub fn spawn_in_new_terminal(
