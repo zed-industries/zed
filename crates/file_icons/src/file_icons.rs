@@ -4,7 +4,8 @@ use collections::HashMap;
 
 use gpui::{AppContext, AssetSource, Global, SharedString};
 use serde_derive::Deserialize;
-use theme::ThemeRegistry;
+use settings::Settings;
+use theme::ThemeSettings;
 use util::{maybe, paths::PathExt};
 
 #[derive(Deserialize, Debug)]
@@ -62,10 +63,10 @@ impl FileIcons {
     }
 
     pub fn get_icon_for_type(&self, typ: &str, cx: &AppContext) -> Option<SharedString> {
-        let theme_registry = ThemeRegistry::global(cx);
-        let icon_theme = theme_registry.get_icon_theme("zed").ok()?;
+        let theme_settings = ThemeSettings::get_global(cx);
 
-        icon_theme
+        theme_settings
+            .active_icon_theme
             .file_icons
             .get(typ)
             .map(|icon_definition| icon_definition.path.clone())

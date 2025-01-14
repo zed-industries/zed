@@ -697,6 +697,12 @@ impl settings::Settings for ThemeSettings {
             this.theme_overrides.clone_from(&value.theme_overrides);
             this.apply_theme_overrides();
 
+            if let Some(value) = &value.icon_theme {
+                if let Some(icon_theme) = themes.get_icon_theme(value).log_err() {
+                    this.active_icon_theme = icon_theme.clone();
+                }
+            }
+
             merge(&mut this.ui_font_size, value.ui_font_size.map(Into::into));
             this.ui_font_size = this.ui_font_size.clamp(px(6.), px(100.));
 
