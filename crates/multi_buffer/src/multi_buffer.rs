@@ -242,7 +242,7 @@ pub struct ExcerptInfo {
     pub buffer: BufferSnapshot,
     pub buffer_id: BufferId,
     pub range: ExcerptRange<text::Anchor>,
-    pub text_summary: TextSummary,
+    pub excerpt_lines: Point,
 }
 
 impl std::fmt::Debug for ExcerptInfo {
@@ -4685,9 +4685,8 @@ impl MultiBufferSnapshot {
                 start_offset = start.to_offset(self);
                 Bound::Included(start_offset)
             }
-            Bound::Excluded(start) => {
-                start_offset = start.to_offset(self);
-                Bound::Excluded(start_offset)
+            Bound::Excluded(_) => {
+                panic!("not supported")
             }
             Bound::Unbounded => {
                 start_offset = 0;
@@ -4701,51 +4700,99 @@ impl MultiBufferSnapshot {
         };
         let bounds = (start, end);
 
-        let mut cursor = self.excerpts.cursor::<(usize, Point)>(&());
-        cursor.seek(&start_offset, Bias::Right, &());
-        if cursor.item().is_none() {
-            cursor.prev(&());
+        let mut cursor = self.cursor::<DimensionPair<usize, Point>>();
+        cursor.seek(&DimensionPair {
+            key: start_offset,
+            value: None,
+        });
+
+        if cursor
+            .region()
+            .is_some_and(|region| bounds.contains(&region.range.start.key))
+        {
+            cursor.prev_excerpt();
+        } else {
+            cursor.seek_to_start_of_current_excerpt();
         }
-        if !bounds.contains(&cursor.start().0) {
-            cursor.next(&());
-        }
+        let mut prev_region = cursor.region();
+
+        cursor.next_excerpt();
 
         let mut visited_end = false;
         iter::from_fn(move || {
             if self.singleton {
-                None
-            } else if bounds.contains(&cursor.start().0) {
-                let next = cursor.item().map(|excerpt| ExcerptInfo {
-                    id: excerpt.id,
-                    buffer: excerpt.buffer.clone(),
-                    buffer_id: excerpt.buffer_id,
-                    range: excerpt.range.clone(),
-                    text_summary: excerpt.text_summary.clone(),
-                });
-
-                if next.is_none() {
-                    if visited_end {
-                        return None;
-                    } else {
-                        visited_end = true;
-                    }
-                }
-
-                let prev = cursor.prev_item().map(|prev_excerpt| ExcerptInfo {
-                    id: prev_excerpt.id,
-                    buffer: prev_excerpt.buffer.clone(),
-                    buffer_id: prev_excerpt.buffer_id,
-                    range: prev_excerpt.range.clone(),
-                    text_summary: prev_excerpt.text_summary.clone(),
-                });
-                let row = MultiBufferRow(cursor.start().1.row);
-
-                cursor.next(&());
-
-                Some(ExcerptBoundary { row, prev, next })
-            } else {
-                None
+                return None;
             }
+
+            let next_region = cursor.region();
+            cursor.next_excerpt();
+
+            let prev_region_start = if let Some(region) = &prev_region {
+                region.range.start.value.unwrap()
+            } else {
+                Point::zero()
+            };
+            let next_region_start = if let Some(region) = &next_region {
+                if !bounds.contains(&region.range.start.key) {
+                    return None;
+                }
+                region.range.start.value.unwrap()
+            } else {
+                self.max_point()
+            };
+            let next_region_end = if let Some(region) = cursor.region() {
+                region.range.start.value.unwrap()
+            } else {
+                self.max_point()
+            };
+
+            let prev = prev_region.as_ref().map(|region| {
+                let mut excerpt_lines = next_region_start - prev_region_start;
+                if region.excerpt.has_trailing_newline {
+                    excerpt_lines.row -= 1;
+                    excerpt_lines.column = region.excerpt.text_summary.lines.column
+                };
+                ExcerptInfo {
+                    id: region.excerpt.id,
+                    buffer: region.excerpt.buffer.clone(),
+                    buffer_id: region.excerpt.buffer_id,
+                    range: region.excerpt.range.clone(),
+                    excerpt_lines,
+                }
+            });
+
+            let next = next_region.as_ref().map(|region| {
+                let mut excerpt_lines = next_region_end - next_region_start;
+                if region.excerpt.has_trailing_newline {
+                    excerpt_lines.row -= 1;
+                    excerpt_lines.column = region.excerpt.text_summary.lines.column
+                };
+                ExcerptInfo {
+                    id: region.excerpt.id,
+                    buffer: region.excerpt.buffer.clone(),
+                    buffer_id: region.excerpt.buffer_id,
+                    range: region.excerpt.range.clone(),
+                    excerpt_lines,
+                }
+            });
+
+            if next.is_none() {
+                if visited_end {
+                    return None;
+                } else {
+                    visited_end = true;
+                }
+            }
+
+            let row = if let Some(next) = &next_region {
+                MultiBufferRow(next.range.start.value.unwrap().row)
+            } else {
+                self.max_row()
+            };
+
+            prev_region = next_region;
+
+            Some(ExcerptBoundary { row, prev, next })
         })
     }
 
@@ -6079,16 +6126,6 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for TextSummary {
 
     fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
         *self += &summary.text;
-    }
-}
-
-impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for usize {
-    fn zero(_cx: &()) -> Self {
-        Default::default()
-    }
-
-    fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
-        *self += summary.text.len;
     }
 }
 

@@ -6405,12 +6405,8 @@ impl Editor {
 
                 // Don't move lines across excerpts
                 if buffer
-                    .excerpt_boundaries_in_range((
-                        Bound::Excluded(insertion_point),
-                        Bound::Included(range_to_move.end),
-                    ))
-                    .next()
-                    .is_none()
+                    .excerpt_containing((insertion_point..range_to_move.end))
+                    .is_some()
                 {
                     let text = buffer
                         .text_for_range(range_to_move.clone())
@@ -6503,12 +6499,8 @@ impl Editor {
 
                 // Don't move lines across excerpt boundaries
                 if buffer
-                    .excerpt_boundaries_in_range((
-                        Bound::Excluded(range_to_move.start),
-                        Bound::Included(insertion_point),
-                    ))
-                    .next()
-                    .is_none()
+                    .excerpt_containing(range_to_move.start..insertion_point)
+                    .is_some()
                 {
                     let mut text = String::from("\n");
                     text.extend(buffer.text_for_range(range_to_move.clone()));

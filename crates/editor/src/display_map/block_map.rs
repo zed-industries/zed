@@ -778,13 +778,13 @@ impl BlockMap {
                 let first_excerpt = excerpt_boundary.next.clone().unwrap();
                 if folded_buffers.contains(&new_buffer_id) {
                     let mut buffer_end = Point::new(excerpt_boundary.row.0, 0)
-                        + excerpt_boundary.next.as_ref().unwrap().text_summary.lines;
+                        + excerpt_boundary.next.as_ref().unwrap().excerpt_lines;
 
                     while let Some(next_boundary) = boundaries.peek() {
                         if let Some(next_excerpt_boundary) = &next_boundary.next {
                             if next_excerpt_boundary.buffer_id == new_buffer_id {
                                 buffer_end = Point::new(next_boundary.row.0, 0)
-                                    + next_excerpt_boundary.text_summary.lines;
+                                    + next_excerpt_boundary.excerpt_lines;
                             } else {
                                 break;
                             }
