@@ -9,11 +9,10 @@ use gpui::{
 };
 use itertools::Itertools;
 use language::Buffer;
-use terminal::alacritty_terminal::vte::ansi::C0::SO;
 use ui::{prelude::*, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip};
 use workspace::Workspace;
 
-use crate::context::{Context, ContextKind, ContextSnapshot};
+use crate::context::ContextKind;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 use crate::thread::Thread;
