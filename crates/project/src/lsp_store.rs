@@ -2566,9 +2566,15 @@ impl LocalLspStore {
                                     let pattern = watcher_path
                                         .as_path()
                                         .strip_prefix(&path)
-                                        .unwrap_or(path.as_path())
-                                        .to_string_lossy()
-                                        .to_string();
+                                        .context("Failed to strip prefix for string pattern")
+                                        .log_err()
+                                        .map(|p| p.to_string_lossy().to_string())
+                                        .unwrap_or_else(|| {
+                                            debug_panic!(
+                                                "Failed to strip prefix for string pattern"
+                                            );
+                                            watcher_path.as_path().to_string_lossy().to_string()
+                                        });
                                     let path = if path.components().next().is_none() {
                                         worktree_root_path.clone()
                                     } else {
@@ -2603,16 +2609,21 @@ impl LocalLspStore {
                                     let path = glob_literal_prefix(Path::new(&rp.pattern));
                                     let pattern = Path::new(&rp.pattern)
                                         .strip_prefix(&path)
-                                        .unwrap_or(path.as_path())
-                                        .to_string_lossy()
-                                        .to_string();
+                                        .context("Failed to strip prefix for relative pattern")
+                                        .log_err()
+                                        .map(|p| p.to_string_lossy().to_string())
+                                        .unwrap_or_else(|| {
+                                            debug_panic!(
+                                                "Failed to strip prefix for relative pattern"
+                                            );
+                                            rp.pattern.clone()
+                                        });
                                     base_uri.push(path);
 
                                     let path = if base_uri.components().next().is_none() {
-                                        // TODO:
-                                        // why just return the root path?
-                                        // how should we handle this on Windows?
-                                        Arc::from(Path::new("/"))
+                                        debug_panic!("base_uri is empty!");
+                                        log::error!("base_uri is empty!");
+                                        worktree_root_path.clone()
                                     } else {
                                         base_uri.into()
                                     };
