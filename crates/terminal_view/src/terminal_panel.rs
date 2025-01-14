@@ -46,13 +46,19 @@ use zed_actions::InlineAssist;
 
 const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
 
-actions!(terminal_panel, [ToggleFocus]);
+actions!(
+    terminal_panel,
+    [ToggleFocus, DockRight, DockBottom, DockLeft]
+);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, _: &mut ViewContext<Workspace>| {
             workspace.register_action(TerminalPanel::new_terminal);
             workspace.register_action(TerminalPanel::open_terminal);
+            workspace.register_action(TerminalPanel::set_position_right);
+            workspace.register_action(TerminalPanel::set_position_bottom);
+            workspace.register_action(TerminalPanel::set_position_left);
             workspace.register_action(|workspace, _: &ToggleFocus, cx| {
                 if is_enabled_in_workspace(workspace, cx) {
                     workspace.toggle_panel_focus::<TerminalPanel>(cx);
@@ -954,6 +960,42 @@ impl TerminalPanel {
         self.workspace.upgrade().map_or(false, |workspace| {
             is_enabled_in_workspace(workspace.read(cx), cx)
         })
+    }
+
+    fn set_position_right(
+        workspace: &mut Workspace,
+        _action: &DockRight,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
+            return;
+        };
+
+        terminal_panel.set_position(DockPosition::Right, cx);
+    }
+
+    fn set_position_bottom(
+        workspace: &mut Workspace,
+        _action: &DockBottom,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
+            return;
+        };
+
+        terminal_panel.set_position(DockPosition::Bottom, cx);
+    }
+
+    fn set_position_left(
+        workspace: &mut Workspace,
+        _action: &DockLeft,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(terminal_panel) = workspace.panel::<Self>(cx) else {
+            return;
+        };
+
+        terminal_panel.set_position(DockPosition::Left, cx);
     }
 }
 
