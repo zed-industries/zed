@@ -366,28 +366,29 @@ impl ShellBuilder {
             .into_iter()
             .fold(task_command, |mut command, arg| {
                 command.push(' ');
-                command.push_str(&to_windows_shell_variable(windows_shell_type, arg));
+                command.push_str(&self.to_windows_shell_variable(windows_shell_type, arg));
                 command
             });
 
         match self.windows_shell_type() {
-            WindowsShellType::Powershell => user_args.extend(["-C".to_owned(), combined_command]),
-            WindowsShellType::Cmd => user_args.extend(["/C".to_owned(), combined_command]),
+            WindowsShellType::Powershell => self.args.extend(["-C".to_owned(), combined_command]),
+            WindowsShellType::Cmd => self.args.extend(["/C".to_owned(), combined_command]),
             WindowsShellType::Other => {
-                user_args.extend(["-i".to_owned(), "-c".to_owned(), combined_command])
+                self.args
+                    .extend(["-i".to_owned(), "-c".to_owned(), combined_command])
             }
         }
 
         (self.program, self.args)
     }
-    fn windows_shell_type(shell: &str) -> WindowsShellType {
-        if shell == "powershell"
-            || shell.ends_with("powershell.exe")
-            || shell == "pwsh"
-            || shell.ends_with("pwsh.exe")
+    fn windows_shell_type(&self) -> WindowsShellType {
+        if self.program == "powershell"
+            || self.program.ends_with("powershell.exe")
+            || self.program == "pwsh"
+            || self.program.ends_with("pwsh.exe")
         {
             WindowsShellType::Powershell
-        } else if shell == "cmd" || shell.ends_with("cmd.exe") {
+        } else if self.program == "cmd" || self.program.ends_with("cmd.exe") {
             WindowsShellType::Cmd
         } else {
             // Someother shell detected, the user might install and use a
@@ -402,7 +403,7 @@ impl ShellBuilder {
         "powershell".to_owned()
     }
 
-    fn to_windows_shell_variable(shell_type: WindowsShellType, input: String) -> String {
+    fn to_windows_shell_variable(&self, input: String) -> String {
         match self.windows_shell_type() {
             WindowsShellType::Powershell => Self::to_powershell_variable(input),
             WindowsShellType::Cmd => Self::to_cmd_variable(input),
