@@ -236,7 +236,11 @@ impl MessageEditor {
     }
 
     fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
-        cx.focus_view(&self.context_strip);
+        if self.context_picker_menu_handle.is_deployed() {
+            cx.propagate();
+        } else {
+            cx.focus_view(&self.context_strip);
+        }
     }
 }
 

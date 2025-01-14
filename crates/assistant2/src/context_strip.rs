@@ -4,8 +4,8 @@ use collections::HashSet;
 use editor::Editor;
 use file_icons::FileIcons;
 use gpui::{
-    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model, Subscription, View,
-    WeakModel, WeakView,
+    AppContext, Bounds, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
+    Subscription, View, WeakModel, WeakView,
 };
 use itertools::Itertools;
 use language::Buffer;
@@ -32,6 +32,7 @@ pub struct ContextStrip {
     workspace: WeakView<Workspace>,
     _subscriptions: Vec<Subscription>,
     focused_index: Option<usize>,
+    children_bounds: Option<Vec<Bounds<Pixels>>>,
 }
 
 impl ContextStrip {
@@ -70,6 +71,7 @@ impl ContextStrip {
             workspace,
             _subscriptions: subscriptions,
             focused_index: None,
+            children_bounds: None,
         }
     }
 
@@ -149,8 +151,7 @@ impl ContextStrip {
     }
 
     fn handle_focus(&mut self, cx: &mut ViewContext<Self>) {
-        // TODO az check if any
-        self.focused_index = Some(self.last_index(cx));
+        self.focused_index = self.last_pill_index();
         cx.notify();
     }
 
@@ -159,24 +160,22 @@ impl ContextStrip {
         cx.notify();
     }
 
-    fn last_index(&self, cx: &AppContext) -> usize {
-        self.context_store.read(cx).len().saturating_sub(1)
-    }
-
     fn focus_left(&mut self, _: &FocusLeft, cx: &mut ViewContext<Self>) {
         self.focused_index = match self.focused_index {
             Some(index) if index > 0 => Some(index - 1),
-            _ => Some(self.last_index(cx)),
+            _ => self.last_pill_index(),
         };
 
         cx.notify();
     }
 
     fn focus_right(&mut self, _: &FocusRight, cx: &mut ViewContext<Self>) {
-        let count = self.context_store.read(cx).len();
+        let Some(last_index) = self.last_pill_index() else {
+            return;
+        };
 
         self.focused_index = match self.focused_index {
-            Some(index) if index < count - 1 => Some(index + 1),
+            Some(index) if index < last_index => Some(index + 1),
             _ => Some(0),
         };
 
@@ -184,11 +183,91 @@ impl ContextStrip {
     }
 
     fn focus_up(&mut self, _: &FocusUp, cx: &mut ViewContext<Self>) {
-        cx.emit(ContextStripEvent::BlurredUp);
+        let Some(focused_index) = self.focused_index else {
+            return;
+        };
+
+        if focused_index == 0 {
+            return cx.emit(ContextStripEvent::BlurredUp);
+        }
+
+        let Some((focused, pills)) = self.focused_bounds(focused_index) else {
+            return;
+        };
+
+        let iter = pills[..focused_index].iter().enumerate().rev();
+        self.focused_index = Self::find_best_horizontal_match(focused, iter).or(Some(0));
+        cx.notify();
     }
 
     fn focus_down(&mut self, _: &FocusDown, cx: &mut ViewContext<Self>) {
-        cx.emit(ContextStripEvent::BlurredDown);
+        let Some(focused_index) = self.focused_index else {
+            return;
+        };
+
+        let last_index = self.last_pill_index();
+
+        if self.focused_index == last_index {
+            return cx.emit(ContextStripEvent::BlurredDown);
+        }
+
+        let Some((focused, pills)) = self.focused_bounds(focused_index) else {
+            return;
+        };
+
+        let iter = pills.iter().enumerate().skip(focused_index + 1);
+        self.focused_index = Self::find_best_horizontal_match(focused, iter).or(last_index);
+        cx.notify();
+    }
+
+    fn focused_bounds(&self, focused: usize) -> Option<(&Bounds<Pixels>, &[Bounds<Pixels>])> {
+        let pill_bounds = self.pill_bounds()?;
+        let focused = pill_bounds.get(focused)?;
+
+        Some((focused, pill_bounds))
+    }
+
+    fn pill_bounds(&self) -> Option<&[Bounds<Pixels>]> {
+        let bounds = self.children_bounds.as_ref()?;
+        let eraser = if bounds.len() < 3 { 0 } else { 1 };
+        let pills = &bounds[1..bounds.len() - eraser];
+
+        if pills.is_empty() {
+            None
+        } else {
+            Some(pills)
+        }
+    }
+
+    fn last_pill_index(&self) -> Option<usize> {
+        Some(self.pill_bounds()?.len() - 1)
+    }
+
+    fn find_best_horizontal_match<'a>(
+        focused: &'a Bounds<Pixels>,
+        iter: impl Iterator<Item = (usize, &'a Bounds<Pixels>)>,
+    ) -> Option<usize> {
+        let mut best = None;
+
+        let focused_left = focused.left();
+        let focused_right = focused.right();
+
+        for (index, probe) in iter {
+            if probe.origin.y == focused.origin.y {
+                continue;
+            }
+
+            let overlap = probe.right().min(focused_right) - probe.left().max(focused_left);
+
+            best = match best {
+                Some((_, prev_overlap, y)) if probe.origin.y != y || prev_overlap > overlap => {
+                    break;
+                }
+                Some(_) | None => Some((index, overlap, probe.origin.y)),
+            };
+        }
+
+        best.map(|(index, _, _)| index)
     }
 
     fn remove_focused_context(&mut self, _: &RemoveFocusedContext, cx: &mut ViewContext<Self>) {
@@ -251,6 +330,15 @@ impl Render for ContextStrip {
             .on_action(cx.listener(Self::focus_down))
             .on_action(cx.listener(Self::focus_left))
             .on_action(cx.listener(Self::remove_focused_context))
+            .on_children_prepainted({
+                let view = cx.view().downgrade();
+                move |children_bounds, cx| {
+                    view.update(cx, |this, _| {
+                        this.children_bounds = Some(children_bounds);
+                    })
+                    .ok();
+                }
+            })
             .child(
                 PopoverMenu::new("context-picker")
                     .menu(move |cx| {
@@ -326,6 +414,7 @@ impl Render for ContextStrip {
                     suggested.name().clone(),
                     suggested.icon_path(),
                     suggested.kind(),
+                    self.focused_index.is_some() && self.focused_index == self.last_pill_index(),
                     {
                         let context_store = self.context_store.clone();
                         Rc::new(cx.listener(move |this, _event, cx| {

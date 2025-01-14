@@ -10,13 +10,14 @@ pub enum ContextPill {
     Added {
         context: ContextSnapshot,
         dupe_name: bool,
-        on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
         focused: bool,
+        on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
     },
     Suggested {
         name: SharedString,
         icon_path: Option<SharedString>,
         kind: ContextKind,
+        focused: bool,
         on_add: Rc<dyn Fn(&ClickEvent, &mut WindowContext)>,
     },
 }
@@ -40,6 +41,7 @@ impl ContextPill {
         name: SharedString,
         icon_path: Option<SharedString>,
         kind: ContextKind,
+        focused: bool,
         on_add: Rc<dyn Fn(&ClickEvent, &mut WindowContext)>,
     ) -> Self {
         Self::Suggested {
@@ -47,6 +49,7 @@ impl ContextPill {
             icon_path,
             kind,
             on_add,
+            focused,
         }
     }
 
@@ -141,11 +144,16 @@ impl RenderOnce for ContextPill {
                 name,
                 icon_path: _,
                 kind,
+                focused,
                 on_add,
             } => base_pill
                 .cursor_pointer()
                 .pr_1()
-                .border_color(color.border_variant.opacity(0.5))
+                .border_color(if *focused {
+                    color.border_focused
+                } else {
+                    color.border_variant.opacity(0.5)
+                })
                 .hover(|style| style.bg(color.element_hover.opacity(0.5)))
                 .child(
                     Label::new(name.clone())
