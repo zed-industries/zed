@@ -8316,24 +8316,14 @@ impl DiagnosticSummary {
 }
 
 fn glob_literal_prefix(glob: &Path) -> PathBuf {
-    let mut idx_end = None;
-    for (idx, component) in glob.components().enumerate() {
-        match component {
+    glob.components()
+        .take_while(|component| match component {
             path::Component::Normal(part) => {
-                let part_str = part.to_str().unwrap_or("");
-                if part_str.contains(['*', '?', '{', '}']) {
-                    idx_end = Some(idx);
-                    break;
-                }
+                !part.to_str().unwrap_or("").contains(['*', '?', '{', '}'])
             }
-            _ => {}
-        }
-    }
-    if let Some(idx_end) = idx_end {
-        glob.components().take(idx_end).collect::<PathBuf>()
-    } else {
-        glob.to_path_buf()
-    }
+            _ => true,
+        })
+        .collect()
 }
 
 pub struct SshLspAdapter {
