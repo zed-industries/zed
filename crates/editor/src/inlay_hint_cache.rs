@@ -38,7 +38,7 @@ pub struct InlayHintCache {
     pub(super) enabled: bool,
     enabled_in_settings: bool,
     update_tasks: HashMap<ExcerptId, TasksForRanges>,
-    refresh_task: Option<Task<()>>,
+    refresh_task: Task<()>,
     invalidate_debounce: Option<Duration>,
     append_debounce: Option<Duration>,
     lsp_request_limiter: Arc<Semaphore>,
@@ -116,13 +116,9 @@ impl InvalidationStrategy {
 
 impl TasksForRanges {
     fn new(query_ranges: QueryRanges, task: Task<()>) -> Self {
-        let mut sorted_ranges = Vec::new();
-        sorted_ranges.extend(query_ranges.before_visible);
-        sorted_ranges.extend(query_ranges.visible);
-        sorted_ranges.extend(query_ranges.after_visible);
         Self {
             tasks: vec![task],
-            sorted_ranges,
+            sorted_ranges: query_ranges.into_sorted_query_ranges(),
         }
     }
 
@@ -135,7 +131,7 @@ impl TasksForRanges {
     ) {
         let query_ranges = if invalidate.should_invalidate() {
             self.tasks.clear();
-            self.sorted_ranges.clear();
+            self.sorted_ranges = query_ranges.clone().into_sorted_query_ranges();
             query_ranges
         } else {
             let mut non_cached_query_ranges = query_ranges;
@@ -272,7 +268,7 @@ impl InlayHintCache {
             enabled_in_settings: inlay_hint_settings.enabled,
             hints: HashMap::default(),
             update_tasks: HashMap::default(),
-            refresh_task: None,
+            refresh_task: Task::ready(()),
             invalidate_debounce: debounce_value(inlay_hint_settings.edit_debounce_ms),
             append_debounce: debounce_value(inlay_hint_settings.scroll_debounce_ms),
             version: 0,
@@ -384,7 +380,7 @@ impl InlayHintCache {
         } else {
             self.append_debounce
         };
-        self.refresh_task = Some(cx.spawn(|editor, mut cx| async move {
+        self.refresh_task = cx.spawn(|editor, mut cx| async move {
             if let Some(debounce_duration) = debounce_duration {
                 cx.background_executor().timer(debounce_duration).await;
             }
@@ -401,7 +397,7 @@ impl InlayHintCache {
                     )
                 })
                 .ok();
-        }));
+        });
 
         if invalidated_hints.is_empty() {
             None
@@ -726,6 +722,16 @@ struct QueryRanges {
 impl QueryRanges {
     fn is_empty(&self) -> bool {
         self.before_visible.is_empty() && self.visible.is_empty() && self.after_visible.is_empty()
+    }
+
+    fn into_sorted_query_ranges(self) -> Vec<Range<text::Anchor>> {
+        let mut sorted_ranges = Vec::with_capacity(
+            self.before_visible.len() + self.visible.len() + self.after_visible.len(),
+        );
+        sorted_ranges.extend(self.before_visible);
+        sorted_ranges.extend(self.visible);
+        sorted_ranges.extend(self.after_visible);
+        sorted_ranges
     }
 }
 
@@ -2224,12 +2230,12 @@ pub mod tests {
                                     );
 
                                     task_lsp_request_ranges.lock().push(params.range);
-                                    let i = Arc::clone(&task_lsp_request_count)
-                                        .fetch_add(1, Ordering::Release)
-                                        + 1;
+                                    task_lsp_request_count.fetch_add(1, Ordering::Release);
                                     Ok(Some(vec![lsp::InlayHint {
                                         position: params.range.end,
-                                        label: lsp::InlayHintLabel::String(i.to_string()),
+                                        label: lsp::InlayHintLabel::String(
+                                            params.range.end.line.to_string(),
+                                        ),
                                         kind: None,
                                         text_edits: None,
                                         tooltip: None,
@@ -2295,7 +2301,7 @@ pub mod tests {
             // TODO kb
             // let requests_count = lsp_request_count.load(Ordering::Acquire);
             // assert_eq!(requests_count, 2, "Visible + invisible request");
-            let expected_hints = vec!["1".to_string(), "2".to_string()];
+            let expected_hints = vec!["47".to_string(), "94".to_string()];
             assert_eq!(
                 expected_hints,
                 cached_hint_labels(editor),
@@ -2359,10 +2365,10 @@ pub mod tests {
                 // let lsp_requests = lsp_request_count.load(Ordering::Acquire);
                 // assert_eq!(lsp_requests, 4, "Should query for hints after every scroll");
                 let expected_hints = vec![
-                    "1".to_string(),
-                    "2".to_string(),
-                    "3".to_string(),
-                    "4".to_string(),
+                    "47".to_string(),
+                    "94".to_string(),
+                    "139".to_string(),
+                    "184".to_string(),
                 ];
                 assert_eq!(
                     expected_hints,
@@ -2431,9 +2437,9 @@ pub mod tests {
                 "Hints query range should contain one more screen after");
 
             // TODO kb
-            // let lsp_requests = lsp_request_count.load(Ordering::Acquire);
+            // let lsp_requests = task_lsp_request_ranges.lock().len();
             // assert_eq!(lsp_requests, 7, "There should be a visible range and two ranges above and below it queried");
-            let expected_hints = vec!["5".to_string(), "6".to_string(), "7".to_string()];
+            let expected_hints = vec!["67".to_string(), "115".to_string(), "163".to_string()];
             assert_eq!(expected_hints, cached_hint_labels(editor),
                 "Should have hints from the new LSP response after the edit");
             assert_eq!(expected_hints, visible_hint_labels(editor, cx));
