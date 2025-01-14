@@ -24,8 +24,30 @@ pub struct IconTheme {
     pub name: SharedString,
     /// The appearance of the icon theme (e.g., light or dark).
     pub appearance: Appearance,
+    /// The icons used for directories.
+    pub directory_icons: DirectoryIcons,
+    /// The icons used for chevrons.
+    pub chevron_icons: ChevronIcons,
     /// The mapping of file types to icon definitions.
     pub file_icons: HashMap<String, IconDefinition>,
+}
+
+/// The icons used for directories.
+#[derive(Debug, PartialEq)]
+pub struct DirectoryIcons {
+    /// The path to the icon to use for a collapsed directory.
+    pub collapsed: Option<SharedString>,
+    /// The path to the icon to use for an expanded directory.
+    pub expanded: Option<SharedString>,
+}
+
+/// The icons used for chevrons.
+#[derive(Debug, PartialEq)]
+pub struct ChevronIcons {
+    /// The path to the icon to use for a collapsed chevron.
+    pub collapsed: Option<SharedString>,
+    /// The path to the icon to use for an expanded chevron.
+    pub expanded: Option<SharedString>,
 }
 
 /// An icon definition.
@@ -43,8 +65,6 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("c", "icons/file_icons/c.svg"),
     ("code", "icons/file_icons/code.svg"),
     ("coffeescript", "icons/file_icons/coffeescript.svg"),
-    ("collapsed_chevron", "icons/file_icons/chevron_right.svg"),
-    ("collapsed_folder", "icons/file_icons/folder.svg"),
     ("cpp", "icons/file_icons/cpp.svg"),
     ("css", "icons/file_icons/css.svg"),
     ("dart", "icons/file_icons/dart.svg"),
@@ -56,8 +76,6 @@ const FILE_ICONS: &[(&str, &str)] = &[
     ("elm", "icons/file_icons/elm.svg"),
     ("erlang", "icons/file_icons/erlang.svg"),
     ("eslint", "icons/file_icons/eslint.svg"),
-    ("expanded_chevron", "icons/file_icons/chevron_down.svg"),
-    ("expanded_folder", "icons/file_icons/folder_open.svg"),
     ("font", "icons/file_icons/font.svg"),
     ("fsharp", "icons/file_icons/fsharp.svg"),
     ("gleam", "icons/file_icons/gleam.svg"),
@@ -115,6 +133,14 @@ pub fn default_icon_theme() -> IconTheme {
         id: DEFAULT_ICON_THEME_ID.into(),
         name: "Zed (Default)".into(),
         appearance: Appearance::Dark,
+        directory_icons: DirectoryIcons {
+            collapsed: Some("icons/file_icons/folder.svg".into()),
+            expanded: Some("icons/file_icons/folder_open.svg".into()),
+        },
+        chevron_icons: ChevronIcons {
+            collapsed: Some("icons/file_icons/chevron_right.svg".into()),
+            expanded: Some("icons/file_icons/chevron_down.svg".into()),
+        },
         file_icons: HashMap::from_iter(FILE_ICONS.into_iter().map(|(ty, path)| {
             (
                 ty.to_string(),
