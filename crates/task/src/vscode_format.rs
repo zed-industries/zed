@@ -388,4 +388,20 @@ mod tests {
         let tasks: TaskTemplates = vscode_definitions.try_into().unwrap();
         assert_eq!(tasks.0, expected);
     }
+
+    #[test]
+    fn test_zed_worktree_root_points_to_directory() {
+        let replacer = EnvVariableReplacer::new(HashMap::from_iter([(
+            "workspaceFolder".to_owned(),
+            "ZED_WORKTREE_ROOT".to_owned(),
+        )]));
+
+        let input = "${workspaceFolder}/some/path";
+        let expected = "${ZED_WORKTREE_ROOT}/some/path";
+        assert_eq!(replacer.replace(input), expected);
+
+        let input = "${workspaceFolder:default}/some/path";
+        let expected = "${ZED_WORKTREE_ROOT:default}/some/path";
+        assert_eq!(replacer.replace(input), expected);
+    }
 }

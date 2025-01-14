@@ -198,3 +198,17 @@ To tag a task, add the runnable tag name to `tags` field on task template:
 ```
 
 In doing so, you can change which task is shown in runnables indicator.
+
+### Example of Correct Usage of `ZED_WORKTREE_ROOT`
+
+To ensure that `ZED_WORKTREE_ROOT` always points to a directory, you can use it in a task as follows:
+
+```json
+{
+  "label": "lazygit",
+  "command": "alacritty -o 'window.startup_mode=\"SimpleFullscreen\"' --working-directory ${ZED_WORKTREE_ROOT} --command lazygit",
+  "hide": "always"
+}
+```
+
+In this example, `ZED_WORKTREE_ROOT` is used to set the working directory for the `alacritty` terminal emulator, ensuring that it always points to the root directory of the current worktree.

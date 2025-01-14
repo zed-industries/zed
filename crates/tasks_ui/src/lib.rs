@@ -192,7 +192,7 @@ fn spawn_task_with_name(
                 Some(())
             })?
             .is_some();
-        if !did_spawn {
+        if (!did_spawn) {
             workspace
                 .update(&mut cx, |workspace, cx| {
                     spawn_task_or_modal(
