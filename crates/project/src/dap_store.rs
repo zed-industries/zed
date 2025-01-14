@@ -706,7 +706,22 @@ impl DapStore {
             merge_json_value_into(args, &mut adapter_args);
         }
 
+        // TODO(debugger): GDB starts the debuggee program on launch instead of configurationDone
+        // causing our sent breakpoints to not be valid. This delay should eventually be taken out
+        let delay = if &client.adapter_id() == "gdb" {
+            Some(
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(20u64)),
+            )
+        } else {
+            None
+        };
+
         cx.background_executor().spawn(async move {
+            if let Some(delay) = delay {
+                delay.await;
+            }
+
             client
                 .request::<Launch>(LaunchRequestArguments { raw: adapter_args })
                 .await
