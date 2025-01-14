@@ -1,5 +1,17 @@
 ALTER TABLE worktree_repository_statuses
-ADD COLUMN status_kind INTEGER NOT NULL DEFAULT 0,
+ADD COLUMN status_kind INTEGER,
 ADD COLUMN first_status INTEGER,
-ADD COLUMN second_status INTEGER,
-DROP COLUMN status;
+ADD COLUMN second_status INTEGER;
+
+ALTER TABLE worktree_repository_statuses
+ALTER COLUMN status_kind
+SET DEFAULT 0;
+
+UPDATE worktree_repository_statuses
+SET
+    status_kind = 0;
+
+ALTER TABLE worktree_repository_statuses
+ALTER COLUMN status_kind
+SET
+    NOT NULL;
