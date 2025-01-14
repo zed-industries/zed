@@ -474,7 +474,7 @@ impl InlayMap {
                         .position
                         .to_offset(&buffer_snapshot)
                         .cmp(&buffer_edit.new.start)
-                        .then(std::cmp::Ordering::Less)
+                        .then(std::cmp::Ordering::Greater)
                 }) {
                     Ok(ix) | Err(ix) => ix,
                 };
