@@ -16,10 +16,6 @@ pub struct FileIcons {
 
 impl Global for FileIcons {}
 
-const COLLAPSED_DIRECTORY_TYPE: &str = "collapsed_folder";
-const EXPANDED_DIRECTORY_TYPE: &str = "expanded_folder";
-const COLLAPSED_CHEVRON_TYPE: &str = "collapsed_chevron";
-const EXPANDED_CHEVRON_TYPE: &str = "expanded_chevron";
 pub const FILE_TYPES_ASSET: &str = "icons/file_icons/file_types.json";
 
 pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
@@ -73,26 +69,22 @@ impl FileIcons {
     }
 
     pub fn get_folder_icon(expanded: bool, cx: &AppContext) -> Option<SharedString> {
-        let this = cx.try_global::<Self>()?;
+        let icon_theme = &ThemeSettings::get_global(cx).active_icon_theme;
 
-        let key = if expanded {
-            EXPANDED_DIRECTORY_TYPE
+        if expanded {
+            icon_theme.directory_icons.expanded.clone()
         } else {
-            COLLAPSED_DIRECTORY_TYPE
-        };
-
-        this.get_icon_for_type(key, cx)
+            icon_theme.directory_icons.collapsed.clone()
+        }
     }
 
     pub fn get_chevron_icon(expanded: bool, cx: &AppContext) -> Option<SharedString> {
-        let this = cx.try_global::<Self>()?;
+        let icon_theme = &ThemeSettings::get_global(cx).active_icon_theme;
 
-        let key = if expanded {
-            EXPANDED_CHEVRON_TYPE
+        if expanded {
+            icon_theme.chevron_icons.expanded.clone()
         } else {
-            COLLAPSED_CHEVRON_TYPE
-        };
-
-        this.get_icon_for_type(key, cx)
+            icon_theme.chevron_icons.collapsed.clone()
+        }
     }
 }
