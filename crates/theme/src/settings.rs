@@ -1,5 +1,8 @@
 use crate::fallback_themes::zed_default_dark;
-use crate::{Appearance, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent};
+use crate::{
+    Appearance, IconTheme, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent,
+    DEFAULT_ICON_THEME_ID,
+};
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
@@ -118,6 +121,8 @@ pub struct ThemeSettings {
     ///
     /// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
     pub theme_overrides: Option<ThemeStyleContent>,
+    /// The active icon theme.
+    pub active_icon_theme: Arc<IconTheme>,
     /// The density of the UI.
     /// Note: This setting is still experimental. See [this tracking issue](
     pub ui_density: UiDensity,
@@ -324,6 +329,9 @@ pub struct ThemeSettingsContent {
     /// The name of the Zed theme to use.
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
+    /// The name of the icon theme to use.
+    #[serde(default)]
+    pub icon_theme: Option<String>,
 
     /// UNSTABLE: Expect many elements to be broken.
     ///
@@ -632,6 +640,10 @@ impl settings::Settings for ThemeSettings {
                 .or(themes.get(&zed_default_dark().name))
                 .unwrap(),
             theme_overrides: None,
+            active_icon_theme: themes
+                .get_icon_theme(defaults.icon_theme.as_ref().unwrap())
+                .or_else(|_| themes.get_icon_theme(DEFAULT_ICON_THEME_ID))
+                .unwrap(),
             ui_density: defaults.ui_density.unwrap_or(UiDensity::Default),
             unnecessary_code_fade: defaults.unnecessary_code_fade.unwrap_or(0.0),
         };

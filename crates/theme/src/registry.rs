@@ -78,6 +78,11 @@ impl ThemeRegistry {
         // We're loading the Zed default theme, as we need a theme to be loaded
         // for tests.
         registry.insert_theme_families([crate::fallback_themes::zed_default_themes()]);
+        registry
+            .state
+            .write()
+            .icon_themes
+            .insert("zed".into(), Arc::new(crate::default_icon_theme()));
 
         registry
     }
@@ -199,6 +204,16 @@ impl ThemeRegistry {
         self.insert_user_theme_families([theme]);
 
         Ok(())
+    }
+
+    /// Returns the icon theme with the specified name.
+    pub fn get_icon_theme(&self, name: &str) -> Result<Arc<IconTheme>> {
+        self.state
+            .read()
+            .icon_themes
+            .get(name)
+            .ok_or_else(|| anyhow!("icon theme not found: {name}"))
+            .cloned()
     }
 }
 
