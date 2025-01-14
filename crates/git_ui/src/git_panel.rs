@@ -13,7 +13,7 @@ use git::status::GitStatusPair;
 use gpui::*;
 use language::Buffer;
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
-use project::{Fs, Project};
+use project::{Fs, Project, ProjectPath};
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,6 +23,7 @@ use ui::{
     prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
+use workspace::notifications::DetachAndPromptErr;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
@@ -55,9 +56,10 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum Event {
     Focus,
+    OpenedEntry { path: ProjectPath },
 }
 
 #[derive(Serialize, Deserialize)]
@@ -328,6 +330,21 @@ impl GitPanel {
             git_panel
         });
 
+        cx.subscribe(
+            &git_panel,
+            move |workspace, _, event: &Event, cx| match event.clone() {
+                Event::OpenedEntry { path } => {
+                    workspace
+                        .open_path_preview(path, None, false, false, cx)
+                        .detach_and_prompt_err("Failed to open file", cx, |e, _| {
+                            Some(format!("{e}"))
+                        });
+                }
+                Event::Focus => { /* TODO */ }
+            },
+        )
+        .detach();
+
         git_panel
     }
 
@@ -570,51 +587,30 @@ impl GitPanel {
     }
 
     fn open_selected(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        println!("Open Selected triggered!");
-        let selected_entry = self.selected_entry;
-
-        if let Some(entry) = selected_entry.and_then(|i| self.visible_entries.get(i)) {
-            self.open_entry(entry);
-
-            cx.notify();
+        if let Some(entry) = self
+            .selected_entry
+            .and_then(|i| self.visible_entries.get(i))
+        {
+            self.open_entry(entry, cx);
         }
     }
 
-    fn open_entry(&self, entry: &GitListEntry) {
-        // TODO: Open entry or entry's changes.
-        println!("Open {} triggered!", entry.repo_path);
-
-        // cx.emit(project_panel::Event::OpenedEntry {
-        //     entry_id,
-        //     focus_opened_item,
-        //     allow_preview,
-        // });
-        //
-        // workspace
-        // .open_path_preview(
-        //     ProjectPath {
-        //         worktree_id,
-        //         path: file_path.clone(),
-        //     },
-        //     None,
-        //     focus_opened_item,
-        //     allow_preview,
-        //     cx,
-        // )
-        // .detach_and_prompt_err("Failed to open file", cx, move |e, _| {
-        //     match e.error_code() {
-        //         ErrorCode::Disconnected => if is_via_ssh {
-        //             Some("Disconnected from SSH host".to_string())
-        //         } else {
-        //             Some("Disconnected from remote project".to_string())
-        //         },
-        //         ErrorCode::UnsharedItem => Some(format!(
-        //             "{} is not shared by the host. This could be because it has been marked as `private`",
-        //             file_path.display()
-        //         )),
-        //         _ => None,
-        //     }
-        // });
+    fn open_entry(&self, entry: &GitListEntry, cx: &mut ViewContext<Self>) {
+        let Some((worktree_id, path)) = GitState::get_global(cx).update(cx, |state, _| {
+            state.active_repository.as_ref().and_then(|(id, repo, _)| {
+                Some((*id, repo.work_directory.unrelativize(&entry.repo_path)?))
+            })
+        }) else {
+            return;
+        };
+        let path = (worktree_id, path).into();
+        let path_exists = self.project.update(cx, |project, cx| {
+            project.entry_for_path(&path, cx).is_some()
+        });
+        if !path_exists {
+            return;
+        }
+        cx.emit(Event::OpenedEntry { path });
     }
 
     fn stage_all(&mut self, _: &StageAll, cx: &mut ViewContext<Self>) {
