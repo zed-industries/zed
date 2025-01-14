@@ -293,7 +293,7 @@ impl Zeta {
         let events = self.events.clone();
         let path = snapshot
             .file()
-            .map(|f| f.path().clone())
+            .map(|f| Arc::from(f.full_path(cx).as_path()))
             .unwrap_or_else(|| Arc::from(Path::new("untitled")));
 
         let client = self.client.clone();
