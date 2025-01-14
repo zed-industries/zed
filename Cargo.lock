@@ -406,6 +406,7 @@ dependencies = [
  "language_model_selector",
  "language_models",
  "languages",
+ "lmstudio",
  "log",
  "lsp",
  "markdown",
@@ -483,6 +484,7 @@ dependencies = [
  "language_model",
  "language_model_selector",
  "language_models",
+ "lmstudio",
  "log",
  "lsp",
  "markdown",
@@ -6682,6 +6684,7 @@ dependencies = [
  "gpui",
  "http_client",
  "image",
+ "lmstudio",
  "log",
  "ollama",
  "open_ai",
@@ -6727,6 +6730,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language_model",
+ "lmstudio",
  "menu",
  "ollama",
  "open_ai",
@@ -7193,6 +7197,18 @@ dependencies = [
  "cc",
  "doxygen-rs",
  "libc",
+]
+
+[[package]]
+name = "lmstudio"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "http_client",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

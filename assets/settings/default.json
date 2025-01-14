@@ -1146,6 +1146,9 @@
     "openai": {
       "version": "1",
       "api_url": "https://api.openai.com/v1"
+    },
+    "lmstudio": {
+      "api_url": "http://localhost:1234/api/v0"
     }
   },
   // Zed's Prettier integration settings.
