@@ -333,7 +333,9 @@ impl GitPanel {
                 Event::OpenedEntry { path } => {
                     workspace
                         .open_path_preview(path, None, false, false, cx)
-                        .detach_and_prompt_err("Couldn't open file", cx, |_, _| None);
+                        .detach_and_prompt_err("Failed to open file", cx, |e, _| {
+                            Some(format!("{e}"))
+                        });
                 }
                 Event::Focus => { /* TODO */ }
             }
