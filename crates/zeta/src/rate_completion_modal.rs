@@ -295,6 +295,7 @@ impl RateCompletionModal {
                         .size_full()
                         .bg(bg_color)
                         .overflow_scroll()
+                        .whitespace_nowrap()
                         .child(CompletionDiffElement::new(&active_completion.completion, cx)),
                 )
                 .when_some((!rated).then(|| ()), |this, _| {
