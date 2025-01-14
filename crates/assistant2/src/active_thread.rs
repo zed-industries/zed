@@ -5,16 +5,16 @@ use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use gpui::{
     list, percentage, AbsoluteLength, Animation, AnimationExt, AnyElement, AppContext,
-    DefiniteLength, EdgesRefinement, Empty, Length, ListAlignment, ListOffset, ListState, Model,
-    StyleRefinement, Subscription, TextStyleRefinement, Transformation, UnderlineStyle, View,
-    WeakView,
+    DefiniteLength, EdgesRefinement, Empty, FocusHandle, Length, ListAlignment, ListOffset,
+    ListState, Model, StyleRefinement, Subscription, TextStyleRefinement, Transformation,
+    UnderlineStyle, View, WeakView,
 };
 use language::LanguageRegistry;
 use language_model::Role;
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings as _;
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{prelude::*, ButtonLike, KeyBinding};
 use workspace::Workspace;
 
 use crate::thread::{MessageId, Thread, ThreadError, ThreadEvent};
@@ -29,6 +29,7 @@ pub struct ActiveThread {
     list_state: ListState,
     rendered_messages_by_id: HashMap<MessageId, View<Markdown>>,
     last_error: Option<ThreadError>,
+    focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -38,6 +39,7 @@ impl ActiveThread {
         workspace: WeakView<Workspace>,
         language_registry: Arc<LanguageRegistry>,
         tools: Arc<ToolWorkingSet>,
+        focus_handle: FocusHandle,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let subscriptions = vec![
@@ -60,6 +62,7 @@ impl ActiveThread {
                 }
             }),
             last_error: None,
+            focus_handle,
             _subscriptions: subscriptions,
         };
 
@@ -327,13 +330,11 @@ impl ActiveThread {
                     )
                     .when_some(context, |parent, context| {
                         if !context.is_empty() {
-                            parent.child(
-                                h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
-                                    context.into_iter().map(|context| {
-                                        ContextPill::new_added(context, false, None)
-                                    }),
-                                ),
-                            )
+                            parent.child(h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
+                                context.into_iter().map(|context| {
+                                    ContextPill::new_added(context, false, false, None)
+                                }),
+                            ))
                         } else {
                             parent
                         }
@@ -344,7 +345,48 @@ impl ActiveThread {
 }
 
 impl Render for ActiveThread {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        list(self.list_state.clone()).flex_1().py_1()
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        let is_streaming_completion = self.thread.read(cx).is_streaming();
+
+        let focus_handle = self.focus_handle.clone();
+
+        v_flex()
+            .size_full()
+            .child(list(self.list_state.clone()).flex_grow())
+            .child(
+                h_flex()
+                    .absolute()
+                    .bottom_1()
+                    .flex_shrink()
+                    .justify_center()
+                    .w_full()
+                    .when(is_streaming_completion, |parent| {
+                        parent.child(
+                            h_flex()
+                                .gap_2()
+                                .p_1p5()
+                                .rounded_md()
+                                .bg(cx.theme().colors().elevated_surface_background)
+                                .child(Label::new("Generating…").size(LabelSize::Small))
+                                .child(
+                                    ButtonLike::new("cancel-generation")
+                                        .style(ButtonStyle::Filled)
+                                        .child(Label::new("Cancel").size(LabelSize::Small))
+                                        .children(
+                                            KeyBinding::for_action_in(
+                                                &editor::actions::Cancel,
+                                                &self.focus_handle,
+                                                cx,
+                                            )
+                                            .map(|binding| binding.into_any_element()),
+                                        )
+                                        .on_click(move |_event, cx| {
+                                            focus_handle
+                                                .dispatch_action(&editor::actions::Cancel, cx);
+                                        }),
+                                ),
+                        )
+                    }),
+            )
     }
 }
