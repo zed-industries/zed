@@ -1,8 +1,5 @@
 use crate::git_panel_settings::StatusStyle;
-use crate::{
-    first_repository_in_project, first_worktree_repository, ADDED_COLOR, MODIFIED_COLOR,
-    REMOVED_COLOR,
-};
+use crate::{first_repository_in_project, first_worktree_repository};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, CommitAllChanges, CommitChanges,
     GitState, GitViewMode, RevertAll, StageAll, ToggleStaged, UnstageAll,
