@@ -6,7 +6,7 @@ use gpui::{
 };
 use language::language_settings;
 use std::time::Duration;
-use ui::{prelude::*, KeyBinding, List, ListItem, ListItemSpacing, Tooltip};
+use ui::{prelude::*, KeyBinding, List, ListItem, ListItemSpacing, PopoverMenu, Tooltip};
 use workspace::{ModalView, Workspace};
 
 actions!(
@@ -42,6 +42,31 @@ pub struct RateCompletionModal {
 struct ActiveCompletion {
     completion: InlineCompletion,
     feedback_editor: View<Editor>,
+}
+
+struct RawPromptDetails {
+    raw_prompt_details: SharedString,
+}
+
+impl Render for RawPromptDetails {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+        div()
+            .id("raw-prompt-details")
+            .p_4()
+            .elevation_2(cx)
+            .max_h_96()
+            .max_w(px(600.))
+            .overflow_scroll()
+            .child(self.raw_prompt_details.clone())
+    }
+}
+
+impl EventEmitter<DismissEvent> for RawPromptDetails {}
+
+impl FocusableView for RawPromptDetails {
+    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+        cx.focus_handle()
+    }
 }
 
 impl RateCompletionModal {
@@ -281,12 +306,50 @@ impl RateCompletionModal {
             .text(cx)
             .is_empty();
 
-        let label_container = || h_flex().pl_1().gap_1p5();
+        let label_container = h_flex().pl_1().gap_1p5();
+
+        let raw_prompt_details = SharedString::from(format!(
+            "{}\n{}",
+            active_completion.completion.input_events, active_completion.completion.input_excerpt
+        ));
 
         Some(
             v_flex()
                 .size_full()
                 .overflow_hidden()
+                .relative()
+                .child(
+                    h_flex()
+                        .px_2()
+                        .py_1()
+                        .justify_between()
+                        .border_b_1()
+                        .border_color(border_color)
+                        .child(
+                            Label::new("Suggested edits")
+                                .size(LabelSize::Small),
+                        )
+                        .child(
+                            PopoverMenu::new("raw-input-menu")
+                                .anchor(gpui::Corner::TopRight)
+                                .offset(point(
+                                    px(0.),
+                                    px(4.),
+                                )
+                                .trigger(
+                                    Button::new("details", "View Raw Input")
+                                        .color(Color::Muted)
+                                        .size(ButtonSize::Compact)
+                                )
+                                .menu(move |cx| {
+                                    Some(cx.new_view(|_| {
+                                        RawPromptDetails {
+                                            raw_prompt_details: raw_prompt_details.clone()
+                                        }
+                                    }))
+                                }),
+                        )
+                )
                 .child(
                     div()
                         .id("diff")
@@ -298,14 +361,13 @@ impl RateCompletionModal {
                         .whitespace_nowrap()
                         .child(CompletionDiffElement::new(&active_completion.completion, cx)),
                 )
-                .when_some((!rated).then(|| ()), |this, _| {
+                .when(!rated, |this| {
                     this.child(
                         h_flex()
                             .p_2()
                             .gap_2()
                             .border_y_1()
                             .border_color(border_color)
-
                             .child(
                                 Icon::new(IconName::Info)
                                     .size(IconSize::XSmall)
@@ -324,7 +386,7 @@ impl RateCompletionModal {
                             )
                     )
                 })
-                .when_some((!rated).then(|| ()), |this, _| {
+                .when(!rated, |this| {
                     this.child(
                         div()
                             .h_40()
@@ -344,7 +406,7 @@ impl RateCompletionModal {
                         .justify_between()
                         .children(if rated {
                             Some(
-                                label_container()
+                                label_container
                                     .child(
                                         Icon::new(IconName::Check)
                                             .size(IconSize::Small)
@@ -354,7 +416,7 @@ impl RateCompletionModal {
                             )
                         } else if active_completion.completion.edits.is_empty() {
                             Some(
-                                label_container()
+                                label_container
                                     .child(
                                         Icon::new(IconName::Warning)
                                             .size(IconSize::Small)
@@ -363,7 +425,7 @@ impl RateCompletionModal {
                                     .child(Label::new("No edits produced.").color(Color::Muted)),
                             )
                         } else {
-                            Some(label_container())
+                            Some(label_container)
                         })
                         .child(
                             h_flex()
