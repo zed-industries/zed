@@ -19,6 +19,7 @@ use editor::{
     Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorEvent, ExcerptId, ExcerptRange,
     GutterDimensions, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint,
 };
+use feature_flags::{Assistant2FeatureFlag, FeatureFlagViewExt as _};
 use fs::Fs;
 use util::ResultExt;
 
@@ -50,10 +51,17 @@ pub fn init(
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
     cx.observe_new_views(|_workspace: &mut Workspace, cx| {
-        let workspace = cx.view().clone();
-        InlineAssistant::update_global(cx, |inline_assistant, cx| {
-            inline_assistant.register_workspace(&workspace, cx)
+        cx.observe_flag::<Assistant2FeatureFlag, _>({
+            |is_assistant2_enabled, _view, cx| {
+                if is_assistant2_enabled {
+                    let workspace = cx.view().clone();
+                    InlineAssistant::update_global(cx, |inline_assistant, cx| {
+                        inline_assistant.register_workspace(&workspace, cx)
+                    })
+                }
+            }
         })
+        .detach();
     })
     .detach();
 }
