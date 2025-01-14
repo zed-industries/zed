@@ -15,6 +15,446 @@ use unindent::Unindent as _;
 use variable_list::{VariableContainer, VariableListEntry};
 
 #[gpui::test]
+async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    let project = Project::test(fs, [], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let task = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |store, cx| {
+            store.start_debug_session(
+                task::DebugAdapterConfig {
+                    label: "test config".into(),
+                    kind: task::DebugAdapterKind::Fake,
+                    request: task::DebugRequestType::Launch,
+                    program: None,
+                    cwd: None,
+                    initialize_args: None,
+                },
+                cx,
+            )
+        })
+    });
+
+    let (session, client) = task.await.unwrap();
+
+    client
+        .on_request::<Initialize, _>(move |_, _| {
+            Ok(dap::Capabilities {
+                supports_step_back: Some(false),
+                ..Default::default()
+            })
+        })
+        .await;
+
+    client.on_request::<Launch, _>(move |_, _| Ok(())).await;
+
+    client
+        .on_request::<StackTrace, _>(move |_, _| {
+            Ok(dap::StackTraceResponse {
+                stack_frames: Vec::default(),
+                total_frames: None,
+            })
+        })
+        .await;
+
+    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: None,
+            output: "First console output line before thread stopped!".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "First output line before thread stopped!".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    // assert we have output from before the thread stopped
+    workspace
+        .update(cx, |workspace, cx| {
+            let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+            let active_debug_panel_item = debug_panel
+                .update(cx, |this, cx| this.active_debug_panel_item(cx))
+                .unwrap();
+
+            assert_eq!(1, debug_panel.read(cx).message_queue().len());
+
+            assert_eq!(
+                "First console output line before thread stopped!\nFirst output line before thread stopped!\n",
+                active_debug_panel_item.read(cx).console().read(cx).editor().read(cx).text(cx).as_str()
+            );
+        })
+        .unwrap();
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "Second output line after thread stopped!".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Console),
+            output: "Second console output line after thread stopped!".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    // assert we have output from before and after the thread stopped
+    workspace
+        .update(cx, |workspace, cx| {
+            let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+            let active_debug_panel_item = debug_panel
+                .update(cx, |this, cx| this.active_debug_panel_item(cx))
+                .unwrap();
+
+            assert!(debug_panel.read(cx).message_queue().is_empty());
+
+            assert_eq!(
+                "First console output line before thread stopped!\nFirst output line before thread stopped!\nSecond output line after thread stopped!\nSecond console output line after thread stopped!\n",
+                active_debug_panel_item.read(cx).console().read(cx).editor().read(cx).text(cx).as_str()
+            );
+        })
+        .unwrap();
+
+    let shutdown_session = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |dap_store, cx| {
+            dap_store.shutdown_session(&session.read(cx).id(), cx)
+        })
+    });
+
+    shutdown_session.await.unwrap();
+}
+
+#[gpui::test]
+async fn test_grouped_output(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    let project = Project::test(fs, [], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let task = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |store, cx| {
+            store.start_debug_session(
+                task::DebugAdapterConfig {
+                    label: "test config".into(),
+                    kind: task::DebugAdapterKind::Fake,
+                    request: task::DebugRequestType::Launch,
+                    program: None,
+                    cwd: None,
+                    initialize_args: None,
+                },
+                cx,
+            )
+        })
+    });
+
+    let (session, client) = task.await.unwrap();
+
+    client
+        .on_request::<Initialize, _>(move |_, _| {
+            Ok(dap::Capabilities {
+                supports_step_back: Some(false),
+                ..Default::default()
+            })
+        })
+        .await;
+
+    client.on_request::<Launch, _>(move |_, _| Ok(())).await;
+
+    client
+        .on_request::<StackTrace, _>(move |_, _| {
+            Ok(dap::StackTraceResponse {
+                stack_frames: Vec::default(),
+                total_frames: None,
+            })
+        })
+        .await;
+
+    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: None,
+            output: "First line".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "First group".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: Some(dap::OutputEventGroup::Start),
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "First item in group 1".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "Second item in group 1".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "Second group".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: Some(dap::OutputEventGroup::Start),
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "First item in group 2".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "Second item in group 2".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "End group 2".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: Some(dap::OutputEventGroup::End),
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "Third group".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: Some(dap::OutputEventGroup::StartCollapsed),
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "First item in group 3".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "Second item in group 3".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "End group 3".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: Some(dap::OutputEventGroup::End),
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "Third item in group 1".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: None,
+        }))
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Output(dap::OutputEvent {
+            category: Some(dap::OutputEventCategory::Stdout),
+            output: "Second item".to_string(),
+            data: None,
+            variables_reference: None,
+            source: None,
+            line: None,
+            column: None,
+            group: Some(dap::OutputEventGroup::End),
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+        debug_panel_item.console().update(cx, |console, cx| {
+            console.editor().update(cx, |editor, cx| {
+                pretty_assertions::assert_eq!(
+                    "
+                        First line
+                        First group
+                            First item in group 1
+                            Second item in group 1
+                            Second group
+                                First item in group 2
+                                Second item in group 2
+                            End group 2
+                        ⋯    End group 3
+                            Third item in group 1
+                        Second item
+                    "
+                    .unindent(),
+                    editor.display_text(cx)
+                );
+            })
+        });
+    });
+
+    let shutdown_session = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |dap_store, cx| {
+            dap_store.shutdown_session(&session.read(cx).id(), cx)
+        })
+    });
+
+    shutdown_session.await.unwrap();
+}
+
+#[gpui::test]
 async fn test_evaluate_expression(executor: BackgroundExecutor, cx: &mut TestAppContext) {
     init_test(cx);
 

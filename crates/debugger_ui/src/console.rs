@@ -2,19 +2,31 @@ use crate::{
     stack_frame_list::{StackFrameList, StackFrameListEvent},
     variable_list::VariableList,
 };
-use dap::client::DebugAdapterClientId;
-use editor::{CompletionProvider, Editor, EditorElement, EditorStyle};
+use dap::{client::DebugAdapterClientId, OutputEvent, OutputEventGroup};
+use editor::{
+    display_map::{Crease, CreaseId},
+    Anchor, CompletionProvider, Editor, EditorElement, EditorStyle, FoldPlaceholder,
+};
 use fuzzy::StringMatchCandidate;
 use gpui::{Model, Render, Subscription, Task, TextStyle, View, ViewContext, WeakView};
 use language::{Buffer, CodeLabel, LanguageServerId, ToOffsetUtf16};
 use menu::Confirm;
 use project::{dap_store::DapStore, Completion};
 use settings::Settings;
-use std::{cell::RefCell, collections::HashMap, rc::Rc};
+use std::{cell::RefCell, collections::HashMap, rc::Rc, sync::Arc};
 use theme::ThemeSettings;
-use ui::prelude::*;
+use ui::{prelude::*, ButtonLike, Disclosure, ElevationIndex};
+
+pub struct OutputGroup {
+    pub start: Anchor,
+    pub collapsed: bool,
+    pub end: Option<Anchor>,
+    pub crease_ids: Vec<CreaseId>,
+    pub placeholder: SharedString,
+}
 
 pub struct Console {
+    groups: Vec<OutputGroup>,
     console: View<Editor>,
     query_bar: View<Editor>,
     dap_store: Model<DapStore>,
@@ -36,7 +48,13 @@ impl Console {
             let mut editor = Editor::multi_line(cx);
             editor.move_to_end(&editor::actions::MoveToEnd, cx);
             editor.set_read_only(true);
-            editor.set_show_gutter(false, cx);
+            editor.set_show_gutter(true, cx);
+            editor.set_show_runnables(false, cx);
+            editor.set_show_code_actions(false, cx);
+            editor.set_show_line_numbers(false, cx);
+            editor.set_show_git_diff_gutter(false, cx);
+            editor.set_autoindent(false);
+            editor.set_input_enabled(false);
             editor.set_use_autoclose(false);
             editor.set_show_wrap_guides(false, cx);
             editor.set_show_indent_guides(false, cx);
@@ -67,6 +85,7 @@ impl Console {
             variable_list,
             _subscriptions,
             client_id: *client_id,
+            groups: Vec::default(),
             stack_frame_list: stack_frame_list.clone(),
         }
     }
@@ -93,13 +112,107 @@ impl Console {
         }
     }
 
-    pub fn add_message(&mut self, message: &str, cx: &mut ViewContext<Self>) {
+    pub fn add_message(&mut self, event: OutputEvent, cx: &mut ViewContext<Self>) {
         self.console.update(cx, |console, cx| {
+            let output = event.output.trim_end().to_string();
+
+            let snapshot = console.buffer().read(cx).snapshot(cx);
+
+            let start = snapshot.anchor_before(snapshot.max_point());
+
+            let mut indent_size = self
+                .groups
+                .iter()
+                .filter(|group| group.end.is_none())
+                .count();
+            if Some(OutputEventGroup::End) == event.group {
+                indent_size = indent_size.saturating_sub(1);
+            }
+
+            let indent = if indent_size > 0 {
+                "    ".repeat(indent_size)
+            } else {
+                "".to_string()
+            };
+
             console.set_read_only(false);
             console.move_to_end(&editor::actions::MoveToEnd, cx);
-            console.insert(format!("{}\n", message.trim_end()).as_str(), cx);
+            console.insert(format!("{}{}\n", indent, output).as_str(), cx);
             console.set_read_only(true);
+
+            let end = snapshot.anchor_before(snapshot.max_point());
+
+            match event.group {
+                Some(OutputEventGroup::Start) => {
+                    self.groups.push(OutputGroup {
+                        start,
+                        end: None,
+                        collapsed: false,
+                        placeholder: output.clone().into(),
+                        crease_ids: console.insert_creases(
+                            vec![Self::create_crease(output.into(), start, end)],
+                            cx,
+                        ),
+                    });
+                }
+                Some(OutputEventGroup::StartCollapsed) => {
+                    self.groups.push(OutputGroup {
+                        start,
+                        end: None,
+                        collapsed: true,
+                        placeholder: output.clone().into(),
+                        crease_ids: console.insert_creases(
+                            vec![Self::create_crease(output.into(), start, end)],
+                            cx,
+                        ),
+                    });
+                }
+                Some(OutputEventGroup::End) => {
+                    if let Some(index) = self.groups.iter().rposition(|group| group.end.is_none()) {
+                        let group = self.groups.remove(index);
+
+                        console.remove_creases(group.crease_ids.clone(), cx);
+
+                        let creases =
+                            vec![Self::create_crease(group.placeholder, group.start, end)];
+                        console.insert_creases(creases.clone(), cx);
+
+                        if group.collapsed {
+                            console.fold_creases(creases, false, cx);
+                        }
+                    }
+                }
+                None => {}
+            }
+
+            cx.notify();
         });
+    }
+
+    fn create_crease(placeholder: SharedString, start: Anchor, end: Anchor) -> Crease<Anchor> {
+        Crease::inline(
+            start..end,
+            FoldPlaceholder {
+                render: Arc::new({
+                    let placeholder = placeholder.clone();
+                    move |_id, _range, _cx| {
+                        ButtonLike::new("output-group-placeholder")
+                            .style(ButtonStyle::Transparent)
+                            .layer(ElevationIndex::ElevatedSurface)
+                            .child(Label::new(placeholder.clone()).single_line())
+                            .into_any_element()
+                    }
+                }),
+                ..Default::default()
+            },
+            move |row, is_folded, fold, _cx| {
+                Disclosure::new(("output-group", row.0 as u64), !is_folded)
+                    .toggle_state(is_folded)
+                    .on_click(move |_event, cx| fold(!is_folded, cx))
+                    .into_any_element()
+            },
+            move |_id, _range, _cx| gpui::Empty.into_any_element(),
+        )
     }
 
     pub fn evaluate(&mut self, _: &Confirm, cx: &mut ViewContext<Self>) {
@@ -125,7 +238,19 @@ impl Console {
             let response = evaluate_task.await?;
 
             this.update(&mut cx, |console, cx| {
-                console.add_message(&response.result, cx);
+                console.add_message(
+                    OutputEvent {
+                        category: None,
+                        output: response.result,
+                        group: None,
+                        variables_reference: Some(response.variables_reference),
+                        source: None,
+                        line: None,
+                        column: None,
+                        data: None,
+                    },
+                    cx,
+                );
 
                 console.variable_list.update(cx, |variable_list, cx| {
                     variable_list.invalidate(cx);

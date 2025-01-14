@@ -2499,8 +2499,7 @@ enum DebuggerThreadItem {
     Console = 0;
     LoadedSource = 1;
     Modules = 2;
-    Output = 3;
-    Variables = 4;
+    Variables = 3;
 }
 
 message DebuggerSetVariableState {
