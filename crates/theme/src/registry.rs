@@ -37,7 +37,6 @@ impl Global for GlobalThemeRegistry {}
 
 struct ThemeRegistryState {
     themes: HashMap<SharedString, Arc<Theme>>,
-    #[allow(unused)]
     icon_themes: HashMap<SharedString, Arc<IconTheme>>,
 }
 
@@ -78,11 +77,12 @@ impl ThemeRegistry {
         // We're loading the Zed default theme, as we need a theme to be loaded
         // for tests.
         registry.insert_theme_families([crate::fallback_themes::zed_default_themes()]);
-        registry
-            .state
-            .write()
-            .icon_themes
-            .insert("zed".into(), Arc::new(crate::default_icon_theme()));
+
+        let default_icon_theme = crate::default_icon_theme();
+        registry.state.write().icon_themes.insert(
+            default_icon_theme.id.clone().into(),
+            Arc::new(default_icon_theme),
+        );
 
         registry
     }
