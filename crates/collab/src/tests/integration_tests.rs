@@ -14,7 +14,7 @@ use collections::{HashMap, HashSet};
 use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::{channel::mpsc, StreamExt as _};
 
-use git::status::{FileStatus, StatusCode, TrackedStatus};
+use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{
     px, size, AppContext, BackgroundExecutor, Model, Modifiers, MouseButton, MouseDownEvent,
     TestAppContext, UpdateGlobal,
@@ -2859,16 +2859,6 @@ async fn test_git_branch_name(
     });
 }
 
-const FILE_MODIFIED: FileStatus = FileStatus::Tracked(TrackedStatus {
-    worktree_status: StatusCode::Modified,
-    index_status: StatusCode::Unmodified,
-});
-
-const FILE_ADDED: FileStatus = FileStatus::Tracked(TrackedStatus {
-    worktree_status: StatusCode::Added,
-    index_status: StatusCode::Unmodified,
-});
-
 #[gpui::test]
 async fn test_git_status_sync(
     executor: BackgroundExecutor,
@@ -2900,11 +2890,20 @@ async fn test_git_status_sync(
     const A_TXT: &str = "a.txt";
     const B_TXT: &str = "b.txt";
 
+    const A_STATUS_START: FileStatus = FileStatus::Tracked(TrackedStatus {
+        index_status: StatusCode::Added,
+        worktree_status: StatusCode::Modified,
+    });
+    const B_STATUS_START: FileStatus = FileStatus::Unmerged(UnmergedStatus {
+        first_head: UnmergedStatusCode::Updated,
+        second_head: UnmergedStatusCode::Deleted,
+    });
+
     client_a.fs().set_status_for_repo_via_git_operation(
         Path::new("/dir/.git"),
         &[
-            (Path::new(A_TXT), FILE_ADDED),
-            (Path::new(B_TXT), FILE_ADDED),
+            (Path::new(A_TXT), A_STATUS_START),
+            (Path::new(B_TXT), B_STATUS_START),
         ],
     );
 
@@ -2937,20 +2936,29 @@ async fn test_git_status_sync(
     }
 
     project_local.read_with(cx_a, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(FILE_ADDED), project, cx);
-        assert_status(&Path::new(B_TXT), Some(FILE_ADDED), project, cx);
+        assert_status(&Path::new(A_TXT), Some(A_STATUS_START), project, cx);
+        assert_status(&Path::new(B_TXT), Some(B_STATUS_START), project, cx);
     });
 
     project_remote.read_with(cx_b, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(FILE_ADDED), project, cx);
-        assert_status(&Path::new(B_TXT), Some(FILE_ADDED), project, cx);
+        assert_status(&Path::new(A_TXT), Some(A_STATUS_START), project, cx);
+        assert_status(&Path::new(B_TXT), Some(B_STATUS_START), project, cx);
+    });
+
+    const A_STATUS_END: FileStatus = FileStatus::Tracked(TrackedStatus {
+        index_status: StatusCode::Added,
+        worktree_status: StatusCode::Unmodified,
+    });
+    const B_STATUS_END: FileStatus = FileStatus::Tracked(TrackedStatus {
+        index_status: StatusCode::Deleted,
+        worktree_status: StatusCode::Unmodified,
     });
 
     client_a.fs().set_status_for_repo_via_working_copy_change(
         Path::new("/dir/.git"),
         &[
-            (Path::new(A_TXT), FILE_MODIFIED),
-            (Path::new(B_TXT), FILE_MODIFIED),
+            (Path::new(A_TXT), A_STATUS_END),
+            (Path::new(B_TXT), B_STATUS_END),
         ],
     );
 
@@ -2960,13 +2968,13 @@ async fn test_git_status_sync(
     // Smoke test status reading
 
     project_local.read_with(cx_a, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(FILE_MODIFIED), project, cx);
-        assert_status(&Path::new(B_TXT), Some(FILE_MODIFIED), project, cx);
+        assert_status(&Path::new(A_TXT), Some(A_STATUS_END), project, cx);
+        assert_status(&Path::new(B_TXT), Some(B_STATUS_END), project, cx);
     });
 
     project_remote.read_with(cx_b, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(FILE_MODIFIED), project, cx);
-        assert_status(&Path::new(B_TXT), Some(FILE_MODIFIED), project, cx);
+        assert_status(&Path::new(A_TXT), Some(A_STATUS_END), project, cx);
+        assert_status(&Path::new(B_TXT), Some(B_STATUS_END), project, cx);
     });
 
     // And synchronization while joining
@@ -2974,8 +2982,8 @@ async fn test_git_status_sync(
     executor.run_until_parked();
 
     project_remote_c.read_with(cx_c, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(FILE_MODIFIED), project, cx);
-        assert_status(&Path::new(B_TXT), Some(FILE_MODIFIED), project, cx);
+        assert_status(&Path::new(A_TXT), Some(A_STATUS_END), project, cx);
+        assert_status(&Path::new(B_TXT), Some(B_STATUS_END), project, cx);
     });
 }
 

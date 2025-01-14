@@ -55,6 +55,13 @@ impl From<TrackedStatus> for FileStatus {
 }
 
 impl FileStatus {
+    pub const fn worktree(worktree_status: StatusCode) -> Self {
+        FileStatus::Tracked(TrackedStatus {
+            index_status: StatusCode::Unmodified,
+            worktree_status,
+        })
+    }
+
     /// Generate a FileStatus Code from a byte pair, as described in
     /// https://git-scm.com/docs/git-status#_output
     ///

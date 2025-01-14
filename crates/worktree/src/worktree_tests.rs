@@ -743,7 +743,10 @@ async fn test_rescan_with_gitignore(cx: &mut TestAppContext) {
 
     fs.set_status_for_repo_via_working_copy_change(
         Path::new("/root/tree/.git"),
-        &[(Path::new("tracked-dir/tracked-file2"), FILE_ADDED)],
+        &[(
+            Path::new("tracked-dir/tracked-file2"),
+            FileStatus::worktree(StatusCode::Added),
+        )],
     );
 
     fs.create_file(
@@ -827,7 +830,7 @@ async fn test_update_gitignore(cx: &mut TestAppContext) {
 
     fs.set_status_for_repo_via_working_copy_change(
         Path::new("/root/.git"),
-        &[(Path::new("b.txt"), FILE_ADDED)],
+        &[(Path::new("b.txt"), FileStatus::worktree(StatusCode::Added))],
     );
 
     cx.executor().run_until_parked();
@@ -1497,7 +1500,10 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
     // detected.
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/.git"),
-        &[(Path::new("b/c.txt"), FILE_MODIFIED)],
+        &[(
+            Path::new("b/c.txt"),
+            FileStatus::worktree(StatusCode::Modified),
+        )],
     );
     cx.executor().run_until_parked();
 
@@ -2147,22 +2153,9 @@ fn random_filename(rng: &mut impl Rng) -> String {
         .collect()
 }
 
-const FILE_MODIFIED: FileStatus = FileStatus::Tracked(TrackedStatus {
-    worktree_status: StatusCode::Modified,
-    index_status: StatusCode::Unmodified,
-});
-const FILE_UNTRACKED: FileStatus = FileStatus::Untracked;
-const FILE_ADDED: FileStatus = FileStatus::Tracked(TrackedStatus {
-    worktree_status: StatusCode::Added,
-    index_status: StatusCode::Unmodified,
-});
-const FILE_CONFLICT: FileStatus = FileStatus::Unmerged(UnmergedStatus {
+const CONFLICT: FileStatus = FileStatus::Unmerged(UnmergedStatus {
     first_head: UnmergedStatusCode::Updated,
     second_head: UnmergedStatusCode::Updated,
-});
-const FILE_DELETED: FileStatus = FileStatus::Tracked(TrackedStatus {
-    worktree_status: StatusCode::Deleted,
-    index_status: StatusCode::Unmodified,
 });
 
 #[gpui::test]
@@ -2206,11 +2199,11 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
         assert_eq!(repo.path.as_ref(), Path::new("projects/project1"));
         assert_eq!(
             tree.status_for_file(Path::new("projects/project1/a")),
-            Some(FILE_MODIFIED),
+            Some(FileStatus::worktree(StatusCode::Modified)),
         );
         assert_eq!(
             tree.status_for_file(Path::new("projects/project1/b")),
-            Some(FILE_UNTRACKED),
+            Some(FileStatus::Untracked),
         );
     });
 
@@ -2227,11 +2220,11 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
         assert_eq!(repo.path.as_ref(), Path::new("projects/project2"));
         assert_eq!(
             tree.status_for_file(Path::new("projects/project2/a")),
-            Some(FILE_MODIFIED),
+            Some(FileStatus::worktree(StatusCode::Modified)),
         );
         assert_eq!(
             tree.status_for_file(Path::new("projects/project2/b")),
-            Some(FILE_UNTRACKED),
+            Some(FileStatus::Untracked),
         );
     });
 }
@@ -2410,11 +2403,11 @@ async fn test_file_status(cx: &mut TestAppContext) {
 
         assert_eq!(
             snapshot.status_for_file(project_path.join(B_TXT)),
-            Some(FILE_UNTRACKED),
+            Some(FileStatus::Untracked),
         );
         assert_eq!(
             snapshot.status_for_file(project_path.join(F_TXT)),
-            Some(FILE_UNTRACKED),
+            Some(FileStatus::Untracked),
         );
     });
 
@@ -2428,7 +2421,7 @@ async fn test_file_status(cx: &mut TestAppContext) {
         let snapshot = tree.snapshot();
         assert_eq!(
             snapshot.status_for_file(project_path.join(A_TXT)),
-            Some(FILE_MODIFIED),
+            Some(FileStatus::worktree(StatusCode::Modified)),
         );
     });
 
@@ -2444,7 +2437,7 @@ async fn test_file_status(cx: &mut TestAppContext) {
         let snapshot = tree.snapshot();
         assert_eq!(
             snapshot.status_for_file(project_path.join(F_TXT)),
-            Some(FILE_UNTRACKED),
+            Some(FileStatus::Untracked),
         );
         assert_eq!(snapshot.status_for_file(project_path.join(B_TXT)), None);
         assert_eq!(snapshot.status_for_file(project_path.join(A_TXT)), None);
@@ -2466,11 +2459,11 @@ async fn test_file_status(cx: &mut TestAppContext) {
         assert_eq!(snapshot.status_for_file(project_path.join(A_TXT)), None);
         assert_eq!(
             snapshot.status_for_file(project_path.join(B_TXT)),
-            Some(FILE_UNTRACKED),
+            Some(FileStatus::Untracked),
         );
         assert_eq!(
             snapshot.status_for_file(project_path.join(E_TXT)),
-            Some(FILE_MODIFIED),
+            Some(FileStatus::worktree(StatusCode::Modified)),
         );
     });
 
@@ -2505,7 +2498,7 @@ async fn test_file_status(cx: &mut TestAppContext) {
         let snapshot = tree.snapshot();
         assert_eq!(
             snapshot.status_for_file(project_path.join(renamed_dir_name).join(RENAMED_FILE)),
-            Some(FILE_UNTRACKED),
+            Some(FileStatus::Untracked),
         );
     });
 
@@ -2529,7 +2522,7 @@ async fn test_file_status(cx: &mut TestAppContext) {
                     .join(Path::new(renamed_dir_name))
                     .join(RENAMED_FILE)
             ),
-            Some(FILE_UNTRACKED),
+            Some(FileStatus::Untracked),
         );
     });
 }
@@ -2582,11 +2575,14 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
 
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].repo_path.as_ref(), Path::new("a.txt"));
-        assert_eq!(entries[0].status, FILE_MODIFIED);
+        assert_eq!(
+            entries[0].status,
+            FileStatus::worktree(StatusCode::Modified)
+        );
         assert_eq!(entries[1].repo_path.as_ref(), Path::new("b.txt"));
-        assert_eq!(entries[1].status, FILE_UNTRACKED);
+        assert_eq!(entries[1].status, FileStatus::Untracked);
         assert_eq!(entries[2].repo_path.as_ref(), Path::new("d.txt"));
-        assert_eq!(entries[2].status, FILE_DELETED);
+        assert_eq!(entries[2].status, FileStatus::worktree(StatusCode::Deleted));
     });
 
     std::fs::write(work_dir.join("c.txt"), "some changes").unwrap();
@@ -2604,14 +2600,20 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
 
         std::assert_eq!(entries.len(), 4, "entries: {entries:?}");
         assert_eq!(entries[0].repo_path.as_ref(), Path::new("a.txt"));
-        assert_eq!(entries[0].status, FILE_MODIFIED);
+        assert_eq!(
+            entries[0].status,
+            FileStatus::worktree(StatusCode::Modified)
+        );
         assert_eq!(entries[1].repo_path.as_ref(), Path::new("b.txt"));
-        assert_eq!(entries[1].status, FILE_UNTRACKED);
+        assert_eq!(entries[1].status, FileStatus::Untracked);
         // Status updated
         assert_eq!(entries[2].repo_path.as_ref(), Path::new("c.txt"));
-        assert_eq!(entries[2].status, FILE_MODIFIED);
+        assert_eq!(
+            entries[2].status,
+            FileStatus::worktree(StatusCode::Modified)
+        );
         assert_eq!(entries[3].repo_path.as_ref(), Path::new("d.txt"));
-        assert_eq!(entries[3].status, FILE_DELETED);
+        assert_eq!(entries[3].status, FileStatus::worktree(StatusCode::Deleted));
     });
 
     git_add("a.txt", &repo);
@@ -2644,7 +2646,7 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
             &entries
         );
         assert_eq!(entries[0].repo_path.as_ref(), Path::new("a.txt"));
-        assert_eq!(entries[0].status, FILE_DELETED);
+        assert_eq!(entries[0].status, FileStatus::worktree(StatusCode::Deleted));
     });
 }
 
@@ -2713,7 +2715,10 @@ async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
         );
 
         assert_eq!(snapshot.status_for_file("c.txt"), None);
-        assert_eq!(snapshot.status_for_file("d/e.txt"), Some(FILE_UNTRACKED));
+        assert_eq!(
+            snapshot.status_for_file("d/e.txt"),
+            Some(FileStatus::Untracked)
+        );
     });
 
     // Now we simulate FS events, but ONLY in the .git folder that's outside
@@ -2764,17 +2769,20 @@ async fn test_traverse_with_git_status(cx: &mut TestAppContext) {
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/x/.git"),
         &[
-            (Path::new("x2.txt"), FILE_MODIFIED),
-            (Path::new("z.txt"), FILE_ADDED),
+            (
+                Path::new("x2.txt"),
+                FileStatus::worktree(StatusCode::Modified),
+            ),
+            (Path::new("z.txt"), FileStatus::worktree(StatusCode::Added)),
         ],
     );
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/x/y/.git"),
-        &[(Path::new("y1.txt"), FILE_CONFLICT)],
+        &[(Path::new("y1.txt"), CONFLICT)],
     );
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/z/.git"),
-        &[(Path::new("z2.txt"), FILE_ADDED)],
+        &[(Path::new("z2.txt"), FileStatus::worktree(StatusCode::Added))],
     );
 
     let tree = Worktree::local(
@@ -2854,9 +2862,15 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/.git"),
         &[
-            (Path::new("a/b/c1.txt"), FILE_ADDED),
-            (Path::new("a/d/e2.txt"), FILE_MODIFIED),
-            (Path::new("g/h2.txt"), FILE_CONFLICT),
+            (
+                Path::new("a/b/c1.txt"),
+                FileStatus::worktree(StatusCode::Added),
+            ),
+            (
+                Path::new("a/d/e2.txt"),
+                FileStatus::worktree(StatusCode::Modified),
+            ),
+            (Path::new("g/h2.txt"), CONFLICT),
         ],
     );
 
@@ -2963,18 +2977,24 @@ async fn test_propagate_statuses_for_repos_under_project(cx: &mut TestAppContext
 
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/x/.git"),
-        &[(Path::new("x1.txt"), FILE_ADDED)],
+        &[(Path::new("x1.txt"), FileStatus::worktree(StatusCode::Added))],
     );
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/y/.git"),
         &[
-            (Path::new("y1.txt"), FILE_CONFLICT),
-            (Path::new("y2.txt"), FILE_MODIFIED),
+            (Path::new("y1.txt"), CONFLICT),
+            (
+                Path::new("y2.txt"),
+                FileStatus::worktree(StatusCode::Modified),
+            ),
         ],
     );
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/z/.git"),
-        &[(Path::new("z2.txt"), FILE_MODIFIED)],
+        &[(
+            Path::new("z2.txt"),
+            FileStatus::worktree(StatusCode::Modified),
+        )],
     );
 
     let tree = Worktree::local(
@@ -3073,18 +3093,21 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/x/.git"),
         &[
-            (Path::new("x2.txt"), FILE_MODIFIED),
-            (Path::new("z.txt"), FILE_ADDED),
+            (
+                Path::new("x2.txt"),
+                FileStatus::worktree(StatusCode::Modified),
+            ),
+            (Path::new("z.txt"), FileStatus::worktree(StatusCode::Added)),
         ],
     );
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/x/y/.git"),
-        &[(Path::new("y1.txt"), FILE_CONFLICT)],
+        &[(Path::new("y1.txt"), CONFLICT)],
     );
 
     fs.set_status_for_repo_via_git_operation(
         Path::new("/root/z/.git"),
-        &[(Path::new("z2.txt"), FILE_ADDED)],
+        &[(Path::new("z2.txt"), FileStatus::worktree(StatusCode::Added))],
     );
 
     let tree = Worktree::local(

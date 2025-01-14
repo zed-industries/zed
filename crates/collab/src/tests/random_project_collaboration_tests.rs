@@ -29,19 +29,6 @@ use std::{
 };
 use util::ResultExt;
 
-const FILE_MODIFIED: FileStatus = FileStatus::Tracked(TrackedStatus {
-    worktree_status: StatusCode::Modified,
-    index_status: StatusCode::Unmodified,
-});
-const FILE_ADDED: FileStatus = FileStatus::Tracked(TrackedStatus {
-    worktree_status: StatusCode::Added,
-    index_status: StatusCode::Unmodified,
-});
-const FILE_CONFLICT: FileStatus = FileStatus::Unmerged(UnmergedStatus {
-    first_head: UnmergedStatusCode::Updated,
-    second_head: UnmergedStatusCode::Updated,
-});
-
 #[gpui::test(
     iterations = 100,
     on_failure = "crate::tests::save_randomized_test_plan"
@@ -1471,17 +1458,7 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
 
             let statuses = file_paths
                 .into_iter()
-                .map(|paths| {
-                    (
-                        paths,
-                        match rng.gen_range(0..3_u32) {
-                            0 => FILE_ADDED,
-                            1 => FILE_MODIFIED,
-                            2 => FILE_CONFLICT,
-                            _ => unreachable!(),
-                        },
-                    )
-                })
+                .map(|path| (path, gen_status(rng)))
                 .collect::<Vec<_>>();
 
             let git_operation = rng.gen::<bool>();
@@ -1625,4 +1602,42 @@ fn gen_file_name(rng: &mut StdRng) -> String {
         name.push(letter);
     }
     name
+}
+
+fn gen_status(rng: &mut StdRng) -> FileStatus {
+    fn gen_status_code(rng: &mut StdRng) -> StatusCode {
+        match rng.gen_range(0..7) {
+            0 => StatusCode::Modified,
+            1 => StatusCode::TypeChanged,
+            2 => StatusCode::Added,
+            3 => StatusCode::Deleted,
+            4 => StatusCode::Renamed,
+            5 => StatusCode::Copied,
+            6 => StatusCode::Unmodified,
+            _ => unreachable!(),
+        }
+    }
+
+    fn gen_unmerged_status_code(rng: &mut StdRng) -> UnmergedStatusCode {
+        match rng.gen_range(0..3) {
+            0 => UnmergedStatusCode::Updated,
+            1 => UnmergedStatusCode::Added,
+            2 => UnmergedStatusCode::Deleted,
+            _ => unreachable!(),
+        }
+    }
+
+    match rng.gen_range(0..4) {
+        0 => FileStatus::Untracked,
+        1 => FileStatus::Ignored,
+        2 => FileStatus::Unmerged(UnmergedStatus {
+            first_head: gen_unmerged_status_code(rng),
+            second_head: gen_unmerged_status_code(rng),
+        }),
+        3 => FileStatus::Tracked(TrackedStatus {
+            index_status: gen_status_code(rng),
+            worktree_status: gen_status_code(rng),
+        }),
+        _ => unreachable!(),
+    }
 }
