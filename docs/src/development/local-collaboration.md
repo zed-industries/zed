@@ -14,6 +14,12 @@ Before you can run the `collab` server locally, you'll need to set up a `zed` Po
 script/bootstrap
 ```
 
+On windows:
+
+```powershell
+.\script\bootstrap.ps1
+```
+
 This script will set up the `zed` Postgres database, and populate it with some users. It requires internet access, because it fetches some users from the GitHub API.
 
 The script will seed the database with various content defined by:
@@ -41,11 +47,37 @@ foreman start
 cargo run -p collab -- serve all
 ```
 
-In a second terminal, run two or more instances of Zed.
+Since foreman is not available on Windows, you can run the following commands in separate terminals:
+
+```powershell
+cargo run --package=collab serve all
+```
+
+If you have added the `livekit` binary to your `PATH`, you can run:
+
+```powershell
+livekit-server --dev
+```
+
+Otherwise,
+
+```powershell
+.\path\to\livekit-serve.exe --dev
+```
+
+In a new terminal, run two or more instances of Zed.
 
 ```sh
 script/zed-local -2
 ```
+
+On windows, you should run:
+
+```powershell
+node .\script\zed-local -2
+```
+
+Note that this requires `node.exe` to be in your `PATH`.
 
 This script starts one to four instances of Zed, depending on the `-2`, `-3` or `-4` flags. Each instance will be connected to the local `collab` server, signed in as a different user from `.admins.json` or `.admins.default.json`.
 
