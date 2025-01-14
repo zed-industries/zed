@@ -2,9 +2,9 @@ use ::settings::Settings;
 use collections::HashMap;
 use futures::{future::FusedFuture, select, FutureExt};
 use git::repository::{GitFileStatus, GitRepository, RepoPath};
+use git_panel_settings::GitPanelSettings;
 use gpui::{actions, AppContext, Context, Global, Hsla, Model, ModelContext};
 use project::{Project, WorktreeId};
-use settings::GitPanelSettings;
 use std::sync::mpsc;
 use std::{
     pin::{pin, Pin},
@@ -16,7 +16,7 @@ use ui::{Color, Icon, IconName, IntoElement, SharedString};
 use worktree::RepositoryEntry;
 
 pub mod git_panel;
-mod settings;
+mod git_panel_settings;
 
 const GIT_TASK_DEBOUNCE: Duration = Duration::from_millis(50);
 

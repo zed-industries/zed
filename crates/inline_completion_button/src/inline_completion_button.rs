@@ -208,7 +208,7 @@ impl Render for InlineCompletionButton {
 
                 let this = cx.view().clone();
                 let button = IconButton::new("zeta", IconName::ZedPredict)
-                    .tooltip(|cx| Tooltip::text("Zed Predict", cx));
+                    .tooltip(|cx| Tooltip::text("Edit Prediction", cx));
 
                 let is_refreshing = self
                     .inline_completion_provider

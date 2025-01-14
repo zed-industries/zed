@@ -1,11 +1,13 @@
+use crate::git_panel_settings::StatusStyle;
 use crate::{first_repository_in_project, first_worktree_repository};
 use crate::{
-    git_status_icon, settings::GitPanelSettings, CommitAllChanges, CommitChanges, GitState,
-    GitViewMode, RevertAll, StageAll, ToggleStaged, UnstageAll,
+    git_panel_settings::GitPanelSettings, git_status_icon, CommitAllChanges, CommitChanges,
+    GitState, GitViewMode, RevertAll, StageAll, ToggleStaged, UnstageAll,
 };
 use anyhow::{Context as _, Result};
 use db::kvp::KEY_VALUE_STORE;
-use editor::Editor;
+use editor::scroll::ScrollbarAutoHide;
+use editor::{Editor, EditorSettings, ShowScrollbar};
 use git::repository::{GitFileStatus, RepoPath};
 use git::status::GitStatusPair;
 use gpui::*;
@@ -313,7 +315,7 @@ impl GitPanel {
                 scrollbar_state: ScrollbarState::new(scroll_handle.clone()).parent_view(cx.view()),
                 scroll_handle,
                 selected_entry: None,
-                show_scrollbar: !Self::should_autohide_scrollbar(cx),
+                show_scrollbar: false,
                 hide_scrollbar_task: None,
                 rebuild_requested,
                 commit_editor,
@@ -322,6 +324,7 @@ impl GitPanel {
                 project,
             };
             git_panel.schedule_update();
+            git_panel.show_scrollbar = git_panel.should_show_scrollbar(cx);
             git_panel
         });
 
@@ -376,19 +379,38 @@ impl GitPanel {
         }
     }
 
-    fn should_show_scrollbar(_cx: &AppContext) -> bool {
-        // TODO: plug into settings
-        true
+    fn show_scrollbar(&self, cx: &mut ViewContext<Self>) -> ShowScrollbar {
+        GitPanelSettings::get_global(cx)
+            .scrollbar
+            .show
+            .unwrap_or_else(|| EditorSettings::get_global(cx).scrollbar.show)
     }
 
-    fn should_autohide_scrollbar(_cx: &AppContext) -> bool {
-        // TODO: plug into settings
-        true
+    fn should_show_scrollbar(&self, cx: &mut ViewContext<Self>) -> bool {
+        let show = self.show_scrollbar(cx);
+        match show {
+            ShowScrollbar::Auto => true,
+            ShowScrollbar::System => true,
+            ShowScrollbar::Always => true,
+            ShowScrollbar::Never => false,
+        }
+    }
+
+    fn should_autohide_scrollbar(&self, cx: &mut ViewContext<Self>) -> bool {
+        let show = self.show_scrollbar(cx);
+        match show {
+            ShowScrollbar::Auto => true,
+            ShowScrollbar::System => cx
+                .try_global::<ScrollbarAutoHide>()
+                .map_or_else(|| cx.should_auto_hide_scrollbars(), |autohide| autohide.0),
+            ShowScrollbar::Always => false,
+            ShowScrollbar::Never => true,
+        }
     }
 
     fn hide_scrollbar(&mut self, cx: &mut ViewContext<Self>) {
         const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
-        if !Self::should_autohide_scrollbar(cx) {
+        if !self.should_autohide_scrollbar(cx) {
             return;
         }
         self.hide_scrollbar_task = Some(cx.spawn(|panel, mut cx| async move {
@@ -960,15 +982,26 @@ impl GitPanel {
     }
 
     fn render_scrollbar(&self, cx: &mut ViewContext<Self>) -> Option<Stateful<Div>> {
-        if !Self::should_show_scrollbar(cx)
+        let scroll_bar_style = self.show_scrollbar(cx);
+        let show_container = matches!(scroll_bar_style, ShowScrollbar::Always);
+
+        if !self.should_show_scrollbar(cx)
             || !(self.show_scrollbar || self.scrollbar_state.is_dragging())
         {
             return None;
         }
+
         Some(
             div()
+                .id("git-panel-vertical-scroll")
                 .occlude()
-                .id("project-panel-vertical-scroll")
+                .flex_none()
+                .h_full()
+                .cursor_default()
+                .when(show_container, |this| this.pl_1().px_1p5())
+                .when(!show_container, |this| {
+                    this.absolute().right_1().top_1().bottom_1().w(px(12.))
+                })
                 .on_mouse_move(cx.listener(|_, _, cx| {
                     cx.notify();
                     cx.stop_propagation()
@@ -995,13 +1028,6 @@ impl GitPanel {
                 .on_scroll_wheel(cx.listener(|_, _, cx| {
                     cx.notify();
                 }))
-                .h_full()
-                .absolute()
-                .right_1()
-                .top_1()
-                .bottom_1()
-                .w(px(12.))
-                .cursor_default()
                 .children(Scrollbar::vertical(
                     // percentage as f32..end_offset as f32,
                     self.scrollbar_state.clone(),
@@ -1042,9 +1068,26 @@ impl GitPanel {
         let state = self.git_state.clone();
         let repo_path = entry_details.repo_path.clone();
         let selected = self.selected_entry == Some(ix);
-
+        let status_style = GitPanelSettings::get_global(cx).status_style;
         // TODO revisit, maybe use a different status here?
         let status = entry_details.status.combined();
+
+        let mut label_color = cx.theme().colors().text;
+        if status_style == StatusStyle::LabelColor {
+            label_color = match status {
+                GitFileStatus::Added => cx.theme().status().created,
+                GitFileStatus::Modified => cx.theme().status().modified,
+                GitFileStatus::Conflict => cx.theme().status().conflict,
+                GitFileStatus::Deleted => cx.theme().colors().text_disabled,
+                // TODO: Should we even have this here?
+                GitFileStatus::Untracked => cx.theme().colors().text_placeholder,
+            }
+        }
+
+        let path_color = matches!(status, GitFileStatus::Deleted)
+            .then_some(cx.theme().colors().text_disabled)
+            .unwrap_or(cx.theme().colors().text_muted);
+
         let entry_id = ElementId::Name(format!("entry_{}", entry_details.display_name).into());
         let checkbox_id =
             ElementId::Name(format!("checkbox_{}", entry_details.display_name).into());
@@ -1125,21 +1168,19 @@ impl GitPanel {
                     }
                 }),
             )
-            .child(git_status_icon(status))
+            .when(status_style == StatusStyle::Icon, |this| {
+                this.child(git_status_icon(status))
+            })
             .child(
                 h_flex()
-                    .when(status == GitFileStatus::Deleted, |this| {
-                        this.text_color(cx.theme().colors().text_disabled)
-                            .line_through()
-                    })
+                    .text_color(label_color)
+                    .when(status == GitFileStatus::Deleted, |this| this.line_through())
                     .when_some(repo_path.parent(), |this, parent| {
                         let parent_str = parent.to_string_lossy();
                         if !parent_str.is_empty() {
                             this.child(
                                 div()
-                                    .when(status != GitFileStatus::Deleted, |this| {
-                                        this.text_color(cx.theme().colors().text_muted)
-                                    })
+                                    .text_color(path_color)
                                     .child(format!("{}/", parent_str)),
                             )
                         } else {

@@ -4299,12 +4299,26 @@ impl Editor {
         self.available_code_actions.take();
     }
 
-    pub fn push_code_action_provider(
+    pub fn add_code_action_provider(
         &mut self,
         provider: Rc<dyn CodeActionProvider>,
         cx: &mut ViewContext<Self>,
     ) {
+        if self
+            .code_action_providers
+            .iter()
+            .any(|existing_provider| existing_provider.id() == provider.id())
+        {
+            return;
+        }
+
         self.code_action_providers.push(provider);
+        self.refresh_code_actions(cx);
+    }
+
+    pub fn remove_code_action_provider(&mut self, id: Arc<str>, cx: &mut ViewContext<Self>) {
+        self.code_action_providers
+            .retain(|provider| provider.id() != id);
         self.refresh_code_actions(cx);
     }
 
@@ -4497,7 +4511,8 @@ impl Editor {
         if !user_requested
             && (!self.enable_inline_completions
                 || !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx)
-                || !self.is_focused(cx))
+                || !self.is_focused(cx)
+                || buffer.read(cx).is_empty())
         {
             self.discard_inline_completion(false, cx);
             return None;
@@ -13591,6 +13606,8 @@ pub trait CompletionProvider {
 }
 
 pub trait CodeActionProvider {
+    fn id(&self) -> Arc<str>;
+
     fn code_actions(
         &self,
         buffer: &Model<Buffer>,
@@ -13609,6 +13626,10 @@ pub trait CodeActionProvider {
 }
 
 impl CodeActionProvider for Model<Project> {
+    fn id(&self) -> Arc<str> {
+        "project".into()
+    }
+
     fn code_actions(
         &self,
         buffer: &Model<Buffer>,

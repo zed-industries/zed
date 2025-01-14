@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use editor::actions::MoveUp;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
 use gpui::{
@@ -75,7 +76,6 @@ impl MessageEditor {
                 context_store.clone(),
                 workspace.clone(),
                 Some(thread_store.clone()),
-                editor.focus_handle(cx),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::File,
                 cx,
@@ -221,11 +221,26 @@ impl MessageEditor {
     fn handle_context_strip_event(
         &mut self,
         _context_strip: View<ContextStrip>,
-        ContextStripEvent::PickerDismissed: &ContextStripEvent,
+        event: &ContextStripEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        let editor_focus_handle = self.editor.focus_handle(cx);
-        cx.focus(&editor_focus_handle);
+        match event {
+            ContextStripEvent::PickerDismissed
+            | ContextStripEvent::BlurredEmpty
+            | ContextStripEvent::BlurredDown => {
+                let editor_focus_handle = self.editor.focus_handle(cx);
+                cx.focus(&editor_focus_handle);
+            }
+            ContextStripEvent::BlurredUp => {}
+        }
+    }
+
+    fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
+        if self.context_picker_menu_handle.is_deployed() {
+            cx.propagate();
+        } else {
+            cx.focus_view(&self.context_strip);
+        }
     }
 }
 
@@ -249,6 +264,7 @@ impl Render for MessageEditor {
             .on_action(cx.listener(Self::toggle_model_selector))
             .on_action(cx.listener(Self::toggle_context_picker))
             .on_action(cx.listener(Self::remove_all_context))
+            .on_action(cx.listener(Self::move_up))
             .size_full()
             .gap_2()
             .p_2()
