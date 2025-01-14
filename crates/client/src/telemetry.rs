@@ -18,7 +18,7 @@ use std::sync::LazyLock;
 use std::time::Instant;
 use std::{env, mem, path::PathBuf, sync::Arc, time::Duration};
 use telemetry_events::{
-    AppEvent, AssistantKind, AssistantPhase, EditEvent, Event, EventRequestBody, EventWrapper,
+    AppEvent, AssistantEvent, AssistantPhase, EditEvent, Event, EventRequestBody, EventWrapper,
 };
 use util::{ResultExt, TryFutureExt};
 use worktree::{UpdatedEntriesSet, WorktreeId};
@@ -52,20 +52,6 @@ struct TelemetryState {
     os_name: String,
     app_version: String,
     os_version: Option<String>,
-}
-
-#[derive(Clone)]
-pub struct AssistantEventData {
-    pub event_type: &'static str,
-    pub conversation_id: Option<String>,
-    pub kind: AssistantKind,
-    pub phase: AssistantPhase,
-    pub message_id: Option<String>,
-    pub model: String,
-    pub model_provider: String,
-    pub response_latency: Option<Duration>,
-    pub error_message: Option<String>,
-    pub language_name: Option<String>,
 }
 
 #[derive(Debug)]
@@ -347,9 +333,16 @@ impl Telemetry {
         drop(state);
     }
 
-    pub fn report_assistant_event(self: &Arc<Self>, event_data: AssistantEventData) {
+    pub fn report_assistant_event(self: &Arc<Self>, event_data: AssistantEvent) {
+        let event_type = match event_data.phase {
+            AssistantPhase::Response => "Assistant Responded",
+            AssistantPhase::Invoked => "Assistant Invoked",
+            AssistantPhase::Accepted => "Assistant Response Accepted",
+            AssistantPhase::Rejected => "Assistant Response Rejected",
+        };
+
         telemetry::event!(
-            event_data.event_type,
+            event_type,
             conversation_id = event_data.conversation_id,
             kind = event_data.kind,
             phase = event_data.phase,

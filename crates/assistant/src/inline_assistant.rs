@@ -4,10 +4,7 @@ use crate::{
     CyclePreviousInlineAssist, LineDiff, LineOperation, RequestType, StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
-use client::{
-    telemetry::{AssistantEventData, Telemetry},
-    ErrorExt,
-};
+use client::{telemetry::Telemetry, ErrorExt};
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     actions::{MoveDown, MoveUp, SelectAll},
@@ -260,8 +257,7 @@ impl InlineAssistant {
             codegen_ranges.push(start..end);
 
             if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-                self.telemetry.report_assistant_event(AssistantEventData {
-                    event_type: "Assistant Invoked",
+                self.telemetry.report_assistant_event(AssistantEvent {
                     conversation_id: None,
                     kind: AssistantKind::Inline,
                     phase: AssistantPhase::Invoked,

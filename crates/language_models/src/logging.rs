@@ -1,6 +1,6 @@
 use anthropic::{AnthropicError, ANTHROPIC_API_URL};
 use anyhow::{anyhow, Context, Result};
-use client::telemetry::{AssistantEventData, Telemetry};
+use client::telemetry::Telemetry;
 use gpui::BackgroundExecutor;
 use http_client::{AsyncBody, HttpClient, Method, Request as HttpRequest};
 use std::env;
@@ -18,25 +18,7 @@ pub fn report_assistant_event(
     executor: &BackgroundExecutor,
 ) {
     if let Some(telemetry) = telemetry.as_ref() {
-        let assistant_event = event.clone();
-        telemetry.report_assistant_event(AssistantEventData {
-            event_type: match assistant_event.phase {
-                AssistantPhase::Response => "Assistant Responded",
-                AssistantPhase::Invoked => "Assistant Invoked",
-                AssistantPhase::Accepted => "Assistant Response Accepted",
-                AssistantPhase::Rejected => "Assistant Response Rejected",
-            },
-            conversation_id: assistant_event.conversation_id,
-            kind: assistant_event.kind,
-            phase: assistant_event.phase,
-            message_id: assistant_event.message_id,
-            model: assistant_event.model,
-            model_provider: assistant_event.model_provider,
-            response_latency: assistant_event.response_latency,
-            error_message: assistant_event.error_message,
-            language_name: assistant_event.language_name,
-        });
-
+        telemetry.report_assistant_event(event.clone());
         if telemetry.metrics_enabled() && event.model_provider == ANTHROPIC_PROVIDER_ID {
             executor
                 .spawn(async move {

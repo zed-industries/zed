@@ -8,7 +8,7 @@ use crate::{
     terminal_inline_assistant::TerminalInlineAssistant,
 };
 use anyhow::{Context as _, Result};
-use client::telemetry::{AssistantEventData, Telemetry};
+use client::telemetry::Telemetry;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
     actions::SelectAll,
@@ -320,8 +320,7 @@ impl InlineAssistant {
             codegen_ranges.push(start..end);
 
             if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
-                self.telemetry.report_assistant_event(AssistantEventData {
-                    event_type: "Assistant Invoked",
+                self.telemetry.report_assistant_event(AssistantEvent {
                     conversation_id: None,
                     kind: AssistantKind::Inline,
                     phase: AssistantPhase::Invoked,
