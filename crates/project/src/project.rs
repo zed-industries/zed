@@ -1,6 +1,7 @@
 pub mod buffer_store;
 mod color_extractor;
 pub mod connection_manager;
+pub mod dap_command;
 pub mod dap_store;
 pub mod debounced_delay;
 pub mod image_store;

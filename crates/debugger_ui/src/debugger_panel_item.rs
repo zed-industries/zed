@@ -251,6 +251,7 @@ impl DebugPanelItem {
         });
 
         self.active_thread_item = ThreadItem::from_proto(state.active_thread_item());
+        // self.update_thread_state_status(ThreadStatus::Stopped, cx); // This is a band aid fix for thread status not being sent correctly all the time
 
         if let Some(stack_frame_list) = state.stack_frame_list.as_ref() {
             self.stack_frame_list.update(cx, |this, cx| {

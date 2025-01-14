@@ -901,7 +901,27 @@ impl DebugPanel {
             project::dap_store::DapStoreEvent::UpdateDebugAdapter(debug_adapter_update) => {
                 self.handle_debug_adapter_update(debug_adapter_update, cx);
             }
+            project::dap_store::DapStoreEvent::UpdateThreadStatus(thread_status_update) => {
+                self.handle_thread_status_update(thread_status_update, cx);
+            }
             _ => {}
+        }
+    }
+
+    pub(crate) fn handle_thread_status_update(
+        &mut self,
+        update: &proto::UpdateThreadStatus,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(thread_state) = self.thread_states.get_mut(&(
+            DebugAdapterClientId::from_proto(update.client_id),
+            update.thread_id,
+        )) {
+            thread_state.update(cx, |thread_state, _| {
+                thread_state.status = ThreadStatus::from_proto(update.status());
+            });
+
+            cx.notify();
         }
     }
 
@@ -975,6 +995,9 @@ impl DebugPanel {
             });
 
         let debug_panel_item = existing_item.get_or_insert_with(|| {
+            self.thread_states
+                .insert((client_id, thread_id), thread_state.clone());
+
             let debug_panel = cx.view().clone();
             let debug_panel_item = self.pane.update(cx, |pane, cx| {
                 let debug_panel_item = cx.new_view(|cx| {

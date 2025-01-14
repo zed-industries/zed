@@ -376,3 +376,24 @@ pub fn capabilities_to_proto(
             .unwrap_or_default(),
     }
 }
+
+impl ProtoConversion for dap_types::SteppingGranularity {
+    type ProtoType = proto::SteppingGranularity;
+    type Output = Self;
+
+    fn to_proto(&self) -> Self::ProtoType {
+        match self {
+            dap_types::SteppingGranularity::Statement => proto::SteppingGranularity::Statement,
+            dap_types::SteppingGranularity::Line => proto::SteppingGranularity::Line,
+            dap_types::SteppingGranularity::Instruction => proto::SteppingGranularity::Instruction,
+        }
+    }
+
+    fn from_proto(payload: Self::ProtoType) -> Self {
+        match payload {
+            proto::SteppingGranularity::Line => dap_types::SteppingGranularity::Line,
+            proto::SteppingGranularity::Instruction => dap_types::SteppingGranularity::Instruction,
+            proto::SteppingGranularity::Statement => dap_types::SteppingGranularity::Statement,
+        }
+    }
+}

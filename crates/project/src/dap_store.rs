@@ -1,29 +1,36 @@
-use crate::project_settings::ProjectSettings;
-use crate::{ProjectEnvironment, ProjectItem as _, ProjectPath};
+use crate::{
+    dap_command::{
+        ContinueCommand, DapCommand, DisconnectCommand, NextCommand, PauseCommand, RestartCommand,
+        StepBackCommand, StepCommand, StepInCommand, StepOutCommand, TerminateCommand,
+        TerminateThreadsCommand,
+    },
+    project_settings::ProjectSettings,
+    ProjectEnvironment, ProjectItem as _, ProjectPath,
+};
 use anyhow::{anyhow, bail, Context as _, Result};
 use async_trait::async_trait;
 use collections::HashMap;
-use dap::session::{DebugSession, DebugSessionId};
 use dap::{
     adapters::{DapDelegate, DapStatus, DebugAdapter, DebugAdapterBinary, DebugAdapterName},
     client::{DebugAdapterClient, DebugAdapterClientId},
     messages::{Message, Response},
     requests::{
-        Attach, Completions, ConfigurationDone, Continue, Disconnect, Evaluate, Initialize, Launch,
-        LoadedSources, Modules, Next, Pause, Request as _, Restart, RunInTerminal, Scopes,
-        SetBreakpoints, SetExpression, SetVariable, StackTrace, StartDebugging, StepBack, StepIn,
-        StepOut, Terminate, TerminateThreads, Variables,
+        Attach, Completions, ConfigurationDone, Disconnect, Evaluate, Initialize, Launch,
+        LoadedSources, Modules, Request as _, RunInTerminal, Scopes, SetBreakpoints, SetExpression,
+        SetVariable, StackTrace, StartDebugging, Terminate, Variables,
     },
     AttachRequestArguments, Capabilities, CompletionItem, CompletionsArguments,
     ConfigurationDoneArguments, ContinueArguments, DisconnectArguments, ErrorResponse,
     EvaluateArguments, EvaluateArgumentsContext, EvaluateResponse, InitializeRequestArguments,
     InitializeRequestArgumentsPathFormat, LaunchRequestArguments, LoadedSourcesArguments, Module,
-    ModulesArguments, NextArguments, PauseArguments, RestartArguments, Scope, ScopesArguments,
-    SetBreakpointsArguments, SetExpressionArguments, SetVariableArguments, Source,
-    SourceBreakpoint, StackFrame, StackTraceArguments, StartDebuggingRequestArguments,
-    StartDebuggingRequestArgumentsRequest, StepBackArguments, StepInArguments, StepOutArguments,
-    SteppingGranularity, TerminateArguments, TerminateThreadsArguments, Variable,
-    VariablesArguments,
+    ModulesArguments, Scope, ScopesArguments, SetBreakpointsArguments, SetExpressionArguments,
+    SetVariableArguments, Source, SourceBreakpoint, StackFrame, StackTraceArguments,
+    StartDebuggingRequestArguments, StartDebuggingRequestArgumentsRequest, SteppingGranularity,
+    TerminateArguments, Variable, VariablesArguments,
+};
+use dap::{
+    session::{DebugSession, DebugSessionId},
+    ContinueResponse,
 };
 use dap_adapters::build_adapter;
 use fs::Fs;
@@ -37,8 +44,10 @@ use language::{
 };
 use lsp::LanguageServerName;
 use node_runtime::NodeRuntime;
-use rpc::proto::{SetDebuggerPanelItem, UpdateDebugAdapter};
-use rpc::{proto, AnyProtoClient, TypedEnvelope};
+use rpc::{
+    proto::{self, SetDebuggerPanelItem, UpdateDebugAdapter, UpdateThreadStatus},
+    AnyProtoClient, TypedEnvelope,
+};
 use serde_json::Value;
 use settings::{Settings as _, WorktreeId};
 use smol::lock::Mutex;
@@ -70,6 +79,7 @@ pub enum DapStoreEvent {
     ActiveDebugLineChanged,
     SetDebugPanelItem(SetDebuggerPanelItem),
     UpdateDebugAdapter(UpdateDebugAdapter),
+    UpdateThreadStatus(UpdateThreadStatus),
 }
 
 #[allow(clippy::large_enum_variant)]
@@ -133,6 +143,19 @@ impl DapStore {
         client.add_model_message_handler(DapStore::handle_set_debug_panel_item);
         client.add_model_message_handler(DapStore::handle_synchronize_breakpoints);
         client.add_model_message_handler(DapStore::handle_update_debug_adapter);
+        client.add_model_message_handler(DapStore::handle_update_thread_status);
+
+        client.add_model_request_handler(DapStore::handle_dap_command::<NextCommand>);
+        client.add_model_request_handler(DapStore::handle_dap_command::<StepInCommand>);
+        client.add_model_request_handler(DapStore::handle_dap_command::<StepOutCommand>);
+        client.add_model_request_handler(DapStore::handle_dap_command::<StepBackCommand>);
+        client.add_model_request_handler(DapStore::handle_dap_command::<ContinueCommand>);
+        client.add_model_request_handler(DapStore::handle_dap_command::<PauseCommand>);
+        client.add_model_request_handler(DapStore::handle_dap_command::<DisconnectCommand>);
+        client.add_model_request_handler(DapStore::handle_dap_command::<TerminateThreadsCommand>);
+        client.add_model_request_handler(DapStore::handle_dap_command::<TerminateCommand>);
+        client.add_model_request_handler(DapStore::handle_dap_command::<RestartCommand>);
+        client.add_model_request_handler(DapStore::handle_shutdown_session);
     }
 
     pub fn new_local(
@@ -1049,31 +1072,65 @@ impl DapStore {
         client_id: &DebugAdapterClientId,
         thread_id: u64,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
+    ) -> Task<Result<ContinueResponse>> {
+        let command = ContinueCommand {
+            args: ContinueArguments {
+                thread_id,
+                single_thread: Some(true),
+            },
+        };
+
+        self.request_dap(client_id, command, cx)
+    }
+
+    fn request_dap<R: DapCommand>(
+        &self,
+        client_id: &DebugAdapterClientId,
+        request: R,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<R::Response>>
+    where
+        <R::DapRequest as dap::requests::Request>::Response: 'static,
+        <R::DapRequest as dap::requests::Request>::Arguments: 'static,
+    {
+        if let Some((upstream_client, upstream_project_id)) = self.upstream_client() {
+            return self.send_proto_client_request::<R>(
+                upstream_client,
+                upstream_project_id,
+                client_id,
+                request,
+                cx,
+            );
+        }
+
         let Some((_, client)) = self.client_by_id(client_id, cx) else {
             return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
         };
 
-        cx.background_executor().spawn(async move {
-            client
-                .request::<Continue>(ContinueArguments {
-                    thread_id,
-                    single_thread: Some(true),
-                })
-                .await?;
+        let client_id = *client_id;
 
-            Ok(())
-        })
+        let task = cx.spawn(|this, mut cx| async move {
+            let args = request.to_dap();
+            let response = request.response_from_dap(client.request::<R::DapRequest>(args).await?);
+            request.handle_response(this, &client_id, response, &mut cx)
+        });
+
+        cx.background_executor().spawn(task)
     }
 
-    // TODO Debugger Collab
-    fn _send_proto_client_request(
+    fn send_proto_client_request<R: DapCommand>(
         &self,
-        _client_id: &DebugAdapterClientId,
-        _message: Message,
-        _cx: &mut ModelContext<Self>,
-    ) {
-        //
+        upstream_client: AnyProtoClient,
+        upstream_project_id: u64,
+        client_id: &DebugAdapterClientId,
+        request: R,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<R::Response>> {
+        let message = request.to_proto(&client_id, upstream_project_id);
+        cx.background_executor().spawn(async move {
+            let response = upstream_client.request(message).await?;
+            request.response_from_proto(response)
+        })
     }
 
     pub fn step_over(
@@ -1083,10 +1140,6 @@ impl DapStore {
         granularity: SteppingGranularity,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let Some((_, client)) = self.client_by_id(client_id, cx) else {
-            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
-        };
-
         let capabilities = self.capabilities_by_id(client_id);
         let supports_single_thread_execution_requests = capabilities
             .supports_single_thread_execution_requests
@@ -1095,15 +1148,15 @@ impl DapStore {
             .supports_stepping_granularity
             .unwrap_or_default();
 
-        cx.background_executor().spawn(async move {
-            client
-                .request::<Next>(NextArguments {
-                    thread_id,
-                    granularity: supports_stepping_granularity.then(|| granularity),
-                    single_thread: supports_single_thread_execution_requests.then(|| true),
-                })
-                .await
-        })
+        let command = NextCommand {
+            inner: StepCommand {
+                thread_id,
+                granularity: supports_stepping_granularity.then(|| granularity),
+                single_thread: supports_single_thread_execution_requests.then(|| true),
+            },
+        };
+
+        self.request_dap(client_id, command, cx)
     }
 
     pub fn step_in(
@@ -1113,10 +1166,6 @@ impl DapStore {
         granularity: SteppingGranularity,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let Some((_, client)) = self.client_by_id(client_id, cx) else {
-            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
-        };
-
         let capabilities = self.capabilities_by_id(client_id);
         let supports_single_thread_execution_requests = capabilities
             .supports_single_thread_execution_requests
@@ -1125,16 +1174,15 @@ impl DapStore {
             .supports_stepping_granularity
             .unwrap_or_default();
 
-        cx.background_executor().spawn(async move {
-            client
-                .request::<StepIn>(StepInArguments {
-                    thread_id,
-                    granularity: supports_stepping_granularity.then(|| granularity),
-                    single_thread: supports_single_thread_execution_requests.then(|| true),
-                    target_id: None,
-                })
-                .await
-        })
+        let command = StepInCommand {
+            inner: StepCommand {
+                thread_id,
+                granularity: supports_stepping_granularity.then(|| granularity),
+                single_thread: supports_single_thread_execution_requests.then(|| true),
+            },
+        };
+
+        self.request_dap(client_id, command, cx)
     }
 
     pub fn step_out(
@@ -1144,10 +1192,6 @@ impl DapStore {
         granularity: SteppingGranularity,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let Some((_, client)) = self.client_by_id(client_id, cx) else {
-            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
-        };
-
         let capabilities = self.capabilities_by_id(client_id);
         let supports_single_thread_execution_requests = capabilities
             .supports_single_thread_execution_requests
@@ -1156,15 +1200,15 @@ impl DapStore {
             .supports_stepping_granularity
             .unwrap_or_default();
 
-        cx.background_executor().spawn(async move {
-            client
-                .request::<StepOut>(StepOutArguments {
-                    thread_id,
-                    granularity: supports_stepping_granularity.then(|| granularity),
-                    single_thread: supports_single_thread_execution_requests.then(|| true),
-                })
-                .await
-        })
+        let command = StepOutCommand {
+            inner: StepCommand {
+                thread_id,
+                granularity: supports_stepping_granularity.then(|| granularity),
+                single_thread: supports_single_thread_execution_requests.then(|| true),
+            },
+        };
+
+        self.request_dap(client_id, command, cx)
     }
 
     pub fn step_back(
@@ -1174,11 +1218,11 @@ impl DapStore {
         granularity: SteppingGranularity,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let Some((_, client)) = self.client_by_id(client_id, cx) else {
-            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
-        };
-
         let capabilities = self.capabilities_by_id(client_id);
+        if !capabilities.supports_step_back.unwrap_or_default() {
+            return Task::ready(Ok(()));
+        }
+
         let supports_single_thread_execution_requests = capabilities
             .supports_single_thread_execution_requests
             .unwrap_or_default();
@@ -1186,19 +1230,15 @@ impl DapStore {
             .supports_stepping_granularity
             .unwrap_or_default();
 
-        if capabilities.supports_step_back.unwrap_or_default() {
-            cx.background_executor().spawn(async move {
-                client
-                    .request::<StepBack>(StepBackArguments {
-                        thread_id,
-                        granularity: supports_stepping_granularity.then(|| granularity),
-                        single_thread: supports_single_thread_execution_requests.then(|| true),
-                    })
-                    .await
-            })
-        } else {
-            Task::ready(Ok(()))
-        }
+        let command = StepBackCommand {
+            inner: StepCommand {
+                thread_id,
+                granularity: supports_stepping_granularity.then(|| granularity),
+                single_thread: supports_single_thread_execution_requests.then(|| true),
+            },
+        };
+
+        self.request_dap(client_id, command, cx)
     }
 
     pub fn variables(
@@ -1328,12 +1368,7 @@ impl DapStore {
         thread_id: u64,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let Some((_, client)) = self.client_by_id(client_id, cx) else {
-            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
-        };
-
-        cx.background_executor()
-            .spawn(async move { client.request::<Pause>(PauseArguments { thread_id }).await })
+        self.request_dap(client_id, PauseCommand { thread_id }, cx)
     }
 
     pub fn terminate_threads(
@@ -1343,20 +1378,12 @@ impl DapStore {
         thread_ids: Option<Vec<u64>>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let Some((_, client)) = self.client_by_id(client_id, cx) else {
-            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
-        };
-
         if self
             .capabilities_by_id(client_id)
             .supports_terminate_threads_request
             .unwrap_or_default()
         {
-            cx.background_executor().spawn(async move {
-                client
-                    .request::<TerminateThreads>(TerminateThreadsArguments { thread_ids })
-                    .await
-            })
+            self.request_dap(client_id, TerminateThreadsCommand { thread_ids }, cx)
         } else {
             self.shutdown_session(session_id, cx)
         }
@@ -1367,19 +1394,13 @@ impl DapStore {
         client_id: &DebugAdapterClientId,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let Some((_, client)) = self.client_by_id(client_id, cx) else {
-            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
+        let command = DisconnectCommand {
+            restart: Some(false),
+            terminate_debuggee: Some(true),
+            suspend_debuggee: Some(false),
         };
 
-        cx.background_executor().spawn(async move {
-            client
-                .request::<Disconnect>(DisconnectArguments {
-                    restart: Some(false),
-                    terminate_debuggee: Some(true),
-                    suspend_debuggee: Some(false),
-                })
-                .await
-        })
+        self.request_dap(client_id, command, cx)
     }
 
     pub fn restart(
@@ -1388,36 +1409,43 @@ impl DapStore {
         args: Option<Value>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let Some((_, client)) = self.client_by_id(client_id, cx) else {
-            return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
-        };
-
         let supports_restart = self
             .capabilities_by_id(client_id)
             .supports_restart_request
             .unwrap_or_default();
 
-        let raw = args.unwrap_or(Value::Null);
+        if supports_restart {
+            let command = RestartCommand {
+                raw: args.unwrap_or(Value::Null),
+            };
 
-        cx.background_executor().spawn(async move {
-            if supports_restart {
-                client.request::<Restart>(RestartArguments { raw }).await?;
-            } else {
-                client
-                    .request::<Disconnect>(DisconnectArguments {
-                        restart: Some(false),
-                        terminate_debuggee: Some(true),
-                        suspend_debuggee: Some(false),
-                    })
-                    .await?;
-            }
+            self.request_dap(client_id, command, cx)
+        } else {
+            let command = DisconnectCommand {
+                restart: Some(false),
+                terminate_debuggee: Some(true),
+                suspend_debuggee: Some(false),
+            };
 
-            Ok(())
-        })
+            self.request_dap(client_id, command, cx)
+        }
     }
 
     pub fn shutdown_sessions(&mut self, cx: &mut ModelContext<Self>) -> Task<()> {
         let Some(local_store) = self.as_local() else {
+            if let Some((upstream_client, project_id)) = self.upstream_client() {
+                return cx.background_executor().spawn(async move {
+                    upstream_client
+                        .request(proto::DapShutdownSession {
+                            project_id,
+                            session_id: None,
+                        })
+                        .await
+                        .log_err();
+
+                    ()
+                });
+            }
             return Task::ready(());
         };
 
@@ -1438,6 +1466,17 @@ impl DapStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(local_store) = self.as_local_mut() else {
+            if let Some((upstream_client, project_id)) = self.upstream_client() {
+                let future = upstream_client.request(proto::DapShutdownSession {
+                    project_id,
+                    session_id: Some(session_id.to_proto()),
+                });
+
+                return cx
+                    .background_executor()
+                    .spawn(async move { future.await.map(|_| ()) });
+            }
+
             return Task::ready(Err(anyhow!("Cannot shutdown session on remote side")));
         };
 
@@ -1563,6 +1602,46 @@ impl DapStore {
         cx.notify();
     }
 
+    async fn handle_shutdown_session(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::DapShutdownSession>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::Ack> {
+        if let Some(session_id) = envelope.payload.session_id {
+            this.update(&mut cx, |dap_store, cx| {
+                dap_store.shutdown_session(&DebugSessionId::from_proto(session_id), cx)
+            })?
+            .await?;
+        } else {
+            this.update(&mut cx, |dap_store, cx| dap_store.shutdown_sessions(cx))?
+                .await;
+        }
+
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_dap_command<T: DapCommand>(
+        this: Model<Self>,
+        envelope: TypedEnvelope<T::ProtoRequest>,
+        mut cx: AsyncAppContext,
+    ) -> Result<<T::ProtoRequest as proto::RequestMessage>::Response>
+    where
+        <T::DapRequest as dap::requests::Request>::Arguments: Send,
+        <T::DapRequest as dap::requests::Request>::Response: Send,
+    {
+        let _sender_id = envelope.original_sender_id().unwrap_or_default();
+        let client_id = T::client_id_from_proto(&envelope.payload);
+
+        let request = T::from_proto(&envelope.payload);
+        let response = this
+            .update(&mut cx, |this, cx| {
+                this.request_dap::<T>(&client_id, request, cx)
+            })?
+            .await?;
+
+        Ok(T::response_to_proto(&client_id, response))
+    }
+
     async fn handle_synchronize_breakpoints(
         this: Model<Self>,
         envelope: TypedEnvelope<proto::SynchronizeBreakpoints>,
@@ -1612,6 +1691,16 @@ impl DapStore {
     ) -> Result<()> {
         this.update(&mut cx, |_, cx| {
             cx.emit(DapStoreEvent::UpdateDebugAdapter(envelope.payload));
+        })
+    }
+
+    async fn handle_update_thread_status(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::UpdateThreadStatus>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |_, cx| {
+            cx.emit(DapStoreEvent::UpdateThreadStatus(envelope.payload));
         })
     }
 

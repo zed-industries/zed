@@ -150,18 +150,6 @@ async fn test_debug_panel_item_opens_on_remote(
     });
 
     shutdown_client.await.unwrap();
-
-    cx_b.run_until_parked();
-
-    // assert we don't have a debug panel item anymore because the client shutdown
-    workspace_b.update(cx_b, |workspace, cx| {
-        let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
-
-        debug_panel.update(cx, |this, cx| {
-            assert!(this.active_debug_panel_item(cx).is_none());
-            assert_eq!(0, this.pane().unwrap().read(cx).items_len());
-        });
-    });
 }
 
 #[gpui::test]
@@ -287,6 +275,370 @@ async fn test_active_debug_panel_item_set_on_join_project(
 
     shutdown_client.await.unwrap();
 
+    cx_b.run_until_parked();
+
+    // assert we don't have a debug panel item anymore because the client shutdown
+    workspace_b.update(cx_b, |workspace, cx| {
+        let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+
+        debug_panel.update(cx, |this, cx| {
+            assert!(this.active_debug_panel_item(cx).is_none());
+            assert_eq!(0, this.pane().unwrap().read(cx).items_len());
+        });
+    });
+}
+
+#[gpui::test]
+async fn test_debug_panel_remote_button_presses(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+) {
+    let executor = cx_a.executor();
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+
+    init_test(cx_a);
+    init_test(cx_b);
+
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+
+    let (project_a, _worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+
+    add_debugger_panel(&workspace_a, cx_a).await;
+    add_debugger_panel(&workspace_b, cx_b).await;
+
+    let task = project_a.update(cx_a, |project, cx| {
+        project.dap_store().update(cx, |store, cx| {
+            store.start_debug_session(
+                dap::DebugAdapterConfig {
+                    label: "test config".into(),
+                    kind: dap::DebugAdapterKind::Fake,
+                    request: dap::DebugRequestType::Launch,
+                    program: None,
+                    cwd: None,
+                    initialize_args: None,
+                },
+                cx,
+            )
+        })
+    });
+
+    let (_, client) = task.await.unwrap();
+
+    client
+        .on_request::<Initialize, _>(move |_, _| {
+            Ok(dap::Capabilities {
+                supports_step_back: Some(true),
+                ..Default::default()
+            })
+        })
+        .await;
+
+    client.on_request::<Launch, _>(move |_, _| Ok(())).await;
+
+    client
+        .on_request::<StackTrace, _>(move |_, _| {
+            Ok(dap::StackTraceResponse {
+                stack_frames: Vec::default(),
+                total_frames: None,
+            })
+        })
+        .await;
+
+    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    client
+        .on_request::<dap::requests::Continue, _>(move |_, _| {
+            Ok(dap::ContinueResponse {
+                all_threads_continued: Some(true),
+            })
+        })
+        .await;
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    let remote_debug_item = workspace_b.update(cx_b, |workspace, cx| {
+        let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+        let active_debug_panel_item = debug_panel
+            .update(cx, |this, cx| this.active_debug_panel_item(cx))
+            .unwrap();
+
+        assert_eq!(
+            1,
+            debug_panel.update(cx, |this, cx| this.pane().unwrap().read(cx).items_len())
+        );
+        assert_eq!(client.id(), active_debug_panel_item.read(cx).client_id());
+        assert_eq!(1, active_debug_panel_item.read(cx).thread_id());
+        active_debug_panel_item
+    });
+
+    let local_debug_item = workspace_a.update(cx_a, |workspace, cx| {
+        let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+        let active_debug_panel_item = debug_panel
+            .update(cx, |this, cx| this.active_debug_panel_item(cx))
+            .unwrap();
+
+        assert_eq!(
+            1,
+            debug_panel.update(cx, |this, cx| this.pane().unwrap().read(cx).items_len())
+        );
+        assert_eq!(client.id(), active_debug_panel_item.read(cx).client_id());
+        assert_eq!(1, active_debug_panel_item.read(cx).thread_id());
+        active_debug_panel_item
+    });
+
+    remote_debug_item.update(cx_b, |this, cx| {
+        this.continue_thread(cx);
+    });
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    local_debug_item.update(cx_a, |debug_panel_item, cx| {
+        assert_eq!(
+            debugger_ui::debugger_panel::ThreadStatus::Running,
+            debug_panel_item.thread_state().read(cx).status,
+        );
+    });
+
+    remote_debug_item.update(cx_b, |debug_panel_item, cx| {
+        assert_eq!(
+            debugger_ui::debugger_panel::ThreadStatus::Running,
+            debug_panel_item.thread_state().read(cx).status,
+        );
+    });
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    client
+        .on_request::<StackTrace, _>(move |_, _| {
+            Ok(dap::StackTraceResponse {
+                stack_frames: Vec::default(),
+                total_frames: None,
+            })
+        })
+        .await;
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    local_debug_item.update(cx_a, |debug_panel_item, cx| {
+        assert_eq!(
+            debugger_ui::debugger_panel::ThreadStatus::Stopped,
+            debug_panel_item.thread_state().read(cx).status,
+        );
+    });
+
+    remote_debug_item.update(cx_b, |debug_panel_item, cx| {
+        assert_eq!(
+            debugger_ui::debugger_panel::ThreadStatus::Stopped,
+            debug_panel_item.thread_state().read(cx).status,
+        );
+    });
+
+    client
+        .on_request::<dap::requests::Continue, _>(move |_, _| {
+            Ok(dap::ContinueResponse {
+                all_threads_continued: Some(true),
+            })
+        })
+        .await;
+
+    local_debug_item.update(cx_a, |this, cx| {
+        this.continue_thread(cx);
+    });
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+
+    local_debug_item.update(cx_a, |debug_panel_item, cx| {
+        assert_eq!(
+            debugger_ui::debugger_panel::ThreadStatus::Running,
+            debug_panel_item.thread_state().read(cx).status,
+        );
+    });
+
+    remote_debug_item.update(cx_b, |debug_panel_item, cx| {
+        assert_eq!(
+            debugger_ui::debugger_panel::ThreadStatus::Running,
+            debug_panel_item.thread_state().read(cx).status,
+        );
+    });
+
+    client
+        .on_request::<dap::requests::Pause, _>(move |_, _| Ok(()))
+        .await;
+
+    client
+        .on_request::<StackTrace, _>(move |_, _| {
+            Ok(dap::StackTraceResponse {
+                stack_frames: Vec::default(),
+                total_frames: None,
+            })
+        })
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    remote_debug_item.update(cx_b, |this, cx| {
+        this.pause_thread(cx);
+    });
+
+    cx_b.run_until_parked();
+    cx_a.run_until_parked();
+
+    client
+        .on_request::<dap::requests::StepOut, _>(move |_, _| Ok(()))
+        .await;
+
+    remote_debug_item.update(cx_b, |this, cx| {
+        this.step_out(cx);
+    });
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx_b.run_until_parked();
+    cx_a.run_until_parked();
+
+    client
+        .on_request::<dap::requests::Next, _>(move |_, _| Ok(()))
+        .await;
+
+    remote_debug_item.update(cx_b, |this, cx| {
+        this.step_over(cx);
+    });
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx_b.run_until_parked();
+    cx_a.run_until_parked();
+
+    client
+        .on_request::<dap::requests::StepIn, _>(move |_, _| Ok(()))
+        .await;
+
+    remote_debug_item.update(cx_b, |this, cx| {
+        this.step_in(cx);
+    });
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx_b.run_until_parked();
+    cx_a.run_until_parked();
+
+    client
+        .on_request::<dap::requests::StepBack, _>(move |_, _| Ok(()))
+        .await;
+
+    remote_debug_item.update(cx_b, |this, cx| {
+        this.step_back(cx);
+    });
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx_b.run_until_parked();
+    cx_a.run_until_parked();
+
+    remote_debug_item.update(cx_b, |this, cx| {
+        this.stop_thread(cx);
+    });
+
+    cx_a.run_until_parked();
     cx_b.run_until_parked();
 
     // assert we don't have a debug panel item anymore because the client shutdown

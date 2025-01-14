@@ -314,7 +314,21 @@ message Envelope {
         SetDebuggerPanelItem set_debugger_panel_item = 294;
         UpdateDebugAdapter update_debug_adapter = 295;
         ShutdownDebugClient shutdown_debug_client = 296;
-        SetDebugClientCapabilities set_debug_client_capabilities = 297; // current max
+        SetDebugClientCapabilities set_debug_client_capabilities = 297;
+
+        DapNextRequest dap_next_request = 298;
+        DapStepInRequest dap_step_in_request = 299;
+        DapStepOutRequest dap_step_out_request = 300;
+        DapStepBackRequest dap_step_back_request = 301;
+        DapContinueRequest dap_continue_request = 302;
+        DapContinueResponse dap_continue_response = 303;
+        DapPauseRequest dap_pause_request = 304;
+        DapDisconnectRequest dap_disconnect_request = 305;
+        DapTerminateThreadsRequest dap_terminate_threads_request = 306;
+        DapTerminateRequest dap_terminate_request = 307;
+        DapRestartRequest dap_restart_request = 308;
+        DapShutdownSession dap_shutdown_session = 309;
+        UpdateThreadStatus update_thread_status = 310; // current max
     }
 
     reserved 87 to 88;
@@ -2552,6 +2566,13 @@ message DebuggerThreadState {
     bool stopped = 2;
 }
 
+message UpdateThreadStatus {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 thread_id = 3;
+    DebuggerThreadStatus status = 4;
+}
+
 enum DebuggerThreadStatus {
     Running = 0;
     Stopped = 1;
@@ -2589,6 +2610,95 @@ message DebuggerStackFrameList {
     uint64 client_id = 2;
     uint64 current_stack_frame = 3;
     repeated DapStackFrame stack_frames = 4;
+}
+
+enum SteppingGranularity {
+    Statement = 0;
+    Line = 1;
+    Instruction = 2;
+}
+
+message DapPauseRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 thread_id = 3;
+}
+
+message DapDisconnectRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    optional bool restart = 3;
+    optional bool terminate_debuggee = 4;
+    optional bool suspend_debuggee = 5;
+}
+
+message DapTerminateThreadsRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    repeated uint64 thread_ids = 3;
+}
+
+message DapTerminateRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    optional bool restart = 3;
+}
+
+message DapRestartRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    bytes raw_args = 3;
+}
+
+
+message DapShutdownSession {
+    uint64 project_id = 1;
+    optional uint64 session_id = 2; // Shutdown all sessions if this is None
+}
+
+message DapNextRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 thread_id = 3;
+    optional bool single_thread = 4;
+    optional SteppingGranularity granularity = 5;
+}
+
+message DapStepInRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 thread_id = 3;
+    optional uint64 target_id = 4;
+    optional bool single_thread = 5;
+    optional SteppingGranularity granularity = 6;
+}
+
+message DapStepOutRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 thread_id = 3;
+    optional bool single_thread = 4;
+    optional SteppingGranularity granularity = 5;
+}
+
+message DapStepBackRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 thread_id = 3;
+    optional bool single_thread = 4;
+    optional SteppingGranularity granularity = 5;
+}
+
+message DapContinueRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 thread_id = 3;
+    optional bool single_thread = 4;
+}
+
+message DapContinueResponse {
+    uint64 client_id = 1;
+    optional bool all_threads_continued = 2;
 }
 
 message DapStackFrame {

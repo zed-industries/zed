@@ -420,7 +420,21 @@ impl Server {
             .add_message_handler(set_debug_client_panel_item)
             .add_message_handler(update_debug_adapter)
             .add_message_handler(update_debug_client_capabilities)
-            .add_message_handler(shutdown_debug_client);
+            .add_message_handler(shutdown_debug_client)
+            .add_request_handler(forward_mutating_project_request::<proto::DapNextRequest>)
+            .add_request_handler(forward_mutating_project_request::<proto::DapStepInRequest>)
+            .add_request_handler(forward_mutating_project_request::<proto::DapStepOutRequest>)
+            .add_request_handler(forward_mutating_project_request::<proto::DapStepBackRequest>)
+            .add_request_handler(forward_mutating_project_request::<proto::DapContinueRequest>)
+            .add_request_handler(forward_mutating_project_request::<proto::DapPauseRequest>)
+            .add_request_handler(forward_mutating_project_request::<proto::DapDisconnectRequest>)
+            .add_request_handler(
+                forward_mutating_project_request::<proto::DapTerminateThreadsRequest>,
+            )
+            .add_request_handler(forward_mutating_project_request::<proto::DapRestartRequest>)
+            .add_request_handler(forward_mutating_project_request::<proto::DapTerminateRequest>)
+            .add_request_handler(forward_mutating_project_request::<proto::DapShutdownSession>)
+            .add_message_handler(broadcast_project_message_from_host::<proto::UpdateThreadStatus>);
 
         Arc::new(server)
     }
