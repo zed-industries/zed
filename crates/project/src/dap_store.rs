@@ -1108,14 +1108,18 @@ impl DapStore {
         };
 
         let client_id = *client_id;
+        let request_clone = request.clone();
 
-        let task = cx.spawn(|this, mut cx| async move {
-            let args = request.to_dap();
-            let response = request.response_from_dap(client.request::<R::DapRequest>(args).await?);
-            request.handle_response(this, &client_id, response, &mut cx)
+        let request_task = cx.background_executor().spawn(async move {
+            let args = request_clone.to_dap();
+            client.request::<R::DapRequest>(args).await
         });
 
-        cx.background_executor().spawn(task)
+        let request_clone = request.clone();
+        cx.spawn(|this, mut cx| async move {
+            let response = request_clone.response_from_dap(request_task.await?);
+            request_clone.handle_response(this, &client_id, response, &mut cx)
+        })
     }
 
     fn send_proto_client_request<R: DapCommand>(
