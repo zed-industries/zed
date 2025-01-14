@@ -333,8 +333,8 @@ impl Telemetry {
         drop(state);
     }
 
-    pub fn report_assistant_event(self: &Arc<Self>, event_data: AssistantEvent) {
-        let event_type = match event_data.phase {
+    pub fn report_assistant_event(self: &Arc<Self>, event: AssistantEvent) {
+        let event_type = match event.phase {
             AssistantPhase::Response => "Assistant Responded",
             AssistantPhase::Invoked => "Assistant Invoked",
             AssistantPhase::Accepted => "Assistant Response Accepted",
@@ -343,15 +343,15 @@ impl Telemetry {
 
         telemetry::event!(
             event_type,
-            conversation_id = event_data.conversation_id,
-            kind = event_data.kind,
-            phase = event_data.phase,
-            message_id = event_data.message_id,
-            model = event_data.model,
-            model_provider = event_data.model_provider,
-            response_latency = event_data.response_latency,
-            error_message = event_data.error_message,
-            language_name = event_data.language_name,
+            conversation_id = event.conversation_id,
+            kind = event.kind,
+            phase = event.phase,
+            message_id = event.message_id,
+            model = event.model,
+            model_provider = event.model_provider,
+            response_latency = event.response_latency,
+            error_message = event.error_message,
+            language_name = event.language_name,
         );
     }
 
