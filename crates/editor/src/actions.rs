@@ -1,6 +1,6 @@
 //! This module contains all actions supported by [`Editor`].
 use super::*;
-use gpui::{action_aliases, action_as};
+use gpui::{action_as, action_with_deprecated_aliases};
 use schemars::JsonSchema;
 use util::serde::default_true;
 
@@ -394,4 +394,4 @@ gpui::actions!(
 
 action_as!(go_to_line, ToggleGoToLine as Toggle);
 
-action_aliases!(editor, OpenSelectedFilename, [OpenFile]);
+action_with_deprecated_aliases!(editor, OpenSelectedFilename, ["editor::OpenFile"]);

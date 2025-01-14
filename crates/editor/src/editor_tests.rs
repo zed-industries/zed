@@ -3705,7 +3705,6 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
     "});
 
     // Test multiple line, single selection case
-    // Test code hack that covers the fact that to_case crate doesn't support '\n' as a word boundary
     cx.set_state(indoc! {"
         «The quick brown
         fox jumps over
@@ -3719,7 +3718,6 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
     "});
 
     // Test multiple line, single selection case
-    // Test code hack that covers the fact that to_case crate doesn't support '\n' as a word boundary
     cx.set_state(indoc! {"
         «The quick brown
         fox jumps over

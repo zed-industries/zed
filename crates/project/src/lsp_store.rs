@@ -286,9 +286,17 @@ impl LocalLspStore {
 
                         Self::setup_lsp_messages(this.clone(), &language_server, delegate, adapter);
 
+                        let did_change_configuration_params =
+                            Arc::new(lsp::DidChangeConfigurationParams {
+                                settings: workspace_config,
+                            });
                         let language_server = cx
                             .update(|cx| {
-                                language_server.initialize(Some(initialization_params), cx)
+                                language_server.initialize(
+                                    Some(initialization_params),
+                                    did_change_configuration_params.clone(),
+                                    cx,
+                                )
                             })?
                             .await
                             .inspect_err(|_| {
@@ -302,9 +310,7 @@ impl LocalLspStore {
 
                         language_server
                             .notify::<lsp::notification::DidChangeConfiguration>(
-                                &lsp::DidChangeConfigurationParams {
-                                    settings: workspace_config,
-                                },
+                                &did_change_configuration_params,
                             )
                             .ok();
 
@@ -7636,7 +7642,6 @@ impl LspStore {
                             continue;
                         }
                     }
-
                     if progress.is_cancellable {
                         server
                             .notify::<lsp::notification::WorkDoneProgressCancel>(
