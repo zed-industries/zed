@@ -515,7 +515,7 @@
       "cmd-alt-r": "task::Rerun",
       "ctrl-alt-shift-r": ["task::Spawn", { "reveal_target": "center" }]
       // also possible to spawn tasks by name:
-      // "foo-bar": ["task_name::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
+      // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
     }
   },
   // Bindings from Sublime Text
