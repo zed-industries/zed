@@ -408,15 +408,22 @@ impl Render for ContextStrip {
                         }))
                     }),
                 )
+                .on_click(Rc::new(cx.listener(move |this, _, cx| {
+                    this.focused_index = Some(i);
+                    cx.notify();
+                })))
             }))
             .when_some(suggested_context, |el, suggested| {
-                el.child(ContextPill::new_suggested(
-                    suggested.name().clone(),
-                    suggested.icon_path(),
-                    suggested.kind(),
-                    self.focused_index == Some(context.len()),
-                    {
+                el.child(
+                    ContextPill::new_suggested(
+                        suggested.name().clone(),
+                        suggested.icon_path(),
+                        suggested.kind(),
+                        self.focused_index == Some(context.len()),
+                    )
+                    .on_click({
                         let context_store = self.context_store.clone();
+
                         Rc::new(cx.listener(move |this, _event, cx| {
                             let task = context_store.update(cx, |context_store, cx| {
                                 context_store.accept_suggested_context(&suggested, cx)
@@ -444,8 +451,8 @@ impl Render for ContextStrip {
                             })
                             .detach_and_log_err(cx);
                         }))
-                    },
-                ))
+                    }),
+                )
             })
             .when(!context.is_empty(), {
                 move |parent| {

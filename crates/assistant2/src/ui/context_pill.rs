@@ -11,6 +11,7 @@ pub enum ContextPill {
         context: ContextSnapshot,
         dupe_name: bool,
         focused: bool,
+        on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
         on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
     },
     Suggested {
@@ -18,7 +19,7 @@ pub enum ContextPill {
         icon_path: Option<SharedString>,
         kind: ContextKind,
         focused: bool,
-        on_add: Rc<dyn Fn(&ClickEvent, &mut WindowContext)>,
+        on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
     },
 }
 
@@ -34,6 +35,7 @@ impl ContextPill {
             dupe_name,
             on_remove,
             focused,
+            on_click: None,
         }
     }
 
@@ -42,15 +44,26 @@ impl ContextPill {
         icon_path: Option<SharedString>,
         kind: ContextKind,
         focused: bool,
-        on_add: Rc<dyn Fn(&ClickEvent, &mut WindowContext)>,
     ) -> Self {
         Self::Suggested {
             name,
             icon_path,
             kind,
-            on_add,
             focused,
+            on_click: None,
         }
+    }
+
+    pub fn on_click(mut self, listener: Rc<dyn Fn(&ClickEvent, &mut WindowContext)>) -> Self {
+        match &mut self {
+            ContextPill::Added { on_click, .. } => {
+                *on_click = Some(listener);
+            }
+            ContextPill::Suggested { on_click, .. } => {
+                *on_click = Some(listener);
+            }
+        }
+        self
     }
 
     pub fn id(&self) -> ElementId {
@@ -100,6 +113,7 @@ impl RenderOnce for ContextPill {
                 dupe_name,
                 on_remove,
                 focused,
+                on_click,
             } => base_pill
                 .bg(color.element_background)
                 .border_color(if *focused {
@@ -139,13 +153,17 @@ impl RenderOnce for ContextPill {
                                 move |event, cx| on_remove(event, cx)
                             }),
                     )
+                })
+                .when_some(on_click.as_ref(), |element, on_click| {
+                    let on_click = on_click.clone();
+                    element.on_click(move |event, cx| on_click(event, cx))
                 }),
             ContextPill::Suggested {
                 name,
                 icon_path: _,
                 kind,
                 focused,
-                on_add,
+                on_click,
             } => base_pill
                 .cursor_pointer()
                 .pr_1()
@@ -178,9 +196,9 @@ impl RenderOnce for ContextPill {
                         .into_any_element(),
                 )
                 .tooltip(|cx| Tooltip::with_meta("Suggested Context", None, "Click to add it", cx))
-                .on_click({
-                    let on_add = on_add.clone();
-                    move |event, cx| on_add(event, cx)
+                .when_some(on_click.as_ref(), |element, on_click| {
+                    let on_click = on_click.clone();
+                    element.on_click(move |event, cx| on_click(event, cx))
                 }),
         }
     }
