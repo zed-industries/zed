@@ -6156,19 +6156,39 @@ fn status_to_proto(status: FileStatus) -> proto::GitFileStatus {
             first_head,
             second_head,
         }) => Variant::Unmerged(Unmerged {
-            first_head: first_head as i32,
-            second_head: second_head as i32,
+            first_head: unmerged_status_to_proto(first_head),
+            second_head: unmerged_status_to_proto(second_head),
         }),
         FileStatus::Tracked(TrackedStatus {
             index_status,
             worktree_status,
         }) => Variant::Tracked(Tracked {
-            index_status: index_status as i32,
-            worktree_status: worktree_status as i32,
+            index_status: tracked_status_to_proto(index_status),
+            worktree_status: tracked_status_to_proto(worktree_status),
         }),
     };
     proto::GitFileStatus {
         variant: Some(variant),
+    }
+}
+
+fn unmerged_status_to_proto(code: UnmergedStatusCode) -> i32 {
+    match code {
+        UnmergedStatusCode::Added => proto::GitStatusCode::Added as _,
+        UnmergedStatusCode::Deleted => proto::GitStatusCode::Deleted as _,
+        UnmergedStatusCode::Updated => proto::GitStatusCode::Updated as _,
+    }
+}
+
+fn tracked_status_to_proto(code: StatusCode) -> i32 {
+    match code {
+        StatusCode::Added => proto::GitStatusCode::Added as _,
+        StatusCode::Deleted => proto::GitStatusCode::Deleted as _,
+        StatusCode::Modified => proto::GitStatusCode::Modified as _,
+        StatusCode::Renamed => proto::GitStatusCode::Renamed as _,
+        StatusCode::TypeChanged => proto::GitStatusCode::TypeChanged as _,
+        StatusCode::Copied => proto::GitStatusCode::Copied as _,
+        StatusCode::Unmodified => proto::GitStatusCode::Unmodified as _,
     }
 }
 
