@@ -139,7 +139,7 @@ impl Project {
         TerminalSettings::get(settings_location, cx)
     }
 
-    pub fn exec_in_shell(&self, command: String, cx: &AppContext) -> smol::process::Command {
+    pub fn exec_in_shell(&self, command: String, cx: &AppContext) -> std::process::Command {
         let path = self.first_project_directory(cx);
         let ssh_details = self.ssh_details(cx);
         let settings = self.terminal_settings(&path, cx).clone();
@@ -163,12 +163,12 @@ impl Project {
                     env,
                     None,
                 );
-                let mut command = smol::process::Command::new(command);
+                let mut command = std::process::Command::new(command);
                 command.args(args);
                 command
             }
             None => {
-                let mut command = smol::process::Command::new(command);
+                let mut command = std::process::Command::new(command);
                 command.args(args);
                 command.envs(env);
                 if let Some(path) = path {
