@@ -698,6 +698,12 @@ impl crate::Keystroke {
             Keysym::KP_Next => "pagedown".to_owned(),
             Keysym::XF86_Back => "back".to_owned(),
             Keysym::XF86_Forward => "forward".to_owned(),
+            Keysym::XF86_Cut => "cut".to_owned(),
+            Keysym::XF86_Copy => "copy".to_owned(),
+            Keysym::XF86_Paste => "paste".to_owned(),
+            Keysym::XF86_New => "new".to_owned(),
+            Keysym::XF86_Open => "open".to_owned(),
+            Keysym::XF86_Save => "save".to_owned(),
 
             Keysym::comma => ",".to_owned(),
             Keysym::period => ".".to_owned(),
