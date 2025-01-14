@@ -332,7 +332,7 @@ impl GitPanel {
             move |workspace, _, event: &Event, cx| match event.clone() {
                 Event::OpenedEntry { path } => {
                     workspace
-                        .open_path_preview(path, None, true, true, cx)
+                        .open_path_preview(path, None, false, false, cx)
                         .detach_and_prompt_err("Couldn't open file", cx, |_, _| None);
                 }
                 Event::Focus => { /* TODO */ }
@@ -580,6 +580,12 @@ impl GitPanel {
             return;
         };
         let path = (worktree_id, path).into();
+        let path_exists = self.project.update(cx, |project, cx| {
+            project.entry_for_path(&path, cx).is_some()
+        });
+        if !path_exists {
+            return;
+        }
         cx.emit(Event::OpenedEntry { path });
     }
 
