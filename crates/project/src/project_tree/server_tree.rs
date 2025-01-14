@@ -15,8 +15,12 @@ use std::{
 
 use collections::HashMap;
 use gpui::{AppContext, Context as _, Model, Subscription};
-use language::{Attach, LanguageName, LspAdapterDelegate};
+use language::{
+    language_settings::{language_settings, AllLanguageSettings},
+    Attach, LanguageName, LanguageRegistry, LspAdapterDelegate,
+};
 use lsp::LanguageServerName;
+use settings::{Settings as _, SettingsLocation};
 
 use crate::{LanguageServerId, ProjectPath};
 
@@ -26,6 +30,7 @@ pub struct LanguageServerTree {
     project_tree: Model<ProjectTree>,
     instances: HashMap<ProjectPath, BTreeMap<LanguageServerName, Arc<InnerTreeNode>>>,
     attach_kind_cache: HashMap<LanguageServerName, Attach>,
+    languages: Arc<LanguageRegistry>,
     _subscriptions: Subscription,
 }
 
@@ -82,7 +87,11 @@ impl InnerTreeNode {
 }
 
 impl LanguageServerTree {
-    pub(crate) fn new(project_tree: Model<ProjectTree>, cx: &mut AppContext) -> Model<Self> {
+    pub(crate) fn new(
+        project_tree: Model<ProjectTree>,
+        languages: Arc<LanguageRegistry>,
+        cx: &mut AppContext,
+    ) -> Model<Self> {
         cx.new_model(|cx| Self {
             _subscriptions: cx.subscribe(
                 &project_tree,
@@ -93,6 +102,7 @@ impl LanguageServerTree {
             project_tree,
             instances: Default::default(),
             attach_kind_cache: Default::default(),
+            languages,
         })
     }
     /// Memoize calls to attach_kind on LspAdapter (which might be a WASM extension, thus ~expensive to call).
@@ -107,12 +117,49 @@ impl LanguageServerTree {
     pub(crate) fn get<'a>(
         &'a mut self,
         path: ProjectPath,
-        language: LanguageName,
+        language_name: &LanguageName,
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut AppContext,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
+        let available_lsp_adapters = self.languages.clone().lsp_adapters(&language_name);
+        let settings_location = SettingsLocation {
+            worktree_id: path.worktree_id,
+            path: &path.path,
+        };
+        let settings = AllLanguageSettings::get(Some(settings_location.clone()), cx).language(
+            Some(settings_location.clone()),
+            Some(language_name),
+            cx,
+        );
+        let available_language_servers = available_lsp_adapters
+            .iter()
+            .map(|lsp_adapter| lsp_adapter.name.clone())
+            .collect::<Vec<_>>();
+
+        let desired_language_servers =
+            settings.customized_language_servers(&available_language_servers);
+        let adapters = desired_language_servers
+            .into_iter()
+            .filter_map(|desired_adapter| {
+                if let Some(adapter) = available_lsp_adapters
+                    .iter()
+                    .find(|adapter| adapter.name == desired_adapter)
+                {
+                    Some(adapter.clone())
+                } else if let Some(adapter) =
+                    self.languages.load_available_lsp_adapter(&desired_adapter)
+                {
+                    self.languages
+                        .register_lsp_adapter(language_name.clone(), adapter.adapter.clone());
+                    Some(adapter)
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
         let roots = self.project_tree.update(cx, |this, cx| {
-            this.root_for_path(path, &language, delegate, cx)
+            this.root_for_path(path, adapters, delegate, cx)
         });
         roots.into_iter().map(|(adapter, root_path)| {
             let attach = self.attach_kind(&adapter);
@@ -126,17 +173,5 @@ impl LanguageServerTree {
                 });
             Arc::downgrade(inner_node).into()
         })
-    }
-
-    /// Get all language servers for a given project path that have already been initialized.
-    pub(crate) fn get_initialized<'a>(
-        &'a mut self,
-        path: ProjectPath,
-        language: LanguageName,
-        delegate: Arc<dyn LspAdapterDelegate>,
-        cx: &mut AppContext,
-    ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
-        self.get(path, language, delegate, cx)
-            .filter(|node| node.server_id().is_some())
     }
 }

@@ -1068,7 +1068,7 @@ impl LocalLspStore {
             };
             let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
             let root = self.lsp_tree.update(cx, |this, cx| {
-                this.get(worktree_path, language.name(), delegate, cx)
+                this.get(worktree_path, &language.name(), delegate, cx)
                     .filter_map(|node| node.server_id())
                     .collect::<Vec<_>>()
             });
@@ -1804,7 +1804,7 @@ impl LocalLspStore {
         let servers = self.lsp_tree.clone().update(cx, |this, cx| {
             this.get(
                 ProjectPath { worktree_id, path },
-                language.name(),
+                &language.name(),
                 delegate.clone(),
                 cx,
             )
@@ -1923,11 +1923,12 @@ impl LocalLspStore {
                 let Some(path): Option<Arc<Path>> = old_file.path().parent().map(Arc::from) else {
                     return;
                 };
+
                 let delegate = LocalLspAdapterDelegate::from_local_lsp(self, &worktree, cx);
                 let nodes = self.lsp_tree.update(cx, |this, cx| {
-                    this.get_initialized(
+                    this.get(
                         ProjectPath { worktree_id, path },
-                        language.name(),
+                        &language.name(),
                         delegate,
                         cx,
                     )
@@ -1935,7 +1936,7 @@ impl LocalLspStore {
                 });
                 for node in nodes {
                     let Some(server_id) = node.server_id() else {
-                        unreachable!()
+                        continue;
                     };
 
                     buffer.update_diagnostics(server_id, DiagnosticSet::new([], buffer), cx);
@@ -3140,7 +3141,7 @@ impl LspStore {
             let (sender, receiver) = watch::channel();
             (Self::maintain_workspace_config(receiver, cx), sender)
         };
-        let project_tree = ProjectTree::new(languages.clone(), worktree_store.clone(), cx);
+        let project_tree = ProjectTree::new(worktree_store.clone(), cx);
         Self {
             mode: LspStoreMode::Local(LocalLspStore {
                 weak: cx.weak_model(),
@@ -3168,7 +3169,7 @@ impl LspStore {
                     this.as_local_mut().unwrap().shutdown_language_servers(cx)
                 }),
                 registered_buffers: HashMap::default(),
-                lsp_tree: LanguageServerTree::new(project_tree, cx),
+                lsp_tree: LanguageServerTree::new(project_tree, languages.clone(), cx),
             }),
             last_formatting_failure: None,
             downstream_client: None,
@@ -3182,7 +3183,7 @@ impl LspStore {
             active_entry: None,
 
             _maintain_workspace_config,
-            _maintain_buffer_languages: Self::maintain_buffer_languages(languages.clone(), cx),
+            _maintain_buffer_languages: Self::maintain_buffer_languages(languages, cx),
         }
     }
 

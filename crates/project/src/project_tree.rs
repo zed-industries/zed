@@ -71,7 +71,6 @@ impl WorktreeRoots {
 }
 
 pub struct ProjectTree {
-    languages: Arc<LanguageRegistry>,
     root_points: HashMap<WorktreeId, Model<WorktreeRoots>>,
     worktree_store: Model<WorktreeStore>,
     _subscriptions: [Subscription; 2],
@@ -114,13 +113,8 @@ pub(crate) enum ProjectTreeEvent {
 impl EventEmitter<ProjectTreeEvent> for ProjectTree {}
 
 impl ProjectTree {
-    pub(crate) fn new(
-        languages: Arc<LanguageRegistry>,
-        worktree_store: Model<WorktreeStore>,
-        cx: &mut AppContext,
-    ) -> Model<Self> {
+    pub(crate) fn new(worktree_store: Model<WorktreeStore>, cx: &mut AppContext) -> Model<Self> {
         cx.new_model(|cx| Self {
-            languages,
             root_points: Default::default(),
             _subscriptions: [
                 cx.subscribe(&worktree_store, Self::on_worktree_store_event),
@@ -139,12 +133,11 @@ impl ProjectTree {
     fn root_for_path(
         &mut self,
         ProjectPath { worktree_id, path }: ProjectPath,
-        language_name: &LanguageName,
+        adapters: Vec<Arc<CachedLspAdapter>>,
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut AppContext,
     ) -> BTreeMap<AdapterWrapper, ProjectPath> {
         debug_assert_eq!(delegate.worktree_id(), worktree_id);
-        let adapters = self.languages.lsp_adapters(&language_name);
         let mut roots = BTreeMap::from_iter(
             adapters
                 .into_iter()
