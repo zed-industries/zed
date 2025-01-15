@@ -22,6 +22,7 @@ pub struct LlmTokenClaims {
     pub github_user_login: String,
     pub is_staff: bool,
     pub has_llm_closed_beta_feature_flag: bool,
+    #[serde(default)]
     pub has_predict_edits_feature_flag: bool,
     pub has_llm_subscription: bool,
     pub max_monthly_spend_in_cents: u32,
