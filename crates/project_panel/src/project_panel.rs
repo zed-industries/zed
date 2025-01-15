@@ -3389,7 +3389,7 @@ impl ProjectPanel {
                 }
                 cx.stop_propagation();
 
-                if let Some(selection) = this.selection.filter(|_| event.down.modifiers.shift) {
+                if let Some(selection) = this.selection.filter(|_| event.modifiers().shift) {
                     let current_selection = this.index_for_selection(selection);
                     let clicked_entry = SelectedEntry {
                         entry_id,
@@ -3422,7 +3422,7 @@ impl ProjectPanel {
                         this.selection = Some(clicked_entry);
                         this.marked_entries.insert(clicked_entry);
                     }
-                } else if event.down.modifiers.secondary() {
+                } else if event.modifiers().secondary() {
                     if event.down.click_count > 1 {
                         this.split_entry(entry_id, cx);
                     } else {
