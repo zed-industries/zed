@@ -47,7 +47,7 @@ use workspace::{
     ItemNavHistory, ToolbarItemLocation, Workspace,
 };
 
-actions!(diagnostics, [Deploy, ToggleWarnings]);
+actions!(diagnostics, [Deploy, ToggleWarnings, ToggleFullDiagnostic]);
 
 struct IncludeWarnings(bool);
 impl Global for IncludeWarnings {}
@@ -117,7 +117,49 @@ impl Render for ProjectDiagnosticsEditor {
 
 impl ProjectDiagnosticsEditor {
     fn register(workspace: &mut Workspace, _: &mut ViewContext<Workspace>) {
-        workspace.register_action(Self::deploy);
+        workspace
+            .register_action(Self::deploy)
+            .register_action(Self::toggle_full);
+    }
+
+    fn toggle_full(
+        workspace: &mut Workspace,
+        _: &ToggleFullDiagnostic,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        // 1. Figure out which editor/buffer we're targeting
+        let Some(editor) = workspace
+            .active_item(cx)
+            .and_then(|item| item.downcast::<Editor>())
+        else {
+            eprintln!("active item is not an editor");
+            return;
+        };
+        editor.update(cx, |editor, cx| {
+            let anchor = editor.selections.newest_anchor().head();
+
+            let diagnostic = Diagnostic {
+                source: None,
+                code: None,
+                severity: DiagnosticSeverity::ERROR,
+                message: "hello!".to_owned(),
+                group_id: 17,
+                is_primary: true,
+                is_disk_based: true,
+                is_unnecessary: false,
+                data: None,
+            };
+
+            // 2. Update the BlockMap of the target editor's buffer
+            let block_properties = BlockProperties {
+                render: diagnostic_block_renderer(diagnostic, None, true, true),
+                placement: BlockPlacement::Below(anchor),
+                height: 1,
+                style: BlockStyle::Fixed,
+                priority: 0,
+            };
+            editor.insert_blocks([block_properties], None, cx);
+        });
     }
 
     fn new_with_context(
