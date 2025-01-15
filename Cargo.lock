@@ -13658,8 +13658,8 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-gomod"
-version = "1.0.2"
-source = "git+https://github.com/zed-industries/tree-sitter-go-mod?rev=a9aea5e358cde4d0f8ff20b7bc4fa311e359c7ca#a9aea5e358cde4d0f8ff20b7bc4fa311e359c7ca"
+version = "1.1.1"
+source = "git+https://github.com/camdencheek/tree-sitter-go-mod?rev=6efb59652d30e0e9cd5f3b3a669afd6f1a926d3c#6efb59652d30e0e9cd5f3b3a669afd6f1a926d3c"
 dependencies = [
  "cc",
  "tree-sitter-language",
