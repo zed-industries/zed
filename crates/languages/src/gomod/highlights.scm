@@ -3,6 +3,7 @@
   "replace"
   "go"
   "toolchain"
+  "tool"
   "exclude"
   "retract"
   "module"

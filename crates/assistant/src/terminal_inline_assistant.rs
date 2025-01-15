@@ -1,9 +1,9 @@
-use crate::assistant_settings::AssistantSettings;
 use crate::{
     humanize_token_count, prompts::PromptBuilder, AssistantPanel, AssistantPanelEvent, RequestType,
     DEFAULT_CONTEXT_LINES,
 };
 use anyhow::{Context as _, Result};
+use assistant_settings::AssistantSettings;
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
 use editor::{

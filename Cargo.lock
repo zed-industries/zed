@@ -372,9 +372,9 @@ dependencies = [
 name = "assistant"
 version = "0.1.0"
 dependencies = [
- "anthropic",
  "anyhow",
  "assets",
+ "assistant_settings",
  "assistant_slash_command",
  "assistant_tool",
  "async-watch",
@@ -411,7 +411,6 @@ dependencies = [
  "markdown",
  "menu",
  "multi_buffer",
- "ollama",
  "open_ai",
  "ordered-float 2.10.1",
  "parking_lot",
@@ -436,6 +435,7 @@ dependencies = [
  "smallvec",
  "smol",
  "strum",
+ "telemetry",
  "telemetry_events",
  "terminal",
  "terminal_view",
@@ -455,9 +455,9 @@ dependencies = [
 name = "assistant2"
 version = "0.1.0"
 dependencies = [
- "anthropic",
  "anyhow",
  "assets",
+ "assistant_settings",
  "assistant_tool",
  "async-watch",
  "chrono",
@@ -488,8 +488,6 @@ dependencies = [
  "markdown",
  "menu",
  "multi_buffer",
- "ollama",
- "open_ai",
  "ordered-float 2.10.1",
  "parking_lot",
  "paths",
@@ -498,10 +496,8 @@ dependencies = [
  "proto",
  "rand 0.8.5",
  "rope",
- "schemars",
  "serde",
  "serde_json",
- "serde_json_lenient",
  "settings",
  "similar",
  "smol",
@@ -518,6 +514,27 @@ dependencies = [
  "uuid",
  "workspace",
  "zed_actions",
+]
+
+[[package]]
+name = "assistant_settings"
+version = "0.1.0"
+dependencies = [
+ "anthropic",
+ "anyhow",
+ "feature_flags",
+ "fs",
+ "gpui",
+ "language_model",
+ "lmstudio",
+ "log",
+ "ollama",
+ "open_ai",
+ "paths",
+ "schemars",
+ "serde",
+ "serde_json_lenient",
+ "settings",
 ]
 
 [[package]]
@@ -2022,7 +2039,6 @@ dependencies = [
  "audio",
  "client",
  "collections",
- "feature_flags",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -4487,6 +4503,8 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
+ "settings",
+ "theme",
  "util",
 ]
 
@@ -4728,13 +4746,11 @@ dependencies = [
  "rope",
  "serde",
  "serde_json",
- "shlex",
  "smol",
  "tempfile",
  "text",
  "time",
  "util",
- "which 6.0.3",
  "windows 0.58.0",
 ]
 
@@ -6682,6 +6698,7 @@ dependencies = [
  "gpui",
  "http_client",
  "image",
+ "lmstudio",
  "log",
  "ollama",
  "open_ai",
@@ -6727,6 +6744,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language_model",
+ "lmstudio",
  "menu",
  "ollama",
  "open_ai",
@@ -6819,7 +6837,6 @@ dependencies = [
  "regex",
  "rope",
  "rust-embed",
- "schemars",
  "serde",
  "serde_json",
  "settings",
@@ -7194,6 +7211,18 @@ dependencies = [
  "cc",
  "doxygen-rs",
  "libc",
+]
+
+[[package]]
+name = "lmstudio"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "http_client",
+ "schemars",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -13642,8 +13671,8 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-gomod"
-version = "1.0.2"
-source = "git+https://github.com/zed-industries/tree-sitter-go-mod?rev=a9aea5e358cde4d0f8ff20b7bc4fa311e359c7ca#a9aea5e358cde4d0f8ff20b7bc4fa311e359c7ca"
+version = "1.1.1"
+source = "git+https://github.com/camdencheek/tree-sitter-go-mod?rev=6efb59652d30e0e9cd5f3b3a669afd6f1a926d3c#6efb59652d30e0e9cd5f3b3a669afd6f1a926d3c"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -16086,7 +16115,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.170.0"
+version = "0.171.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -16094,6 +16123,7 @@ dependencies = [
  "assets",
  "assistant",
  "assistant2",
+ "assistant_settings",
  "assistant_tools",
  "async-watch",
  "audio",

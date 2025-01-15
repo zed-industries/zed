@@ -1,8 +1,8 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    div, px, uniform_list, AnyElement, BackgroundExecutor, Div, FontWeight, ListSizingBehavior,
-    Model, ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText,
-    UniformListScrollHandle, ViewContext, WeakView,
+    div, pulsating_between, px, uniform_list, Animation, AnimationExt, AnyElement,
+    BackgroundExecutor, Div, FontWeight, ListSizingBehavior, Model, ScrollStrategy, SharedString,
+    Size, StrikethroughStyle, StyledText, UniformListScrollHandle, ViewContext, WeakView,
 };
 use language::Buffer;
 use language::{CodeLabel, Documentation};
@@ -10,6 +10,8 @@ use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
 use project::{CodeAction, Completion, TaskSourceKind};
+use settings::Settings;
+use std::time::Duration;
 use std::{
     cell::RefCell,
     cmp::{min, Reverse},
@@ -333,7 +335,6 @@ impl CompletionsMenu {
                 entries[0] = hint;
             }
             _ => {
-                self.selected_item += 1;
                 entries.insert(0, hint);
             }
         }
@@ -461,10 +462,9 @@ impl CompletionsMenu {
 
                     len
                 }
-                CompletionEntry::InlineCompletionHint(InlineCompletionMenuHint {
-                    provider_name,
-                    ..
-                }) => provider_name.len(),
+                CompletionEntry::InlineCompletionHint(hint) => {
+                    "Zed AI / ".chars().count() + hint.label().chars().count()
+                }
             })
             .map(|(ix, _)| ix);
         drop(completions);
@@ -488,6 +488,12 @@ impl CompletionsMenu {
                     .enumerate()
                     .map(|(ix, mat)| {
                         let item_ix = start_ix + ix;
+                        let buffer_font = theme::ThemeSettings::get_global(cx).buffer_font.clone();
+                        let base_label = h_flex()
+                            .gap_1()
+                            .child(div().font(buffer_font.clone()).child("Zed AI"))
+                            .child(div().px_0p5().child("/").opacity(0.2));
+
                         match mat {
                             CompletionEntry::Match(mat) => {
                                 let candidate_id = mat.candidate_id;
@@ -571,20 +577,57 @@ impl CompletionsMenu {
                                         .end_slot::<Label>(documentation_label),
                                 )
                             }
-                            CompletionEntry::InlineCompletionHint(InlineCompletionMenuHint {
-                                provider_name,
-                                ..
-                            }) => div().min_w(px(250.)).max_w(px(500.)).child(
+                            CompletionEntry::InlineCompletionHint(
+                                hint @ InlineCompletionMenuHint::None,
+                            ) => div().min_w(px(250.)).max_w(px(500.)).child(
                                 ListItem::new("inline-completion")
                                     .inset(true)
                                     .toggle_state(item_ix == selected_item)
                                     .start_slot(Icon::new(IconName::ZedPredict))
                                     .child(
-                                        StyledText::new(format!(
-                                            "{} Completion",
-                                            SharedString::new_static(provider_name)
-                                        ))
-                                        .with_highlights(&style.text, None),
+                                        base_label.child(
+                                            StyledText::new(hint.label())
+                                                .with_highlights(&style.text, None),
+                                        ),
+                                    ),
+                            ),
+                            CompletionEntry::InlineCompletionHint(
+                                hint @ InlineCompletionMenuHint::Loading,
+                            ) => div().min_w(px(250.)).max_w(px(500.)).child(
+                                ListItem::new("inline-completion")
+                                    .inset(true)
+                                    .toggle_state(item_ix == selected_item)
+                                    .start_slot(Icon::new(IconName::ZedPredict))
+                                    .child(base_label.child({
+                                        let text_style = style.text.clone();
+                                        StyledText::new(hint.label())
+                                            .with_highlights(&text_style, None)
+                                            .with_animation(
+                                                "pulsating-label",
+                                                Animation::new(Duration::from_secs(1))
+                                                    .repeat()
+                                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                                move |text, delta| {
+                                                    let mut text_style = text_style.clone();
+                                                    text_style.color =
+                                                        text_style.color.opacity(delta);
+                                                    text.with_highlights(&text_style, None)
+                                                },
+                                            )
+                                    })),
+                            ),
+                            CompletionEntry::InlineCompletionHint(
+                                hint @ InlineCompletionMenuHint::Loaded { .. },
+                            ) => div().min_w(px(250.)).max_w(px(500.)).child(
+                                ListItem::new("inline-completion")
+                                    .inset(true)
+                                    .toggle_state(item_ix == selected_item)
+                                    .start_slot(Icon::new(IconName::ZedPredict))
+                                    .child(
+                                        base_label.child(
+                                            StyledText::new(hint.label())
+                                                .with_highlights(&style.text, None),
+                                        ),
                                     )
                                     .on_click(cx.listener(move |editor, _event, cx| {
                                         cx.stop_propagation();
@@ -641,19 +684,20 @@ impl CompletionsMenu {
                     Documentation::Undocumented => return None,
                 }
             }
-            CompletionEntry::InlineCompletionHint(hint) => match &hint.text {
-                InlineCompletionText::Edit { text, highlights } => div()
-                    .mx_1()
-                    .rounded(px(6.))
-                    .bg(cx.theme().colors().editor_background)
-                    .border_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .child(
-                        gpui::StyledText::new(text.clone())
-                            .with_highlights(&style.text, highlights.clone()),
-                    ),
-                InlineCompletionText::Move(text) => div().child(text.clone()),
-            },
+            CompletionEntry::InlineCompletionHint(InlineCompletionMenuHint::Loaded { text }) => {
+                match text {
+                    InlineCompletionText::Edit { text, highlights } => div()
+                        .mx_1()
+                        .rounded_md()
+                        .bg(cx.theme().colors().editor_background)
+                        .child(
+                            gpui::StyledText::new(text.clone())
+                                .with_highlights(&style.text, highlights.clone()),
+                        ),
+                    InlineCompletionText::Move(text) => div().child(text.clone()),
+                }
+            }
+            CompletionEntry::InlineCompletionHint(_) => return None,
         };
 
         Some(

@@ -99,8 +99,8 @@ use itertools::Itertools;
 use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, Diagnostic, DiagnosticEntry, Documentation, IndentKind, IndentSize, Language,
-    OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
+    CursorShape, Diagnostic, Documentation, IndentKind, IndentSize, Language, OffsetRangeExt,
+    Point, Selection, SelectionGoal, TransactionId,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -459,9 +459,21 @@ pub fn make_suggestion_styles(cx: &WindowContext) -> InlineCompletionStyles {
 type CompletionId = usize;
 
 #[derive(Debug, Clone)]
-struct InlineCompletionMenuHint {
-    provider_name: &'static str,
-    text: InlineCompletionText,
+enum InlineCompletionMenuHint {
+    Loading,
+    Loaded { text: InlineCompletionText },
+    None,
+}
+
+impl InlineCompletionMenuHint {
+    pub fn label(&self) -> &'static str {
+        match self {
+            InlineCompletionMenuHint::Loading | InlineCompletionMenuHint::Loaded { .. } => {
+                "Edit Prediction"
+            }
+            InlineCompletionMenuHint::None => "No Prediction",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -1732,8 +1744,12 @@ impl Editor {
         self.input_enabled = input_enabled;
     }
 
-    pub fn set_inline_completions_enabled(&mut self, enabled: bool) {
+    pub fn set_inline_completions_enabled(&mut self, enabled: bool, cx: &mut ViewContext<Self>) {
         self.enable_inline_completions = enabled;
+        if !self.enable_inline_completions {
+            self.take_active_inline_completion(cx);
+            cx.notify();
+        }
     }
 
     pub fn set_autoindent(&mut self, autoindent: bool) {
@@ -3824,6 +3840,26 @@ impl Editor {
     ) -> Option<Task<std::result::Result<(), anyhow::Error>>> {
         use language::ToOffset as _;
 
+        {
+            let context_menu = self.context_menu.borrow();
+            if let CodeContextMenu::Completions(menu) = context_menu.as_ref()? {
+                let entries = menu.entries.borrow();
+                let entry = entries.get(item_ix.unwrap_or(menu.selected_item));
+                match entry {
+                    Some(CompletionEntry::InlineCompletionHint(
+                        InlineCompletionMenuHint::Loading,
+                    )) => return Some(Task::ready(Ok(()))),
+                    Some(CompletionEntry::InlineCompletionHint(InlineCompletionMenuHint::None)) => {
+                        drop(entries);
+                        drop(context_menu);
+                        self.context_menu_next(&Default::default(), cx);
+                        return Some(Task::ready(Ok(())));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         let completions_menu =
             if let CodeContextMenu::Completions(menu) = self.hide_context_menu(cx)? {
                 menu
@@ -3834,7 +3870,7 @@ impl Editor {
         let entries = completions_menu.entries.borrow();
         let mat = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
         let mat = match mat {
-            CompletionEntry::InlineCompletionHint { .. } => {
+            CompletionEntry::InlineCompletionHint(_) => {
                 self.accept_inline_completion(&AcceptInlineCompletion, cx);
                 cx.stop_propagation();
                 return Some(Task::ready(Ok(())));
@@ -4299,12 +4335,26 @@ impl Editor {
         self.available_code_actions.take();
     }
 
-    pub fn push_code_action_provider(
+    pub fn add_code_action_provider(
         &mut self,
         provider: Rc<dyn CodeActionProvider>,
         cx: &mut ViewContext<Self>,
     ) {
+        if self
+            .code_action_providers
+            .iter()
+            .any(|existing_provider| existing_provider.id() == provider.id())
+        {
+            return;
+        }
+
         self.code_action_providers.push(provider);
+        self.refresh_code_actions(cx);
+    }
+
+    pub fn remove_code_action_provider(&mut self, id: Arc<str>, cx: &mut ViewContext<Self>) {
+        self.code_action_providers
+            .retain(|provider| provider.id() != id);
         self.refresh_code_actions(cx);
     }
 
@@ -4497,7 +4547,8 @@ impl Editor {
         if !user_requested
             && (!self.enable_inline_completions
                 || !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx)
-                || !self.is_focused(cx))
+                || !self.is_focused(cx)
+                || buffer.read(cx).is_empty())
         {
             self.discard_inline_completion(false, cx);
             return None;
@@ -4718,9 +4769,7 @@ impl Editor {
         let Some(provider) = self.inline_completion_provider() else {
             return;
         };
-        let Some(project) = self.project.as_ref() else {
-            return;
-        };
+
         let Some((_, buffer, _)) = self
             .buffer
             .read(cx)
@@ -4729,15 +4778,20 @@ impl Editor {
             return;
         };
 
-        let project = project.read(cx);
         let extension = buffer
             .read(cx)
             .file()
             .and_then(|file| Some(file.path().extension()?.to_string_lossy().to_string()));
-        project.client().telemetry().report_inline_completion_event(
-            provider.name().into(),
-            accepted,
-            extension,
+
+        let event_type = match accepted {
+            true => "Inline Completion Accepted",
+            false => "Inline Completion Discarded",
+        };
+        telemetry::event!(
+            event_type,
+            provider = provider.name(),
+            suggestion_accepted = accepted,
+            file_extension = extension,
         );
     }
 
@@ -4767,6 +4821,7 @@ impl Editor {
                 || (!self.completion_tasks.is_empty() && !self.has_active_inline_completion()));
         if completions_menu_has_precedence
             || !offset_selection.is_empty()
+            || !self.enable_inline_completions
             || self
                 .active_inline_completion
                 .as_ref()
@@ -4889,8 +4944,8 @@ impl Editor {
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> Option<InlineCompletionMenuHint> {
+        let provider = self.inline_completion_provider()?;
         if self.has_active_inline_completion() {
-            let provider_name = self.inline_completion_provider()?.display_name();
             let editor_snapshot = self.snapshot(cx);
 
             let text = match &self.active_inline_completion.as_ref()?.completion {
@@ -4907,12 +4962,11 @@ impl Editor {
                 }
             };
 
-            Some(InlineCompletionMenuHint {
-                provider_name,
-                text,
-            })
+            Some(InlineCompletionMenuHint::Loaded { text })
+        } else if provider.is_refreshing(cx) {
+            Some(InlineCompletionMenuHint::Loading)
         } else {
-            None
+            Some(InlineCompletionMenuHint::None)
         }
     }
 
@@ -6203,8 +6257,6 @@ impl Editor {
 
     pub fn convert_to_title_case(&mut self, _: &ConvertToTitleCase, cx: &mut ViewContext<Self>) {
         self.manipulate_text(cx, |text| {
-            // Hack to get around the fact that to_case crate doesn't support '\n' as a word boundary
-            // https://github.com/rutrum/convert-case/issues/16
             text.split('\n')
                 .map(|line| line.to_case(Case::Title))
                 .join("\n")
@@ -6225,8 +6277,6 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.manipulate_text(cx, |text| {
-            // Hack to get around the fact that to_case crate doesn't support '\n' as a word boundary
-            // https://github.com/rutrum/convert-case/issues/16
             text.split('\n')
                 .map(|line| line.to_case(Case::UpperCamel))
                 .join("\n")
@@ -9222,41 +9272,35 @@ impl Editor {
         let snapshot = self.snapshot(cx);
         loop {
             let diagnostics = if direction == Direction::Prev {
-                buffer
-                    .diagnostics_in_range(0..search_start, true)
-                    .map(|DiagnosticEntry { diagnostic, range }| DiagnosticEntry {
-                        diagnostic,
-                        range: range.to_offset(&buffer),
-                    })
-                    .collect::<Vec<_>>()
+                buffer.diagnostics_in_range(0..search_start, true)
             } else {
-                buffer
-                    .diagnostics_in_range(search_start..buffer.len(), false)
-                    .map(|DiagnosticEntry { diagnostic, range }| DiagnosticEntry {
-                        diagnostic,
-                        range: range.to_offset(&buffer),
-                    })
-                    .collect::<Vec<_>>()
+                buffer.diagnostics_in_range(search_start..buffer.len(), false)
             }
-            .into_iter()
             .filter(|diagnostic| !snapshot.intersects_fold(diagnostic.range.start));
+            let search_start_anchor = buffer.anchor_after(search_start);
             let group = diagnostics
                 // relies on diagnostics_in_range to return diagnostics with the same starting range to
                 // be sorted in a stable way
                 // skip until we are at current active diagnostic, if it exists
                 .skip_while(|entry| {
-                    (match direction {
-                        Direction::Prev => entry.range.start >= search_start,
-                        Direction::Next => entry.range.start <= search_start,
-                    }) && self
-                        .active_diagnostics
-                        .as_ref()
-                        .is_some_and(|a| a.group_id != entry.diagnostic.group_id)
+                    let is_in_range = match direction {
+                        Direction::Prev => {
+                            entry.range.start.cmp(&search_start_anchor, &buffer).is_ge()
+                        }
+                        Direction::Next => {
+                            entry.range.start.cmp(&search_start_anchor, &buffer).is_le()
+                        }
+                    };
+                    is_in_range
+                        && self
+                            .active_diagnostics
+                            .as_ref()
+                            .is_some_and(|a| a.group_id != entry.diagnostic.group_id)
                 })
                 .find_map(|entry| {
                     if entry.diagnostic.is_primary
                         && entry.diagnostic.severity <= DiagnosticSeverity::WARNING
-                        && !entry.range.is_empty()
+                        && !(entry.range.start == entry.range.end)
                         // if we match with the active diagnostic, skip it
                         && Some(entry.diagnostic.group_id)
                             != self.active_diagnostics.as_ref().map(|d| d.group_id)
@@ -9269,6 +9313,7 @@ impl Editor {
 
             if let Some((primary_range, group_id)) = group {
                 self.activate_diagnostics(group_id, cx);
+                let primary_range = primary_range.to_offset(&buffer);
                 if self.active_diagnostics.is_some() {
                     self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.select(vec![Selection {
@@ -12396,6 +12441,7 @@ impl Editor {
                 cx.emit(EditorEvent::ExcerptsEdited { ids: ids.clone() })
             }
             multi_buffer::Event::ExcerptsExpanded { ids } => {
+                self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
             }
             multi_buffer::Event::Reparsed(buffer_id) => {
@@ -13595,6 +13641,8 @@ pub trait CompletionProvider {
 }
 
 pub trait CodeActionProvider {
+    fn id(&self) -> Arc<str>;
+
     fn code_actions(
         &self,
         buffer: &Model<Buffer>,
@@ -13613,6 +13661,10 @@ pub trait CodeActionProvider {
 }
 
 impl CodeActionProvider for Model<Project> {
+    fn id(&self) -> Arc<str> {
+        "project".into()
+    }
+
     fn code_actions(
         &self,
         buffer: &Model<Buffer>,

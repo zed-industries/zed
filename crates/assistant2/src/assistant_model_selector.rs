@@ -1,3 +1,4 @@
+use assistant_settings::AssistantSettings;
 use fs::Fs;
 use gpui::{FocusHandle, View};
 use language_model::LanguageModelRegistry;
@@ -6,7 +7,7 @@ use settings::update_settings_file;
 use std::sync::Arc;
 use ui::{prelude::*, ButtonLike, PopoverMenuHandle, Tooltip};
 
-use crate::{assistant_settings::AssistantSettings, ToggleModelSelector};
+use crate::ToggleModelSelector;
 
 pub struct AssistantModelSelector {
     selector: View<LanguageModelSelector>,

@@ -21,9 +21,9 @@ test-support = [
 ]
 
 [dependencies]
-anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
 assets.workspace = true
+assistant_settings.workspace = true
 assistant_slash_command.workspace = true
 assistant_tool.workspace = true
 async-watch.workspace = true
@@ -57,7 +57,6 @@ lsp.workspace = true
 markdown.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
-ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
 ordered-float.workspace = true
 parking_lot.workspace = true
@@ -79,6 +78,7 @@ similar.workspace = true
 smallvec.workspace = true
 smol.workspace = true
 strum.workspace = true
+telemetry.workspace = true
 telemetry_events.workspace = true
 terminal.workspace = true
 terminal_view.workspace = true
