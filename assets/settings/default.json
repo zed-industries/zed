@@ -416,7 +416,7 @@
     /// 3. Mark files with errors and warnings:
     ///    "all"
     "show_diagnostics": "all",
-    "show_file_numbers": "relative",
+    "show_file_numbers": "off",
     // Settings related to indent guides in the project panel.
     "indent_guides": {
       // When to show indent guides in the project panel.

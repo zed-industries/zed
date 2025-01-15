@@ -3248,6 +3248,7 @@ impl ProjectPanel {
 
         let kind = details.kind;
         let settings = ProjectPanelSettings::get_global(cx);
+        let relative_line_numbers = EditorSettings::get_global(cx).relative_line_numbers;
         let show_editor = details.is_editing && !details.is_processing;
 
         let selection = SelectedEntry {
@@ -3314,7 +3315,12 @@ impl ProjectPanel {
                 item_colors.default
             };
 
-        let file_number = self.get_file_number(worktree_id, entry_id, settings.show_file_numbers);
+        let file_number = self.get_file_number(
+            worktree_id,
+            entry_id,
+            settings.show_file_numbers,
+            relative_line_numbers,
+        );
 
         div()
             .id(entry_id.to_proto() as usize)
@@ -3924,15 +3930,18 @@ impl ProjectPanel {
         &self,
         worktree_id: WorktreeId,
         entry_id: ProjectEntryId,
-        variant: ShowFileNumbers,
+        show_file_numbers: ShowFileNumbers,
+        relative_line_numbers: bool,
     ) -> Option<usize> {
         let entry_line_number = self
             .index_for_entry(entry_id, worktree_id)
             .unwrap_or_default()
             .2;
 
-        match variant {
-            ShowFileNumbers::Relative => {
+        dbg!(relative_line_numbers);
+
+        match (show_file_numbers, relative_line_numbers) {
+            (ShowFileNumbers::On, true) => {
                 let selection_line_number = if let Some(selection) = self.selection {
                     self.index_for_selection(selection).unwrap_or_default().2
                 } else {
@@ -3943,13 +3952,14 @@ impl ProjectPanel {
                         - selection_line_number.min(entry_line_number),
                 );
             }
-            ShowFileNumbers::Absolute => Some(entry_line_number),
-            ShowFileNumbers::Off => None,
+            (ShowFileNumbers::On, false) => Some(entry_line_number),
+            (ShowFileNumbers::Off, _) => None,
         }
     }
 
     fn go_to_numbered_file(&mut self, file_number: FileNumber, cx: &mut ViewContext<Self>) {
         let variant = ProjectPanelSettings::get_global(cx).show_file_numbers;
+        let relative_line_numbers = EditorSettings::get_global(cx).relative_line_numbers;
 
         let total_entries: usize = self
             .visible_entries
@@ -3957,12 +3967,12 @@ impl ProjectPanel {
             .map(|(_, entries, _)| entries.len())
             .sum();
 
-        let file_index = match variant {
-            ShowFileNumbers::Absolute => match file_number {
+        let file_index = match (variant, relative_line_numbers) {
+            (ShowFileNumbers::On, false) => match file_number {
                 FileNumber::Absolute(number) => number,
                 FileNumber::Relative(_) => return,
             },
-            ShowFileNumbers::Relative => match file_number {
+            (ShowFileNumbers::On, true) => match file_number {
                 FileNumber::Relative(relative_file_number) => {
                     let selection_line_number = if let Some(selection) = self.selection {
                         self.index_for_selection(selection).unwrap_or_default().2
@@ -3985,7 +3995,7 @@ impl ProjectPanel {
                 }
                 FileNumber::Absolute(count) => return,
             },
-            ShowFileNumbers::Off => return,
+            (ShowFileNumbers::Off, _) => return,
         };
 
         // Get the entry at the specified index (subtract 1 because UI numbers start at 1)

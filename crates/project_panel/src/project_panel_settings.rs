@@ -47,28 +47,6 @@ pub struct ProjectPanelSettings {
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct FileLineNumberSettings {
-    pub file_line_number_style: FileLineNumberStyle,
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-pub struct FileLineNumberSettingsContent {
-    /// When to show the scrollbar in the project panel.
-    ///
-    /// Default: inherits editor scrollbar settings
-    pub file_line_number_style: Option<FileLineNumberStyle>,
-}
-
-#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum FileLineNumberStyle {
-    Absolute,
-    Relative,
-    #[default]
-    None,
-}
-
-#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
 pub struct IndentGuidesSettings {
     pub show: ShowIndentGuides,
 }
@@ -120,9 +98,7 @@ pub enum ShowFileNumbers {
     #[default]
     Off,
     /// Number files relative to the currently opened file.
-    Relative,
-    /// Number files from the top down.
-    Absolute,
+    On,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
