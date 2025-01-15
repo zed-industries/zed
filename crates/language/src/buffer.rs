@@ -825,6 +825,54 @@ impl Buffer {
         })
     }
 
+    pub fn preview_edits(
+        &self,
+        edits: Arc<[(Range<Anchor>, String)]>,
+        cx: &AppContext,
+    ) -> Task<(text::BufferSnapshot, SyntaxSnapshot)> {
+        struct EditPreview {
+            old_snapshot: text::BufferSnapshot,
+            new_snapshot: text::BufferSnapshot,
+            syntax_snapshot: SyntaxSnapshot,
+        }
+
+        impl EditPreview {
+            fn new(
+                old_snapshot: text::BufferSnapshot,
+                new_snapshot: text::BufferSnapshot,
+                syntax_snapshot: SyntaxSnapshot,
+            ) -> Self {
+                Self {
+                    old_snapshot,
+                    new_snapshot,
+                    syntax_snapshot,
+                }
+            }
+
+            fn highlight_edits(
+                &self,
+                range: Range<usize>,
+                edits: &[Edit<usize>],
+                include_deletions: bool,
+            ) -> (String, Vec<HighlightStyle>) {
+                todo!()
+            }
+        }
+
+        let mut branch_buffer = self.text.branch();
+        let mut syntax_snapshot = self.syntax_map.lock().snapshot();
+        let registry = self.language_registry();
+        let language = self.language().cloned();
+        cx.background_executor().spawn(async move {
+            branch_buffer.edit(edits);
+            let buffer_snapshot = branch_buffer.snapshot();
+            if let Some(language) = language {
+                syntax_snapshot.reparse(&buffer_snapshot, registry, language);
+            }
+            (buffer_snapshot, syntax_snapshot)
+        })
+    }
+
     /// Applies all of the changes in this buffer that intersect any of the
     /// given `ranges` to its base buffer.
     ///

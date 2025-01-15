@@ -286,7 +286,8 @@ impl Zeta {
         F: FnOnce(Arc<Client>, LlmApiToken, PredictEditsParams) -> R + 'static,
         R: Future<Output = Result<PredictEditsResponse>> + Send + 'static,
     {
-        let snapshot = self.report_changes_for_buffer(buffer, cx);
+        let buffer = buffer.clone();
+        let snapshot = self.report_changes_for_buffer(&buffer, cx);
         let point = position.to_point(&snapshot);
         let offset = point.to_offset(&snapshot);
         let excerpt_range = excerpt_range_for_position(point, &snapshot);
@@ -340,6 +341,7 @@ impl Zeta {
 
             Self::process_completion_response(
                 output_excerpt,
+                buffer,
                 &snapshot,
                 excerpt_range,
                 offset,
@@ -565,6 +567,7 @@ and then another
     #[allow(clippy::too_many_arguments)]
     fn process_completion_response(
         output_excerpt: String,
+        buffer: Model<Buffer>,
         snapshot: &BufferSnapshot,
         excerpt_range: Range<usize>,
         cursor_offset: usize,
