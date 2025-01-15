@@ -2,16 +2,21 @@ mod base_keymap_picker;
 mod base_keymap_setting;
 mod multibuffer_hint;
 
+use client::Client;
 use client::{telemetry::Telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
+use feature_flags::FeatureFlagAppExt;
+use feature_flags::ZedPro;
 use gpui::{
     actions, svg, Action, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
     ParentElement, Render, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
     WindowContext,
 };
 use settings::{Settings, SettingsStore};
+use smol::stream::StreamExt;
 use std::sync::Arc;
 use ui::{prelude::*, CheckboxWithLabel, ElevationIndex, Tooltip};
+use util::ResultExt;
 use vim_mode_setting::VimModeSetting;
 use workspace::{
     dock::DockPosition,
@@ -65,6 +70,8 @@ pub struct WelcomePage {
     workspace: WeakView<Workspace>,
     focus_handle: FocusHandle,
     telemetry: Arc<Telemetry>,
+    is_signed_out: bool,
+    watch_client_status: Option<Task<()>>,
     _settings_subscription: Subscription,
 }
 
@@ -160,24 +167,56 @@ impl Render for WelcomePage {
                                                     .ok();
                                             })),
                                     )
-                                    .child(
-                                        Button::new(
-                                            "sign-in-to-copilot",
-                                            "Sign in to GitHub Copilot",
-                                        )
-                                        .icon(IconName::Copilot)
-                                        .icon_size(IconSize::XSmall)
-                                        .icon_color(Color::Muted)
-                                        .icon_position(IconPosition::Start)
-                                        .on_click(
-                                            cx.listener(|this, _, cx| {
-                                                this.telemetry.report_app_event(
-                                                    "welcome page: sign in to copilot".to_string(),
-                                                );
-                                                copilot::initiate_sign_in(cx);
-                                            }),
-                                        ),
-                                    )
+                                    .child({
+                                        if cx.has_flag::<ZedPro>() && self.is_signed_out {
+                                            Button::new(
+                                                "sign-in-to-enable-zed-ai",
+                                                "Sign in to enable Zed AI",
+                                            )
+                                            .icon(IconName::ZedPredict)
+                                            .icon_size(IconSize::XSmall)
+                                            .icon_color(Color::Muted)
+                                            .icon_position(IconPosition::Start)
+                                            .on_click(
+                                                cx.listener(|this, _, cx| {
+                                                    this.telemetry.report_app_event(
+                                                        "welcome page: sign in to enable zed ai".to_string(),
+                                                    );
+
+                                                    let client = this
+                                                        .workspace
+                                                        .update(cx, |workspace, _| workspace.client().clone())
+                                                        .log_err();
+
+
+                                                    if let Some(client) = client {
+                                                        cx.spawn(|this, mut cx| async move {
+                                                            client.authenticate_and_connect(true, &mut cx).await?;
+                                                            this.update(&mut cx, |_, cx| cx.notify())
+                                                        })
+                                                        .detach_and_log_err(cx)
+                                                    }
+                                                }),
+                                            )
+                                        } else {
+                                            Button::new(
+                                                "sign-in-to-copilot",
+                                                "Sign in to GitHub Copilot",
+                                            )
+                                            .icon(IconName::Copilot)
+                                            .icon_size(IconSize::XSmall)
+                                            .icon_color(Color::Muted)
+                                            .icon_position(IconPosition::Start)
+                                            .on_click(
+                                                cx.listener(|this, _, cx| {
+                                                    this.telemetry.report_app_event(
+                                                        "welcome page: sign in to copilot".to_string(),
+                                                    );
+                                                    copilot::initiate_sign_in(cx);
+                                                }),
+                                            )
+                                        }
+                                    })
                                     .child(
                                         Button::new("edit settings", "Edit Settings")
                                             .icon(IconName::Settings)
@@ -373,10 +412,16 @@ impl WelcomePage {
             })
             .detach();
 
+            let client = workspace.client();
+
+            let watch_client_status = Self::watch_client_status(client.clone(), cx);
+
             WelcomePage {
                 focus_handle: cx.focus_handle(),
                 workspace: workspace.weak_handle(),
-                telemetry: workspace.client().telemetry().clone(),
+                telemetry: client.telemetry().clone(),
+                is_signed_out: false,
+                watch_client_status: Some(watch_client_status),
                 _settings_subscription: cx
                     .observe_global::<SettingsStore>(move |_, cx| cx.notify()),
             }
@@ -412,6 +457,22 @@ impl WelcomePage {
             });
         }
     }
+
+    fn watch_client_status(client: Arc<Client>, cx: &mut ViewContext<Self>) -> Task<()> {
+        let mut status_rx = client.status();
+
+        cx.spawn(|this, mut cx| async move {
+            while let Some(status) = status_rx.next().await {
+                this.update(&mut cx, |this, cx| {
+                    this.is_signed_out = status.is_signed_out();
+                    cx.notify()
+                })
+                .log_err();
+            }
+            this.update(&mut cx, |this, _cx| this.watch_client_status = None)
+                .log_err();
+        })
+    }
 }
 
 impl EventEmitter<ItemEvent> for WelcomePage {}
@@ -442,11 +503,20 @@ impl Item for WelcomePage {
         _workspace_id: Option<WorkspaceId>,
         cx: &mut ViewContext<Self>,
     ) -> Option<View<Self>> {
-        Some(cx.new_view(|cx| WelcomePage {
-            focus_handle: cx.focus_handle(),
-            workspace: self.workspace.clone(),
-            telemetry: self.telemetry.clone(),
-            _settings_subscription: cx.observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+        Some(cx.new_view(|cx| {
+            let watch_client_status = self.workspace.upgrade().map(|workspace| {
+                Self::watch_client_status(workspace.read(cx).client().clone(), cx)
+            });
+
+            WelcomePage {
+                focus_handle: cx.focus_handle(),
+                workspace: self.workspace.clone(),
+                telemetry: self.telemetry.clone(),
+                is_signed_out: self.is_signed_out,
+                watch_client_status,
+                _settings_subscription: cx
+                    .observe_global::<SettingsStore>(move |_, cx| cx.notify()),
+            }
         }))
     }
 
