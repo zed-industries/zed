@@ -6084,16 +6084,6 @@ impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for Locator {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for OffsetUtf16 {
-    fn zero(_cx: &()) -> Self {
-        Default::default()
-    }
-
-    fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
-        *self += summary.text.len_utf16;
-    }
-}
-
 impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for ExcerptPoint {
     fn zero(_cx: &()) -> Self {
         Default::default()
@@ -6101,16 +6091,6 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for ExcerptPoint {
 
     fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
         self.value += summary.text.lines;
-    }
-}
-
-impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for PointUtf16 {
-    fn zero(_cx: &()) -> Self {
-        Default::default()
-    }
-
-    fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
-        *self += summary.text.lines_utf16()
     }
 }
 
