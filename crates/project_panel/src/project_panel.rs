@@ -3470,11 +3470,9 @@ impl ProjectPanel {
                         )
                     })
                     .child(if let Some(icon) = &icon {
-                        // Check if there's a diagnostic severity and get the decoration color
                         if let Some((_, decoration_color)) =
                             entry_diagnostic_aware_icon_decoration_and_color(diagnostic_severity)
                         {
-                            // Determine if the diagnostic is a warning
                             let is_warning = diagnostic_severity
                                 .map(|severity| matches!(severity, DiagnosticSeverity::WARNING))
                                 .unwrap_or(false);

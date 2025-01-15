@@ -4,7 +4,7 @@ use client::Client;
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::{Editor, EditorMode};
-use feature_flags::{FeatureFlagAppExt, ZetaFeatureFlag};
+use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
 use gpui::{AnyWindowHandle, AppContext, Context, ViewContext, WeakView};
 use language::language_settings::{all_language_settings, InlineCompletionProvider};
 use settings::SettingsStore;
@@ -49,11 +49,11 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
         });
     }
 
-    if cx.has_flag::<ZetaFeatureFlag>() {
+    if cx.has_flag::<PredictEditsFeatureFlag>() {
         cx.on_action(clear_zeta_edit_history);
     }
 
-    cx.observe_flag::<ZetaFeatureFlag, _>({
+    cx.observe_flag::<PredictEditsFeatureFlag, _>({
         let editors = editors.clone();
         let client = client.clone();
         move |active, cx| {
@@ -164,8 +164,9 @@ fn assign_inline_completion_provider(
                 editor.set_inline_completion_provider(Some(provider), cx);
             }
         }
-        language::language_settings::InlineCompletionProvider::Zeta => {
-            if cx.has_flag::<ZetaFeatureFlag>()
+
+        language::language_settings::InlineCompletionProvider::Zed => {
+            if cx.has_flag::<PredictEditsFeatureFlag>()
                 || (cfg!(debug_assertions) && client.status().borrow().is_connected())
             {
                 let zeta = zeta::Zeta::register(client.clone(), cx);

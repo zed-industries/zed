@@ -1304,13 +1304,12 @@ impl Room {
         self.live_kit.as_ref().map(|live_kit| live_kit.deafened)
     }
 
-    pub fn can_use_microphone(&self, _cx: &AppContext) -> bool {
+    pub fn can_use_microphone(&self) -> bool {
         use proto::ChannelRole::*;
 
         #[cfg(not(any(test, feature = "test-support")))]
         {
-            use feature_flags::FeatureFlagAppExt as _;
-            if cfg!(target_os = "windows") || (cfg!(target_os = "linux") && !_cx.is_staff()) {
+            if cfg!(target_os = "windows") {
                 return false;
             }
         }
@@ -1684,7 +1683,7 @@ fn spawn_room_connection(
                     _handle_updates,
                 });
 
-                if !muted_by_user && this.can_use_microphone(cx) {
+                if !muted_by_user && this.can_use_microphone() {
                     this.share_microphone(cx)
                 } else {
                     Task::ready(Ok(()))

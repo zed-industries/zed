@@ -33,10 +33,12 @@ To use a different set of admin users, you can create your own version of that j
 
 ## Testing collaborative features locally
 
-In one terminal, run Zed's collaboration server and the `livekit` dev server:
+Ensure that Postgres is configured and running, then run Zed's collaboration server and the `livekit` dev server:
 
 ```sh
 foreman start
+# OR
+cargo run -p collab -- serve all
 ```
 
 In a second terminal, run two or more instances of Zed.
