@@ -253,17 +253,14 @@ impl InlineAssistant {
                 snapshot.anchor_before(selection.start)..snapshot.anchor_after(selection.end)
             }))
         {
-            let start = Anchor::in_buffer(
+            let start = buffer.anchor_before(buffer_range.start);
+            let end = buffer.anchor_after(buffer_range.end);
+
+            codegen_ranges.push(Anchor::range_in_buffer(
                 excerpt_id,
                 buffer.remote_id(),
-                buffer.anchor_before(buffer_range.start),
-            );
-            let end = Anchor::in_buffer(
-                excerpt_id,
-                buffer.remote_id(),
-                buffer.anchor_after(buffer_range.end),
-            );
-            codegen_ranges.push(start..end);
+                start..end,
+            ));
 
             if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
                 self.telemetry.report_assistant_event(AssistantEvent {

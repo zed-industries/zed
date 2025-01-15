@@ -1455,8 +1455,11 @@ impl SearchableItem for Editor {
                                 search_buffer.anchor_after(search_range.start + match_range.start);
                             let end =
                                 search_buffer.anchor_before(search_range.start + match_range.end);
-                            Anchor::in_buffer(excerpt_id, search_buffer.remote_id(), start)
-                                ..Anchor::in_buffer(excerpt_id, search_buffer.remote_id(), end)
+                            Anchor::range_in_buffer(
+                                excerpt_id,
+                                search_buffer.remote_id(),
+                                start..end,
+                            )
                         }),
                 );
             }

@@ -67,7 +67,7 @@ use std::{
 };
 use sum_tree::{Bias, TreeMap};
 use tab_map::{TabMap, TabSnapshot};
-use text::LineIndent;
+use text::{BufferId, LineIndent};
 use ui::{px, SharedString, WindowContext};
 use unicode_segmentation::UnicodeSegmentation;
 use wrap_map::{WrapMap, WrapSnapshot};
@@ -366,8 +366,12 @@ impl DisplayMap {
         block_map.unfold_buffer(buffer_id, self.buffer.read(cx), cx)
     }
 
-    pub(crate) fn buffer_folded(&self, buffer_id: language::BufferId) -> bool {
+    pub(crate) fn is_buffer_folded(&self, buffer_id: language::BufferId) -> bool {
         self.block_map.folded_buffers.contains(&buffer_id)
+    }
+
+    pub(crate) fn folded_buffers(&self) -> &HashSet<BufferId> {
+        &self.block_map.folded_buffers
     }
 
     pub fn insert_creases(

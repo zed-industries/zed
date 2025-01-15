@@ -35,6 +35,15 @@ impl Anchor {
         }
     }
 
+    pub fn range_in_buffer(
+        excerpt_id: ExcerptId,
+        buffer_id: BufferId,
+        range: Range<text::Anchor>,
+    ) -> Range<Self> {
+        Self::in_buffer(excerpt_id, buffer_id, range.start)
+            ..Self::in_buffer(excerpt_id, buffer_id, range.end)
+    }
+
     pub fn min() -> Self {
         Self {
             buffer_id: None,

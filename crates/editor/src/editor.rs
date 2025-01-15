@@ -10573,7 +10573,7 @@ impl Editor {
                 .collect();
 
             for buffer_id in buffer_ids {
-                if self.buffer_folded(buffer_id, cx) {
+                if self.is_buffer_folded(buffer_id, cx) {
                     self.unfold_buffer(buffer_id, cx);
                 } else {
                     self.fold_buffer(buffer_id, cx);
@@ -10969,7 +10969,7 @@ impl Editor {
     }
 
     pub fn fold_buffer(&mut self, buffer_id: BufferId, cx: &mut ViewContext<Self>) {
-        if self.buffer().read(cx).is_singleton() || self.buffer_folded(buffer_id, cx) {
+        if self.buffer().read(cx).is_singleton() || self.is_buffer_folded(buffer_id, cx) {
             return;
         }
         let Some(buffer) = self.buffer().read(cx).buffer(buffer_id) else {
@@ -10986,7 +10986,7 @@ impl Editor {
     }
 
     pub fn unfold_buffer(&mut self, buffer_id: BufferId, cx: &mut ViewContext<Self>) {
-        if self.buffer().read(cx).is_singleton() || !self.buffer_folded(buffer_id, cx) {
+        if self.buffer().read(cx).is_singleton() || !self.is_buffer_folded(buffer_id, cx) {
             return;
         }
         let Some(buffer) = self.buffer().read(cx).buffer(buffer_id) else {
@@ -11003,8 +11003,12 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn buffer_folded(&self, buffer: BufferId, cx: &AppContext) -> bool {
-        self.display_map.read(cx).buffer_folded(buffer)
+    pub fn is_buffer_folded(&self, buffer: BufferId, cx: &AppContext) -> bool {
+        self.display_map.read(cx).is_buffer_folded(buffer)
+    }
+
+    pub fn folded_buffers<'a>(&self, cx: &'a AppContext) -> &'a HashSet<BufferId> {
+        self.display_map.read(cx).folded_buffers()
     }
 
     /// Removes any folds with the given ranges.

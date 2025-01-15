@@ -1496,7 +1496,7 @@ impl EditorElement {
 
     // Folds contained in a hunk are ignored apart from shrinking visual size
     // If a fold contains any hunks then that fold line is marked as modified
-    fn layout_gutter_git_hunks(
+    fn layout_gutter_diff_hunks(
         &self,
         line_height: Pixels,
         gutter_hitbox: &Hitbox,
@@ -1507,62 +1507,58 @@ impl EditorElement {
         let buffer_start = DisplayPoint::new(display_rows.start, 0).to_point(snapshot);
         let buffer_end = DisplayPoint::new(display_rows.end, 0).to_point(snapshot);
 
-        let git_gutter_setting = ProjectSettings::get_global(cx)
-            .git
-            .git_gutter
-            .unwrap_or_default();
-
         let mut display_hunks = Vec::<(DisplayDiffHunk, Option<Hitbox>)>::new();
+        let folded_buffers = self.editor.read(cx).folded_buffers(cx);
 
         for hunk in snapshot
             .buffer_snapshot
             .diff_hunks_in_range(buffer_start..buffer_end)
         {
+            if folded_buffers.contains(&hunk.buffer_id) {
+                continue;
+            }
+
             let hunk_start_point = Point::new(hunk.row_range.start.0, 0);
             let hunk_end_point = Point::new(hunk.row_range.end.0, 0);
 
             let hunk_display_start = snapshot.point_to_display_point(hunk_start_point, Bias::Left);
             let hunk_display_end = snapshot.point_to_display_point(hunk_end_point, Bias::Right);
 
-            let (display_hunk, hitbox) = if hunk_display_start.column() != 0
-                || hunk_display_end.column() != 0
+            let display_hunk = if hunk_display_start.column() != 0 || hunk_display_end.column() != 0
             {
-                (
-                    DisplayDiffHunk::Folded {
-                        display_row: hunk_display_start.row(),
-                    },
-                    None,
-                )
+                DisplayDiffHunk::Folded {
+                    display_row: hunk_display_start.row(),
+                }
             } else {
-                let hunk = DisplayDiffHunk::Unfolded {
+                DisplayDiffHunk::Unfolded {
                     status: hunk.status(),
                     diff_base_byte_range: hunk.diff_base_byte_range,
                     display_row_range: hunk_display_start.row()..hunk_display_end.row(),
-                    multi_buffer_range: Anchor {
-                        buffer_id: Some(hunk.buffer_id),
-                        excerpt_id: hunk.excerpt_id,
-                        text_anchor: hunk.buffer_range.start,
-                        diff_base_anchor: None,
-                    }..Anchor {
-                        buffer_id: Some(hunk.buffer_id),
-                        excerpt_id: hunk.excerpt_id,
-                        text_anchor: hunk.buffer_range.end,
-                        diff_base_anchor: None,
-                    },
-                };
-
-                let hitbox = if let GitGutterSetting::TrackedFiles = git_gutter_setting {
-                    let hunk_bounds =
-                        Self::diff_hunk_bounds(snapshot, line_height, gutter_hitbox.bounds, &hunk);
-                    Some(cx.insert_hitbox(hunk_bounds, true))
-                } else {
-                    None
-                };
-
-                (hunk, hitbox)
+                    multi_buffer_range: Anchor::range_in_buffer(
+                        hunk.excerpt_id,
+                        hunk.buffer_id,
+                        hunk.buffer_range,
+                    ),
+                }
             };
-            display_hunks.push((display_hunk, hitbox));
+
+            display_hunks.push((display_hunk, None));
         }
+
+        let git_gutter_setting = ProjectSettings::get_global(cx)
+            .git
+            .git_gutter
+            .unwrap_or_default();
+        if let GitGutterSetting::TrackedFiles = git_gutter_setting {
+            for (hunk, hitbox) in &mut display_hunks {
+                if matches!(hunk, DisplayDiffHunk::Unfolded { .. }) {
+                    let hunk_bounds =
+                        Self::diff_hunk_bounds(snapshot, line_height, gutter_hitbox.bounds, hunk);
+                    *hitbox = Some(cx.insert_hitbox(hunk_bounds, true));
+                }
+            }
+        }
+
         display_hunks
     }
 
@@ -1866,7 +1862,7 @@ impl EditorElement {
                         .buffer_snapshot
                         .buffer_line_for_row(multibuffer_row)
                         .map(|(buffer_snapshot, _)| buffer_snapshot.remote_id())
-                        .map(|buffer_id| editor.buffer_folded(buffer_id, cx))
+                        .map(|buffer_id| editor.is_buffer_folded(buffer_id, cx))
                         .unwrap_or(false);
                     if buffer_folded {
                         return None;
@@ -6389,7 +6385,7 @@ impl Element for EditorElement {
                         self.layout_crease_trailers(row_infos.iter().copied(), &snapshot, cx)
                     });
 
-                    let display_hunks = self.layout_gutter_git_hunks(
+                    let display_hunks = self.layout_gutter_diff_hunks(
                         line_height,
                         &gutter_hitbox,
                         start_row..end_row,
