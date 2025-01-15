@@ -9,7 +9,7 @@
 //! This module defines a Project Tree.
 
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     path::Path,
     sync::{Arc, OnceLock, Weak},
 };
@@ -17,8 +17,8 @@ use std::{
 use collections::HashMap;
 use gpui::{AppContext, Context as _, Model, Subscription};
 use language::{
-    language_settings::AllLanguageSettings, Attach, LanguageName, LanguageRegistry,
-    LspAdapterDelegate,
+    language_settings::AllLanguageSettings, Attach, CachedLspAdapter, LanguageName,
+    LanguageRegistry, LspAdapterDelegate,
 };
 use lsp::LanguageServerName;
 use settings::{Settings as _, SettingsLocation, WorktreeId};
@@ -29,12 +29,12 @@ use super::{AdapterWrapper, ProjectTree, ProjectTreeEvent};
 
 #[derive(Default)]
 struct ServersForWorktree {
-    roots: HashMap<Arc<Path>, BTreeMap<LanguageServerName, Arc<InnerTreeNode>>>,
+    roots: BTreeMap<Arc<Path>, BTreeMap<LanguageServerName, Arc<InnerTreeNode>>>,
 }
 
 pub struct LanguageServerTree {
     project_tree: Model<ProjectTree>,
-    instances: HashMap<WorktreeId, ServersForWorktree>,
+    instances: BTreeMap<WorktreeId, ServersForWorktree>,
     attach_kind_cache: HashMap<LanguageServerName, Attach>,
     languages: Arc<LanguageRegistry>,
     _subscriptions: Subscription,
@@ -46,6 +46,12 @@ pub struct LanguageServerTree {
 #[derive(Clone)]
 pub(crate) struct LanguageServerTreeNode(Weak<InnerTreeNode>);
 
+struct LaunchDisposition<'a> {
+    server_name: &'a LanguageServerName,
+    attach: Attach,
+    path: ProjectPath,
+}
+
 impl LanguageServerTreeNode {
     /// Returns a language server ID for this node if there is one.
     /// Returns None if this node has not been initialized yet or it is no longer in the tree.
@@ -56,14 +62,16 @@ impl LanguageServerTreeNode {
     /// May return None if the node no longer belongs to the server tree it was created in.
     pub(crate) fn server_id_or_init(
         &self,
-        init: impl FnOnce(&LanguageServerName, Attach, ProjectPath) -> LanguageServerId,
+        init: impl FnOnce(LaunchDisposition) -> LanguageServerId,
     ) -> Option<LanguageServerId> {
         let this = self.0.upgrade()?;
-        Some(
-            *this
-                .id
-                .get_or_init(|| init(&this.name, this.attach, this.path.clone())),
-        )
+        Some(*this.id.get_or_init(|| {
+            init(LaunchDisposition {
+                server_name: &this.name,
+                attach: this.attach,
+                path: this.path.clone(),
+            })
+        }))
     }
 }
 
@@ -127,7 +135,35 @@ impl LanguageServerTree {
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut AppContext,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
-        let available_lsp_adapters = self.languages.clone().lsp_adapters(&language_name);
+        let adapters = self.adapters_for_language(&path, language_name, cx);
+        #[allow(clippy::mutable_key_type)]
+        let roots = self.project_tree.update(cx, |this, cx| {
+            this.root_for_path(path, adapters, delegate, cx)
+        });
+        roots.into_iter().map(|(adapter, root_path)| {
+            let attach = self.attach_kind(&adapter);
+            let inner_node = self
+                .instances
+                .entry(root_path.worktree_id)
+                .or_default()
+                .roots
+                .entry(root_path.path.clone())
+                .or_default()
+                .entry(adapter.0.name.clone())
+                .or_insert_with(|| {
+                    Arc::new(InnerTreeNode::new(adapter.0.name(), attach, root_path))
+                });
+            Arc::downgrade(inner_node).into()
+        })
+    }
+
+    fn adapters_for_language(
+        &self,
+        path: &ProjectPath,
+        language_name: &LanguageName,
+        cx: &AppContext,
+    ) -> Vec<Arc<CachedLspAdapter>> {
+        let available_lsp_adapters = self.languages.lsp_adapters(&language_name);
         let settings_location = SettingsLocation {
             worktree_id: path.worktree_id,
             path: &path.path,
@@ -163,25 +199,43 @@ impl LanguageServerTree {
                 }
             })
             .collect::<Vec<_>>();
+        adapters
+    }
+    pub(crate) fn on_settings_changed(
+        &mut self,
+        get_delegate: &mut dyn FnMut(WorktreeId, &mut AppContext) -> Arc<dyn LspAdapterDelegate>,
+        mut on_language_server_added: &mut dyn FnMut(LaunchDisposition),
+        mut on_language_server_removed: &mut dyn FnMut(LanguageServerId),
+        cx: &mut AppContext,
+    ) {
+        // Settings are checked at query time. Thus, to avoid messing with inference of applicable settings, we're just going to clear ourselves and let the next query repopulate.
+        // We're going to optimistically re-run the queries and re-assign the same language server id when a language server still exists at a given tree node.
+        let old_instances = std::mem::take(&mut self.instances);
 
-        #[allow(clippy::mutable_key_type)]
-        let roots = self.project_tree.update(cx, |this, cx| {
-            this.root_for_path(path, adapters, delegate, cx)
-        });
-        roots.into_iter().map(|(adapter, root_path)| {
-            let attach = self.attach_kind(&adapter);
-            let inner_node = self
-                .instances
-                .entry(root_path.worktree_id)
-                .or_default()
-                .roots
-                .entry(root_path.path.clone())
-                .or_default()
-                .entry(adapter.0.name.clone())
-                .or_insert_with(|| {
-                    Arc::new(InnerTreeNode::new(adapter.0.name(), attach, root_path))
-                });
-            Arc::downgrade(inner_node).into()
-        })
+        let mut referenced_instances = BTreeSet::new();
+        // Re-map the old tree onto a new one. In the process we'll get a list of servers we have to shut down.
+        let mut all_instances = BTreeSet::new();
+        for (worktree_id, servers) in old_instances {
+            let delegate = get_delegate(worktree_id, cx);
+
+            // Record all initialized node ids.
+            all_instances.extend(servers.roots.values().flat_map(|servers_at_node| {
+                servers_at_node
+                    .values()
+                    .filter_map(|server_node| server_node.id.get())
+            }));
+            while let Some((path, servers)) = servers.roots.pop_first() {
+                for (name, nodes) in servers {
+                    self.get(
+                        ProjectPath {
+                            path: path.clone(),
+                            worktree_id,
+                        },
+                        delegate.clone(),
+                        cx,
+                    );
+                }
+            }
+        }
     }
 }
