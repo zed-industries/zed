@@ -34,9 +34,9 @@ struct Author {
 
 #[derive(Debug, Deserialize)]
 struct User {
-    pub login: String,
-    pub id: u64,
-    pub avatar_url: String,
+    login: String,
+    id: u64,
+    avatar_url: String,
 }
 
 pub struct Codeberg;
