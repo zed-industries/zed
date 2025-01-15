@@ -4075,11 +4075,11 @@ impl MultiBufferSnapshot {
         }
 
         if range.end > *cursor.start() {
-            summary.add_assign(&D::from_text_summary(&cursor.summary::<_, TextSummary>(
-                &range.end,
-                Bias::Right,
-                &(),
-            )));
+            summary.add_assign(
+                &cursor
+                    .summary::<_, ExcerptDimension<D>>(&range.end, Bias::Right, &())
+                    .0,
+            );
             if let Some(excerpt) = cursor.item() {
                 range.end = cmp::max(*cursor.start(), range.end);
 
@@ -6056,16 +6056,6 @@ impl sum_tree::Summary for ExcerptSummary {
     }
 }
 
-impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for TextSummary {
-    fn zero(_cx: &()) -> Self {
-        Default::default()
-    }
-
-    fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
-        *self += &summary.text;
-    }
-}
-
 impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for ExcerptOffset {
     fn zero(_cx: &()) -> Self {
         Default::default()
@@ -6079,12 +6069,6 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for ExcerptOffset {
 impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, ExcerptSummary> for ExcerptOffset {
     fn cmp(&self, cursor_location: &ExcerptSummary, _: &()) -> cmp::Ordering {
         Ord::cmp(&self.value, &cursor_location.text.len)
-    }
-}
-
-impl<'a> sum_tree::SeekTarget<'a, ExcerptSummary, TextSummary> for Point {
-    fn cmp(&self, cursor_location: &TextSummary, _: &()) -> cmp::Ordering {
-        Ord::cmp(self, &cursor_location.lines)
     }
 }
 
