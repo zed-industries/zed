@@ -829,13 +829,22 @@ fn db_status_to_proto(
                     second_head,
                 }),
             ),
-            (StatusKind::Tracked, Some(index_status), Some(worktree_status)) => (
-                worktree_status,
-                Variant::Tracked(Tracked {
-                    index_status,
-                    worktree_status,
-                }),
-            ),
+            (StatusKind::Tracked, Some(index_status), Some(worktree_status)) => {
+                let simple_status = if worktree_status != proto::GitStatusCode::Unmodified as i32 {
+                    worktree_status
+                } else if index_status != proto::GitStatusCode::Unmodified as i32 {
+                    index_status
+                } else {
+                    proto::GitStatusCode::Unmodified as i32
+                };
+                (
+                    simple_status,
+                    Variant::Tracked(Tracked {
+                        index_status,
+                        worktree_status,
+                    }),
+                )
+            }
             _ => {
                 return Err(anyhow!(
                     "Unexpected combination of status fields: {entry:?}"
@@ -846,7 +855,7 @@ fn db_status_to_proto(
         repo_path: entry.repo_path,
         simple_status,
         status: Some(proto::GitFileStatus {
-            variant: Some(variant),
+            variant: Some(dbg!(variant)),
         }),
     })
 }
