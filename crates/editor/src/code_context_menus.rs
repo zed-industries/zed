@@ -10,6 +10,7 @@ use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
 use project::{CodeAction, Completion, TaskSourceKind};
+use settings::Settings;
 use std::time::Duration;
 use std::{
     cell::RefCell,
@@ -485,6 +486,12 @@ impl CompletionsMenu {
                     .enumerate()
                     .map(|(ix, mat)| {
                         let item_ix = start_ix + ix;
+                        let buffer_font = theme::ThemeSettings::get_global(cx).buffer_font.clone();
+                        let base_label = h_flex()
+                            .gap_1()
+                            .child(div().font(buffer_font.clone()).child("Zed AI"))
+                            .child(div().px_0p5().child("/").opacity(0.2));
+
                         match mat {
                             CompletionEntry::Match(mat) => {
                                 let candidate_id = mat.candidate_id;
@@ -576,8 +583,10 @@ impl CompletionsMenu {
                                     .toggle_state(item_ix == selected_item)
                                     .start_slot(Icon::new(IconName::ZedPredict))
                                     .child(
-                                        StyledText::new(hint.label())
-                                            .with_highlights(&style.text, None),
+                                        base_label.child(
+                                            StyledText::new(hint.label())
+                                                .with_highlights(&style.text, None),
+                                        ),
                                     ),
                             ),
                             CompletionEntry::InlineCompletionHint(
@@ -587,13 +596,13 @@ impl CompletionsMenu {
                                     .inset(true)
                                     .toggle_state(item_ix == selected_item)
                                     .start_slot(Icon::new(IconName::ZedPredict))
-                                    .child({
+                                    .child(base_label.child({
                                         let text_style = style.text.clone();
                                         StyledText::new(hint.label())
                                             .with_highlights(&text_style, None)
                                             .with_animation(
                                                 "pulsating-label",
-                                                Animation::new(Duration::from_secs(1))
+                                                Animation::new(Duration::from_secs(2))
                                                     .repeat()
                                                     .with_easing(pulsating_between(0.4, 0.8)),
                                                 move |text, delta| {
@@ -603,7 +612,7 @@ impl CompletionsMenu {
                                                     text.with_highlights(&text_style, None)
                                                 },
                                             )
-                                    }),
+                                    })),
                             ),
                             CompletionEntry::InlineCompletionHint(
                                 hint @ InlineCompletionMenuHint::Loaded { .. },
@@ -613,8 +622,10 @@ impl CompletionsMenu {
                                     .toggle_state(item_ix == selected_item)
                                     .start_slot(Icon::new(IconName::ZedPredict))
                                     .child(
-                                        StyledText::new(hint.label())
-                                            .with_highlights(&style.text, None),
+                                        base_label.child(
+                                            StyledText::new(hint.label())
+                                                .with_highlights(&style.text, None),
+                                        ),
                                     )
                                     .on_click(cx.listener(move |editor, _event, cx| {
                                         cx.stop_propagation();
@@ -675,10 +686,8 @@ impl CompletionsMenu {
                 match text {
                     InlineCompletionText::Edit { text, highlights } => div()
                         .mx_1()
-                        .rounded(px(6.))
+                        .rounded_md()
                         .bg(cx.theme().colors().editor_background)
-                        .border_1()
-                        .border_color(cx.theme().colors().border_variant)
                         .child(
                             gpui::StyledText::new(text.clone())
                                 .with_highlights(&style.text, highlights.clone()),

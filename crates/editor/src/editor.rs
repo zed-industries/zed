@@ -468,8 +468,9 @@ enum InlineCompletionMenuHint {
 impl InlineCompletionMenuHint {
     pub fn label(&self) -> &'static str {
         match self {
-            InlineCompletionMenuHint::Loading => "Loading...",
-            InlineCompletionMenuHint::Loaded { .. } => "Prediction",
+            InlineCompletionMenuHint::Loading | InlineCompletionMenuHint::Loaded { .. } => {
+                "Edit Prediction"
+            }
             InlineCompletionMenuHint::None => "No Prediction",
         }
     }
