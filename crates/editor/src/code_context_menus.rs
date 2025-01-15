@@ -590,7 +590,9 @@ impl CompletionsMenu {
                                     )
                                     .when(state.is_none(), |element| {
                                         element.end_slot(
-                                            Label::new("No completions").size(LabelSize::XSmall),
+                                            Label::new("No completions")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted),
                                         )
                                     })
                                     .on_click(cx.listener(move |editor, _event, cx| {
@@ -662,8 +664,9 @@ impl CompletionsMenu {
                         ),
                     InlineCompletionText::Move(text) => div().child(text.clone()),
                 },
-                InlineCompletionMenuState::Loading => return None,
-                InlineCompletionMenuState::None => return None,
+                InlineCompletionMenuState::Loading | InlineCompletionMenuState::None => {
+                    return None
+                }
             },
         };
 
