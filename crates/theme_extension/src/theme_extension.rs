@@ -64,9 +64,17 @@ impl ExtensionThemeProxy for ThemeRegistryProxy {
         self.theme_registry.remove_icon_themes(&icon_themes);
     }
 
-    fn load_icon_theme(&self, icon_theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<()>> {
+    fn load_icon_theme(
+        &self,
+        icon_theme_path: PathBuf,
+        icons_root_dir: PathBuf,
+        fs: Arc<dyn Fs>,
+    ) -> Task<Result<()>> {
         let theme_registry = self.theme_registry.clone();
-        self.executor
-            .spawn(async move { theme_registry.load_icon_theme(&icon_theme_path, fs).await })
+        self.executor.spawn(async move {
+            theme_registry
+                .load_icon_theme(&icon_theme_path, &icons_root_dir, fs)
+                .await
+        })
     }
 }

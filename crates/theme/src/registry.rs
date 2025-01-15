@@ -231,7 +231,15 @@ impl ThemeRegistry {
     }
 
     /// Loads the icon theme from the specified path and adds it to the registry.
-    pub async fn load_icon_theme(&self, icon_theme_path: &Path, fs: Arc<dyn Fs>) -> Result<()> {
+    ///
+    /// The `icons_root_dir` parameter indicates the root directory from which
+    /// the relative paths to icons in the theme should be resolved against.
+    pub async fn load_icon_theme(
+        &self,
+        icon_theme_path: &Path,
+        icons_root_dir: &Path,
+        fs: Arc<dyn Fs>,
+    ) -> Result<()> {
         let icon_theme_family = read_icon_theme(icon_theme_path, fs).await?;
 
         let mut state = self.state.write();
@@ -254,7 +262,16 @@ impl ThemeRegistry {
                 file_icons: icon_theme
                     .file_icons
                     .into_iter()
-                    .map(|(key, icon)| (key, IconDefinition { path: icon.path }))
+                    .map(|(key, icon)| {
+                        let path = icons_root_dir.join(icon.path.as_ref());
+
+                        (
+                            key,
+                            IconDefinition {
+                                path: path.to_string_lossy().to_string().into(),
+                            },
+                        )
+                    })
                     .collect(),
             };
 

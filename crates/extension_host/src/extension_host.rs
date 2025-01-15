@@ -1103,7 +1103,11 @@ impl ExtensionStore {
                 |icon_theme_path| {
                     let mut path = self.installed_dir.clone();
                     path.extend([Path::new(extension_id.as_ref()), icon_theme_path.as_path()]);
-                    path
+
+                    let mut icons_root_path = self.installed_dir.clone();
+                    icons_root_path.extend([Path::new(extension_id.as_ref())]);
+
+                    (path, icons_root_path)
                 },
             ));
             snippets_to_add.extend(extension.manifest.snippets.iter().map(|snippets_path| {
@@ -1174,9 +1178,9 @@ impl ExtensionStore {
                                 .log_err();
                         }
 
-                        for icon_theme_path in icon_themes_to_add.into_iter() {
+                        for (icon_theme_path, icons_root_path) in icon_themes_to_add.into_iter() {
                             proxy
-                                .load_icon_theme(icon_theme_path, fs.clone())
+                                .load_icon_theme(icon_theme_path, icons_root_path, fs.clone())
                                 .await
                                 .log_err();
                         }

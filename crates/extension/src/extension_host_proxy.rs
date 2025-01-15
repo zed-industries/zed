@@ -112,7 +112,12 @@ pub trait ExtensionThemeProxy: Send + Sync + 'static {
 
     fn remove_icon_themes(&self, icon_themes: Vec<SharedString>);
 
-    fn load_icon_theme(&self, icon_theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<()>>;
+    fn load_icon_theme(
+        &self,
+        icon_theme_path: PathBuf,
+        icons_root_dir: PathBuf,
+        fs: Arc<dyn Fs>,
+    ) -> Task<Result<()>>;
 }
 
 impl ExtensionThemeProxy for ExtensionHostProxy {
@@ -168,12 +173,17 @@ impl ExtensionThemeProxy for ExtensionHostProxy {
         proxy.remove_icon_themes(icon_themes)
     }
 
-    fn load_icon_theme(&self, icon_theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<()>> {
+    fn load_icon_theme(
+        &self,
+        icon_theme_path: PathBuf,
+        icons_root_dir: PathBuf,
+        fs: Arc<dyn Fs>,
+    ) -> Task<Result<()>> {
         let Some(proxy) = self.theme_proxy.read().clone() else {
             return Task::ready(Ok(()));
         };
 
-        proxy.load_icon_theme(icon_theme_path, fs)
+        proxy.load_icon_theme(icon_theme_path, icons_root_dir, fs)
     }
 }
 
