@@ -1,7 +1,11 @@
 use anyhow::Error;
+use etagere::euclid::Vector2D;
+use lyon::geom::Angle;
 use lyon::tessellation::{
     BuffersBuilder, FillTessellator, FillVertex, StrokeTessellator, StrokeVertex, VertexBuffers,
 };
+
+pub use lyon::math::Transform;
 pub use lyon::tessellation::{FillOptions, FillRule, StrokeOptions};
 
 use crate::{point, px, Path, Pixels, Point};
@@ -17,8 +21,27 @@ pub enum PathStyle {
 /// A [`Path`] builder.
 pub struct PathBuilder {
     raw: lyon::path::builder::WithSvg<lyon::path::BuilderImpl>,
+    transform: Option<lyon::math::Transform>,
     /// PathStyle of the PathBuilder
     pub style: PathStyle,
+}
+
+impl From<lyon::path::Builder> for PathBuilder {
+    fn from(builder: lyon::path::Builder) -> Self {
+        Self {
+            raw: builder.with_svg(),
+            ..Default::default()
+        }
+    }
+}
+
+impl From<lyon::path::builder::WithSvg<lyon::path::BuilderImpl>> for PathBuilder {
+    fn from(raw: lyon::path::builder::WithSvg<lyon::path::BuilderImpl>) -> Self {
+        Self {
+            raw,
+            ..Default::default()
+        }
+    }
 }
 
 impl From<lyon::math::Point> for Point<Pixels> {
@@ -38,25 +61,28 @@ impl Default for PathBuilder {
         Self {
             raw: lyon::path::Path::builder().with_svg(),
             style: PathStyle::Fill(FillOptions::default()),
+            transform: None,
         }
     }
 }
 
 impl PathBuilder {
     /// Creates a new [`PathBuilder`] to build a Stroke path.
-    pub fn stroke(options: StrokeOptions) -> Self {
+    pub fn stroke(width: Pixels) -> Self {
         Self {
-            style: PathStyle::Stroke(options),
+            style: PathStyle::Stroke(StrokeOptions::default().with_line_width(width.0)),
             ..Self::default()
         }
     }
 
     /// Creates a new [`PathBuilder`] to build a Fill path.
-    pub fn fill(options: FillOptions) -> Self {
-        Self {
-            style: PathStyle::Fill(options),
-            ..Self::default()
-        }
+    pub fn fill() -> Self {
+        Self::default()
+    }
+
+    /// Sets the style of the [`PathBuilder`].
+    pub fn with_style(self, style: PathStyle) -> Self {
+        Self { style, ..self }
     }
 
     /// Move the current point to the given point.
@@ -96,10 +122,54 @@ impl PathBuilder {
         self.raw.close();
     }
 
+    /// Applies a transform to the path.
+    #[inline]
+    pub fn transform(&mut self, transform: Transform) {
+        self.transform = Some(transform);
+    }
+
+    /// Applies a translation to the path.
+    #[inline]
+    pub fn translate(&mut self, to: Point<Pixels>) {
+        if let Some(transform) = self.transform {
+            self.transform = Some(transform.then_translate(Vector2D::new(to.x.0, to.y.0)));
+        } else {
+            self.transform = Some(Transform::translation(to.x.0, to.y.0))
+        }
+    }
+
+    /// Applies a scale to the path.
+    #[inline]
+    pub fn scale(&mut self, scale: f32) {
+        if let Some(transform) = self.transform {
+            self.transform = Some(transform.then_scale(scale, scale));
+        } else {
+            self.transform = Some(Transform::scale(scale, scale));
+        }
+    }
+
+    /// Applies a rotation to the path.
+    ///
+    /// The `angle` is in degrees value in the range 0.0 to 360.0.
+    #[inline]
+    pub fn rotate(&mut self, angle: f32) {
+        let radians = angle.to_radians();
+        if let Some(transform) = self.transform {
+            self.transform = Some(transform.then_rotate(Angle::radians(radians)));
+        } else {
+            self.transform = Some(Transform::rotation(Angle::radians(radians)));
+        }
+    }
+
     /// Builds into a [`Path`].
     #[inline]
     pub fn build(self) -> Result<Path<Pixels>, Error> {
-        let path = self.raw.build();
+        let path = if let Some(transform) = self.transform {
+            self.raw.build().transformed(&transform)
+        } else {
+            self.raw.build()
+        };
+
         match self.style {
             PathStyle::Stroke(options) => Self::tessellate_stroke(&path, &options),
             PathStyle::Fill(options) => Self::tessellate_fill(&path, &options),
@@ -121,7 +191,7 @@ impl PathBuilder {
             &mut BuffersBuilder::new(&mut buf, |vertex: FillVertex| vertex.position()),
         )?;
 
-        Ok(Self::convert_to_path(buf))
+        Ok(Self::build_path(buf))
     }
 
     fn tessellate_stroke(
@@ -139,10 +209,11 @@ impl PathBuilder {
             &mut BuffersBuilder::new(&mut buf, |vertex: StrokeVertex| vertex.position()),
         )?;
 
-        Ok(Self::convert_to_path(buf))
+        Ok(Self::build_path(buf))
     }
 
-    fn convert_to_path(buf: VertexBuffers<lyon::math::Point, u16>) -> Path<Pixels> {
+    /// Builds a [`Path`] from a [`lyon::VertexBuffers`].
+    pub fn build_path(buf: VertexBuffers<lyon::math::Point, u16>) -> Path<Pixels> {
         let mut path = Path::new(Point::default());
         for i in 0..buf.indices.len() / 3 {
             let i0 = buf.indices[i * 3] as usize;

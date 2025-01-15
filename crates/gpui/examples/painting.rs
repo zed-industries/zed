@@ -1,6 +1,6 @@
 use gpui::{
     canvas, div, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size, App,
-    AppContext, Background, Bounds, ColorSpace, FillOptions, MouseDownEvent, Path, PathBuilder,
+    AppContext, Background, Bounds, ColorSpace, MouseDownEvent, Path, PathBuilder, PathStyle,
     Pixels, Point, Render, StrokeOptions, ViewContext, WindowContext, WindowOptions,
 };
 
@@ -15,17 +15,18 @@ impl PaintingViewer {
     fn new(_: &WindowContext) -> Self {
         let mut lines = vec![];
 
-        // draw a line
-        let mut builder = PathBuilder::stroke(StrokeOptions::default().with_line_width(1.0));
-        builder.move_to(point(px(50.), px(180.)));
-        builder.line_to(point(px(100.), px(120.)));
-        builder.move_to(point(px(50.), px(120.)));
-        builder.line_to(point(px(100.), px(180.)));
+        // draw a Rust logo
+        let mut builder = lyon::path::Path::svg_builder();
+        lyon::extra::rust_logo::build_logo_path(&mut builder);
+        // move down the Path
+        let mut builder: PathBuilder = builder.into();
+        builder.translate(point(px(10.), px(100.)));
+        builder.scale(0.9);
         let path = builder.build().unwrap();
-        lines.push((path, rgb(0xdc2626).into()));
+        lines.push((path, gpui::black().into()));
 
         // draw a lightening bolt ⚡
-        let mut builder = PathBuilder::fill(FillOptions::default());
+        let mut builder = PathBuilder::fill();
         builder.move_to(point(px(150.), px(200.)));
         builder.line_to(point(px(200.), px(125.)));
         builder.line_to(point(px(200.), px(175.)));
@@ -34,7 +35,7 @@ impl PaintingViewer {
         lines.push((path, rgb(0x1d4ed8).into()));
 
         // draw a ⭐
-        let mut builder = PathBuilder::fill(FillOptions::default());
+        let mut builder = PathBuilder::fill();
         builder.move_to(point(px(350.), px(100.)));
         builder.line_to(point(px(370.), px(160.)));
         builder.line_to(point(px(430.), px(160.)));
@@ -64,7 +65,7 @@ impl PaintingViewer {
         let height = square_bounds.size.height;
         let horizontal_offset = height;
         let vertical_offset = px(30.);
-        let mut builder = PathBuilder::fill(FillOptions::default());
+        let mut builder = PathBuilder::fill();
         builder.move_to(square_bounds.bottom_left());
         builder.curve_to(
             square_bounds.origin + point(horizontal_offset, vertical_offset),
@@ -90,7 +91,7 @@ impl PaintingViewer {
         let options = StrokeOptions::default()
             .with_line_width(1.)
             .with_line_join(lyon::path::LineJoin::Bevel);
-        let mut builder = PathBuilder::stroke(options);
+        let mut builder = PathBuilder::stroke(px(1.)).with_style(PathStyle::Stroke(options));
         builder.move_to(point(px(40.), px(320.)));
         for i in 0..50 {
             builder.line_to(point(
@@ -164,7 +165,7 @@ impl Render for PaintingViewer {
                                         continue;
                                     }
 
-                                    let mut builder = PathBuilder::stroke(StrokeOptions::default().with_line_width(1.0));
+                                    let mut builder = PathBuilder::stroke(px(1.));
                                     for (i, p) in points.into_iter().enumerate() {
                                         if i == 0 {
                                             builder.move_to(p);
