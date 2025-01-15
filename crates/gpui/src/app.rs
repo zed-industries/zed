@@ -147,7 +147,7 @@ impl App {
         self
     }
 
-    /// Set the http client for the application
+    /// Sets the HTTP client for the application.
     pub fn with_http_client(self, http_client: Arc<dyn HttpClient>) -> Self {
         let mut context_lock = self.0.borrow_mut();
         context_lock.http_client = http_client;
@@ -682,22 +682,26 @@ impl AppContext {
         self.platform.open_url(url);
     }
 
-    /// register_url_scheme requests that the given scheme (e.g. `zed` for `zed://` urls)
-    /// is opened by the current app.
-    /// On some platforms (e.g. macOS) you may be able to register URL schemes as part of app
-    /// distribution, but this method exists to let you register schemes at runtime.
+    /// Registers the given URL scheme (e.g. `zed` for `zed://` urls) to be
+    /// opened by the current app.
+    ///
+    /// On some platforms (e.g. macOS) you may be able to register URL schemes
+    /// as part of app distribution, but this method exists to let you register
+    /// schemes at runtime.
     pub fn register_url_scheme(&self, scheme: &str) -> Task<Result<()>> {
         self.platform.register_url_scheme(scheme)
     }
 
     /// Returns the full pathname of the current app bundle.
-    /// If the app is not being run from a bundle, returns an error.
+    ///
+    /// Returns an error if the app is not being run from a bundle.
     pub fn app_path(&self) -> Result<PathBuf> {
         self.platform.app_path()
     }
 
     /// On Linux, returns the name of the compositor in use.
-    /// Is blank on other platforms.
+    ///
+    /// Returns an empty string on other platforms.
     pub fn compositor_name(&self) -> &'static str {
         self.platform.compositor_name()
     }
@@ -708,6 +712,7 @@ impl AppContext {
     }
 
     /// Displays a platform modal for selecting paths.
+    ///
     /// When one or more paths are selected, they'll be relayed asynchronously via the returned oneshot channel.
     /// If cancelled, a `None` will be relayed instead.
     /// May return an error on Linux if the file picker couldn't be opened.
@@ -719,6 +724,7 @@ impl AppContext {
     }
 
     /// Displays a platform modal for selecting a new path where a file can be saved.
+    ///
     /// The provided directory will be used to set the initial location.
     /// When a path is selected, it is relayed asynchronously via the returned oneshot channel.
     /// If cancelled, a `None` will be relayed instead.
@@ -745,22 +751,22 @@ impl AppContext {
         self.platform.should_auto_hide_scrollbars()
     }
 
-    /// Restart the application.
+    /// Restarts the application.
     pub fn restart(&self, binary_path: Option<PathBuf>) {
         self.platform.restart(binary_path)
     }
 
-    /// Updates the http client assigned to GPUI
-    pub fn set_http_client(&mut self, new_client: Arc<dyn HttpClient>) {
-        self.http_client = new_client;
-    }
-
-    /// Returns the http client assigned to GPUI
+    /// Returns the HTTP client for the application.
     pub fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()
     }
 
-    /// Returns the SVG renderer GPUI uses
+    /// Sets the HTTP client for the application.
+    pub fn set_http_client(&mut self, new_client: Arc<dyn HttpClient>) {
+        self.http_client = new_client;
+    }
+
+    /// Returns the SVG renderer used by the application.
     pub fn svg_renderer(&self) -> SvgRenderer {
         self.svg_renderer.clone()
     }

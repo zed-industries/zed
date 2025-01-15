@@ -1,7 +1,13 @@
 #![allow(missing_docs)]
-use gpui::{svg, AnimationElement, Hsla, IntoElement, Point, Rems, Transformation};
+
+mod decorated_icon;
+mod icon_decoration;
+
+pub use decorated_icon::*;
+use gpui::{svg, AnimationElement, Hsla, IntoElement, Rems, Transformation};
+pub use icon_decoration::*;
 use serde::{Deserialize, Serialize};
-use strum::{EnumIter, EnumString, IntoEnumIterator, IntoStaticStr};
+use strum::{EnumIter, EnumString, IntoStaticStr};
 use ui_macros::DerivePathStr;
 
 use crate::{
@@ -116,6 +122,7 @@ pub enum IconName {
     AiAnthropic,
     AiAnthropicHosted,
     AiGoogle,
+    AiLmStudio,
     AiOllama,
     AiOpenAi,
     AiZed,
@@ -143,7 +150,8 @@ pub enum IconName {
     CaseSensitive,
     Check,
     ChevronDown,
-    ChevronDownSmall, // This chevron indicates a popover menu.
+    /// This chevron indicates a popover menu.
+    ChevronDownSmall,
     ChevronLeft,
     ChevronRight,
     ChevronUp,
@@ -230,6 +238,7 @@ pub enum IconName {
     PanelRight,
     Pencil,
     Person,
+    PersonCircle,
     PhoneIncoming,
     Pin,
     Play,
@@ -374,260 +383,6 @@ impl RenderOnce for Icon {
             .flex_none()
             .path(self.path)
             .text_color(self.color.color(cx))
-    }
-}
-
-const ICON_DECORATION_SIZE: f32 = 11.0;
-
-/// An icon silhouette used to knockout the background of an element
-/// for an icon to sit on top of it, emulating a stroke/border.
-#[derive(Debug, PartialEq, Eq, Copy, Clone, EnumIter, EnumString, IntoStaticStr, DerivePathStr)]
-#[strum(serialize_all = "snake_case")]
-#[path_str(prefix = "icons/knockouts", suffix = ".svg")]
-pub enum KnockoutIconName {
-    // /icons/knockouts/x1.svg
-    XFg,
-    XBg,
-    DotFg,
-    DotBg,
-    TriangleFg,
-    TriangleBg,
-}
-
-#[derive(Debug, PartialEq, Eq, Copy, Clone, EnumIter, EnumString)]
-pub enum IconDecorationKind {
-    // Slash,
-    X,
-    Dot,
-    Triangle,
-}
-
-impl IconDecorationKind {
-    fn fg(&self) -> KnockoutIconName {
-        match self {
-            Self::X => KnockoutIconName::XFg,
-            Self::Dot => KnockoutIconName::DotFg,
-            Self::Triangle => KnockoutIconName::TriangleFg,
-        }
-    }
-
-    fn bg(&self) -> KnockoutIconName {
-        match self {
-            Self::X => KnockoutIconName::XBg,
-            Self::Dot => KnockoutIconName::DotBg,
-            Self::Triangle => KnockoutIconName::TriangleBg,
-        }
-    }
-}
-
-/// The decoration for an icon.
-///
-/// For example, this can show an indicator, an "x",
-/// or a diagonal strikethrough to indicate something is disabled.
-#[derive(IntoElement)]
-pub struct IconDecoration {
-    kind: IconDecorationKind,
-    color: Hsla,
-    knockout_color: Hsla,
-    knockout_hover_color: Hsla,
-    position: Point<Pixels>,
-    group_name: Option<SharedString>,
-}
-
-impl IconDecoration {
-    /// Create a new icon decoration
-    pub fn new(kind: IconDecorationKind, knockout_color: Hsla, cx: &WindowContext) -> Self {
-        let color = cx.theme().colors().icon;
-        let position = Point::default();
-
-        Self {
-            kind,
-            color,
-            knockout_color,
-            knockout_hover_color: knockout_color,
-            position,
-            group_name: None,
-        }
-    }
-
-    /// Sets the kind of decoration
-    pub fn kind(mut self, kind: IconDecorationKind) -> Self {
-        self.kind = kind;
-        self
-    }
-
-    /// Sets the color of the decoration
-    pub fn color(mut self, color: Hsla) -> Self {
-        self.color = color;
-        self
-    }
-
-    /// Sets the color of the decoration's knockout
-    ///
-    /// Match this to the background of the element
-    /// the icon will be rendered on
-    pub fn knockout_color(mut self, color: Hsla) -> Self {
-        self.knockout_color = color;
-        self
-    }
-
-    /// Sets the color of the decoration that is used on hover
-    pub fn knockout_hover_color(mut self, color: Hsla) -> Self {
-        self.knockout_hover_color = color;
-        self
-    }
-
-    /// Sets the position of the decoration
-    pub fn position(mut self, position: Point<Pixels>) -> Self {
-        self.position = position;
-        self
-    }
-
-    /// Sets the name of the group the decoration belongs to
-    pub fn group_name(mut self, name: Option<SharedString>) -> Self {
-        self.group_name = name;
-        self
-    }
-}
-
-impl RenderOnce for IconDecoration {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        div()
-            .size(px(ICON_DECORATION_SIZE))
-            .flex_none()
-            .absolute()
-            .bottom(self.position.y)
-            .right(self.position.x)
-            .child(
-                // foreground
-                svg()
-                    .absolute()
-                    .bottom_0()
-                    .right_0()
-                    .size(px(ICON_DECORATION_SIZE))
-                    .path(self.kind.fg().path())
-                    .text_color(self.color),
-            )
-            .child(
-                // background
-                svg()
-                    .absolute()
-                    .bottom_0()
-                    .right_0()
-                    .size(px(ICON_DECORATION_SIZE))
-                    .path(self.kind.bg().path())
-                    .text_color(self.knockout_color)
-                    .when(self.group_name.is_none(), |this| {
-                        this.hover(|style| style.text_color(self.knockout_hover_color))
-                    })
-                    .when_some(self.group_name.clone(), |this, group_name| {
-                        this.group_hover(group_name, |style| {
-                            style.text_color(self.knockout_hover_color)
-                        })
-                    }),
-            )
-    }
-}
-
-impl ComponentPreview for IconDecoration {
-    fn examples(cx: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
-        let all_kinds = IconDecorationKind::iter().collect::<Vec<_>>();
-
-        let examples = all_kinds
-            .iter()
-            .map(|kind| {
-                let name = format!("{:?}", kind).to_string();
-
-                single_example(
-                    name,
-                    IconDecoration::new(*kind, cx.theme().colors().surface_background, cx),
-                )
-            })
-            .collect();
-
-        vec![example_group(examples)]
-    }
-}
-
-#[derive(IntoElement)]
-pub struct DecoratedIcon {
-    icon: Icon,
-    decoration: Option<IconDecoration>,
-}
-
-impl DecoratedIcon {
-    pub fn new(icon: Icon, decoration: Option<IconDecoration>) -> Self {
-        Self { icon, decoration }
-    }
-}
-
-impl RenderOnce for DecoratedIcon {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
-        div()
-            .relative()
-            .size(self.icon.size)
-            .child(self.icon)
-            .when_some(self.decoration, |this, decoration| this.child(decoration))
-    }
-}
-
-impl ComponentPreview for DecoratedIcon {
-    fn examples(cx: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
-        let icon_1 = Icon::new(IconName::FileDoc);
-        let icon_2 = Icon::new(IconName::FileDoc);
-        let icon_3 = Icon::new(IconName::FileDoc);
-        let icon_4 = Icon::new(IconName::FileDoc);
-
-        let decoration_x = IconDecoration::new(
-            IconDecorationKind::X,
-            cx.theme().colors().surface_background,
-            cx,
-        )
-        .color(cx.theme().status().error)
-        .position(Point {
-            x: px(-2.),
-            y: px(-2.),
-        });
-
-        let decoration_triangle = IconDecoration::new(
-            IconDecorationKind::Triangle,
-            cx.theme().colors().surface_background,
-            cx,
-        )
-        .color(cx.theme().status().error)
-        .position(Point {
-            x: px(-2.),
-            y: px(-2.),
-        });
-
-        let decoration_dot = IconDecoration::new(
-            IconDecorationKind::Dot,
-            cx.theme().colors().surface_background,
-            cx,
-        )
-        .color(cx.theme().status().error)
-        .position(Point {
-            x: px(-2.),
-            y: px(-2.),
-        });
-
-        let examples = vec![
-            single_example("no_decoration", DecoratedIcon::new(icon_1, None)),
-            single_example(
-                "with_decoration",
-                DecoratedIcon::new(icon_2, Some(decoration_x)),
-            ),
-            single_example(
-                "with_decoration",
-                DecoratedIcon::new(icon_3, Some(decoration_triangle)),
-            ),
-            single_example(
-                "with_decoration",
-                DecoratedIcon::new(icon_4, Some(decoration_dot)),
-            ),
-        ];
-
-        vec![example_group(examples)]
     }
 }
 

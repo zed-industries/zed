@@ -50,7 +50,7 @@ impl Vim {
                             {
                                 selection.end = next_line
                             }
-                            Motion::EndOfDocument {} => {
+                            Motion::EndOfDocument {} if times.is_none() => {
                                 // Deleting until the end of the document includes the last line, including
                                 // soft-wrapped lines.
                                 selection.end = map.max_point()
@@ -476,6 +476,41 @@ mod test {
         .assert_matches();
         cx.simulate(
             "d shift-g",
+            indoc! {"
+            The quick
+            brown fox
+            jumps over
+            ˇ"},
+        )
+        .await
+        .assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_delete_to_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.simulate(
+            "d 3 shift-g",
+            indoc! {"
+            The quick
+            brownˇ fox
+            jumps over
+            the lazy"},
+        )
+        .await
+        .assert_matches();
+        cx.simulate(
+            "d 3 shift-g",
+            indoc! {"
+            The quick
+            brown fox
+            jumps over
+            the lˇazy"},
+        )
+        .await
+        .assert_matches();
+        cx.simulate(
+            "d 2 shift-g",
             indoc! {"
             The quick
             brown fox

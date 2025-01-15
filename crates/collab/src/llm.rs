@@ -470,6 +470,8 @@ async fn predict_edits(
         .replace("<outline>", &outline_prefix)
         .replace("<events>", &params.input_events)
         .replace("<excerpt>", &params.input_excerpt);
+
+    let request_start = std::time::Instant::now();
     let mut response = fireworks::complete(
         &state.http_client,
         api_url,
@@ -486,13 +488,18 @@ async fn predict_edits(
         },
     )
     .await?;
+    let duration = request_start.elapsed();
+
+    let choice = response
+        .completion
+        .choices
+        .pop()
+        .context("no output from completion response")?;
 
     state.executor.spawn_detached({
         let kinesis_client = state.kinesis_client.clone();
         let kinesis_stream = state.config.kinesis_stream.clone();
-        let headers = response.headers.clone();
         let model = model.clone();
-
         async move {
             SnowflakeRow::new(
                 "Fireworks Completion Requested",
@@ -501,7 +508,9 @@ async fn predict_edits(
                 claims.system_id.clone(),
                 json!({
                     "model": model.to_string(),
-                    "headers": headers,
+                    "headers": response.headers,
+                    "usage": response.completion.usage,
+                    "duration": duration.as_secs_f64(),
                 }),
             )
             .write(&kinesis_client, &kinesis_stream)
@@ -510,11 +519,6 @@ async fn predict_edits(
         }
     });
 
-    let choice = response
-        .completion
-        .choices
-        .pop()
-        .context("no output from completion response")?;
     Ok(Json(PredictEditsResponse {
         output_excerpt: choice.text,
     }))

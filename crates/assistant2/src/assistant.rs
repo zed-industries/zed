@@ -45,7 +45,13 @@ actions!(
         OpenHistory,
         Chat,
         CycleNextInlineAssist,
-        CyclePreviousInlineAssist
+        CyclePreviousInlineAssist,
+        FocusUp,
+        FocusDown,
+        FocusLeft,
+        FocusRight,
+        RemoveFocusedContext,
+        AcceptSuggestedContext
     ]
 );
 

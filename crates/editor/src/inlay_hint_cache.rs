@@ -1479,7 +1479,7 @@ pub mod tests {
             .await
             .expect("work done progress create request failed");
         cx.executor().run_until_parked();
-        fake_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+        fake_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
             token: lsp::ProgressToken::String(progress_token.to_string()),
             value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Begin(
                 lsp::WorkDoneProgressBegin::default(),
@@ -1504,7 +1504,7 @@ pub mod tests {
             })
             .unwrap();
 
-        fake_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+        fake_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
             token: lsp::ProgressToken::String(progress_token.to_string()),
             value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::End(
                 lsp::WorkDoneProgressEnd::default(),

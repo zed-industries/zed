@@ -415,6 +415,8 @@ impl<T: 'static> PromptEditor<T> {
                     editor.move_to_end(&Default::default(), cx)
                 });
             }
+        } else {
+            cx.focus_view(&self.context_strip);
         }
     }
 
@@ -738,11 +740,18 @@ impl<T: 'static> PromptEditor<T> {
     fn handle_context_strip_event(
         &mut self,
         _context_strip: View<ContextStrip>,
-        ContextStripEvent::PickerDismissed: &ContextStripEvent,
+        event: &ContextStripEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        let editor_focus_handle = self.editor.focus_handle(cx);
-        cx.focus(&editor_focus_handle);
+        match event {
+            ContextStripEvent::PickerDismissed
+            | ContextStripEvent::BlurredEmpty
+            | ContextStripEvent::BlurredUp => {
+                let editor_focus_handle = self.editor.focus_handle(cx);
+                cx.focus(&editor_focus_handle);
+            }
+            ContextStripEvent::BlurredDown => {}
+        }
     }
 }
 
@@ -826,7 +835,6 @@ impl PromptEditor<BufferCodegen> {
                 context_store.clone(),
                 workspace.clone(),
                 thread_store.clone(),
-                prompt_editor.focus_handle(cx),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
                 cx,
@@ -978,7 +986,6 @@ impl PromptEditor<TerminalCodegen> {
                 context_store.clone(),
                 workspace.clone(),
                 thread_store.clone(),
-                prompt_editor.focus_handle(cx),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
                 cx,

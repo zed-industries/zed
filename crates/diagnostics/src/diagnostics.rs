@@ -95,6 +95,7 @@ impl Render for ProjectDiagnosticsEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let child = if self.path_states.is_empty() {
             div()
+                .key_context("EmptyPane")
                 .bg(cx.theme().colors().editor_background)
                 .flex()
                 .items_center()
@@ -106,10 +107,8 @@ impl Render for ProjectDiagnosticsEditor {
         };
 
         div()
+            .key_context("Diagnostics")
             .track_focus(&self.focus_handle(cx))
-            .when(self.path_states.is_empty(), |el| {
-                el.key_context("EmptyPane")
-            })
             .size_full()
             .on_action(cx.listener(Self::toggle_warnings))
             .child(child)

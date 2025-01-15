@@ -11,7 +11,8 @@ use parking_lot::RwLock;
 use util::ResultExt;
 
 use crate::{
-    read_user_theme, refine_theme_family, Appearance, Theme, ThemeFamily, ThemeFamilyContent,
+    read_user_theme, refine_theme_family, Appearance, IconTheme, Theme, ThemeFamily,
+    ThemeFamilyContent,
 };
 
 /// The metadata for a theme.
@@ -36,6 +37,7 @@ impl Global for GlobalThemeRegistry {}
 
 struct ThemeRegistryState {
     themes: HashMap<SharedString, Arc<Theme>>,
+    icon_themes: HashMap<SharedString, Arc<IconTheme>>,
 }
 
 /// The registry for themes.
@@ -67,6 +69,7 @@ impl ThemeRegistry {
         let registry = Self {
             state: RwLock::new(ThemeRegistryState {
                 themes: HashMap::default(),
+                icon_themes: HashMap::default(),
             }),
             assets,
         };
@@ -74,6 +77,12 @@ impl ThemeRegistry {
         // We're loading the Zed default theme, as we need a theme to be loaded
         // for tests.
         registry.insert_theme_families([crate::fallback_themes::zed_default_themes()]);
+
+        let default_icon_theme = crate::default_icon_theme();
+        registry.state.write().icon_themes.insert(
+            default_icon_theme.id.clone().into(),
+            Arc::new(default_icon_theme),
+        );
 
         registry
     }
@@ -195,6 +204,16 @@ impl ThemeRegistry {
         self.insert_user_theme_families([theme]);
 
         Ok(())
+    }
+
+    /// Returns the icon theme with the specified name.
+    pub fn get_icon_theme(&self, name: &str) -> Result<Arc<IconTheme>> {
+        self.state
+            .read()
+            .icon_themes
+            .get(name)
+            .ok_or_else(|| anyhow!("icon theme not found: {name}"))
+            .cloned()
     }
 }
 

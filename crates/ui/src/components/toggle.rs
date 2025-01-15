@@ -1,4 +1,4 @@
-use gpui::{div, hsla, prelude::*, ElementId, Hsla, IntoElement, Styled, WindowContext};
+use gpui::{div, hsla, prelude::*, AnyView, ElementId, Hsla, IntoElement, Styled, WindowContext};
 use std::sync::Arc;
 
 use crate::utils::is_light;
@@ -44,6 +44,7 @@ pub struct Checkbox {
     on_click: Option<Box<dyn Fn(&ToggleState, &mut WindowContext) + 'static>>,
     filled: bool,
     style: ToggleStyle,
+    tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
 }
 
 impl Checkbox {
@@ -56,6 +57,7 @@ impl Checkbox {
             on_click: None,
             filled: false,
             style: ToggleStyle::default(),
+            tooltip: None,
         }
     }
 
@@ -89,6 +91,12 @@ impl Checkbox {
     /// Match the style of the checkbox to the current elevation using [`ToggleStyle::ElevationBased`].
     pub fn elevation(mut self, elevation: ElevationIndex) -> Self {
         self.style = ToggleStyle::ElevationBased(elevation);
+        self
+    }
+
+    /// Sets the tooltip for the checkbox.
+    pub fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
+        self.tooltip = Some(Box::new(tooltip));
         self
     }
 }
@@ -176,6 +184,9 @@ impl RenderOnce for Checkbox {
                     this.on_click(move |_, cx| on_click(&self.toggle_state.inverse(), cx))
                 },
             )
+            .when_some(self.tooltip, |this, tooltip| {
+                this.tooltip(move |cx| tooltip(cx))
+            })
     }
 }
 

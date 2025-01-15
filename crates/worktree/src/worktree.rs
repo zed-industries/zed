@@ -21,6 +21,7 @@ use fuzzy::CharBag;
 use git::GitHostingProviderRegistry;
 use git::{
     repository::{GitFileStatus, GitRepository, RepoPath},
+    status::GitStatusPair,
     COOKIES, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE,
 };
 use gpui::{
@@ -193,8 +194,8 @@ pub struct RepositoryEntry {
     ///     - my_sub_folder_1/project_root/changed_file_1
     ///     - my_sub_folder_2/changed_file_2
     pub(crate) statuses_by_path: SumTree<StatusEntry>,
-    pub(crate) work_directory_id: ProjectEntryId,
-    pub(crate) work_directory: WorkDirectory,
+    pub work_directory_id: ProjectEntryId,
+    pub work_directory: WorkDirectory,
     pub(crate) branch: Option<Arc<str>>,
 }
 
@@ -225,6 +226,12 @@ impl RepositoryEntry {
         self.statuses_by_path.iter().cloned()
     }
 
+    pub fn status_for_path(&self, path: &RepoPath) -> Option<StatusEntry> {
+        self.statuses_by_path
+            .get(&PathKey(path.0.clone()), &())
+            .cloned()
+    }
+
     pub fn initial_update(&self) -> proto::RepositoryEntry {
         proto::RepositoryEntry {
             work_directory_id: self.work_directory_id.to_proto(),
@@ -234,7 +241,7 @@ impl RepositoryEntry {
                 .iter()
                 .map(|entry| proto::StatusEntry {
                     repo_path: entry.repo_path.to_string_lossy().to_string(),
-                    status: git_status_to_proto(entry.status),
+                    status: status_pair_to_proto(entry.status.clone()),
                 })
                 .collect(),
             removed_statuses: Default::default(),
@@ -259,7 +266,7 @@ impl RepositoryEntry {
                             current_new_entry = new_statuses.next();
                         }
                         Ordering::Equal => {
-                            if new_entry.status != old_entry.status {
+                            if new_entry.combined_status() != old_entry.combined_status() {
                                 updated_statuses.push(new_entry.to_proto());
                             }
                             current_old_entry = old_statuses.next();
@@ -2360,7 +2367,7 @@ impl Snapshot {
             let repo_path = repo.relativize(path).unwrap();
             repo.statuses_by_path
                 .get(&PathKey(repo_path.0), &())
-                .map(|entry| entry.status)
+                .map(|entry| entry.combined_status())
         })
     }
 
@@ -2574,8 +2581,8 @@ impl Snapshot {
             .map(|repo| repo.status().collect())
     }
 
-    pub fn repositories(&self) -> impl Iterator<Item = &RepositoryEntry> {
-        self.repositories.iter()
+    pub fn repositories(&self) -> &SumTree<RepositoryEntry> {
+        &self.repositories
     }
 
     /// Get the repository whose work directory corresponds to the given path.
@@ -2609,7 +2616,7 @@ impl Snapshot {
         entries: impl 'a + Iterator<Item = &'a Entry>,
     ) -> impl 'a + Iterator<Item = (&'a Entry, Option<&'a RepositoryEntry>)> {
         let mut containing_repos = Vec::<&RepositoryEntry>::new();
-        let mut repositories = self.repositories().peekable();
+        let mut repositories = self.repositories().iter().peekable();
         entries.map(move |entry| {
             while let Some(repository) = containing_repos.last() {
                 if repository.directory_contains(&entry.path) {
@@ -3626,14 +3633,31 @@ pub type UpdatedGitRepositoriesSet = Arc<[(Arc<Path>, GitRepositoryChange)]>;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatusEntry {
     pub repo_path: RepoPath,
-    pub status: GitFileStatus,
+    pub status: GitStatusPair,
 }
 
 impl StatusEntry {
+    // TODO revisit uses of this
+    pub fn combined_status(&self) -> GitFileStatus {
+        self.status.combined()
+    }
+
+    pub fn index_status(&self) -> Option<GitFileStatus> {
+        self.status.index_status
+    }
+
+    pub fn worktree_status(&self) -> Option<GitFileStatus> {
+        self.status.worktree_status
+    }
+
+    pub fn is_staged(&self) -> Option<bool> {
+        self.status.is_staged()
+    }
+
     fn to_proto(&self) -> proto::StatusEntry {
         proto::StatusEntry {
             repo_path: self.repo_path.to_proto(),
-            status: git_status_to_proto(self.status),
+            status: status_pair_to_proto(self.status.clone()),
         }
     }
 }
@@ -3641,11 +3665,10 @@ impl StatusEntry {
 impl TryFrom<proto::StatusEntry> for StatusEntry {
     type Error = anyhow::Error;
     fn try_from(value: proto::StatusEntry) -> Result<Self, Self::Error> {
-        Ok(Self {
-            repo_path: RepoPath(Path::new(&value.repo_path).into()),
-            status: git_status_from_proto(Some(value.status))
-                .ok_or_else(|| anyhow!("Unable to parse status value {}", value.status))?,
-        })
+        let repo_path = RepoPath(Path::new(&value.repo_path).into());
+        let status = status_pair_from_proto(value.status)
+            .ok_or_else(|| anyhow!("Unable to parse status value {}", value.status))?;
+        Ok(Self { repo_path, status })
     }
 }
 
@@ -3729,7 +3752,7 @@ impl sum_tree::Item for StatusEntry {
     fn summary(&self, _: &<Self::Summary as Summary>::Context) -> Self::Summary {
         PathSummary {
             max_path: self.repo_path.0.clone(),
-            item_summary: match self.status {
+            item_summary: match self.combined_status() {
                 GitFileStatus::Added => GitStatuses {
                     added: 1,
                     ..Default::default()
@@ -4820,15 +4843,15 @@ impl BackgroundScanner {
 
                 for (repo_path, status) in &*status.entries {
                     paths.remove_repo_path(repo_path);
-                    if cursor.seek_forward(&PathTarget::Path(&repo_path), Bias::Left, &()) {
-                        if cursor.item().unwrap().status == *status {
+                    if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left, &()) {
+                        if &cursor.item().unwrap().status == status {
                             continue;
                         }
                     }
 
                     changed_path_statuses.push(Edit::Insert(StatusEntry {
                         repo_path: repo_path.clone(),
-                        status: *status,
+                        status: status.clone(),
                     }));
                 }
 
@@ -5257,7 +5280,7 @@ impl BackgroundScanner {
             new_entries_by_path.insert_or_replace(
                 StatusEntry {
                     repo_path: repo_path.clone(),
-                    status: *status,
+                    status: status.clone(),
                 },
                 &(),
             );
@@ -5771,7 +5794,7 @@ impl<'a> GitTraversal<'a> {
         } else if entry.is_file() {
             // For a file entry, park the cursor on the corresponding status
             if statuses.seek_forward(&PathTarget::Path(repo_path.as_ref()), Bias::Left, &()) {
-                self.current_entry_status = Some(statuses.item().unwrap().status);
+                self.current_entry_status = Some(statuses.item().unwrap().combined_status());
             }
         }
     }
@@ -6136,19 +6159,23 @@ impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
     }
 }
 
-fn git_status_from_proto(git_status: Option<i32>) -> Option<GitFileStatus> {
-    git_status.and_then(|status| {
-        proto::GitStatus::from_i32(status).map(|status| match status {
-            proto::GitStatus::Added => GitFileStatus::Added,
-            proto::GitStatus::Modified => GitFileStatus::Modified,
-            proto::GitStatus::Conflict => GitFileStatus::Conflict,
-            proto::GitStatus::Deleted => GitFileStatus::Deleted,
-        })
+// TODO pass the status pair all the way through
+fn status_pair_from_proto(proto: i32) -> Option<GitStatusPair> {
+    let proto = proto::GitStatus::from_i32(proto)?;
+    let worktree_status = match proto {
+        proto::GitStatus::Added => GitFileStatus::Added,
+        proto::GitStatus::Modified => GitFileStatus::Modified,
+        proto::GitStatus::Conflict => GitFileStatus::Conflict,
+        proto::GitStatus::Deleted => GitFileStatus::Deleted,
+    };
+    Some(GitStatusPair {
+        index_status: None,
+        worktree_status: Some(worktree_status),
     })
 }
 
-fn git_status_to_proto(status: GitFileStatus) -> i32 {
-    match status {
+fn status_pair_to_proto(status: GitStatusPair) -> i32 {
+    match status.combined() {
         GitFileStatus::Added => proto::GitStatus::Added as i32,
         GitFileStatus::Modified => proto::GitStatus::Modified as i32,
         GitFileStatus::Conflict => proto::GitStatus::Conflict as i32,

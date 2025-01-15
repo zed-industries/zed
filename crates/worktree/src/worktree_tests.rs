@@ -2179,7 +2179,7 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
 
     cx.read(|cx| {
         let tree = tree.read(cx);
-        let repo = tree.repositories().next().unwrap();
+        let repo = tree.repositories().iter().next().unwrap();
         assert_eq!(repo.path.as_ref(), Path::new("projects/project1"));
         assert_eq!(
             tree.status_for_file(Path::new("projects/project1/a")),
@@ -2200,7 +2200,7 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
 
     cx.read(|cx| {
         let tree = tree.read(cx);
-        let repo = tree.repositories().next().unwrap();
+        let repo = tree.repositories().iter().next().unwrap();
         assert_eq!(repo.path.as_ref(), Path::new("projects/project2"));
         assert_eq!(
             tree.status_for_file(Path::new("projects/project2/a")),
@@ -2380,8 +2380,8 @@ async fn test_file_status(cx: &mut TestAppContext) {
     // Check that the right git state is observed on startup
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
-        assert_eq!(snapshot.repositories().count(), 1);
-        let repo_entry = snapshot.repositories().next().unwrap();
+        assert_eq!(snapshot.repositories().iter().count(), 1);
+        let repo_entry = snapshot.repositories().iter().next().unwrap();
         assert_eq!(repo_entry.path.as_ref(), Path::new("project"));
         assert!(repo_entry.location_in_repo.is_none());
 
@@ -2554,16 +2554,16 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
     // Check that the right git state is observed on startup
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
-        let repo = snapshot.repositories().next().unwrap();
+        let repo = snapshot.repositories().iter().next().unwrap();
         let entries = repo.status().collect::<Vec<_>>();
 
         assert_eq!(entries.len(), 3);
         assert_eq!(entries[0].repo_path.as_ref(), Path::new("a.txt"));
-        assert_eq!(entries[0].status, GitFileStatus::Modified);
+        assert_eq!(entries[0].worktree_status(), Some(GitFileStatus::Modified));
         assert_eq!(entries[1].repo_path.as_ref(), Path::new("b.txt"));
-        assert_eq!(entries[1].status, GitFileStatus::Untracked);
+        assert_eq!(entries[1].worktree_status(), Some(GitFileStatus::Untracked));
         assert_eq!(entries[2].repo_path.as_ref(), Path::new("d.txt"));
-        assert_eq!(entries[2].status, GitFileStatus::Deleted);
+        assert_eq!(entries[2].worktree_status(), Some(GitFileStatus::Deleted));
     });
 
     std::fs::write(work_dir.join("c.txt"), "some changes").unwrap();
@@ -2576,19 +2576,19 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
 
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
-        let repository = snapshot.repositories().next().unwrap();
+        let repository = snapshot.repositories().iter().next().unwrap();
         let entries = repository.status().collect::<Vec<_>>();
 
         std::assert_eq!(entries.len(), 4, "entries: {entries:?}");
         assert_eq!(entries[0].repo_path.as_ref(), Path::new("a.txt"));
-        assert_eq!(entries[0].status, GitFileStatus::Modified);
+        assert_eq!(entries[0].worktree_status(), Some(GitFileStatus::Modified));
         assert_eq!(entries[1].repo_path.as_ref(), Path::new("b.txt"));
-        assert_eq!(entries[1].status, GitFileStatus::Untracked);
+        assert_eq!(entries[1].worktree_status(), Some(GitFileStatus::Untracked));
         // Status updated
         assert_eq!(entries[2].repo_path.as_ref(), Path::new("c.txt"));
-        assert_eq!(entries[2].status, GitFileStatus::Modified);
+        assert_eq!(entries[2].worktree_status(), Some(GitFileStatus::Modified));
         assert_eq!(entries[3].repo_path.as_ref(), Path::new("d.txt"));
-        assert_eq!(entries[3].status, GitFileStatus::Deleted);
+        assert_eq!(entries[3].worktree_status(), Some(GitFileStatus::Deleted));
     });
 
     git_add("a.txt", &repo);
@@ -2609,7 +2609,7 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
 
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
-        let repo = snapshot.repositories().next().unwrap();
+        let repo = snapshot.repositories().iter().next().unwrap();
         let entries = repo.status().collect::<Vec<_>>();
 
         // Deleting an untracked entry, b.txt, should leave no status
@@ -2621,7 +2621,7 @@ async fn test_git_repository_status(cx: &mut TestAppContext) {
             &entries
         );
         assert_eq!(entries[0].repo_path.as_ref(), Path::new("a.txt"));
-        assert_eq!(entries[0].status, GitFileStatus::Deleted);
+        assert_eq!(entries[0].worktree_status(), Some(GitFileStatus::Deleted));
     });
 }
 
@@ -2676,8 +2676,8 @@ async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
     // Ensure that the git status is loaded correctly
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
-        assert_eq!(snapshot.repositories().count(), 1);
-        let repo = snapshot.repositories().next().unwrap();
+        assert_eq!(snapshot.repositories().iter().count(), 1);
+        let repo = snapshot.repositories().iter().next().unwrap();
         // Path is blank because the working directory of
         // the git repository is located at the root of the project
         assert_eq!(repo.path.as_ref(), Path::new(""));
@@ -2707,7 +2707,7 @@ async fn test_repository_subfolder_git_status(cx: &mut TestAppContext) {
     tree.read_with(cx, |tree, _cx| {
         let snapshot = tree.snapshot();
 
-        assert!(snapshot.repositories().next().is_some());
+        assert!(snapshot.repositories().iter().next().is_some());
 
         assert_eq!(snapshot.status_for_file("c.txt"), None);
         assert_eq!(snapshot.status_for_file("d/e.txt"), None);
