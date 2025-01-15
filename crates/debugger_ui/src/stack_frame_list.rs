@@ -109,6 +109,13 @@ impl StackFrameList {
         &self.stack_frames
     }
 
+    pub fn first_stack_frame_id(&self) -> u64 {
+        self.stack_frames
+            .first()
+            .map(|stack_frame| stack_frame.id)
+            .unwrap_or(0)
+    }
+
     pub fn current_stack_frame_id(&self) -> u64 {
         self.current_stack_frame_id
     }

@@ -216,7 +216,7 @@ async fn test_basic_fetch_initial_scope_and_variables(
                             depth: 1,
                         },
                     ],
-                    variable_list.variables(cx)
+                    variable_list.variables_by_stack_frame_id(1)
                 );
 
                 variable_list.assert_visual_entries(

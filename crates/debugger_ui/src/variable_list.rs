@@ -591,8 +591,19 @@ impl VariableList {
         self.variables.get(&(stack_frame_id, scope_id))
     }
 
-    pub fn variables(&self, cx: &mut ViewContext<Self>) -> Vec<VariableContainer> {
-        let stack_frame_id = self.stack_frame_list.read(cx).current_stack_frame_id();
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn variables_by_stack_frame_id(
+        &self,
+        stack_frame_id: StackFrameId,
+    ) -> Vec<VariableContainer> {
+        self.variables
+            .range((stack_frame_id, u64::MIN)..(stack_frame_id, u64::MAX))
+            .flat_map(|(_, containers)| containers.variables.iter().cloned())
+            .collect()
+    }
+
+    pub fn completion_variables(&self, cx: &mut ViewContext<Self>) -> Vec<VariableContainer> {
+        let stack_frame_id = self.stack_frame_list.read(cx).first_stack_frame_id();
 
         self.variables
             .range((stack_frame_id, u64::MIN)..(stack_frame_id, u64::MAX))
