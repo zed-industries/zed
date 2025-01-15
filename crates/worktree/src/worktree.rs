@@ -3640,9 +3640,21 @@ impl StatusEntry {
     }
 
     fn to_proto(&self) -> proto::StatusEntry {
+        let simple_status = match self.status {
+            FileStatus::Ignored | FileStatus::Untracked => proto::GitStatusCode::Added as i32,
+            FileStatus::Unmerged { .. } => proto::GitStatusCode::Conflict as i32,
+            FileStatus::Tracked(TrackedStatus {
+                index_status,
+                worktree_status,
+            }) => tracked_status_to_proto(if worktree_status != StatusCode::Unmodified {
+                worktree_status
+            } else {
+                index_status
+            }),
+        };
         proto::StatusEntry {
             repo_path: self.repo_path.to_proto(),
-            simple_status: 0,
+            simple_status,
             status: Some(status_to_proto(self.status)),
         }
     }
@@ -3650,6 +3662,7 @@ impl StatusEntry {
 
 impl TryFrom<proto::StatusEntry> for StatusEntry {
     type Error = anyhow::Error;
+
     fn try_from(value: proto::StatusEntry) -> Result<Self, Self::Error> {
         let repo_path = RepoPath(Path::new(&value.repo_path).into());
         let status = status_from_proto(value.simple_status, value.status)?;
@@ -6057,8 +6070,6 @@ impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
         })
     }
 }
-
-// TODO transmit file statuses with full fidelity
 
 fn status_from_proto(
     simple_status: i32,
