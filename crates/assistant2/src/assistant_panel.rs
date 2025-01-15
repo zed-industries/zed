@@ -428,13 +428,12 @@ impl AssistantPanel {
                                 .color(Color::Muted),
                         ),
                     )
-                    .child(
-                        v_flex().mx_auto().w_4_5().gap_2().children(
-                            recent_threads
-                                .into_iter()
-                                .map(|thread| PastThread::new(thread, cx.view().downgrade())),
-                        ),
-                    )
+                    .child(v_flex().mx_auto().w_4_5().gap_2().children(
+                        recent_threads.into_iter().map(|thread| {
+                            // TODO: keyboard navigation
+                            PastThread::new(thread, cx.view().downgrade(), false)
+                        }),
+                    ))
                     .child(
                         h_flex().w_full().justify_center().child(
                             Button::new("view-all-past-threads", "View All Past Threads")

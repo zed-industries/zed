@@ -43,6 +43,7 @@ actions!(
         ToggleModelSelector,
         RemoveAllContext,
         OpenHistory,
+        RemoveSelectedThread,
         Chat,
         CycleNextInlineAssist,
         CyclePreviousInlineAssist,
