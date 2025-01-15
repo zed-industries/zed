@@ -3,10 +3,6 @@ ADD COLUMN status_kind INTEGER,
 ADD COLUMN first_status INTEGER,
 ADD COLUMN second_status INTEGER;
 
-ALTER TABLE worktree_repository_statuses
-ALTER COLUMN status_kind
-SET DEFAULT 0;
-
 UPDATE worktree_repository_statuses
 SET
     status_kind = 0;

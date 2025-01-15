@@ -371,6 +371,7 @@ impl Database {
                                         scan_id: ActiveValue::set(update.scan_id as i64),
                                         is_deleted: ActiveValue::set(false),
                                         repo_path: ActiveValue::set(repo_path),
+                                        status: ActiveValue::set(0),
                                         status_kind: ActiveValue::set(status_kind),
                                         first_status: ActiveValue::set(first_status),
                                         second_status: ActiveValue::set(second_status),

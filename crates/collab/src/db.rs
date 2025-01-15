@@ -853,7 +853,7 @@ fn db_status_to_proto(
 
 fn proto_status_to_db(
     status_entry: proto::StatusEntry,
-) -> (String, StatusKind, Option<i64>, Option<i64>) {
+) -> (String, StatusKind, Option<i32>, Option<i32>) {
     use proto::git_file_status::{Tracked, Unmerged, Variant};
 
     let (status_kind, first_status, second_status) = status_entry
@@ -870,16 +870,17 @@ fn proto_status_to_db(
                     second_head,
                 }) => (
                     StatusKind::Unmerged,
-                    Some(first_head as i64),
-                    Some(second_head as i64),
+                    Some(first_head as i32),
+                    Some(second_head as i32),
                 ),
                 Variant::Tracked(Tracked {
                     index_status,
                     worktree_status,
                 }) => (
                     StatusKind::Tracked,
-                    Some(index_status as i64),
-                    Some(worktree_status as i64),
+                    // FIXME use the same width everywhere
+                    Some(index_status as i32),
+                    Some(worktree_status as i32),
                 ),
             },
         );
