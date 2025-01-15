@@ -7285,34 +7285,44 @@ impl LspStore {
     // for the stopped server
     fn stop_local_language_server(
         &mut self,
-        worktree_id: WorktreeId,
-        adapter_name: LanguageServerName,
-        language_server_id: LanguageServerId,
+        server_id: LanguageServerId,
         cx: &mut ModelContext<Self>,
     ) -> Task<Vec<WorktreeId>> {
-        let key = (worktree_id, adapter_name);
         let local = match &mut self.mode {
             LspStoreMode::Local(local) => local,
             _ => {
                 return Task::ready(Vec::new());
             }
         };
-        let Some(server_id) = local
-            .language_server_ids
-            .get_mut(&key)
-            .and_then(|server_ids| {
-                server_ids
-                    .remove(&language_server_id)
-                    .then_some(language_server_id)
-            })
+
+        let mut orphaned_worktrees = vec![];
+        // Did any of the worktrees reference this server ID at least once?
+        let mut was_referenced = false;
+        // Remove this server ID from all entries in the given worktree.
+        local.language_server_ids.retain(|(worktree, _), ids| {
+            if !ids.remove(&server_id) {
+                return true;
+            }
+
+            was_referenced = true;
+            if ids.is_empty() {
+                orphaned_worktrees.push(*worktree);
+                false
+            } else {
+                true
+            }
+        });
+
+        let Some(status) = self
+            .language_server_statuses
+            .remove(&server_id)
+            .filter(|_| was_referenced)
         else {
             return Task::ready(Vec::new());
         };
-        let name = key.1;
-        log::info!("stopping language server {name}");
 
-        // Remove other entries for this language server as well
-        let orphaned_worktrees = vec![worktree_id];
+        let name = LanguageServerName(status.name.into());
+        log::info!("stopping language server {name}");
 
         self.buffer_store.update(cx, |buffer_store, cx| {
             for buffer in buffer_store.buffers() {
@@ -7347,7 +7357,6 @@ impl LspStore {
             });
         }
 
-        self.language_server_statuses.remove(&server_id);
         let local = self.as_local_mut().unwrap();
         for diagnostics in local.diagnostics.values_mut() {
             diagnostics.retain(|_, diagnostics_by_server_id| {
@@ -7415,29 +7424,20 @@ impl LspStore {
         let worktree_id = worktree.read(cx).id();
 
         let lsp_adapters = self.languages.clone().lsp_adapters(&language);
-        let stop_tasks = lsp_adapters
+        let ids = lsp_adapters
             .iter()
-            .filter_map(|adapter| {
-                let ids = self
-                    .as_local()
+            .flat_map(|adapter| {
+                self.as_local()
                     .unwrap()
                     .language_server_ids
-                    .get(&(worktree_id, adapter.name.clone()))?
-                    .clone();
-                let stop_tasks = futures::future::join_all(
-                    ids.into_iter()
-                        .map(|language_server_id| {
-                            self.stop_local_language_server(
-                                worktree_id,
-                                adapter.name.clone(),
-                                language_server_id,
-                                cx,
-                            )
-                        })
-                        .collect::<Vec<_>>(),
-                );
-                Some(stop_tasks)
+                    .get(&(worktree_id, adapter.name.clone()))
+                    .cloned()
+                    .unwrap_or_default()
             })
+            .collect::<BTreeSet<_>>();
+        let stop_tasks = ids
+            .into_iter()
+            .map(|language_server_id| self.stop_local_language_server(language_server_id, cx))
             .collect::<Vec<_>>();
         if stop_tasks.is_empty() {
             return;
