@@ -91,7 +91,7 @@ jobs:
 
   macos_tests:
     timeout-minutes: 60
-    name: macOS Tests and Clippy
+    name: (macOS) Run Clippy and tests
     if: github.repository_owner == 'zed-industries'
     runs-on:
       - self-hosted
@@ -134,7 +134,7 @@ jobs:
 
   linux_tests:
     timeout-minutes: 60
-    name: Linux Tests and Clippy
+    name: (Linux) Run Clippy and tests
     if: github.repository_owner == 'zed-industries'
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
@@ -197,7 +197,7 @@ jobs:
   # todo(windows): Actually run the tests
   windows_tests:
     timeout-minutes: 60
-    name: Windows Tests and Clippy
+    name: (Windows) Run Clippy and tests
     if: github.repository_owner == 'zed-industries'
     runs-on: hosted-windows-1
     steps:
