@@ -3641,8 +3641,8 @@ impl StatusEntry {
 
     fn to_proto(&self) -> proto::StatusEntry {
         let simple_status = match self.status {
-            FileStatus::Ignored | FileStatus::Untracked => proto::GitStatusCode::Added as i32,
-            FileStatus::Unmerged { .. } => proto::GitStatusCode::Conflict as i32,
+            FileStatus::Ignored | FileStatus::Untracked => proto::GitStatus::Added as i32,
+            FileStatus::Unmerged { .. } => proto::GitStatus::Conflict as i32,
             FileStatus::Tracked(TrackedStatus {
                 index_status,
                 worktree_status,
@@ -6078,25 +6078,25 @@ fn status_from_proto(
     use proto::git_file_status::Variant;
 
     let Some(variant) = status.and_then(|status| status.variant) else {
-        let code = proto::GitStatusCode::from_i32(simple_status)
+        let code = proto::GitStatus::from_i32(simple_status)
             .ok_or_else(|| anyhow!("Invalid git status code: {simple_status}"))?;
         let result = match code {
-            proto::GitStatusCode::Added => TrackedStatus {
+            proto::GitStatus::Added => TrackedStatus {
                 worktree_status: StatusCode::Added,
                 index_status: StatusCode::Unmodified,
             }
             .into(),
-            proto::GitStatusCode::Modified => TrackedStatus {
+            proto::GitStatus::Modified => TrackedStatus {
                 worktree_status: StatusCode::Modified,
                 index_status: StatusCode::Unmodified,
             }
             .into(),
-            proto::GitStatusCode::Conflict => UnmergedStatus {
+            proto::GitStatus::Conflict => UnmergedStatus {
                 first_head: UnmergedStatusCode::Updated,
                 second_head: UnmergedStatusCode::Updated,
             }
             .into(),
-            proto::GitStatusCode::Deleted => TrackedStatus {
+            proto::GitStatus::Deleted => TrackedStatus {
                 worktree_status: StatusCode::Deleted,
                 index_status: StatusCode::Unmodified,
             }
@@ -6112,12 +6112,12 @@ fn status_from_proto(
         Variant::Unmerged(unmerged) => {
             let [first_head, second_head] =
                 [unmerged.first_head, unmerged.second_head].map(|head| {
-                    let code = proto::GitStatusCode::from_i32(head)
+                    let code = proto::GitStatus::from_i32(head)
                         .ok_or_else(|| anyhow!("Invalid git status code: {head}"))?;
                     let result = match code {
-                        proto::GitStatusCode::Added => UnmergedStatusCode::Added,
-                        proto::GitStatusCode::Updated => UnmergedStatusCode::Updated,
-                        proto::GitStatusCode::Deleted => UnmergedStatusCode::Deleted,
+                        proto::GitStatus::Added => UnmergedStatusCode::Added,
+                        proto::GitStatus::Updated => UnmergedStatusCode::Updated,
+                        proto::GitStatus::Deleted => UnmergedStatusCode::Deleted,
                         _ => return Err(anyhow!("Invalid code for unmerged status: {code:?}")),
                     };
                     Ok(result)
@@ -6132,16 +6132,16 @@ fn status_from_proto(
         Variant::Tracked(tracked) => {
             let [index_status, worktree_status] = [tracked.index_status, tracked.worktree_status]
                 .map(|status| {
-                    let code = proto::GitStatusCode::from_i32(status)
+                    let code = proto::GitStatus::from_i32(status)
                         .ok_or_else(|| anyhow!("Invalid git status code: {status}"))?;
                     let result = match code {
-                        proto::GitStatusCode::Modified => StatusCode::Modified,
-                        proto::GitStatusCode::TypeChanged => StatusCode::TypeChanged,
-                        proto::GitStatusCode::Added => StatusCode::Added,
-                        proto::GitStatusCode::Deleted => StatusCode::Deleted,
-                        proto::GitStatusCode::Renamed => StatusCode::Renamed,
-                        proto::GitStatusCode::Copied => StatusCode::Copied,
-                        proto::GitStatusCode::Unmodified => StatusCode::Unmodified,
+                        proto::GitStatus::Modified => StatusCode::Modified,
+                        proto::GitStatus::TypeChanged => StatusCode::TypeChanged,
+                        proto::GitStatus::Added => StatusCode::Added,
+                        proto::GitStatus::Deleted => StatusCode::Deleted,
+                        proto::GitStatus::Renamed => StatusCode::Renamed,
+                        proto::GitStatus::Copied => StatusCode::Copied,
+                        proto::GitStatus::Unmodified => StatusCode::Unmodified,
                         _ => return Err(anyhow!("Invalid code for tracked status: {code:?}")),
                     };
                     Ok(result)
@@ -6185,21 +6185,21 @@ fn status_to_proto(status: FileStatus) -> proto::GitFileStatus {
 
 fn unmerged_status_to_proto(code: UnmergedStatusCode) -> i32 {
     match code {
-        UnmergedStatusCode::Added => proto::GitStatusCode::Added as _,
-        UnmergedStatusCode::Deleted => proto::GitStatusCode::Deleted as _,
-        UnmergedStatusCode::Updated => proto::GitStatusCode::Updated as _,
+        UnmergedStatusCode::Added => proto::GitStatus::Added as _,
+        UnmergedStatusCode::Deleted => proto::GitStatus::Deleted as _,
+        UnmergedStatusCode::Updated => proto::GitStatus::Updated as _,
     }
 }
 
 fn tracked_status_to_proto(code: StatusCode) -> i32 {
     match code {
-        StatusCode::Added => proto::GitStatusCode::Added as _,
-        StatusCode::Deleted => proto::GitStatusCode::Deleted as _,
-        StatusCode::Modified => proto::GitStatusCode::Modified as _,
-        StatusCode::Renamed => proto::GitStatusCode::Renamed as _,
-        StatusCode::TypeChanged => proto::GitStatusCode::TypeChanged as _,
-        StatusCode::Copied => proto::GitStatusCode::Copied as _,
-        StatusCode::Unmodified => proto::GitStatusCode::Unmodified as _,
+        StatusCode::Added => proto::GitStatus::Added as _,
+        StatusCode::Deleted => proto::GitStatus::Deleted as _,
+        StatusCode::Modified => proto::GitStatus::Modified as _,
+        StatusCode::Renamed => proto::GitStatus::Renamed as _,
+        StatusCode::TypeChanged => proto::GitStatus::TypeChanged as _,
+        StatusCode::Copied => proto::GitStatus::Copied as _,
+        StatusCode::Unmodified => proto::GitStatus::Unmodified as _,
     }
 }
 

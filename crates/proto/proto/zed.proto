@@ -1785,11 +1785,11 @@ message RepositoryEntry {
 message StatusEntry {
     string repo_path = 1;
     // Can be removed once collab's min version is >=0.171.0.
-    GitStatusCode simple_status = 2;
+    GitStatus simple_status = 2;
     GitFileStatus status = 3;
 }
 
-enum GitStatusCode {
+enum GitStatus {
     Added = 0;
     Modified = 1;
     Conflict = 2;
@@ -1812,12 +1812,12 @@ message GitFileStatus {
     message Untracked {}
     message Ignored {}
     message Unmerged {
-        GitStatusCode first_head = 1;
-        GitStatusCode second_head = 2;
+        GitStatus first_head = 1;
+        GitStatus second_head = 2;
     }
     message Tracked {
-        GitStatusCode index_status = 1;
-        GitStatusCode worktree_status = 2;
+        GitStatus index_status = 1;
+        GitStatus worktree_status = 2;
     }
 }
 

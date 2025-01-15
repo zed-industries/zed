@@ -815,27 +815,27 @@ fn db_status_to_proto(
     let (simple_status, variant) =
         match (entry.status_kind, entry.first_status, entry.second_status) {
             (StatusKind::Untracked, None, None) => (
-                proto::GitStatusCode::Added as i32,
+                proto::GitStatus::Added as i32,
                 Variant::Untracked(Default::default()),
             ),
             (StatusKind::Ignored, None, None) => (
-                proto::GitStatusCode::Added as i32,
+                proto::GitStatus::Added as i32,
                 Variant::Ignored(Default::default()),
             ),
             (StatusKind::Unmerged, Some(first_head), Some(second_head)) => (
-                proto::GitStatusCode::Conflict as i32,
+                proto::GitStatus::Conflict as i32,
                 Variant::Unmerged(Unmerged {
                     first_head,
                     second_head,
                 }),
             ),
             (StatusKind::Tracked, Some(index_status), Some(worktree_status)) => {
-                let simple_status = if worktree_status != proto::GitStatusCode::Unmodified as i32 {
+                let simple_status = if worktree_status != proto::GitStatus::Unmodified as i32 {
                     worktree_status
-                } else if index_status != proto::GitStatusCode::Unmodified as i32 {
+                } else if index_status != proto::GitStatus::Unmodified as i32 {
                     index_status
                 } else {
-                    proto::GitStatusCode::Unmodified as i32
+                    proto::GitStatus::Unmodified as i32
                 };
                 (
                     simple_status,
