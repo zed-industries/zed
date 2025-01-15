@@ -144,6 +144,13 @@ impl SelectionLayout {
     }
 }
 
+struct DiagnosticElement {
+    x: Pixels,
+    y: Pixels,
+    message: String,
+    severity: DiagnosticSeverity,
+}
+
 pub struct EditorElement {
     editor: View<Editor>,
     style: EditorStyle,
@@ -376,6 +383,7 @@ impl EditorElement {
         register_action(view, cx, Editor::copy_permalink_to_line);
         register_action(view, cx, Editor::open_permalink_to_line);
         register_action(view, cx, Editor::copy_file_location);
+        register_action(view, cx, Editor::toggle_active_diagnostic_at_cursor);
         register_action(view, cx, Editor::toggle_git_blame);
         register_action(view, cx, Editor::toggle_git_blame_inline);
         register_action(view, cx, Editor::toggle_hunk_diff);
@@ -1577,6 +1585,167 @@ impl EditorElement {
 
             display_hunks
         })
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn layout_inline_diagnostics(
+        &self,
+        snapshot: &EditorSnapshot,
+        line_layouts: &[LineWithInvisibles],
+        crease_trailers: &[Option<CreaseTrailerLayout>],
+        content_origin: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        line_height: Pixels,
+        style: &EditorStyle,
+        start_row: DisplayRow,
+        end_row: DisplayRow,
+        cx: &mut WindowContext,
+    ) -> HashMap<DisplayRow, AnyElement> {
+        if !self
+            .editor
+            .update(cx, |editor, _| editor.render_inline_diagnostics())
+        {
+            return Default::default();
+        }
+
+        let diagnostics = self.gather_inline_diagnostics(
+            snapshot,
+            line_layouts,
+            crease_trailers,
+            content_origin,
+            scroll_pixel_position,
+            line_height,
+            start_row,
+            end_row,
+            cx,
+        );
+
+        let sev_to_color = |sev: &DiagnosticSeverity| match sev {
+            &DiagnosticSeverity::ERROR => Color::Error,
+            &DiagnosticSeverity::WARNING => Color::Warning,
+            &DiagnosticSeverity::INFORMATION => Color::Info,
+            &DiagnosticSeverity::HINT => Color::Hint,
+            _ => Color::Error,
+        };
+
+        let mut elements = HashMap::default();
+        for (line_ix, elem) in diagnostics.into_iter() {
+            let mut element = h_flex()
+                .id(SharedString::from(format!("diagnostic-{}", line_ix.0)))
+                .h(line_height)
+                .w_full()
+                .bg(sev_to_color(&elem.severity).color(cx).opacity(0.07))
+                .text_color(sev_to_color(&elem.severity).color(cx))
+                .text_sm()
+                .font_family(style.text.font().family)
+                .child(elem.message)
+                .into_any();
+
+            element.prepaint_as_root(point(elem.x, elem.y), AvailableSpace::min_size(), cx);
+            elements.insert(line_ix, element);
+        }
+
+        elements
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn gather_inline_diagnostics(
+        &self,
+        snapshot: &EditorSnapshot,
+        line_layouts: &[LineWithInvisibles],
+        crease_trailers: &[Option<CreaseTrailerLayout>],
+        content_origin: gpui::Point<Pixels>,
+        scroll_pixel_position: gpui::Point<Pixels>,
+        line_height: Pixels,
+        start_row: DisplayRow,
+        end_row: DisplayRow,
+        cx: &mut WindowContext,
+    ) -> HashMap<DisplayRow, DiagnosticElement> {
+        let mut inline_diagnostics: HashMap<DisplayRow, DiagnosticElement> = HashMap::default();
+        let buffer_snapshot = snapshot.display_snapshot.buffer_snapshot.clone();
+
+        let start_point =
+            snapshot.display_point_to_point(DisplayPoint::new(start_row, 0), Bias::Left);
+        let end_point = snapshot.display_point_to_point(DisplayPoint::new(end_row, 0), Bias::Right);
+        let diagnostics = buffer_snapshot
+            .diagnostics_in_range(start_point..end_point, false)
+            .map(|DiagnosticEntry { diagnostic, range }| DiagnosticEntry {
+                diagnostic,
+                range: range.to_point(&buffer_snapshot),
+            })
+            .sorted_by_key(|diagnostic| {
+                (
+                    diagnostic.diagnostic.severity,
+                    std::cmp::Reverse(diagnostic.diagnostic.is_primary),
+                    diagnostic.range.start.row,
+                    diagnostic.range.start.column,
+                )
+            })
+            .collect::<Vec<_>>();
+
+        for diagnostic in diagnostics {
+            let diag_point = MultiBufferPoint::new(diagnostic.range.start.row, 0);
+            let display_point = snapshot.point_to_display_point(diag_point, Bias::Right);
+
+            if !(start_row..end_row).contains(&display_point.row()) {
+                continue;
+            }
+
+            let line_ix = DisplayRow(display_point.row().minus(start_row));
+
+            if inline_diagnostics.contains_key(&line_ix) {
+                continue;
+            }
+
+            let start_y = content_origin.y
+                + line_height
+                    * (display_point.row().0 as f32 - scroll_pixel_position.y / line_height);
+
+            let start_x = {
+                let padding = ProjectSettings::get_global(cx)
+                    .diagnostics
+                    .inline()
+                    .padding();
+
+                let crease_trailer_layout = crease_trailers[line_ix.0 as usize].as_ref();
+                let line_layout = &line_layouts[line_ix.0 as usize];
+
+                let line_end = if let Some(crease_trailer) = crease_trailer_layout {
+                    crease_trailer.bounds.right()
+                } else {
+                    content_origin.x - scroll_pixel_position.x + line_layout.width
+                };
+                let padding_pixels = self.column_pixels(padding as usize, cx);
+                let padded_line_end = line_end + padding_pixels;
+
+                let min_column = ProjectSettings::get_global(cx)
+                    .diagnostics
+                    .inline()
+                    .min_column();
+                let min_column_in_pixels = self.column_pixels(min_column as usize, cx);
+                let min_start = content_origin.x - scroll_pixel_position.x + min_column_in_pixels;
+
+                cmp::max(padded_line_end, min_start)
+            };
+
+            let message = diagnostic
+                .diagnostic
+                .message
+                .split_once('\n')
+                .map(|(line, _)| line.to_string())
+                .unwrap_or(diagnostic.diagnostic.message.to_string());
+
+            let elem = DiagnosticElement {
+                x: start_x,
+                y: start_y,
+                message,
+                severity: diagnostic.diagnostic.severity,
+            };
+
+            inline_diagnostics.insert(line_ix, elem);
+        }
+
+        inline_diagnostics
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -4230,6 +4399,7 @@ impl EditorElement {
                 self.paint_redactions(layout, cx);
                 self.paint_cursors(layout, cx);
                 self.paint_inline_blame(layout, cx);
+                self.paint_inline_diagnostics(layout, cx);
                 cx.with_element_namespace("crease_trailers", |cx| {
                     for trailer in layout.crease_trailers.iter_mut().flatten() {
                         trailer.element.paint(cx);
@@ -4909,6 +5079,12 @@ impl EditorElement {
             cx.paint_layer(layout.text_hitbox.bounds, |cx| {
                 inline_blame.paint(cx);
             })
+        }
+    }
+
+    fn paint_inline_diagnostics(&mut self, layout: &mut EditorLayout, cx: &mut WindowContext) {
+        for mut inline_diagnostic in layout.inline_diagnostics.drain() {
+            inline_diagnostic.1.paint(cx);
         }
     }
 
@@ -6456,24 +6632,40 @@ impl Element for EditorElement {
                         )
                     });
 
+                    let inline_diagnostics = self.layout_inline_diagnostics(
+                        &snapshot,
+                        &line_layouts[..],
+                        &crease_trailers[..],
+                        content_origin,
+                        scroll_pixel_position,
+                        line_height,
+                        &style,
+                        start_row,
+                        end_row,
+                        cx,
+                    );
+
                     let mut inline_blame = None;
                     if let Some(newest_selection_head) = newest_selection_head {
                         let display_row = newest_selection_head.row();
                         if (start_row..end_row).contains(&display_row) {
-                            let line_ix = display_row.minus(start_row) as usize;
-                            let line_layout = &line_layouts[line_ix];
-                            let crease_trailer_layout = crease_trailers[line_ix].as_ref();
-                            inline_blame = self.layout_inline_blame(
-                                display_row,
-                                &snapshot.display_snapshot,
-                                line_layout,
-                                crease_trailer_layout,
-                                em_width,
-                                content_origin,
-                                scroll_pixel_position,
-                                line_height,
-                                cx,
-                            );
+                            let line_ix = display_row.minus(start_row);
+                            if !inline_diagnostics.contains_key(&DisplayRow(line_ix)) {
+                                let line_ix = line_ix as usize;
+                                let line_layout = &line_layouts[line_ix];
+                                let crease_trailer_layout = crease_trailers[line_ix].as_ref();
+                                inline_blame = self.layout_inline_blame(
+                                    display_row,
+                                    &snapshot.display_snapshot,
+                                    line_layout,
+                                    crease_trailer_layout,
+                                    em_width,
+                                    content_origin,
+                                    scroll_pixel_position,
+                                    line_height,
+                                    cx,
+                                );
+                            }
                         }
                     }
 
@@ -6803,6 +6995,7 @@ impl Element for EditorElement {
                         line_numbers,
                         blamed_display_rows,
                         inline_blame,
+                        inline_diagnostics,
                         blocks,
                         cursors,
                         visible_cursors,
@@ -6993,6 +7186,7 @@ pub struct EditorLayout {
     line_elements: SmallVec<[AnyElement; 1]>,
     line_numbers: Arc<HashMap<MultiBufferRow, (ShapedLine, Option<Hitbox>)>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
+    inline_diagnostics: HashMap<DisplayRow, AnyElement>,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_blame: Option<AnyElement>,
     blocks: Vec<BlockLayout>,

@@ -141,6 +141,7 @@ use selections_collection::{
     resolve_selections, MutableSelectionsCollection, SelectionsCollection,
 };
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use settings::{update_settings_file, Settings, SettingsLocation, SettingsStore};
 use smallvec::SmallVec;
 use snippet::Snippet;
@@ -670,6 +671,7 @@ pub struct Editor {
     use_autoclose: bool,
     use_auto_surround: bool,
     auto_replace_emoji_shortcode: bool,
+    show_diagnostics_inline: bool,
     show_git_blame_gutter: bool,
     show_git_blame_inline: bool,
     show_git_blame_inline_delay_task: Option<Task<()>>,
@@ -1315,6 +1317,7 @@ impl Editor {
             show_inline_completions_override: None,
             enable_inline_completions: true,
             custom_context_menu: None,
+            show_diagnostics_inline: ProjectSettings::get_global(cx).diagnostics.inline().enabled,
             show_git_blame_gutter: false,
             show_git_blame_inline: false,
             show_selection_menu: None,
@@ -1994,6 +1997,12 @@ impl Editor {
         }
 
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
+        if ProjectSettings::get_global(cx)
+            .diagnostics
+            .update_with_cursor()
+        {
+            self.show_active_diagnostic_at_cursor(cx);
+        }
         cx.emit(EditorEvent::SelectionsChanged { local });
 
         if self.selections.disjoint_anchors().len() == 1 {
@@ -4377,6 +4386,63 @@ impl Editor {
             })
         }));
         None
+    }
+
+    pub fn render_inline_diagnostics(&mut self) -> bool {
+        self.show_diagnostics_inline
+    }
+
+    /// Used to disable the inline diagnostics rendering in the ProjectDiagnostics
+    /// multi-buffer.
+    pub fn set_render_inline_diagnostics(&mut self, enabled: bool) {
+        self.show_diagnostics_inline = enabled;
+    }
+
+    pub fn toggle_show_diagnostics_inline(&mut self, _cx: &mut ViewContext<Self>) {
+        self.show_diagnostics_inline = !self.show_diagnostics_inline;
+
+        // ToDo: if !show, clear preprocessed diagnostics, else, kick off timer
+        // to collect new diagnostics.
+    }
+
+    pub fn toggle_active_diagnostic_at_cursor(
+        &mut self,
+        _: &ToggleActiveDiagnosticAtCursor,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(group_id) = self.diagnostic_group_at_cursor(cx) {
+            if group_id
+                != self
+                    .active_diagnostics
+                    .as_ref()
+                    .map(|d| d.group_id)
+                    .unwrap_or(usize::MAX)
+            {
+                self.activate_diagnostics(group_id, cx);
+            } else {
+                self.dismiss_diagnostics(cx);
+            }
+        }
+
+        cx.notify();
+    }
+
+    pub fn show_active_diagnostic_at_cursor(&mut self, cx: &mut ViewContext<Self>) {
+        if let Some(group_id) = self.diagnostic_group_at_cursor(cx) {
+            self.activate_diagnostics(group_id, cx);
+        }
+    }
+
+    pub fn diagnostic_group_at_cursor(&self, cx: &mut ViewContext<Self>) -> Option<usize> {
+        let anchor = self.selections.newest_anchor().head();
+        let snapshot = self.buffer.read(cx).snapshot(cx);
+        let diagnostic = snapshot
+            .diagnostics_in_range(anchor..anchor, false)
+            .min_by_key(|entry| {
+                let range = entry.range.to_offset(&snapshot);
+                range.end - range.start
+            });
+        diagnostic.map(|d| d.diagnostic.group_id)
     }
 
     fn start_inline_blame_timer(&mut self, cx: &mut ViewContext<Self>) {
@@ -10414,6 +10480,11 @@ impl Editor {
     fn activate_diagnostics(&mut self, group_id: usize, cx: &mut ViewContext<Self>) {
         self.dismiss_diagnostics(cx);
         let snapshot = self.snapshot(cx);
+
+        let settings = ProjectSettings::get_global(cx).diagnostics;
+        let primary_only = settings.primary_only();
+        let use_rendered = settings.use_rendered();
+
         self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
             let buffer = self.buffer.read(cx).snapshot(cx);
 
@@ -10422,7 +10493,7 @@ impl Editor {
             let mut group_end = Point::zero();
             let diagnostic_group = buffer
                 .diagnostic_group(group_id)
-                .filter_map(|entry| {
+                .filter_map(|mut entry| {
                     let start = entry.range.start.to_point(&buffer);
                     let end = entry.range.end.to_point(&buffer);
                     if snapshot.is_line_folded(MultiBufferRow(start.row))
@@ -10437,8 +10508,21 @@ impl Editor {
                     if entry.diagnostic.is_primary {
                         primary_range = Some(entry.range.clone());
                         primary_message = Some(entry.diagnostic.message.clone());
+
+                        if use_rendered {
+                            if let Some(Value::Object(data)) = entry.diagnostic.data.as_ref() {
+                                if let Some(Value::String(rendered)) = data.get("rendered") {
+                                    entry.diagnostic.message = rendered.trim().to_string();
+                                }
+                            }
+                        }
+
+                        Some(entry)
+                    } else if !primary_only {
+                        Some(entry)
+                    } else {
+                        None
                     }
-                    Some(entry)
                 })
                 .collect::<Vec<_>>();
             let primary_range = primary_range?;
@@ -12475,7 +12559,13 @@ impl Editor {
         self.serialize_dirty_buffers = project_settings.session.restore_unsaved_buffers;
 
         if self.mode == EditorMode::Full {
+            let show_diagnostics_inline = project_settings.diagnostics.inline().enabled();
             let inline_blame_enabled = project_settings.git.inline_blame_enabled();
+
+            if self.show_diagnostics_inline != show_diagnostics_inline {
+                self.toggle_show_diagnostics_inline(cx);
+            }
+
             if self.git_blame_inline_enabled != inline_blame_enabled {
                 self.toggle_git_blame_inline_internal(false, cx);
             }

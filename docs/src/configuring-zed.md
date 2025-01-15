@@ -1150,6 +1150,136 @@ To interpret all `.c` files as C++, files called `MyLockFile` as TOML and files 
 }
 ```
 
+## Diagnostics
+
+- Description: Configuration for diagnostics-related features.
+- Setting: `diagnostics`
+- Default:
+
+```json
+{
+  "diagnostics": {
+    "include_warnings": true,
+    "inline": {
+      "enabled": false
+    }
+    "update_with_cursor": false,
+    "primary_only": false,
+    "use_rendered": false,
+  }
+}
+```
+
+### Inline Diagnostics
+
+- Description: Whether or not to show diagnostics information inline.
+- Setting: `inline`
+- Default:
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": false,
+      "delay_ms": 0,
+      "padding": 4,
+      "min_column": 0
+    }
+  }
+}
+```
+
+**Options**
+
+1. Enable inline diagnostics:
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true
+    }
+  }
+}
+```
+
+2. Only show inline diagnostics after a delay (that starts after the last editor event):
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "delay_ms": 250
+    }
+  }
+}
+```
+
+3. Set padding between the end of the source line and the start of the diagnostic
+
+````json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "padding": 4
+    }
+  }
+}
+
+4. Horizontally align inline diagnostics at the given column.
+
+```json
+{
+  "diagnostics": {
+    "inline": {
+      "enabled": true,
+      "min_column": 80
+    }
+  }
+}
+````
+
+### Update Active Diagnostic With Cursor
+
+- Description: Whether or not to update the active diagnostic on cursor movement.
+- Setting: `update_with_cursor`
+- Default:
+
+```json
+{
+  "diagnostics": {
+    "update_with_cursor": false
+}
+```
+
+### Only Show the Primary Diagnostic
+
+- Description: Whether or not to show non-primary diagnostics.
+- Setting: `primary_only`
+- Default:
+
+```json
+{
+  "diagnostics": {
+    "primary_only": false
+}
+```
+
+### Use the Rendered Diagnostic When Available
+
+- Description: Whether or not to use a rendered version of the primary diagnostic
+- Setting: `use_rendered`
+- Default:
+
+```json
+{
+  "diagnostics": {
+    "use_rendered": false
+}
+```
+
 ## Git
 
 - Description: Configuration for git-related features.

@@ -95,6 +95,7 @@
       "ctrl-shift-end": "editor::SelectToEnd",
       "ctrl-a": "editor::SelectAll",
       "ctrl-l": "editor::SelectLine",
+      "ctrl-shift-d": "editor::ToggleActiveDiagnosticAtCursor",
       "ctrl-shift-i": "editor::Format",
       // "cmd-shift-left": ["editor::SelectToBeginningOfLine", {"stop_at_soft_wraps": true }],
       "shift-home": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true }],
