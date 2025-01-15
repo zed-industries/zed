@@ -366,7 +366,7 @@ impl ShellBuilder {
             .into_iter()
             .fold(task_command, |mut command, arg| {
                 command.push(' ');
-                command.push_str(&self.to_windows_shell_variable(arg));
+                command.push_str(&self.to_windows_shell_variable(arg.to_sting()));
                 command
             });
 
