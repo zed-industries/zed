@@ -80,13 +80,14 @@ impl LspAdapter for RustLspAdapter {
         ancestor_depth: usize,
         delegate: &Arc<dyn LspAdapterDelegate>,
     ) -> Option<Arc<Path>> {
+        let mut outermost_cargo_toml = None;
         for path in path.ancestors().take(ancestor_depth) {
             let p = path.join("Cargo.toml").to_path_buf();
             if smol::block_on(delegate.read_text_file(p)).is_ok() {
-                return Some(Arc::from(path));
+                outermost_cargo_toml = Some(Arc::from(path));
             }
         }
-        None
+        outermost_cargo_toml
     }
     async fn check_if_user_installed(
         &self,
