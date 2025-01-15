@@ -13,7 +13,7 @@ pub struct Model {
     #[sea_orm(primary_key)]
     pub repo_path: String,
     /// Old single-code status field, no longer used but kept here to mirror the DB schema.
-    pub status: i64, // FIXME put it back in the test schema as well
+    pub status: i64,
     pub status_kind: StatusKind,
     /// For unmerged entries, this is the `first_head` status. For tracked entries, this is the `index_status`.
     pub first_status: Option<i32>,
