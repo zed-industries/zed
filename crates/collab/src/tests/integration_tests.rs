@@ -2586,7 +2586,7 @@ async fn test_git_diff_base_change(
     change_set_local_a.read_with(cx_a, |change_set, cx| {
         let buffer = buffer_local_a.read(cx);
         assert_eq!(
-            change_set.base_text_string(cx).as_deref(),
+            change_set.base_text_string().as_deref(),
             Some(diff_base.as_str())
         );
         git::diff::assert_hunks(
@@ -2614,7 +2614,7 @@ async fn test_git_diff_base_change(
     change_set_remote_a.read_with(cx_b, |change_set, cx| {
         let buffer = buffer_remote_a.read(cx);
         assert_eq!(
-            change_set.base_text_string(cx).as_deref(),
+            change_set.base_text_string().as_deref(),
             Some(diff_base.as_str())
         );
         git::diff::assert_hunks(
@@ -2636,7 +2636,7 @@ async fn test_git_diff_base_change(
     change_set_local_a.read_with(cx_a, |change_set, cx| {
         let buffer = buffer_local_a.read(cx);
         assert_eq!(
-            change_set.base_text_string(cx).as_deref(),
+            change_set.base_text_string().as_deref(),
             Some(new_diff_base.as_str())
         );
         git::diff::assert_hunks(
@@ -2650,7 +2650,7 @@ async fn test_git_diff_base_change(
     change_set_remote_a.read_with(cx_b, |change_set, cx| {
         let buffer = buffer_remote_a.read(cx);
         assert_eq!(
-            change_set.base_text_string(cx).as_deref(),
+            change_set.base_text_string().as_deref(),
             Some(new_diff_base.as_str())
         );
         git::diff::assert_hunks(
@@ -2696,7 +2696,7 @@ async fn test_git_diff_base_change(
     change_set_local_b.read_with(cx_a, |change_set, cx| {
         let buffer = buffer_local_b.read(cx);
         assert_eq!(
-            change_set.base_text_string(cx).as_deref(),
+            change_set.base_text_string().as_deref(),
             Some(diff_base.as_str())
         );
         git::diff::assert_hunks(
@@ -2723,7 +2723,7 @@ async fn test_git_diff_base_change(
     change_set_remote_b.read_with(cx_b, |change_set, cx| {
         let buffer = buffer_remote_b.read(cx);
         assert_eq!(
-            change_set.base_text_string(cx).as_deref(),
+            change_set.base_text_string().as_deref(),
             Some(diff_base.as_str())
         );
         git::diff::assert_hunks(
@@ -2745,7 +2745,7 @@ async fn test_git_diff_base_change(
     change_set_local_b.read_with(cx_a, |change_set, cx| {
         let buffer = buffer_local_b.read(cx);
         assert_eq!(
-            change_set.base_text_string(cx).as_deref(),
+            change_set.base_text_string().as_deref(),
             Some(new_diff_base.as_str())
         );
         git::diff::assert_hunks(
@@ -2759,7 +2759,7 @@ async fn test_git_diff_base_change(
     change_set_remote_b.read_with(cx_b, |change_set, cx| {
         let buffer = buffer_remote_b.read(cx);
         assert_eq!(
-            change_set.base_text_string(cx).as_deref(),
+            change_set.base_text_string().as_deref(),
             Some(new_diff_base.as_str())
         );
         git::diff::assert_hunks(

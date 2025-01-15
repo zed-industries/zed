@@ -3363,8 +3363,8 @@ async fn test_custom_newlines_cause_no_false_positive_diffs(
         let snapshot = editor.snapshot(cx);
         assert_eq!(
             snapshot
-                .diff_map
-                .diff_hunks_in_range(0..snapshot.buffer_snapshot.len(), &snapshot.buffer_snapshot)
+                .buffer_snapshot
+                .diff_hunks_in_range(0..snapshot.buffer_snapshot.len())
                 .collect::<Vec<_>>(),
             Vec::new(),
             "Should not have any diffs for files with custom newlines"
@@ -10179,7 +10179,26 @@ async fn go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext)
     );
 
     cx.update_editor(|editor, cx| {
-        for _ in 0..3 {
+        editor.go_to_prev_hunk(&GoToPrevHunk, cx);
+    });
+
+    cx.assert_editor_state(
+        &r#"
+        ˇuse some::modified;
+
+
+        fn main() {
+            println!("hello there");
+
+            println!("around the");
+            println!("world");
+        }
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| {
+        for _ in 0..2 {
             editor.go_to_prev_hunk(&GoToPrevHunk, cx);
         }
     });
@@ -10201,11 +10220,10 @@ async fn go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext)
 
     cx.update_editor(|editor, cx| {
         editor.fold(&Fold, cx);
+    });
 
-        //Make sure that the fold only gets one hunk
-        for _ in 0..4 {
-            editor.go_to_next_hunk(&GoToHunk, cx);
-        }
+    cx.update_editor(|editor, cx| {
+        editor.go_to_next_hunk(&GoToHunk, cx);
     });
 
     cx.assert_editor_state(
@@ -11537,6 +11555,8 @@ async fn test_modification_reverts(cx: &mut gpui::TestAppContext) {
         &mut cx,
     );
 
+    eprintln!("==========================================================================");
+
     assert_hunk_revert(
         indoc! {r#"ˇstruct Row1.1;
                    struct Row1;
@@ -11777,13 +11797,11 @@ async fn test_multibuffer_reverts(cx: &mut gpui::TestAppContext) {
             (buffer_3.clone(), base_text_3),
         ] {
             let change_set = cx.new_model(|cx| {
-                BufferChangeSet::new_with_base_text(
-                    diff_base.to_string(),
-                    buffer.read(cx).text_snapshot(),
-                    cx,
-                )
+                BufferChangeSet::new_with_base_text(diff_base.to_string(), &buffer, cx)
             });
-            editor.diff_map.add_change_set(change_set, cx)
+            editor
+                .buffer
+                .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx));
         }
     });
     cx.executor().run_until_parked();
@@ -12143,7 +12161,10 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
+async fn test_toggle_selected_diff_hunks(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -12181,7 +12202,7 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
 
     cx.update_editor(|editor, cx| {
         editor.go_to_next_hunk(&GoToHunk, cx);
-        editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
+        editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, cx);
     });
     executor.run_until_parked();
     cx.assert_state_with_diff(
@@ -12201,10 +12222,32 @@ async fn test_toggle_hunk_diff(executor: BackgroundExecutor, cx: &mut gpui::Test
     );
 
     cx.update_editor(|editor, cx| {
-        for _ in 0..3 {
+        for _ in 0..2 {
             editor.go_to_next_hunk(&GoToHunk, cx);
-            editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
+            editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, cx);
         }
+    });
+    executor.run_until_parked();
+    cx.assert_state_with_diff(
+        r#"
+        - use some::mod;
+        + ˇuse some::modified;
+
+
+          fn main() {
+        -     println!("hello");
+        +     println!("hello there");
+
+        +     println!("around the");
+              println!("world");
+          }
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| {
+        editor.go_to_next_hunk(&GoToHunk, cx);
+        editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, cx);
     });
     executor.run_until_parked();
     cx.assert_state_with_diff(
@@ -12292,7 +12335,7 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
     executor.run_until_parked();
 
     cx.update_editor(|editor, cx| {
-        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, cx);
     });
     executor.run_until_parked();
     cx.assert_state_with_diff(
@@ -12337,7 +12380,7 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
     );
 
     cx.update_editor(|editor, cx| {
-        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, cx);
     });
     executor.run_until_parked();
     cx.assert_state_with_diff(
@@ -12356,170 +12399,6 @@ async fn test_diff_base_change_with_expanded_diff_hunks(
         +     //
         + }
         "#
-        .unindent(),
-    );
-}
-
-#[gpui::test]
-async fn test_fold_unfold_diff_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
-    init_test(cx, |_| {});
-
-    let mut cx = EditorTestContext::new(cx).await;
-
-    let diff_base = r#"
-        use some::mod1;
-        use some::mod2;
-
-        const A: u32 = 42;
-        const B: u32 = 42;
-        const C: u32 = 42;
-
-        fn main() {
-            println!("hello");
-
-            println!("world");
-        }
-
-        fn another() {
-            println!("another");
-        }
-
-        fn another2() {
-            println!("another2");
-        }
-        "#
-    .unindent();
-
-    cx.set_state(
-        &r#"
-        «use some::mod2;
-
-        const A: u32 = 42;
-        const C: u32 = 42;
-
-        fn main() {
-            //println!("hello");
-
-            println!("world");
-            //
-            //ˇ»
-        }
-
-        fn another() {
-            println!("another");
-            println!("another");
-        }
-
-            println!("another2");
-        }
-        "#
-        .unindent(),
-    );
-
-    cx.set_diff_base(&diff_base);
-    executor.run_until_parked();
-
-    cx.update_editor(|editor, cx| {
-        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
-    });
-    executor.run_until_parked();
-
-    cx.assert_state_with_diff(
-        r#"
-        - use some::mod1;
-          «use some::mod2;
-
-          const A: u32 = 42;
-        - const B: u32 = 42;
-          const C: u32 = 42;
-
-          fn main() {
-        -     println!("hello");
-        +     //println!("hello");
-
-              println!("world");
-        +     //
-        +     //ˇ»
-          }
-
-          fn another() {
-              println!("another");
-        +     println!("another");
-          }
-
-        - fn another2() {
-              println!("another2");
-          }
-        "#
-        .unindent(),
-    );
-
-    // Fold across some of the diff hunks. They should no longer appear expanded.
-    cx.update_editor(|editor, cx| editor.fold_selected_ranges(&FoldSelectedRanges, cx));
-    cx.executor().run_until_parked();
-
-    // Hunks are not shown if their position is within a fold
-    cx.assert_state_with_diff(
-        r#"
-          «use some::mod2;
-
-          const A: u32 = 42;
-          const C: u32 = 42;
-
-          fn main() {
-              //println!("hello");
-
-              println!("world");
-              //
-              //ˇ»
-          }
-
-          fn another() {
-              println!("another");
-        +     println!("another");
-          }
-
-        - fn another2() {
-              println!("another2");
-          }
-        "#
-        .unindent(),
-    );
-
-    cx.update_editor(|editor, cx| {
-        editor.select_all(&SelectAll, cx);
-        editor.unfold_lines(&UnfoldLines, cx);
-    });
-    cx.executor().run_until_parked();
-
-    // The deletions reappear when unfolding.
-    cx.assert_state_with_diff(
-        r#"
-        - use some::mod1;
-          «use some::mod2;
-
-          const A: u32 = 42;
-        - const B: u32 = 42;
-          const C: u32 = 42;
-
-          fn main() {
-        -     println!("hello");
-        +     //println!("hello");
-
-              println!("world");
-        +     //
-        +     //
-          }
-
-          fn another() {
-              println!("another");
-        +     println!("another");
-          }
-
-        - fn another2() {
-              println!("another2");
-          }
-          ˇ»"#
         .unindent(),
     );
 }
@@ -12607,13 +12486,11 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
                 (buffer_3.clone(), file_3_old),
             ] {
                 let change_set = cx.new_model(|cx| {
-                    BufferChangeSet::new_with_base_text(
-                        diff_base.to_string(),
-                        buffer.read(cx).text_snapshot(),
-                        cx,
-                    )
+                    BufferChangeSet::new_with_base_text(diff_base.to_string(), &buffer, cx)
                 });
-                editor.diff_map.add_change_set(change_set, cx)
+                editor
+                    .buffer
+                    .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx));
             }
         })
         .unwrap();
@@ -12653,7 +12530,7 @@ async fn test_toggle_diff_expand_in_multi_buffer(cx: &mut gpui::TestAppContext) 
 
     cx.update_editor(|editor, cx| {
         editor.select_all(&SelectAll, cx);
-        editor.toggle_hunk_diff(&ToggleHunkDiff, cx);
+        editor.toggle_selected_diff_hunks(&ToggleSelectedDiffHunks, cx);
     });
     cx.executor().run_until_parked();
 
@@ -12720,17 +12597,18 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
     let editor = cx.add_window(|cx| Editor::new(EditorMode::Full, multi_buffer, None, true, cx));
     editor
         .update(cx, |editor, cx| {
-            let buffer = buffer.read(cx).text_snapshot();
             let change_set = cx
-                .new_model(|cx| BufferChangeSet::new_with_base_text(base.to_string(), buffer, cx));
-            editor.diff_map.add_change_set(change_set, cx)
+                .new_model(|cx| BufferChangeSet::new_with_base_text(base.to_string(), &buffer, cx));
+            editor
+                .buffer
+                .update(cx, |buffer, cx| buffer.add_change_set(change_set, cx))
         })
         .unwrap();
 
     let mut cx = EditorTestContext::for_editor(editor, cx).await;
     cx.run_until_parked();
 
-    cx.update_editor(|editor, cx| editor.expand_all_hunk_diffs(&Default::default(), cx));
+    cx.update_editor(|editor, cx| editor.expand_all_diff_hunks(&Default::default(), cx));
     cx.executor().run_until_parked();
 
     cx.assert_state_with_diff(
@@ -12739,8 +12617,6 @@ async fn test_expand_diff_hunk_at_excerpt_boundary(cx: &mut gpui::TestAppContext
           - bbb
           + BBB
 
-          - ddd
-          - eee
           + EEE
             fff
         "
@@ -12794,7 +12670,7 @@ async fn test_edits_around_expanded_insertion_hunks(
     executor.run_until_parked();
 
     cx.update_editor(|editor, cx| {
-        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, cx);
     });
     executor.run_until_parked();
 
@@ -12813,7 +12689,7 @@ async fn test_edits_around_expanded_insertion_hunks(
 
             println!("world");
         }
-        "#
+      "#
         .unindent(),
     );
 
@@ -12836,7 +12712,7 @@ async fn test_edits_around_expanded_insertion_hunks(
 
             println!("world");
         }
-        "#
+      "#
         .unindent(),
     );
 
@@ -12860,7 +12736,7 @@ async fn test_edits_around_expanded_insertion_hunks(
 
             println!("world");
         }
-        "#
+      "#
         .unindent(),
     );
 
@@ -12885,7 +12761,7 @@ async fn test_edits_around_expanded_insertion_hunks(
 
             println!("world");
         }
-        "#
+      "#
         .unindent(),
     );
 
@@ -12911,7 +12787,7 @@ async fn test_edits_around_expanded_insertion_hunks(
 
             println!("world");
         }
-        "#
+      "#
         .unindent(),
     );
 
@@ -12922,17 +12798,13 @@ async fn test_edits_around_expanded_insertion_hunks(
     executor.run_until_parked();
     cx.assert_state_with_diff(
         r#"
-        use some::mod1;
-      - use some::mod2;
-      -
-      - const A: u32 = 42;
         ˇ
         fn main() {
             println!("hello");
 
             println!("world");
         }
-        "#
+      "#
         .unindent(),
     );
 }
@@ -12985,7 +12857,7 @@ async fn test_edits_around_expanded_deletion_hunks(
     executor.run_until_parked();
 
     cx.update_editor(|editor, cx| {
-        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, cx);
     });
     executor.run_until_parked();
 
@@ -13004,7 +12876,7 @@ async fn test_edits_around_expanded_deletion_hunks(
 
             println!("world");
         }
-        "#
+      "#
         .unindent(),
     );
 
@@ -13027,7 +12899,7 @@ async fn test_edits_around_expanded_deletion_hunks(
 
             println!("world");
         }
-        "#
+      "#
         .unindent(),
     );
 
@@ -13050,7 +12922,7 @@ async fn test_edits_around_expanded_deletion_hunks(
 
             println!("world");
         }
-        "#
+      "#
         .unindent(),
     );
 
@@ -13074,6 +12946,71 @@ async fn test_edits_around_expanded_deletion_hunks(
 
             println!("world");
         }
+      "#
+        .unindent(),
+    );
+}
+
+#[gpui::test]
+async fn test_backspace_after_deletion_hunk(
+    executor: BackgroundExecutor,
+    cx: &mut gpui::TestAppContext,
+) {
+    init_test(cx, |_| {});
+
+    let mut cx = EditorTestContext::new(cx).await;
+
+    let base_text = r#"
+        one
+        two
+        three
+        four
+        five
+    "#
+    .unindent();
+    executor.run_until_parked();
+    cx.set_state(
+        &r#"
+        one
+        two
+        fˇour
+        five
+        "#
+        .unindent(),
+    );
+
+    cx.set_diff_base(&base_text);
+    executor.run_until_parked();
+
+    cx.update_editor(|editor, cx| {
+        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, cx);
+    });
+    executor.run_until_parked();
+
+    cx.assert_state_with_diff(
+        r#"
+          one
+          two
+        - three
+          fˇour
+          five
+        "#
+        .unindent(),
+    );
+
+    cx.update_editor(|editor, cx| {
+        editor.backspace(&Backspace, cx);
+        editor.backspace(&Backspace, cx);
+    });
+    executor.run_until_parked();
+    cx.assert_state_with_diff(
+        r#"
+          one
+          two
+        - threeˇ
+        - four
+        + our
+          five
         "#
         .unindent(),
     );
@@ -13127,7 +13064,7 @@ async fn test_edit_after_expanded_modification_hunk(
     cx.set_diff_base(&diff_base);
     executor.run_until_parked();
     cx.update_editor(|editor, cx| {
-        editor.expand_all_hunk_diffs(&ExpandAllHunkDiffs, cx);
+        editor.expand_all_diff_hunks(&ExpandAllHunkDiffs, cx);
     });
     executor.run_until_parked();
 
@@ -15023,7 +14960,7 @@ pub(crate) fn init_test(cx: &mut TestAppContext, f: fn(&mut AllLanguageSettingsC
 #[track_caller]
 fn assert_hunk_revert(
     not_reverted_text_with_selections: &str,
-    expected_not_reverted_hunk_statuses: Vec<DiffHunkStatus>,
+    expected_hunk_statuses_before: Vec<DiffHunkStatus>,
     expected_reverted_text_with_selections: &str,
     base_text: &str,
     cx: &mut EditorLspTestContext,
@@ -15032,12 +14969,12 @@ fn assert_hunk_revert(
     cx.set_diff_base(base_text);
     cx.executor().run_until_parked();
 
-    let reverted_hunk_statuses = cx.update_editor(|editor, cx| {
+    let actual_hunk_statuses_before = cx.update_editor(|editor, cx| {
         let snapshot = editor.snapshot(cx);
         let reverted_hunk_statuses = snapshot
-            .diff_map
-            .diff_hunks_in_range(0..snapshot.buffer_snapshot.len(), &snapshot.buffer_snapshot)
-            .map(|hunk| hunk_status(&hunk))
+            .buffer_snapshot
+            .diff_hunks_in_range(0..snapshot.buffer_snapshot.len())
+            .map(|hunk| hunk.status())
             .collect::<Vec<_>>();
 
         editor.revert_selected_hunks(&RevertSelectedHunks, cx);
@@ -15045,5 +14982,5 @@ fn assert_hunk_revert(
     });
     cx.executor().run_until_parked();
     cx.assert_editor_state(expected_reverted_text_with_selections);
-    assert_eq!(reverted_hunk_statuses, expected_not_reverted_hunk_statuses);
+    assert_eq!(actual_hunk_statuses_before, expected_hunk_statuses_before);
 }

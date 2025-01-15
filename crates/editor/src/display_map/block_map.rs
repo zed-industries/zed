@@ -7,8 +7,8 @@ use collections::{Bound, HashMap, HashSet};
 use gpui::{AnyElement, AppContext, EntityId, Pixels, WindowContext};
 use language::{Chunk, Patch, Point};
 use multi_buffer::{
-    Anchor, ExcerptId, ExcerptInfo, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, ToOffset,
-    ToPoint as _,
+    Anchor, ExcerptId, ExcerptInfo, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, RowInfo,
+    ToOffset, ToPoint as _,
 };
 use parking_lot::Mutex;
 use std::{
@@ -399,9 +399,9 @@ pub struct BlockChunks<'a> {
 }
 
 #[derive(Clone)]
-pub struct BlockBufferRows<'a> {
+pub struct BlockRows<'a> {
     transforms: sum_tree::Cursor<'a, Transform, (BlockRow, WrapRow)>,
-    input_buffer_rows: wrap_map::WrapBufferRows<'a>,
+    input_rows: wrap_map::WrapRows<'a>,
     output_row: BlockRow,
     started: bool,
 }
@@ -777,14 +777,12 @@ impl BlockMap {
             if let Some(new_buffer_id) = new_buffer_id {
                 let first_excerpt = excerpt_boundary.next.clone().unwrap();
                 if folded_buffers.contains(&new_buffer_id) {
-                    let mut buffer_end = Point::new(excerpt_boundary.row.0, 0)
-                        + excerpt_boundary.next.as_ref().unwrap().text_summary.lines;
+                    let mut last_excerpt_end_row = first_excerpt.end_row;
 
                     while let Some(next_boundary) = boundaries.peek() {
                         if let Some(next_excerpt_boundary) = &next_boundary.next {
                             if next_excerpt_boundary.buffer_id == new_buffer_id {
-                                buffer_end = Point::new(next_boundary.row.0, 0)
-                                    + next_excerpt_boundary.text_summary.lines;
+                                last_excerpt_end_row = next_excerpt_boundary.end_row;
                             } else {
                                 break;
                             }
@@ -793,7 +791,15 @@ impl BlockMap {
                         boundaries.next();
                     }
 
-                    let wrap_end_row = wrap_snapshot.make_wrap_point(buffer_end, Bias::Right).row();
+                    let wrap_end_row = wrap_snapshot
+                        .make_wrap_point(
+                            Point::new(
+                                last_excerpt_end_row.0,
+                                buffer.line_len(last_excerpt_end_row),
+                            ),
+                            Bias::Right,
+                        )
+                        .row();
 
                     return Some((
                         BlockPlacement::Replace(WrapRow(wrap_row)..=WrapRow(wrap_end_row)),
@@ -1360,7 +1366,7 @@ impl BlockSnapshot {
         }
     }
 
-    pub(super) fn buffer_rows(&self, start_row: BlockRow) -> BlockBufferRows {
+    pub(super) fn row_infos(&self, start_row: BlockRow) -> BlockRows {
         let mut cursor = self.transforms.cursor::<(BlockRow, WrapRow)>(&());
         cursor.seek(&start_row, Bias::Right, &());
         let (output_start, input_start) = cursor.start();
@@ -1373,9 +1379,9 @@ impl BlockSnapshot {
             0
         };
         let input_start_row = input_start.0 + overshoot;
-        BlockBufferRows {
+        BlockRows {
             transforms: cursor,
-            input_buffer_rows: self.wrap_snapshot.buffer_rows(input_start_row),
+            input_rows: self.wrap_snapshot.row_infos(input_start_row),
             output_row: start_row,
             started: false,
         }
@@ -1833,8 +1839,8 @@ impl<'a> Iterator for BlockChunks<'a> {
     }
 }
 
-impl<'a> Iterator for BlockBufferRows<'a> {
-    type Item = Option<u32>;
+impl<'a> Iterator for BlockRows<'a> {
+    type Item = RowInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.started {
@@ -1863,7 +1869,7 @@ impl<'a> Iterator for BlockBufferRows<'a> {
                 .as_ref()
                 .map_or(true, |block| block.is_replacement())
             {
-                self.input_buffer_rows.seek(self.transforms.start().1 .0);
+                self.input_rows.seek(self.transforms.start().1 .0);
             }
         }
 
@@ -1871,15 +1877,15 @@ impl<'a> Iterator for BlockBufferRows<'a> {
         if let Some(block) = transform.block.as_ref() {
             if block.is_replacement() && self.transforms.start().0 == self.output_row {
                 if matches!(block, Block::FoldedBuffer { .. }) {
-                    Some(None)
+                    Some(RowInfo::default())
                 } else {
-                    Some(self.input_buffer_rows.next().unwrap())
+                    Some(self.input_rows.next().unwrap())
                 }
             } else {
-                Some(None)
+                Some(RowInfo::default())
             }
         } else {
-            Some(self.input_buffer_rows.next().unwrap())
+            Some(self.input_rows.next().unwrap())
         }
     }
 }
@@ -2154,7 +2160,10 @@ mod tests {
         );
 
         assert_eq!(
-            snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            snapshot
+                .row_infos(BlockRow(0))
+                .map(|row_info| row_info.buffer_row)
+                .collect::<Vec<_>>(),
             &[
                 Some(0),
                 None,
@@ -2604,7 +2613,10 @@ mod tests {
             "\n\n\n111\n\n\n\n\n222\n\n\n333\n\n\n444\n\n\n\n\n555\n\n\n666\n"
         );
         assert_eq!(
-            blocks_snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            blocks_snapshot
+                .row_infos(BlockRow(0))
+                .map(|i| i.buffer_row)
+                .collect::<Vec<_>>(),
             vec![
                 None,
                 None,
@@ -2680,7 +2692,10 @@ mod tests {
             "\n\n\n111\n\n\n\n\n\n222\n\n\n\n333\n\n\n444\n\n\n\n\n\n\n555\n\n\n666\n\n"
         );
         assert_eq!(
-            blocks_snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            blocks_snapshot
+                .row_infos(BlockRow(0))
+                .map(|i| i.buffer_row)
+                .collect::<Vec<_>>(),
             vec![
                 None,
                 None,
@@ -2755,7 +2770,10 @@ mod tests {
             "\n\n\n\n\n\n222\n\n\n\n333\n\n\n444\n\n\n\n\n\n\n555\n\n\n666\n\n"
         );
         assert_eq!(
-            blocks_snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            blocks_snapshot
+                .row_infos(BlockRow(0))
+                .map(|i| i.buffer_row)
+                .collect::<Vec<_>>(),
             vec![
                 None,
                 None,
@@ -2820,7 +2838,10 @@ mod tests {
         );
         assert_eq!(blocks_snapshot.text(), "\n\n\n\n\n\n\n\n555\n\n\n666\n\n");
         assert_eq!(
-            blocks_snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            blocks_snapshot
+                .row_infos(BlockRow(0))
+                .map(|i| i.buffer_row)
+                .collect::<Vec<_>>(),
             vec![
                 None,
                 None,
@@ -2874,7 +2895,10 @@ mod tests {
             "Should have extra newline for 111 buffer, due to a new block added when it was folded"
         );
         assert_eq!(
-            blocks_snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            blocks_snapshot
+                .row_infos(BlockRow(0))
+                .map(|i| i.buffer_row)
+                .collect::<Vec<_>>(),
             vec![
                 None,
                 None,
@@ -2928,7 +2952,10 @@ mod tests {
             "Should have a single, first buffer left after folding"
         );
         assert_eq!(
-            blocks_snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            blocks_snapshot
+                .row_infos(BlockRow(0))
+                .map(|i| i.buffer_row)
+                .collect::<Vec<_>>(),
             vec![
                 None,
                 None,
@@ -2998,7 +3025,10 @@ mod tests {
         );
         assert_eq!(blocks_snapshot.text(), "\n");
         assert_eq!(
-            blocks_snapshot.buffer_rows(BlockRow(0)).collect::<Vec<_>>(),
+            blocks_snapshot
+                .row_infos(BlockRow(0))
+                .map(|i| i.buffer_row)
+                .collect::<Vec<_>>(),
             vec![None, None],
             "When fully folded, should be no buffer rows"
         );
@@ -3296,7 +3326,8 @@ mod tests {
             let mut sorted_blocks_iter = expected_blocks.into_iter().peekable();
 
             let input_buffer_rows = buffer_snapshot
-                .buffer_rows(MultiBufferRow(0))
+                .row_infos(MultiBufferRow(0))
+                .map(|row| row.buffer_row)
                 .collect::<Vec<_>>();
             let mut expected_buffer_rows = Vec::new();
             let mut expected_text = String::new();
@@ -3451,7 +3482,8 @@ mod tests {
                 );
                 assert_eq!(
                     blocks_snapshot
-                        .buffer_rows(BlockRow(start_row as u32))
+                        .row_infos(BlockRow(start_row as u32))
+                        .map(|row_info| row_info.buffer_row)
                         .collect::<Vec<_>>(),
                     &expected_buffer_rows[start_row..],
                     "incorrect buffer_rows starting at row {:?}",

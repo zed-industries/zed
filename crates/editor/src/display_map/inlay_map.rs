@@ -1,7 +1,9 @@
 use crate::{HighlightStyles, InlayId};
 use collections::BTreeSet;
 use language::{Chunk, Edit, Point, TextSummary};
-use multi_buffer::{Anchor, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot, ToOffset};
+use multi_buffer::{
+    Anchor, MultiBufferRow, MultiBufferRows, MultiBufferSnapshot, RowInfo, ToOffset,
+};
 use std::{
     cmp,
     ops::{Add, AddAssign, Range, Sub, SubAssign},
@@ -362,14 +364,14 @@ impl<'a> InlayBufferRows<'a> {
 }
 
 impl<'a> Iterator for InlayBufferRows<'a> {
-    type Item = Option<u32>;
+    type Item = RowInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
         let buffer_row = if self.inlay_row == 0 {
             self.buffer_rows.next().unwrap()
         } else {
             match self.transforms.item()? {
-                Transform::Inlay(_) => None,
+                Transform::Inlay(_) => Default::default(),
                 Transform::Isomorphic(_) => self.buffer_rows.next().unwrap(),
             }
         };
@@ -944,7 +946,7 @@ impl InlaySnapshot {
         summary
     }
 
-    pub fn buffer_rows(&self, row: u32) -> InlayBufferRows<'_> {
+    pub fn row_infos(&self, row: u32) -> InlayBufferRows<'_> {
         let mut cursor = self.transforms.cursor::<(InlayPoint, Point)>(&());
         let inlay_point = InlayPoint::new(row, 0);
         cursor.seek(&inlay_point, Bias::Left, &());
@@ -966,7 +968,7 @@ impl InlaySnapshot {
         InlayBufferRows {
             transforms: cursor,
             inlay_row: inlay_point.row(),
-            buffer_rows: self.buffer.buffer_rows(buffer_row),
+            buffer_rows: self.buffer.row_infos(buffer_row),
             max_buffer_row,
         }
     }
@@ -1476,7 +1478,10 @@ mod tests {
         );
         assert_eq!(inlay_snapshot.text(), "|123|\nabc\n|456|def\n|567|\n\nghi");
         assert_eq!(
-            inlay_snapshot.buffer_rows(0).collect::<Vec<_>>(),
+            inlay_snapshot
+                .row_infos(0)
+                .map(|info| info.buffer_row)
+                .collect::<Vec<_>>(),
             vec![Some(0), None, Some(1), None, None, Some(2)]
         );
     }
@@ -1547,7 +1552,7 @@ mod tests {
             }
             assert_eq!(inlay_snapshot.text(), expected_text.to_string());
 
-            let expected_buffer_rows = inlay_snapshot.buffer_rows(0).collect::<Vec<_>>();
+            let expected_buffer_rows = inlay_snapshot.row_infos(0).collect::<Vec<_>>();
             assert_eq!(
                 expected_buffer_rows.len() as u32,
                 expected_text.max_point().row + 1
@@ -1555,7 +1560,7 @@ mod tests {
             for row_start in 0..expected_buffer_rows.len() {
                 assert_eq!(
                     inlay_snapshot
-                        .buffer_rows(row_start as u32)
+                        .row_infos(row_start as u32)
                         .collect::<Vec<_>>(),
                     &expected_buffer_rows[row_start..],
                     "incorrect buffer rows starting at {}",

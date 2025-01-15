@@ -15,7 +15,7 @@ fn task_context_with_editor(
     };
     let (selection, buffer, editor_snapshot) = {
         let selection = editor.selections.newest_adjusted(cx);
-        let Some((buffer, _, _)) = editor
+        let Some((buffer, _)) = editor
             .buffer()
             .read(cx)
             .point_to_buffer_offset(selection.start, cx)

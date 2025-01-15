@@ -494,7 +494,7 @@ pub fn surrounding_html_tag(
 
     let snapshot = &map.buffer_snapshot;
     let offset = head.to_offset(map, Bias::Left);
-    let excerpt = snapshot.excerpt_containing(offset..offset)?;
+    let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
     let buffer = excerpt.buffer();
     let offset = excerpt.map_offset_to_buffer(offset);
 
@@ -664,7 +664,7 @@ fn text_object(
     let snapshot = &map.buffer_snapshot;
     let offset = relative_to.to_offset(map, Bias::Left);
 
-    let excerpt = snapshot.excerpt_containing(offset..offset)?;
+    let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
     let buffer = excerpt.buffer();
     let offset = excerpt.map_offset_to_buffer(offset);
 
@@ -710,7 +710,7 @@ fn argument(
     let offset = relative_to.to_offset(map, Bias::Left);
 
     // The `argument` vim text object uses the syntax tree, so we operate at the buffer level and map back to the display level
-    let excerpt = snapshot.excerpt_containing(offset..offset)?;
+    let mut excerpt = snapshot.excerpt_containing(offset..offset)?;
     let buffer = excerpt.buffer();
 
     fn comma_delimited_range_at(

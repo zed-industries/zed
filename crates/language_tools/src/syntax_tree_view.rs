@@ -131,15 +131,15 @@ impl SyntaxTreeView {
         let snapshot = editor_state
             .editor
             .update(cx, |editor, cx| editor.snapshot(cx));
-        let (excerpt, buffer, range) = editor_state.editor.update(cx, |editor, cx| {
+        let (buffer, range, excerpt_id) = editor_state.editor.update(cx, |editor, cx| {
             let selection_range = editor.selections.last::<usize>(cx).range();
             let multi_buffer = editor.buffer().read(cx);
-            let (excerpt, range) = snapshot
+            let (buffer, range, excerpt_id) = snapshot
                 .buffer_snapshot
                 .range_to_buffer_ranges(selection_range)
                 .pop()?;
-            let buffer = multi_buffer.buffer(excerpt.buffer_id()).unwrap().clone();
-            Some((excerpt, buffer, range))
+            let buffer = multi_buffer.buffer(buffer.remote_id()).unwrap().clone();
+            Some((buffer, range, excerpt_id))
         })?;
 
         // If the cursor has moved into a different excerpt, retrieve a new syntax layer
@@ -148,16 +148,16 @@ impl SyntaxTreeView {
             .active_buffer
             .get_or_insert_with(|| BufferState {
                 buffer: buffer.clone(),
-                excerpt_id: excerpt.id(),
+                excerpt_id,
                 active_layer: None,
             });
         let mut prev_layer = None;
         if did_reparse {
             prev_layer = buffer_state.active_layer.take();
         }
-        if buffer_state.buffer != buffer || buffer_state.excerpt_id != excerpt.id() {
+        if buffer_state.buffer != buffer || buffer_state.excerpt_id != excerpt_id {
             buffer_state.buffer = buffer.clone();
-            buffer_state.excerpt_id = excerpt.id();
+            buffer_state.excerpt_id = excerpt_id;
             buffer_state.active_layer = None;
         }
 

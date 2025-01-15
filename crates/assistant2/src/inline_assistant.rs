@@ -316,21 +316,21 @@ impl InlineAssistant {
         let newest_selection = newest_selection.unwrap();
 
         let mut codegen_ranges = Vec::new();
-        for (excerpt_id, buffer, buffer_range) in
-            snapshot.excerpts_in_ranges(selections.iter().map(|selection| {
+        for (buffer, buffer_range, excerpt_id) in
+            snapshot.ranges_to_buffer_ranges(selections.iter().map(|selection| {
                 snapshot.anchor_before(selection.start)..snapshot.anchor_after(selection.end)
             }))
         {
-            let start = Anchor {
-                buffer_id: Some(buffer.remote_id()),
+            let start = Anchor::in_buffer(
                 excerpt_id,
-                text_anchor: buffer.anchor_before(buffer_range.start),
-            };
-            let end = Anchor {
-                buffer_id: Some(buffer.remote_id()),
+                buffer.remote_id(),
+                buffer.anchor_before(buffer_range.start),
+            );
+            let end = Anchor::in_buffer(
                 excerpt_id,
-                text_anchor: buffer.anchor_after(buffer_range.end),
-            };
+                buffer.remote_id(),
+                buffer.anchor_after(buffer_range.end),
+            );
             codegen_ranges.push(start..end);
 
             if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
@@ -897,7 +897,7 @@ impl InlineAssistant {
                     let ranges = snapshot.range_to_buffer_ranges(assist.range.clone());
                     ranges
                         .first()
-                        .and_then(|(excerpt, _)| excerpt.buffer().language())
+                        .and_then(|(buffer, _, _)| buffer.language())
                         .map(|language| language.name())
                 });
                 report_assistant_event(

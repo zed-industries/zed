@@ -603,7 +603,7 @@ mod rng {
 
         fn next(&mut self) -> Option<Self::Item> {
             if self.simple_text {
-                return if self.rng.gen_range(0..100) < 5 {
+                return if self.rng.gen_range(0..100) < 10 {
                     Some('\n')
                 } else {
                     Some(self.rng.gen_range(b'a'..b'z' + 1).into())
@@ -611,16 +611,18 @@ mod rng {
             }
 
             match self.rng.gen_range(0..100) {
+                // newline
+                0..=9 => ['\r', '\n'].choose(&mut self.rng).copied(),
                 // whitespace
-                0..=19 => [' ', '\n', '\r', '\t'].choose(&mut self.rng).copied(),
+                10..=19 => [' ', '\t'].choose(&mut self.rng).copied(),
                 // two-byte greek letters
-                20..=32 => char::from_u32(self.rng.gen_range(('α' as u32)..('ω' as u32 + 1))),
-                // // three-byte characters
-                33..=45 => ['✋', '✅', '❌', '❎', '⭐']
+                20..=30 => char::from_u32(self.rng.gen_range(('α' as u32)..('ω' as u32 + 1))),
+                // three-byte characters
+                31..=40 => ['✋', '✅', '❌', '❎', '⭐']
                     .choose(&mut self.rng)
                     .copied(),
-                // // four-byte characters
-                46..=58 => ['🍐', '🏀', '🍗', '🎉'].choose(&mut self.rng).copied(),
+                // four-byte characters
+                41..=50 => ['🍐', '🏀', '🍗', '🎉'].choose(&mut self.rng).copied(),
                 // ascii letters
                 _ => Some(self.rng.gen_range(b'a'..b'z' + 1).into()),
             }

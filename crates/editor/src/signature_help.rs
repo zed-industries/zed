@@ -5,6 +5,7 @@ use crate::actions::ShowSignatureHelp;
 use crate::{Editor, EditorSettings, ToggleAutoSignatureHelp};
 use gpui::{AppContext, ViewContext};
 use language::markdown::parse_markdown;
+use language::BufferSnapshot;
 use multi_buffer::{Anchor, ToOffset};
 use settings::Settings;
 use std::ops::Range;
@@ -94,13 +95,14 @@ impl Editor {
             (a, b) if b <= buffer_snapshot.len() => a - 1..b,
             (a, b) => a - 1..b - 1,
         };
-        let not_quote_like_brackets = |start: Range<usize>, end: Range<usize>| {
-            let text = buffer_snapshot.text();
-            let (text_start, text_end) = (text.get(start), text.get(end));
-            QUOTE_PAIRS
-                .into_iter()
-                .all(|(start, end)| text_start != Some(start) && text_end != Some(end))
-        };
+        let not_quote_like_brackets =
+            |buffer: &BufferSnapshot, start: Range<usize>, end: Range<usize>| {
+                let text_start = buffer.text_for_range(start).collect::<String>();
+                let text_end = buffer.text_for_range(end).collect::<String>();
+                QUOTE_PAIRS
+                    .into_iter()
+                    .all(|(start, end)| text_start != start && text_end != end)
+            };
 
         let previous_position = old_cursor_position.to_offset(&buffer_snapshot);
         let previous_brackets_range = bracket_range(previous_position);

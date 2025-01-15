@@ -30,8 +30,8 @@ use crate::{
     hover_links::InlayHighlight, movement::TextLayoutDetails, EditorStyle, InlayId, RowExt,
 };
 pub use block_map::{
-    Block, BlockBufferRows, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap,
-    BlockPlacement, BlockPoint, BlockProperties, BlockStyle, CustomBlockId, RenderBlock,
+    Block, BlockChunks as DisplayChunks, BlockContext, BlockId, BlockMap, BlockPlacement,
+    BlockPoint, BlockProperties, BlockRows, BlockStyle, CustomBlockId, RenderBlock,
     StickyHeaderExcerpt,
 };
 use block_map::{BlockRow, BlockSnapshot};
@@ -53,7 +53,7 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
     Anchor, AnchorRangeExt, MultiBuffer, MultiBufferPoint, MultiBufferRow, MultiBufferSnapshot,
-    ToOffset, ToPoint,
+    RowInfo, ToOffset, ToPoint,
 };
 use serde::Deserialize;
 use std::{
@@ -715,13 +715,8 @@ impl DisplaySnapshot {
         self.buffer_snapshot.len() == 0
     }
 
-    pub fn buffer_rows(
-        &self,
-        start_row: DisplayRow,
-    ) -> impl Iterator<Item = Option<MultiBufferRow>> + '_ {
-        self.block_snapshot
-            .buffer_rows(BlockRow(start_row.0))
-            .map(|row| row.map(MultiBufferRow))
+    pub fn row_infos(&self, start_row: DisplayRow) -> impl Iterator<Item = RowInfo> + '_ {
+        self.block_snapshot.row_infos(BlockRow(start_row.0))
     }
 
     pub fn widest_line_number(&self) -> u32 {
