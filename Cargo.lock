@@ -14229,6 +14229,7 @@ dependencies = [
  "multi_buffer",
  "nvim-rs",
  "parking_lot",
+ "project",
  "regex",
  "release_channel",
  "schemars",

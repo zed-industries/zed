@@ -29,11 +29,12 @@ use indexmap::IndexMap;
 use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::{
-    relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
-    WorktreeId,
+    relativize_path, Entry, EntryKind, FileNumber, Fs, Project, ProjectEntryId, ProjectPath,
+    RelativeFileNumber, Worktree, WorktreeId,
 };
 use project_panel_settings::{
-    ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics, ShowIndentGuides,
+    ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics, ShowFileNumbers,
+    ShowIndentGuides,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -293,6 +294,9 @@ impl ProjectPanel {
                 project::Event::RevealInProjectPanel(entry_id) => {
                     this.reveal_entry(project, *entry_id, false, cx);
                     cx.emit(PanelEvent::Activate);
+                }
+                project::Event::OpenNumberedFile(file_number) => {
+                    this.go_to_numbered_file(file_number.clone(), cx);
                 }
                 project::Event::ActivateProjectPanel => {
                     cx.emit(PanelEvent::Activate);
@@ -3294,6 +3298,8 @@ impl ProjectPanel {
                 item_colors.default
             };
 
+        let file_number = self.get_file_number(worktree_id, entry_id, settings.show_file_numbers);
+
         div()
             .id(entry_id.to_proto() as usize)
             .group(GROUP_NAME)
@@ -3304,6 +3310,14 @@ impl ProjectPanel {
             .border_r_2()
             .border_color(border_color)
             .hover(|style| style.bg(bg_hover_color))
+            .h_flex()
+            .when_some(file_number, |this, file_number| {
+                this.child(
+                    div()
+                        .px(px(8.))
+                        .child(Label::new(format!("{}", file_number)).color(filename_text_color)),
+                )
+            })
             .when(is_local, |div| {
                 div.on_drag_move::<ExternalPaths>(cx.listener(
                     move |this, event: &DragMoveEvent<ExternalPaths>, cx| {
@@ -3886,6 +3900,87 @@ impl ProjectPanel {
         }
         None
     }
+
+    fn get_file_number(
+        &self,
+        worktree_id: WorktreeId,
+        entry_id: ProjectEntryId,
+        variant: ShowFileNumbers,
+    ) -> Option<usize> {
+        let entry_line_number = self
+            .index_for_entry(entry_id, worktree_id)
+            .unwrap_or_default()
+            .2;
+
+        match variant {
+            ShowFileNumbers::Relative => {
+                let selection_line_number = if let Some(selection) = self.selection {
+                    self.index_for_selection(selection).unwrap_or_default().2
+                } else {
+                    0
+                };
+                return Some(
+                    selection_line_number.max(entry_line_number)
+                        - selection_line_number.min(entry_line_number),
+                );
+            }
+            ShowFileNumbers::Absolute => Some(entry_line_number),
+            ShowFileNumbers::Off => None,
+        }
+    }
+
+    fn go_to_numbered_file(&mut self, file_number: FileNumber, cx: &mut ViewContext<Self>) {
+        let variant = ProjectPanelSettings::get_global(cx).show_file_numbers;
+
+        let total_entries: usize = self
+            .visible_entries
+            .iter()
+            .map(|(_, entries, _)| entries.len())
+            .sum();
+
+        let file_index = match variant {
+            ShowFileNumbers::Absolute => match file_number {
+                FileNumber::Absolute(number) => number,
+                FileNumber::Relative(_) => return,
+            },
+            ShowFileNumbers::Relative => match file_number {
+                FileNumber::Relative(relative_file_number) => {
+                    let selection_line_number = if let Some(selection) = self.selection {
+                        self.index_for_selection(selection).unwrap_or_default().2
+                    } else {
+                        0
+                    };
+                    match relative_file_number {
+                        RelativeFileNumber::Down(count) => {
+                            let number = selection_line_number.saturating_add(count);
+                            if number > total_entries {
+                                total_entries
+                            } else {
+                                number
+                            }
+                        }
+                        RelativeFileNumber::Up(count) => {
+                            selection_line_number.saturating_sub(count)
+                        }
+                    }
+                }
+                FileNumber::Absolute(_) => return,
+            },
+            ShowFileNumbers::Off => return,
+        };
+
+        // Get the entry at the specified index (subtract 1 because UI numbers start at 1)
+        if let Some((_, entry)) = self.entry_at_index(file_index) {
+            if entry.kind.is_file() {
+                // Open the file
+                self.open_entry(entry.id, true, false, cx);
+            } else if entry.kind.is_dir() {
+                self.toggle_expanded(entry.id, cx);
+            }
+            self.autoscroll(cx);
+            cx.notify();
+        }
+    }
 }
 
 fn item_width_estimate(depth: usize, item_text_chars: usize, is_symlink: bool) -> usize {
@@ -4119,7 +4214,16 @@ impl Render for ProjectPanel {
                             .with_render_fn(
                                 cx.view().clone(),
                                 move |this, params, cx| {
-                                    const LEFT_OFFSET: f32 = 14.;
+                                    let line_number_width = match ProjectPanelSettings::get_global(
+                                        cx,
+                                    )
+                                    .show_file_numbers
+                                    {
+                                        ShowFileNumbers::Off => 0.,
+                                        _ => 34.,
+                                    };
+
+                                    let left_offset: f32 = 14. + line_number_width;
                                     const PADDING_Y: f32 = 4.;
                                     const HITBOX_OVERDRAW: f32 = 3.;
 
@@ -4142,7 +4246,7 @@ impl Render for ProjectPanel {
                                             let bounds = Bounds::new(
                                                 point(
                                                     px(layout.offset.x as f32) * indent_size
-                                                        + px(LEFT_OFFSET),
+                                                        + px(left_offset),
                                                     px(layout.offset.y as f32) * item_height
                                                         + offset,
                                                 ),
