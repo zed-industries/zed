@@ -4469,6 +4469,14 @@ impl MultiBufferSnapshot {
         self.anchor_at(position, Bias::Right)
     }
 
+    // ] buffer content ] [ deleted item ] [\n] [ buffer content ]
+    //                  1 2              3 4  5 6
+    // 1: bias left (diff base = none)
+    // 2: bias left (diff base = some)
+    // 3: bias left (diff base = some)
+    // 4: <-- merged into case 3
+    // 5: <-- merged into case 6
+    // 6: bias right (diff base = none)
     pub fn anchor_at<T: ToOffset>(&self, position: T, mut bias: Bias) -> Anchor {
         let offset = position.to_offset(self);
 
@@ -4480,34 +4488,36 @@ impl MultiBufferSnapshot {
         if offset == diff_transform_cursor.start().0 && bias == Bias::Left {
             if let Some(prev_item) = diff_transform_cursor.prev_item() {
                 match prev_item {
-                    DiffTransform::DeletedHunk {
-                        has_trailing_newline: true,
-                        ..
-                    } => {}
-                    _ => {
+                    DiffTransform::DeletedHunk { .. } => {
                         diff_transform_cursor.prev(&());
                     }
+                    _ => {}
                 }
             }
         }
-
         let offset_in_transform = offset - diff_transform_cursor.start().0;
         let mut excerpt_offset = diff_transform_cursor.start().1;
         let mut diff_base_anchor = None;
         if let Some(DiffTransform::DeletedHunk {
             buffer_id,
             base_text_byte_range,
+            has_trailing_newline,
             ..
         }) = diff_transform_cursor.item()
         {
             let diff_base = self.diffs.get(buffer_id).expect("missing diff base");
-            diff_base_anchor = Some(DiffBaseAnchor {
-                text_anchor: diff_base
-                    .base_text
-                    .anchor_at(base_text_byte_range.start + offset_in_transform, bias),
-                version: diff_base.base_text_version,
-            });
-            bias = Bias::Left;
+            if offset_in_transform > base_text_byte_range.len() {
+                debug_assert!(*has_trailing_newline);
+                bias = Bias::Right;
+            } else {
+                diff_base_anchor = Some(DiffBaseAnchor {
+                    text_anchor: diff_base
+                        .base_text
+                        .anchor_at(base_text_byte_range.start + offset_in_transform, bias),
+                    version: diff_base.base_text_version,
+                });
+                bias = Bias::Left;
+            }
         } else {
             excerpt_offset += ExcerptOffset::new(offset_in_transform);
         };
