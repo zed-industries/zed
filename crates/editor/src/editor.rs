@@ -459,9 +459,21 @@ pub fn make_suggestion_styles(cx: &WindowContext) -> InlineCompletionStyles {
 type CompletionId = usize;
 
 #[derive(Debug, Clone)]
-struct InlineCompletionMenuHint {
-    provider_name: &'static str,
-    text: InlineCompletionText,
+enum InlineCompletionMenuHint {
+    Loading,
+    Loaded { text: InlineCompletionText },
+    None,
+}
+
+impl InlineCompletionMenuHint {
+    pub fn label(&self) -> &'static str {
+        match self {
+            InlineCompletionMenuHint::Loading | InlineCompletionMenuHint::Loaded { .. } => {
+                "Edit Prediction"
+            }
+            InlineCompletionMenuHint::None => "No Prediction",
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -3828,6 +3840,26 @@ impl Editor {
     ) -> Option<Task<std::result::Result<(), anyhow::Error>>> {
         use language::ToOffset as _;
 
+        {
+            let context_menu = self.context_menu.borrow();
+            if let CodeContextMenu::Completions(menu) = context_menu.as_ref()? {
+                let entries = menu.entries.borrow();
+                let entry = entries.get(item_ix.unwrap_or(menu.selected_item));
+                match entry {
+                    Some(CompletionEntry::InlineCompletionHint(
+                        InlineCompletionMenuHint::Loading,
+                    )) => return Some(Task::ready(Ok(()))),
+                    Some(CompletionEntry::InlineCompletionHint(InlineCompletionMenuHint::None)) => {
+                        drop(entries);
+                        drop(context_menu);
+                        self.context_menu_next(&Default::default(), cx);
+                        return Some(Task::ready(Ok(())));
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         let completions_menu =
             if let CodeContextMenu::Completions(menu) = self.hide_context_menu(cx)? {
                 menu
@@ -3838,7 +3870,7 @@ impl Editor {
         let entries = completions_menu.entries.borrow();
         let mat = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
         let mat = match mat {
-            CompletionEntry::InlineCompletionHint { .. } => {
+            CompletionEntry::InlineCompletionHint(_) => {
                 self.accept_inline_completion(&AcceptInlineCompletion, cx);
                 cx.stop_propagation();
                 return Some(Task::ready(Ok(())));
@@ -4912,8 +4944,8 @@ impl Editor {
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> Option<InlineCompletionMenuHint> {
+        let provider = self.inline_completion_provider()?;
         if self.has_active_inline_completion() {
-            let provider_name = self.inline_completion_provider()?.display_name();
             let editor_snapshot = self.snapshot(cx);
 
             let text = match &self.active_inline_completion.as_ref()?.completion {
@@ -4930,12 +4962,11 @@ impl Editor {
                 }
             };
 
-            Some(InlineCompletionMenuHint {
-                provider_name,
-                text,
-            })
+            Some(InlineCompletionMenuHint::Loaded { text })
+        } else if provider.is_refreshing(cx) {
+            Some(InlineCompletionMenuHint::Loading)
         } else {
-            None
+            Some(InlineCompletionMenuHint::None)
         }
     }
 
