@@ -380,7 +380,7 @@ pub struct AssistantSettingsContentV1 {
     default_height: Option<f32>,
     /// The provider of the assistant service.
     ///
-    /// This can be "openai", "anthropic", "ollama", "zed.dev"
+    /// This can be "openai", "anthropic", "ollama", "lmstudio", "zed.dev"
     /// each with their respective default models and configurations.
     provider: Option<AssistantProviderContentV1>,
 }

@@ -12,19 +12,17 @@ workspace = true
 path = "src/assistant_settings.rs"
 
 [dependencies]
-anthropic.workspace = true
+anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
-collections.workspace = true
 feature_flags.workspace = true
 gpui.workspace = true
 language_model.workspace = true
+lmstudio = { workspace = true, features = ["schemars"] }
 log.workspace = true
-lmstudio.workspace = true
-ollama.workspace = true
-open_ai.workspace = true
+ollama = { workspace = true, features = ["schemars"] }
+open_ai = { workspace = true, features = ["schemars"] }
 schemars.workspace = true
 serde.workspace = true
-serde_json.workspace = true
 settings.workspace = true
 
 [dev-dependencies]
