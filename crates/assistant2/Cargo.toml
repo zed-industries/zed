@@ -13,9 +13,9 @@ path = "src/assistant.rs"
 doctest = false
 
 [dependencies]
-anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
 assets.workspace = true
+assistant_settings.workspace = true
 assistant_tool.workspace = true
 async-watch.workspace = true
 chrono.workspace = true
@@ -45,9 +45,6 @@ lsp.workspace = true
 markdown.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
-ollama = { workspace = true, features = ["schemars"] }
-lmstudio = { workspace = true, features = ["schemars"] }
-open_ai = { workspace = true, features = ["schemars"] }
 ordered-float.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
@@ -55,10 +52,8 @@ picker.workspace = true
 project.workspace = true
 proto.workspace = true
 rope.workspace = true
-schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde_json_lenient.workspace = true
 settings.workspace = true
 similar.workspace = true
 smol.workspace = true

@@ -2,7 +2,8 @@ use std::sync::Arc;
 
 use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
-use gpui::Pixels;
+use feature_flags::FeatureFlagAppExt;
+use gpui::{AppContext, Pixels};
 use language_model::{CloudModel, LanguageModel};
 use lmstudio::Model as LmStudioModel;
 use ollama::Model as OllamaModel;
@@ -58,6 +59,12 @@ pub struct AssistantSettings {
     pub inline_alternatives: Vec<LanguageModelSelection>,
     pub using_outdated_settings_version: bool,
     pub enable_experimental_live_diffs: bool,
+}
+
+impl AssistantSettings {
+    pub fn are_live_diffs_enabled(&self, cx: &AppContext) -> bool {
+        cx.is_staff() || self.enable_experimental_live_diffs
+    }
 }
 
 /// Assistant panel settings
@@ -373,7 +380,7 @@ pub struct AssistantSettingsContentV1 {
     default_height: Option<f32>,
     /// The provider of the assistant service.
     ///
-    /// This can be "openai", "anthropic", "ollama", "zed.dev"
+    /// This can be "openai", "anthropic", "ollama", "lmstudio", "zed.dev"
     /// each with their respective default models and configurations.
     provider: Option<AssistantProviderContentV1>,
 }

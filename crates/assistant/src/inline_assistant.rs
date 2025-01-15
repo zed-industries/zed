@@ -1,9 +1,10 @@
 use crate::{
-    assistant_settings::AssistantSettings, humanize_token_count, prompts::PromptBuilder,
-    AssistantPanel, AssistantPanelEvent, CharOperation, CycleNextInlineAssist,
-    CyclePreviousInlineAssist, LineDiff, LineOperation, RequestType, StreamingDiff,
+    humanize_token_count, prompts::PromptBuilder, AssistantPanel, AssistantPanelEvent,
+    CharOperation, CycleNextInlineAssist, CyclePreviousInlineAssist, LineDiff, LineOperation,
+    RequestType, StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
+use assistant_settings::AssistantSettings;
 use client::{telemetry::Telemetry, ErrorExt};
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{

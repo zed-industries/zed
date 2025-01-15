@@ -372,9 +372,9 @@ dependencies = [
 name = "assistant"
 version = "0.1.0"
 dependencies = [
- "anthropic",
  "anyhow",
  "assets",
+ "assistant_settings",
  "assistant_slash_command",
  "assistant_tool",
  "async-watch",
@@ -406,13 +406,11 @@ dependencies = [
  "language_model_selector",
  "language_models",
  "languages",
- "lmstudio",
  "log",
  "lsp",
  "markdown",
  "menu",
  "multi_buffer",
- "ollama",
  "open_ai",
  "ordered-float 2.10.1",
  "parking_lot",
@@ -457,9 +455,9 @@ dependencies = [
 name = "assistant2"
 version = "0.1.0"
 dependencies = [
- "anthropic",
  "anyhow",
  "assets",
+ "assistant_settings",
  "assistant_tool",
  "async-watch",
  "chrono",
@@ -485,14 +483,11 @@ dependencies = [
  "language_model",
  "language_model_selector",
  "language_models",
- "lmstudio",
  "log",
  "lsp",
  "markdown",
  "menu",
  "multi_buffer",
- "ollama",
- "open_ai",
  "ordered-float 2.10.1",
  "parking_lot",
  "paths",
@@ -501,10 +496,8 @@ dependencies = [
  "proto",
  "rand 0.8.5",
  "rope",
- "schemars",
  "serde",
  "serde_json",
- "serde_json_lenient",
  "settings",
  "similar",
  "smol",
@@ -521,6 +514,27 @@ dependencies = [
  "uuid",
  "workspace",
  "zed_actions",
+]
+
+[[package]]
+name = "assistant_settings"
+version = "0.1.0"
+dependencies = [
+ "anthropic",
+ "anyhow",
+ "feature_flags",
+ "fs",
+ "gpui",
+ "language_model",
+ "lmstudio",
+ "log",
+ "ollama",
+ "open_ai",
+ "paths",
+ "schemars",
+ "serde",
+ "serde_json_lenient",
+ "settings",
 ]
 
 [[package]]
@@ -16110,6 +16124,7 @@ dependencies = [
  "assets",
  "assistant",
  "assistant2",
+ "assistant_settings",
  "assistant_tools",
  "async-watch",
  "audio",
