@@ -825,15 +825,15 @@ fn db_status_to_proto(
             (StatusKind::Unmerged, Some(first_head), Some(second_head)) => (
                 proto::GitStatusCode::Conflict as i32,
                 Variant::Unmerged(Unmerged {
-                    first_head: first_head as i32,
-                    second_head: second_head as i32,
+                    first_head,
+                    second_head,
                 }),
             ),
             (StatusKind::Tracked, Some(index_status), Some(worktree_status)) => (
-                worktree_status as i32,
+                worktree_status,
                 Variant::Tracked(Tracked {
-                    index_status: index_status as i32,
-                    worktree_status: worktree_status as i32,
+                    index_status,
+                    worktree_status,
                 }),
             ),
             _ => {
@@ -868,19 +868,14 @@ fn proto_status_to_db(
                 Variant::Unmerged(Unmerged {
                     first_head,
                     second_head,
-                }) => (
-                    StatusKind::Unmerged,
-                    Some(first_head as i32),
-                    Some(second_head as i32),
-                ),
+                }) => (StatusKind::Unmerged, Some(first_head), Some(second_head)),
                 Variant::Tracked(Tracked {
                     index_status,
                     worktree_status,
                 }) => (
                     StatusKind::Tracked,
-                    // FIXME use the same width everywhere
-                    Some(index_status as i32),
-                    Some(worktree_status as i32),
+                    Some(index_status),
+                    Some(worktree_status),
                 ),
             },
         );
