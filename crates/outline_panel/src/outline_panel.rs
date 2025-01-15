@@ -74,6 +74,7 @@ actions!(
         ToggleActiveEditorPin,
         ToggleFocus,
         UnfoldDirectory,
+        NextDockPosition
     ]
 );
 
@@ -667,6 +668,13 @@ pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, cx| {
             workspace.toggle_panel_focus::<OutlinePanel>(cx);
+        });
+        workspace.register_action(|workspace, _: &NextDockPosition, cx| {
+            let Some(outline_panel) = workspace.panel::<OutlinePanel>(cx) else {
+                return;
+            };
+
+            outline_panel.update(cx, |panel, cx| panel.next_position(cx));
         });
     })
     .detach();

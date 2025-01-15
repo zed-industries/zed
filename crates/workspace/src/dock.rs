@@ -31,6 +31,23 @@ pub trait Panel: FocusableView + EventEmitter<PanelEvent> {
     fn position(&self, cx: &WindowContext) -> DockPosition;
     fn position_is_valid(&self, position: DockPosition) -> bool;
     fn set_position(&mut self, position: DockPosition, cx: &mut ViewContext<Self>);
+    fn next_position(&mut self, cx: &mut ViewContext<Self>) {
+        let current_position = self.position(cx);
+        let mut valid_positions: Vec<DockPosition> = vec![
+            DockPosition::Right,
+            DockPosition::Bottom,
+            DockPosition::Left,
+        ]
+        .into_iter()
+        .filter(|position| self.position_is_valid(*position))
+        .collect();
+
+        while *valid_positions.last().unwrap() != current_position {
+            valid_positions.rotate_left(1);
+        }
+
+        self.set_position(valid_positions[0], cx);
+    }
     fn size(&self, cx: &WindowContext) -> Pixels;
     fn set_size(&mut self, size: Option<Pixels>, cx: &mut ViewContext<Self>);
     fn icon(&self, cx: &WindowContext) -> Option<ui::IconName>;
