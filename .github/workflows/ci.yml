@@ -270,7 +270,7 @@ jobs:
         run: cargo build
 
   bundle-mac:
-    timeout-minutes: 60
+    timeout-minutes: 120
     name: Create a macOS bundle
     runs-on:
       - self-hosted
