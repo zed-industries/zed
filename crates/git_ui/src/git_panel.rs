@@ -88,7 +88,7 @@ pub struct GitPanel {
     selected_entry: Option<usize>,
     show_scrollbar: bool,
     rebuild_requested: Arc<AtomicBool>,
-    git_state: Model<GitState>,
+    git_state: GitState,
     commit_editor: View<Editor>,
     /// The visible entries in the list, accounting for folding & expanded state.
     ///
@@ -112,11 +112,8 @@ impl GitPanel {
         let fs = workspace.app_state().fs.clone();
         let project = workspace.project().clone();
         let language_registry = workspace.app_state().languages.clone();
-        let git_state = GitState::get_global(cx);
-        let current_commit_message = {
-            let state = git_state.read(cx);
-            state.commit_message.clone()
-        };
+        let mut git_state = GitState::new(cx);
+        let current_commit_message = git_state.commit_message.clone();
 
         let git_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
             let focus_handle = cx.focus_handle();
@@ -128,89 +125,74 @@ impl GitPanel {
             cx.subscribe(&project, move |this, project, event, cx| {
                 use project::Event;
 
+                let git_state = &mut this.git_state;
                 let first_worktree_id = project.read(cx).worktrees(cx).next().map(|worktree| {
                     let snapshot = worktree.read(cx).snapshot();
                     snapshot.id()
                 });
                 let first_repo_in_project = first_repository_in_project(&project, cx);
 
-                // TODO: Don't get another git_state here
-                // was running into a borrow issue
-                let git_state = GitState::get_global(cx);
-
                 match event {
                     project::Event::WorktreeRemoved(id) => {
-                        git_state.update(cx, |state, _| {
-                            state.all_repositories.remove(id);
-                            let Some((worktree_id, _, _)) = state.active_repository.as_ref() else {
-                                return;
-                            };
-                            if worktree_id == id {
-                                state.active_repository = first_repo_in_project;
-                                this.schedule_update();
-                            }
-                        });
+                        git_state.all_repositories.remove(id);
+                        let Some((worktree_id, _, _)) = git_state.active_repository.as_ref() else {
+                            return;
+                        };
+                        if worktree_id == id {
+                            git_state.active_repository = first_repo_in_project;
+                            this.schedule_update();
+                        }
                     }
                     project::Event::WorktreeOrderChanged => {
                         // activate the new first worktree if the first was moved
                         let Some(first_id) = first_worktree_id else {
                             return;
                         };
-                        git_state.update(cx, |state, _| {
-                            if !state
-                                .active_repository
-                                .as_ref()
-                                .is_some_and(|(id, _, _)| id == &first_id)
-                            {
-                                state.active_repository = first_repo_in_project;
-                                this.schedule_update();
-                            }
-                        });
+                        if !git_state
+                            .active_repository
+                            .as_ref()
+                            .is_some_and(|(id, _, _)| id == &first_id)
+                        {
+                            git_state.active_repository = first_repo_in_project;
+                            this.schedule_update();
+                        }
                     }
                     Event::WorktreeAdded(id) => {
-                        git_state.update(cx, |state, cx| {
-                            let Some(worktree) = project.read(cx).worktree_for_id(*id, cx) else {
-                                return;
-                            };
-                            let snapshot = worktree.read(cx).snapshot();
-                            state
-                                .all_repositories
-                                .insert(*id, snapshot.repositories().clone());
-                        });
+                        let Some(worktree) = project.read(cx).worktree_for_id(*id, cx) else {
+                            return;
+                        };
+                        let snapshot = worktree.read(cx).snapshot();
+                        git_state
+                            .all_repositories
+                            .insert(*id, snapshot.repositories().clone());
                         let Some(first_id) = first_worktree_id else {
                             return;
                         };
-                        git_state.update(cx, |state, _| {
-                            if !state
-                                .active_repository
-                                .as_ref()
-                                .is_some_and(|(id, _, _)| id == &first_id)
-                            {
-                                state.active_repository = first_repo_in_project;
-                                this.schedule_update();
-                            }
-                        });
+                        if !git_state
+                            .active_repository
+                            .as_ref()
+                            .is_some_and(|(id, _, _)| id == &first_id)
+                        {
+                            git_state.active_repository = first_repo_in_project;
+                            this.schedule_update();
+                        }
                     }
                     project::Event::WorktreeUpdatedEntries(id, _) => {
-                        git_state.update(cx, |state, _| {
-                            if state
-                                .active_repository
-                                .as_ref()
-                                .is_some_and(|(active_id, _, _)| active_id == id)
-                            {
-                                state.active_repository = first_repo_in_project;
-                                this.schedule_update();
-                            }
-                        });
+                        if git_state
+                            .active_repository
+                            .as_ref()
+                            .is_some_and(|(active_id, _, _)| active_id == id)
+                        {
+                            git_state.active_repository = first_repo_in_project;
+                            this.schedule_update();
+                        }
                     }
                     project::Event::WorktreeUpdatedGitRepositories(_) => {
                         let Some(first) = first_repo_in_project else {
                             return;
                         };
-                        git_state.update(cx, |state, _| {
-                            state.active_repository = Some(first);
-                            this.schedule_update();
-                        });
+                        git_state.active_repository = Some(first);
+                        this.schedule_update();
                     }
                     project::Event::Closed => {
                         this.reveal_in_editor = Task::ready(());
@@ -272,20 +254,18 @@ impl GitPanel {
 
             let scroll_handle = UniformListScrollHandle::new();
 
-            git_state.update(cx, |state, cx| {
-                let mut visible_worktrees = project.read(cx).visible_worktrees(cx);
-                let Some(first_worktree) = visible_worktrees.next() else {
-                    return;
-                };
-                drop(visible_worktrees);
+            let mut visible_worktrees = project.read(cx).visible_worktrees(cx);
+            let first_worktree = visible_worktrees.next();
+            drop(visible_worktrees);
+            if let Some(first_worktree) = first_worktree {
                 let snapshot = first_worktree.read(cx).snapshot();
 
                 if let Some((repo, git_repo)) =
                     first_worktree_repository(&project, snapshot.id(), cx)
                 {
-                    state.activate_repository(snapshot.id(), repo, git_repo);
+                    git_state.activate_repository(snapshot.id(), repo, git_repo);
                 }
-            });
+            };
 
             let rebuild_requested = Arc::new(AtomicBool::new(false));
             let flag = rebuild_requested.clone();
@@ -569,18 +549,16 @@ impl GitPanel {
             .and_then(|i| self.visible_entries.get(i))
     }
 
-    fn toggle_staged_for_entry(&self, entry: &GitListEntry, cx: &mut ViewContext<Self>) {
-        self.git_state
-            .clone()
-            .update(cx, |state, _| match entry.status.is_staged() {
-                Some(true) | None => state.unstage_entry(entry.repo_path.clone()),
-                Some(false) => state.stage_entry(entry.repo_path.clone()),
-            });
+    fn toggle_staged_for_entry(&mut self, entry: &GitListEntry, cx: &mut ViewContext<Self>) {
+        match entry.status.is_staged() {
+            Some(true) | None => self.git_state.unstage_entry(entry.repo_path.clone()),
+            Some(false) => self.git_state.stage_entry(entry.repo_path.clone()),
+        }
         cx.notify();
     }
 
     fn toggle_staged_for_selected(&mut self, _: &ToggleStaged, cx: &mut ViewContext<Self>) {
-        if let Some(selected_entry) = self.get_selected_entry() {
+        if let Some(selected_entry) = self.get_selected_entry().cloned() {
             self.toggle_staged_for_entry(&selected_entry, cx);
         }
     }
@@ -595,11 +573,14 @@ impl GitPanel {
     }
 
     fn open_entry(&self, entry: &GitListEntry, cx: &mut ViewContext<Self>) {
-        let Some((worktree_id, path)) = GitState::get_global(cx).update(cx, |state, _| {
-            state.active_repository.as_ref().and_then(|(id, repo, _)| {
-                Some((*id, repo.work_directory.unrelativize(&entry.repo_path)?))
-            })
-        }) else {
+        let Some((worktree_id, path)) =
+            self.git_state
+                .active_repository
+                .as_ref()
+                .and_then(|(id, repo, _)| {
+                    Some((*id, repo.work_directory.unrelativize(&entry.repo_path)?))
+                })
+        else {
             return;
         };
         let path = (worktree_id, path).into();
@@ -612,7 +593,7 @@ impl GitPanel {
         cx.emit(Event::OpenedEntry { path });
     }
 
-    fn stage_all(&mut self, _: &StageAll, cx: &mut ViewContext<Self>) {
+    fn stage_all(&mut self, _: &StageAll, _cx: &mut ViewContext<Self>) {
         let to_stage = self
             .visible_entries
             .iter_mut()
@@ -623,19 +604,16 @@ impl GitPanel {
             })
             .collect();
         self.all_staged = Some(true);
-        self.git_state
-            .update(cx, |state, _| state.stage_entries(to_stage));
+        self.git_state.stage_entries(to_stage);
     }
 
-    fn unstage_all(&mut self, _: &UnstageAll, cx: &mut ViewContext<Self>) {
+    fn unstage_all(&mut self, _: &UnstageAll, _cx: &mut ViewContext<Self>) {
         // This should only be called when all entries are staged.
         for entry in &mut self.visible_entries {
             entry.is_staged = Some(false);
         }
         self.all_staged = Some(false);
-        self.git_state.update(cx, |state, _| {
-            state.unstage_all();
-        });
+        self.git_state.unstage_all();
     }
 
     fn discard_all(&mut self, _: &RevertAll, _cx: &mut ViewContext<Self>) {
@@ -644,8 +622,7 @@ impl GitPanel {
     }
 
     fn clear_message(&mut self, cx: &mut ViewContext<Self>) {
-        self.git_state
-            .update(cx, |state, _cx| state.clear_commit_message());
+        self.git_state.clear_commit_message();
         self.commit_editor
             .update(cx, |editor, cx| editor.set_text("", cx));
     }
@@ -713,11 +690,9 @@ impl GitPanel {
 
     #[track_caller]
     fn update_visible_entries(&mut self, cx: &mut ViewContext<Self>) {
-        let git_state = self.git_state.read(cx);
-
         self.visible_entries.clear();
 
-        let Some((_, repo, _)) = git_state.active_repository().as_ref() else {
+        let Some((_, repo, _)) = self.git_state.active_repository().as_ref() else {
             // Just clear entries if no repository is active.
             cx.notify();
             return;
@@ -790,9 +765,7 @@ impl GitPanel {
         if let language::BufferEvent::Reparsed | language::BufferEvent::Edited = event {
             let commit_message = self.commit_editor.update(cx, |editor, cx| editor.text(cx));
 
-            self.git_state.update(cx, |state, _cx| {
-                state.commit_message = Some(commit_message.into());
-            });
+            self.git_state.commit_message = Some(commit_message.into());
 
             cx.notify();
         }
@@ -1096,7 +1069,6 @@ impl GitPanel {
         entry_details: GitListEntry,
         cx: &ViewContext<Self>,
     ) -> impl IntoElement {
-        let state = self.git_state.clone();
         let repo_path = entry_details.repo_path.clone();
         let selected = self.selected_entry == Some(ix);
         let status_style = GitPanelSettings::get_global(cx).status_style;
@@ -1122,7 +1094,7 @@ impl GitPanel {
         let entry_id = ElementId::Name(format!("entry_{}", entry_details.display_name).into());
         let checkbox_id =
             ElementId::Name(format!("checkbox_{}", entry_details.display_name).into());
-        let view_mode = state.read(cx).list_view_mode.clone();
+        let view_mode = self.git_state.list_view_mode;
         let handle = cx.view().downgrade();
 
         let end_slot = h_flex()
@@ -1185,15 +1157,13 @@ impl GitPanel {
                                 ToggleState::Selected => Some(true),
                                 ToggleState::Unselected => Some(false),
                                 ToggleState::Indeterminate => None,
-                            }
-                        });
-                        state.update(cx, {
+                            };
                             let repo_path = repo_path.clone();
-                            move |state, _| match toggle {
+                            match toggle {
                                 ToggleState::Selected | ToggleState::Indeterminate => {
-                                    state.stage_entry(repo_path);
+                                    this.git_state.stage_entry(repo_path);
                                 }
-                                ToggleState::Unselected => state.unstage_entry(repo_path),
+                                ToggleState::Unselected => this.git_state.unstage_entry(repo_path),
                             }
                         });
                     }
