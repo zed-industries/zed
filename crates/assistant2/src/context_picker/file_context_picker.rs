@@ -2,6 +2,7 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use editor::Editor;
 use file_icons::FileIcons;
 use fuzzy::PathMatch;
 use gpui::{
@@ -24,6 +25,7 @@ impl FileContextPicker {
     pub fn new(
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
+        editor: WeakView<Editor>,
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
         cx: &mut ViewContext<Self>,
@@ -31,6 +33,7 @@ impl FileContextPicker {
         let delegate = FileContextPickerDelegate::new(
             context_picker,
             workspace,
+            editor,
             context_store,
             confirm_behavior,
         );
@@ -55,6 +58,7 @@ impl Render for FileContextPicker {
 pub struct FileContextPickerDelegate {
     context_picker: WeakView<ContextPicker>,
     workspace: WeakView<Workspace>,
+    editor: WeakView<Editor>,
     context_store: WeakModel<ContextStore>,
     confirm_behavior: ConfirmBehavior,
     matches: Vec<PathMatch>,
@@ -65,12 +69,14 @@ impl FileContextPickerDelegate {
     pub fn new(
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
+        editor: WeakView<Editor>,
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
     ) -> Self {
         Self {
             context_picker,
             workspace,
+            editor,
             context_store,
             confirm_behavior,
             matches: Vec::new(),
@@ -200,6 +206,16 @@ impl PickerDelegate for FileContextPickerDelegate {
             worktree_id: WorktreeId::from_usize(mat.worktree_id),
             path: mat.path.clone(),
         };
+
+        let Some(editor) = self.editor.upgrade() else {
+            return;
+        };
+
+        editor.update(cx, |editor, cx| {
+            editor.transact(cx, |editor, cx| {
+                editor.insert(&(*project_path.path).display().to_string(), cx);
+            });
+        });
 
         let Some(task) = self
             .context_store

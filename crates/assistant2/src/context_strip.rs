@@ -24,6 +24,7 @@ use crate::{
 };
 
 pub struct ContextStrip {
+    editor: WeakView<Editor>,
     context_store: Model<ContextStore>,
     pub context_picker: View<ContextPicker>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
@@ -39,6 +40,7 @@ impl ContextStrip {
     pub fn new(
         context_store: Model<ContextStore>,
         workspace: WeakView<Workspace>,
+        editor: WeakView<Editor>,
         thread_store: Option<WeakModel<ThreadStore>>,
         context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
         suggest_context_kind: SuggestContextKind,
@@ -49,6 +51,7 @@ impl ContextStrip {
                 workspace.clone(),
                 thread_store.clone(),
                 context_store.downgrade(),
+                editor.clone(),
                 ConfirmBehavior::KeepOpen,
                 cx,
             )
@@ -63,6 +66,7 @@ impl ContextStrip {
         ];
 
         Self {
+            editor,
             context_store: context_store.clone(),
             context_picker,
             context_picker_menu_handle,

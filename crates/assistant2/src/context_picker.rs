@@ -43,6 +43,7 @@ enum ContextPickerMode {
 pub(super) struct ContextPicker {
     mode: ContextPickerMode,
     workspace: WeakView<Workspace>,
+    editor: WeakView<Editor>,
     context_store: WeakModel<ContextStore>,
     thread_store: Option<WeakModel<ThreadStore>>,
     confirm_behavior: ConfirmBehavior,
@@ -53,6 +54,7 @@ impl ContextPicker {
         workspace: WeakView<Workspace>,
         thread_store: Option<WeakModel<ThreadStore>>,
         context_store: WeakModel<ContextStore>,
+        editor: WeakView<Editor>,
         confirm_behavior: ConfirmBehavior,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -61,6 +63,7 @@ impl ContextPicker {
             workspace,
             context_store,
             thread_store,
+            editor,
             confirm_behavior,
         }
     }
@@ -131,6 +134,7 @@ impl ContextPicker {
                     FileContextPicker::new(
                         context_picker.clone(),
                         self.workspace.clone(),
+                        self.editor.clone(),
                         self.context_store.clone(),
                         self.confirm_behavior,
                         cx,

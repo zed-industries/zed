@@ -64,6 +64,7 @@ impl MessageEditor {
                 workspace.clone(),
                 Some(thread_store.clone()),
                 context_store.downgrade(),
+                editor.downgrade(),
                 ConfirmBehavior::Close,
                 cx,
             )
@@ -73,6 +74,7 @@ impl MessageEditor {
             ContextStrip::new(
                 context_store.clone(),
                 workspace.clone(),
+                editor.downgrade(),
                 Some(thread_store.clone()),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::File,
