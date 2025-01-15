@@ -1586,11 +1586,16 @@ impl ReferenceMultibuffer {
                 {
                     continue;
                 }
-                if buffer_range.is_empty() {
+
+                let hunk_offset = hunk.buffer_range.start.to_offset(buffer);
+                let hunk_end = hunk.buffer_range.end.to_offset(buffer);
+                if hunk_offset >= buffer_range.end
+                    || hunk_end < buffer_range.start
+                    || buffer_range.is_empty()
+                {
                     continue;
                 }
 
-                let hunk_offset = hunk.buffer_range.start.to_offset(buffer);
                 if hunk_offset >= start {
                     // Add the buffer text before the hunk
                     expected_text.extend(buffer.text_for_range(start..hunk_offset));

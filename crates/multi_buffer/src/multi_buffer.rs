@@ -2652,6 +2652,7 @@ impl MultiBuffer {
                             if should_expand_hunk {
                                 if !hunk.diff_base_byte_range.is_empty()
                                     && hunk_buffer_range.start >= edit_buffer_start
+                                    && hunk_buffer_range.start < edit_buffer_end
                                 {
                                     let mut text_cursor =
                                         base_text.as_rope().cursor(hunk.diff_base_byte_range.start);
@@ -4469,8 +4470,8 @@ impl MultiBufferSnapshot {
         self.anchor_at(position, Bias::Right)
     }
 
-    // ] buffer content ] [ deleted item ] [\n] [ buffer content ]
-    //                  1 2              3 4  5 6
+    // buffer content ] [ deleted item ] [\n] [ buffer content
+    //                1 2              3 4  5 6
     // 1: bias left (diff base = none)
     // 2: bias left (diff base = some)
     // 3: bias left (diff base = some)
