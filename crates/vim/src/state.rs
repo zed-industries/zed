@@ -65,33 +65,16 @@ pub enum Operator {
     Delete,
     Yank,
     Replace,
-    Object {
-        around: bool,
-    },
-    FindForward {
-        before: bool,
-    },
-    FindBackward {
-        after: bool,
-    },
-    Sneak {
-        first_char: Option<char>,
-    },
-    SneakBackward {
-        first_char: Option<char>,
-    },
-    AddSurrounds {
-        #[serde(skip)]
-        target: Option<SurroundsType>,
-    },
-    ChangeSurrounds {
-        target: Option<Object>,
-    },
+    Object { around: bool },
+    FindForward { before: bool },
+    FindBackward { after: bool },
+    Sneak { first_char: Option<char> },
+    SneakBackward { first_char: Option<char> },
+    AddSurrounds { target: Option<SurroundsType> },
+    ChangeSurrounds { target: Option<Object> },
     DeleteSurrounds,
     Mark,
-    Jump {
-        line: bool,
-    },
+    Jump { line: bool },
     Indent,
     Outdent,
     AutoIndent,
@@ -99,12 +82,8 @@ pub enum Operator {
     Lowercase,
     Uppercase,
     OppositeCase,
-    Digraph {
-        first_char: Option<char>,
-    },
-    Literal {
-        prefix: Option<String>,
-    },
+    Digraph { first_char: Option<char> },
+    Literal { prefix: Option<String> },
     Register,
     RecordRegister,
     ReplayRegister,
