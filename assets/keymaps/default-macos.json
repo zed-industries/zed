@@ -37,6 +37,7 @@
       "cmd-h": "zed::Hide",
       "alt-cmd-h": "zed::HideOthers",
       "cmd-m": "zed::Minimize",
+      "fn-f": "zed::ToggleFullScreen",
       "ctrl-cmd-f": "zed::ToggleFullScreen"
     }
   },
