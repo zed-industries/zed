@@ -4286,6 +4286,11 @@ impl MultiBufferSnapshot {
                     ));
                 }
             } else {
+                diff_transforms_cursor.seek_forward(
+                    &ExcerptDimension(excerpt_start_position.clone()),
+                    Bias::Left,
+                    &(),
+                );
                 let position = self.resolve_summary_for_anchor(
                     &None,
                     excerpt_start_position,

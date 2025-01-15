@@ -1980,7 +1980,9 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
             assert!(resolved_offset <= snapshot.len());
             assert_eq!(
                 snapshot.summary_for_anchor::<usize>(anchor),
-                resolved_offset
+                resolved_offset,
+                "anchor: {:?}",
+                anchor
             );
         }
 
