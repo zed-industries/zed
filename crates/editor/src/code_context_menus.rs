@@ -602,7 +602,7 @@ impl CompletionsMenu {
                                             .with_highlights(&text_style, None)
                                             .with_animation(
                                                 "pulsating-label",
-                                                Animation::new(Duration::from_secs(2))
+                                                Animation::new(Duration::from_secs(1))
                                                     .repeat()
                                                     .with_easing(pulsating_between(0.4, 0.8)),
                                                 move |text, delta| {
