@@ -1486,7 +1486,7 @@ impl BlockSnapshot {
             }
             BlockId::ExcerptBoundary(next_excerpt_id) => {
                 if let Some(next_excerpt_id) = next_excerpt_id {
-                    let excerpt_range = buffer.range_for_excerpt::<Point>(next_excerpt_id)?;
+                    let excerpt_range = buffer.range_for_excerpt(next_excerpt_id)?;
                     self.wrap_snapshot
                         .make_wrap_point(excerpt_range.start, Bias::Left)
                 } else {
@@ -1494,10 +1494,9 @@ impl BlockSnapshot {
                         .make_wrap_point(buffer.max_point(), Bias::Left)
                 }
             }
-            BlockId::FoldedBuffer(excerpt_id) => self.wrap_snapshot.make_wrap_point(
-                buffer.range_for_excerpt::<Point>(excerpt_id)?.start,
-                Bias::Left,
-            ),
+            BlockId::FoldedBuffer(excerpt_id) => self
+                .wrap_snapshot
+                .make_wrap_point(buffer.range_for_excerpt(excerpt_id)?.start, Bias::Left),
         };
         let wrap_row = WrapRow(wrap_point.row());
 

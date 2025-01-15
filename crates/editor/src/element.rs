@@ -6334,7 +6334,7 @@ impl Element for EditorElement {
                             for selection in all_selections {
                                 for buffer_id in snapshot
                                     .buffer_snapshot
-                                    .buffer_ids_in_selected_rows(selection)
+                                    .buffer_ids_for_range(selection.range())
                                 {
                                     if selected_buffer_ids.last() != Some(&buffer_id) {
                                         selected_buffer_ids.push(buffer_id);

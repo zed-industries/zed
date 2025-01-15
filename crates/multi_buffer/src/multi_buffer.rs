@@ -3251,6 +3251,23 @@ impl MultiBufferSnapshot {
         })
     }
 
+    pub fn buffer_ids_for_range<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> impl Iterator<Item = BufferId> + 'a {
+        let range = range.start.to_offset(self)..range.end.to_offset(self);
+        let mut cursor = self.cursor::<usize>();
+        cursor.seek(&range.start);
+        std::iter::from_fn(move || {
+            let region = cursor.region()?;
+            if region.range.start >= range.end {
+                return None;
+            }
+            cursor.next_excerpt();
+            Some(region.excerpt.buffer_id)
+        })
+    }
+
     pub fn ranges_to_buffer_ranges<'a, T: ToOffset>(
         &'a self,
         ranges: impl Iterator<Item = Range<T>>,
@@ -3789,35 +3806,35 @@ impl MultiBufferSnapshot {
         let mut result = BTreeMap::new();
 
         let mut rows_for_excerpt = Vec::new();
-        let mut cursor = self.excerpts.cursor::<Point>(&());
+        let mut cursor = self.cursor::<Point>();
         let mut rows = rows.into_iter().peekable();
         let mut prev_row = u32::MAX;
         let mut prev_language_indent_size = IndentSize::default();
 
         while let Some(row) = rows.next() {
-            cursor.seek(&Point::new(row, 0), Bias::Right, &());
-            let excerpt = match cursor.item() {
-                Some(excerpt) => excerpt,
-                _ => continue,
+            cursor.seek(&Point::new(row, 0));
+            let Some(region) = cursor.region() else {
+                continue;
             };
 
             // Retrieve the language and indent size once for each disjoint region being indented.
             let single_indent_size = if row.saturating_sub(1) == prev_row {
                 prev_language_indent_size
             } else {
-                excerpt
+                region
                     .buffer
                     .language_indent_size_at(Point::new(row, 0), cx)
             };
             prev_language_indent_size = single_indent_size;
             prev_row = row;
 
-            let start_buffer_row = excerpt.range.context.start.to_point(&excerpt.buffer).row;
-            let start_multibuffer_row = cursor.start().row;
+            let start_buffer_row = region.buffer_range.start.row;
+            let start_multibuffer_row = region.range.start.row;
+            let end_multibuffer_row = region.range.end.row;
 
             rows_for_excerpt.push(row);
             while let Some(next_row) = rows.peek().copied() {
-                if cursor.end(&()).row > next_row {
+                if end_multibuffer_row > next_row {
                     rows_for_excerpt.push(next_row);
                     rows.next();
                 } else {
@@ -3828,7 +3845,7 @@ impl MultiBufferSnapshot {
             let buffer_rows = rows_for_excerpt
                 .drain(..)
                 .map(|row| start_buffer_row + row - start_multibuffer_row);
-            let buffer_indents = excerpt
+            let buffer_indents = region
                 .buffer
                 .suggested_indents(buffer_rows, single_indent_size);
             let multibuffer_indents = buffer_indents.into_iter().map(|(row, indent)| {
@@ -4551,24 +4568,6 @@ impl MultiBufferSnapshot {
         }
     }
 
-    pub fn buffer_ids_in_selected_rows(
-        &self,
-        selection: Selection<Point>,
-    ) -> impl Iterator<Item = BufferId> + '_ {
-        let mut cursor = self.excerpts.cursor::<Point>(&());
-        cursor.seek(&Point::new(selection.start.row, 0), Bias::Right, &());
-        cursor.prev(&());
-
-        iter::from_fn(move || {
-            cursor.next(&());
-            if cursor.start().row <= selection.end.row {
-                cursor.item().map(|item| item.buffer_id)
-            } else {
-                None
-            }
-        })
-    }
-
     pub fn excerpts(
         &self,
     ) -> impl Iterator<Item = (ExcerptId, &BufferSnapshot, ExcerptRange<text::Anchor>)> {
@@ -5156,15 +5155,23 @@ impl MultiBufferSnapshot {
         Some(&self.excerpt(excerpt_id)?.buffer)
     }
 
-    pub fn range_for_excerpt<'a, T: sum_tree::Dimension<'a, ExcerptSummary>>(
-        &'a self,
-        excerpt_id: ExcerptId,
-    ) -> Option<Range<T>> {
-        let mut cursor = self.excerpts.cursor::<(Option<&Locator>, T)>(&());
+    pub fn range_for_excerpt<'a>(&'a self, excerpt_id: ExcerptId) -> Option<Range<Point>> {
+        let mut cursor = self
+            .excerpts
+            .cursor::<(Option<&Locator>, ExcerptDimension<Point>)>(&());
         let locator = self.excerpt_locator_for_id(excerpt_id);
         if cursor.seek(&Some(locator), Bias::Left, &()) {
             let start = cursor.start().1.clone();
             let end = cursor.end(&()).1;
+            let mut diff_transforms = self
+                .diff_transforms
+                .cursor::<(ExcerptDimension<Point>, OutputDimension<Point>)>(&());
+            diff_transforms.seek(&start, Bias::Left, &());
+            let overshoot = start.0 - diff_transforms.start().0 .0;
+            let start = diff_transforms.start().1 .0 + overshoot;
+            diff_transforms.seek(&end, Bias::Right, &());
+            let overshoot = end.0 - diff_transforms.start().0 .0;
+            let end = diff_transforms.start().1 .0 + overshoot;
             Some(start..end)
         } else {
             None
@@ -6100,16 +6107,6 @@ impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for OffsetUtf16 {
 
     fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
         *self += summary.text.len_utf16;
-    }
-}
-
-impl<'a> sum_tree::Dimension<'a, ExcerptSummary> for Point {
-    fn zero(_cx: &()) -> Self {
-        Default::default()
-    }
-
-    fn add_summary(&mut self, summary: &'a ExcerptSummary, _: &()) {
-        *self += summary.text.lines;
     }
 }
 
