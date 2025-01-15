@@ -1243,29 +1243,6 @@ fn surrounding_markers(
 
     let mut closing = closing?;
 
-    if around && !search_across_lines {
-        let mut found = false;
-
-        for (ch, range) in movement::chars_after(map, closing.end) {
-            if ch.is_whitespace() && ch != '\n' {
-                found = true;
-                closing.end = range.end;
-            } else {
-                break;
-            }
-        }
-
-        if !found {
-            for (ch, range) in movement::chars_before(map, opening.start) {
-                if ch.is_whitespace() && ch != '\n' {
-                    opening.start = range.start
-                } else {
-                    break;
-                }
-            }
-        }
-    }
-
     if !around && search_across_lines {
         if let Some((ch, range)) = movement::chars_after(map, opening.end).next() {
             if ch == '\n' {
@@ -1918,7 +1895,7 @@ mod test {
             (
                 "c a q",
                 "This is a 'qˇuote' example.",
-                "This is a ˇexample.",
+                "This is a ˇ example.",
                 Mode::Insert,
             ),
             (
@@ -1930,7 +1907,7 @@ mod test {
             (
                 "d a q",
                 "This is a 'qˇuote' example.",
-                "This is a ˇexample.",
+                "This is a ˇ example.",
                 Mode::Normal,
             ),
             // Double quotes
@@ -1943,7 +1920,7 @@ mod test {
             (
                 "c a q",
                 "This is a \"qˇuote\" example.",
-                "This is a ˇexample.",
+                "This is a ˇ example.",
                 Mode::Insert,
             ),
             (
@@ -1955,7 +1932,7 @@ mod test {
             (
                 "d a q",
                 "This is a \"qˇuote\" example.",
-                "This is a ˇexample.",
+                "This is a ˇ example.",
                 Mode::Normal,
             ),
             // Back quotes
@@ -1968,7 +1945,7 @@ mod test {
             (
                 "c a q",
                 "This is a `qˇuote` example.",
-                "This is a ˇexample.",
+                "This is a ˇ example.",
                 Mode::Insert,
             ),
             (
@@ -1980,7 +1957,7 @@ mod test {
             (
                 "d a q",
                 "This is a `qˇuote` example.",
-                "This is a ˇexample.",
+                "This is a ˇ example.",
                 Mode::Normal,
             ),
         ];
