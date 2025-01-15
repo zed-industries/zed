@@ -164,7 +164,8 @@ fn assign_inline_completion_provider(
                 editor.set_inline_completion_provider(Some(provider), cx);
             }
         }
-        language::language_settings::InlineCompletionProvider::Zeta => {
+
+        language::language_settings::InlineCompletionProvider::Zed => {
             if cx.has_flag::<PredictEditsFeatureFlag>()
                 || (cfg!(debug_assertions) && client.status().borrow().is_connected())
             {
