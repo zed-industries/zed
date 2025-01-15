@@ -2025,7 +2025,6 @@ dependencies = [
  "audio",
  "client",
  "collections",
- "feature_flags",
  "fs",
  "futures 0.3.31",
  "gpui",
