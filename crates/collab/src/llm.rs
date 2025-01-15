@@ -440,10 +440,6 @@ async fn predict_edits(
     _country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
     Json(params): Json<PredictEditsParams>,
 ) -> Result<impl IntoResponse> {
-    if !claims.is_staff {
-        return Err(anyhow!("not found"))?;
-    }
-
     let api_url = state
         .config
         .prediction_api_url
