@@ -122,7 +122,7 @@ impl ThemePreview {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> impl IntoElement {
-        let bg = layer.bg(window, cx);
+        let bg = layer.bg(cx);
 
         let label_with_contrast = |label: &str, fg: Hsla| {
             let contrast = calculate_contrast_ratio(fg, bg);
@@ -288,8 +288,8 @@ impl ThemePreview {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> impl IntoElement {
-        let bg = layer.bg(window, cx);
-        let all_colors = all_theme_colors(window, cx);
+        let bg = layer.bg(cx);
+        let all_colors = all_theme_colors(cx);
 
         v_flex()
             .gap_1()
@@ -340,7 +340,7 @@ impl ThemePreview {
     ) -> impl IntoElement {
         v_flex()
             .p_4()
-            .bg(layer.bg(window, cx))
+            .bg(layer.bg(cx))
             .text_color(cx.theme().colors().text)
             .gap_2()
             .child(Headline::new(layer.clone().to_string()).size(HeadlineSize::Medium))

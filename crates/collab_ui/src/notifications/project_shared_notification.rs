@@ -28,8 +28,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             for screen in cx.displays() {
                 let options = notification_window_options(screen, window_size, cx);
                 let Some(window) = cx
-                    .open_window(options, |window, cx| {
-                        cx.new_model(|cx| {
+                    .open_window(options, |_, cx| {
+                        cx.new_model(|_| {
                             ProjectSharedNotification::new(
                                 owner.clone(),
                                 *project_id,
@@ -55,7 +55,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             if let Some(windows) = notification_windows.remove(project_id) {
                 for window in windows {
                     window
-                        .update(cx, |_, window, cx| {
+                        .update(cx, |_, window, _| {
                             window.remove_window();
                         })
                         .ok();
@@ -67,7 +67,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
             for (_, windows) in notification_windows.drain() {
                 for window in windows {
                     window
-                        .update(cx, |_, window, cx| {
+                        .update(cx, |_, window, _| {
                             window.remove_window();
                         })
                         .ok();
@@ -101,14 +101,14 @@ impl ProjectSharedNotification {
         }
     }
 
-    fn join(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn join(&mut self, cx: &mut ModelContext<Self>) {
         if let Some(app_state) = self.app_state.upgrade() {
             workspace::join_in_room_project(self.project_id, self.owner.id, app_state, cx)
                 .detach_and_log_err(cx);
         }
     }
 
-    fn dismiss(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn dismiss(&mut self, cx: &mut ModelContext<Self>) {
         if let Some(active_room) =
             ActiveCall::global(cx).read_with(cx, |call, _| call.room().cloned())
         {
@@ -128,14 +128,12 @@ impl Render for ProjectSharedNotification {
         div().size_full().font(ui_font).child(
             CollabNotification::new(
                 self.owner.avatar_uri.clone(),
-                Button::new("open", "Open").on_click(cx.listener(
-                    move |this, _event, window, cx| {
-                        this.join(window, cx);
-                    },
-                )),
+                Button::new("open", "Open").on_click(cx.listener(move |this, _event, _, cx| {
+                    this.join(cx);
+                })),
                 Button::new("dismiss", "Dismiss").on_click(cx.listener(
-                    move |this, _event, window, cx| {
-                        this.dismiss(window, cx);
+                    move |this, _event, _, cx| {
+                        this.dismiss(cx);
                     },
                 )),
             )

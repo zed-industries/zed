@@ -33,7 +33,7 @@
 
 use crate::{
     util::FluentBuilder, AppContext, ArenaBox, AvailableSpace, Bounds, DispatchNodeId, ElementId,
-    FocusHandle, LayoutId, Model, ModelContext, Pixels, Point, Size, Style, Window, ELEMENT_ARENA,
+    FocusHandle, LayoutId, ModelContext, Pixels, Point, Size, Style, Window, ELEMENT_ARENA,
 };
 use derive_more::{Deref, DerefMut};
 pub(crate) use smallvec::SmallVec;
@@ -122,7 +122,7 @@ pub trait Render: 'static + Sized {
 }
 
 impl Render for Empty {
-    fn render(&mut self, window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         Empty
     }
 }

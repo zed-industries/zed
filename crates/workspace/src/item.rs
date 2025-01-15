@@ -564,11 +564,7 @@ impl<T: Item> ItemHandle for Model<T> {
         self.read(cx).tab_tooltip_text(cx)
     }
 
-    fn telemetry_event_text(
-        &self,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Option<&'static str> {
+    fn telemetry_event_text(&self, _: &mut Window, cx: &mut AppContext) -> Option<&'static str> {
         self.read(cx).telemetry_event_text()
     }
 
@@ -1124,7 +1120,7 @@ impl<T: FollowableItem> FollowableItemHandle for Model<T> {
     fn remote_id(
         &self,
         client: &Arc<Client>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut AppContext,
     ) -> Option<ViewId> {
         self.read(cx).remote_id().or_else(|| {
@@ -1221,7 +1217,7 @@ pub mod test {
     use gpui::{
         AnyElement, AppContext, Context as _, EntityId, EventEmitter, Focusable,
         InteractiveElement, IntoElement, Model, ModelContext, Render, SharedString, Task,
-        VisualContext, WeakModel, Window,
+        WeakModel, Window,
     };
     use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
     use std::{any::Any, cell::Cell, path::Path};
@@ -1299,7 +1295,7 @@ pub mod test {
     }
 
     impl TestItem {
-        pub fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+        pub fn new(_window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
             Self {
                 state: String::new(),
                 label: String::new(),
@@ -1373,7 +1369,7 @@ pub mod test {
             self.state = state;
         }
 
-        fn push_to_nav_history(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+        fn push_to_nav_history(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) {
             if let Some(history) = &mut self.nav_history {
                 history.push(Some(Box::new(self.state.clone())), cx);
             }
@@ -1381,7 +1377,11 @@ pub mod test {
     }
 
     impl Render for TestItem {
-        fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            cx: &mut ModelContext<Self>,
+        ) -> impl IntoElement {
             gpui::div().track_focus(&self.focus_handle(cx))
         }
     }
@@ -1467,7 +1467,7 @@ pub mod test {
         fn clone_on_split(
             &self,
             _workspace_id: Option<WorkspaceId>,
-            window: &mut Window,
+            _: &mut Window,
             cx: &mut ModelContext<Self>,
         ) -> Option<Model<Self>>
         where

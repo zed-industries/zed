@@ -214,9 +214,9 @@ impl Switch {
 }
 
 impl RenderOnce for Switch {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let is_on = self.toggle_state == ToggleState::Selected;
-        let adjust_ratio = if is_light(window, cx) { 1.5 } else { 1.0 };
+        let adjust_ratio = if is_light(cx) { 1.5 } else { 1.0 };
         let base_color = cx.theme().colors().text;
 
         let bg_color = if is_on {
@@ -395,13 +395,11 @@ impl ComponentPreview for Switch {
                 vec![
                     single_example(
                         "Off",
-                        Switch::new("switch_off", ToggleState::Unselected)
-                            .on_click(|_, window, _cx| {}),
+                        Switch::new("switch_off", ToggleState::Unselected).on_click(|_, _, _cx| {}),
                     ),
                     single_example(
                         "On",
-                        Switch::new("switch_on", ToggleState::Selected)
-                            .on_click(|_, window, _cx| {}),
+                        Switch::new("switch_on", ToggleState::Selected).on_click(|_, _, _cx| {}),
                     ),
                 ],
             ),

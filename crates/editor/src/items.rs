@@ -181,7 +181,7 @@ impl FollowableItem for Editor {
         cx.notify();
     }
 
-    fn to_state_proto(&self, window: &Window, cx: &AppContext) -> Option<proto::view::Variant> {
+    fn to_state_proto(&self, _: &Window, cx: &AppContext) -> Option<proto::view::Variant> {
         let buffer = self.buffer.read(cx);
         if buffer
             .as_singleton()
@@ -251,7 +251,7 @@ impl FollowableItem for Editor {
         &self,
         event: &EditorEvent,
         update: &mut Option<proto::update_view::Variant>,
-        window: &Window,
+        _: &Window,
         cx: &AppContext,
     ) -> bool {
         let update =
@@ -330,7 +330,7 @@ impl FollowableItem for Editor {
         true
     }
 
-    fn dedup(&self, existing: &Self, window: &Window, cx: &AppContext) -> Option<Dedup> {
+    fn dedup(&self, existing: &Self, _: &Window, cx: &AppContext) -> Option<Dedup> {
         let self_singleton = self.buffer.read(cx).as_singleton()?;
         let other_singleton = existing.buffer.read(cx).as_singleton()?;
         if self_singleton == other_singleton {
@@ -614,7 +614,7 @@ impl Item for Editor {
         Some(path.to_string_lossy().to_string().into())
     }
 
-    fn tab_icon(&self, window: &Window, cx: &AppContext) -> Option<Icon> {
+    fn tab_icon(&self, _: &Window, cx: &AppContext) -> Option<Icon> {
         ItemSettings::get_global(cx)
             .file_icons
             .then(|| {
@@ -628,12 +628,7 @@ impl Item for Editor {
             .map(Icon::from_path)
     }
 
-    fn tab_content(
-        &self,
-        params: TabContentParams,
-        window: &Window,
-        cx: &AppContext,
-    ) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _: &Window, cx: &AppContext) -> AnyElement {
         let label_color = if ItemSettings::get_global(cx).git_status {
             self.buffer()
                 .read(cx)
@@ -721,24 +716,19 @@ impl Item for Editor {
         self.nav_history = Some(history);
     }
 
-    fn discarded(
-        &self,
-        _project: Model<Project>,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn discarded(&self, _project: Model<Project>, _: &mut Window, cx: &mut ModelContext<Self>) {
         for buffer in self.buffer().clone().read(cx).all_buffers() {
             buffer.update(cx, |buffer, cx| buffer.discarded(cx))
         }
     }
 
-    fn deactivated(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn deactivated(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) {
         let selection = self.selections.newest_anchor();
         self.push_to_nav_history(selection.head(), None, cx);
     }
 
-    fn workspace_deactivated(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.hide_hovered_link(window, cx);
+    fn workspace_deactivated(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) {
+        self.hide_hovered_link(cx);
     }
 
     fn is_dirty(&self, cx: &AppContext) -> bool {
@@ -830,7 +820,7 @@ impl Item for Editor {
         &mut self,
         project: Model<Project>,
         path: ProjectPath,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let buffer = self
@@ -860,7 +850,7 @@ impl Item for Editor {
             project.update(cx, |project, cx| project.reload_buffers(buffers, true, cx));
         cx.spawn_in(window, |this, mut cx| async move {
             let transaction = reload_buffers.log_err().await;
-            this.update_in(&mut cx, |editor, window, cx| {
+            this.update(&mut cx, |editor, cx| {
                 editor.request_autoscroll(Autoscroll::fit(), cx)
             })?;
             buffer
@@ -1268,9 +1258,9 @@ impl SearchableItem for Editor {
             })
     }
 
-    fn clear_matches(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn clear_matches(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) {
         if self
-            .clear_background_highlights::<BufferSearchHighlights>(window, cx)
+            .clear_background_highlights::<BufferSearchHighlights>(cx)
             .is_some()
         {
             cx.emit(SearchEvent::MatchesInvalidated);
@@ -1280,7 +1270,7 @@ impl SearchableItem for Editor {
     fn update_matches(
         &mut self,
         matches: &[Range<Anchor>],
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let existing_range = self
@@ -1305,12 +1295,12 @@ impl SearchableItem for Editor {
     fn toggle_filtered_search_ranges(
         &mut self,
         enabled: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if self.has_filtered_search_ranges() {
             self.previous_search_ranges = self
-                .clear_background_highlights::<SearchWithinRange>(window, cx)
+                .clear_background_highlights::<SearchWithinRange>(cx)
                 .map(|(_, ranges)| ranges)
         }
 
@@ -1320,9 +1310,9 @@ impl SearchableItem for Editor {
 
         let ranges = self.selections.disjoint_anchor_ranges();
         if ranges.iter().any(|range| range.start != range.end) {
-            self.set_search_within_ranges(&ranges, window, cx);
+            self.set_search_within_ranges(&ranges, cx);
         } else if let Some(previous_search_ranges) = self.previous_search_ranges.take() {
-            self.set_search_within_ranges(&previous_search_ranges, window, cx)
+            self.set_search_within_ranges(&previous_search_ranges, cx)
         }
     }
 
@@ -1443,7 +1433,7 @@ impl SearchableItem for Editor {
         current_index: usize,
         direction: Direction,
         count: usize,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> usize {
         let buffer = self.buffer().read(cx).snapshot(cx);
@@ -1490,7 +1480,7 @@ impl SearchableItem for Editor {
     fn find_matches(
         &mut self,
         query: Arc<project::search::SearchQuery>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Task<Vec<Range<Anchor>>> {
         let buffer = self.buffer().read(cx).snapshot(cx);
@@ -1564,7 +1554,7 @@ impl SearchableItem for Editor {
     fn active_match_index(
         &mut self,
         matches: &[Range<Anchor>],
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<usize> {
         active_match_index(
@@ -1576,9 +1566,9 @@ impl SearchableItem for Editor {
 
     fn search_bar_visibility_changed(
         &mut self,
-        _visible: bool,
-        _window: &mut Window,
-        _cx: &mut ModelContext<Self>,
+        _: bool,
+        _: &mut Window,
+        _: &mut ModelContext<Self>,
     ) {
         self.expect_bounds_change = self.last_bounds;
     }

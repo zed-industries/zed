@@ -12,8 +12,7 @@ use command_palette_hooks::{
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     Action, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Global, Model,
-    ModelContext, ParentElement, Render, Styled, Task, UpdateGlobal, VisualContext, WeakModel,
-    Window,
+    ModelContext, ParentElement, Render, Styled, Task, UpdateGlobal, WeakModel, Window,
 };
 use picker::{Picker, PickerDelegate};
 
@@ -193,7 +192,6 @@ impl CommandPaletteDelegate {
         query: String,
         mut commands: Vec<Command>,
         mut matches: Vec<StringMatch>,
-        window: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) {
         self.updating_matches.take();
@@ -332,10 +330,10 @@ impl PickerDelegate for CommandPaletteDelegate {
             };
 
             picker
-                .update_in(&mut cx, |picker, window, cx| {
+                .update(&mut cx, |picker, cx| {
                     picker
                         .delegate
-                        .matches_updated(query, commands, matches, window, cx)
+                        .matches_updated(query, commands, matches, cx)
                 })
                 .log_err();
         })
@@ -345,7 +343,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         &mut self,
         query: String,
         duration: Duration,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> bool {
         let Some((task, rx)) = self.updating_matches.take() else {
@@ -357,7 +355,7 @@ impl PickerDelegate for CommandPaletteDelegate {
             .block_with_timeout(duration, rx.clone().recv())
         {
             Ok(Some((commands, matches))) => {
-                self.matches_updated(query, commands, matches, window, cx);
+                self.matches_updated(query, commands, matches, cx);
                 true
             }
             _ => {
@@ -367,7 +365,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         }
     }
 
-    fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         self.command_palette
             .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
@@ -402,7 +400,7 @@ impl PickerDelegate for CommandPaletteDelegate {
         ix: usize,
         selected: bool,
         window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
+        _: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let r#match = self.matches.get(ix)?;
         let command = self.commands.get(r#match.candidate_id)?;
@@ -424,7 +422,6 @@ impl PickerDelegate for CommandPaletteDelegate {
                             &*command.action,
                             &self.previous_focus_handle,
                             window,
-                            cx,
                         )),
                 ),
         )
@@ -526,7 +523,7 @@ mod tests {
 
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
-            editor.update(cx, |editor, cx| editor.focus(window, cx))
+            editor.update(cx, |editor, cx| window.focus(&editor.focus_handle(cx)))
         });
 
         cx.simulate_keystrokes("cmd-shift-p");
@@ -597,7 +594,7 @@ mod tests {
 
         workspace.update_in(cx, |workspace, window, cx| {
             workspace.add_item_to_active_pane(Box::new(editor.clone()), None, true, window, cx);
-            editor.update(cx, |editor, cx| editor.focus(window, cx))
+            editor.update(cx, |editor, cx| window.focus(&editor.focus_handle(cx)))
         });
 
         // Test normalize (trimming whitespace and double colons)

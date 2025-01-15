@@ -188,7 +188,7 @@ pub struct ScrollManager {
 }
 
 impl ScrollManager {
-    pub fn new(window: &mut Window, cx: &mut AppContext) -> Self {
+    pub fn new(cx: &mut AppContext) -> Self {
         ScrollManager {
             vertical_scroll_margin: EditorSettings::get_global(cx).vertical_scroll_margin,
             anchor: ScrollAnchor::new(),
@@ -375,7 +375,6 @@ impl ScrollManager {
         &mut self,
         axis: Axis,
         dragging: bool,
-        window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) {
         self.dragging_scrollbar = self.dragging_scrollbar.apply_along(axis, |_| dragging);
@@ -405,12 +404,7 @@ impl Editor {
         self.scroll_manager.vertical_scroll_margin as usize
     }
 
-    pub fn set_vertical_scroll_margin(
-        &mut self,
-        margin_rows: usize,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn set_vertical_scroll_margin(&mut self, margin_rows: usize, cx: &mut ModelContext<Self>) {
         self.scroll_manager.vertical_scroll_margin = margin_rows as f32;
         cx.notify();
     }
@@ -435,7 +429,7 @@ impl Editor {
         if opened_first_time {
             cx.spawn_in(window, |editor, mut cx| async move {
                 editor
-                    .update_in(&mut cx, |editor, window, cx| {
+                    .update(&mut cx, |editor, cx| {
                         editor.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx)
                     })
                     .ok()
@@ -498,7 +492,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        hide_hover(self, window, cx);
+        hide_hover(self, cx);
         let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
 
         self.scroll_manager.set_scroll_position(
@@ -525,7 +519,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        hide_hover(self, window, cx);
+        hide_hover(self, cx);
         let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
         let top_row = scroll_anchor
             .anchor
@@ -548,7 +542,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        hide_hover(self, window, cx);
+        hide_hover(self, cx);
         let workspace_id = self.workspace.as_ref().and_then(|workspace| workspace.1);
         let snapshot = &self.buffer().read(cx).snapshot(cx);
         if !scroll_anchor.anchor.is_valid(snapshot) {

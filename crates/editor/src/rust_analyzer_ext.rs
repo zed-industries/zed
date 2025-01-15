@@ -21,18 +21,12 @@ fn is_rust_language(language: &Language) -> bool {
 pub fn apply_related_actions(editor: &Model<Editor>, window: &mut Window, cx: &mut AppContext) {
     if editor
         .update(cx, |e, cx| {
-            find_specific_language_server_in_selection(
-                e,
-                window,
-                cx,
-                is_rust_language,
-                RUST_ANALYZER_NAME,
-            )
+            find_specific_language_server_in_selection(e, cx, is_rust_language, RUST_ANALYZER_NAME)
         })
         .is_some()
     {
-        register_action(editor, window, cx, expand_macro_recursively);
-        register_action(editor, window, cx, open_docs);
+        register_action(editor, window, expand_macro_recursively);
+        register_action(editor, window, open_docs);
     }
 }
 
@@ -55,7 +49,6 @@ pub fn expand_macro_recursively(
     let Some((trigger_anchor, rust_language, server_to_query, buffer)) =
         find_specific_language_server_in_selection(
             editor,
-            window,
             cx,
             is_rust_language,
             RUST_ANALYZER_NAME,
@@ -126,7 +119,6 @@ pub fn open_docs(
     let Some((trigger_anchor, _rust_language, server_to_query, buffer)) =
         find_specific_language_server_in_selection(
             editor,
-            window,
             cx,
             is_rust_language,
             RUST_ANALYZER_NAME,

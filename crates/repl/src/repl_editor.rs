@@ -26,7 +26,7 @@ pub fn assign_kernelspec(
         return Ok(());
     }
 
-    let worktree_id = crate::repl_editor::worktree_id_for_editor(weak_editor.clone(), window, cx)
+    let worktree_id = crate::repl_editor::worktree_id_for_editor(weak_editor.clone(), cx)
         .context("editor is not in a worktree")?;
 
     store.update(cx, |store, cx| {
@@ -38,7 +38,7 @@ pub fn assign_kernelspec(
     if let Some(session) = store.read(cx).get_session(weak_editor.entity_id()).cloned() {
         // Drop previous session, start new one
         session.update(cx, |session, cx| {
-            session.clear_outputs(window, cx);
+            session.clear_outputs(cx);
             session.shutdown(window, cx);
             cx.notify();
         });
@@ -51,9 +51,9 @@ pub fn assign_kernelspec(
         .update(cx, |_editor, cx| {
             cx.notify();
 
-            cx.subscribe_in(&session, window, {
+            cx.subscribe(&session, {
                 let store = store.clone();
-                move |_this, _session, event, window, cx| match event {
+                move |_this, _session, event, cx| match event {
                     SessionEvent::Shutdown(shutdown_event) => {
                         store.update(cx, |store, _cx| {
                             store.remove_session(shutdown_event.entity_id());
@@ -122,9 +122,9 @@ pub fn run(
             editor.update(cx, |_editor, cx| {
                 cx.notify();
 
-                cx.subscribe_in(&session, window, {
+                cx.subscribe(&session, {
                     let store = store.clone();
-                    move |_this, _session, event, window, cx| match event {
+                    move |_this, _session, event, cx| match event {
                         SessionEvent::Shutdown(shutdown_event) => {
                             store.update(cx, |store, _cx| {
                                 store.remove_session(shutdown_event.entity_id());
@@ -180,7 +180,6 @@ pub enum SessionSupport {
 
 pub fn worktree_id_for_editor(
     editor: WeakModel<Editor>,
-    window: &mut Window,
     cx: &mut AppContext,
 ) -> Option<WorktreeId> {
     editor.upgrade().and_then(|editor| {
@@ -195,11 +194,7 @@ pub fn worktree_id_for_editor(
     })
 }
 
-pub fn session(
-    editor: WeakModel<Editor>,
-    window: &mut Window,
-    cx: &mut AppContext,
-) -> SessionSupport {
+pub fn session(editor: WeakModel<Editor>, cx: &mut AppContext) -> SessionSupport {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
 
@@ -207,11 +202,11 @@ pub fn session(
         return SessionSupport::ActiveSession(session);
     };
 
-    let Some(language) = get_language(editor.clone(), window, cx) else {
+    let Some(language) = get_language(editor.clone(), cx) else {
         return SessionSupport::Unsupported;
     };
 
-    let worktree_id = worktree_id_for_editor(editor.clone(), window, cx);
+    let worktree_id = worktree_id_for_editor(editor.clone(), cx);
 
     let Some(worktree_id) = worktree_id else {
         return SessionSupport::Unsupported;
@@ -233,19 +228,19 @@ pub fn session(
     }
 }
 
-pub fn clear_outputs(editor: WeakModel<Editor>, window: &mut Window, cx: &mut AppContext) {
+pub fn clear_outputs(editor: WeakModel<Editor>, cx: &mut AppContext) {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
     let Some(session) = store.read(cx).get_session(entity_id).cloned() else {
         return;
     };
     session.update(cx, |session, cx| {
-        session.clear_outputs(window, cx);
+        session.clear_outputs(cx);
         cx.notify();
     });
 }
 
-pub fn interrupt(editor: WeakModel<Editor>, window: &mut Window, cx: &mut AppContext) {
+pub fn interrupt(editor: WeakModel<Editor>, cx: &mut AppContext) {
     let store = ReplStore::global(cx);
     let entity_id = editor.entity_id();
     let Some(session) = store.read(cx).get_session(entity_id).cloned() else {
@@ -253,7 +248,7 @@ pub fn interrupt(editor: WeakModel<Editor>, window: &mut Window, cx: &mut AppCon
     };
 
     session.update(cx, |session, cx| {
-        session.interrupt(window, cx);
+        session.interrupt(cx);
         cx.notify();
     });
 }
@@ -296,12 +291,12 @@ pub fn setup_editor_session_actions(editor: &mut Editor, editor_handle: WeakMode
     editor
         .register_action({
             let editor_handle = editor_handle.clone();
-            move |_: &ClearOutputs, window, cx| {
+            move |_: &ClearOutputs, _, cx| {
                 if !JupyterSettings::enabled(cx) {
                     return;
                 }
 
-                crate::clear_outputs(editor_handle.clone(), window, cx);
+                crate::clear_outputs(editor_handle.clone(), cx);
             }
         })
         .detach();
@@ -309,12 +304,12 @@ pub fn setup_editor_session_actions(editor: &mut Editor, editor_handle: WeakMode
     editor
         .register_action({
             let editor_handle = editor_handle.clone();
-            move |_: &Interrupt, window, cx| {
+            move |_: &Interrupt, _, cx| {
                 if !JupyterSettings::enabled(cx) {
                     return;
                 }
 
-                crate::interrupt(editor_handle.clone(), window, cx);
+                crate::interrupt(editor_handle.clone(), cx);
             }
         })
         .detach();
@@ -468,11 +463,7 @@ fn language_supported(language: &Arc<Language>) -> bool {
     }
 }
 
-fn get_language(
-    editor: WeakModel<Editor>,
-    window: &mut Window,
-    cx: &mut AppContext,
-) -> Option<Arc<Language>> {
+fn get_language(editor: WeakModel<Editor>, cx: &mut AppContext) -> Option<Arc<Language>> {
     editor
         .update(cx, |editor, cx| {
             let selection = editor.selections.newest::<usize>(cx);

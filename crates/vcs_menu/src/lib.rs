@@ -4,7 +4,7 @@ use git::repository::Branch;
 use gpui::{
     rems, AnyElement, AppContext, AsyncAppContext, DismissEvent, EventEmitter, FocusHandle,
     Focusable, InteractiveElement, IntoElement, Model, ModelContext, ParentElement, Render,
-    SharedString, Styled, Subscription, Task, VisualContext, WeakModel, Window,
+    SharedString, Styled, Subscription, Task, WeakModel, Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::ProjectPath;
@@ -58,8 +58,7 @@ impl BranchList {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let picker = cx.new_model(|cx| Picker::uniform_list(delegate, window, cx));
-        let _subscription =
-            cx.subscribe_in(&picker, window, |_, _, _, window, cx| cx.emit(DismissEvent));
+        let _subscription = cx.subscribe(&picker, |_, _, _, cx| cx.emit(DismissEvent));
         Self {
             picker,
             rem_width,
@@ -77,7 +76,7 @@ impl Focusable for BranchList {
 }
 
 impl Render for BranchList {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         v_flex()
             .w(rems(self.rem_width))
             .child(self.picker.clone())
@@ -285,7 +284,7 @@ impl PickerDelegate for BranchListDelegate {
         .detach_and_prompt_err("Failed to change branch", window, cx, |_, _, _| None);
     }
 
-    fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         cx.emit(DismissEvent);
     }
 

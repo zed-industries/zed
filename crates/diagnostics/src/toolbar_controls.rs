@@ -9,7 +9,7 @@ pub struct ToolbarControls {
 }
 
 impl Render for ToolbarControls {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let mut include_warnings = false;
         let mut has_stale_excerpts = false;
         let mut is_updating = false;
@@ -47,7 +47,7 @@ impl Render for ToolbarControls {
                         .icon_color(Color::Info)
                         .shape(IconButtonShape::Square)
                         .disabled(is_updating)
-                        .tooltip(move |window, cx| Tooltip::text("Update excerpts", window, cx))
+                        .tooltip(Tooltip::text("Update excerpts"))
                         .on_click(cx.listener(|this, _, window, cx| {
                             if let Some(diagnostics) = this.diagnostics() {
                                 diagnostics.update(cx, |diagnostics, cx| {
@@ -61,7 +61,7 @@ impl Render for ToolbarControls {
                 IconButton::new("toggle-warnings", IconName::Warning)
                     .icon_color(warning_color)
                     .shape(IconButtonShape::Square)
-                    .tooltip(move |window, cx| Tooltip::text(tooltip, window, cx))
+                    .tooltip(Tooltip::text(tooltip))
                     .on_click(cx.listener(|this, _, window, cx| {
                         if let Some(editor) = this.diagnostics() {
                             editor.update(cx, |editor, cx| {

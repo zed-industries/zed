@@ -82,7 +82,7 @@ impl Element for Surface {
         _: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
         #[cfg_attr(not(target_os = "macos"), allow(unused_variables))] window: &mut Window,
-        cx: &mut AppContext,
+        _: &mut AppContext,
     ) {
         match &self.source {
             #[cfg(target_os = "macos")]

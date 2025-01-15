@@ -98,7 +98,7 @@ impl SlashCommand for ExtensionSlashCommand {
         arguments: &[String],
         _cancel: Arc<AtomicBool>,
         _workspace: Option<WeakModel<Workspace>>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let command = self.command.clone();
@@ -130,7 +130,7 @@ impl SlashCommand for ExtensionSlashCommand {
         _context_buffer: BufferSnapshot,
         _workspace: WeakModel<Workspace>,
         delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         let command = self.command.clone();

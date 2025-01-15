@@ -67,14 +67,14 @@ impl SlashCommand for TerminalSlashCommand {
         _context_buffer: BufferSnapshot,
         workspace: WeakModel<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
         };
 
-        let Some(active_terminal) = resolve_active_terminal(&workspace, window, cx) else {
+        let Some(active_terminal) = resolve_active_terminal(&workspace, cx) else {
             return Task::ready(Err(anyhow::anyhow!("no active terminal")));
         };
 
@@ -110,7 +110,6 @@ impl SlashCommand for TerminalSlashCommand {
 
 fn resolve_active_terminal(
     workspace: &Model<Workspace>,
-    window: &mut Window,
     cx: &mut AppContext,
 ) -> Option<Model<TerminalView>> {
     if let Some(terminal_view) = workspace

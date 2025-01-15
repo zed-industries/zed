@@ -21,7 +21,7 @@ pub struct DiagnosticIndicator {
 }
 
 impl Render for DiagnosticIndicator {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let diagnostic_indicator = match (self.summary.error_count, self.summary.warning_count) {
             (0, 0) => h_flex().map(|this| {
                 this.child(
@@ -113,30 +113,26 @@ impl Render for DiagnosticIndicator {
 }
 
 impl DiagnosticIndicator {
-    pub fn new(workspace: &Workspace, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(workspace: &Workspace, cx: &mut ModelContext<Self>) -> Self {
         let project = workspace.project();
-        cx.subscribe_in(
-            project,
-            window,
-            |this, project, event, window, cx| match event {
-                project::Event::DiskBasedDiagnosticsStarted { .. } => {
-                    cx.notify();
-                }
+        cx.subscribe(project, |this, project, event, cx| match event {
+            project::Event::DiskBasedDiagnosticsStarted { .. } => {
+                cx.notify();
+            }
 
-                project::Event::DiskBasedDiagnosticsFinished { .. }
-                | project::Event::LanguageServerRemoved(_) => {
-                    this.summary = project.read(cx).diagnostic_summary(false, cx);
-                    cx.notify();
-                }
+            project::Event::DiskBasedDiagnosticsFinished { .. }
+            | project::Event::LanguageServerRemoved(_) => {
+                this.summary = project.read(cx).diagnostic_summary(false, cx);
+                cx.notify();
+            }
 
-                project::Event::DiagnosticsUpdated { .. } => {
-                    this.summary = project.read(cx).diagnostic_summary(false, cx);
-                    cx.notify();
-                }
+            project::Event::DiagnosticsUpdated { .. } => {
+                this.summary = project.read(cx).diagnostic_summary(false, cx);
+                cx.notify();
+            }
 
-                _ => {}
-            },
-        )
+            _ => {}
+        })
         .detach();
 
         Self {

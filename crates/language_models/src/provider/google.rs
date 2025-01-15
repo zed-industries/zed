@@ -333,7 +333,7 @@ struct ConfigurationView {
 
 impl ConfigurationView {
     fn new(state: gpui::Model<State>, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
-        cx.observe_in(&state, window, |_, _, window, cx| {
+        cx.observe(&state, |_, _, cx| {
             cx.notify();
         })
         .detach();
@@ -404,11 +404,7 @@ impl ConfigurationView {
         cx.notify();
     }
 
-    fn render_api_key_editor(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> impl IntoElement {
+    fn render_api_key_editor(&self, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: cx.theme().colors().text,
@@ -436,13 +432,13 @@ impl ConfigurationView {
         )
     }
 
-    fn should_render_editor(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> bool {
+    fn should_render_editor(&self, cx: &mut ModelContext<Self>) -> bool {
         !self.state.read(cx).is_authenticated()
     }
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         const GOOGLE_CONSOLE_URL: &str = "https://aistudio.google.com/app/apikey";
         const INSTRUCTIONS: [&str; 3] = [
             "To use Zed's assistant with Google AI, you need to add an API key. Follow these steps:",
@@ -454,7 +450,7 @@ impl Render for ConfigurationView {
 
         if self.load_credentials_task.is_some() {
             div().child(Label::new("Loading credentials...")).into_any()
-        } else if self.should_render_editor(window, cx) {
+        } else if self.should_render_editor(cx) {
             v_flex()
                 .size_full()
                 .on_action(cx.listener(Self::save_api_key))
@@ -465,7 +461,7 @@ impl Render for ConfigurationView {
                         .icon(IconName::ExternalLink)
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
-                        .on_click(move |_, window, cx| cx.open_url(GOOGLE_CONSOLE_URL))
+                        .on_click(move |_, _, cx| cx.open_url(GOOGLE_CONSOLE_URL))
                     )
                 )
                 .child(Label::new(INSTRUCTIONS[2]))
@@ -477,7 +473,7 @@ impl Render for ConfigurationView {
                         .py_1()
                         .bg(cx.theme().colors().editor_background)
                         .rounded_md()
-                        .child(self.render_api_key_editor(window, cx)),
+                        .child(self.render_api_key_editor(cx)),
                 )
                 .child(
                     Label::new(
@@ -507,7 +503,7 @@ impl Render for ConfigurationView {
                         .icon_position(IconPosition::Start)
                         .disabled(env_var_set)
                         .when(env_var_set, |this| {
-                            this.tooltip(|window, cx| Tooltip::text(format!("To reset your API key, unset the {GOOGLE_AI_API_KEY_VAR} environment variable."), window, cx))
+                            this.tooltip(Tooltip::text(format!("To reset your API key, unset the {GOOGLE_AI_API_KEY_VAR} environment variable.")))
                         })
                         .on_click(cx.listener(|this, _, window, cx| this.reset_api_key(window, cx))),
                 )

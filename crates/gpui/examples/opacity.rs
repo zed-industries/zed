@@ -55,7 +55,7 @@ impl HelloWorld {
             loop {
                 Timer::after(Duration::from_secs_f32(0.05)).await;
                 let mut stop = false;
-                let _ = cx.update(|window, cx| {
+                let _ = cx.update(|_, cx| {
                     view.update(cx, |view, cx| {
                         if view.opacity >= 1.0 {
                             stop = true;
@@ -76,7 +76,7 @@ impl HelloWorld {
 }
 
 impl Render for HelloWorld {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_row()

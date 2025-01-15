@@ -26,7 +26,7 @@ impl ActiveBufferLanguage {
     fn update_language(
         &mut self,
         editor: Model<Editor>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.active_language = Some(None);
@@ -43,7 +43,7 @@ impl ActiveBufferLanguage {
 }
 
 impl Render for ActiveBufferLanguage {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         div().when_some(self.active_language.as_ref(), |el, active_language| {
             let active_language_text = if let Some(active_language_text) = active_language {
                 active_language_text.to_string()

@@ -13,20 +13,20 @@ actions!(
     [LineUp, LineDown, ScrollUp, ScrollDown, PageUp, PageDown]
 );
 
-pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
-    Vim::action(editor, window, cx, |vim, _: &LineDown, window, cx| {
+pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+    Vim::action(editor, cx, |vim, _: &LineDown, window, cx| {
         vim.scroll(false, window, cx, |c| ScrollAmount::Line(c.unwrap_or(1.)))
     });
-    Vim::action(editor, window, cx, |vim, _: &LineUp, window, cx| {
+    Vim::action(editor, cx, |vim, _: &LineUp, window, cx| {
         vim.scroll(false, window, cx, |c| ScrollAmount::Line(-c.unwrap_or(1.)))
     });
-    Vim::action(editor, window, cx, |vim, _: &PageDown, window, cx| {
+    Vim::action(editor, cx, |vim, _: &PageDown, window, cx| {
         vim.scroll(false, window, cx, |c| ScrollAmount::Page(c.unwrap_or(1.)))
     });
-    Vim::action(editor, window, cx, |vim, _: &PageUp, window, cx| {
+    Vim::action(editor, cx, |vim, _: &PageUp, window, cx| {
         vim.scroll(false, window, cx, |c| ScrollAmount::Page(-c.unwrap_or(1.)))
     });
-    Vim::action(editor, window, cx, |vim, _: &ScrollDown, window, cx| {
+    Vim::action(editor, cx, |vim, _: &ScrollDown, window, cx| {
         vim.scroll(true, window, cx, |c| {
             if let Some(c) = c {
                 ScrollAmount::Line(c)
@@ -35,7 +35,7 @@ pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<
             }
         })
     });
-    Vim::action(editor, window, cx, |vim, _: &ScrollUp, window, cx| {
+    Vim::action(editor, cx, |vim, _: &ScrollUp, window, cx| {
         vim.scroll(true, window, cx, |c| {
             if let Some(c) = c {
                 ScrollAmount::Line(-c)
@@ -185,7 +185,7 @@ mod test {
     async fn test_scroll(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
-        let (line_height, visible_line_count) = cx.editor(|editor, window, cx| {
+        let (line_height, visible_line_count) = cx.editor(|editor, window, _cx| {
             (
                 editor
                     .style()
@@ -198,7 +198,7 @@ mod test {
 
         let window = cx.window;
         let margin = cx
-            .update_window(window, |_, window, cx| {
+            .update_window(window, |_, window, _cx| {
                 window.viewport_size().height - line_height * visible_line_count
             })
             .unwrap();

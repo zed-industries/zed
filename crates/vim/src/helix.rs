@@ -1,15 +1,15 @@
 use editor::{movement, scroll::Autoscroll, DisplayPoint, Editor};
 use gpui::{actions, Action};
-use gpui::{AppContext, ModelContext, Window};
+use gpui::{ModelContext, Window};
 use language::{CharClassifier, CharKind};
 
 use crate::{motion::Motion, state::Mode, Vim};
 
 actions!(vim, [HelixNormalAfter, HelixDelete]);
 
-pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
-    Vim::action(editor, window, cx, Vim::helix_normal_after);
-    Vim::action(editor, window, cx, Vim::helix_delete);
+pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+    Vim::action(editor, cx, Vim::helix_normal_after);
+    Vim::action(editor, cx, Vim::helix_delete);
 }
 
 impl Vim {
@@ -24,7 +24,7 @@ impl Vim {
             self.sync_vim_settings(window, cx);
             return;
         }
-        self.stop_recording_immediately(action.boxed_clone(), window, cx);
+        self.stop_recording_immediately(action.boxed_clone(), cx);
         self.switch_mode(Mode::HelixNormal, false, window, cx);
         return;
     }
@@ -259,7 +259,7 @@ impl Vim {
                 });
             });
 
-            vim.copy_selections_content(editor, false, window, cx);
+            vim.copy_selections_content(editor, false, cx);
             editor.insert("", window, cx);
         });
     }

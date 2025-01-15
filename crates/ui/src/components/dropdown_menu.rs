@@ -150,7 +150,7 @@ impl RenderOnce for DropdownMenuTrigger {
                     }),
             )
             .when_some(self.on_click.filter(|_| !disabled), |el, on_click| {
-                el.on_mouse_down(MouseButton::Left, |_, window, cx| window.prevent_default())
+                el.on_mouse_down(MouseButton::Left, |_, window, _| window.prevent_default())
                     .on_click(move |event, window, cx| {
                         cx.stop_propagation();
                         (on_click)(event, window, cx)

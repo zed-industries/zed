@@ -9,7 +9,7 @@ use gpui::{
     actions, div, img, list, px, AnyElement, AppContext, AsyncWindowContext, CursorStyle,
     DismissEvent, Element, EventEmitter, FocusHandle, Focusable, InteractiveElement, IntoElement,
     ListAlignment, ListScrollEvent, ListState, Model, ModelContext, ParentElement, Render,
-    StatefulInteractiveElement, Styled, Task, VisualContext, WeakModel, Window,
+    StatefulInteractiveElement, Styled, Task, WeakModel, Window,
 };
 use notifications::{NotificationEntry, NotificationEvent, NotificationStore};
 use project::Fs;
@@ -120,7 +120,7 @@ impl NotificationPanel {
                         .unwrap_or_else(|| div().into_any())
                 });
             notification_list.set_scroll_handler(cx.listener(
-                |this, event: &ListScrollEvent, window, cx| {
+                |this, event: &ListScrollEvent, _, cx| {
                     if event.count.saturating_sub(event.visible_range.end) < LOADING_THRESHOLD {
                         if let Some(task) = this
                             .notification_store
@@ -154,9 +154,7 @@ impl NotificationPanel {
 
             let mut old_dock_position = this.position(window, cx);
             this.subscriptions.extend([
-                cx.observe_in(&this.notification_store, window, |_, _, window, cx| {
-                    cx.notify()
-                }),
+                cx.observe(&this.notification_store, |_, _, cx| cx.notify()),
                 cx.subscribe_in(
                     &this.notification_store,
                     window,
@@ -208,7 +206,7 @@ impl NotificationPanel {
         })
     }
 
-    fn serialize(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn serialize(&mut self, cx: &mut ModelContext<Self>) {
         let width = self.width;
         self.pending_serialization = cx.background_executor().spawn(
             async move {
@@ -305,8 +303,8 @@ impl NotificationPanel {
                                                 .rounded_md()
                                         })
                                         .child(Label::new(relative_timestamp).color(Color::Muted))
-                                        .tooltip(move |window, cx| {
-                                            Tooltip::text(absolute_timestamp.clone(), window, cx)
+                                        .tooltip(move |_, cx| {
+                                            Tooltip::simple(absolute_timestamp.clone(), cx)
                                         }),
                                 )
                                 .children(if let Some(is_accepted) = response {
@@ -325,12 +323,11 @@ impl NotificationPanel {
                                             .child(Button::new("decline", "Decline").on_click({
                                                 let notification = notification.clone();
                                                 let view = cx.model().clone();
-                                                move |_, window, cx| {
+                                                move |_, _, cx| {
                                                     view.update(cx, |this, cx| {
                                                         this.respond_to_notification(
                                                             notification.clone(),
                                                             false,
-                                                            window,
                                                             cx,
                                                         )
                                                     });
@@ -339,12 +336,11 @@ impl NotificationPanel {
                                             .child(Button::new("accept", "Accept").on_click({
                                                 let notification = notification.clone();
                                                 let view = cx.model().clone();
-                                                move |_, window, cx| {
+                                                move |_, _, cx| {
                                                     view.update(cx, |this, cx| {
                                                         this.respond_to_notification(
                                                             notification.clone(),
                                                             true,
-                                                            window,
                                                             cx,
                                                         )
                                                     });
@@ -481,12 +477,7 @@ impl NotificationPanel {
                         if let Some(panel) = workspace.focus_panel::<ChatPanel>(window, cx) {
                             panel.update(cx, |panel, cx| {
                                 panel
-                                    .select_channel(
-                                        ChannelId(channel_id),
-                                        Some(message_id),
-                                        window,
-                                        cx,
-                                    )
+                                    .select_channel(ChannelId(channel_id), Some(message_id), cx)
                                     .detach_and_log_err(cx);
                             });
                         }
@@ -499,7 +490,6 @@ impl NotificationPanel {
     fn is_showing_notification(
         &self,
         notification: &Notification,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> bool {
         if !self.active {
@@ -532,7 +522,7 @@ impl NotificationPanel {
     ) {
         match event {
             NotificationEvent::NewNotification { entry } => {
-                if !self.is_showing_notification(&entry.notification, window, cx) {
+                if !self.is_showing_notification(&entry.notification, cx) {
                     self.unseen_notifications.push(entry.clone());
                 }
                 self.add_toast(entry, window, cx);
@@ -540,7 +530,7 @@ impl NotificationPanel {
             NotificationEvent::NotificationRemoved { entry }
             | NotificationEvent::NotificationRead { entry } => {
                 self.unseen_notifications.retain(|n| n.id != entry.id);
-                self.remove_toast(entry.id, window, cx);
+                self.remove_toast(entry.id, cx);
             }
             NotificationEvent::NotificationsUpdated {
                 old_range,
@@ -558,7 +548,7 @@ impl NotificationPanel {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        if self.is_showing_notification(&entry.notification, window, cx) {
+        if self.is_showing_notification(&entry.notification, cx) {
             return;
         }
 
@@ -572,10 +562,8 @@ impl NotificationPanel {
             notification_id,
             cx.spawn_in(window, |this, mut cx| async move {
                 cx.background_executor().timer(TOAST_DURATION).await;
-                this.update_in(&mut cx, |this, window, cx| {
-                    this.remove_toast(notification_id, window, cx)
-                })
-                .ok();
+                this.update(&mut cx, |this, cx| this.remove_toast(notification_id, cx))
+                    .ok();
             }),
         ));
 
@@ -597,12 +585,7 @@ impl NotificationPanel {
             .ok();
     }
 
-    fn remove_toast(
-        &mut self,
-        notification_id: u64,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn remove_toast(&mut self, notification_id: u64, cx: &mut ModelContext<Self>) {
         if let Some((current_id, _)) = &self.current_notification_toast {
             if *current_id == notification_id {
                 self.current_notification_toast.take();
@@ -620,7 +603,7 @@ impl NotificationPanel {
         &mut self,
         notification: Notification,
         response: bool,
-        window: &mut Window,
+
         cx: &mut ModelContext<Self>,
     ) {
         self.notification_store.update(cx, |store, cx| {
@@ -630,7 +613,7 @@ impl NotificationPanel {
 }
 
 impl Render for NotificationPanel {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .child(
@@ -639,7 +622,7 @@ impl Render for NotificationPanel {
                     .px_2()
                     .py_1()
                     // Match the height of the tab bar so they line up.
-                    .h(Tab::container_height(window, cx))
+                    .h(Tab::container_height(cx))
                     .border_b_1()
                     .border_color(cx.theme().colors().border)
                     .child(Label::new("Notifications"))
@@ -712,7 +695,7 @@ impl Panel for NotificationPanel {
         "NotificationPanel"
     }
 
-    fn position(&self, window: &Window, cx: &AppContext) -> DockPosition {
+    fn position(&self, _: &Window, cx: &AppContext) -> DockPosition {
         NotificationPanelSettings::get_global(cx).dock
     }
 
@@ -723,7 +706,7 @@ impl Panel for NotificationPanel {
     fn set_position(
         &mut self,
         position: DockPosition,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         settings::update_settings_file::<NotificationPanelSettings>(
@@ -733,18 +716,18 @@ impl Panel for NotificationPanel {
         );
     }
 
-    fn size(&self, window: &Window, cx: &AppContext) -> Pixels {
+    fn size(&self, _: &Window, cx: &AppContext) -> Pixels {
         self.width
             .unwrap_or_else(|| NotificationPanelSettings::get_global(cx).default_width)
     }
 
-    fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut ModelContext<Self>) {
         self.width = size;
-        self.serialize(window, cx);
+        self.serialize(cx);
         cx.notify();
     }
 
-    fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_active(&mut self, active: bool, _: &mut Window, cx: &mut ModelContext<Self>) {
         self.active = active;
 
         if self.active {
@@ -757,7 +740,7 @@ impl Panel for NotificationPanel {
         }
     }
 
-    fn icon(&self, window: &Window, cx: &AppContext) -> Option<IconName> {
+    fn icon(&self, _: &Window, cx: &AppContext) -> Option<IconName> {
         let show_button = NotificationPanelSettings::get_global(cx).button;
         if !show_button {
             return None;
@@ -825,19 +808,19 @@ impl NotificationToast {
 }
 
 impl Render for NotificationToast {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let user = self.actor.clone();
 
         h_flex()
             .id("notification_panel_toast")
-            .elevation_3(window, cx)
+            .elevation_3(cx)
             .p_2()
             .gap_2()
             .children(user.map(|user| Avatar::new(user.avatar_uri.clone())))
             .child(Label::new(self.text.clone()))
             .child(
                 IconButton::new("close", IconName::Close)
-                    .on_click(cx.listener(|_, _, window, cx| cx.emit(DismissEvent))),
+                    .on_click(cx.listener(|_, _, _, cx| cx.emit(DismissEvent))),
             )
             .on_click(cx.listener(|this, _, window, cx| {
                 this.focus_notification_panel(window, cx);

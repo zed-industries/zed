@@ -231,7 +231,7 @@ fn assert_editor_active_edit_completion(
     cx: &mut EditorTestContext,
     assert: impl FnOnce(MultiBufferSnapshot, &Vec<(Range<Anchor>, String)>),
 ) {
-    cx.editor(|editor, window, cx| {
+    cx.editor(|editor, _, cx| {
         let completion_state = editor
             .active_inline_completion
             .as_ref()
@@ -249,7 +249,7 @@ fn assert_editor_active_move_completion(
     cx: &mut EditorTestContext,
     assert: impl FnOnce(MultiBufferSnapshot, Anchor),
 ) {
-    cx.editor(|editor, window, cx| {
+    cx.editor(|editor, _, cx| {
         let completion_state = editor
             .active_inline_completion
             .as_ref()

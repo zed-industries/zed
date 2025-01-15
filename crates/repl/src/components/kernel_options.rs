@@ -87,7 +87,7 @@ impl PickerDelegate for KernelPickerDelegate {
     fn set_selected_index(
         &mut self,
         ix: usize,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) {
         self.selected_kernelspec = self.filtered_kernels.get(ix).cloned();
@@ -141,7 +141,7 @@ impl PickerDelegate for KernelPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let kernelspec = self.filtered_kernels.get(ix)?;
@@ -222,7 +222,7 @@ impl PickerDelegate for KernelPickerDelegate {
 
     fn render_footer(
         &self,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<gpui::AnyElement> {
         Some(
@@ -238,7 +238,7 @@ impl PickerDelegate for KernelPickerDelegate {
                         .icon_size(IconSize::XSmall)
                         .icon_color(Color::Muted)
                         .icon_position(IconPosition::End)
-                        .on_click(move |_, window, cx| cx.open_url(KERNEL_DOCS_URL)),
+                        .on_click(move |_, _, cx| cx.open_url(KERNEL_DOCS_URL)),
                 )
                 .into_any(),
         )

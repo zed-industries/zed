@@ -32,7 +32,7 @@ pub fn init(cx: &mut AppContext) {
             if let Some(existing) = existing {
                 workspace.activate_item(&existing, true, true, window, cx);
             } else {
-                let settings_page = SettingsPage::new(workspace, window, cx);
+                let settings_page = SettingsPage::new(workspace, cx);
                 workspace.add_item_to_active_pane(Box::new(settings_page), None, true, window, cx)
             }
         });
@@ -43,20 +43,17 @@ pub fn init(cx: &mut AppContext) {
             filter.hide_action_types(&settings_ui_actions);
         });
 
-        cx.observe_flag::<SettingsUiFeatureFlag, _>(
-            window,
-            move |is_enabled, _view, window, cx| {
-                if is_enabled {
-                    CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                        filter.show_action_types(settings_ui_actions.iter());
-                    });
-                } else {
-                    CommandPaletteFilter::update_global(cx, |filter, _cx| {
-                        filter.hide_action_types(&settings_ui_actions);
-                    });
-                }
-            },
-        )
+        cx.observe_flag::<SettingsUiFeatureFlag, _>(window, move |is_enabled, _view, _, cx| {
+            if is_enabled {
+                CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                    filter.show_action_types(settings_ui_actions.iter());
+                });
+            } else {
+                CommandPaletteFilter::update_global(cx, |filter, _cx| {
+                    filter.hide_action_types(&settings_ui_actions);
+                });
+            }
+        })
         .detach();
     })
     .detach();
@@ -67,11 +64,7 @@ pub struct SettingsPage {
 }
 
 impl SettingsPage {
-    pub fn new(
-        _workspace: &Workspace,
-        window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
-    ) -> Model<Self> {
+    pub fn new(_workspace: &Workspace, cx: &mut ModelContext<Workspace>) -> Model<Self> {
         cx.new_model(|cx| Self {
             focus_handle: cx.focus_handle(),
         })
@@ -107,7 +100,7 @@ impl Item for SettingsPage {
 }
 
 impl Render for SettingsPage {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         v_flex()
             .p_4()
             .size_full()
@@ -116,14 +109,14 @@ impl Render for SettingsPage {
             .child(
                 v_flex().gap_1().child(Label::new("Appearance")).child(
                     v_flex()
-                        .elevation_2(window, cx)
+                        .elevation_2(cx)
                         .child(AppearanceSettingsControls::new()),
                 ),
             )
             .child(
                 v_flex().gap_1().child(Label::new("Editor")).child(
                     v_flex()
-                        .elevation_2(window, cx)
+                        .elevation_2(cx)
                         .child(EditorSettingsControls::new()),
                 ),
             )

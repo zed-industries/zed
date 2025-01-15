@@ -6,7 +6,7 @@ use gpui::{
     deferred, div, px, Action, AnyView, AppContext, Axis, Corner, Entity, EntityId, EventEmitter,
     FocusHandle, Focusable, IntoElement, KeyContext, Model, ModelContext, MouseButton,
     MouseDownEvent, MouseUpEvent, ParentElement, Render, SharedString, StyleRefinement, Styled,
-    Subscription, VisualContext, WeakModel, Window,
+    Subscription, WeakModel, Window,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -65,13 +65,13 @@ pub trait PanelHandle: Send + Sync {
     fn panel_id(&self) -> EntityId;
     fn persistent_name(&self) -> &'static str;
     fn position(&self, window: &Window, cx: &AppContext) -> DockPosition;
-    fn position_is_valid(&self, position: DockPosition, window: &Window, cx: &AppContext) -> bool;
+    fn position_is_valid(&self, position: DockPosition, cx: &AppContext) -> bool;
     fn set_position(&self, position: DockPosition, window: &mut Window, cx: &mut AppContext);
     fn is_zoomed(&self, window: &Window, cx: &AppContext) -> bool;
     fn set_zoomed(&self, zoomed: bool, window: &mut Window, cx: &mut AppContext);
     fn set_active(&self, active: bool, window: &mut Window, cx: &mut AppContext);
     fn remote_id(&self) -> Option<proto::PanelId>;
-    fn pane(&self, window: &Window, cx: &AppContext) -> Option<Model<Pane>>;
+    fn pane(&self, cx: &AppContext) -> Option<Model<Pane>>;
     fn size(&self, window: &Window, cx: &AppContext) -> Pixels;
     fn set_size(&self, size: Option<Pixels>, window: &mut Window, cx: &mut AppContext);
     fn icon(&self, window: &Window, cx: &AppContext) -> Option<ui::IconName>;
@@ -99,7 +99,7 @@ where
         self.read(cx).position(window, cx)
     }
 
-    fn position_is_valid(&self, position: DockPosition, window: &Window, cx: &AppContext) -> bool {
+    fn position_is_valid(&self, position: DockPosition, cx: &AppContext) -> bool {
         self.read(cx).position_is_valid(position)
     }
 
@@ -119,7 +119,7 @@ where
         self.update(cx, |this, cx| this.set_active(active, window, cx))
     }
 
-    fn pane(&self, window: &Window, cx: &AppContext) -> Option<Model<Pane>> {
+    fn pane(&self, cx: &AppContext) -> Option<Model<Pane>> {
         self.read(cx).pane()
     }
 
@@ -143,7 +143,7 @@ where
         self.read(cx).icon_tooltip(window, cx)
     }
 
-    fn toggle_action(&self, window: &Window, cx: &AppContext) -> Box<dyn Action> {
+    fn toggle_action(&self, _: &Window, cx: &AppContext) -> Box<dyn Action> {
         self.read(cx).toggle_action()
     }
 
@@ -780,9 +780,8 @@ impl Render for Dock {
 }
 
 impl PanelButtons {
-    pub fn new(dock: Model<Dock>, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
-        cx.observe_in(&dock, window, |_, _, window, cx| cx.notify())
-            .detach();
+    pub fn new(dock: Model<Dock>, cx: &mut ModelContext<Self>) -> Self {
+        cx.observe(&dock, |_, _, cx| cx.notify()).detach();
         Self { dock }
     }
 }
@@ -832,10 +831,10 @@ impl Render for PanelButtons {
                                 DockPosition::Bottom,
                             ];
 
-                            ContextMenu::build(window, cx, |mut menu, window, cx| {
+                            ContextMenu::build(window, cx, |mut menu, _, cx| {
                                 for position in POSITIONS {
                                     if position != dock_position
-                                        && panel.position_is_valid(position, window, cx)
+                                        && panel.position_is_valid(position, cx)
                                     {
                                         let panel = panel.clone();
                                         menu = menu.entry(
@@ -901,7 +900,7 @@ pub mod test {
     impl EventEmitter<PanelEvent> for TestPanel {}
 
     impl TestPanel {
-        pub fn new(position: DockPosition, window: &mut Window, cx: &mut AppContext) -> Self {
+        pub fn new(position: DockPosition, _window: &mut Window, cx: &mut AppContext) -> Self {
             Self {
                 position,
                 zoomed: false,
@@ -913,7 +912,11 @@ pub mod test {
     }
 
     impl Render for TestPanel {
-        fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+        fn render(
+            &mut self,
+            _window: &mut Window,
+            cx: &mut ModelContext<Self>,
+        ) -> impl IntoElement {
             div().id("test").track_focus(&self.focus_handle(cx))
         }
     }
@@ -934,7 +937,7 @@ pub mod test {
         fn set_position(
             &mut self,
             position: DockPosition,
-            window: &mut Window,
+            _: &mut Window,
             cx: &mut ModelContext<Self>,
         ) {
             self.position = position;

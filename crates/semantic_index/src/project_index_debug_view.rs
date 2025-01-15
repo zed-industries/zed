@@ -126,9 +126,9 @@ impl ProjectIndexDebugView {
                         chunks.len(),
                         gpui::ListAlignment::Top,
                         px(100.),
-                        move |ix, window, cx| {
+                        move |ix, _, cx| {
                             if let Some(view) = view.upgrade() {
-                                view.update(cx, |view, cx| view.render_chunk(ix, window, cx))
+                                view.update(cx, |view, cx| view.render_chunk(ix, cx))
                             } else {
                                 div().into_any()
                             }
@@ -143,12 +143,7 @@ impl ProjectIndexDebugView {
         None
     }
 
-    fn render_chunk(
-        &mut self,
-        ix: usize,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> AnyElement {
+    fn render_chunk(&mut self, ix: usize, cx: &mut ModelContext<Self>) -> AnyElement {
         let buffer_font = ThemeSettings::get_global(cx).buffer_font.clone();
         let Some(state) = &self.selected_path else {
             return div().into_any();
@@ -208,7 +203,7 @@ impl ProjectIndexDebugView {
 }
 
 impl Render for ProjectIndexDebugView {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         if let Some(selected_path) = self.selected_path.as_ref() {
             v_flex()
                 .child(
@@ -223,7 +218,7 @@ impl Render for ProjectIndexDebugView {
                         .border_b_1()
                         .border_color(cx.theme().colors().border)
                         .cursor(CursorStyle::PointingHand)
-                        .on_click(cx.listener(|this, _, window, cx| {
+                        .on_click(cx.listener(|this, _, _, cx| {
                             this.selected_path.take();
                             cx.notify();
                         })),
@@ -236,7 +231,7 @@ impl Render for ProjectIndexDebugView {
                 cx.model().clone(),
                 "ProjectIndexDebugView",
                 self.rows.len(),
-                move |this, range, window, cx| {
+                move |this, range, _, cx| {
                     this.rows[range]
                         .iter()
                         .enumerate()
@@ -249,7 +244,7 @@ impl Render for ProjectIndexDebugView {
                                 .pl_8()
                                 .child(Label::new(file_path.to_string_lossy().to_string()))
                                 .on_mouse_move(cx.listener(
-                                    move |this, _: &MouseMoveEvent, window, cx| {
+                                    move |this, _: &MouseMoveEvent, _, cx| {
                                         if this.hovered_row_ix != Some(ix) {
                                             this.hovered_row_ix = Some(ix);
                                             cx.notify();

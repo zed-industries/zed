@@ -194,7 +194,7 @@ impl Cell {
                     };
 
                     editor.set_text(text, window, cx);
-                    editor.set_show_gutter(false, window, cx);
+                    editor.set_show_gutter(false, cx);
                     editor.set_text_style_refinement(refinement);
 
                     // editor.set_read_only(true);

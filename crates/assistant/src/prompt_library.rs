@@ -39,7 +39,7 @@ use text::LineEnding;
 use theme::ThemeSettings;
 use ui::{
     div, prelude::*, IconButtonShape, KeyBinding, ListItem, ListItemSpacing, ModelContext,
-    ParentElement, Render, SharedString, Styled, Tooltip, VisualContext, Window,
+    ParentElement, Render, SharedString, Styled, Tooltip, Window,
 };
 use util::{ResultExt, TryFutureExt};
 use uuid::Uuid;
@@ -88,7 +88,7 @@ pub fn open_prompt_library(
         .find_map(|window| window.downcast::<PromptLibrary>());
     if let Some(existing_window) = existing_window {
         existing_window
-            .update(cx, |_, window, cx| window.activate_window())
+            .update(cx, |_, window, _| window.activate_window())
             .ok();
         Task::ready(Ok(existing_window))
     } else {
@@ -175,7 +175,7 @@ impl PickerDelegate for PromptPickerDelegate {
     fn set_selected_index(
         &mut self,
         ix: usize,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) {
         self.selected_index = ix;
@@ -222,12 +222,7 @@ impl PickerDelegate for PromptPickerDelegate {
         })
     }
 
-    fn confirm(
-        &mut self,
-        _secondary: bool,
-        window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
-    ) {
+    fn confirm(&mut self, _secondary: bool, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         if let Some(prompt) = self.matches.get(self.selected_index) {
             cx.emit(PromptPickerEvent::Confirmed {
                 prompt_id: prompt.id,
@@ -241,7 +236,7 @@ impl PickerDelegate for PromptPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let prompt = self.matches.get(ix)?;
@@ -259,10 +254,8 @@ impl PickerDelegate for PromptPickerDelegate {
                     .toggle_state(true)
                     .icon_color(Color::Accent)
                     .shape(IconButtonShape::Square)
-                    .tooltip(move |window, cx| {
-                        Tooltip::text("Remove from Default Prompt", window, cx)
-                    })
-                    .on_click(cx.listener(move |_, _, window, cx| {
+                    .tooltip(Tooltip::text("Remove from Default Prompt"))
+                    .on_click(cx.listener(move |_, _, _, cx| {
                         cx.emit(PromptPickerEvent::ToggledDefault { prompt_id })
                     }))
             }))
@@ -287,8 +280,8 @@ impl PickerDelegate for PromptPickerDelegate {
                         IconButton::new("delete-prompt", IconName::Trash)
                             .icon_color(Color::Muted)
                             .shape(IconButtonShape::Square)
-                            .tooltip(move |window, cx| Tooltip::text("Delete Prompt", window, cx))
-                            .on_click(cx.listener(move |_, _, window, cx| {
+                            .tooltip(Tooltip::text("Delete Prompt"))
+                            .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.emit(PromptPickerEvent::Deleted { prompt_id })
                             }))
                             .into_any_element()
@@ -299,18 +292,12 @@ impl PickerDelegate for PromptPickerDelegate {
                             .selected_icon(IconName::SparkleFilled)
                             .icon_color(if default { Color::Accent } else { Color::Muted })
                             .shape(IconButtonShape::Square)
-                            .tooltip(move |window, cx| {
-                                Tooltip::text(
-                                    if default {
-                                        "Remove from Default Prompt"
-                                    } else {
-                                        "Add to Default Prompt"
-                                    },
-                                    window,
-                                    cx,
-                                )
-                            })
-                            .on_click(cx.listener(move |_, _, window, cx| {
+                            .tooltip(Tooltip::text(if default {
+                                "Remove from Default Prompt"
+                            } else {
+                                "Add to Default Prompt"
+                            }))
+                            .on_click(cx.listener(move |_, _, _, cx| {
                                 cx.emit(PromptPickerEvent::ToggledDefault { prompt_id })
                             })),
                     ),
@@ -321,7 +308,7 @@ impl PickerDelegate for PromptPickerDelegate {
     fn render_editor(
         &self,
         editor: &Model<Editor>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Div {
         h_flex()
@@ -536,7 +523,7 @@ impl PromptLibrary {
             if focus {
                 prompt_editor
                     .body_editor
-                    .update(cx, |editor, cx| editor.focus(window, cx));
+                    .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx)));
             }
             self.set_active_prompt(Some(prompt_id), window, cx);
         } else if let Some(prompt_metadata) = self.store.metadata(prompt_id) {
@@ -570,10 +557,10 @@ impl PromptLibrary {
                                 editor.set_read_only(true);
                                 editor.set_show_inline_completions(Some(false), window, cx);
                             }
-                            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, window, cx);
-                            editor.set_show_gutter(false, window, cx);
-                            editor.set_show_wrap_guides(false, window, cx);
-                            editor.set_show_indent_guides(false, window, cx);
+                            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+                            editor.set_show_gutter(false, cx);
+                            editor.set_show_wrap_guides(false, cx);
+                            editor.set_show_indent_guides(false, cx);
                             editor.set_use_modal_editing(false);
                             editor.set_current_line_highlight(Some(CurrentLineHighlight::None));
                             editor.set_completion_provider(Some(Box::new(
@@ -584,7 +571,7 @@ impl PromptLibrary {
                                 ),
                             )));
                             if focus {
-                                editor.focus(window, cx);
+                                window.focus(&editor.focus_handle(cx));
                             }
                             editor
                         });
@@ -754,7 +741,7 @@ impl PromptLibrary {
         if let Some(active_prompt) = self.active_prompt_id {
             self.prompt_editors[&active_prompt]
                 .body_editor
-                .update(cx, |editor, cx| editor.focus(window, cx));
+                .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx)));
             cx.stop_propagation();
         }
     }
@@ -898,7 +885,7 @@ impl PromptLibrary {
 
                     cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
                     let token_count = cx
-                        .update(|window, cx| {
+                        .update(|_, cx| {
                             model.count_tokens(
                                 LanguageModelRequest {
                                     messages: vec![LanguageModelRequestMessage {
@@ -926,11 +913,7 @@ impl PromptLibrary {
         }
     }
 
-    fn render_prompt_list(
-        &mut self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> impl IntoElement {
+    fn render_prompt_list(&mut self, cx: &mut ModelContext<Self>) -> impl IntoElement {
         v_flex()
             .id("prompt-list")
             .capture_action(cx.listener(Self::focus_active_prompt))
@@ -963,7 +946,6 @@ impl PromptLibrary {
 
     fn render_active_prompt(
         &mut self,
-        window: &mut Window,
         cx: &mut ModelContext<PromptLibrary>,
     ) -> gpui::Stateful<Div> {
         div()
@@ -990,7 +972,7 @@ impl PromptLibrary {
                         .overflow_hidden()
                         .pl(DynamicSpacing::Base16.rems(cx))
                         .pt(DynamicSpacing::Base08.rems(cx))
-                        .on_click(cx.listener(move |_, _, window, cx| {
+                        .on_click(cx.listener(move |_, _, window, _| {
                             window.focus(&focus_handle);
                         }))
                         .child(
@@ -1044,9 +1026,9 @@ impl PromptLibrary {
                                                     syntax: cx.theme().syntax().clone(),
                                                     status: cx.theme().status().clone(),
                                                     inlay_hints_style:
-                                                        editor::make_inlay_hints_style(window, cx),
+                                                        editor::make_inlay_hints_style(cx),
                                                     inline_completion_styles:
-                                                        editor::make_suggestion_styles(window, cx),
+                                                        editor::make_suggestion_styles(cx),
                                                     ..EditorStyle::default()
                                                 },
                                             )),
@@ -1187,17 +1169,13 @@ impl PromptLibrary {
                                                     })
                                                     .shape(IconButtonShape::Square)
                                                     .size(ButtonSize::Large)
-                                                    .tooltip(move |window, cx| {
-                                                        Tooltip::text(
-                                                            if prompt_metadata.default {
-                                                                "Remove from Default Prompt"
-                                                            } else {
-                                                                "Add to Default Prompt"
-                                                            },
-                                                            window,
-                                                            cx,
-                                                        )
-                                                    })
+                                                    .tooltip(Tooltip::text(
+                                                        if prompt_metadata.default {
+                                                            "Remove from Default Prompt"
+                                                        } else {
+                                                            "Add to Default Prompt"
+                                                        },
+                                                    ))
                                                     .on_click(|_, window, cx| {
                                                         window.dispatch_action(
                                                             Box::new(ToggleDefaultPrompt),
@@ -1246,7 +1224,7 @@ impl Render for PromptLibrary {
             .overflow_hidden()
             .font(ui_font)
             .text_color(theme.colors().text)
-            .child(self.render_prompt_list(window, cx))
+            .child(self.render_prompt_list(cx))
             .map(|el| {
                 if self.store.prompt_count() == 0 {
                     el.child(
@@ -1282,7 +1260,7 @@ impl Render for PromptLibrary {
                                                 Button::new("create-prompt", "New Prompt")
                                                     .full_width()
                                                     .key_binding(KeyBinding::for_action(
-                                                        &NewPrompt, window, cx,
+                                                        &NewPrompt, window,
                                                     ))
                                                     .on_click(|_, window, cx| {
                                                         window.dispatch_action(
@@ -1296,7 +1274,7 @@ impl Render for PromptLibrary {
                             ),
                     )
                 } else {
-                    el.child(self.render_active_prompt(window, cx))
+                    el.child(self.render_active_prompt(cx))
                 }
             })
     }

@@ -70,7 +70,7 @@ impl PickerDelegate for Delegate {
     fn set_selected_index(
         &mut self,
         ix: usize,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) {
         self.selected_ix = ix;
@@ -93,14 +93,14 @@ impl PickerDelegate for Delegate {
         }
     }
 
-    fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         cx.quit();
     }
 
     fn update_matches(
         &mut self,
         query: String,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Task<()> {
         let candidates = self.candidates.clone();
@@ -208,7 +208,7 @@ impl PickerStory {
 }
 
 impl Render for PickerStory {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         div()
             .bg(cx.theme().styles.colors.background)
             .size_full()

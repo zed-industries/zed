@@ -51,7 +51,7 @@ enum SupermavenButtonStatus {
 }
 
 impl Render for InlineCompletionButton {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let all_language_settings = all_language_settings(None, cx);
 
         match all_language_settings.inline_completions.provider {
@@ -88,13 +88,13 @@ impl Render for InlineCompletionButton {
                                     window.window_handle().downcast::<Workspace>()
                                 {
                                     workspace
-                                        .update(cx, |workspace, window, cx| {
+                                        .update(cx, |workspace, _, cx| {
                                             workspace.show_toast(
                                                 Toast::new(
                                                     NotificationId::unique::<CopilotErrorToast>(),
                                                     format!("Copilot can't be started: {}", e),
                                                 )
-                                                .on_click("Reinstall Copilot", |window, cx| {
+                                                .on_click("Reinstall Copilot", |_, cx| {
                                                     if let Some(copilot) = Copilot::global(cx) {
                                                         copilot
                                                             .update(cx, |copilot, cx| {
@@ -109,7 +109,7 @@ impl Render for InlineCompletionButton {
                                         .ok();
                                 }
                             }))
-                            .tooltip(|window, cx| Tooltip::text("GitHub Copilot", window, cx)),
+                            .tooltip(Tooltip::text("GitHub Copilot")),
                     );
                 }
                 let this = cx.model().clone();
@@ -129,7 +129,7 @@ impl Render for InlineCompletionButton {
                         .anchor(Corner::BottomRight)
                         .trigger(
                             IconButton::new("copilot-icon", icon)
-                                .tooltip(|window, cx| Tooltip::text("GitHub Copilot", window, cx)),
+                                .tooltip(Tooltip::text("GitHub Copilot")),
                         ),
                 )
             }
@@ -173,13 +173,13 @@ impl Render for InlineCompletionButton {
                                 Some(ContextMenu::build(window, cx, |menu, _, _| {
                                     let fs = fs.clone();
                                     let activate_url = activate_url.clone();
-                                    menu.entry("Sign In", None, move |window, cx| {
+                                    menu.entry("Sign In", None, move |_, cx| {
                                         cx.open_url(activate_url.as_str())
                                     })
                                     .entry(
                                         "Use Copilot",
                                         None,
-                                        move |window, cx| {
+                                        move |_, cx| {
                                             set_completion_provider(
                                                 fs.clone(),
                                                 cx,
@@ -195,9 +195,10 @@ impl Render for InlineCompletionButton {
                             _ => None,
                         })
                         .anchor(Corner::BottomRight)
-                        .trigger(IconButton::new("supermaven-icon", icon).tooltip(
-                            move |window, cx| Tooltip::text(tooltip_text.clone(), window, cx),
-                        )),
+                        .trigger(
+                            IconButton::new("supermaven-icon", icon)
+                                .tooltip(Tooltip::text(tooltip_text.clone())),
+                        ),
                 );
             }
 
@@ -234,15 +235,13 @@ impl InlineCompletionButton {
     pub fn new(
         workspace: WeakModel<Workspace>,
         fs: Arc<dyn Fs>,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         if let Some(copilot) = Copilot::global(cx) {
-            cx.observe_in(&copilot, window, |_, _, window, cx| cx.notify())
-                .detach()
+            cx.observe(&copilot, |_, _, cx| cx.notify()).detach()
         }
 
-        cx.observe_global_in::<SettingsStore>(window, move |_, window, cx| cx.notify())
+        cx.observe_global::<SettingsStore>(move |_, cx| cx.notify())
             .detach();
 
         Self {
@@ -283,7 +282,6 @@ impl InlineCompletionButton {
     pub fn build_language_settings_menu(
         &self,
         mut menu: ContextMenu,
-        window: &mut Window,
         cx: &mut AppContext,
     ) -> ContextMenu {
         let fs = self.fs.clone();
@@ -301,7 +299,7 @@ impl InlineCompletionButton {
                     language.name()
                 ),
                 None,
-                move |window, cx| {
+                move |_, cx| {
                     toggle_inline_completions_for_language(language.clone(), fs.clone(), cx)
                 },
             );
@@ -346,7 +344,7 @@ impl InlineCompletionButton {
                 "Show Inline Completions for All Files"
             },
             None,
-            move |window, cx| toggle_inline_completions_globally(fs.clone(), cx),
+            move |_, cx| toggle_inline_completions_globally(fs.clone(), cx),
         )
     }
 
@@ -355,8 +353,8 @@ impl InlineCompletionButton {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Model<ContextMenu> {
-        ContextMenu::build(window, cx, |menu, window, cx| {
-            self.build_language_settings_menu(menu, window, cx)
+        ContextMenu::build(window, cx, |menu, _, cx| {
+            self.build_language_settings_menu(menu, cx)
                 .separator()
                 .link(
                     "Go to Copilot Settings",
@@ -374,19 +372,14 @@ impl InlineCompletionButton {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Model<ContextMenu> {
-        ContextMenu::build(window, cx, |menu, window, cx| {
-            self.build_language_settings_menu(menu, window, cx)
+        ContextMenu::build(window, cx, |menu, _, cx| {
+            self.build_language_settings_menu(menu, cx)
                 .separator()
                 .action("Sign Out", supermaven::SignOut.boxed_clone())
         })
     }
 
-    pub fn update_enabled(
-        &mut self,
-        editor: Model<Editor>,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn update_enabled(&mut self, editor: Model<Editor>, cx: &mut ModelContext<Self>) {
         let editor = editor.read(cx);
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         let suggestion_anchor = editor.selections.newest_anchor().start;
@@ -414,15 +407,15 @@ impl StatusItemView for InlineCompletionButton {
     fn set_active_pane_item(
         &mut self,
         item: Option<&dyn ItemHandle>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(editor) = item.and_then(|item| item.act_as::<Editor>(cx)) {
             self.editor_subscription = Some((
-                cx.observe_in(&editor, window, Self::update_enabled),
+                cx.observe(&editor, Self::update_enabled),
                 editor.entity_id().as_u64() as usize,
             ));
-            self.update_enabled(editor, window, cx);
+            self.update_enabled(editor, cx);
         } else {
             self.language = None;
             self.editor_subscription = None;

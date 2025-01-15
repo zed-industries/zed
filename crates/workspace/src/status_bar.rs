@@ -58,28 +58,20 @@ impl Render for StatusBar {
                     .border_b(px(1.0))
                     .border_color(cx.theme().colors().status_bar_background),
             })
-            .child(self.render_left_tools(window, cx))
-            .child(self.render_right_tools(window, cx))
+            .child(self.render_left_tools(cx))
+            .child(self.render_right_tools(cx))
     }
 }
 
 impl StatusBar {
-    fn render_left_tools(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> impl IntoElement {
+    fn render_left_tools(&self, cx: &mut ModelContext<Self>) -> impl IntoElement {
         h_flex()
             .gap(DynamicSpacing::Base04.rems(cx))
             .overflow_x_hidden()
             .children(self.left_items.iter().map(|item| item.to_any()))
     }
 
-    fn render_right_tools(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> impl IntoElement {
+    fn render_right_tools(&self, cx: &mut ModelContext<Self>) -> impl IntoElement {
         h_flex()
             .gap(DynamicSpacing::Base04.rems(cx))
             .children(self.right_items.iter().rev().map(|item| item.to_any()))
@@ -164,12 +156,7 @@ impl StatusBar {
         cx.notify()
     }
 
-    pub fn remove_item_at(
-        &mut self,
-        position: usize,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn remove_item_at(&mut self, position: usize, cx: &mut ModelContext<Self>) {
         if position < self.left_items.len() {
             self.left_items.remove(position);
         } else {

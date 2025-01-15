@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
-    Element, EventEmitter, Focusable, IntoElement, ModelContext, ParentElement, Render,
-    StyledText, Subscription, Window,
+    Element, EventEmitter, Focusable, IntoElement, ModelContext, ParentElement, Render, StyledText,
+    Subscription, Window,
 };
 use itertools::Itertools;
 use std::cmp;
@@ -156,7 +156,7 @@ impl ToolbarItemView for Breadcrumbs {
         self.subscription = Some(item.subscribe_to_item_events(
             window,
             cx,
-            Box::new(move |event, window, cx| {
+            Box::new(move |event, _, cx| {
                 if let ItemEvent::UpdateBreadcrumbs = event {
                     this.update(cx, |this, cx| {
                         cx.notify();

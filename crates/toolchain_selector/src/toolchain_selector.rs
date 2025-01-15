@@ -5,7 +5,7 @@ use editor::Editor;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model, ModelContext,
-    ParentElement, Render, Styled, Task, VisualContext, WeakModel, Window,
+    ParentElement, Render, Styled, Task, WeakModel, Window,
 };
 use language::{LanguageName, Toolchain, ToolchainList};
 use picker::{Picker, PickerDelegate};
@@ -155,7 +155,7 @@ impl ToolchainSelectorDelegate {
             let project = project.clone();
             move |this, mut cx| async move {
                 let term = project
-                    .update_in(&mut cx, |this, window, _| {
+                    .update(&mut cx, |this, _| {
                         Project::toolchain_term(this.languages().clone(), language_name.clone())
                     })
                     .ok()?
@@ -166,7 +166,7 @@ impl ToolchainSelectorDelegate {
                     this.refresh_placeholder(window, cx);
                 });
                 let available_toolchains = project
-                    .update_in(&mut cx, |this, window, cx| {
+                    .update(&mut cx, |this, cx| {
                         this.available_toolchains(worktree_id, language_name, cx)
                     })
                     .ok()?
@@ -258,7 +258,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
         self.dismissed(window, cx);
     }
 
-    fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         self.toolchain_selector
             .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();

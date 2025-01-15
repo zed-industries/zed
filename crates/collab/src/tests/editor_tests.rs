@@ -105,10 +105,10 @@ async fn test_host_disconnect(
         .unwrap();
 
     //TODO: focus
-    assert!(cx_b.update_window_model(&editor_b, |editor, window, cx| editor.is_focused(window)));
+    assert!(cx_b.update_window_model(&editor_b, |editor, window, _| editor.is_focused(window)));
     editor_b.update_in(cx_b, |editor, window, cx| editor.insert("X", window, cx));
 
-    cx_b.update(|window, cx| {
+    cx_b.update(|_, cx| {
         assert!(workspace_b_view.read(cx).is_edited());
     });
 
@@ -128,7 +128,7 @@ async fn test_host_disconnect(
 
     // Ensure client B's edited state is reset and that the whole window is blurred.
     workspace_b
-        .update(cx_b, |workspace, window, cx| {
+        .update(cx_b, |workspace, _, cx| {
             assert!(workspace.active_modal::<DisconnectedOverlay>(cx).is_some());
             assert!(!workspace.is_edited());
         })
@@ -2123,7 +2123,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
 
     // editor_b updates the file, which gets sent to client_a, which updates git blame,
     // which gets back to client_b.
-    editor_b.update_in(cx_b, |editor_b, window, cx| {
+    editor_b.update_in(cx_b, |editor_b, _, cx| {
         editor_b.edit([(Point::new(0, 3)..Point::new(0, 3), "FOO")], cx);
     });
 
@@ -2150,7 +2150,7 @@ async fn test_git_blame_is_forwarded(cx_a: &mut TestAppContext, cx_b: &mut TestA
     });
 
     // Now editor_a also updates the file
-    editor_a.update_in(cx_a, |editor_a, window, cx| {
+    editor_a.update_in(cx_a, |editor_a, _, cx| {
         editor_a.edit([(Point::new(1, 3)..Point::new(1, 3), "FOO")], cx);
     });
 

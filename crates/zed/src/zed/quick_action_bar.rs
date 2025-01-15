@@ -40,7 +40,6 @@ impl QuickActionBar {
     pub fn new(
         buffer_search_bar: Model<BufferSearchBar>,
         workspace: &Workspace,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let mut this = Self {
@@ -52,11 +51,9 @@ impl QuickActionBar {
             toggle_settings_handle: Default::default(),
             workspace: workspace.weak_handle(),
         };
-        this.apply_settings(window, cx);
-        cx.observe_global_in::<SettingsStore>(window, |this, window, cx| {
-            this.apply_settings(window, cx)
-        })
-        .detach();
+        this.apply_settings(cx);
+        cx.observe_global::<SettingsStore>(|this, cx| this.apply_settings(cx))
+            .detach();
         this
     }
 
@@ -66,7 +63,7 @@ impl QuickActionBar {
             .and_then(|item| item.downcast::<Editor>())
     }
 
-    fn apply_settings(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn apply_settings(&mut self, cx: &mut ModelContext<Self>) {
         let new_show = EditorSettings::get_global(cx).toolbar.quick_actions;
         if new_show != self.show {
             self.show = new_show;
@@ -86,7 +83,7 @@ impl QuickActionBar {
 }
 
 impl Render for QuickActionBar {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let Some(editor) = self.active_editor() else {
             return div().id("empty quick action bar");
         };
@@ -173,9 +170,7 @@ impl Render for QuickActionBar {
                         .style(ButtonStyle::Subtle)
                         .toggle_state(self.toggle_selections_handle.is_deployed())
                         .when(!self.toggle_selections_handle.is_deployed(), |this| {
-                            this.tooltip(|window, cx| {
-                                Tooltip::text("Selection Controls", window, cx)
-                            })
+                            this.tooltip(Tooltip::text("Selection Controls"))
                         }),
                 )
                 .with_handle(self.toggle_selections_handle.clone())
@@ -225,7 +220,7 @@ impl Render for QuickActionBar {
                         .style(ButtonStyle::Subtle)
                         .toggle_state(self.toggle_settings_handle.is_deployed())
                         .when(!self.toggle_settings_handle.is_deployed(), |this| {
-                            this.tooltip(|window, cx| Tooltip::text("Editor Controls", window, cx))
+                            this.tooltip(Tooltip::text("Editor Controls"))
                         }),
                 )
                 .anchor(Corner::TopRight)
@@ -366,8 +361,8 @@ impl Render for QuickActionBar {
         h_flex()
             .id("quick action bar")
             .gap(DynamicSpacing::Base06.rems(cx))
-            .children(self.render_repl_menu(window, cx))
-            .children(self.render_toggle_markdown_preview(self.workspace.clone(), window, cx))
+            .children(self.render_repl_menu(cx))
+            .children(self.render_toggle_markdown_preview(self.workspace.clone(), cx))
             .children(search_button)
             .when(
                 AssistantSettings::get_global(cx).enabled
@@ -435,7 +430,7 @@ impl ToolbarItemView for QuickActionBar {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> ToolbarItemLocation {
         self.active_item = active_pane_item.map(ItemHandle::boxed_clone);
@@ -446,20 +441,18 @@ impl ToolbarItemView for QuickActionBar {
                 let mut inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
                 let mut supports_inlay_hints = editor.read(cx).supports_inlay_hints(cx);
                 self._inlay_hints_enabled_subscription =
-                    Some(
-                        cx.observe_in(&editor, window, move |_, editor, window, cx| {
-                            let editor = editor.read(cx);
-                            let new_inlay_hints_enabled = editor.inlay_hints_enabled();
-                            let new_supports_inlay_hints = editor.supports_inlay_hints(cx);
-                            let should_notify = inlay_hints_enabled != new_inlay_hints_enabled
-                                || supports_inlay_hints != new_supports_inlay_hints;
-                            inlay_hints_enabled = new_inlay_hints_enabled;
-                            supports_inlay_hints = new_supports_inlay_hints;
-                            if should_notify {
-                                cx.notify()
-                            }
-                        }),
-                    );
+                    Some(cx.observe(&editor, move |_, editor, cx| {
+                        let editor = editor.read(cx);
+                        let new_inlay_hints_enabled = editor.inlay_hints_enabled();
+                        let new_supports_inlay_hints = editor.supports_inlay_hints(cx);
+                        let should_notify = inlay_hints_enabled != new_inlay_hints_enabled
+                            || supports_inlay_hints != new_supports_inlay_hints;
+                        inlay_hints_enabled = new_inlay_hints_enabled;
+                        supports_inlay_hints = new_supports_inlay_hints;
+                        if should_notify {
+                            cx.notify()
+                        }
+                    }));
             }
         }
         self.get_toolbar_item_location()

@@ -115,20 +115,19 @@ impl InlineAssistant {
             .detach();
 
         let workspace = workspace.downgrade();
-        window
-            .observe_global::<SettingsStore>(cx, move |window, cx| {
-                let Some(workspace) = workspace.upgrade() else {
-                    return;
-                };
-                let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
-                    return;
-                };
-                let enabled = AssistantSettings::get_global(cx).enabled;
-                terminal_panel.update(cx, |terminal_panel, cx| {
-                    terminal_panel.asssistant_enabled(enabled, window, cx)
-                });
-            })
-            .detach();
+        cx.observe_global::<SettingsStore>(move |cx| {
+            let Some(workspace) = workspace.upgrade() else {
+                return;
+            };
+            let Some(terminal_panel) = workspace.read(cx).panel::<TerminalPanel>(cx) else {
+                return;
+            };
+            let enabled = AssistantSettings::get_global(cx).enabled;
+            terminal_panel.update(cx, |terminal_panel, cx| {
+                terminal_panel.asssistant_enabled(enabled, cx)
+            });
+        })
+        .detach();
     }
 
     fn handle_workspace_event(
@@ -242,7 +241,7 @@ impl InlineAssistant {
             handle_assist(window, cx);
         } else {
             cx.spawn_in(window, |_workspace, mut cx| async move {
-                let Some(task) = cx.update(|window, cx| {
+                let Some(task) = cx.update(|_, cx| {
                     LanguageModelRegistry::read_global(cx)
                         .active_provider()
                         .map_or(None, |provider| Some(provider.authenticate(cx)))
@@ -405,7 +404,7 @@ impl InlineAssistant {
             }
 
             let [prompt_block_id, end_block_id] =
-                self.insert_assist_blocks(editor, &range, &prompt_editor, window, cx);
+                self.insert_assist_blocks(editor, &range, &prompt_editor, cx);
 
             assists.push((
                 assist_id,
@@ -508,7 +507,7 @@ impl InlineAssistant {
         });
 
         let [prompt_block_id, end_block_id] =
-            self.insert_assist_blocks(editor, &range, &prompt_editor, window, cx);
+            self.insert_assist_blocks(editor, &range, &prompt_editor, cx);
 
         let editor_assists = self
             .assists_by_editor
@@ -548,7 +547,6 @@ impl InlineAssistant {
         editor: &Model<Editor>,
         range: &Range<Anchor>,
         prompt_editor: &Model<PromptEditor<BufferCodegen>>,
-        window: &mut Window,
         cx: &mut AppContext,
     ) -> [CustomBlockId; 2] {
         let prompt_editor_height = prompt_editor.update(cx, |prompt_editor, cx| {
@@ -581,17 +579,12 @@ impl InlineAssistant {
         ];
 
         editor.update(cx, |editor, cx| {
-            let block_ids = editor.insert_blocks(assist_blocks, None, window, cx);
+            let block_ids = editor.insert_blocks(assist_blocks, None, cx);
             [block_ids[0], block_ids[1]]
         })
     }
 
-    fn handle_prompt_editor_focus_in(
-        &mut self,
-        assist_id: InlineAssistId,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) {
+    fn handle_prompt_editor_focus_in(&mut self, assist_id: InlineAssistId, cx: &mut AppContext) {
         let assist = &self.assists[&assist_id];
         let Some(decorations) = assist.decorations.as_ref() else {
             return;
@@ -604,7 +597,7 @@ impl InlineAssistant {
             for assist_id in &assist_group.assist_ids {
                 if let Some(decorations) = self.assists[assist_id].decorations.as_ref() {
                     decorations.prompt_editor.update(cx, |prompt_editor, cx| {
-                        prompt_editor.set_show_cursor_when_unfocused(true, window, cx)
+                        prompt_editor.set_show_cursor_when_unfocused(true, cx)
                     });
                 }
             }
@@ -632,12 +625,7 @@ impl InlineAssistant {
             .ok();
     }
 
-    fn handle_prompt_editor_focus_out(
-        &mut self,
-        assist_id: InlineAssistId,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) {
+    fn handle_prompt_editor_focus_out(&mut self, assist_id: InlineAssistId, cx: &mut AppContext) {
         let assist = &self.assists[&assist_id];
         let assist_group = self.assist_groups.get_mut(&assist.group_id).unwrap();
         if assist_group.active_assist_id == Some(assist_id) {
@@ -646,7 +634,7 @@ impl InlineAssistant {
                 for assist_id in &assist_group.assist_ids {
                     if let Some(decorations) = self.assists[assist_id].decorations.as_ref() {
                         decorations.prompt_editor.update(cx, |prompt_editor, cx| {
-                            prompt_editor.set_show_cursor_when_unfocused(false, window, cx)
+                            prompt_editor.set_show_cursor_when_unfocused(false, cx)
                         });
                     }
                 }
@@ -667,7 +655,7 @@ impl InlineAssistant {
                 self.start_assist(assist_id, window, cx);
             }
             PromptEditorEvent::StopRequested => {
-                self.stop_assist(assist_id, window, cx);
+                self.stop_assist(assist_id, cx);
             }
             PromptEditorEvent::ConfirmRequested { execute: _ } => {
                 self.finish_assist(assist_id, false, window, cx);
@@ -930,7 +918,7 @@ impl InlineAssistant {
                 if entry.get().assist_ids.is_empty() {
                     entry.remove();
                     if let Some(editor) = assist.editor.upgrade() {
-                        self.update_editor_highlights(&editor, window, cx);
+                        self.update_editor_highlights(&editor, cx);
                     }
                 } else {
                     entry.get().highlight_updates.send(()).ok();
@@ -1057,7 +1045,7 @@ impl InlineAssistant {
 
         assist
             .editor
-            .update(cx, |editor, cx| editor.focus(window, cx))
+            .update(cx, |editor, cx| window.focus(&editor.focus_handle(cx)))
             .ok();
     }
 
@@ -1074,7 +1062,7 @@ impl InlineAssistant {
         if let Some(decorations) = assist.decorations.as_ref() {
             decorations.prompt_editor.update(cx, |prompt_editor, cx| {
                 prompt_editor.editor.update(cx, |editor, cx| {
-                    editor.focus(window, cx);
+                    window.focus(&editor.focus_handle(cx));
                     editor.select_all(&SelectAll, window, cx);
                 })
             });
@@ -1201,12 +1189,7 @@ impl InlineAssistant {
             .log_err();
     }
 
-    pub fn stop_assist(
-        &mut self,
-        assist_id: InlineAssistId,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) {
+    pub fn stop_assist(&mut self, assist_id: InlineAssistId, cx: &mut AppContext) {
         let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
             assist
         } else {
@@ -1216,12 +1199,7 @@ impl InlineAssistant {
         assist.codegen.update(cx, |codegen, cx| codegen.stop(cx));
     }
 
-    fn update_editor_highlights(
-        &self,
-        editor: &Model<Editor>,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) {
+    fn update_editor_highlights(&self, editor: &Model<Editor>, cx: &mut AppContext) {
         let mut gutter_pending_ranges = Vec::new();
         let mut gutter_transformed_ranges = Vec::new();
         let mut foreground_ranges = Vec::new();
@@ -1267,24 +1245,22 @@ impl InlineAssistant {
         editor.update(cx, |editor, cx| {
             enum GutterPendingRange {}
             if gutter_pending_ranges.is_empty() {
-                editor.clear_gutter_highlights::<GutterPendingRange>(window, cx);
+                editor.clear_gutter_highlights::<GutterPendingRange>(cx);
             } else {
                 editor.highlight_gutter::<GutterPendingRange>(
                     &gutter_pending_ranges,
                     |cx| cx.theme().status().info_background,
-                    window,
                     cx,
                 )
             }
 
             enum GutterTransformedRange {}
             if gutter_transformed_ranges.is_empty() {
-                editor.clear_gutter_highlights::<GutterTransformedRange>(window, cx);
+                editor.clear_gutter_highlights::<GutterTransformedRange>(cx);
             } else {
                 editor.highlight_gutter::<GutterTransformedRange>(
                     &gutter_transformed_ranges,
                     |cx| cx.theme().status().info,
-                    window,
                     cx,
                 )
             }
@@ -1308,7 +1284,6 @@ impl InlineAssistant {
                     row_range,
                     cx.theme().status().info_background,
                     false,
-                    window,
                     cx,
                 );
             }
@@ -1367,13 +1342,9 @@ impl InlineAssistant {
 
                     enum DeletedLines {}
                     let mut editor = Editor::for_multibuffer(multi_buffer, None, true, window, cx);
-                    editor.set_soft_wrap_mode(
-                        language::language_settings::SoftWrap::None,
-                        window,
-                        cx,
-                    );
-                    editor.set_show_wrap_guides(false, window, cx);
-                    editor.set_show_gutter(false, window, cx);
+                    editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
+                    editor.set_show_wrap_guides(false, cx);
+                    editor.set_show_gutter(false, cx);
                     editor.scroll_manager.set_forbid_vertical_scroll(true);
                     editor.set_read_only(true);
                     editor.set_show_inline_completions(Some(false), window, cx);
@@ -1381,7 +1352,6 @@ impl InlineAssistant {
                         Anchor::min()..Anchor::max(),
                         cx.theme().status().deleted_background,
                         false,
-                        window,
                         cx,
                     );
                     editor
@@ -1408,7 +1378,7 @@ impl InlineAssistant {
             }
 
             decorations.removed_line_block_ids = editor
-                .insert_blocks(new_blocks, None, window, cx)
+                .insert_blocks(new_blocks, None, cx)
                 .into_iter()
                 .collect();
         })
@@ -1472,13 +1442,13 @@ impl EditorInlineAssists {
             assist_ids: Vec::new(),
             scroll_lock: None,
             highlight_updates: highlight_updates_tx,
-            _update_highlights: window.spawn(cx, |mut cx| {
+            _update_highlights: cx.spawn(|cx| {
                 let editor = editor.downgrade();
                 async move {
                     while let Ok(()) = highlight_updates_rx.changed().await {
                         let editor = editor.upgrade().context("editor was dropped")?;
-                        cx.update_global(|assistant: &mut InlineAssistant, window, cx| {
-                            assistant.update_editor_highlights(&editor, window, cx);
+                        cx.update_global(|assistant: &mut InlineAssistant, cx| {
+                            assistant.update_editor_highlights(&editor, cx);
                         })?;
                     }
                     Ok(())
@@ -1605,14 +1575,14 @@ impl InlineAssist {
             codegen: codegen.clone(),
             workspace: workspace.clone(),
             _subscriptions: vec![
-                window.on_focus_in(&prompt_editor_focus_handle, cx, move |window, cx| {
+                window.on_focus_in(&prompt_editor_focus_handle, cx, move |_, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
-                        this.handle_prompt_editor_focus_in(assist_id, window, cx)
+                        this.handle_prompt_editor_focus_in(assist_id, cx)
                     })
                 }),
-                window.on_focus_out(&prompt_editor_focus_handle, cx, move |_, window, cx| {
+                window.on_focus_out(&prompt_editor_focus_handle, cx, move |_, _, cx| {
                     InlineAssistant::update_global(cx, |this, cx| {
-                        this.handle_prompt_editor_focus_out(assist_id, window, cx)
+                        this.handle_prompt_editor_focus_out(assist_id, cx)
                     })
                 }),
                 window.subscribe(prompt_editor, cx, |prompt_editor, event, window, cx| {
@@ -1698,7 +1668,7 @@ impl CodeActionProvider for AssistantCodeActionProvider {
         &self,
         buffer: &Model<Buffer>,
         range: Range<text::Anchor>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<CodeAction>>> {
         if !AssistantSettings::get_global(cx).enabled {

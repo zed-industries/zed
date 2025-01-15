@@ -82,7 +82,7 @@ impl RenderOnce for ThemeControl {
         DropdownMenu::new(
             "theme",
             value.clone(),
-            ContextMenu::build(window, cx, |mut menu, window, cx| {
+            ContextMenu::build(window, cx, |mut menu, _, cx| {
                 let theme_registry = ThemeRegistry::global(cx);
 
                 for theme in theme_registry.list_names() {
@@ -146,7 +146,7 @@ impl RenderOnce for ThemeModeControl {
                     .style(ButtonStyle::Filled)
                     .size(ButtonSize::Large)
                     .toggle_state(value == ThemeMode::Light)
-                    .on_click(|_, window, cx| Self::write(ThemeMode::Light, cx))
+                    .on_click(|_, _, cx| Self::write(ThemeMode::Light, cx))
                     .first(),
             )
             .child(
@@ -154,7 +154,7 @@ impl RenderOnce for ThemeModeControl {
                     .style(ButtonStyle::Filled)
                     .size(ButtonSize::Large)
                     .toggle_state(value == ThemeMode::System)
-                    .on_click(|_, window, cx| Self::write(ThemeMode::System, cx))
+                    .on_click(|_, _, cx| Self::write(ThemeMode::System, cx))
                     .middle(),
             )
             .child(
@@ -162,7 +162,7 @@ impl RenderOnce for ThemeModeControl {
                     .style(ButtonStyle::Filled)
                     .size(ButtonSize::Large)
                     .toggle_state(value == ThemeMode::Dark)
-                    .on_click(|_, window, cx| Self::write(ThemeMode::Dark, cx))
+                    .on_click(|_, _, cx| Self::write(ThemeMode::Dark, cx))
                     .last(),
             )
     }
@@ -203,7 +203,7 @@ impl RenderOnce for UiFontFamilyControl {
             .child(DropdownMenu::new(
                 "ui-font-family",
                 value.clone(),
-                ContextMenu::build(window, cx, |mut menu, window, cx| {
+                ContextMenu::build(window, cx, |mut menu, _, cx| {
                     let font_family_cache = FontFamilyCache::global(cx);
 
                     for font_name in font_family_cache.list_font_families(cx) {
@@ -262,10 +262,10 @@ impl RenderOnce for UiFontSizeControl {
             .child(NumericStepper::new(
                 "ui-font-size",
                 value.to_string(),
-                move |_, window, cx| {
+                move |_, _, cx| {
                     Self::write(value - px(1.), cx);
                 },
-                move |_, window, cx| {
+                move |_, _, cx| {
                     Self::write(value + px(1.), cx);
                 },
             ))
@@ -372,7 +372,7 @@ impl RenderOnce for UiFontLigaturesControl {
             "ui-font-ligatures",
             Label::new(self.name()),
             value.into(),
-            |selection, window, cx| {
+            |selection, _, cx| {
                 Self::write(
                     match selection {
                         ToggleState::Selected => true,

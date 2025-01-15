@@ -52,7 +52,7 @@ impl SlashCommand for OutlineSlashCommand {
         _context_buffer: BufferSnapshot,
         workspace: WeakModel<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         let output = workspace.update(cx, |workspace, cx| {

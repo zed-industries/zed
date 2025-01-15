@@ -51,7 +51,7 @@ pub fn init(cx: &mut AppContext) {
                 }
             });
 
-            workspace.register_action(|_workspace, _: &RefreshKernelspecs, window, cx| {
+            workspace.register_action(|_workspace, _: &RefreshKernelspecs, _, cx| {
                 let store = ReplStore::global(cx);
                 store.update(cx, |store, cx| {
                     store.refresh_kernelspecs(cx).detach();
@@ -229,7 +229,7 @@ impl Render for ReplSessionsPage {
                             .size(ButtonSize::Large)
                             .layer(ElevationIndex::ModalSurface)
                             .child(Label::new("Install Kernels"))
-                            .on_click(move |_, window, cx| {
+                            .on_click(move |_, _, cx| {
                                 cx.open_url(
                                     "https://zed.dev/docs/repl#language-specific-instructions",
                                 )
@@ -245,7 +245,7 @@ impl Render for ReplSessionsPage {
             return ReplSessionsContainer::new("No Jupyter Kernel Sessions").child(
                 v_flex()
                     .child(Label::new(instructions))
-                    .children(KeyBinding::for_action(&Run, window, cx)),
+                    .children(KeyBinding::for_action(&Run, window)),
             );
         }
 

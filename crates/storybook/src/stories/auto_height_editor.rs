@@ -1,7 +1,7 @@
 use editor::Editor;
 use gpui::{
     div, white, AppContext, Context as _, IntoElement, KeyBinding, Model, ModelContext,
-    ParentElement, Render, Styled, VisualContext, Window,
+    ParentElement, Render, Styled, Window,
 };
 
 pub struct AutoHeightEditorStory {
@@ -18,11 +18,7 @@ impl AutoHeightEditorStory {
         cx.new_model(|cx| Self {
             editor: cx.new_model(|cx| {
                 let mut editor = Editor::auto_height(3, window, cx);
-                editor.set_soft_wrap_mode(
-                    language::language_settings::SoftWrap::EditorWidth,
-                    window,
-                    cx,
-                );
+                editor.set_soft_wrap_mode(language::language_settings::SoftWrap::EditorWidth, cx);
                 editor
             }),
         })

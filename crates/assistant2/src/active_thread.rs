@@ -53,8 +53,8 @@ impl ActiveThread {
             rendered_messages_by_id: HashMap::default(),
             list_state: ListState::new(0, ListAlignment::Bottom, px(1024.), {
                 let this = cx.model().downgrade();
-                move |ix, window: &mut Window, cx: &mut AppContext| {
-                    this.update(cx, |this, cx| this.render_message(ix, window, cx))
+                move |ix, _: &mut Window, cx: &mut AppContext| {
+                    this.update(cx, |this, cx| this.render_message(ix, cx))
                         .unwrap()
                 }
             }),
@@ -228,12 +228,7 @@ impl ActiveThread {
         }
     }
 
-    fn render_message(
-        &self,
-        ix: usize,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> AnyElement {
+    fn render_message(&self, ix: usize, cx: &mut ModelContext<Self>) -> AnyElement {
         let message_id = self.messages[ix];
         let Some(message) = self.thread.read(cx).message(message_id) else {
             return Empty.into_any();

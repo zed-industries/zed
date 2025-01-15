@@ -8,8 +8,8 @@ use crate::story_selector::ComponentStory;
 pub struct KitchenSinkStory;
 
 impl KitchenSinkStory {
-    pub fn view(window: &mut Window, cx: &mut AppContext) -> Model<Self> {
-        cx.new_model(|cx| Self)
+    pub fn view(cx: &mut AppContext) -> Model<Self> {
+        cx.new_model(|_| Self)
     }
 }
 

@@ -5,23 +5,13 @@ use crate::{state::Mode, Vim};
 
 actions!(vim, [ChangeListOlder, ChangeListNewer]);
 
-pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
-    Vim::action(
-        editor,
-        window,
-        cx,
-        |vim, _: &ChangeListOlder, window, cx| {
-            vim.move_to_change(Direction::Prev, window, cx);
-        },
-    );
-    Vim::action(
-        editor,
-        window,
-        cx,
-        |vim, _: &ChangeListNewer, window, cx| {
-            vim.move_to_change(Direction::Next, window, cx);
-        },
-    );
+pub(crate) fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+    Vim::action(editor, cx, |vim, _: &ChangeListOlder, window, cx| {
+        vim.move_to_change(Direction::Prev, window, cx);
+    });
+    Vim::action(editor, cx, |vim, _: &ChangeListNewer, window, cx| {
+        vim.move_to_change(Direction::Next, window, cx);
+    });
 }
 
 impl Vim {
@@ -58,7 +48,7 @@ impl Vim {
     }
 
     pub(crate) fn push_to_change_list(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        let Some((map, selections)) = self.update_editor(window, cx, |_, editor, window, cx| {
+        let Some((map, selections)) = self.update_editor(window, cx, |_, editor, _, cx| {
             editor.selections.all_adjusted_display(cx)
         }) else {
             return;

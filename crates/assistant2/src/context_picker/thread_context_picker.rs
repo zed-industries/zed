@@ -213,7 +213,7 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         }
     }
 
-    fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         self.context_picker
             .update(cx, |this, cx| {
                 this.reset_mode();

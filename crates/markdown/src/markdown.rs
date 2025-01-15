@@ -4,10 +4,10 @@ use crate::parser::CodeBlockKind;
 use futures::FutureExt;
 use gpui::{
     actions, point, quad, AnyElement, AppContext, Bounds, ClipboardItem, CursorStyle,
-    DispatchPhase, Edges, FocusHandle, Focusable, FontStyle, FontWeight,
-    GlobalElementId, Hitbox, Hsla, KeyContext, Length, Model, MouseDownEvent, MouseEvent,
-    MouseMoveEvent, MouseUpEvent, Point, Render, StrikethroughStyle, StyleRefinement, StyledText,
-    Task, TextLayout, TextRun, TextStyle, TextStyleRefinement,
+    DispatchPhase, Edges, FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox,
+    Hsla, KeyContext, Length, Model, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    Point, Render, StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout, TextRun,
+    TextStyle, TextStyleRefinement,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_links_only, parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
@@ -147,7 +147,7 @@ impl Markdown {
         &self.parsed_markdown
     }
 
-    fn copy(&self, text: &RenderedText, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn copy(&self, text: &RenderedText, _: &mut Window, cx: &mut ModelContext<Self>) {
         if self.selection.end <= self.selection.start {
             return;
         }
@@ -200,7 +200,7 @@ impl Markdown {
 }
 
 impl Render for Markdown {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         MarkdownElement::new(
             cx.model().clone(),
             self.style.clone(),
@@ -476,7 +476,7 @@ impl MarkdownElement {
         });
         self.on_mouse_event(window, cx, {
             let rendered_text = rendered_text.clone();
-            move |markdown, event: &MouseUpEvent, phase, window, cx| {
+            move |markdown, event: &MouseUpEvent, phase, _, cx| {
                 if phase.bubble() {
                     if let Some(pressed_link) = markdown.pressed_link.take() {
                         if Some(&pressed_link) == rendered_text.link_for_position(event.position) {
@@ -527,7 +527,7 @@ impl MarkdownElement {
     fn on_mouse_event<T: MouseEvent>(
         &self,
         window: &mut Window,
-        cx: &mut AppContext,
+        _cx: &mut AppContext,
         mut f: impl 'static
             + FnMut(&mut Markdown, &T, DispatchPhase, &mut Window, &mut ModelContext<Markdown>),
     ) {

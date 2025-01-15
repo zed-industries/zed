@@ -70,13 +70,13 @@ impl PaintingViewer {
         }
     }
 
-    fn clear(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn clear(&mut self, cx: &mut ModelContext<Self>) {
         self.lines.clear();
         cx.notify();
     }
 }
 impl Render for PaintingViewer {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let default_lines = self.default_lines.clone();
         let lines = self.lines.clone();
         div()
@@ -103,8 +103,8 @@ impl Render for PaintingViewer {
                             .flex()
                             .px_3()
                             .py_1()
-                            .on_click(cx.listener(|this, _, window, cx| {
-                                this.clear(window, cx);
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                this.clear(cx);
                             })),
                     ),
             )
@@ -114,7 +114,7 @@ impl Render for PaintingViewer {
                     .child(
                         canvas(
                             move |_, _, _| {},
-                            move |_, _, window, cx| {
+                            move |_, _, window, _| {
                                 const STROKE_WIDTH: Pixels = px(2.0);
                                 for path in default_lines {
                                     window.paint_path(path, gpui::black());
@@ -150,7 +150,7 @@ impl Render for PaintingViewer {
                             this.lines.push(path);
                         }),
                     )
-                    .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, window, cx| {
+                    .on_mouse_move(cx.listener(|this, ev: &gpui::MouseMoveEvent, _, cx| {
                         if !this._painting {
                             return;
                         }
@@ -191,7 +191,7 @@ fn main() {
                 focus: true,
                 ..Default::default()
             },
-            |window, cx| cx.new_model(|_| PaintingViewer::new()),
+            |_, cx| cx.new_model(|_| PaintingViewer::new()),
         )
         .unwrap();
         cx.activate(true);

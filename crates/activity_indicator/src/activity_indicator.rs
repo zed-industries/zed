@@ -5,7 +5,7 @@ use futures::StreamExt;
 use gpui::{
     actions, percentage, Animation, AnimationExt as _, AppContext, CursorStyle, EventEmitter,
     InteractiveElement as _, Model, ModelContext, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement, Styled, Transformation, VisualContext as _, Window,
+    StatefulInteractiveElement, Styled, Transformation, Window,
 };
 use language::{LanguageRegistry, LanguageServerBinaryStatus, LanguageServerId};
 use lsp::LanguageServerName;
@@ -198,11 +198,7 @@ impl ActivityIndicator {
         self.project.read(cx).shell_environment_errors(cx)
     }
 
-    fn content_to_render(
-        &mut self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<Content> {
+    fn content_to_render(&mut self, cx: &mut ModelContext<Self>) -> Option<Content> {
         // Show if any direnv calls failed
         if let Some((&worktree_id, error)) = self.pending_environment_errors(cx).next() {
             return Some(Content {
@@ -475,12 +471,12 @@ impl EventEmitter<Event> for ActivityIndicator {}
 const MAX_MESSAGE_LEN: usize = 50;
 
 impl Render for ActivityIndicator {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let result = h_flex()
             .id("activity-indicator")
             .on_action(cx.listener(Self::show_error_message))
             .on_action(cx.listener(Self::dismiss_error_message));
-        let Some(content) = self.content_to_render(window, cx) else {
+        let Some(content) = self.content_to_render(cx) else {
             return result;
         };
         let this = cx.model().downgrade();
@@ -503,9 +499,7 @@ impl Render for ActivityIndicator {
                                             ))
                                             .size(LabelSize::Small),
                                         )
-                                        .tooltip(move |window, cx| {
-                                            Tooltip::text(&content.message, window, cx)
-                                        })
+                                        .tooltip(Tooltip::text(content.message))
                                 } else {
                                     button.child(Label::new(content.message).size(LabelSize::Small))
                                 }
@@ -522,7 +516,7 @@ impl Render for ActivityIndicator {
                 .menu(move |window, cx| {
                     let strong_this = this.upgrade()?;
                     let mut has_work = false;
-                    let menu = ContextMenu::build(window, cx, |mut menu, window, cx| {
+                    let menu = ContextMenu::build(window, cx, |mut menu, _, cx| {
                         for work in strong_this.read(cx).pending_language_server_work(cx) {
                             has_work = true;
                             let this = this.clone();
@@ -546,7 +540,7 @@ impl Render for ActivityIndicator {
                                             .child(Icon::new(IconName::XCircle))
                                             .into_any_element()
                                     },
-                                    move |window, cx| {
+                                    move |_, cx| {
                                         this.update(cx, |this, cx| {
                                             this.project.update(cx, |project, cx| {
                                                 project.cancel_language_server_work(
@@ -555,7 +549,7 @@ impl Render for ActivityIndicator {
                                                     cx,
                                                 );
                                             });
-                                            this.context_menu_handle.hide(window, cx);
+                                            this.context_menu_handle.hide(cx);
                                             cx.notify();
                                         })
                                         .ok();

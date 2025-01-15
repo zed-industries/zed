@@ -267,7 +267,7 @@ impl TextLayout {
         text: SharedString,
         runs: Option<Vec<TextRun>>,
         window: &mut Window,
-        cx: &mut AppContext,
+        _: &mut AppContext,
     ) -> LayoutId {
         let text_style = window.text_style();
         let font_size = text_style.font_size.to_pixels(window.rem_size());
@@ -658,7 +658,7 @@ impl Element for InteractiveText {
                         });
                     } else {
                         let hitbox = hitbox.clone();
-                        window.on_mouse_event(move |event: &MouseDownEvent, phase, window, cx| {
+                        window.on_mouse_event(move |event: &MouseDownEvent, phase, window, _| {
                             if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
                                 if let Ok(mouse_down_index) =
                                     text_layout.index_for_position(event.position)

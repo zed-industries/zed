@@ -84,7 +84,7 @@ impl FileContextPickerDelegate {
         query: String,
         cancellation_flag: Arc<AtomicBool>,
         workspace: &Model<Workspace>,
-        window: &mut Window,
+
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Task<Vec<PathMatch>> {
         if query.is_empty() {
@@ -190,7 +190,7 @@ impl PickerDelegate for FileContextPickerDelegate {
             return Task::ready(());
         };
 
-        let search_task = self.search(query, Arc::<AtomicBool>::default(), &workspace, window, cx);
+        let search_task = self.search(query, Arc::<AtomicBool>::default(), &workspace, cx);
 
         cx.spawn_in(window, |this, mut cx| async move {
             // TODO: This should be probably be run in the background.
@@ -268,7 +268,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         .detach_and_log_err(cx);
     }
 
-    fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         self.context_picker
             .update(cx, |this, cx| {
                 this.reset_mode();

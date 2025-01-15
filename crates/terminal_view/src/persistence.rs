@@ -24,16 +24,14 @@ use crate::{
 pub(crate) fn serialize_pane_group(
     pane_group: &PaneGroup,
     active_pane: &Model<Pane>,
-    window: &mut Window,
     cx: &mut AppContext,
 ) -> SerializedPaneGroup {
-    build_serialized_pane_group(&pane_group.root, active_pane, window, cx)
+    build_serialized_pane_group(&pane_group.root, active_pane, cx)
 }
 
 fn build_serialized_pane_group(
     pane_group: &Member,
     active_pane: &Model<Pane>,
-    window: &mut Window,
     cx: &mut AppContext,
 ) -> SerializedPaneGroup {
     match pane_group {
@@ -46,25 +44,17 @@ fn build_serialized_pane_group(
             axis: SerializedAxis(*axis),
             children: members
                 .iter()
-                .map(|member| build_serialized_pane_group(member, active_pane, window, cx))
+                .map(|member| build_serialized_pane_group(member, active_pane, cx))
                 .collect::<Vec<_>>(),
             flexes: Some(flexes.lock().clone()),
         },
-        Member::Pane(pane_handle) => SerializedPaneGroup::Pane(serialize_pane(
-            pane_handle,
-            pane_handle == active_pane,
-            window,
-            cx,
-        )),
+        Member::Pane(pane_handle) => {
+            SerializedPaneGroup::Pane(serialize_pane(pane_handle, pane_handle == active_pane, cx))
+        }
     }
 }
 
-fn serialize_pane(
-    pane: &Model<Pane>,
-    active: bool,
-    window: &mut Window,
-    cx: &mut AppContext,
-) -> SerializedPane {
+fn serialize_pane(pane: &Model<Pane>, active: bool, cx: &mut AppContext) -> SerializedPane {
     let mut items_to_serialize = HashSet::default();
     let pane = pane.read(cx);
     let children = pane

@@ -20,20 +20,14 @@ type GetSearchBar<T> = for<'a, 'b> fn(
 /// Registers search actions on a div that can be taken out.
 pub struct DivRegistrar<'a, 'b, T: 'static> {
     div: Option<Div>,
-    window: &'a Window,
     cx: &'a mut ModelContext<'b, T>,
     search_getter: GetSearchBar<T>,
 }
 
 impl<'a, 'b, T: 'static> DivRegistrar<'a, 'b, T> {
-    pub fn new(
-        search_getter: GetSearchBar<T>,
-        window: &'a mut Window,
-        cx: &'a mut ModelContext<'b, T>,
-    ) -> Self {
+    pub fn new(search_getter: GetSearchBar<T>, cx: &'a mut ModelContext<'b, T>) -> Self {
         Self {
             div: Some(div()),
-            window,
             cx,
             search_getter,
         }

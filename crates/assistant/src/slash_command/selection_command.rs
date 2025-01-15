@@ -61,7 +61,7 @@ impl SlashCommand for SelectionCommand {
         _context_buffer: BufferSnapshot,
         workspace: WeakModel<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         let mut events = vec![];

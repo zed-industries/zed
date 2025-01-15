@@ -126,7 +126,7 @@ impl Editor {
             MultiCursorModifier::CmdOrCtrl => modifiers.alt,
         };
         if !hovered_link_modifier || self.has_pending_selection() {
-            self.hide_hovered_link(window, cx);
+            self.hide_hovered_link(cx);
             return;
         }
 
@@ -154,7 +154,7 @@ impl Editor {
         }
     }
 
-    pub(crate) fn hide_hovered_link(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub(crate) fn hide_hovered_link(&mut self, cx: &mut ModelContext<Self>) {
         self.hovered_link_state.take();
         self.clear_highlights::<HoveredLinkState>(cx);
     }
@@ -213,7 +213,7 @@ impl Editor {
         cx: &mut ModelContext<Editor>,
     ) -> Task<anyhow::Result<Navigated>> {
         if let Some(hovered_link_state) = self.hovered_link_state.take() {
-            self.hide_hovered_link(window, cx);
+            self.hide_hovered_link(cx);
             if !hovered_link_state.links.is_empty() {
                 if !self.focus_handle.is_focused(window) {
                     window.focus(&self.focus_handle);
@@ -443,7 +443,7 @@ pub fn update_inlay_link_and_hover_points(
     }
 
     if !go_to_definition_updated {
-        editor.hide_hovered_link(window, cx)
+        editor.hide_hovered_link(cx)
     }
     if !hover_updated {
         hover_popover::hover_at(editor, None, window, cx);
@@ -519,7 +519,7 @@ pub fn show_link_definition(
             return;
         }
     } else {
-        editor.hide_hovered_link(window, cx)
+        editor.hide_hovered_link(cx)
     }
     let project = editor.project.clone();
     let provider = editor.semantics_provider.clone();
@@ -552,7 +552,7 @@ pub fn show_link_definition(
 
                         Some((range, vec![HoverLink::File(filename)]))
                     } else if let Some(provider) = provider {
-                        let task = cx.update(|window, cx| {
+                        let task = cx.update(|_, cx| {
                             provider.definitions(&buffer, buffer_position, preferred_kind, cx)
                         })?;
                         if let Some(task) = task {
@@ -585,11 +585,11 @@ pub fn show_link_definition(
                 )),
             };
 
-            this.update_in(&mut cx, |editor, window, cx| {
+            this.update(&mut cx, |editor, cx| {
                 // Clear any existing highlights
                 editor.clear_highlights::<HoveredLinkState>(cx);
                 let Some(hovered_link_state) = editor.hovered_link_state.as_mut() else {
-                    editor.hide_hovered_link(window, cx);
+                    editor.hide_hovered_link(cx);
                     return;
                 };
                 hovered_link_state.preferred_kind = preferred_kind;
@@ -636,7 +636,7 @@ pub fn show_link_definition(
                         }
                     }
                 } else {
-                    editor.hide_hovered_link(window, cx);
+                    editor.hide_hovered_link(cx);
                 }
             })?;
 
@@ -942,7 +942,7 @@ mod tests {
             struct A;
             let vˇariable = A;
         "});
-        let screen_coord = cx.editor(|editor, window, cx| editor.pixel_position_of_cursor(cx));
+        let screen_coord = cx.editor(|editor, _, cx| editor.pixel_position_of_cursor(cx));
 
         // Basic hold cmd+shift, expect highlight in region if response contains type definition
         let symbol_range = cx.lsp_range(indoc! {"
@@ -1335,10 +1335,10 @@ mod tests {
             .next()
             .await;
         cx.background_executor.run_until_parked();
-        cx.update_editor(|editor, window, cx| {
+        cx.update_editor(|editor, _, cx| {
             let expected_layers = vec![hint_label.to_string()];
             assert_eq!(expected_layers, cached_hint_labels(editor));
-            assert_eq!(expected_layers, visible_hint_labels(editor, window, cx));
+            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
         });
 
         let inlay_range = cx
@@ -1531,7 +1531,7 @@ mod tests {
         for (input, expected) in test_cases {
             cx.set_state(input);
 
-            let (position, snapshot) = cx.editor(|editor, window, cx| {
+            let (position, snapshot) = cx.editor(|editor, _, cx| {
                 let positions = editor.selections.newest_anchor().head().text_anchor;
                 let snapshot = editor
                     .buffer()
@@ -1572,8 +1572,7 @@ mod tests {
         .await;
 
         // Insert a new file
-        let fs =
-            cx.update_workspace(|workspace, window, cx| workspace.project().read(cx).fs().clone());
+        let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
         fs.as_fake()
             .insert_file("/root/dir/file2.rs", "This is file2.rs".as_bytes().to_vec())
             .await;
@@ -1679,8 +1678,8 @@ mod tests {
 
         cx.simulate_click(screen_coord, Modifiers::secondary_key());
 
-        cx.update_workspace(|workspace, window, cx| assert_eq!(workspace.items(cx).count(), 2));
-        cx.update_workspace(|workspace, window, cx| {
+        cx.update_workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.update_workspace(|workspace, _, cx| {
             let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
 
             let buffer = active_editor
@@ -1709,8 +1708,7 @@ mod tests {
         .await;
 
         // Insert a new file
-        let fs =
-            cx.update_workspace(|workspace, window, cx| workspace.project().read(cx).fs().clone());
+        let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
         fs.as_fake()
             .insert_file("/root/dir/file2.rs", "This is file2.rs".as_bytes().to_vec())
             .await;
@@ -1737,6 +1735,6 @@ mod tests {
 
         // Does not open the directory
         cx.simulate_click(screen_coord, Modifiers::secondary_key());
-        cx.update_workspace(|workspace, window, cx| assert_eq!(workspace.items(cx).count(), 1));
+        cx.update_workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 1));
     }
 }

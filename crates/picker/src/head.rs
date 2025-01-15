@@ -35,7 +35,7 @@ impl Head {
         window: &mut Window,
         cx: &mut ModelContext<V>,
     ) -> Self {
-        let head = cx.new_model(|cx| EmptyHead::new(window, cx));
+        let head = cx.new_model(|cx| EmptyHead::new(cx));
         cx.on_blur(&head.focus_handle(cx), window, blur_handler)
             .detach();
         Self::Empty(head)
@@ -48,7 +48,7 @@ pub(crate) struct EmptyHead {
 }
 
 impl EmptyHead {
-    fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+    fn new(cx: &mut ModelContext<Self>) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
         }
@@ -56,7 +56,7 @@ impl EmptyHead {
 }
 
 impl Render for EmptyHead {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         div().track_focus(&self.focus_handle(cx))
     }
 }

@@ -5,7 +5,7 @@ use crate::{
     Vim,
 };
 use editor::{movement, scroll::Autoscroll, Bias};
-use gpui::{AppContext, ModelContext, Window};
+use gpui::{ModelContext, Window};
 use language::BracketPair;
 use serde::Deserialize;
 use std::sync::Arc;
@@ -35,7 +35,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.stop_recording(window, cx);
+        self.stop_recording(cx);
         let count = Vim::take_count(cx);
         let mode = self.mode;
         self.update_editor(window, cx, |_, editor, window, cx| {
@@ -140,7 +140,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.stop_recording(window, cx);
+        self.stop_recording(cx);
 
         // only legitimate surrounds can be removed
         let pair = match find_surround_pair(&all_support_surround_pair(), &text) {
@@ -238,7 +238,7 @@ impl Vim {
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(will_replace_pair) = object_to_bracket_pair(target) {
-            self.stop_recording(window, cx);
+            self.stop_recording(cx);
             self.update_editor(window, cx, |_, editor, window, cx| {
                 editor.transact(window, cx, |editor, window, cx| {
                     editor.set_clip_at_line_ends(false, cx);
@@ -756,7 +756,7 @@ mod test {
     async fn test_add_surrounds_visual(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
 
-        cx.update(|window, cx| {
+        cx.update(|_, cx| {
             cx.bind_keys([KeyBinding::new(
                 "shift-s",
                 PushOperator(Operator::AddSurrounds { target: None }),

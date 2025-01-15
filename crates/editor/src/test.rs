@@ -74,7 +74,6 @@ pub fn select_ranges(
 pub fn assert_text_with_selections(
     editor: &mut Editor,
     marked_text: &str,
-    window: &mut Window,
     cx: &mut ModelContext<Editor>,
 ) {
     let (unmarked_text, text_ranges) = marked_text_ranges(marked_text, true);

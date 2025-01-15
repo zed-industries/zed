@@ -1,6 +1,6 @@
 use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, scroll::Autoscroll};
-use gpui::{AppContext, Model, ModelContext, Window};
+use gpui::{ModelContext, Window};
 use language::{Bias, Point, SelectionGoal};
 use multi_buffer::MultiBufferRow;
 
@@ -27,7 +27,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.stop_recording(window, cx);
+        self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.set_clip_at_line_ends(false, cx);
             let text_layout_details = editor.text_layout_details(window, cx);
@@ -70,7 +70,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.stop_recording(window, cx);
+        self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 let mut original_positions: HashMap<_, _> = Default::default();
@@ -141,7 +141,7 @@ impl Vim {
     where
         F: Fn(char) -> Vec<char> + Copy,
     {
-        self.record_current_action(window, cx);
+        self.record_current_action(cx);
         self.store_visual_marks(window, cx);
         let count = Vim::take_count(cx).unwrap_or(1) as u32;
 

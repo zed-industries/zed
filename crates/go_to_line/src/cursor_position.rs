@@ -1,7 +1,5 @@
 use editor::{Editor, ToPoint};
-use gpui::{
-    AppContext, FocusHandle, Focusable, Model, Subscription, Task, WeakModel,
-};
+use gpui::{AppContext, FocusHandle, Focusable, Model, Subscription, Task, WeakModel};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
@@ -165,7 +163,7 @@ impl CursorPosition {
 }
 
 impl Render for CursorPosition {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         div().when_some(self.position, |el, position| {
             let mut text = format!(
                 "{}{FILE_ROW_COLUMN_DELIMITER}{}",

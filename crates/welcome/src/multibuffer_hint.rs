@@ -70,11 +70,7 @@ impl MultibufferHint {
     }
 
     /// Determines the toolbar location for this [`MultibufferHint`].
-    fn determine_toolbar_location(
-        &mut self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> ToolbarItemLocation {
+    fn determine_toolbar_location(&mut self, cx: &mut ModelContext<Self>) -> ToolbarItemLocation {
         if Self::shown_count() >= NUMBER_OF_HINTS {
             return ToolbarItemLocation::Hidden;
         }
@@ -117,11 +113,11 @@ impl ToolbarItemView for MultibufferHint {
         self.subscription = Some(active_pane_item.subscribe_to_item_events(
             window,
             cx,
-            Box::new(move |event, window, cx| {
+            Box::new(move |event, _, cx| {
                 if let ItemEvent::UpdateBreadcrumbs = event {
                     this.update(cx, |this, cx| {
                         cx.notify();
-                        let location = this.determine_toolbar_location(window, cx);
+                        let location = this.determine_toolbar_location(cx);
                         cx.emit(ToolbarItemEvent::ChangeLocation(location))
                     })
                     .ok();
@@ -129,12 +125,12 @@ impl ToolbarItemView for MultibufferHint {
             }),
         ));
 
-        self.determine_toolbar_location(window, cx)
+        self.determine_toolbar_location(cx)
     }
 }
 
 impl Render for MultibufferHint {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         h_flex()
             .px_2()
             .justify_between()
@@ -155,7 +151,7 @@ impl Render for MultibufferHint {
                                     .child(Label::new("Read more…"))
                                     .child(Icon::new(IconName::ArrowUpRight).size(IconSize::Small)),
                             )
-                            .on_click(move |_event, window, cx| {
+                            .on_click(move |_event, _, cx| {
                                 cx.open_url("https://zed.dev/docs/multibuffers")
                             }),
                     ),
@@ -165,13 +161,13 @@ impl Render for MultibufferHint {
                     .style(ButtonStyle::Transparent)
                     .shape(IconButtonShape::Square)
                     .icon_size(IconSize::Small)
-                    .on_click(cx.listener(|this, _event, window, cx| {
+                    .on_click(cx.listener(|this, _event, _, cx| {
                         this.dismiss(cx);
                         cx.emit(ToolbarItemEvent::ChangeLocation(
                             ToolbarItemLocation::Hidden,
                         ))
                     }))
-                    .tooltip(move |window, cx| Tooltip::text("Dismiss this hint", window, cx)),
+                    .tooltip(Tooltip::text("Dismiss this hint")),
             )
             .into_any_element()
     }

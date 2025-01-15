@@ -225,7 +225,7 @@ impl GitPanel {
         git_panel
     }
 
-    fn serialize(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn serialize(&mut self, cx: &mut ModelContext<Self>) {
         let width = self.width;
         self.pending_serialization = cx.background_executor().spawn(
             async move {
@@ -286,7 +286,7 @@ impl GitPanel {
     fn handle_modifiers_changed(
         &mut self,
         event: &ModifiersChangedEvent,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.current_modifiers = event.modifiers;
@@ -796,22 +796,14 @@ impl GitPanel {
             .style(ButtonStyle::Filled)
     }
 
-    pub fn render_divider(
-        &self,
-        _window: &mut Window,
-        _cx: &mut ModelContext<Self>,
-    ) -> impl IntoElement {
+    pub fn render_divider(&self, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         h_flex()
             .items_center()
             .h(px(8.))
             .child(Divider::horizontal_dashed().color(DividerColor::Border))
     }
 
-    pub fn render_panel_header(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> impl IntoElement {
+    pub fn render_panel_header(&self, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
 
         let changes_string = format!("{} changes", self.entry_count());
@@ -820,7 +812,7 @@ impl GitPanel {
             .h(px(32.))
             .items_center()
             .px_3()
-            .bg(ElevationIndex::Surface.bg(window, cx))
+            .bg(ElevationIndex::Surface.bg(cx))
             .child(
                 h_flex()
                     .gap_2()
@@ -861,11 +853,7 @@ impl GitPanel {
             )
     }
 
-    pub fn render_commit_editor(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> impl IntoElement {
+    pub fn render_commit_editor(&self, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let focus_handle_1 = self.focus_handle(cx).clone();
         let focus_handle_2 = self.focus_handle(cx).clone();
 
@@ -925,11 +913,7 @@ impl GitPanel {
         )
     }
 
-    fn render_empty_state(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> impl IntoElement {
+    fn render_empty_state(&self, cx: &mut ModelContext<Self>) -> impl IntoElement {
         h_flex()
             .h_full()
             .flex_1()
@@ -945,11 +929,7 @@ impl GitPanel {
             )
     }
 
-    fn render_scrollbar(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<Stateful<Div>> {
+    fn render_scrollbar(&self, cx: &mut ModelContext<Self>) -> Option<Stateful<Div>> {
         if !Self::should_show_scrollbar(cx)
             || !(self.show_scrollbar || self.scrollbar_state.is_dragging())
         {
@@ -959,14 +939,14 @@ impl GitPanel {
             div()
                 .occlude()
                 .id("project-panel-vertical-scroll")
-                .on_mouse_move(cx.listener(|_, _, window, cx| {
+                .on_mouse_move(cx.listener(|_, _, _, cx| {
                     cx.notify();
                     cx.stop_propagation()
                 }))
-                .on_hover(|_, window, cx| {
+                .on_hover(|_, _, cx| {
                     cx.stop_propagation();
                 })
-                .on_any_mouse_down(|_, window, cx| {
+                .on_any_mouse_down(|_, _, cx| {
                     cx.stop_propagation();
                 })
                 .on_mouse_up(
@@ -982,7 +962,7 @@ impl GitPanel {
                         cx.stop_propagation();
                     }),
                 )
-                .on_scroll_wheel(cx.listener(|_, _, window, cx| {
+                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
                     cx.notify();
                 }))
                 .h_full()
@@ -999,7 +979,7 @@ impl GitPanel {
         )
     }
 
-    fn render_entries(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render_entries(&self, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let item_count = self
             .visible_entries
             .iter()
@@ -1017,12 +997,11 @@ impl GitPanel {
                             range,
                             window,
                             cx,
-                            |id, details, window, cx| {
+                            |id, details, _, cx| {
                                 items.push(git_panel.render_entry(
                                     id,
                                     Some(details.index) == selected_entry,
                                     details,
-                                    window,
                                     cx,
                                 ));
                             },
@@ -1036,7 +1015,7 @@ impl GitPanel {
                 // .with_width_from_item(self.max_width_item_index)
                 .track_scroll(self.scroll_handle.clone()),
             )
-            .children(self.render_scrollbar(window, cx))
+            .children(self.render_scrollbar(cx))
     }
 
     fn render_entry(
@@ -1044,7 +1023,6 @@ impl GitPanel {
         id: ProjectEntryId,
         selected: bool,
         details: EntryDetails,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> impl IntoElement {
         let id = id.to_proto() as usize;
@@ -1193,7 +1171,7 @@ impl GitPanel {
 }
 
 impl Render for GitPanel {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let project = self.project.read(cx);
 
         v_flex()
@@ -1235,16 +1213,16 @@ impl Render for GitPanel {
             .overflow_hidden()
             .font_buffer(cx)
             .py_1()
-            .bg(ElevationIndex::Surface.bg(window, cx))
-            .child(self.render_panel_header(window, cx))
-            .child(self.render_divider(window, cx))
+            .bg(ElevationIndex::Surface.bg(cx))
+            .child(self.render_panel_header(cx))
+            .child(self.render_divider(cx))
             .child(if !self.no_entries() {
-                self.render_entries(window, cx).into_any_element()
+                self.render_entries(cx).into_any_element()
             } else {
-                self.render_empty_state(window, cx).into_any_element()
+                self.render_empty_state(cx).into_any_element()
             })
-            .child(self.render_divider(window, cx))
-            .child(self.render_commit_editor(window, cx))
+            .child(self.render_divider(cx))
+            .child(self.render_commit_editor(cx))
     }
 }
 
@@ -1263,7 +1241,7 @@ impl Panel for GitPanel {
         "GitPanel"
     }
 
-    fn position(&self, window: &Window, cx: &AppContext) -> DockPosition {
+    fn position(&self, _: &Window, cx: &AppContext) -> DockPosition {
         GitPanelSettings::get_global(cx).dock
     }
 
@@ -1274,7 +1252,7 @@ impl Panel for GitPanel {
     fn set_position(
         &mut self,
         position: DockPosition,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         settings::update_settings_file::<GitPanelSettings>(
@@ -1284,18 +1262,18 @@ impl Panel for GitPanel {
         );
     }
 
-    fn size(&self, window: &Window, cx: &AppContext) -> Pixels {
+    fn size(&self, _: &Window, cx: &AppContext) -> Pixels {
         self.width
             .unwrap_or_else(|| GitPanelSettings::get_global(cx).default_width)
     }
 
-    fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut ModelContext<Self>) {
         self.width = size;
-        self.serialize(window, cx);
+        self.serialize(cx);
         cx.notify();
     }
 
-    fn icon(&self, window: &Window, cx: &AppContext) -> Option<ui::IconName> {
+    fn icon(&self, _: &Window, cx: &AppContext) -> Option<ui::IconName> {
         Some(ui::IconName::GitBranch).filter(|_| GitPanelSettings::get_global(cx).button)
     }
 

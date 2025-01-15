@@ -15,8 +15,7 @@ use futures::channel::oneshot;
 use gpui::{
     actions, div, impl_actions, Action, AppContext, ClickEvent, EventEmitter, FocusHandle,
     Focusable, Hsla, InteractiveElement as _, IntoElement, KeyContext, Model, ModelContext,
-    ParentElement as _, Render, ScrollHandle, Styled, Subscription, Task, TextStyle,
-    VisualContext as _, Window,
+    ParentElement as _, Render, ScrollHandle, Styled, Subscription, Task, TextStyle, Window,
 };
 use project::{
     search::SearchQuery,
@@ -108,7 +107,7 @@ impl BufferSearchBar {
         &self,
         editor: &Model<Editor>,
         color: Hsla,
-        window: &mut Window,
+
         cx: &mut ModelContext<Self>,
     ) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
@@ -228,12 +227,7 @@ impl Render for BufferSearchBar {
                 input_base_styles()
                     .id("editor-scroll")
                     .track_scroll(&self.editor_scroll_handle)
-                    .child(self.render_text_input(
-                        &self.query_editor,
-                        text_color.color(cx),
-                        window,
-                        cx,
-                    ))
+                    .child(self.render_text_input(&self.query_editor, text_color.color(cx), cx))
                     .when(!hide_inline_icons, |div| {
                         div.children(supported_options.case.then(|| {
                             self.render_search_option_button(
@@ -385,7 +379,6 @@ impl Render for BufferSearchBar {
                 .child(input_base_styles().child(self.render_text_input(
                     &self.replacement_editor,
                     cx.theme().colors().text,
-                    window,
                     cx,
                 )))
                 .child(
@@ -784,7 +777,7 @@ impl BufferSearchBar {
         self.query_editor.read(cx).text(cx)
     }
 
-    pub fn replacement(&self, window: &mut Window, cx: &mut AppContext) -> String {
+    pub fn replacement(&self, cx: &mut AppContext) -> String {
         self.replacement_editor.read(cx).text(cx)
     }
 
@@ -799,12 +792,7 @@ impl BufferSearchBar {
             .filter(|suggestion| !suggestion.is_empty())
     }
 
-    pub fn set_replacement(
-        &mut self,
-        replacement: Option<&str>,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn set_replacement(&mut self, replacement: Option<&str>, cx: &mut ModelContext<Self>) {
         if replacement.is_none() {
             self.replace_enabled = false;
             return;
@@ -896,7 +884,7 @@ impl BufferSearchBar {
     pub fn set_search_options(
         &mut self,
         search_options: SearchOptions,
-        window: &mut Window,
+
         cx: &mut ModelContext<Self>,
     ) {
         self.search_options = search_options;
@@ -1151,7 +1139,7 @@ impl BufferSearchBar {
                             Default::default(),
                             None,
                         ) {
-                            Ok(query) => query.with_replacement(self.replacement(window, cx)),
+                            Ok(query) => query.with_replacement(self.replacement(cx)),
                             Err(_) => {
                                 self.query_contains_error = true;
                                 self.clear_active_searchable_item_matches(window, cx);
@@ -1169,7 +1157,7 @@ impl BufferSearchBar {
                             Default::default(),
                             None,
                         ) {
-                            Ok(query) => query.with_replacement(self.replacement(window, cx)),
+                            Ok(query) => query.with_replacement(self.replacement(cx)),
                             Err(_) => {
                                 self.query_contains_error = true;
                                 self.clear_active_searchable_item_matches(window, cx);
@@ -1309,7 +1297,7 @@ impl BufferSearchBar {
     }
 
     fn focus(&self, handle: &gpui::FocusHandle, window: &mut Window, cx: &mut ModelContext<Self>) {
-        cx.on_next_frame(window, |_, window, cx| {
+        cx.on_next_frame(window, |_, window, _| {
             window.invalidate_character_coordinates();
         });
         window.focus(handle);
@@ -1346,7 +1334,7 @@ impl BufferSearchBar {
                             let query = query
                                 .as_ref()
                                 .clone()
-                                .with_replacement(self.replacement(window, cx));
+                                .with_replacement(self.replacement(cx));
                             searchable_item.replace(matches.at(active_index), &query, window, cx);
                             self.select_next_match(&SelectNextMatch, window, cx);
                         }
@@ -1377,7 +1365,7 @@ impl BufferSearchBar {
                         let query = query
                             .as_ref()
                             .clone()
-                            .with_replacement(self.replacement(window, cx));
+                            .with_replacement(self.replacement(cx));
                         searchable_item.replace_all(&mut matches.iter(), &query, window, cx);
                     }
                 }
@@ -1390,11 +1378,7 @@ impl BufferSearchBar {
         self.active_match_index.is_some()
     }
 
-    pub fn should_use_smartcase_search(
-        &mut self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> bool {
+    pub fn should_use_smartcase_search(&mut self, cx: &mut ModelContext<Self>) -> bool {
         EditorSettings::get_global(cx).use_smartcase_search
     }
 
@@ -1403,7 +1387,7 @@ impl BufferSearchBar {
     }
 
     fn smartcase(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        if self.should_use_smartcase_search(window, cx) {
+        if self.should_use_smartcase_search(cx) {
             let query = self.query(cx);
             if !query.is_empty() {
                 let is_case = self.is_contains_uppercase(&query);
@@ -2381,7 +2365,7 @@ mod tests {
             .search_bar
             .update_in(options.cx, |search_bar, window, cx| {
                 if let Some(options) = options.search_options {
-                    search_bar.set_search_options(options, window, cx);
+                    search_bar.set_search_options(options, cx);
                 }
                 search_bar.search(options.search_text, options.search_options, window, cx)
             })

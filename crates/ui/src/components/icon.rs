@@ -436,12 +436,7 @@ pub struct IconDecoration {
 
 impl IconDecoration {
     /// Create a new icon decoration
-    pub fn new(
-        kind: IconDecorationKind,
-        knockout_color: Hsla,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Self {
+    pub fn new(kind: IconDecorationKind, knockout_color: Hsla, cx: &mut AppContext) -> Self {
         let color = cx.theme().colors().icon;
         let position = Point::default();
 
@@ -535,7 +530,7 @@ impl RenderOnce for IconDecoration {
 }
 
 impl ComponentPreview for IconDecoration {
-    fn examples(window: &mut Window, cx: &mut AppContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_: &mut Window, cx: &mut AppContext) -> Vec<ComponentExampleGroup<Self>> {
         let all_kinds = IconDecorationKind::iter().collect::<Vec<_>>();
 
         let examples = all_kinds
@@ -545,7 +540,7 @@ impl ComponentPreview for IconDecoration {
 
                 single_example(
                     name,
-                    IconDecoration::new(*kind, cx.theme().colors().surface_background, window, cx),
+                    IconDecoration::new(*kind, cx.theme().colors().surface_background, cx),
                 )
             })
             .collect();
@@ -577,7 +572,7 @@ impl RenderOnce for DecoratedIcon {
 }
 
 impl ComponentPreview for DecoratedIcon {
-    fn examples(window: &mut Window, cx: &mut AppContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_: &mut Window, cx: &mut AppContext) -> Vec<ComponentExampleGroup<Self>> {
         let icon_1 = Icon::new(IconName::FileDoc);
         let icon_2 = Icon::new(IconName::FileDoc);
         let icon_3 = Icon::new(IconName::FileDoc);
@@ -586,7 +581,6 @@ impl ComponentPreview for DecoratedIcon {
         let decoration_x = IconDecoration::new(
             IconDecorationKind::X,
             cx.theme().colors().surface_background,
-            window,
             cx,
         )
         .color(cx.theme().status().error)
@@ -598,7 +592,6 @@ impl ComponentPreview for DecoratedIcon {
         let decoration_triangle = IconDecoration::new(
             IconDecorationKind::Triangle,
             cx.theme().colors().surface_background,
-            window,
             cx,
         )
         .color(cx.theme().status().error)
@@ -610,7 +603,6 @@ impl ComponentPreview for DecoratedIcon {
         let decoration_dot = IconDecoration::new(
             IconDecorationKind::Dot,
             cx.theme().colors().surface_background,
-            window,
             cx,
         )
         .color(cx.theme().status().error)

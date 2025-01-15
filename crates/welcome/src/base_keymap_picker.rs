@@ -2,7 +2,7 @@ use super::base_keymap_setting::BaseKeymap;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions, AppContext, DismissEvent, EventEmitter, Focusable, Model, ModelContext, Render, Task,
-    VisualContext, WeakModel, Window,
+    WeakModel, Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::Fs;
@@ -15,7 +15,7 @@ use workspace::{ui::HighlightedLabel, ModalView, Workspace};
 actions!(welcome, [ToggleBaseKeymapSelector]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(|workspace: &mut Workspace, window, _cx| {
+    cx.observe_new_models(|workspace: &mut Workspace, _cx| {
         workspace.register_action(toggle);
     })
     .detach();
@@ -30,7 +30,7 @@ pub fn toggle(
     let fs = workspace.app_state().fs.clone();
     workspace.toggle_modal(window, cx, |window, cx| {
         BaseKeymapSelector::new(
-            BaseKeymapSelectorDelegate::new(cx.model().downgrade(), fs, window, cx),
+            BaseKeymapSelectorDelegate::new(cx.model().downgrade(), fs, cx),
             window,
             cx,
         )
@@ -78,7 +78,6 @@ impl BaseKeymapSelectorDelegate {
     fn new(
         weak_view: WeakModel<BaseKeymapSelector>,
         fs: Arc<dyn Fs>,
-        window: &mut Window,
         cx: &mut ModelContext<BaseKeymapSelector>,
     ) -> Self {
         let base = BaseKeymap::get(None, cx);
@@ -169,7 +168,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
     fn confirm(
         &mut self,
         _: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<BaseKeymapSelectorDelegate>>,
     ) {
         if let Some(selection) = self.matches.get(self.selected_index) {
@@ -195,7 +194,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
 
     fn dismissed(
         &mut self,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<BaseKeymapSelectorDelegate>>,
     ) {
         self.view

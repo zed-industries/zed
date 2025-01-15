@@ -27,7 +27,7 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(move |workspace: &mut Workspace, window, _cx| {
+    cx.observe_new_window_models(move |workspace: &mut Workspace, _, _cx| {
         workspace.register_action(|workspace, _: &RateCompletions, window, cx| {
             RateCompletionModal::toggle(workspace, window, cx);
         });
@@ -62,7 +62,7 @@ impl RateCompletionModal {
     }
 
     pub fn new(zeta: Model<Zeta>, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
-        let subscription = cx.observe_in(&zeta, window, |_, _, window, cx| cx.notify());
+        let subscription = cx.observe_in(&zeta, window, |_, _, _, cx| cx.notify());
         Self {
             zeta,
             selected_index: 0,
@@ -72,16 +72,11 @@ impl RateCompletionModal {
         }
     }
 
-    fn dismiss(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn dismiss(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut ModelContext<Self>) {
         cx.emit(DismissEvent);
     }
 
-    fn select_next(
-        &mut self,
-        _: &menu::SelectNext,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn select_next(&mut self, _: &menu::SelectNext, _: &mut Window, cx: &mut ModelContext<Self>) {
         self.selected_index += 1;
         self.selected_index = usize::min(
             self.selected_index,
@@ -90,17 +85,12 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn select_prev(
-        &mut self,
-        _: &menu::SelectPrev,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn select_prev(&mut self, _: &menu::SelectPrev, _: &mut Window, cx: &mut ModelContext<Self>) {
         self.selected_index = self.selected_index.saturating_sub(1);
         cx.notify();
     }
 
-    fn select_next_edit(&mut self, _: &NextEdit, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_next_edit(&mut self, _: &NextEdit, _: &mut Window, cx: &mut ModelContext<Self>) {
         let next_index = self
             .zeta
             .read(cx)
@@ -117,12 +107,7 @@ impl RateCompletionModal {
         }
     }
 
-    fn select_prev_edit(
-        &mut self,
-        _: &PreviousEdit,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn select_prev_edit(&mut self, _: &PreviousEdit, _: &mut Window, cx: &mut ModelContext<Self>) {
         let zeta = self.zeta.read(cx);
         let completions_len = zeta.recent_completions_len();
 
@@ -144,22 +129,12 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn select_first(
-        &mut self,
-        _: &menu::SelectFirst,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn select_first(&mut self, _: &menu::SelectFirst, _: &mut Window, cx: &mut ModelContext<Self>) {
         self.selected_index = 0;
         cx.notify();
     }
 
-    fn select_last(
-        &mut self,
-        _: &menu::SelectLast,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn select_last(&mut self, _: &menu::SelectLast, _: &mut Window, cx: &mut ModelContext<Self>) {
         self.selected_index = self.zeta.read(cx).recent_completions_len() - 1;
         cx.notify();
     }
@@ -319,14 +294,14 @@ impl RateCompletionModal {
             completion,
             feedback_editor: cx.new_model(|cx| {
                 let mut editor = Editor::multi_line(window, cx);
-                editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, window, cx);
-                editor.set_show_line_numbers(false, window, cx);
-                editor.set_show_scrollbars(false, window, cx);
-                editor.set_show_git_diff_gutter(false, window, cx);
-                editor.set_show_code_actions(false, window, cx);
-                editor.set_show_runnables(false, window, cx);
-                editor.set_show_wrap_guides(false, window, cx);
-                editor.set_show_indent_guides(false, window, cx);
+                editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
+                editor.set_show_line_numbers(false, cx);
+                editor.set_show_scrollbars(false, cx);
+                editor.set_show_git_diff_gutter(false, cx);
+                editor.set_show_code_actions(false, cx);
+                editor.set_show_runnables(false, cx);
+                editor.set_show_wrap_guides(false, cx);
+                editor.set_show_indent_guides(false, cx);
                 editor.set_show_inline_completions(Some(false), window, cx);
                 editor.set_placeholder_text("Add your feedback…", cx);
                 if focus {
@@ -512,7 +487,7 @@ impl RateCompletionModal {
                                         .key_binding(KeyBinding::for_action_in(
                                             &ThumbsDown,
                                             &self.focus_handle(cx),
-                                            window, cx,
+                                            window,
                                         ))
                                         .style(ButtonStyle::Filled)
                                         .icon(IconName::ThumbsDown)
@@ -520,9 +495,7 @@ impl RateCompletionModal {
                                         .icon_position(IconPosition::Start)
                                         .disabled(rated || feedback_empty)
                                         .when(feedback_empty, |this| {
-                                            this.tooltip(|window, cx| {
-                                                Tooltip::text("Explain what's bad about it before reporting it", window, cx)
-                                            })
+                                            this.tooltip(Tooltip::text("Explain what's bad about it before reporting it"))
                                         })
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             this.thumbs_down_active(
@@ -536,7 +509,7 @@ impl RateCompletionModal {
                                         .key_binding(KeyBinding::for_action_in(
                                             &ThumbsUp,
                                             &self.focus_handle(cx),
-                                            window, cx,
+                                            window,
                                         ))
                                         .style(ButtonStyle::Filled)
                                         .icon(IconName::ThumbsUp)
@@ -661,7 +634,7 @@ impl Render for RateCompletionModal {
                     ),
             )
             .children(self.render_active_completion(window, cx))
-            .on_mouse_down_out(cx.listener(|_, _, window, cx| cx.emit(DismissEvent)))
+            .on_mouse_down_out(cx.listener(|_, _, _, cx| cx.emit(DismissEvent)))
     }
 }
 

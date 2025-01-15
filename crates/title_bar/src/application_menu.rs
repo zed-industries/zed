@@ -13,7 +13,7 @@ pub struct ApplicationMenu {
 }
 
 impl ApplicationMenu {
-    pub fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(_: &mut Window, cx: &mut ModelContext<Self>) -> Self {
         let menus = cx.get_menus().unwrap_or_default();
         Self {
             entries: menus
@@ -114,9 +114,7 @@ impl ApplicationMenu {
                         .style(ButtonStyle::Subtle)
                         .icon_size(IconSize::Small)
                         .when(!handle.is_deployed(), |this| {
-                            this.tooltip(|window, cx| {
-                                Tooltip::text("Open Application Menu", window, cx)
-                            })
+                            this.tooltip(Tooltip::text("Open Application Menu"))
                         }),
                     )
                     .with_handle(handle),
@@ -156,7 +154,7 @@ impl ApplicationMenu {
             .on_hover(move |hover_enter, window, cx| {
                 // Skip if menu is already open to avoid focus issue
                 if *hover_enter && !current_handle.is_deployed() {
-                    all_handles.iter().for_each(|h| h.hide(window, cx));
+                    all_handles.iter().for_each(|h| h.hide(cx));
 
                     // Defer to prevent focus race condition with the previously open menu
                     let handle = current_handle.clone();

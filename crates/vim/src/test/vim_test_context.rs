@@ -1,7 +1,7 @@
 use std::ops::{Deref, DerefMut};
 
 use editor::test::editor_lsp_test_context::EditorLspTestContext;
-use gpui::{Context, Model, SemanticVersion, UpdateGlobal, VisualContext};
+use gpui::{Context, Model, SemanticVersion, UpdateGlobal};
 use search::{project_search::ProjectSearchBar, BufferSearchBar};
 
 use crate::{state::Operator, *};
@@ -55,7 +55,7 @@ impl VimTestContext {
     }
 
     pub fn new_with_lsp(mut cx: EditorLspTestContext, enabled: bool) -> VimTestContext {
-        cx.update(|window, cx| {
+        cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(enabled));
             });
@@ -105,7 +105,7 @@ impl VimTestContext {
     }
 
     pub fn enable_vim(&mut self) {
-        self.cx.update(|window, cx| {
+        self.cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(true));
             });
@@ -113,7 +113,7 @@ impl VimTestContext {
     }
 
     pub fn disable_vim(&mut self) {
-        self.cx.update(|window, cx| {
+        self.cx.update(|_, cx| {
             SettingsStore::update_global(cx, |store, cx| {
                 store.update_user_settings::<VimModeSetting>(cx, |s| *s = Some(false));
             });
@@ -121,13 +121,11 @@ impl VimTestContext {
     }
 
     pub fn mode(&mut self) -> Mode {
-        self.update_editor(|editor, window, cx| {
-            editor.addon::<VimAddon>().unwrap().view.read(cx).mode
-        })
+        self.update_editor(|editor, _, cx| editor.addon::<VimAddon>().unwrap().view.read(cx).mode)
     }
 
     pub fn active_operator(&mut self) -> Option<Operator> {
-        self.update_editor(|editor, window, cx| {
+        self.update_editor(|editor, _, cx| {
             editor
                 .addon::<VimAddon>()
                 .unwrap()

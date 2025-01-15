@@ -96,16 +96,11 @@ impl TerminalPanel {
             assistant_enabled: false,
             assistant_tab_bar_button: None,
         };
-        terminal_panel.apply_tab_bar_buttons(&terminal_panel.active_pane, window, cx);
+        terminal_panel.apply_tab_bar_buttons(&terminal_panel.active_pane, cx);
         terminal_panel
     }
 
-    pub fn asssistant_enabled(
-        &mut self,
-        enabled: bool,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn asssistant_enabled(&mut self, enabled: bool, cx: &mut ModelContext<Self>) {
         self.assistant_enabled = enabled;
         if enabled {
             let focus_handle = self
@@ -122,19 +117,14 @@ impl TerminalPanel {
             self.assistant_tab_bar_button = None;
         }
         for pane in self.center.panes() {
-            self.apply_tab_bar_buttons(pane, window, cx);
+            self.apply_tab_bar_buttons(pane, cx);
         }
     }
 
-    fn apply_tab_bar_buttons(
-        &self,
-        terminal_pane: &Model<Pane>,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn apply_tab_bar_buttons(&self, terminal_pane: &Model<Pane>, cx: &mut ModelContext<Self>) {
         let assistant_tab_bar_button = self.assistant_tab_bar_button.clone();
         terminal_pane.update(cx, |pane, cx| {
-            pane.set_render_tab_bar_buttons(window, cx, move |pane, window, cx| {
+            pane.set_render_tab_bar_buttons(cx, move |pane, window, cx| {
                 let split_context = pane
                     .active_item()
                     .and_then(|item| item.downcast::<TerminalView>())
@@ -150,7 +140,7 @@ impl TerminalPanel {
                             .trigger(
                                 IconButton::new("plus", IconName::Plus)
                                     .icon_size(IconSize::Small)
-                                    .tooltip(|window, cx| Tooltip::text("New…", window, cx)),
+                                    .tooltip(Tooltip::text("New…")),
                             )
                             .anchor(Corner::TopRight)
                             .with_handle(pane.new_item_context_menu_handle.clone())
@@ -180,7 +170,7 @@ impl TerminalPanel {
                             .trigger(
                                 IconButton::new("terminal-pane-split", IconName::Split)
                                     .icon_size(IconSize::Small)
-                                    .tooltip(|window, cx| Tooltip::text("Split Pane", window, cx)),
+                                    .tooltip(Tooltip::text("Split Pane")),
                             )
                             .anchor(Corner::TopRight)
                             .with_handle(pane.split_item_context_menu_handle.clone())
@@ -306,14 +296,14 @@ impl TerminalPanel {
         cx: &mut ModelContext<Self>,
     ) {
         match event {
-            pane::Event::ActivateItem { .. } => self.serialize(window, cx),
-            pane::Event::RemovedItem { .. } => self.serialize(window, cx),
+            pane::Event::ActivateItem { .. } => self.serialize(cx),
+            pane::Event::RemovedItem { .. } => self.serialize(cx),
             pane::Event::Remove { focus_on_pane } => {
                 let pane_count_before_removal = self.center.panes().len();
                 let _removal_result = self.center.remove(&pane);
                 if pane_count_before_removal == 1 {
                     self.center.first_pane().update(cx, |pane, cx| {
-                        pane.set_zoomed(false, window, cx);
+                        pane.set_zoomed(false, cx);
                     });
                     cx.emit(PanelEvent::Close);
                 } else {
@@ -327,7 +317,7 @@ impl TerminalPanel {
             pane::Event::ZoomIn => {
                 for pane in self.center.panes() {
                     pane.update(cx, |pane, cx| {
-                        pane.set_zoomed(true, window, cx);
+                        pane.set_zoomed(true, cx);
                     })
                 }
                 cx.emit(PanelEvent::ZoomIn);
@@ -336,7 +326,7 @@ impl TerminalPanel {
             pane::Event::ZoomOut => {
                 for pane in self.center.panes() {
                     pane.update(cx, |pane, cx| {
-                        pane.set_zoomed(false, window, cx);
+                        pane.set_zoomed(false, cx);
                     })
                 }
                 cx.emit(PanelEvent::ZoomOut);
@@ -348,7 +338,7 @@ impl TerminalPanel {
                         item.added_to_pane(workspace, pane.clone(), window, cx)
                     })
                 }
-                self.serialize(window, cx);
+                self.serialize(cx);
             }
             pane::Event::Split(direction) => {
                 let Some(new_pane) = self.new_pane_with_cloned_active_terminal(window, cx) else {
@@ -417,7 +407,7 @@ impl TerminalPanel {
             window,
             cx,
         );
-        self.apply_tab_bar_buttons(&pane, window, cx);
+        self.apply_tab_bar_buttons(&pane, cx);
         pane.update(cx, |pane, cx| {
             pane.add_item(terminal_view, true, true, None, window, cx);
         });
@@ -804,28 +794,27 @@ impl TerminalPanel {
 
                 Ok(terminal)
             })?;
-            terminal_panel.update_in(&mut cx, |this, window, cx| {
+            terminal_panel.update(&mut cx, |this, cx| {
                 this.pending_terminals_to_add = this.pending_terminals_to_add.saturating_sub(1);
-                this.serialize(window, cx)
+                this.serialize(cx)
             })?;
             result
         })
     }
 
-    fn serialize(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn serialize(&mut self, cx: &mut ModelContext<Self>) {
         let height = self.height;
         let width = self.width;
-        self.pending_serialization = cx.spawn_in(window, |terminal_panel, mut cx| async move {
+        self.pending_serialization = cx.spawn(|terminal_panel, mut cx| async move {
             cx.background_executor()
                 .timer(Duration::from_millis(50))
                 .await;
             let terminal_panel = terminal_panel.upgrade()?;
             let items = terminal_panel
-                .update_in(&mut cx, |terminal_panel, window, cx| {
+                .update(&mut cx, |terminal_panel, cx| {
                     SerializedItems::WithSplits(serialize_pane_group(
                         &terminal_panel.center,
                         &terminal_panel.active_pane,
-                        window,
                         cx,
                     ))
                 })
@@ -1002,8 +991,8 @@ pub fn new_terminal_pane(
             window,
             cx,
         );
-        pane.set_zoomed(zoomed, window, cx);
-        pane.set_can_navigate(false, window, cx);
+        pane.set_zoomed(zoomed, cx);
+        pane.set_can_navigate(false, cx);
         pane.display_nav_history_buttons(None);
         pane.set_should_display_tab_bar(|_, _| true);
         pane.set_zoom_out_on_close(false);
@@ -1046,7 +1035,7 @@ pub fn new_terminal_pane(
 
         let drop_closure_project = project.downgrade();
         let drop_closure_terminal_panel = terminal_panel.downgrade();
-        pane.set_custom_drop_handle(window, cx, move |pane, dropped_item, window, cx| {
+        pane.set_custom_drop_handle(cx, move |pane, dropped_item, window, cx| {
             let Some(project) = drop_closure_project.upgrade() else {
                 return ControlFlow::Break(());
             };
@@ -1078,7 +1067,7 @@ pub fn new_terminal_pane(
                                         window,
                                         cx,
                                     );
-                                    terminal_panel.apply_tab_bar_buttons(&new_pane, window, cx);
+                                    terminal_panel.apply_tab_bar_buttons(&new_pane, cx);
                                     terminal_panel.center.split(
                                         &this_pane,
                                         &new_pane,
@@ -1147,8 +1136,7 @@ pub fn new_terminal_pane(
 
     cx.subscribe_in(&pane, window, TerminalPanel::handle_pane_event)
         .detach();
-    cx.observe_in(&pane, window, |_, _, window, cx| cx.notify())
-        .detach();
+    cx.observe(&pane, |_, _, cx| cx.notify()).detach();
 
     pane
 }
@@ -1195,7 +1183,7 @@ impl EventEmitter<PanelEvent> for TerminalPanel {}
 impl Render for TerminalPanel {
     fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let mut registrar = DivRegistrar::new(
-            |panel, window, cx| {
+            |panel, _, cx| {
                 panel
                     .active_pane
                     .read(cx)
@@ -1203,7 +1191,6 @@ impl Render for TerminalPanel {
                     .read(cx)
                     .item_of_type::<BufferSearchBar>()
             },
-            window,
             cx,
         );
         BufferSearchBar::register(&mut registrar);
@@ -1289,8 +1276,8 @@ impl Render for TerminalPanel {
                         }
                     }),
                 )
-                .on_action(cx.listener(
-                    |terminal_panel, action: &SwapPaneInDirection, window, cx| {
+                .on_action(
+                    cx.listener(|terminal_panel, action: &SwapPaneInDirection, _, cx| {
                         if let Some(to) = terminal_panel
                             .center
                             .find_pane_in_direction(&terminal_panel.active_pane, action.0, cx)
@@ -1299,8 +1286,8 @@ impl Render for TerminalPanel {
                             terminal_panel.center.swap(&terminal_panel.active_pane, &to);
                             cx.notify();
                         }
-                    },
-                ))
+                    }),
+                )
                 .on_action(
                     cx.listener(|terminal_panel, action: &MoveItemToPane, window, cx| {
                         let Some(&target_pane) =
@@ -1395,7 +1382,7 @@ impl Panel for TerminalPanel {
             DockPosition::Left | DockPosition::Right => self.width = size,
             DockPosition::Bottom => self.height = size,
         }
-        self.serialize(window, cx);
+        self.serialize(cx);
         cx.notify();
     }
 
@@ -1403,10 +1390,10 @@ impl Panel for TerminalPanel {
         self.active_pane.read(cx).is_zoomed()
     }
 
-    fn set_zoomed(&mut self, zoomed: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_zoomed(&mut self, zoomed: bool, _: &mut Window, cx: &mut ModelContext<Self>) {
         for pane in self.center.panes() {
             pane.update(cx, |pane, cx| {
-                pane.set_zoomed(zoomed, window, cx);
+                pane.set_zoomed(zoomed, cx);
             })
         }
         cx.notify();

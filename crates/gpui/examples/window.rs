@@ -57,7 +57,7 @@ impl Render for SubWindow {
                     .p_8()
                     .gap_2()
                     .child("SubWindow")
-                    .child(button("Close", |window, cx| {
+                    .child(button("Close", |window, _| {
                         window.remove_window();
                     })),
             )
@@ -67,7 +67,7 @@ impl Render for SubWindow {
 struct WindowDemo {}
 
 impl Render for WindowDemo {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let window_bounds =
             WindowBounds::Windowed(Bounds::centered(None, size(px(300.0), px(300.0)), cx));
 
@@ -80,66 +80,66 @@ impl Render for WindowDemo {
             .justify_center()
             .items_center()
             .gap_2()
-            .child(button("Normal", move |window, cx| {
+            .child(button("Normal", move |_, cx| {
                 cx.open_window(
                     WindowOptions {
                         window_bounds: Some(window_bounds),
                         ..Default::default()
                     },
-                    |window, cx| {
-                        cx.new_model(|cx| SubWindow {
+                    |_, cx| {
+                        cx.new_model(|_| SubWindow {
                             custom_titlebar: false,
                         })
                     },
                 )
                 .unwrap();
             }))
-            .child(button("Popup", move |window, cx| {
+            .child(button("Popup", move |_, cx| {
                 cx.open_window(
                     WindowOptions {
                         window_bounds: Some(window_bounds),
                         kind: WindowKind::PopUp,
                         ..Default::default()
                     },
-                    |window, cx| {
-                        cx.new_model(|cx| SubWindow {
+                    |_, cx| {
+                        cx.new_model(|_| SubWindow {
                             custom_titlebar: false,
                         })
                     },
                 )
                 .unwrap();
             }))
-            .child(button("Custom Titlebar", move |window, cx| {
+            .child(button("Custom Titlebar", move |_, cx| {
                 cx.open_window(
                     WindowOptions {
                         titlebar: None,
                         window_bounds: Some(window_bounds),
                         ..Default::default()
                     },
-                    |window, cx| {
-                        cx.new_model(|cx| SubWindow {
+                    |_, cx| {
+                        cx.new_model(|_| SubWindow {
                             custom_titlebar: true,
                         })
                     },
                 )
                 .unwrap();
             }))
-            .child(button("Invisible", move |window, cx| {
+            .child(button("Invisible", move |_, cx| {
                 cx.open_window(
                     WindowOptions {
                         show: false,
                         window_bounds: Some(window_bounds),
                         ..Default::default()
                     },
-                    |window, cx| {
-                        cx.new_model(|cx| SubWindow {
+                    |_, cx| {
+                        cx.new_model(|_| SubWindow {
                             custom_titlebar: false,
                         })
                     },
                 )
                 .unwrap();
             }))
-            .child(button("Unmovable", move |window, cx| {
+            .child(button("Unmovable", move |_, cx| {
                 cx.open_window(
                     WindowOptions {
                         is_movable: false,
@@ -147,8 +147,8 @@ impl Render for WindowDemo {
                         window_bounds: Some(window_bounds),
                         ..Default::default()
                     },
-                    |window, cx| {
-                        cx.new_model(|cx| SubWindow {
+                    |_, cx| {
+                        cx.new_model(|_| SubWindow {
                             custom_titlebar: false,
                         })
                     },
@@ -162,7 +162,7 @@ impl Render for WindowDemo {
                 window
                     .spawn(cx, |mut cx| async move {
                         Timer::after(std::time::Duration::from_secs(3)).await;
-                        cx.update(|window, cx| {
+                        cx.update(|_, cx| {
                             cx.activate(false);
                         })
                     })
@@ -179,7 +179,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |window, cx| cx.new_model(|cx| WindowDemo {}),
+            |_, cx| cx.new_model(|_| WindowDemo {}),
         )
         .unwrap();
     });

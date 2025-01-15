@@ -5,9 +5,7 @@ use gpui::{
 };
 use language::{Buffer, BufferEvent, LanguageName, Toolchain};
 use project::{Project, WorktreeId};
-use ui::{
-    AppContext, Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, SharedString, Tooltip,
-};
+use ui::{Button, ButtonCommon, Clickable, FluentBuilder, LabelSize, SharedString, Tooltip};
 use workspace::{item::ItemHandle, StatusItemView, Workspace};
 
 use crate::ToolchainSelector;
@@ -126,7 +124,7 @@ impl ActiveToolchain {
                     .update(&mut cx, |this, _| this.project().clone())
                     .ok()?;
                 let toolchains = cx
-                    .update(|window, cx| {
+                    .update(|_, cx| {
                         project
                             .read(cx)
                             .available_toolchains(worktree_id, language_name, cx)
@@ -154,7 +152,7 @@ impl ActiveToolchain {
 }
 
 impl Render for ActiveToolchain {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         div().when_some(self.active_toolchain.as_ref(), |el, active_toolchain| {
             let term = self.term.clone();
             el.child(
@@ -167,9 +165,7 @@ impl Render for ActiveToolchain {
                             });
                         }
                     }))
-                    .tooltip(move |window, cx| {
-                        Tooltip::text(format!("Select {}", &term), window, cx)
-                    }),
+                    .tooltip(Tooltip::text(format!("Select {}", &term))),
             )
         })
     }

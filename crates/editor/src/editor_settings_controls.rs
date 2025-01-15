@@ -89,7 +89,7 @@ impl RenderOnce for BufferFontFamilyControl {
             .child(DropdownMenu::new(
                 "buffer-font-family",
                 value.clone(),
-                ContextMenu::build(window, cx, |mut menu, window, cx| {
+                ContextMenu::build(window, cx, |mut menu, _, cx| {
                     let font_family_cache = FontFamilyCache::global(cx);
 
                     for font_name in font_family_cache.list_font_families(cx) {
@@ -148,10 +148,10 @@ impl RenderOnce for BufferFontSizeControl {
             .child(NumericStepper::new(
                 "buffer-font-size",
                 value.to_string(),
-                move |_, window, cx| {
+                move |_, _, cx| {
                     Self::write(value - px(1.), cx);
                 },
-                move |_, window, cx| {
+                move |_, _, cx| {
                     Self::write(value + px(1.), cx);
                 },
             ))
@@ -198,7 +198,7 @@ impl RenderOnce for BufferFontWeightControl {
                         menu = menu.custom_entry(
                             move |_window, _cx| Label::new(weight.0.to_string()).into_any_element(),
                             {
-                                move |window, cx| {
+                                move |_, cx| {
                                     Self::write(weight, cx);
                                 }
                             },
@@ -262,7 +262,7 @@ impl RenderOnce for BufferFontLigaturesControl {
             "buffer-font-ligatures",
             Label::new(self.name()),
             value.into(),
-            |selection, window, cx| {
+            |selection, _, cx| {
                 Self::write(
                     match selection {
                         ToggleState::Selected => true,
@@ -315,7 +315,7 @@ impl RenderOnce for InlineGitBlameControl {
             "inline-git-blame",
             Label::new(self.name()),
             value.into(),
-            |selection, window, cx| {
+            |selection, _, cx| {
                 Self::write(
                     match selection {
                         ToggleState::Selected => true,
@@ -368,7 +368,7 @@ impl RenderOnce for LineNumbersControl {
             "line-numbers",
             Label::new(self.name()),
             value.into(),
-            |selection, window, cx| {
+            |selection, _, cx| {
                 Self::write(
                     match selection {
                         ToggleState::Selected => true,
@@ -416,11 +416,11 @@ impl RenderOnce for RelativeLineNumbersControl {
             ContextMenu::build(window, cx, |menu, _window, _cx| {
                 menu.custom_entry(
                     |_window, _cx| Label::new("Ascending").into_any_element(),
-                    move |window, cx| Self::write(false, cx),
+                    move |_, cx| Self::write(false, cx),
                 )
                 .custom_entry(
                     |_window, _cx| Label::new("Relative").into_any_element(),
-                    move |window, cx| Self::write(true, cx),
+                    move |_, cx| Self::write(true, cx),
                 )
             }),
         )

@@ -18,10 +18,7 @@ use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
-use gpui::{
-    Action, App, AppContext, AsyncAppContext, Context, DismissEvent, UpdateGlobal as _,
-    VisualContext,
-};
+use gpui::{Action, App, AppContext, AsyncAppContext, Context, DismissEvent, UpdateGlobal as _};
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
 use log::LevelFilter;
@@ -102,7 +99,7 @@ fn files_not_createad_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
 
     eprintln!("{message}: {error_details}");
     App::new().run(move |cx| {
-        if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |window, cx| {
+        if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |_, cx| {
             cx.new_model(|_| gpui::Empty)
         }) {
             window
@@ -117,7 +114,7 @@ fn files_not_createad_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
 
                     cx.spawn_in(window, |_, mut cx| async move {
                         response.await?;
-                        cx.update(|window, cx| cx.quit())
+                        cx.update(|_, cx| cx.quit())
                     })
                     .detach_and_log_err(cx);
                 })
@@ -519,7 +516,7 @@ fn main() {
                 for &mut window in cx.windows().iter_mut() {
                     let background_appearance = cx.theme().window_background_appearance();
                     window
-                        .update(cx, |_, window, cx| {
+                        .update(cx, |_, window, _| {
                             window.set_background_appearance(background_appearance)
                         })
                         .ok();
@@ -618,7 +615,7 @@ fn handle_keymap_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
 
     for workspace in workspace::local_workspace_windows(cx) {
         workspace
-            .update(cx, |workspace, window, cx| match &error {
+            .update(cx, |workspace, _, cx| match &error {
                 Some(error) => {
                     workspace.show_notification(id.clone(), cx, |cx| {
                         cx.new_model(|_| {
@@ -644,7 +641,7 @@ fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
 
     for workspace in workspace::local_workspace_windows(cx) {
         workspace
-            .update(cx, |workspace, window, cx| {
+            .update(cx, |workspace, _, cx| {
                 match error.as_ref() {
                     Some(error) => {
                         if let Some(InvalidSettingsError::LocalSettings { .. }) =

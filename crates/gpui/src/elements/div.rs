@@ -33,7 +33,6 @@ use std::{
     fmt::Debug,
     marker::PhantomData,
     mem,
-    ops::DerefMut,
     rc::Rc,
     sync::Arc,
     time::Duration,
@@ -1526,7 +1525,7 @@ impl Interactivity {
         bounds: Bounds<Pixels>,
         style: &Style,
         window: &mut Window,
-        cx: &mut AppContext,
+        _cx: &mut AppContext,
     ) -> Point<Pixels> {
         if let Some(scroll_offset) = self.scroll_offset.as_ref() {
             if let Some(scroll_handle) = &self.tracked_scroll_handle {
@@ -1700,7 +1699,7 @@ impl Interactivity {
                     {
                         let secondary_held = window.modifiers().secondary();
                         window.on_key_event({
-                            move |e: &crate::ModifiersChangedEvent, _phase, window, cx| {
+                            move |e: &crate::ModifiersChangedEvent, _phase, window, _cx| {
                                 if e.modifiers.secondary() != secondary_held
                                     && text_bounds.contains(&window.mouse_position())
                                 {
@@ -1712,7 +1711,7 @@ impl Interactivity {
                         let was_hovered = hitbox.is_hovered(window);
                         window.on_mouse_event({
                             let hitbox = hitbox.clone();
-                            move |_: &MouseMoveEvent, phase, window, cx| {
+                            move |_: &MouseMoveEvent, phase, window, _| {
                                 if phase == DispatchPhase::Capture {
                                     let hovered = hitbox.is_hovered(window);
                                     if hovered != was_hovered {
@@ -1783,7 +1782,7 @@ impl Interactivity {
         // This behavior can be suppressed by using `cx.prevent_default()`.
         if let Some(focus_handle) = self.tracked_focus_handle.clone() {
             let hitbox = hitbox.clone();
-            window.on_mouse_event(move |_: &MouseDownEvent, phase, window, cx| {
+            window.on_mouse_event(move |_: &MouseDownEvent, phase, window, _| {
                 if phase == DispatchPhase::Bubble
                     && hitbox.is_hovered(window)
                     && !window.default_prevented()
@@ -1830,7 +1829,7 @@ impl Interactivity {
         {
             let hitbox = hitbox.clone();
             let was_hovered = hitbox.is_hovered(window);
-            window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
+            window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, _cx| {
                 let hovered = hitbox.is_hovered(window);
                 if phase == DispatchPhase::Capture && hovered != was_hovered {
                     window.refresh();
@@ -1890,7 +1889,7 @@ impl Interactivity {
                 window.on_mouse_event({
                     let pending_mouse_down = pending_mouse_down.clone();
                     let hitbox = hitbox.clone();
-                    move |event: &MouseDownEvent, phase, window, cx| {
+                    move |event: &MouseDownEvent, phase, window, _cx| {
                         if phase == DispatchPhase::Bubble
                             && event.button == MouseButton::Left
                             && hitbox.is_hovered(window)
@@ -2064,7 +2063,7 @@ impl Interactivity {
                 window.on_mouse_event({
                     let active_tooltip = active_tooltip.clone();
                     let tooltip_id = self.tooltip_id;
-                    move |_: &MouseDownEvent, _, window, cx| {
+                    move |_: &MouseDownEvent, _, window, _cx| {
                         let tooltip_is_hovered =
                             tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(window));
 
@@ -2079,7 +2078,7 @@ impl Interactivity {
                 window.on_mouse_event({
                     let active_tooltip = active_tooltip.clone();
                     let tooltip_id = self.tooltip_id;
-                    move |_: &ScrollWheelEvent, _, window, cx| {
+                    move |_: &ScrollWheelEvent, _, window, _cx| {
                         let tooltip_is_hovered =
                             tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(window));
                         if (!tooltip_is_hoverable || !tooltip_is_hovered)
@@ -2096,7 +2095,7 @@ impl Interactivity {
                 .get_or_insert_with(Default::default)
                 .clone();
             if active_state.borrow().is_clicked() {
-                window.on_mouse_event(move |_: &MouseUpEvent, phase, window, cx| {
+                window.on_mouse_event(move |_: &MouseUpEvent, phase, window, _cx| {
                     if phase == DispatchPhase::Capture {
                         *active_state.borrow_mut() = ElementClickedState::default();
                         window.refresh();
@@ -2108,7 +2107,7 @@ impl Interactivity {
                     .as_ref()
                     .and_then(|group_active| GroupHitboxes::get(&group_active.group, cx));
                 let hitbox = hitbox.clone();
-                window.on_mouse_event(move |_: &MouseDownEvent, phase, window, cx| {
+                window.on_mouse_event(move |_: &MouseDownEvent, phase, window, _cx| {
                     if phase == DispatchPhase::Bubble && !window.default_prevented() {
                         let group_hovered = active_group_hitbox
                             .map_or(false, |group_hitbox_id| group_hitbox_id.is_hovered(window));
@@ -2126,7 +2125,7 @@ impl Interactivity {
         }
     }
 
-    fn paint_keyboard_listeners(&mut self, window: &mut Window, cx: &mut AppContext) {
+    fn paint_keyboard_listeners(&mut self, window: &mut Window, _cx: &mut AppContext) {
         let key_down_listeners = mem::take(&mut self.key_down_listeners);
         let key_up_listeners = mem::take(&mut self.key_up_listeners);
         let modifiers_changed_listeners = mem::take(&mut self.modifiers_changed_listeners);
@@ -2166,7 +2165,7 @@ impl Interactivity {
 
         if let Some(group_hitbox) = group_hitbox {
             let was_hovered = group_hitbox.is_hovered(window);
-            window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, cx| {
+            window.on_mouse_event(move |_: &MouseMoveEvent, phase, window, _cx| {
                 let hovered = group_hitbox.is_hovered(window);
                 if phase == DispatchPhase::Capture && hovered != was_hovered {
                     window.refresh();
@@ -2180,7 +2179,7 @@ impl Interactivity {
         hitbox: &Hitbox,
         style: &Style,
         window: &mut Window,
-        cx: &mut AppContext,
+        _cx: &mut AppContext,
     ) {
         if let Some(scroll_offset) = self.scroll_offset.clone() {
             let overflow = style.overflow;
@@ -2607,7 +2606,7 @@ impl ScrollAnchor {
         }
     }
     /// Request scroll to this item on the next frame.
-    pub fn scroll_to(&self, window: &mut Window, cx: &mut AppContext) {
+    pub fn scroll_to(&self, window: &mut Window, _cx: &mut AppContext) {
         let this = self.clone();
 
         window.on_next_frame(move |_, _| {

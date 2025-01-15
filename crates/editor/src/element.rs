@@ -171,83 +171,82 @@ impl EditorElement {
 
         crate::rust_analyzer_ext::apply_related_actions(view, window, cx);
         crate::clangd_ext::apply_related_actions(view, window, cx);
-        register_action(view, window, cx, Editor::open_context_menu);
-        register_action(view, window, cx, Editor::move_left);
-        register_action(view, window, cx, Editor::move_right);
-        register_action(view, window, cx, Editor::move_down);
-        register_action(view, window, cx, Editor::move_down_by_lines);
-        register_action(view, window, cx, Editor::select_down_by_lines);
-        register_action(view, window, cx, Editor::move_up);
-        register_action(view, window, cx, Editor::move_up_by_lines);
-        register_action(view, window, cx, Editor::select_up_by_lines);
-        register_action(view, window, cx, Editor::select_page_down);
-        register_action(view, window, cx, Editor::select_page_up);
-        register_action(view, window, cx, Editor::cancel);
-        register_action(view, window, cx, Editor::newline);
-        register_action(view, window, cx, Editor::newline_above);
-        register_action(view, window, cx, Editor::newline_below);
-        register_action(view, window, cx, Editor::backspace);
-        register_action(view, window, cx, Editor::delete);
-        register_action(view, window, cx, Editor::tab);
-        register_action(view, window, cx, Editor::tab_prev);
-        register_action(view, window, cx, Editor::indent);
-        register_action(view, window, cx, Editor::outdent);
-        register_action(view, window, cx, Editor::autoindent);
-        register_action(view, window, cx, Editor::delete_line);
-        register_action(view, window, cx, Editor::join_lines);
-        register_action(view, window, cx, Editor::sort_lines_case_sensitive);
-        register_action(view, window, cx, Editor::sort_lines_case_insensitive);
-        register_action(view, window, cx, Editor::reverse_lines);
-        register_action(view, window, cx, Editor::shuffle_lines);
-        register_action(view, window, cx, Editor::convert_to_upper_case);
-        register_action(view, window, cx, Editor::convert_to_lower_case);
-        register_action(view, window, cx, Editor::convert_to_title_case);
-        register_action(view, window, cx, Editor::convert_to_snake_case);
-        register_action(view, window, cx, Editor::convert_to_kebab_case);
-        register_action(view, window, cx, Editor::convert_to_upper_camel_case);
-        register_action(view, window, cx, Editor::convert_to_lower_camel_case);
-        register_action(view, window, cx, Editor::convert_to_opposite_case);
-        register_action(view, window, cx, Editor::delete_to_previous_word_start);
-        register_action(view, window, cx, Editor::delete_to_previous_subword_start);
-        register_action(view, window, cx, Editor::delete_to_next_word_end);
-        register_action(view, window, cx, Editor::delete_to_next_subword_end);
-        register_action(view, window, cx, Editor::delete_to_beginning_of_line);
-        register_action(view, window, cx, Editor::delete_to_end_of_line);
-        register_action(view, window, cx, Editor::cut_to_end_of_line);
-        register_action(view, window, cx, Editor::duplicate_line_up);
-        register_action(view, window, cx, Editor::duplicate_line_down);
-        register_action(view, window, cx, Editor::duplicate_selection);
-        register_action(view, window, cx, Editor::move_line_up);
-        register_action(view, window, cx, Editor::move_line_down);
-        register_action(view, window, cx, Editor::transpose);
-        register_action(view, window, cx, Editor::rewrap);
-        register_action(view, window, cx, Editor::cut);
-        register_action(view, window, cx, Editor::kill_ring_cut);
-        register_action(view, window, cx, Editor::kill_ring_yank);
-        register_action(view, window, cx, Editor::copy);
-        register_action(view, window, cx, Editor::paste);
-        register_action(view, window, cx, Editor::undo);
-        register_action(view, window, cx, Editor::redo);
-        register_action(view, window, cx, Editor::move_page_up);
-        register_action(view, window, cx, Editor::move_page_down);
-        register_action(view, window, cx, Editor::next_screen);
-        register_action(view, window, cx, Editor::scroll_cursor_top);
-        register_action(view, window, cx, Editor::scroll_cursor_center);
-        register_action(view, window, cx, Editor::scroll_cursor_bottom);
-        register_action(view, window, cx, Editor::scroll_cursor_center_top_bottom);
-        register_action(view, window, cx, |editor, _: &LineDown, window, cx| {
+        register_action(view, window, Editor::open_context_menu);
+        register_action(view, window, Editor::move_left);
+        register_action(view, window, Editor::move_right);
+        register_action(view, window, Editor::move_down);
+        register_action(view, window, Editor::move_down_by_lines);
+        register_action(view, window, Editor::select_down_by_lines);
+        register_action(view, window, Editor::move_up);
+        register_action(view, window, Editor::move_up_by_lines);
+        register_action(view, window, Editor::select_up_by_lines);
+        register_action(view, window, Editor::select_page_down);
+        register_action(view, window, Editor::select_page_up);
+        register_action(view, window, Editor::cancel);
+        register_action(view, window, Editor::newline);
+        register_action(view, window, Editor::newline_above);
+        register_action(view, window, Editor::newline_below);
+        register_action(view, window, Editor::backspace);
+        register_action(view, window, Editor::delete);
+        register_action(view, window, Editor::tab);
+        register_action(view, window, Editor::tab_prev);
+        register_action(view, window, Editor::indent);
+        register_action(view, window, Editor::outdent);
+        register_action(view, window, Editor::autoindent);
+        register_action(view, window, Editor::delete_line);
+        register_action(view, window, Editor::join_lines);
+        register_action(view, window, Editor::sort_lines_case_sensitive);
+        register_action(view, window, Editor::sort_lines_case_insensitive);
+        register_action(view, window, Editor::reverse_lines);
+        register_action(view, window, Editor::shuffle_lines);
+        register_action(view, window, Editor::convert_to_upper_case);
+        register_action(view, window, Editor::convert_to_lower_case);
+        register_action(view, window, Editor::convert_to_title_case);
+        register_action(view, window, Editor::convert_to_snake_case);
+        register_action(view, window, Editor::convert_to_kebab_case);
+        register_action(view, window, Editor::convert_to_upper_camel_case);
+        register_action(view, window, Editor::convert_to_lower_camel_case);
+        register_action(view, window, Editor::convert_to_opposite_case);
+        register_action(view, window, Editor::delete_to_previous_word_start);
+        register_action(view, window, Editor::delete_to_previous_subword_start);
+        register_action(view, window, Editor::delete_to_next_word_end);
+        register_action(view, window, Editor::delete_to_next_subword_end);
+        register_action(view, window, Editor::delete_to_beginning_of_line);
+        register_action(view, window, Editor::delete_to_end_of_line);
+        register_action(view, window, Editor::cut_to_end_of_line);
+        register_action(view, window, Editor::duplicate_line_up);
+        register_action(view, window, Editor::duplicate_line_down);
+        register_action(view, window, Editor::duplicate_selection);
+        register_action(view, window, Editor::move_line_up);
+        register_action(view, window, Editor::move_line_down);
+        register_action(view, window, Editor::transpose);
+        register_action(view, window, Editor::rewrap);
+        register_action(view, window, Editor::cut);
+        register_action(view, window, Editor::kill_ring_cut);
+        register_action(view, window, Editor::kill_ring_yank);
+        register_action(view, window, Editor::copy);
+        register_action(view, window, Editor::paste);
+        register_action(view, window, Editor::undo);
+        register_action(view, window, Editor::redo);
+        register_action(view, window, Editor::move_page_up);
+        register_action(view, window, Editor::move_page_down);
+        register_action(view, window, Editor::next_screen);
+        register_action(view, window, Editor::scroll_cursor_top);
+        register_action(view, window, Editor::scroll_cursor_center);
+        register_action(view, window, Editor::scroll_cursor_bottom);
+        register_action(view, window, Editor::scroll_cursor_center_top_bottom);
+        register_action(view, window, |editor, _: &LineDown, window, cx| {
             editor.scroll_screen(&ScrollAmount::Line(1.), window, cx)
         });
-        register_action(view, window, cx, |editor, _: &LineUp, window, cx| {
+        register_action(view, window, |editor, _: &LineUp, window, cx| {
             editor.scroll_screen(&ScrollAmount::Line(-1.), window, cx)
         });
-        register_action(view, window, cx, |editor, _: &HalfPageDown, window, cx| {
+        register_action(view, window, |editor, _: &HalfPageDown, window, cx| {
             editor.scroll_screen(&ScrollAmount::Page(0.5), window, cx)
         });
         register_action(
             view,
             window,
-            cx,
             |editor, HandleInput(text): &HandleInput, window, cx| {
                 if text.is_empty() {
                     return;
@@ -255,235 +254,235 @@ impl EditorElement {
                 editor.handle_input(text, window, cx);
             },
         );
-        register_action(view, window, cx, |editor, _: &HalfPageUp, window, cx| {
+        register_action(view, window, |editor, _: &HalfPageUp, window, cx| {
             editor.scroll_screen(&ScrollAmount::Page(-0.5), window, cx)
         });
-        register_action(view, window, cx, |editor, _: &PageDown, window, cx| {
+        register_action(view, window, |editor, _: &PageDown, window, cx| {
             editor.scroll_screen(&ScrollAmount::Page(1.), window, cx)
         });
-        register_action(view, window, cx, |editor, _: &PageUp, window, cx| {
+        register_action(view, window, |editor, _: &PageUp, window, cx| {
             editor.scroll_screen(&ScrollAmount::Page(-1.), window, cx)
         });
-        register_action(view, window, cx, Editor::move_to_previous_word_start);
-        register_action(view, window, cx, Editor::move_to_previous_subword_start);
-        register_action(view, window, cx, Editor::move_to_next_word_end);
-        register_action(view, window, cx, Editor::move_to_next_subword_end);
-        register_action(view, window, cx, Editor::move_to_beginning_of_line);
-        register_action(view, window, cx, Editor::move_to_end_of_line);
-        register_action(view, window, cx, Editor::move_to_start_of_paragraph);
-        register_action(view, window, cx, Editor::move_to_end_of_paragraph);
-        register_action(view, window, cx, Editor::move_to_beginning);
-        register_action(view, window, cx, Editor::move_to_end);
-        register_action(view, window, cx, Editor::select_up);
-        register_action(view, window, cx, Editor::select_down);
-        register_action(view, window, cx, Editor::select_left);
-        register_action(view, window, cx, Editor::select_right);
-        register_action(view, window, cx, Editor::select_to_previous_word_start);
-        register_action(view, window, cx, Editor::select_to_previous_subword_start);
-        register_action(view, window, cx, Editor::select_to_next_word_end);
-        register_action(view, window, cx, Editor::select_to_next_subword_end);
-        register_action(view, window, cx, Editor::select_to_beginning_of_line);
-        register_action(view, window, cx, Editor::select_to_end_of_line);
-        register_action(view, window, cx, Editor::select_to_start_of_paragraph);
-        register_action(view, window, cx, Editor::select_to_end_of_paragraph);
-        register_action(view, window, cx, Editor::select_to_beginning);
-        register_action(view, window, cx, Editor::select_to_end);
-        register_action(view, window, cx, Editor::select_all);
-        register_action(view, window, cx, |editor, action, window, cx| {
+        register_action(view, window, Editor::move_to_previous_word_start);
+        register_action(view, window, Editor::move_to_previous_subword_start);
+        register_action(view, window, Editor::move_to_next_word_end);
+        register_action(view, window, Editor::move_to_next_subword_end);
+        register_action(view, window, Editor::move_to_beginning_of_line);
+        register_action(view, window, Editor::move_to_end_of_line);
+        register_action(view, window, Editor::move_to_start_of_paragraph);
+        register_action(view, window, Editor::move_to_end_of_paragraph);
+        register_action(view, window, Editor::move_to_beginning);
+        register_action(view, window, Editor::move_to_end);
+        register_action(view, window, Editor::select_up);
+        register_action(view, window, Editor::select_down);
+        register_action(view, window, Editor::select_left);
+        register_action(view, window, Editor::select_right);
+        register_action(view, window, Editor::select_to_previous_word_start);
+        register_action(view, window, Editor::select_to_previous_subword_start);
+        register_action(view, window, Editor::select_to_next_word_end);
+        register_action(view, window, Editor::select_to_next_subword_end);
+        register_action(view, window, Editor::select_to_beginning_of_line);
+        register_action(view, window, Editor::select_to_end_of_line);
+        register_action(view, window, Editor::select_to_start_of_paragraph);
+        register_action(view, window, Editor::select_to_end_of_paragraph);
+        register_action(view, window, Editor::select_to_beginning);
+        register_action(view, window, Editor::select_to_end);
+        register_action(view, window, Editor::select_all);
+        register_action(view, window, |editor, action, window, cx| {
             editor.select_all_matches(action, window, cx).log_err();
         });
-        register_action(view, window, cx, Editor::select_line);
-        register_action(view, window, cx, Editor::split_selection_into_lines);
-        register_action(view, window, cx, Editor::add_selection_above);
-        register_action(view, window, cx, Editor::add_selection_below);
-        register_action(view, window, cx, |editor, action, window, cx| {
+        register_action(view, window, Editor::select_line);
+        register_action(view, window, Editor::split_selection_into_lines);
+        register_action(view, window, Editor::add_selection_above);
+        register_action(view, window, Editor::add_selection_below);
+        register_action(view, window, |editor, action, window, cx| {
             editor.select_next(action, window, cx).log_err();
         });
-        register_action(view, window, cx, |editor, action, window, cx| {
+        register_action(view, window, |editor, action, window, cx| {
             editor.select_previous(action, window, cx).log_err();
         });
-        register_action(view, window, cx, Editor::toggle_comments);
-        register_action(view, window, cx, Editor::select_larger_syntax_node);
-        register_action(view, window, cx, Editor::select_smaller_syntax_node);
-        register_action(view, window, cx, Editor::select_enclosing_symbol);
-        register_action(view, window, cx, Editor::move_to_enclosing_bracket);
-        register_action(view, window, cx, Editor::undo_selection);
-        register_action(view, window, cx, Editor::redo_selection);
+        register_action(view, window, Editor::toggle_comments);
+        register_action(view, window, Editor::select_larger_syntax_node);
+        register_action(view, window, Editor::select_smaller_syntax_node);
+        register_action(view, window, Editor::select_enclosing_symbol);
+        register_action(view, window, Editor::move_to_enclosing_bracket);
+        register_action(view, window, Editor::undo_selection);
+        register_action(view, window, Editor::redo_selection);
         if !view.read(cx).is_singleton(cx) {
-            register_action(view, window, cx, Editor::expand_excerpts);
-            register_action(view, window, cx, Editor::expand_excerpts_up);
-            register_action(view, window, cx, Editor::expand_excerpts_down);
+            register_action(view, window, Editor::expand_excerpts);
+            register_action(view, window, Editor::expand_excerpts_up);
+            register_action(view, window, Editor::expand_excerpts_down);
         }
-        register_action(view, window, cx, Editor::go_to_diagnostic);
-        register_action(view, window, cx, Editor::go_to_prev_diagnostic);
-        register_action(view, window, cx, Editor::go_to_next_hunk);
-        register_action(view, window, cx, Editor::go_to_prev_hunk);
-        register_action(view, window, cx, |editor, a, window, cx| {
+        register_action(view, window, Editor::go_to_diagnostic);
+        register_action(view, window, Editor::go_to_prev_diagnostic);
+        register_action(view, window, Editor::go_to_next_hunk);
+        register_action(view, window, Editor::go_to_prev_hunk);
+        register_action(view, window, |editor, a, window, cx| {
             editor
                 .go_to_definition(a, window, cx)
                 .detach_and_log_err(cx);
         });
-        register_action(view, window, cx, |editor, a, window, cx| {
+        register_action(view, window, |editor, a, window, cx| {
             editor
                 .go_to_definition_split(a, window, cx)
                 .detach_and_log_err(cx);
         });
-        register_action(view, window, cx, |editor, a, window, cx| {
+        register_action(view, window, |editor, a, window, cx| {
             editor
                 .go_to_declaration(a, window, cx)
                 .detach_and_log_err(cx);
         });
-        register_action(view, window, cx, |editor, a, window, cx| {
+        register_action(view, window, |editor, a, window, cx| {
             editor
                 .go_to_declaration_split(a, window, cx)
                 .detach_and_log_err(cx);
         });
-        register_action(view, window, cx, |editor, a, window, cx| {
+        register_action(view, window, |editor, a, window, cx| {
             editor
                 .go_to_implementation(a, window, cx)
                 .detach_and_log_err(cx);
         });
-        register_action(view, window, cx, |editor, a, window, cx| {
+        register_action(view, window, |editor, a, window, cx| {
             editor
                 .go_to_implementation_split(a, window, cx)
                 .detach_and_log_err(cx);
         });
-        register_action(view, window, cx, |editor, a, window, cx| {
+        register_action(view, window, |editor, a, window, cx| {
             editor
                 .go_to_type_definition(a, window, cx)
                 .detach_and_log_err(cx);
         });
-        register_action(view, window, cx, |editor, a, window, cx| {
+        register_action(view, window, |editor, a, window, cx| {
             editor
                 .go_to_type_definition_split(a, window, cx)
                 .detach_and_log_err(cx);
         });
-        register_action(view, window, cx, Editor::open_url);
-        register_action(view, window, cx, Editor::open_file);
-        register_action(view, window, cx, Editor::fold);
-        register_action(view, window, cx, Editor::fold_at_level);
-        register_action(view, window, cx, Editor::fold_all);
-        register_action(view, window, cx, Editor::fold_function_bodies);
-        register_action(view, window, cx, Editor::fold_at);
-        register_action(view, window, cx, Editor::fold_recursive);
-        register_action(view, window, cx, Editor::toggle_fold);
-        register_action(view, window, cx, Editor::toggle_fold_recursive);
-        register_action(view, window, cx, Editor::unfold_lines);
-        register_action(view, window, cx, Editor::unfold_recursive);
-        register_action(view, window, cx, Editor::unfold_all);
-        register_action(view, window, cx, Editor::unfold_at);
-        register_action(view, window, cx, Editor::fold_selected_ranges);
-        register_action(view, window, cx, Editor::show_completions);
-        register_action(view, window, cx, Editor::toggle_code_actions);
-        register_action(view, window, cx, Editor::open_excerpts);
-        register_action(view, window, cx, Editor::open_excerpts_in_split);
-        register_action(view, window, cx, Editor::open_proposed_changes_editor);
-        register_action(view, window, cx, Editor::toggle_soft_wrap);
-        register_action(view, window, cx, Editor::toggle_tab_bar);
-        register_action(view, window, cx, Editor::toggle_line_numbers);
-        register_action(view, window, cx, Editor::toggle_relative_line_numbers);
-        register_action(view, window, cx, Editor::toggle_indent_guides);
-        register_action(view, window, cx, Editor::toggle_inlay_hints);
-        register_action(view, window, cx, Editor::toggle_inline_completions);
-        register_action(view, window, cx, hover_popover::hover);
-        register_action(view, window, cx, Editor::reveal_in_finder);
-        register_action(view, window, cx, Editor::copy_path);
-        register_action(view, window, cx, Editor::copy_relative_path);
-        register_action(view, window, cx, Editor::copy_highlight_json);
-        register_action(view, window, cx, Editor::copy_permalink_to_line);
-        register_action(view, window, cx, Editor::open_permalink_to_line);
-        register_action(view, window, cx, Editor::copy_file_location);
-        register_action(view, window, cx, Editor::toggle_git_blame);
-        register_action(view, window, cx, Editor::toggle_git_blame_inline);
-        register_action(view, window, cx, Editor::toggle_hunk_diff);
-        register_action(view, window, cx, Editor::expand_all_hunk_diffs);
-        register_action(view, window, cx, |editor, action, window, cx| {
+        register_action(view, window, Editor::open_url);
+        register_action(view, window, Editor::open_file);
+        register_action(view, window, Editor::fold);
+        register_action(view, window, Editor::fold_at_level);
+        register_action(view, window, Editor::fold_all);
+        register_action(view, window, Editor::fold_function_bodies);
+        register_action(view, window, Editor::fold_at);
+        register_action(view, window, Editor::fold_recursive);
+        register_action(view, window, Editor::toggle_fold);
+        register_action(view, window, Editor::toggle_fold_recursive);
+        register_action(view, window, Editor::unfold_lines);
+        register_action(view, window, Editor::unfold_recursive);
+        register_action(view, window, Editor::unfold_all);
+        register_action(view, window, Editor::unfold_at);
+        register_action(view, window, Editor::fold_selected_ranges);
+        register_action(view, window, Editor::show_completions);
+        register_action(view, window, Editor::toggle_code_actions);
+        register_action(view, window, Editor::open_excerpts);
+        register_action(view, window, Editor::open_excerpts_in_split);
+        register_action(view, window, Editor::open_proposed_changes_editor);
+        register_action(view, window, Editor::toggle_soft_wrap);
+        register_action(view, window, Editor::toggle_tab_bar);
+        register_action(view, window, Editor::toggle_line_numbers);
+        register_action(view, window, Editor::toggle_relative_line_numbers);
+        register_action(view, window, Editor::toggle_indent_guides);
+        register_action(view, window, Editor::toggle_inlay_hints);
+        register_action(view, window, Editor::toggle_inline_completions);
+        register_action(view, window, hover_popover::hover);
+        register_action(view, window, Editor::reveal_in_finder);
+        register_action(view, window, Editor::copy_path);
+        register_action(view, window, Editor::copy_relative_path);
+        register_action(view, window, Editor::copy_highlight_json);
+        register_action(view, window, Editor::copy_permalink_to_line);
+        register_action(view, window, Editor::open_permalink_to_line);
+        register_action(view, window, Editor::copy_file_location);
+        register_action(view, window, Editor::toggle_git_blame);
+        register_action(view, window, Editor::toggle_git_blame_inline);
+        register_action(view, window, Editor::toggle_hunk_diff);
+        register_action(view, window, Editor::expand_all_hunk_diffs);
+        register_action(view, window, |editor, action, window, cx| {
             if let Some(task) = editor.format(action, window, cx) {
                 task.detach_and_log_err(cx);
             } else {
                 cx.propagate();
             }
         });
-        register_action(view, window, cx, |editor, action, window, cx| {
+        register_action(view, window, |editor, action, window, cx| {
             if let Some(task) = editor.format_selections(action, window, cx) {
                 task.detach_and_log_err(cx);
             } else {
                 cx.propagate();
             }
         });
-        register_action(view, window, cx, Editor::restart_language_server);
-        register_action(view, window, cx, Editor::cancel_language_server_work);
-        register_action(view, window, cx, Editor::show_character_palette);
-        register_action(view, window, cx, |editor, action, window, cx| {
+        register_action(view, window, Editor::restart_language_server);
+        register_action(view, window, Editor::cancel_language_server_work);
+        register_action(view, window, Editor::show_character_palette);
+        register_action(view, window, |editor, action, window, cx| {
             if let Some(task) = editor.confirm_completion(action, window, cx) {
                 task.detach_and_log_err(cx);
             } else {
                 cx.propagate();
             }
         });
-        register_action(view, window, cx, |editor, action, window, cx| {
+        register_action(view, window, |editor, action, window, cx| {
             if let Some(task) = editor.compose_completion(action, window, cx) {
                 task.detach_and_log_err(cx);
             } else {
                 cx.propagate();
             }
         });
-        register_action(view, window, cx, |editor, action, window, cx| {
+        register_action(view, window, |editor, action, window, cx| {
             if let Some(task) = editor.confirm_code_action(action, window, cx) {
                 task.detach_and_log_err(cx);
             } else {
                 cx.propagate();
             }
         });
-        register_action(view, window, cx, |editor, action, window, cx| {
+        register_action(view, window, |editor, action, window, cx| {
             if let Some(task) = editor.rename(action, window, cx) {
                 task.detach_and_log_err(cx);
             } else {
                 cx.propagate();
             }
         });
-        register_action(view, window, cx, |editor, action, window, cx| {
+        register_action(view, window, |editor, action, window, cx| {
             if let Some(task) = editor.confirm_rename(action, window, cx) {
                 task.detach_and_log_err(cx);
             } else {
                 cx.propagate();
             }
         });
-        register_action(view, window, cx, |editor, action, window, cx| {
+        register_action(view, window, |editor, action, window, cx| {
             if let Some(task) = editor.find_all_references(action, window, cx) {
                 task.detach_and_log_err(cx);
             } else {
                 cx.propagate();
             }
         });
-        register_action(view, window, cx, Editor::show_signature_help);
-        register_action(view, window, cx, Editor::next_inline_completion);
-        register_action(view, window, cx, Editor::previous_inline_completion);
-        register_action(view, window, cx, Editor::show_inline_completion);
-        register_action(view, window, cx, Editor::context_menu_first);
-        register_action(view, window, cx, Editor::context_menu_prev);
-        register_action(view, window, cx, Editor::context_menu_next);
-        register_action(view, window, cx, Editor::context_menu_last);
-        register_action(view, window, cx, Editor::display_cursor_names);
-        register_action(view, window, cx, Editor::unique_lines_case_insensitive);
-        register_action(view, window, cx, Editor::unique_lines_case_sensitive);
-        register_action(view, window, cx, Editor::accept_partial_inline_completion);
-        register_action(view, window, cx, Editor::accept_inline_completion);
-        register_action(view, window, cx, Editor::revert_file);
-        register_action(view, window, cx, Editor::revert_selected_hunks);
-        register_action(view, window, cx, Editor::apply_all_diff_hunks);
-        register_action(view, window, cx, Editor::apply_selected_diff_hunks);
-        register_action(view, window, cx, Editor::open_active_item_in_terminal);
-        register_action(view, window, cx, Editor::reload_file);
-        register_action(view, window, cx, Editor::spawn_nearest_task);
-        register_action(view, window, cx, Editor::insert_uuid_v4);
-        register_action(view, window, cx, Editor::insert_uuid_v7);
+        register_action(view, window, Editor::show_signature_help);
+        register_action(view, window, Editor::next_inline_completion);
+        register_action(view, window, Editor::previous_inline_completion);
+        register_action(view, window, Editor::show_inline_completion);
+        register_action(view, window, Editor::context_menu_first);
+        register_action(view, window, Editor::context_menu_prev);
+        register_action(view, window, Editor::context_menu_next);
+        register_action(view, window, Editor::context_menu_last);
+        register_action(view, window, Editor::display_cursor_names);
+        register_action(view, window, Editor::unique_lines_case_insensitive);
+        register_action(view, window, Editor::unique_lines_case_sensitive);
+        register_action(view, window, Editor::accept_partial_inline_completion);
+        register_action(view, window, Editor::accept_inline_completion);
+        register_action(view, window, Editor::revert_file);
+        register_action(view, window, Editor::revert_selected_hunks);
+        register_action(view, window, Editor::apply_all_diff_hunks);
+        register_action(view, window, Editor::apply_selected_diff_hunks);
+        register_action(view, window, Editor::open_active_item_in_terminal);
+        register_action(view, window, Editor::reload_file);
+        register_action(view, window, Editor::spawn_nearest_task);
+        register_action(view, window, Editor::insert_uuid_v4);
+        register_action(view, window, Editor::insert_uuid_v7);
     }
 
     fn register_key_listeners(
         &self,
         window: &mut Window,
-        cx: &mut AppContext,
+        _: &mut AppContext,
         layout: &EditorLayout,
     ) {
         let position_map = layout.position_map.clone();
@@ -817,7 +816,7 @@ impl EditorElement {
     ) {
         let modifiers = event.modifiers;
         let gutter_hovered = gutter_hitbox.is_hovered(window);
-        editor.set_gutter_hovered(gutter_hovered, window, cx);
+        editor.set_gutter_hovered(gutter_hovered, cx);
 
         // Don't trigger hover popover if mouse is hovering over context menu
         if text_hitbox.is_hovered(window) {
@@ -843,7 +842,7 @@ impl EditorElement {
                 hover_at(editor, None, window, cx);
             }
         } else {
-            editor.hide_hovered_link(window, cx);
+            editor.hide_hovered_link(cx);
             hover_at(editor, None, window, cx);
             if gutter_hovered {
                 cx.stop_propagation();
@@ -1049,7 +1048,6 @@ impl EditorElement {
     fn collect_cursors(
         &self,
         snapshot: &EditorSnapshot,
-        window: &mut Window,
         cx: &mut AppContext,
     ) -> Vec<(DisplayPoint, Hsla)> {
         let editor = self.editor.read(cx);
@@ -1307,15 +1305,12 @@ impl EditorElement {
         // cancel the scrollbar drag.
         if cx.has_active_drag() {
             self.editor.update(cx, |editor, cx| {
-                editor.scroll_manager.set_is_dragging_scrollbar(
-                    Axis::Horizontal,
-                    false,
-                    window,
-                    cx,
-                );
                 editor
                     .scroll_manager
-                    .set_is_dragging_scrollbar(Axis::Vertical, false, window, cx);
+                    .set_is_dragging_scrollbar(Axis::Horizontal, false, cx);
+                editor
+                    .scroll_manager
+                    .set_is_dragging_scrollbar(Axis::Vertical, false, cx);
             });
         }
 
@@ -1527,7 +1522,7 @@ impl EditorElement {
             .git_gutter
             .unwrap_or_default();
 
-        self.editor.update(cx, |editor, cx| {
+        self.editor.update(cx, |editor, _| {
             let expanded_hunks = &editor.diff_map.hunks;
             let expanded_hunks_start_ix = expanded_hunks
                 .binary_search_by(|hunk| {
@@ -1645,7 +1640,7 @@ impl EditorElement {
             .flatten()?;
 
         let mut element =
-            render_inline_blame_entry(&blame, blame_entry, &self.style, workspace, window, cx);
+            render_inline_blame_entry(&blame, blame_entry, &self.style, workspace, cx);
 
         let start_y = content_origin.y
             + line_height * (display_row.as_f32() - scroll_pixel_position.y / line_height);
@@ -1723,7 +1718,6 @@ impl EditorElement {
                         &self.style,
                         &mut last_used_color,
                         self.editor.clone(),
-                        window,
                         cx,
                     );
 
@@ -1760,7 +1754,7 @@ impl EditorElement {
         cx: &mut AppContext,
     ) -> Option<Vec<IndentGuideLayout>> {
         let indent_guides = self.editor.update(cx, |editor, cx| {
-            editor.indent_guides(visible_buffer_range, snapshot, window, cx)
+            editor.indent_guides(visible_buffer_range, snapshot, cx)
         })?;
 
         let active_indent_guide_indices = self.editor.update(cx, |editor, cx| {
@@ -1938,7 +1932,6 @@ impl EditorElement {
                         &self.style,
                         Some(display_row) == active_task_indicator_row,
                         display_row,
-                        window,
                         cx,
                     );
 
@@ -1982,7 +1975,7 @@ impl EditorElement {
             {
                 active = deployed_from_indicator.map_or(true, |indicator_row| indicator_row == row);
             };
-            button = editor.render_code_actions_indicator(&self.style, row, active, window, cx);
+            button = editor.render_code_actions_indicator(&self.style, row, active, cx);
         });
 
         let button = prepaint_gutter_button(
@@ -2097,7 +2090,7 @@ impl EditorElement {
                 )
                 .head
             });
-            let is_relative = editor.should_use_relative_line_numbers(window, cx);
+            let is_relative = editor.should_use_relative_line_numbers(cx);
             (newest_selection_head, is_relative)
         });
 
@@ -2127,7 +2120,7 @@ impl EditorElement {
                 write!(&mut line_number, "{number}").unwrap();
 
                 let shaped_line = self
-                    .shape_line_number(SharedString::from(&line_number), color, window, cx)
+                    .shape_line_number(SharedString::from(&line_number), color, window)
                     .log_err()?;
                 let scroll_top = scroll_position.y * line_height;
                 let line_origin = gutter_hitbox.map(|hitbox| {
@@ -2395,31 +2388,29 @@ impl EditorElement {
 
                 if let Some(prev_excerpt) = prev_excerpt {
                     if *show_excerpt_controls {
-                        result = result.child(
-                            h_flex()
-                                .id("expand_down_hit_area")
-                                .w(icon_offset)
-                                .h(
-                                    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32
-                                        * window.line_height(),
-                                )
-                                .flex_none()
-                                .justify_end()
-                                .child(self.render_expand_excerpt_button(
-                                    IconName::ArrowDownFromLine,
-                                    None,
-                                    window,
-                                    cx,
-                                ))
-                                .on_click(window.listener_for(&self.editor, {
-                                    let excerpt_id = prev_excerpt.id;
-                                    let direction = ExpandExcerptDirection::Down;
-                                    move |editor, _, window, cx| {
-                                        editor.expand_excerpt(excerpt_id, direction, window, cx);
-                                        cx.stop_propagation();
-                                    }
-                                })),
-                        );
+                        result =
+                            result.child(
+                                h_flex()
+                                    .id("expand_down_hit_area")
+                                    .w(icon_offset)
+                                    .h(MULTI_BUFFER_EXCERPT_HEADER_HEIGHT as f32
+                                        * window.line_height())
+                                    .flex_none()
+                                    .justify_end()
+                                    .child(self.render_expand_excerpt_button(
+                                        IconName::ArrowDownFromLine,
+                                        None,
+                                        cx,
+                                    ))
+                                    .on_click(window.listener_for(&self.editor, {
+                                        let excerpt_id = prev_excerpt.id;
+                                        let direction = ExpandExcerptDirection::Down;
+                                        move |editor, _, _, cx| {
+                                            editor.expand_excerpt(excerpt_id, direction, cx);
+                                            cx.stop_propagation();
+                                        }
+                                    })),
+                            );
                     }
                 }
 
@@ -2458,7 +2449,7 @@ impl EditorElement {
                         .w_full()
                         .cursor_pointer()
                         .block_mouse_down()
-                        .on_mouse_move(|_, window, cx| cx.stop_propagation())
+                        .on_mouse_move(|_, _, cx| cx.stop_propagation())
                         .hover(|style| style.bg(hover_color))
                         .tooltip({
                             let focus_handle = focus_handle.clone();
@@ -2490,15 +2481,14 @@ impl EditorElement {
                                         .child(self.render_expand_excerpt_button(
                                             IconName::ArrowDownFromLine,
                                             Some(group_name.to_string()),
-                                            window,
                                             cx,
                                         )),
                                 )
                                 .on_click(window.listener_for(&self.editor, {
                                     let excerpt_id = prev_excerpt.id;
                                     let direction = ExpandExcerptDirection::Down;
-                                    move |editor, _, window, cx| {
-                                        editor.expand_excerpt(excerpt_id, direction, window, cx);
+                                    move |editor, _, _, cx| {
+                                        editor.expand_excerpt(excerpt_id, direction, cx);
                                         cx.stop_propagation();
                                     }
                                 })),
@@ -2543,17 +2533,14 @@ impl EditorElement {
                                                 .child(self.render_expand_excerpt_button(
                                                     IconName::ArrowUpFromLine,
                                                     Some(group_name.to_string()),
-                                                    window,
                                                     cx,
                                                 )),
                                         )
                                         .on_click(window.listener_for(&self.editor, {
                                             let excerpt_id = next_excerpt.id;
                                             let direction = ExpandExcerptDirection::Up;
-                                            move |editor, _, window, cx| {
-                                                editor.expand_excerpt(
-                                                    excerpt_id, direction, window, cx,
-                                                );
+                                            move |editor, _, _, cx| {
+                                                editor.expand_excerpt(excerpt_id, direction, cx);
                                                 cx.stop_propagation();
                                             }
                                         })),
@@ -2589,7 +2576,6 @@ impl EditorElement {
                                                         self.render_expand_excerpt_button(
                                                             IconName::ArrowUpFromLine,
                                                             Some(group_name.to_string()),
-                                                            window,
                                                             cx,
                                                         )
                                                     } else {
@@ -2619,10 +2605,9 @@ impl EditorElement {
                                             .on_click(window.listener_for(&self.editor, {
                                                 let excerpt_id = next_excerpt.id;
                                                 let direction = ExpandExcerptDirection::Up;
-                                                move |editor, _, window, cx| {
-                                                    editor.expand_excerpt(
-                                                        excerpt_id, direction, window, cx,
-                                                    );
+                                                move |editor, _, _, cx| {
+                                                    editor
+                                                        .expand_excerpt(excerpt_id, direction, cx);
                                                     cx.stop_propagation();
                                                 }
                                             })),
@@ -2740,14 +2725,14 @@ impl EditorElement {
                                                 )
                                             }
                                         })
-                                        .on_click(move |_, window, cx| {
+                                        .on_click(move |_, _, cx| {
                                             if is_folded {
                                                 editor.update(cx, |editor, cx| {
-                                                    editor.unfold_buffer(buffer_id, window, cx);
+                                                    editor.unfold_buffer(buffer_id, cx);
                                                 });
                                             } else {
                                                 editor.update(cx, |editor, cx| {
-                                                    editor.fold_buffer(buffer_id, window, cx);
+                                                    editor.fold_buffer(buffer_id, cx);
                                                 });
                                             }
                                         }),
@@ -2783,13 +2768,12 @@ impl EditorElement {
                                                 &OpenExcerpts,
                                                 &focus_handle,
                                                 window,
-                                                cx,
                                             )
                                             .map(|binding| binding.into_any_element()),
                                         ),
                                 )
                             })
-                            .on_mouse_down(MouseButton::Left, |_, window, cx| cx.stop_propagation())
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .on_click(window.listener_for(&self.editor, {
                                 move |editor, e: &ClickEvent, window, cx| {
                                     editor.open_excerpts_common(
@@ -2808,7 +2792,6 @@ impl EditorElement {
         &self,
         icon: IconName,
         group_name: impl Into<Option<String>>,
-        window: &mut Window,
         cx: &mut AppContext,
     ) -> ButtonLike {
         let group_name = group_name.into();
@@ -3299,11 +3282,9 @@ impl EditorElement {
                 available_within_viewport.right - px(1.),
                 MENU_ASIDE_MAX_WIDTH,
             );
-            let Some(mut aside) = self.render_context_menu_aside(
-                size(max_width, max_height - POPOVER_Y_PADDING),
-                window,
-                cx,
-            ) else {
+            let Some(mut aside) =
+                self.render_context_menu_aside(size(max_width, max_height - POPOVER_Y_PADDING), cx)
+            else {
                 return;
             };
             aside.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -3325,7 +3306,7 @@ impl EditorElement {
                     ),
                 ) - POPOVER_Y_PADDING,
             );
-            let Some(mut aside) = self.render_context_menu_aside(max_size, window, cx) else {
+            let Some(mut aside) = self.render_context_menu_aside(max_size, cx) else {
                 return;
             };
             let actual_size = aside.layout_as_root(AvailableSpace::min_size(), window, cx);
@@ -3370,14 +3351,14 @@ impl EditorElement {
     fn render_context_menu_aside(
         &self,
         max_size: Size<Pixels>,
-        window: &mut Window,
+
         cx: &mut AppContext,
     ) -> Option<AnyElement> {
         if max_size.width < px(100.) || max_size.height < px(12.) {
             None
         } else {
             self.editor.update(cx, |editor, cx| {
-                editor.render_context_menu_aside(&self.style, max_size, window, cx)
+                editor.render_context_menu_aside(&self.style, max_size, cx)
             })
         }
     }
@@ -3675,13 +3656,9 @@ impl EditorElement {
         );
 
         let hover_popovers = self.editor.update(cx, |editor, cx| {
-            editor.hover_state.render(
-                snapshot,
-                visible_display_row_range.clone(),
-                max_size,
-                window,
-                cx,
-            )
+            editor
+                .hover_state
+                .render(snapshot, visible_display_row_range.clone(), max_size, cx)
         });
         let Some((position, hover_popovers)) = hover_popovers else {
             return;
@@ -3723,7 +3700,7 @@ impl EditorElement {
             let mut occlusion = div()
                 .size_full()
                 .occlude()
-                .on_mouse_move(|_, window, cx| cx.stop_propagation())
+                .on_mouse_move(|_, _, cx| cx.stop_propagation())
                 .into_any_element();
             occlusion.layout_as_root(size(width, HOVER_POPOVER_GAP).into(), window, cx);
             window.defer_draw(occlusion, origin, 2);
@@ -3815,7 +3792,6 @@ impl EditorElement {
                     &self.style,
                     max_size,
                     editor.workspace.as_ref().map(|(w, _)| w.clone()),
-                    window,
                     cx,
                 );
                 Some(element)
@@ -4086,7 +4062,7 @@ impl EditorElement {
                 cx.theme().colors().editor_line_number
             };
             let Some(line) = self
-                .shape_line_number(line.text.clone(), color, window, cx)
+                .shape_line_number(line.text.clone(), color, window)
                 .log_err()
             else {
                 continue;
@@ -4349,9 +4325,9 @@ impl EditorElement {
                 };
                 window.set_cursor_style(cursor_style, &layout.text_hitbox);
 
-                let invisible_display_ranges = self.paint_highlights(layout, window, cx);
+                let invisible_display_ranges = self.paint_highlights(layout, window);
                 self.paint_lines(&invisible_display_ranges, layout, window, cx);
-                self.paint_redactions(layout, window, cx);
+                self.paint_redactions(layout, window);
                 self.paint_cursors(layout, window, cx);
                 self.paint_inline_blame(layout, window, cx);
                 window.with_element_namespace("crease_trailers", |window| {
@@ -4367,7 +4343,6 @@ impl EditorElement {
         &mut self,
         layout: &mut EditorLayout,
         window: &mut Window,
-        cx: &mut AppContext,
     ) -> SmallVec<[Range<DisplayPoint>; 32]> {
         window.paint_layer(layout.text_hitbox.bounds, |window| {
             let mut invisible_display_ranges = SmallVec::<[Range<DisplayPoint>; 32]>::new();
@@ -4380,7 +4355,6 @@ impl EditorElement {
                     line_end_overshoot,
                     layout,
                     window,
-                    cx,
                 );
             }
 
@@ -4395,7 +4369,6 @@ impl EditorElement {
                         corner_radius * 2.,
                         layout,
                         window,
-                        cx,
                     );
 
                     if selection.is_local && !selection.range.is_empty() {
@@ -4440,12 +4413,7 @@ impl EditorElement {
         }
     }
 
-    fn paint_redactions(
-        &mut self,
-        layout: &EditorLayout,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) {
+    fn paint_redactions(&mut self, layout: &EditorLayout, window: &mut Window) {
         if layout.redacted_ranges.is_empty() {
             return;
         }
@@ -4464,7 +4432,6 @@ impl EditorElement {
                     line_end_overshoot,
                     layout,
                     window,
-                    cx,
                 );
             }
         });
@@ -4562,7 +4529,6 @@ impl EditorElement {
                             editor.scroll_manager.set_is_dragging_scrollbar(
                                 Axis::Horizontal,
                                 false,
-                                window,
                                 cx,
                             );
 
@@ -4583,7 +4549,7 @@ impl EditorElement {
             {
                 window.on_mouse_event({
                     let editor = self.editor.clone();
-                    move |_: &MouseUpEvent, phase, window, cx| {
+                    move |_: &MouseUpEvent, phase, _, cx| {
                         if phase == DispatchPhase::Capture {
                             return;
                         }
@@ -4592,7 +4558,6 @@ impl EditorElement {
                             editor.scroll_manager.set_is_dragging_scrollbar(
                                 Axis::Horizontal,
                                 false,
-                                window,
                                 cx,
                             );
                             cx.stop_propagation();
@@ -4612,7 +4577,6 @@ impl EditorElement {
                             editor.scroll_manager.set_is_dragging_scrollbar(
                                 Axis::Horizontal,
                                 true,
-                                window,
                                 cx,
                             );
 
@@ -4662,7 +4626,7 @@ impl EditorElement {
                     ));
 
                     let fast_markers =
-                        self.collect_fast_scrollbar_markers(layout, &scrollbar_layout, window, cx);
+                        self.collect_fast_scrollbar_markers(layout, &scrollbar_layout, cx);
                     // Refresh slow scrollbar markers in the background. Below, we paint whatever markers have already been computed.
                     self.refresh_slow_scrollbar_markers(layout, &scrollbar_layout, window, cx);
 
@@ -4719,7 +4683,6 @@ impl EditorElement {
                             editor.scroll_manager.set_is_dragging_scrollbar(
                                 Axis::Vertical,
                                 false,
-                                window,
                                 cx,
                             );
 
@@ -4740,7 +4703,7 @@ impl EditorElement {
             {
                 window.on_mouse_event({
                     let editor = self.editor.clone();
-                    move |_: &MouseUpEvent, phase, window, cx| {
+                    move |_: &MouseUpEvent, phase, _, cx| {
                         if phase == DispatchPhase::Capture {
                             return;
                         }
@@ -4749,7 +4712,6 @@ impl EditorElement {
                             editor.scroll_manager.set_is_dragging_scrollbar(
                                 Axis::Vertical,
                                 false,
-                                window,
                                 cx,
                             );
                             cx.stop_propagation();
@@ -4769,7 +4731,6 @@ impl EditorElement {
                             editor.scroll_manager.set_is_dragging_scrollbar(
                                 Axis::Vertical,
                                 true,
-                                window,
                                 cx,
                             );
 
@@ -4799,7 +4760,6 @@ impl EditorElement {
         &self,
         layout: &EditorLayout,
         scrollbar_layout: &ScrollbarLayout,
-        window: &mut Window,
         cx: &mut AppContext,
     ) -> Vec<PaintQuad> {
         const LIMIT: usize = 100;
@@ -4982,7 +4942,6 @@ impl EditorElement {
         line_end_overshoot: Pixels,
         layout: &EditorLayout,
         window: &mut Window,
-        cx: &mut AppContext,
     ) {
         let start_row = layout.visible_display_row_range.start;
         let end_row = layout.visible_display_row_range.end;
@@ -5028,7 +4987,7 @@ impl EditorElement {
                     .collect(),
             };
 
-            highlighted_range.paint(layout.text_hitbox.bounds, window, cx);
+            highlighted_range.paint(layout.text_hitbox.bounds, window);
         }
     }
 
@@ -5261,7 +5220,7 @@ impl EditorElement {
         bounds.top_right().x - self.style.scrollbar_width
     }
 
-    fn column_pixels(&self, column: usize, window: &mut Window, cx: &mut AppContext) -> Pixels {
+    fn column_pixels(&self, column: usize, window: &mut Window, _: &mut AppContext) -> Pixels {
         let style = &self.style;
         let font_size = style.text.font_size.to_pixels(window.rem_size());
         let layout = window
@@ -5298,7 +5257,6 @@ impl EditorElement {
         text: SharedString,
         color: Hsla,
         window: &mut Window,
-        cx: &mut AppContext,
     ) -> anyhow::Result<ShapedLine> {
         let run = TextRun {
             len: text.len(),
@@ -5431,7 +5389,6 @@ fn render_inline_blame_entry(
     blame_entry: BlameEntry,
     style: &EditorStyle,
     workspace: Option<WeakModel<Workspace>>,
-    window: &mut Window,
     cx: &mut AppContext,
 ) -> AnyElement {
     let relative_timestamp = blame_entry_relative_timestamp(&blame_entry);
@@ -5472,7 +5429,6 @@ fn render_blame_entry(
     style: &EditorStyle,
     last_used_color: &mut Option<(PlayerColor, Oid)>,
     editor: Model<Editor>,
-    window: &mut Window,
     cx: &mut AppContext,
 ) -> AnyElement {
     let mut sha_color = cx
@@ -5541,7 +5497,7 @@ fn render_blame_entry(
             details.and_then(|details| details.permalink),
             |this, url| {
                 let url = url.clone();
-                this.cursor_pointer().on_click(move |_, window, cx| {
+                this.cursor_pointer().on_click(move |_, _, cx| {
                     cx.stop_propagation();
                     cx.open_url(url.as_str())
                 })
@@ -5562,13 +5518,13 @@ fn deploy_blame_entry_context_menu(
     let context_menu = ContextMenu::build(window, cx, move |menu, _, _| {
         let sha = format!("{}", blame_entry.sha);
         menu.on_blur_subscription(Subscription::new(|| {}))
-            .entry("Copy commit SHA", None, move |window, cx| {
+            .entry("Copy commit SHA", None, move |_, cx| {
                 cx.write_to_clipboard(ClipboardItem::new_string(sha.clone()));
             })
             .when_some(
                 details.and_then(|details| details.permalink.clone()),
                 |this, url| {
-                    this.entry("Open permalink", None, move |window, cx| {
+                    this.entry("Open permalink", None, move |_, cx| {
                         cx.open_url(url.as_str())
                     })
                 },
@@ -6114,7 +6070,7 @@ impl EditorElement {
     /// Returns the rem size to use when rendering the [`EditorElement`].
     ///
     /// This allows UI elements to scale based on the `buffer_font_size`.
-    fn rem_size(&self, window: &mut Window, cx: &mut AppContext) -> Option<Pixels> {
+    fn rem_size(&self, cx: &mut AppContext) -> Option<Pixels> {
         match self.editor.read(cx).mode {
             EditorMode::Full => {
                 let buffer_font_size = self.style.text.font_size;
@@ -6163,7 +6119,7 @@ impl Element for EditorElement {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> (gpui::LayoutId, ()) {
-        let rem_size = self.rem_size(window, cx);
+        let rem_size = self.rem_size(cx);
         window.with_rem_size(rem_size, |window| {
             self.editor.update(cx, |editor, cx| {
                 editor.set_style(self.style.clone(), window, cx);
@@ -6267,7 +6223,7 @@ impl Element for EditorElement {
         window.set_view_id(self.editor.entity_id());
         window.set_focus_handle(&focus_handle, cx);
 
-        let rem_size = self.rem_size(window, cx);
+        let rem_size = self.rem_size(cx);
         window.with_rem_size(rem_size, |window| {
             window.with_text_style(Some(text_style), |window| {
                 window.with_content_mask(Some(ContentMask { bounds }), |window| {
@@ -6571,7 +6527,6 @@ impl Element for EditorElement {
                         &snapshot,
                         longest_line_width,
                         &style,
-                        window,
                         cx,
                     );
 
@@ -6611,7 +6566,7 @@ impl Element for EditorElement {
                         Ok(blocks) => blocks,
                         Err(resized_blocks) => {
                             self.editor.update(cx, |editor, cx| {
-                                editor.resize_blocks(resized_blocks, autoscroll_request, window, cx)
+                                editor.resize_blocks(resized_blocks, autoscroll_request, cx)
                             });
                             return self.prepaint(None, bounds, &mut (), window, cx);
                         }
@@ -6778,7 +6733,7 @@ impl Element for EditorElement {
                         );
                     });
 
-                    let cursors = self.collect_cursors(&snapshot, window, cx);
+                    let cursors = self.collect_cursors(&snapshot, cx);
                     let visible_row_range = start_row..end_row;
                     let non_visible_cursors = cursors
                         .iter()
@@ -7128,7 +7083,7 @@ impl Element for EditorElement {
                     }
                 }
             });
-        let rem_size = self.rem_size(window, cx);
+        let rem_size = self.rem_size(cx);
         window.with_rem_size(rem_size, |window| {
             window.with_text_style(Some(text_style), |window| {
                 window.with_content_mask(Some(ContentMask { bounds }), |window| {
@@ -7192,7 +7147,7 @@ impl ScrollbarRangeData {
         snapshot: &EditorSnapshot,
         longest_line_width: Pixels,
         style: &EditorStyle,
-        window: &mut Window,
+
         cx: &mut AppContext,
     ) -> ScrollbarRangeData {
         // TODO: Simplify this function down, it requires a lot of parameters
@@ -7669,18 +7624,17 @@ pub struct HighlightedRangeLine {
 }
 
 impl HighlightedRange {
-    pub fn paint(&self, bounds: Bounds<Pixels>, window: &mut Window, cx: &mut AppContext) {
+    pub fn paint(&self, bounds: Bounds<Pixels>, window: &mut Window) {
         if self.lines.len() >= 2 && self.lines[0].start_x > self.lines[1].end_x {
-            self.paint_lines(self.start_y, &self.lines[0..1], bounds, window, cx);
+            self.paint_lines(self.start_y, &self.lines[0..1], bounds, window);
             self.paint_lines(
                 self.start_y + self.line_height,
                 &self.lines[1..],
                 bounds,
                 window,
-                cx,
             );
         } else {
-            self.paint_lines(self.start_y, &self.lines, bounds, window, cx);
+            self.paint_lines(self.start_y, &self.lines, bounds, window);
         }
     }
 
@@ -7690,7 +7644,6 @@ impl HighlightedRange {
         lines: &[HighlightedRangeLine],
         _bounds: Bounds<Pixels>,
         window: &mut Window,
-        cx: &mut AppContext,
     ) {
         if lines.is_empty() {
             return;
@@ -7802,7 +7755,6 @@ fn scale_horizontal_mouse_autoscroll_delta(delta: Pixels) -> f32 {
 pub fn register_action<T: Action>(
     view: &Model<Editor>,
     window: &mut Window,
-    cx: &mut AppContext,
     listener: impl Fn(&mut Editor, &T, &mut Window, &mut ModelContext<Editor>) + 'static,
 ) {
     let view = view.clone();
@@ -7905,7 +7857,7 @@ mod tests {
         let editor = window.root(cx).unwrap();
         let style = cx.update(|cx| editor.read(cx).style().unwrap().clone());
         let line_height = window
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, window, _| {
                 style.text.line_height_in_pixels(window.rem_size())
             })
             .unwrap();
@@ -7999,7 +7951,7 @@ mod tests {
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
-        let style = cx.update(|window, cx| editor.read(cx).style().unwrap().clone());
+        let style = cx.update(|_, cx| editor.read(cx).style().unwrap().clone());
 
         window
             .update(cx, |editor, window, cx| {
@@ -8102,7 +8054,7 @@ mod tests {
             Editor::new(EditorMode::Full, buffer, None, true, window, cx)
         });
         let editor = window.root(cx).unwrap();
-        let style = cx.update(|window, cx| editor.read(cx).style().unwrap().clone());
+        let style = cx.update(|_, cx| editor.read(cx).style().unwrap().clone());
         let _state = window.update(cx, |editor, window, cx| {
             editor.cursor_shape = CursorShape::Block;
             editor.change_selections(None, window, cx, |s| {
@@ -8154,7 +8106,7 @@ mod tests {
         });
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
-        let style = cx.update(|window, cx| editor.read(cx).style().unwrap().clone());
+        let style = cx.update(|_, cx| editor.read(cx).style().unwrap().clone());
         window
             .update(cx, |editor, window, cx| {
                 editor.set_placeholder_text("hello", cx);
@@ -8167,7 +8119,6 @@ mod tests {
                         priority: 0,
                     }],
                     None,
-                    window,
                     cx,
                 );
 
@@ -8382,12 +8333,12 @@ mod tests {
         let cx = &mut VisualTestContext::from_window(*window, cx);
         let editor = window.root(cx).unwrap();
 
-        let style = cx.update(|window, cx| editor.read(cx).style().unwrap().clone());
+        let style = cx.update(|_, cx| editor.read(cx).style().unwrap().clone());
         window
-            .update(cx, |editor, window, cx| {
-                editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, window, cx);
+            .update(cx, |editor, _, cx| {
+                editor.set_soft_wrap_mode(language_settings::SoftWrap::EditorWidth, cx);
                 editor.set_wrap_width(Some(editor_width), cx);
-                editor.set_show_line_numbers(show_line_numbers, window, cx);
+                editor.set_show_line_numbers(show_line_numbers, cx);
             })
             .unwrap();
         let (_, state) = cx.draw(

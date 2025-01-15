@@ -15,7 +15,7 @@ use gpui::{
 use language::Point;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use ui::{ModelContext, SharedString, Window};
+use ui::{ModelContext, SharedString};
 use workspace::searchable::Direction;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, Serialize)]
@@ -183,7 +183,7 @@ impl VimGlobals {
     pub(crate) fn register(cx: &mut AppContext) {
         cx.set_global(VimGlobals::default());
 
-        cx.observe_keystrokes(|event, window, cx| {
+        cx.observe_keystrokes(|event, _, cx| {
             let Some(action) = event.action.as_ref().map(|action| action.boxed_clone()) else {
                 return;
             };
@@ -218,7 +218,7 @@ impl VimGlobals {
         register: Option<char>,
         is_yank: bool,
         linewise: bool,
-        window: &mut Window,
+
         cx: &mut ModelContext<Editor>,
     ) {
         if let Some(register) = register {
@@ -293,14 +293,13 @@ impl VimGlobals {
         &mut self,
         register: Option<char>,
         editor: Option<&mut Editor>,
-        window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> Option<Register> {
         let Some(register) = register.filter(|reg| *reg != '"') else {
             let setting = VimSettings::get_global(cx).use_system_clipboard;
             return match setting {
                 UseSystemClipboard::Always => cx.read_from_clipboard().map(|item| item.into()),
-                UseSystemClipboard::OnYank if self.system_clipboard_is_newer(window, cx) => {
+                UseSystemClipboard::OnYank if self.system_clipboard_is_newer(cx) => {
                     cx.read_from_clipboard().map(|item| item.into())
                 }
                 _ => self.registers.get(&'"').cloned(),
@@ -339,11 +338,7 @@ impl VimGlobals {
         }
     }
 
-    fn system_clipboard_is_newer(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Editor>,
-    ) -> bool {
+    fn system_clipboard_is_newer(&self, cx: &mut ModelContext<Editor>) -> bool {
         cx.read_from_clipboard().is_some_and(|item| {
             if let Some(last_state) = &self.last_yank {
                 Some(last_state.as_ref()) != item.text().as_deref()

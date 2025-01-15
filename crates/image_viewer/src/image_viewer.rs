@@ -5,7 +5,7 @@ use editor::items::entry_git_aware_label_color;
 use gpui::{
     canvas, div, fill, img, opaque_grey, point, size, AnyElement, AppContext, Bounds, EventEmitter,
     FocusHandle, Focusable, InteractiveElement, IntoElement, Model, ModelContext, ObjectFit,
-    ParentElement, Render, Styled, Task, VisualContext, WeakModel, Window,
+    ParentElement, Render, Styled, Task, WeakModel, Window,
 };
 use persistence::IMAGE_VIEWER;
 use theme::Theme;
@@ -32,7 +32,7 @@ impl ImageView {
     pub fn new(
         image_item: Model<ImageItem>,
         project: Model<Project>,
-        window: &mut Window,
+
         cx: &mut ModelContext<Self>,
     ) -> Self {
         cx.subscribe(&image_item, Self::on_image_event).detach();
@@ -95,12 +95,7 @@ impl Item for ImageView {
         Some(file_path.into())
     }
 
-    fn tab_content(
-        &self,
-        params: TabContentParams,
-        window: &Window,
-        cx: &AppContext,
-    ) -> AnyElement {
+    fn tab_content(&self, params: TabContentParams, _: &Window, cx: &AppContext) -> AnyElement {
         let project_path = self.image_item.read(cx).project_path(cx);
         let label_color = if ItemSettings::get_global(cx).git_status {
             self.project
@@ -128,7 +123,7 @@ impl Item for ImageView {
             .into_any_element()
     }
 
-    fn tab_icon(&self, window: &Window, cx: &AppContext) -> Option<Icon> {
+    fn tab_icon(&self, _: &Window, cx: &AppContext) -> Option<Icon> {
         let path = self.image_item.read(cx).path();
         ItemSettings::get_global(cx)
             .file_icons
@@ -153,7 +148,7 @@ impl Item for ImageView {
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<Model<Self>>
     where
@@ -219,9 +214,7 @@ impl SerializableItem for ImageView {
                 .update(&mut cx, |project, cx| project.open_image(project_path, cx))?
                 .await?;
 
-            cx.update(|window, cx| {
-                Ok(cx.new_model(|cx| ImageView::new(image_item, project, window, cx)))
-            })?
+            cx.update(|_, cx| Ok(cx.new_model(|cx| ImageView::new(image_item, project, cx))))?
         })
     }
 
@@ -269,12 +262,12 @@ impl Focusable for ImageView {
 }
 
 impl Render for ImageView {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let image = self.image_item.read(cx).image.clone();
         let checkered_background = |bounds: Bounds<Pixels>,
                                     _,
                                     window: &mut Window,
-                                    cx: &mut AppContext| {
+                                    _cx: &mut AppContext| {
             let square_size = 32.0;
 
             let start_y = bounds.origin.y.0;
@@ -346,13 +339,13 @@ impl ProjectItem for ImageView {
     fn for_project_item(
         project: Model<Project>,
         item: Model<Self::Item>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self
     where
         Self: Sized,
     {
-        Self::new(item, project, window, cx)
+        Self::new(item, project, cx)
     }
 }
 

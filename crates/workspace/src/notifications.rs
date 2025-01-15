@@ -268,13 +268,13 @@ impl Render for LanguageServerPrompt {
         h_flex()
             .id("language_server_prompt_notification")
             .occlude()
-            .elevation_3(window, cx)
+            .elevation_3(cx)
             .items_start()
             .justify_between()
             .p_2()
             .gap_2()
             .w_full()
-            .max_h(vh(0.8, window, cx))
+            .max_h(vh(0.8, window))
             .overflow_y_scroll()
             .track_scroll(&self.scroll_handle)
             .group("")
@@ -340,7 +340,7 @@ impl Render for LanguageServerPrompt {
                                                 ))
                                             }
                                         })
-                                        .tooltip(|window, cx| Tooltip::text("Copy", window, cx))
+                                        .tooltip(Tooltip::text("Copy"))
                                         .visible_on_hover(""),
                                 ),
                             )
@@ -396,7 +396,7 @@ impl Render for ErrorMessagePrompt {
         h_flex()
             .id("error_message_prompt_notification")
             .occlude()
-            .elevation_3(window, cx)
+            .elevation_3(cx)
             .items_start()
             .justify_between()
             .p_2()
@@ -529,9 +529,9 @@ pub mod simple_message_notification {
     }
 
     impl Render for MessageNotification {
-        fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+        fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
             v_flex()
-                .elevation_3(window, cx)
+                .elevation_3(cx)
                 .p_4()
                 .child(
                     h_flex()

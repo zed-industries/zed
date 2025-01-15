@@ -134,7 +134,7 @@ pub fn notify_of_any_new_update(
     cx.spawn_in(window, |workspace, mut cx| async move {
         let should_show_notification = should_show_notification.await?;
         if should_show_notification {
-            workspace.update_in(&mut cx, |workspace, window, cx| {
+            workspace.update(&mut cx, |workspace, cx| {
                 let workspace_handle = workspace.weak_handle();
                 workspace.show_notification(
                     NotificationId::unique::<UpdateNotification>(),

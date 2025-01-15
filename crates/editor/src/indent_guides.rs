@@ -34,7 +34,6 @@ impl Editor {
         &self,
         visible_buffer_range: Range<MultiBufferRow>,
         snapshot: &DisplaySnapshot,
-        window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> Option<Vec<MultiBufferIndentGuide>> {
         let show_indent_guides = self.should_show_indent_guides().unwrap_or_else(|| {

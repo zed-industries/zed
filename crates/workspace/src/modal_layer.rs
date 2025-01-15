@@ -23,7 +23,7 @@ pub trait ModalView: ManagedView {
 trait ModalViewHandle {
     fn on_before_dismiss(&mut self, window: &mut Window, cx: &mut AppContext) -> DismissDecision;
     fn view(&self) -> AnyView;
-    fn fade_out_background(&self, window: &mut Window, cx: &mut AppContext) -> bool;
+    fn fade_out_background(&self, cx: &mut AppContext) -> bool;
 }
 
 impl<V: ModalView> ModalViewHandle for Model<V> {
@@ -35,7 +35,7 @@ impl<V: ModalView> ModalViewHandle for Model<V> {
         self.clone().into()
     }
 
-    fn fade_out_background(&self, window: &mut Window, cx: &mut AppContext) -> bool {
+    fn fade_out_background(&self, cx: &mut AppContext) -> bool {
         self.read(cx).fade_out_background()
     }
 }
@@ -164,7 +164,7 @@ impl ModalLayer {
 }
 
 impl Render for ModalLayer {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let Some(active_modal) = &self.active_modal else {
             return div();
         };
@@ -174,7 +174,7 @@ impl Render for ModalLayer {
             .size_full()
             .top_0()
             .left_0()
-            .when(active_modal.modal.fade_out_background(window, cx), |el| {
+            .when(active_modal.modal.fade_out_background(cx), |el| {
                 let mut background = cx.theme().colors().elevated_surface_background;
                 background.fade_out(0.2);
                 el.bg(background)

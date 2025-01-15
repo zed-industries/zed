@@ -76,7 +76,7 @@ impl PickerDelegate for SlashCommandDelegate {
     fn set_selected_index(
         &mut self,
         ix: usize,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) {
         self.selected_index = ix.min(self.filtered_commands.len().saturating_sub(1));
@@ -195,9 +195,7 @@ impl PickerDelegate for SlashCommandDelegate {
                     .toggle_state(selected)
                     .tooltip({
                         let description = info.description.clone();
-                        move |window, cx| {
-                            cx.new_model(|cx| Tooltip::new(description.clone())).into()
-                        }
+                        move |_, cx| cx.new_model(|_| Tooltip::new(description.clone())).into()
                     })
                     .child(
                         v_flex()
@@ -277,7 +275,7 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
             })
             .chain([SlashCommandEntry::Advert {
                 name: "create-your-command".into(),
-                renderer: |window, cx| {
+                renderer: |_, cx| {
                     v_flex()
                         .w_full()
                         .child(
@@ -311,9 +309,7 @@ impl<T: PopoverTrigger> RenderOnce for SlashCommandSelector<T> {
                         )
                         .into_any_element()
                 },
-                on_confirm: |window, cx| {
-                    cx.open_url("https://zed.dev/docs/extensions/slash-commands")
-                },
+                on_confirm: |_, cx| cx.open_url("https://zed.dev/docs/extensions/slash-commands"),
             }])
             .collect::<Vec<_>>();
 

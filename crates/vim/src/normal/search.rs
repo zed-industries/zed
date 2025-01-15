@@ -71,15 +71,15 @@ impl_actions!(
     [FindCommand, ReplaceCommand, Search, MoveToPrev, MoveToNext]
 );
 
-pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
-    Vim::action(editor, window, cx, Vim::move_to_next);
-    Vim::action(editor, window, cx, Vim::move_to_prev);
-    Vim::action(editor, window, cx, Vim::move_to_next_match);
-    Vim::action(editor, window, cx, Vim::move_to_prev_match);
-    Vim::action(editor, window, cx, Vim::search);
-    Vim::action(editor, window, cx, Vim::search_deploy);
-    Vim::action(editor, window, cx, Vim::find_command);
-    Vim::action(editor, window, cx, Vim::replace_command);
+pub(crate) fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+    Vim::action(editor, cx, Vim::move_to_next);
+    Vim::action(editor, cx, Vim::move_to_prev);
+    Vim::action(editor, cx, Vim::move_to_next_match);
+    Vim::action(editor, cx, Vim::move_to_prev_match);
+    Vim::action(editor, cx, Vim::search);
+    Vim::action(editor, cx, Vim::search_deploy);
+    Vim::action(editor, cx, Vim::find_command);
+    Vim::action(editor, cx, Vim::replace_command);
 }
 
 impl Vim {
@@ -155,12 +155,12 @@ impl Vim {
                     search_bar.select_query(window, cx);
                     cx.focus_self(window);
 
-                    search_bar.set_replacement(None, window, cx);
+                    search_bar.set_replacement(None, cx);
                     let mut options = SearchOptions::NONE;
                     if action.regex {
                         options |= SearchOptions::REGEX;
                     }
-                    search_bar.set_search_options(options, window, cx);
+                    search_bar.set_search_options(options, cx);
                     let prior_mode = if self.temp_mode {
                         Mode::Insert
                     } else {
@@ -184,7 +184,7 @@ impl Vim {
     fn search_deploy(
         &mut self,
         _: &buffer_search::Deploy,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.search = Default::default();
@@ -392,7 +392,7 @@ impl Vim {
                     };
 
                     let mut options = SearchOptions::REGEX | SearchOptions::CASE_SENSITIVE;
-                    if search_bar.should_use_smartcase_search(window, cx) {
+                    if search_bar.should_use_smartcase_search(cx) {
                         options.set(
                             SearchOptions::CASE_SENSITIVE,
                             search_bar.is_contains_uppercase(&query),
@@ -440,7 +440,7 @@ impl Vim {
             let end_point = Point::new(range.end.0, snapshot.line_len(range.end));
             let range = snapshot.anchor_before(Point::new(range.start.0, 0))
                 ..snapshot.anchor_after(end_point);
-            editor.set_search_within_ranges(&[range], window, cx);
+            editor.set_search_within_ranges(&[range], cx);
             anyhow::Ok(())
         }) {
             workspace.update(cx, |workspace, cx| {
@@ -466,13 +466,13 @@ impl Vim {
                 } else {
                     replacement.search
                 };
-                if search_bar.should_use_smartcase_search(window, cx) {
+                if search_bar.should_use_smartcase_search(cx) {
                     options.set(
                         SearchOptions::CASE_SENSITIVE,
                         search_bar.is_contains_uppercase(&search),
                     );
                 }
-                search_bar.set_replacement(Some(&replacement.replacement), window, cx);
+                search_bar.set_replacement(Some(&replacement.replacement), cx);
                 Some(search_bar.search(&search, Some(options), window, cx))
             });
             let Some(search) = search else { return };
@@ -483,14 +483,12 @@ impl Vim {
                     if replacement.should_replace_all {
                         search_bar.select_last_match(window, cx);
                         search_bar.replace_all(&Default::default(), window, cx);
-                        cx.spawn_in(window, |_, mut cx| async move {
+                        cx.spawn(|_, mut cx| async move {
                             cx.background_executor()
                                 .timer(Duration::from_millis(200))
                                 .await;
                             editor
-                                .update_in(&mut cx, |editor, window, cx| {
-                                    editor.clear_search_within_ranges(window, cx)
-                                })
+                                .update(&mut cx, |editor, cx| editor.clear_search_within_ranges(cx))
                                 .ok();
                         })
                         .detach();
@@ -683,7 +681,7 @@ mod test {
         cx.set_state("aa\nbˇb\ncc\ncc\ncc\n", Mode::Normal);
         cx.simulate_keystrokes("/ c c");
 
-        let search_bar = cx.workspace(|workspace, window, cx| {
+        let search_bar = cx.workspace(|workspace, _, cx| {
             workspace
                 .active_pane()
                 .read(cx)
@@ -693,7 +691,7 @@ mod test {
                 .expect("Buffer search bar should be deployed")
         });
 
-        cx.update_view(search_bar, |bar, window, cx| {
+        cx.update_view(search_bar, |bar, _, cx| {
             assert_eq!(bar.query(cx), "cc");
         });
 

@@ -5,7 +5,7 @@ use editor::{
     scroll::Autoscroll,
     Bias, DisplayPoint,
 };
-use gpui::{AppContext, ModelContext, Window};
+use gpui::{ModelContext, Window};
 use language::{Point, Selection};
 use multi_buffer::MultiBufferRow;
 
@@ -17,7 +17,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.stop_recording(window, cx);
+        self.stop_recording(cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window, cx);
             editor.transact(window, cx, |editor, window, cx| {
@@ -60,7 +60,7 @@ impl Vim {
                         }
                     });
                 });
-                vim.copy_selections_content(editor, motion.linewise(), window, cx);
+                vim.copy_selections_content(editor, motion.linewise(), cx);
                 editor.insert("", window, cx);
 
                 // Fixup cursor position after the deletion
@@ -89,7 +89,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.stop_recording(window, cx);
+        self.stop_recording(cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
@@ -148,7 +148,7 @@ impl Vim {
                         }
                     });
                 });
-                vim.copy_selections_content(editor, false, window, cx);
+                vim.copy_selections_content(editor, false, cx);
                 editor.insert("", window, cx);
 
                 // Fixup cursor position after the deletion

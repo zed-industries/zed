@@ -369,11 +369,7 @@ impl Editor {
                         });
                     }
 
-                    editor.remove_highlighted_rows::<DiffRowHighlight>(
-                        highlights_to_remove,
-                        window,
-                        cx,
-                    );
+                    editor.remove_highlighted_rows::<DiffRowHighlight>(highlights_to_remove, cx);
                     editor.remove_blocks(blocks_to_remove, None, cx);
                     for hunk in hunks_to_expand {
                         editor.expand_diff_hunk(None, &hunk, window, cx);
@@ -432,7 +428,7 @@ impl Editor {
             DiffHunkStatus::Removed => {
                 blocks = self.insert_blocks(
                     [
-                        self.hunk_header_block(&hunk, window, cx),
+                        self.hunk_header_block(&hunk, cx),
                         Self::deleted_text_block(
                             hunk,
                             diff_base_buffer,
@@ -442,7 +438,6 @@ impl Editor {
                         ),
                     ],
                     None,
-                    window,
                     cx,
                 );
             }
@@ -451,27 +446,20 @@ impl Editor {
                     hunk_range.clone(),
                     added_hunk_color(cx),
                     false,
-                    window,
                     cx,
                 );
-                blocks = self.insert_blocks(
-                    [self.hunk_header_block(&hunk, window, cx)],
-                    None,
-                    window,
-                    cx,
-                );
+                blocks = self.insert_blocks([self.hunk_header_block(&hunk, cx)], None, cx);
             }
             DiffHunkStatus::Modified => {
                 self.highlight_rows::<DiffRowHighlight>(
                     hunk_range.clone(),
                     added_hunk_color(cx),
                     false,
-                    window,
                     cx,
                 );
                 blocks = self.insert_blocks(
                     [
-                        self.hunk_header_block(&hunk, window, cx),
+                        self.hunk_header_block(&hunk, cx),
                         Self::deleted_text_block(
                             hunk,
                             diff_base_buffer,
@@ -481,7 +469,6 @@ impl Editor {
                         ),
                     ],
                     None,
-                    window,
                     cx,
                 );
             }
@@ -551,7 +538,7 @@ impl Editor {
         let snapshot = self.snapshot(window, cx);
         let hunks = hunks_for_selections(&snapshot, &self.selections.all(cx));
         let mut ranges_by_buffer = HashMap::default();
-        self.transact(window, cx, |editor, window, cx| {
+        self.transact(window, cx, |editor, _, cx| {
             for hunk in hunks {
                 if let Some(buffer) = editor.buffer.read(cx).buffer(hunk.buffer_id) {
                     ranges_by_buffer
@@ -582,7 +569,6 @@ impl Editor {
     fn hunk_header_block(
         &self,
         hunk: &HoveredHunk,
-        window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> BlockProperties<Anchor> {
         let is_branch_buffer = self
@@ -799,10 +785,9 @@ impl Editor {
                                                                 !hunk_controls_menu_handle
                                                                     .is_deployed(),
                                                                 |this| {
-                                                                    this.tooltip(|window, cx| {
-                                                                        Tooltip::text(
+                                                                    this.tooltip(|_, cx| {
+                                                                        Tooltip::simple(
                                                                             "Hunk Controls",
-                                                                            window,
                                                                             cx,
                                                                         )
                                                                     })
@@ -935,11 +920,7 @@ impl Editor {
         }
     }
 
-    pub(super) fn clear_expanded_diff_hunks(
-        &mut self,
-        window: &mut Window,
-        cx: &mut ModelContext<Editor>,
-    ) -> bool {
+    pub(super) fn clear_expanded_diff_hunks(&mut self, cx: &mut ModelContext<Editor>) -> bool {
         if self.diff_map.expand_all {
             return false;
         }
@@ -1108,11 +1089,7 @@ impl Editor {
                         drop(recalculated_hunks);
                     }
 
-                    editor.remove_highlighted_rows::<DiffRowHighlight>(
-                        highlights_to_remove,
-                        window,
-                        cx,
-                    );
+                    editor.remove_highlighted_rows::<DiffRowHighlight>(highlights_to_remove, cx);
                     editor.remove_blocks(blocks_to_remove, None, cx);
 
                     if let Some(diff_base_buffer) = &diff_base_buffer {
@@ -1250,14 +1227,14 @@ fn editor_with_deleted_text(
         });
 
         let mut editor = Editor::for_multibuffer(multi_buffer, None, true, window, cx);
-        editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, window, cx);
-        editor.set_show_wrap_guides(false, window, cx);
-        editor.set_show_gutter(false, window, cx);
-        editor.set_show_line_numbers(false, window, cx);
-        editor.set_show_scrollbars(false, window, cx);
-        editor.set_show_runnables(false, window, cx);
-        editor.set_show_git_diff_gutter(false, window, cx);
-        editor.set_show_code_actions(false, window, cx);
+        editor.set_soft_wrap_mode(language::language_settings::SoftWrap::None, cx);
+        editor.set_show_wrap_guides(false, cx);
+        editor.set_show_gutter(false, cx);
+        editor.set_show_line_numbers(false, cx);
+        editor.set_show_scrollbars(false, cx);
+        editor.set_show_runnables(false, cx);
+        editor.set_show_git_diff_gutter(false, cx);
+        editor.set_show_code_actions(false, cx);
         editor.scroll_manager.set_forbid_vertical_scroll(true);
         editor.set_read_only(true);
         editor.set_show_inline_completions(Some(false), window, cx);
@@ -1267,7 +1244,6 @@ fn editor_with_deleted_text(
             Anchor::min()..Anchor::max(),
             deleted_color,
             false,
-            window,
             cx,
         );
         editor.set_current_line_highlight(Some(CurrentLineHighlight::None));

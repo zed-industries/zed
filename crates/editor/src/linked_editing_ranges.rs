@@ -1,5 +1,5 @@
 use collections::HashMap;
-use gpui::{AppContext, ModelContext, Window};
+use gpui::{ModelContext, Window};
 use itertools::Itertools;
 use std::{ops::Range, time::Duration};
 use text::{AnchorRangeExt, BufferId, ToPoint};

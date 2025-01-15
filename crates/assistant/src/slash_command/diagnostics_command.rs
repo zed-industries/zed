@@ -119,7 +119,7 @@ impl SlashCommand for DiagnosticsSlashCommand {
         arguments: &[String],
         cancellation_flag: Arc<AtomicBool>,
         workspace: Option<WeakModel<Workspace>>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let Some(workspace) = workspace.and_then(|workspace| workspace.upgrade()) else {

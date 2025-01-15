@@ -135,7 +135,7 @@ impl SlashCommand for FileSlashCommand {
         arguments: &[String],
         cancellation_flag: Arc<AtomicBool>,
         workspace: Option<WeakModel<Workspace>>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let Some(workspace) = workspace.and_then(|workspace| workspace.upgrade()) else {
@@ -190,7 +190,7 @@ impl SlashCommand for FileSlashCommand {
         _context_buffer: BufferSnapshot,
         workspace: WeakModel<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {

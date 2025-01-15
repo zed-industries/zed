@@ -93,8 +93,8 @@ impl Deref for WrappedAction {
     }
 }
 
-pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
-    Vim::action(editor, window, cx, |vim, _: &VisualCommand, window, cx| {
+pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+    Vim::action(editor, cx, |vim, _: &VisualCommand, window, cx| {
         let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
@@ -103,7 +103,7 @@ pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<
         })
     });
 
-    Vim::action(editor, window, cx, |vim, _: &CountCommand, window, cx| {
+    Vim::action(editor, cx, |vim, _: &CountCommand, window, cx| {
         let Some(workspace) = vim.workspace(window, cx) else {
             return;
         };
@@ -118,7 +118,7 @@ pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<
         })
     });
 
-    Vim::action(editor, window, cx, |vim, action: &GoToLine, window, cx| {
+    Vim::action(editor, cx, |vim, action: &GoToLine, window, cx| {
         vim.switch_mode(Mode::Normal, false, window, cx);
         let result = vim.update_editor(window, cx, |vim, editor, window, cx| {
             action.range.head().buffer_row(vim, editor, window, cx)
@@ -144,39 +144,33 @@ pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<
         );
     });
 
-    Vim::action(
-        editor,
-        window,
-        cx,
-        |vim, action: &YankCommand, window, cx| {
-            vim.update_editor(window, cx, |vim, editor, window, cx| {
-                let snapshot = editor.snapshot(window, cx);
-                if let Ok(range) = action.range.buffer_range(vim, editor, window, cx) {
-                    let end = if range.end < snapshot.buffer_snapshot.max_row() {
-                        Point::new(range.end.0 + 1, 0)
-                    } else {
-                        snapshot.buffer_snapshot.max_point()
-                    };
-                    vim.copy_ranges(
-                        editor,
-                        true,
-                        true,
-                        vec![Point::new(range.start.0, 0)..end],
-                        window,
-                        cx,
-                    )
-                }
-            });
-        },
-    );
+    Vim::action(editor, cx, |vim, action: &YankCommand, window, cx| {
+        vim.update_editor(window, cx, |vim, editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
+            if let Ok(range) = action.range.buffer_range(vim, editor, window, cx) {
+                let end = if range.end < snapshot.buffer_snapshot.max_row() {
+                    Point::new(range.end.0 + 1, 0)
+                } else {
+                    snapshot.buffer_snapshot.max_point()
+                };
+                vim.copy_ranges(
+                    editor,
+                    true,
+                    true,
+                    vec![Point::new(range.start.0, 0)..end],
+                    cx,
+                )
+            }
+        });
+    });
 
-    Vim::action(editor, window, cx, |_, action: &WithCount, window, cx| {
+    Vim::action(editor, cx, |_, action: &WithCount, window, cx| {
         for _ in 0..action.count {
             window.dispatch_action(action.action.boxed_clone(), cx)
         }
     });
 
-    Vim::action(editor, window, cx, |vim, action: &WithRange, window, cx| {
+    Vim::action(editor, cx, |vim, action: &WithRange, window, cx| {
         let result = vim.update_editor(window, cx, |vim, editor, window, cx| {
             action.range.buffer_range(vim, editor, window, cx)
         });
@@ -223,12 +217,9 @@ pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<
         });
     });
 
-    Vim::action(
-        editor,
-        window,
-        cx,
-        |vim, action: &OnMatchingLines, window, cx| action.run(vim, window, cx),
-    )
+    Vim::action(editor, cx, |vim, action: &OnMatchingLines, window, cx| {
+        action.run(vim, window, cx)
+    })
 }
 
 #[derive(Default)]
@@ -1069,7 +1060,7 @@ impl OnMatchingLines {
                             editor.change_selections(None, window, cx, |s| {
                                 s.select(vec![newest]);
                             });
-                            editor.end_transaction_at(Instant::now(), window, cx);
+                            editor.end_transaction_at(Instant::now(), cx);
                         })
                     })
                     .ok();
@@ -1088,7 +1079,7 @@ mod test {
         test::{NeovimBackedTestContext, VimTestContext},
     };
     use editor::Editor;
-    use gpui::{ModelContext, TestAppContext, Window};
+    use gpui::{ModelContext, TestAppContext};
     use indoc::indoc;
     use workspace::Workspace;
 
@@ -1187,7 +1178,7 @@ mod test {
     async fn test_command_write(cx: &mut TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
         let path = Path::new("/root/dir/file.rs");
-        let fs = cx.workspace(|workspace, window, cx| workspace.project().read(cx).fs().clone());
+        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
 
         cx.simulate_keystrokes("i @ escape");
         cx.simulate_keystrokes(": w enter");
@@ -1215,13 +1206,13 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
 
         cx.simulate_keystrokes(": n e w enter");
-        cx.workspace(|workspace, window, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
         cx.simulate_keystrokes(": q enter");
-        cx.workspace(|workspace, window, cx| assert_eq!(workspace.items(cx).count(), 1));
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 1));
         cx.simulate_keystrokes(": n e w enter");
-        cx.workspace(|workspace, window, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
         cx.simulate_keystrokes(": q a enter");
-        cx.workspace(|workspace, window, cx| assert_eq!(workspace.items(cx).count(), 0));
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 0));
     }
 
     #[gpui::test]
@@ -1283,7 +1274,6 @@ mod test {
         workspace: &mut Workspace,
         expected_path: &str,
         expected_text: &str,
-        window: &mut Window,
         cx: &mut ModelContext<Workspace>,
     ) {
         let active_editor = workspace.active_item_as::<Editor>(cx).unwrap();
@@ -1308,12 +1298,12 @@ mod test {
         let mut cx = VimTestContext::new(cx, true).await;
 
         // Assert base state, that we're in /root/dir/file.rs
-        cx.workspace(|workspace, window, cx| {
-            assert_active_item(workspace, "/root/dir/file.rs", "", window, cx);
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, "/root/dir/file.rs", "", cx);
         });
 
         // Insert a new file
-        let fs = cx.workspace(|workspace, window, cx| workspace.project().read(cx).fs().clone());
+        let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
         fs.as_fake()
             .insert_file("/root/dir/file2.rs", "This is file2.rs".as_bytes().to_vec())
             .await;
@@ -1328,20 +1318,14 @@ mod test {
         cx.simulate_keystrokes("g f");
 
         // We now have two items
-        cx.workspace(|workspace, window, cx| assert_eq!(workspace.items(cx).count(), 2));
-        cx.workspace(|workspace, window, cx| {
-            assert_active_item(
-                workspace,
-                "/root/dir/file2.rs",
-                "This is file2.rs",
-                window,
-                cx,
-            );
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 2));
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, "/root/dir/file2.rs", "This is file2.rs", cx);
         });
 
         // Update editor to point to `file2.rs`
         cx.editor =
-            cx.workspace(|workspace, window, cx| workspace.active_item_as::<Editor>(cx).unwrap());
+            cx.workspace(|workspace, _, cx| workspace.active_item_as::<Editor>(cx).unwrap());
 
         // Put the path to the third file into the currently open buffer,
         // but remove its suffix, because we want that lookup to happen automatically.
@@ -1351,9 +1335,9 @@ mod test {
         cx.simulate_keystrokes("g f");
 
         // We now have three items
-        cx.workspace(|workspace, window, cx| assert_eq!(workspace.items(cx).count(), 3));
-        cx.workspace(|workspace, window, cx| {
-            assert_active_item(workspace, "/root/dir/file3.rs", "go to file3", window, cx);
+        cx.workspace(|workspace, _, cx| assert_eq!(workspace.items(cx).count(), 3));
+        cx.workspace(|workspace, _, cx| {
+            assert_active_item(workspace, "/root/dir/file3.rs", "go to file3", cx);
         });
     }
 

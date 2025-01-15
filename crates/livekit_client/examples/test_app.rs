@@ -344,7 +344,7 @@ impl LivekitWindow {
     fn toggle_remote_audio_for_participant(
         &mut self,
         identity: &ParticipantIdentity,
-        window: &mut Window,
+
         cx: &mut ModelContext<Self>,
     ) -> Option<()> {
         let participant = self.remote_participants.iter().find_map(|(id, state)| {
@@ -363,7 +363,7 @@ impl LivekitWindow {
 
 #[cfg(not(windows))]
 impl Render for LivekitWindow {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         fn button() -> gpui::Div {
             div()
                 .w(px(180.0))
@@ -437,9 +437,9 @@ impl Render for LivekitWindow {
                                         })
                                         .on_click(cx.listener({
                                             let identity = identity.clone();
-                                            move |this, _, window, cx| {
+                                            move |this, _, _, cx| {
                                                 this.toggle_remote_audio_for_participant(
-                                                    &identity, window, cx,
+                                                    &identity, cx,
                                                 );
                                             }
                                         })),

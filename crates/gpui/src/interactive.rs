@@ -468,7 +468,7 @@ mod test {
 
     use crate::{
         self as gpui, div, Context, FocusHandle, InteractiveElement, IntoElement, KeyBinding,
-        Keystroke, ModelContext, ParentElement, Render, TestAppContext, VisualContext, Window,
+        Keystroke, ModelContext, ParentElement, Render, TestAppContext, Window,
     };
 
     struct TestView {
@@ -480,19 +480,17 @@ mod test {
     actions!(test, [TestAction]);
 
     impl Render for TestView {
-        fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+        fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
             div().id("testview").child(
                 div()
                     .key_context("parent")
-                    .on_key_down(cx.listener(|this, _, window, cx| {
+                    .on_key_down(cx.listener(|this, _, _, cx| {
                         cx.stop_propagation();
                         this.saw_key_down = true
                     }))
-                    .on_action(
-                        cx.listener(|this: &mut TestView, _: &TestAction, window, _| {
-                            this.saw_action = true
-                        }),
-                    )
+                    .on_action(cx.listener(|this: &mut TestView, _: &TestAction, _, _| {
+                        this.saw_action = true
+                    }))
                     .child(
                         div()
                             .key_context("nested")
@@ -506,7 +504,7 @@ mod test {
     #[gpui::test]
     fn test_on_events(cx: &mut TestAppContext) {
         let window = cx.update(|cx| {
-            cx.open_window(Default::default(), |window, cx| {
+            cx.open_window(Default::default(), |_, cx| {
                 cx.new_model(|cx| TestView {
                     saw_key_down: false,
                     saw_action: false,

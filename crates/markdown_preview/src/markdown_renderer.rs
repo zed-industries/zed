@@ -211,8 +211,8 @@ fn render_markdown_list_item(
                 ),
             )
             .hover(|s| s.cursor_pointer())
-            .tooltip(|window, cx| {
-                InteractiveMarkdownElementTooltip::new(None, "toggle checkbox", window, cx).into()
+            .tooltip(|_, cx| {
+                InteractiveMarkdownElementTooltip::new(None, "toggle checkbox", cx).into()
             })
             .into_any_element(),
     };
@@ -390,7 +390,7 @@ fn render_markdown_code_block(
                 cx.write_to_clipboard(ClipboardItem::new_string(contents.to_string()));
             }
         })
-        .tooltip(|window, cx| Tooltip::text("Copy code block", window, cx))
+        .tooltip(Tooltip::text("Copy code block"))
         .visible_on_hover("markdown-block");
 
     cx.with_common_p(div())
@@ -473,14 +473,10 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                         .tooltip({
                             let links = links.clone();
                             let link_ranges = link_ranges.clone();
-                            move |idx, window, cx| {
+                            move |idx, _, cx| {
                                 for (ix, range) in link_ranges.iter().enumerate() {
                                     if range.contains(&idx) {
-                                        return Some(LinkPreview::new(
-                                            &links[ix].to_string(),
-                                            window,
-                                            cx,
-                                        ));
+                                        return Some(LinkPreview::new(&links[ix].to_string(), cx));
                                     }
                                 }
                                 None
@@ -525,11 +521,10 @@ fn render_markdown_text(parsed_new: &MarkdownParagraph, cx: &mut RenderContext) 
                     }))
                     .tooltip({
                         let link = image.link.clone();
-                        move |window, cx| {
+                        move |_, cx| {
                             InteractiveMarkdownElementTooltip::new(
                                 Some(link.to_string()),
                                 "open image",
-                                window,
                                 cx,
                             )
                             .into()
@@ -578,12 +573,11 @@ impl InteractiveMarkdownElementTooltip {
     pub fn new(
         tooltip_text: Option<String>,
         action_text: &str,
-        window: &mut Window,
         cx: &mut AppContext,
     ) -> Model<Self> {
         let tooltip_text = tooltip_text.map(|t| util::truncate_and_trailoff(&t, 50).into());
 
-        cx.new_model(|cx| Self {
+        cx.new_model(|_cx| Self {
             tooltip_text,
             action_text: action_text.to_string(),
         })

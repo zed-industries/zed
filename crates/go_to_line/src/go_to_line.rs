@@ -4,8 +4,7 @@ use cursor_position::LineIndicatorFormat;
 use editor::{scroll::Autoscroll, Editor};
 use gpui::{
     div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
-    Focusable, Model, ModelContext, Render, SharedString, Styled, Subscription, VisualContext,
-    Window,
+    Focusable, Model, ModelContext, Render, SharedString, Styled, Subscription,
 };
 use settings::Settings;
 use text::{Bias, Point};
@@ -39,7 +38,7 @@ impl EventEmitter<DismissEvent> for GoToLine {}
 enum GoToLineRowHighlights {}
 
 impl GoToLine {
-    fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Editor>) {
+    fn register(editor: &mut Editor, _window: &mut Window, cx: &mut ModelContext<Editor>) {
         let handle = cx.model().downgrade();
         editor
             .register_action(move |_: &editor::actions::ToggleGoToLine, window, cx| {
@@ -121,7 +120,7 @@ impl GoToLine {
     }
 
     fn highlight_current_line(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        if let Some(point) = self.point_from_query(window, cx) {
+        if let Some(point) = self.point_from_query(cx) {
             self.active_editor.update(cx, |active_editor, cx| {
                 let snapshot = active_editor.snapshot(window, cx).display_snapshot;
                 let start = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
@@ -133,7 +132,6 @@ impl GoToLine {
                     start..end,
                     cx.theme().colors().editor_highlighted_line_background,
                     true,
-                    window,
                     cx,
                 );
                 active_editor.request_autoscroll(Autoscroll::center(), cx);
@@ -142,19 +140,15 @@ impl GoToLine {
         }
     }
 
-    fn point_from_query(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<Point> {
-        let (row, column) = self.line_column_from_query(window, cx);
+    fn point_from_query(&self, cx: &mut ModelContext<Self>) -> Option<Point> {
+        let (row, column) = self.line_column_from_query(cx);
         Some(Point::new(
             row?.saturating_sub(1),
             column.unwrap_or(0).saturating_sub(1),
         ))
     }
 
-    fn line_column_from_query(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> (Option<u32>, Option<u32>) {
+    fn line_column_from_query(&self, cx: &mut ModelContext<Self>) -> (Option<u32>, Option<u32>) {
         let input = self.line_editor.read(cx).text(cx);
         let mut components = input
             .splitn(2, FILE_ROW_COLUMN_DELIMITER)
@@ -165,19 +159,19 @@ impl GoToLine {
         (row, column)
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut ModelContext<Self>) {
         cx.emit(DismissEvent);
     }
 
     fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut ModelContext<Self>) {
-        if let Some(point) = self.point_from_query(window, cx) {
+        if let Some(point) = self.point_from_query(cx) {
             self.active_editor.update(cx, |editor, cx| {
                 let snapshot = editor.snapshot(window, cx).display_snapshot;
                 let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
                 editor.change_selections(Some(Autoscroll::center()), window, cx, |s| {
                     s.select_ranges([point..point])
                 });
-                editor.focus(window, cx);
+                window.focus(&editor.focus_handle(cx));
                 cx.notify();
             });
             self.prev_scroll_position.take();
@@ -188,9 +182,9 @@ impl GoToLine {
 }
 
 impl Render for GoToLine {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let mut help_text = self.current_text.clone();
-        let query = self.line_column_from_query(window, cx);
+        let query = self.line_column_from_query(cx);
         if let Some(line) = query.0 {
             if let Some(column) = query.1 {
                 help_text = format!("Go to line {line}, column {column}").into();
@@ -201,7 +195,7 @@ impl Render for GoToLine {
 
         v_flex()
             .w(rems(24.))
-            .elevation_2(window, cx)
+            .elevation_2(cx)
             .key_context("GoToLine")
             .on_action(cx.listener(Self::cancel))
             .on_action(cx.listener(Self::confirm))
@@ -361,7 +355,7 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
         workspace.update_in(cx, |workspace, window, cx| {
-            let cursor_position = cx.new_model(|cx| CursorPosition::new(workspace));
+            let cursor_position = cx.new_model(|_| CursorPosition::new(workspace));
             workspace.status_bar().update(cx, |status_bar, cx| {
                 status_bar.add_right_item(cursor_position, window, cx);
             });

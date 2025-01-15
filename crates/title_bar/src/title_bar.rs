@@ -74,7 +74,7 @@ pub struct TitleBar {
 impl Render for TitleBar {
     fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let close_action = Box::new(workspace::CloseWindow);
-        let height = Self::height(window, cx);
+        let height = Self::height(window);
         let supported_controls = window.window_controls();
         let decorations = window.window_decorations();
         let titlebar_color = if cfg!(any(target_os = "linux", target_os = "freebsd")) {
@@ -125,7 +125,7 @@ impl Render for TitleBar {
                     .w_full()
                     // Note: On Windows the title bar behavior is handled by the platform implementation.
                     .when(self.platform_style != PlatformStyle::Windows, |this| {
-                        this.on_click(|event, window, cx| {
+                        this.on_click(|event, window, _| {
                             if event.up.click_count == 2 {
                                 window.zoom_window();
                             }
@@ -143,31 +143,29 @@ impl Render for TitleBar {
                                     })
                                     .when(render_project_items, |title_bar| {
                                         title_bar
-                                            .children(self.render_project_host(window, cx))
-                                            .child(self.render_project_name(window, cx))
-                                            .children(self.render_project_branch(window, cx))
+                                            .children(self.render_project_host(cx))
+                                            .child(self.render_project_name(cx))
+                                            .children(self.render_project_branch(cx))
                                     })
                             })
-                            .on_mouse_down(MouseButton::Left, |_, window, cx| {
-                                cx.stop_propagation()
-                            }),
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation()),
                     )
                     .child(self.render_collaborator_list(window, cx))
                     .child(
                         h_flex()
                             .gap_1()
                             .pr_1()
-                            .on_mouse_down(MouseButton::Left, |_, window, cx| cx.stop_propagation())
+                            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                             .children(self.render_call_controls(window, cx))
                             .map(|el| {
                                 let status = self.client.status();
                                 let status = &*status.borrow();
                                 if matches!(status, client::Status::Connected { .. }) {
-                                    el.child(self.render_user_menu_button(window, cx))
+                                    el.child(self.render_user_menu_button(cx))
                                 } else {
-                                    el.children(self.render_connection_status(status, window, cx))
-                                        .child(self.render_sign_in_button(window, cx))
-                                        .child(self.render_user_menu_button(window, cx))
+                                    el.children(self.render_connection_status(status, cx))
+                                        .child(self.render_sign_in_button(cx))
+                                        .child(self.render_user_menu_button(cx))
                                 }
                             }),
                     ),
@@ -182,10 +180,10 @@ impl Render for TitleBar {
                                 .when(supported_controls.window_menu, |titlebar| {
                                     titlebar.on_mouse_down(
                                         gpui::MouseButton::Right,
-                                        move |ev, window, cx| window.show_window_menu(ev.position),
+                                        move |ev, window, _| window.show_window_menu(ev.position),
                                     )
                                 })
-                                .on_mouse_move(cx.listener(move |this, _ev, window, cx| {
+                                .on_mouse_move(cx.listener(move |this, _ev, window, _| {
                                     if this.should_move {
                                         this.should_move = false;
                                         window.start_window_move();
@@ -245,17 +243,15 @@ impl TitleBar {
         };
 
         let mut subscriptions = Vec::new();
-        subscriptions.push(cx.observe_in(
-            &workspace.weak_handle().upgrade().unwrap(),
-            window,
-            |_, _, window, cx| cx.notify(),
-        ));
-        subscriptions.push(cx.observe_in(&project, window, |_, _, window, cx| cx.notify()));
-        subscriptions.push(cx.observe_in(&active_call, window, |this, _, window, cx| {
-            this.active_call_changed(window, cx)
-        }));
+        subscriptions.push(
+            cx.observe(&workspace.weak_handle().upgrade().unwrap(), |_, _, cx| {
+                cx.notify()
+            }),
+        );
+        subscriptions.push(cx.observe(&project, |_, _, cx| cx.notify()));
+        subscriptions.push(cx.observe(&active_call, |this, _, cx| this.active_call_changed(cx)));
         subscriptions.push(cx.observe_window_activation(window, Self::window_activation_changed));
-        subscriptions.push(cx.observe_in(&user_store, window, |_, _, window, cx| cx.notify()));
+        subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
         Self {
             platform_style,
@@ -272,7 +268,7 @@ impl TitleBar {
     }
 
     #[cfg(not(target_os = "windows"))]
-    pub fn height(window: &mut Window, cx: &mut AppContext) -> Pixels {
+    pub fn height(window: &mut Window) -> Pixels {
         (1.75 * window.rem_size()).max(px(34.))
     }
 
@@ -288,11 +284,7 @@ impl TitleBar {
         self
     }
 
-    fn render_ssh_project_host(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<AnyElement> {
+    fn render_ssh_project_host(&self, cx: &mut ModelContext<Self>) -> Option<AnyElement> {
         let options = self.project.read(cx).ssh_connection_options(cx)?;
         let host: SharedString = options.connection_string().into();
 
@@ -366,13 +358,9 @@ impl TitleBar {
         )
     }
 
-    pub fn render_project_host(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<AnyElement> {
+    pub fn render_project_host(&self, cx: &mut ModelContext<Self>) -> Option<AnyElement> {
         if self.project.read(cx).is_via_ssh() {
-            return self.render_ssh_project_host(window, cx);
+            return self.render_ssh_project_host(cx);
         }
 
         if self.project.read(cx).is_disconnected(cx) {
@@ -398,16 +386,10 @@ impl TitleBar {
                 .color(Color::Player(participant_index.0))
                 .style(ButtonStyle::Subtle)
                 .label_size(LabelSize::Small)
-                .tooltip(move |window, cx| {
-                    Tooltip::text(
-                        format!(
-                            "{} is sharing this project. Click to follow.",
-                            host_user.github_login.clone()
-                        ),
-                        window,
-                        cx,
-                    )
-                })
+                .tooltip(Tooltip::text(format!(
+                    "{} is sharing this project. Click to follow.",
+                    host_user.github_login.clone()
+                )))
                 .on_click({
                     let host_peer_id = host.peer_id;
                     cx.listener(move |this, _, window, cx| {
@@ -422,11 +404,7 @@ impl TitleBar {
         )
     }
 
-    pub fn render_project_name(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> impl IntoElement {
+    pub fn render_project_name(&self, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let name = {
             let mut names = self.project.read(cx).visible_worktrees(cx).map(|worktree| {
                 let worktree = worktree.read(cx);
@@ -467,11 +445,7 @@ impl TitleBar {
             }))
     }
 
-    pub fn render_project_branch(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<impl IntoElement> {
+    pub fn render_project_branch(&self, cx: &mut ModelContext<Self>) -> Option<impl IntoElement> {
         let entry = {
             let mut names_and_branches =
                 self.project.read(cx).visible_worktrees(cx).map(|worktree| {
@@ -525,16 +499,11 @@ impl TitleBar {
             .ok();
     }
 
-    fn active_call_changed(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn active_call_changed(&mut self, cx: &mut ModelContext<Self>) {
         cx.notify();
     }
 
-    fn share_project(
-        &mut self,
-        _: &ShareProject,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn share_project(&mut self, _: &ShareProject, cx: &mut ModelContext<Self>) {
         let active_call = ActiveCall::global(cx);
         let project = self.project.clone();
         active_call
@@ -542,12 +511,7 @@ impl TitleBar {
             .detach_and_log_err(cx);
     }
 
-    fn unshare_project(
-        &mut self,
-        _: &UnshareProject,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn unshare_project(&mut self, _: &UnshareProject, _: &mut Window, cx: &mut ModelContext<Self>) {
         let active_call = ActiveCall::global(cx);
         let project = self.project.clone();
         active_call
@@ -558,7 +522,6 @@ impl TitleBar {
     fn render_connection_status(
         &self,
         status: &client::Status,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<AnyElement> {
         match status {
@@ -570,7 +533,7 @@ impl TitleBar {
                 div()
                     .id("disconnected")
                     .child(Icon::new(IconName::Disconnected).size(IconSize::Small))
-                    .tooltip(|window, cx| Tooltip::text("Disconnected", window, cx))
+                    .tooltip(Tooltip::text("Disconnected"))
                     .into_any_element(),
             ),
             client::Status::UpgradeRequired => {
@@ -604,11 +567,7 @@ impl TitleBar {
         }
     }
 
-    pub fn render_sign_in_button(
-        &mut self,
-        _window: &mut Window,
-        _: &mut ModelContext<Self>,
-    ) -> Button {
+    pub fn render_sign_in_button(&mut self, _: &mut ModelContext<Self>) -> Button {
         let client = self.client.clone();
         Button::new("sign_in", "Sign in")
             .label_size(LabelSize::Small)
@@ -625,17 +584,13 @@ impl TitleBar {
             })
     }
 
-    pub fn render_user_menu_button(
-        &mut self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> impl Element {
+    pub fn render_user_menu_button(&mut self, cx: &mut ModelContext<Self>) -> impl Element {
         let user_store = self.user_store.read(cx);
         if let Some(user) = user_store.current_user() {
             let plan = user_store.current_plan();
             PopoverMenu::new("user-menu")
                 .menu(move |window, cx| {
-                    ContextMenu::build(window, cx, |menu, window, cx| {
+                    ContextMenu::build(window, cx, |menu, _, cx| {
                         menu.when(cx.has_flag::<ZedPro>(), |menu| {
                             menu.action(
                                 format!(
@@ -686,7 +641,7 @@ impl TitleBar {
                                 ),
                         )
                         .style(ButtonStyle::Subtle)
-                        .tooltip(move |window, cx| Tooltip::text("Toggle User Menu", window, cx)),
+                        .tooltip(Tooltip::text("Toggle User Menu")),
                 )
                 .anchor(gpui::Corner::TopRight)
         } else {
@@ -721,7 +676,7 @@ impl TitleBar {
                             ),
                         )
                         .style(ButtonStyle::Subtle)
-                        .tooltip(move |window, cx| Tooltip::text("Toggle User Menu", window, cx)),
+                        .tooltip(Tooltip::text("Toggle User Menu")),
                 )
         }
     }

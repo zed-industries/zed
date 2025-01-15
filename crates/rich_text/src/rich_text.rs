@@ -144,7 +144,7 @@ impl RichText {
         )
         .on_click(self.link_ranges.clone(), {
             let link_urls = self.link_urls.clone();
-            move |ix, window, cx| {
+            move |ix, _, cx| {
                 let url = &link_urls[ix];
                 if url.starts_with("http") {
                     cx.open_url(url);
@@ -159,7 +159,7 @@ impl RichText {
             move |idx, window, cx| {
                 for (ix, range) in link_ranges.iter().enumerate() {
                     if range.contains(&idx) {
-                        return Some(LinkPreview::new(&link_urls[ix], window, cx));
+                        return Some(LinkPreview::new(&link_urls[ix], cx));
                     }
                 }
                 for range in &custom_tooltip_ranges {

@@ -91,7 +91,7 @@ impl PickerDelegate for OpenPathDelegate {
     fn set_selected_index(
         &mut self,
         ix: usize,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) {
         self.selected_index = ix;
@@ -248,7 +248,7 @@ impl PickerDelegate for OpenPathDelegate {
         )
     }
 
-    fn confirm(&mut self, _: bool, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn confirm(&mut self, _: bool, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         let Some(m) = self.matches.get(self.selected_index) else {
             return;
         };
@@ -274,7 +274,7 @@ impl PickerDelegate for OpenPathDelegate {
         self.should_dismiss
     }
 
-    fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         if let Some(tx) = self.tx.take() {
             tx.send(None).ok();
         }

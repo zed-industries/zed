@@ -8,8 +8,8 @@ use call::{ActiveCall, ParticipantLocation};
 use client::proto::PeerId;
 use collections::HashMap;
 use gpui::{
-    point, size, Along, AnyView, AnyWeakModel, AnyWeakView, Axis, Bounds, IntoElement, Model,
-    ModelContext, MouseButton, Pixels, Point, StyleRefinement, Window,
+    point, size, Along, AnyView, AnyWeakView, Axis, Bounds, IntoElement, Model, ModelContext,
+    MouseButton, Pixels, Point, StyleRefinement, Window,
 };
 use parking_lot::Mutex;
 use project::Project;
@@ -343,7 +343,7 @@ impl Member {
                                 .w_96()
                                 .bottom_3()
                                 .right_3()
-                                .elevation_2(window, cx)
+                                .elevation_2(cx)
                                 .p_1()
                                 .child(status_box)
                                 .when_some(
@@ -351,7 +351,7 @@ impl Member {
                                     |this, (leader_project_id, leader_user_id)| {
                                         this.cursor_pointer().on_mouse_down(
                                             MouseButton::Left,
-                                            cx.listener(move |this, _, window, cx| {
+                                            cx.listener(move |this, _, _, cx| {
                                                 crate::join_in_room_project(
                                                     leader_project_id,
                                                     leader_user_id,
@@ -747,14 +747,14 @@ impl SplitDirection {
         [Self::Up, Self::Down, Self::Left, Self::Right]
     }
 
-    pub fn vertical(window: &mut Window, cx: &mut AppContext) -> Self {
+    pub fn vertical(cx: &mut AppContext) -> Self {
         match WorkspaceSettings::get_global(cx).pane_split_direction_vertical {
             PaneSplitDirectionVertical::Left => SplitDirection::Left,
             PaneSplitDirectionVertical::Right => SplitDirection::Right,
         }
     }
 
-    pub fn horizontal(window: &mut Window, cx: &mut AppContext) -> Self {
+    pub fn horizontal(cx: &mut AppContext) -> Self {
         match WorkspaceSettings::get_global(cx).pane_split_direction_horizontal {
             PaneSplitDirectionHorizontal::Down => SplitDirection::Down,
             PaneSplitDirectionHorizontal::Up => SplitDirection::Up,
@@ -983,7 +983,7 @@ mod element {
             axis: Axis,
             pane_bounds: Bounds<Pixels>,
             window: &mut Window,
-            cx: &mut AppContext,
+            _cx: &mut AppContext,
         ) -> PaneAxisHandleLayout {
             let handle_bounds = Bounds {
                 origin: pane_bounds.origin.apply_along(axis, |origin| {

@@ -364,7 +364,7 @@ impl Element for Img {
                                     let parent_view_id = window.parent_view_id().unwrap();
                                     let task = window.spawn(cx, |mut cx| async move {
                                         cx.background_executor().timer(LOADING_DELAY).await;
-                                        cx.update(move |window, cx| {
+                                        cx.update(move |_, cx| {
                                             cx.notify(parent_view_id);
                                         })
                                         .ok();

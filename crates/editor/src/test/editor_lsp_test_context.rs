@@ -11,7 +11,7 @@ use serde_json::json;
 use crate::{Editor, ToPoint};
 use collections::HashSet;
 use futures::Future;
-use gpui::{Model, ModelContext, VisualTestContext, Window};
+use gpui::{Focusable as _, Model, ModelContext, VisualTestContext, Window};
 use indoc::indoc;
 use language::{
     point_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, LanguageQueries,
@@ -144,11 +144,13 @@ impl EditorLspTestContext {
             })
             .await
             .expect("Could not open test file");
-        let editor = cx.update(|window, cx| {
+        let editor = cx.update(|_, cx| {
             item.act_as::<Editor>(cx)
                 .expect("Opened test file wasn't an editor")
         });
-        editor.update_in(&mut cx, |editor, window, cx| editor.focus(window, cx));
+        editor.update_in(&mut cx, |editor, window, cx| {
+            window.focus(&editor.focus_handle(cx))
+        });
 
         let lsp = fake_servers.next().await.unwrap();
         Self {
@@ -268,7 +270,7 @@ impl EditorLspTestContext {
         let start_point = range.start.to_point(&snapshot.buffer_snapshot);
         let end_point = range.end.to_point(&snapshot.buffer_snapshot);
 
-        self.editor(|editor, window, cx| {
+        self.editor(|editor, _, cx| {
             let buffer = editor.buffer().read(cx);
             let start = point_to_lsp(
                 buffer
@@ -293,7 +295,7 @@ impl EditorLspTestContext {
         let snapshot = self.update_editor(|editor, window, cx| editor.snapshot(window, cx));
         let point = offset.to_point(&snapshot.buffer_snapshot);
 
-        self.editor(|editor, window, cx| {
+        self.editor(|editor, _, cx| {
             let buffer = editor.buffer().read(cx);
             point_to_lsp(
                 buffer

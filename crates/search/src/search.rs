@@ -130,7 +130,7 @@ pub(crate) fn show_no_more_matches(window: &mut Window, cx: &mut AppContext) {
             return;
         };
         workspace
-            .update(cx, |workspace, window, cx| {
+            .update(cx, |workspace, _, cx| {
                 workspace.show_toast(
                     Toast::new(notification_id.clone(), "No more matches").autohide(),
                     cx,

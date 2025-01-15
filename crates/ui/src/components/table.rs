@@ -49,7 +49,7 @@ impl Table {
         self
     }
 
-    fn base_cell_style(window: &mut Window, cx: &mut AppContext) -> Div {
+    fn base_cell_style(cx: &mut AppContext) -> Div {
         div()
             .px_1p5()
             .flex_1()
@@ -74,7 +74,7 @@ impl Table {
 }
 
 impl RenderOnce for Table {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let header = div()
             .flex()
             .flex_row()
@@ -85,7 +85,7 @@ impl RenderOnce for Table {
             .border_b_1()
             .border_color(cx.theme().colors().border)
             .children(self.column_headers.into_iter().map(|h| {
-                Self::base_cell_style(window, cx)
+                Self::base_cell_style(cx)
                     .font_weight(FontWeight::SEMIBOLD)
                     .child(h)
             }));
@@ -111,8 +111,8 @@ impl RenderOnce for Table {
                     row.border_b_1().border_color(cx.theme().colors().border)
                 })
                 .children(row.into_iter().map(|cell| match cell {
-                    TableCell::String(s) => Self::base_cell_style(window, cx).child(s),
-                    TableCell::Element(e) => Self::base_cell_style(window, cx).child(e),
+                    TableCell::String(s) => Self::base_cell_style(cx).child(s),
+                    TableCell::Element(e) => Self::base_cell_style(cx).child(e),
                 }))
         });
 

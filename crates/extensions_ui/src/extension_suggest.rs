@@ -5,14 +5,11 @@ use std::sync::{Arc, OnceLock};
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use extension_host::ExtensionStore;
-use gpui::{Model, VisualContext};
+use gpui::Model;
 use language::Buffer;
 use ui::{ModelContext, SharedString, Window};
 use workspace::notifications::simple_message_notification::MessageNotification;
-use workspace::{
-    notifications::{simple_message_notification, NotificationId},
-    Workspace,
-};
+use workspace::{notifications::NotificationId, Workspace};
 
 const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("astro", &["astro"]),
@@ -159,7 +156,7 @@ pub(crate) fn suggest(
         return;
     };
 
-    cx.on_next_frame(window, move |workspace, window, cx| {
+    cx.on_next_frame(window, move |workspace, _, cx| {
         let Some(editor) = workspace.active_item_as::<Editor>(cx) else {
             return;
         };
@@ -181,7 +178,7 @@ pub(crate) fn suggest(
         .with_click_message("Yes")
         .on_click({
             let extension_id = extension_id.clone();
-            move |window, cx| {
+            move |_, cx| {
                 let extension_id = extension_id.clone();
                 let extension_store = ExtensionStore::global(cx);
                 extension_store.update(cx, move |store, cx| {
@@ -190,7 +187,7 @@ pub(crate) fn suggest(
             }
         })
         .with_secondary_click_message("No")
-        .on_secondary_click(move |window, cx| {
+        .on_secondary_click(move |_, cx| {
             let key = language_extension_key(&extension_id);
             db::write_and_log(cx, move || {
                 KEY_VALUE_STORE.write_kvp(key, "dismissed".to_string())

@@ -9,7 +9,7 @@ use fuzzy::StringMatch;
 use gpui::{
     div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, HighlightStyle,
     Model, ModelContext, ParentElement, Point, Render, Styled, StyledText, Task, TextStyle,
-    VisualContext, WeakModel, Window,
+    WeakModel, Window,
 };
 use language::{Outline, OutlineItem};
 use ordered_float::OrderedFloat;
@@ -86,7 +86,7 @@ impl Render for OutlineView {
 }
 
 impl OutlineView {
-    fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Editor>) {
+    fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Editor>) {
         if editor.mode() == EditorMode::Full {
             let handle = cx.model().downgrade();
             editor
@@ -105,10 +105,9 @@ impl OutlineView {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> OutlineView {
-        let delegate =
-            OutlineViewDelegate::new(cx.model().downgrade(), outline, editor, window, cx);
+        let delegate = OutlineViewDelegate::new(cx.model().downgrade(), outline, editor, cx);
         let picker = cx.new_model(|cx| {
-            Picker::uniform_list(delegate, window, cx).max_height(Some(vh(0.75, window, cx)))
+            Picker::uniform_list(delegate, window, cx).max_height(Some(vh(0.75, window)))
         });
         OutlineView { picker }
     }
@@ -131,7 +130,7 @@ impl OutlineViewDelegate {
         outline_view: WeakModel<OutlineView>,
         outline: Outline<Anchor>,
         editor: Model<Editor>,
-        window: &mut Window,
+
         cx: &mut ModelContext<OutlineView>,
     ) -> Self {
         Self {
@@ -158,7 +157,7 @@ impl OutlineViewDelegate {
         &mut self,
         ix: usize,
         navigate: bool,
-        window: &mut Window,
+
         cx: &mut ModelContext<Picker<OutlineViewDelegate>>,
     ) {
         self.selected_match_index = ix;
@@ -173,7 +172,6 @@ impl OutlineViewDelegate {
                     outline_item.range.start..outline_item.range.end,
                     cx.theme().colors().editor_highlighted_line_background,
                     true,
-                    window,
                     cx,
                 );
                 active_editor.request_autoscroll(Autoscroll::center(), cx);
@@ -200,10 +198,10 @@ impl PickerDelegate for OutlineViewDelegate {
     fn set_selected_index(
         &mut self,
         ix: usize,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<OutlineViewDelegate>>,
     ) {
-        self.set_selected_index(ix, true, window, cx);
+        self.set_selected_index(ix, true, cx);
     }
 
     fn update_matches(
@@ -268,7 +266,7 @@ impl PickerDelegate for OutlineViewDelegate {
                 .unwrap_or(0);
         }
         self.last_query = query;
-        self.set_selected_index(selected_index, !self.last_query.is_empty(), window, cx);
+        self.set_selected_index(selected_index, !self.last_query.is_empty(), cx);
         Task::ready(())
     }
 
@@ -289,7 +287,7 @@ impl PickerDelegate for OutlineViewDelegate {
                     s.select_ranges([rows.start..rows.start])
                 });
                 active_editor.clear_row_highlights::<OutlineRowHighlights>();
-                active_editor.focus(window, cx);
+                window.focus(&active_editor.focus_handle(cx));
             }
         });
 
@@ -311,7 +309,7 @@ impl PickerDelegate for OutlineViewDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let mat = self.matches.get(ix)?;

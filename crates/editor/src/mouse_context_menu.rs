@@ -84,7 +84,7 @@ impl MouseContextMenu {
             move |editor, _, _event: &DismissEvent, window, cx| {
                 editor.mouse_context_menu.take();
                 if context_menu_focus.contains_focused(window, cx) {
-                    editor.focus(window, cx);
+                    window.focus(&editor.focus_handle(cx));
                 }
             },
         );
@@ -120,7 +120,7 @@ pub fn deploy_context_menu(
     cx: &mut ModelContext<Editor>,
 ) {
     if !editor.is_focused(window) {
-        editor.focus(window, cx);
+        window.focus(&editor.focus_handle(cx));
     }
 
     // Don't show context menu for inline editors

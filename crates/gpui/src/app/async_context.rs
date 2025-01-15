@@ -1,7 +1,7 @@
 use crate::{
     AnyView, AnyWindowHandle, AppCell, AppContext, BackgroundExecutor, BorrowAppContext, Context,
-    DismissEvent, Focusable, ForegroundExecutor, Global, Model, ModelContext, PromptLevel, Render,
-    Reservation, Result, Task, VisualContext, Window, WindowHandle,
+    Focusable, ForegroundExecutor, Global, Model, ModelContext, PromptLevel, Render, Reservation,
+    Result, Task, VisualContext, Window, WindowHandle,
 };
 use anyhow::{anyhow, Context as _};
 use derive_more::{Deref, DerefMut};

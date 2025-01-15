@@ -1,7 +1,7 @@
 use crate::{Editor, EditorStyle};
 use gpui::{
     div, AnyElement, InteractiveElement, IntoElement, ModelContext, MouseButton, ParentElement,
-    Pixels, Size, StatefulInteractiveElement, Styled, WeakModel, Window,
+    Pixels, Size, StatefulInteractiveElement, Styled, WeakModel,
 };
 use language::ParsedMarkdown;
 use ui::StyledExt;
@@ -26,23 +26,21 @@ impl SignatureHelpPopover {
         style: &EditorStyle,
         max_size: Size<Pixels>,
         workspace: Option<WeakModel<Workspace>>,
-        window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> AnyElement {
         div()
             .id("signature_help_popover")
-            .elevation_2(window, cx)
+            .elevation_2(cx)
             .overflow_y_scroll()
             .max_w(max_size.width)
             .max_h(max_size.height)
-            .on_mouse_move(|_, window, cx| cx.stop_propagation())
-            .on_mouse_down(MouseButton::Left, |_, window, cx| cx.stop_propagation())
+            .on_mouse_move(|_, _, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
             .child(div().p_2().child(crate::render_parsed_markdown(
                 "signature_help_popover_content",
                 &self.parsed_content,
                 style,
                 workspace,
-                window,
                 cx,
             )))
             .into_any_element()

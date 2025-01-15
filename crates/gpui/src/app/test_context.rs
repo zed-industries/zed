@@ -206,7 +206,7 @@ impl TestAppContext {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |window, cx| cx.new_model(|_| Empty),
+                |_, cx| cx.new_model(|_| Empty),
             )
             .unwrap();
         drop(cx);
@@ -760,7 +760,7 @@ impl VisualTestContext {
 
     /// debug_bounds returns the bounds of the element with the given selector.
     pub fn debug_bounds(&mut self, selector: &'static str) -> Option<Bounds<Pixels>> {
-        self.update(|window, cx| window.rendered_frame.debug_bounds.get(selector).copied())
+        self.update(|window, _| window.rendered_frame.debug_bounds.get(selector).copied())
     }
 
     /// Draw an element to the window. Useful for simulating events or actions
@@ -810,7 +810,7 @@ impl VisualTestContext {
     pub fn simulate_close(&mut self) -> bool {
         let handler = self
             .cx
-            .update_window(self.window, |_, window, cx| {
+            .update_window(self.window, |_, window, _| {
                 window
                     .platform_window
                     .as_test()
@@ -824,7 +824,7 @@ impl VisualTestContext {
         if let Some(mut handler) = handler {
             let should_close = handler();
             self.cx
-                .update_window(self.window, |_, window, cx| {
+                .update_window(self.window, |_, window, _| {
                     window.platform_window.on_should_close(handler);
                 })
                 .unwrap();

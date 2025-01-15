@@ -6,7 +6,7 @@ use gpui::{
     anchored, deferred, div, point, prelude::FluentBuilder, px, size, AnyElement, AppContext,
     Bounds, Corner, DismissEvent, DispatchPhase, Element, ElementId, Focusable as _,
     GlobalElementId, HitboxId, InteractiveElement, IntoElement, LayoutId, Length, ManagedView,
-    Model, MouseDownEvent, ParentElement, Pixels, Point, Style, VisualContext, Window,
+    Model, MouseDownEvent, ParentElement, Pixels, Point, Style, Window,
 };
 
 use crate::prelude::*;
@@ -41,7 +41,7 @@ impl<M: ManagedView> PopoverMenuHandle<M> {
         }
     }
 
-    pub fn hide(&self, window: &mut Window, cx: &mut AppContext) {
+    pub fn hide(&self, cx: &mut AppContext) {
         if let Some(state) = self.0.borrow().as_ref() {
             if let Some(menu) = state.menu.borrow().as_ref() {
                 menu.update(cx, |_, cx| cx.emit(DismissEvent));
@@ -52,7 +52,7 @@ impl<M: ManagedView> PopoverMenuHandle<M> {
     pub fn toggle(&self, window: &mut Window, cx: &mut AppContext) {
         if let Some(state) = self.0.borrow().as_ref() {
             if state.menu.borrow().is_some() {
-                self.hide(window, cx);
+                self.hide(cx);
             } else {
                 self.show(window, cx);
             }
@@ -169,7 +169,7 @@ impl<M: ManagedView> PopoverMenu<M> {
         })
     }
 
-    fn resolved_offset(&self, window: &mut Window, cx: &mut AppContext) -> Point<Pixels> {
+    fn resolved_offset(&self, window: &mut Window) -> Point<Pixels> {
         self.offset.unwrap_or_else(|| {
             // Default offset = 4px padding + 1px border
             let offset = rems_from_px(5.) * window.rem_size();
@@ -266,7 +266,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                     if let Some(child_bounds) = element_state.child_bounds {
                         anchored = anchored.position(
                             child_bounds.corner(self.resolved_attach())
-                                + self.resolved_offset(window, cx),
+                                + self.resolved_offset(window),
                         );
                     }
                     let mut element = deferred(anchored.child(div().occlude().child(menu.clone())))

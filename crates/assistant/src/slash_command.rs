@@ -97,7 +97,7 @@ impl SlashCommandCompletionProvider {
             )
             .await;
 
-            cx.update(|window, cx| {
+            cx.update(|_, cx| {
                 matches
                     .into_iter()
                     .filter_map(|mat| {
@@ -350,7 +350,7 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         position: language::Anchor,
         _text: &str,
         _trigger_in_words: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> bool {
         let buffer = buffer.read(cx);

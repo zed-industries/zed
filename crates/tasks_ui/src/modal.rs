@@ -285,7 +285,7 @@ impl PickerDelegate for TasksModalDelegate {
     fn confirm(
         &mut self,
         omit_history_entry: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<picker::Picker<Self>>,
     ) {
         let current_match_index = self.selected_index();
@@ -312,14 +312,7 @@ impl PickerDelegate for TasksModalDelegate {
 
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_resolved_task(
-                    workspace,
-                    task_source_kind,
-                    task,
-                    omit_history_entry,
-                    window,
-                    cx,
-                );
+                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, cx);
             })
             .ok();
         cx.emit(DismissEvent);
@@ -360,7 +353,7 @@ impl PickerDelegate for TasksModalDelegate {
         let tooltip_label = if tooltip_label_text.trim().is_empty() {
             None
         } else {
-            Some(Tooltip::text(tooltip_label_text, window, cx))
+            Some(Tooltip::simple(tooltip_label_text, cx))
         };
 
         let highlighted_location = HighlightedText {
@@ -426,8 +419,8 @@ impl PickerDelegate for TasksModalDelegate {
                                         .checked_sub(1);
                                     picker.refresh(window, cx);
                                 }))
-                                .tooltip(|window, cx| {
-                                    Tooltip::text("Delete Previously Scheduled Task", window, cx)
+                                .tooltip(|_, cx| {
+                                    Tooltip::simple("Delete Previously Scheduled Task", cx)
                                 }),
                         );
                         item.end_hover_slot(delete_button)
@@ -456,7 +449,7 @@ impl PickerDelegate for TasksModalDelegate {
     fn confirm_input(
         &mut self,
         omit_history_entry: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) {
         let Some((task_source_kind, mut task)) = self.spawn_oneshot() else {
@@ -473,14 +466,7 @@ impl PickerDelegate for TasksModalDelegate {
         }
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_resolved_task(
-                    workspace,
-                    task_source_kind,
-                    task,
-                    omit_history_entry,
-                    window,
-                    cx,
-                );
+                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, cx);
             })
             .ok();
         cx.emit(DismissEvent);
@@ -525,7 +511,7 @@ impl PickerDelegate for TasksModalDelegate {
                 .child(
                     left_button
                         .map(|(label, action)| {
-                            let keybind = KeyBinding::for_action(&*action, window, cx);
+                            let keybind = KeyBinding::for_action(&*action, window);
 
                             Button::new("edit-current-task", label)
                                 .label_size(LabelSize::Small)
@@ -544,7 +530,7 @@ impl PickerDelegate for TasksModalDelegate {
                             secondary: current_modifiers.secondary(),
                         }
                         .boxed_clone();
-                        this.children(KeyBinding::for_action(&*action, window, cx).map(|keybind| {
+                        this.children(KeyBinding::for_action(&*action, window).map(|keybind| {
                             let spawn_oneshot_label = if current_modifiers.secondary() {
                                 "Spawn Oneshot Without History"
                             } else {
@@ -559,28 +545,26 @@ impl PickerDelegate for TasksModalDelegate {
                                 })
                         }))
                     } else if current_modifiers.secondary() {
-                        this.children(
-                            KeyBinding::for_action(&menu::SecondaryConfirm, window, cx).map(
-                                |keybind| {
-                                    let label = if is_recent_selected {
-                                        "Rerun Without History"
-                                    } else {
-                                        "Spawn Without History"
-                                    };
-                                    Button::new("spawn", label)
-                                        .label_size(LabelSize::Small)
-                                        .key_binding(keybind)
-                                        .on_click(move |_, window, cx| {
-                                            window.dispatch_action(
-                                                menu::SecondaryConfirm.boxed_clone(),
-                                                cx,
-                                            )
-                                        })
-                                },
-                            ),
-                        )
+                        this.children(KeyBinding::for_action(&menu::SecondaryConfirm, window).map(
+                            |keybind| {
+                                let label = if is_recent_selected {
+                                    "Rerun Without History"
+                                } else {
+                                    "Spawn Without History"
+                                };
+                                Button::new("spawn", label)
+                                    .label_size(LabelSize::Small)
+                                    .key_binding(keybind)
+                                    .on_click(move |_, window, cx| {
+                                        window.dispatch_action(
+                                            menu::SecondaryConfirm.boxed_clone(),
+                                            cx,
+                                        )
+                                    })
+                            },
+                        ))
                     } else {
-                        this.children(KeyBinding::for_action(&menu::Confirm, window, cx).map(
+                        this.children(KeyBinding::for_action(&menu::Confirm, window).map(
                             |keybind| {
                                 let run_entry_label =
                                     if is_recent_selected { "Rerun" } else { "Spawn" };

@@ -11,7 +11,6 @@ impl QuickActionBar {
     pub fn render_toggle_markdown_preview(
         &self,
         workspace: WeakModel<Workspace>,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<AnyElement> {
         let mut active_editor_is_markdown = false;
@@ -19,10 +18,8 @@ impl QuickActionBar {
         if let Some(workspace) = self.workspace.upgrade() {
             workspace.update(cx, |workspace, cx| {
                 active_editor_is_markdown =
-                    MarkdownPreviewView::resolve_active_item_as_markdown_editor(
-                        workspace, cx,
-                    )
-                    .is_some();
+                    MarkdownPreviewView::resolve_active_item_as_markdown_editor(workspace, cx)
+                        .is_some();
             });
         }
 

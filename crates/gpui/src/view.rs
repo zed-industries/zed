@@ -1,20 +1,14 @@
 use crate::{
-    seal::Sealed, AnyElement, AnyModel, AnyWeakModel, AppContext, Bounds, ContentMask, Element,
-    ElementId, Entity, EntityId, Flatten, FocusHandle, Focusable, GlobalElementId, IntoElement,
-    LayoutId, Model, ModelContext, PaintIndex, Pixels, PrepaintStateIndex, Render, Style,
-    StyleRefinement, TextStyle, VisualContext, WeakModel,
+    AnyElement, AnyModel, AnyWeakModel, AppContext, Bounds, ContentMask, Element, ElementId,
+    Entity, EntityId, GlobalElementId, IntoElement, LayoutId, Model, ModelContext, PaintIndex,
+    Pixels, PrepaintStateIndex, Render, Style, StyleRefinement, TextStyle, WeakModel,
 };
 use crate::{Empty, Window};
-use anyhow::{Context, Result};
+use anyhow::Result;
 use collections::FxHashSet;
 use refineable::Refineable;
 use std::mem;
-use std::{
-    any::{type_name, TypeId},
-    fmt,
-    hash::{Hash, Hasher},
-    ops::Range,
-};
+use std::{any::TypeId, fmt, ops::Range};
 
 struct AnyViewState {
     prepaint_range: Range<PrepaintStateIndex>,
@@ -343,7 +337,7 @@ mod any_view {
 pub struct EmptyView;
 
 impl Render for EmptyView {
-    fn render(&mut self, window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         Empty
     }
 }

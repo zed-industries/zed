@@ -9,7 +9,7 @@ use collab_ui::{
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{
     point, BackgroundExecutor, BorrowAppContext, Context, Entity, Model, SharedString,
-    TestAppContext, VisualContext, VisualTestContext,
+    TestAppContext, VisualTestContext,
 };
 use language::Capability;
 use project::WorktreeSettings;
@@ -77,7 +77,7 @@ async fn test_basic_following(
     let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
     let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
 
-    cx_b.update(|window, cx| {
+    cx_b.update(|window, _| {
         assert!(window.is_window_active());
     });
 
@@ -429,7 +429,7 @@ async fn test_basic_following(
         Some(peer_id_b)
     );
     assert_eq!(
-        workspace_a.update_in(cx_a, |workspace, window, cx| workspace
+        workspace_a.update_in(cx_a, |workspace, _, cx| workspace
             .active_item(cx)
             .unwrap()
             .item_id()),
@@ -1299,8 +1299,7 @@ async fn test_auto_unfollowing(cx_a: &mut TestAppContext, cx_b: &mut TestAppCont
     // When client B edits, it automatically stops following client A.
     editor_b2.update_in(cx_b, |editor, window, cx| editor.insert("X", window, cx));
     assert_eq!(
-        workspace_b.update_in(cx_b, |workspace, window, _| workspace
-            .leader_for_pane(&pane_b)),
+        workspace_b.update_in(cx_b, |workspace, _, _| workspace.leader_for_pane(&pane_b)),
         None
     );
 
@@ -1593,7 +1592,7 @@ async fn test_following_across_workspaces(cx_a: &mut TestAppContext, cx_b: &mut 
 
     executor.run_until_parked();
     assert_eq!(visible_push_notifications(cx_a).len(), 1);
-    cx_a.update(|window, cx| {
+    cx_a.update(|_, cx| {
         workspace::join_in_room_project(
             project_b_id,
             client_b.user_id().unwrap(),
@@ -1667,7 +1666,7 @@ async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut T
     });
 
     // a unshares the project
-    cx_a.update(|window, cx| {
+    cx_a.update(|_, cx| {
         let project = workspace_a.read(cx).project().clone();
         ActiveCall::global(cx).update(cx, |call, cx| {
             call.unshare_project(project, cx).unwrap();
@@ -1685,7 +1684,7 @@ async fn test_following_stops_on_unshare(cx_a: &mut TestAppContext, cx_b: &mut T
     editor_b.update(cx_b, |editor, cx| {
         assert_eq!(editor.selections.ranges(cx), vec![1..1])
     });
-    cx_b.update(|window, cx| {
+    cx_b.update(|_, cx| {
         let room = ActiveCall::global(cx).read(cx).room().unwrap().read(cx);
         let participant = room.remote_participants().get(&client_a.id()).unwrap();
         assert_eq!(participant.location, ParticipantLocation::UnsharedProject)
@@ -2118,7 +2117,7 @@ async fn test_following_to_channel_notes_other_workspace(
 
     // a opens a second workspace and the channel notes
     let (workspace_a2, cx_a2) = client_a.build_test_workspace(&mut cx_a2).await;
-    cx_a2.update(|window, cx| window.activate_window());
+    cx_a2.update(|window, _| window.activate_window());
     cx_a2
         .update(|window, cx| ChannelView::open(channel, None, workspace_a2, window, cx))
         .await
@@ -2132,7 +2131,7 @@ async fn test_following_to_channel_notes_other_workspace(
     });
 
     // a returns to the shared project
-    cx_a.update(|window, cx| window.activate_window());
+    cx_a.update(|window, _| window.activate_window());
     cx_a.run_until_parked();
 
     workspace_a.update(cx_a, |workspace, cx| {
@@ -2190,7 +2189,7 @@ async fn test_following_while_deactivated(cx_a: &mut TestAppContext, cx_b: &mut 
 
     // a opens a file in a new window
     let (_, cx_a2) = client_a.build_test_workspace(&mut cx_a2).await;
-    cx_a2.update(|window, cx| window.activate_window());
+    cx_a2.update(|window, _| window.activate_window());
     cx_a2.simulate_keystrokes("cmd-p");
     cx_a2.run_until_parked();
     cx_a2.simulate_keystrokes("3 enter");
@@ -2201,7 +2200,7 @@ async fn test_following_while_deactivated(cx_a: &mut TestAppContext, cx_b: &mut 
     cx_a.run_until_parked();
 
     // a returns to the shared project
-    cx_a.update(|window, cx| window.activate_window());
+    cx_a.update(|window, _| window.activate_window());
     cx_a.run_until_parked();
 
     workspace_a.update(cx_a, |workspace, cx| {

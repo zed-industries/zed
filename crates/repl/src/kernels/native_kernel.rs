@@ -299,8 +299,8 @@ impl NativeRunningKernel {
                 log::error!("{}", error_message);
 
                 session
-                    .update_in(&mut cx, |session, window, cx| {
-                        session.kernel_errored(error_message, window, cx);
+                    .update(&mut cx, |session, cx| {
+                        session.kernel_errored(error_message, cx);
 
                         cx.notify();
                     })

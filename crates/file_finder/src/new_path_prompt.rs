@@ -256,7 +256,7 @@ impl PickerDelegate for NewPathDelegate {
     fn set_selected_index(
         &mut self,
         ix: usize,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<picker::Picker<Self>>,
     ) {
         self.selected_index = ix;
@@ -348,7 +348,7 @@ impl PickerDelegate for NewPathDelegate {
 
     fn confirm_update_query(
         &mut self,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<String> {
         let m = self.matches.get(self.selected_index)?;
@@ -386,7 +386,7 @@ impl PickerDelegate for NewPathDelegate {
             cx.spawn_in(window, |picker, mut cx| async move {
                 let answer = answer.await.ok();
                 picker
-                    .update_in(&mut cx, |picker, window, cx| {
+                    .update(&mut cx, |picker, cx| {
                         picker.delegate.should_dismiss = true;
                         if answer != Some(0) {
                             return;
@@ -416,7 +416,7 @@ impl PickerDelegate for NewPathDelegate {
         self.should_dismiss
     }
 
-    fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<picker::Picker<Self>>) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<picker::Picker<Self>>) {
         if let Some(tx) = self.tx.take() {
             tx.send(None).ok();
         }

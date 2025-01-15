@@ -360,14 +360,14 @@ async fn test_channel_message_changes(
     chat_panel_b
         .update_in(cx_b, |chat_panel, window, cx| {
             chat_panel.set_active(true, window, cx);
-            chat_panel.select_channel(channel_id, None, window, cx)
+            chat_panel.select_channel(channel_id, None, cx)
         })
         .await
         .unwrap();
 
     executor.run_until_parked();
 
-    let b_has_messages = cx_b.update(|window, cx| {
+    let b_has_messages = cx_b.update(|_, cx| {
         client_b
             .channel_store()
             .read(cx)
@@ -384,7 +384,7 @@ async fn test_channel_message_changes(
 
     executor.run_until_parked();
 
-    let b_has_messages = cx_b.update(|window, cx| {
+    let b_has_messages = cx_b.update(|_, cx| {
         client_b
             .channel_store()
             .read(cx)
@@ -406,7 +406,7 @@ async fn test_channel_message_changes(
 
     executor.run_until_parked();
 
-    let b_has_messages = cx_b.update(|window, cx| {
+    let b_has_messages = cx_b.update(|_, cx| {
         client_b
             .channel_store()
             .read(cx)
@@ -425,7 +425,7 @@ async fn test_channel_message_changes(
 
     executor.run_until_parked();
 
-    let b_has_messages = cx_b.update(|window, cx| {
+    let b_has_messages = cx_b.update(|_, cx| {
         client_b
             .channel_store()
             .read(cx)

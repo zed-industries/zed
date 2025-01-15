@@ -441,7 +441,7 @@ impl ConfigurationView {
         }
     }
 
-    fn retry_connection(&self, window: &mut Window, cx: &mut AppContext) {
+    fn retry_connection(&self, cx: &mut AppContext) {
         self.state
             .update(cx, |state, cx| state.fetch_models(cx))
             .detach_and_log_err(cx);
@@ -449,7 +449,7 @@ impl ConfigurationView {
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
         let ollama_intro = "Get up and running with Llama 3.3, Mistral, Gemma 2, and other large language models with Ollama.";
@@ -503,9 +503,7 @@ impl Render for ConfigurationView {
                                                 .icon(IconName::ExternalLink)
                                                 .icon_size(IconSize::XSmall)
                                                 .icon_color(Color::Muted)
-                                                .on_click(move |_, window, cx| {
-                                                    cx.open_url(OLLAMA_SITE)
-                                                })
+                                                .on_click(move |_, _, cx| cx.open_url(OLLAMA_SITE))
                                                 .into_any_element(),
                                         )
                                     } else {
@@ -518,7 +516,7 @@ impl Render for ConfigurationView {
                                             .icon(IconName::ExternalLink)
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
-                                            .on_click(move |_, window, cx| {
+                                            .on_click(move |_, _, cx| {
                                                 cx.open_url(OLLAMA_DOWNLOAD_URL)
                                             })
                                             .into_any_element(),
@@ -531,9 +529,7 @@ impl Render for ConfigurationView {
                                         .icon(IconName::ExternalLink)
                                         .icon_size(IconSize::XSmall)
                                         .icon_color(Color::Muted)
-                                        .on_click(move |_, window, cx| {
-                                            cx.open_url(OLLAMA_LIBRARY_URL)
-                                        }),
+                                        .on_click(move |_, _, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
                                 ),
                         )
                         .child(if is_authenticated {
@@ -555,9 +551,9 @@ impl Render for ConfigurationView {
                             Button::new("retry_ollama_models", "Connect")
                                 .icon_position(IconPosition::Start)
                                 .icon(IconName::ArrowCircle)
-                                .on_click(cx.listener(move |this, _, window, cx| {
-                                    this.retry_connection(window, cx)
-                                }))
+                                .on_click(
+                                    cx.listener(move |this, _, _, cx| this.retry_connection(cx)),
+                                )
                                 .into_any_element()
                         }),
                 )

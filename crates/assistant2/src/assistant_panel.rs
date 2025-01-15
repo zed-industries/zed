@@ -131,7 +131,7 @@ impl AssistantPanel {
                 chrono::Local::now().offset().local_minus_utc(),
             )
             .unwrap(),
-            history: cx.new_model(|cx| ThreadHistory::new(weak_self, thread_store, window, cx)),
+            history: cx.new_model(|cx| ThreadHistory::new(weak_self, thread_store, cx)),
             width: None,
             height: None,
         }
@@ -217,12 +217,7 @@ impl AssistantPanel {
         self.message_editor.focus_handle(cx).focus(window);
     }
 
-    pub(crate) fn delete_thread(
-        &mut self,
-        thread_id: &ThreadId,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub(crate) fn delete_thread(&mut self, thread_id: &ThreadId, cx: &mut ModelContext<Self>) {
         self.thread_store
             .update(cx, |this, cx| this.delete_thread(thread_id, cx));
     }
@@ -255,7 +250,7 @@ impl Panel for AssistantPanel {
     fn set_position(
         &mut self,
         position: DockPosition,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         settings::update_settings_file::<AssistantSettings>(
@@ -314,14 +309,14 @@ impl Panel for AssistantPanel {
 }
 
 impl AssistantPanel {
-    fn render_toolbar(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render_toolbar(&self, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx);
 
         h_flex()
             .id("assistant-toolbar")
             .justify_between()
             .gap(DynamicSpacing::Base08.rems(cx))
-            .h(Tab::container_height(window, cx))
+            .h(Tab::container_height(cx))
             .px(DynamicSpacing::Base08.rems(cx))
             .bg(cx.theme().colors().tab_bar_background)
             .border_b_1()
@@ -378,9 +373,7 @@ impl AssistantPanel {
                         IconButton::new("configure-assistant", IconName::Settings)
                             .icon_size(IconSize::Small)
                             .style(ButtonStyle::Subtle)
-                            .tooltip(move |window, cx| {
-                                Tooltip::text("Configure Assistant", window, cx)
-                            })
+                            .tooltip(Tooltip::text("Configure Assistant"))
                             .on_click(move |_event, _window, _cx| {
                                 println!("Configure Assistant");
                             }),
@@ -449,7 +442,6 @@ impl AssistantPanel {
                                     &OpenHistory,
                                     &self.focus_handle(cx),
                                     window,
-                                    cx,
                                 ))
                                 .on_click(move |_event, window, cx| {
                                     window.dispatch_action(OpenHistory.boxed_clone(), cx);
@@ -459,11 +451,7 @@ impl AssistantPanel {
             })
     }
 
-    fn render_last_error(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<AnyElement> {
+    fn render_last_error(&self, cx: &mut ModelContext<Self>) -> Option<AnyElement> {
         let last_error = self.thread.read(cx).last_error()?;
 
         Some(
@@ -474,26 +462,22 @@ impl AssistantPanel {
                 .max_w_96()
                 .py_2()
                 .px_3()
-                .elevation_2(window, cx)
+                .elevation_2(cx)
                 .occlude()
                 .child(match last_error {
-                    ThreadError::PaymentRequired => self.render_payment_required_error(window, cx),
+                    ThreadError::PaymentRequired => self.render_payment_required_error(cx),
                     ThreadError::MaxMonthlySpendReached => {
-                        self.render_max_monthly_spend_reached_error(window, cx)
+                        self.render_max_monthly_spend_reached_error(cx)
                     }
                     ThreadError::Message(error_message) => {
-                        self.render_error_message(&error_message, window, cx)
+                        self.render_error_message(&error_message, cx)
                     }
                 })
                 .into_any(),
         )
     }
 
-    fn render_payment_required_error(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> AnyElement {
+    fn render_payment_required_error(&self, cx: &mut ModelContext<Self>) -> AnyElement {
         const ERROR_MESSAGE: &str = "Free tier exceeded. Subscribe and add payment to continue using Zed LLMs. You'll be billed at cost for tokens used.";
 
         v_flex()
@@ -517,7 +501,7 @@ impl AssistantPanel {
                     .justify_end()
                     .mt_1()
                     .child(Button::new("subscribe", "Subscribe").on_click(cx.listener(
-                        |this, _, window, cx| {
+                        |this, _, _, cx| {
                             this.thread.update(cx, |this, _cx| {
                                 this.clear_last_error();
                             });
@@ -527,7 +511,7 @@ impl AssistantPanel {
                         },
                     )))
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
-                        |this, _, window, cx| {
+                        |this, _, _, cx| {
                             this.thread.update(cx, |this, _cx| {
                                 this.clear_last_error();
                             });
@@ -539,11 +523,7 @@ impl AssistantPanel {
             .into_any()
     }
 
-    fn render_max_monthly_spend_reached_error(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> AnyElement {
+    fn render_max_monthly_spend_reached_error(&self, cx: &mut ModelContext<Self>) -> AnyElement {
         const ERROR_MESSAGE: &str = "You have reached your maximum monthly spend. Increase your spend limit to continue using Zed LLMs.";
 
         v_flex()
@@ -568,7 +548,7 @@ impl AssistantPanel {
                     .mt_1()
                     .child(
                         Button::new("subscribe", "Update Monthly Spend Limit").on_click(
-                            cx.listener(|this, _, window, cx| {
+                            cx.listener(|this, _, _, cx| {
                                 this.thread.update(cx, |this, _cx| {
                                     this.clear_last_error();
                                 });
@@ -579,7 +559,7 @@ impl AssistantPanel {
                         ),
                     )
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
-                        |this, _, window, cx| {
+                        |this, _, _, cx| {
                             this.thread.update(cx, |this, _cx| {
                                 this.clear_last_error();
                             });
@@ -594,7 +574,6 @@ impl AssistantPanel {
     fn render_error_message(
         &self,
         error_message: &SharedString,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> AnyElement {
         v_flex()
@@ -621,7 +600,7 @@ impl AssistantPanel {
                     .justify_end()
                     .mt_1()
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
-                        |this, _, window, cx| {
+                        |this, _, _, cx| {
                             this.thread.update(cx, |this, _cx| {
                                 this.clear_last_error();
                             });
@@ -646,7 +625,7 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(|this, _: &OpenHistory, window, cx| {
                 this.open_history(window, cx);
             }))
-            .child(self.render_toolbar(window, cx))
+            .child(self.render_toolbar(cx))
             .map(|parent| match self.active_view {
                 ActiveView::Thread => parent
                     .child(self.render_active_thread_or_empty_state(window, cx))
@@ -656,7 +635,7 @@ impl Render for AssistantPanel {
                             .border_color(cx.theme().colors().border)
                             .child(self.message_editor.clone()),
                     )
-                    .children(self.render_last_error(window, cx)),
+                    .children(self.render_last_error(cx)),
                 ActiveView::History => parent.child(self.history.clone()),
             })
     }

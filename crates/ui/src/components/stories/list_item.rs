@@ -9,7 +9,7 @@ const OVERFLOWING_TEXT: &str = "Lorem ipsum dolor sit amet, consectetur adipisci
 pub struct ListItemStory;
 
 impl Render for ListItemStory {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         Story::container()
             .bg(cx.theme().colors().background)
             .child(Story::title_for::<ListItem>())

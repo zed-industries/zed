@@ -41,7 +41,7 @@ impl AssistantModelSelector {
 }
 
 impl Render for AssistantModelSelector {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let active_model = LanguageModelRegistry::read_global(cx).active_model();
         let focus_handle = self.selector.focus_handle(cx).clone();
 

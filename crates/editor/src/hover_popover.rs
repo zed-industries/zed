@@ -22,7 +22,7 @@ use std::rc::Rc;
 use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
 use theme::ThemeSettings;
-use ui::{prelude::*, window_is_transparent, Scrollbar, ScrollbarState};
+use ui::{prelude::*, theme_is_transparent, Scrollbar, ScrollbarState};
 use util::TryFutureExt;
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
@@ -51,7 +51,7 @@ pub fn hover_at(
         if let Some(anchor) = anchor {
             show_hover(editor, anchor, false, window, cx);
         } else {
-            hide_hover(editor, window, cx);
+            hide_hover(editor, cx);
         }
     }
 }
@@ -142,7 +142,7 @@ pub fn hover_at_inlay(
                 false
             })
         {
-            hide_hover(editor, window, cx);
+            hide_hover(editor, cx);
         }
 
         let hover_popover_delay = EditorSettings::get_global(cx).hover_popover_delay;
@@ -188,7 +188,7 @@ pub fn hover_at_inlay(
 /// Hides the type information popup.
 /// Triggered by the `Hover` action when the cursor is not over a symbol or when the
 /// selections changed.
-pub fn hide_hover(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Editor>) -> bool {
+pub fn hide_hover(editor: &mut Editor, cx: &mut ModelContext<Editor>) -> bool {
     let info_popovers = editor.hover_state.info_popovers.drain(..);
     let diagnostics_popover = editor.hover_state.diagnostic_popover.take();
     let did_hide = info_popovers.count() > 0 || diagnostics_popover.is_some();
@@ -196,7 +196,7 @@ pub fn hide_hover(editor: &mut Editor, window: &mut Window, cx: &mut ModelContex
     editor.hover_state.info_task = None;
     editor.hover_state.triggered_from = None;
 
-    editor.clear_background_highlights::<HoverState>(window, cx);
+    editor.clear_background_highlights::<HoverState>(cx);
 
     if did_hide {
         cx.notify();
@@ -239,7 +239,7 @@ fn show_hover(
             // Hover triggered from same location as last time. Don't show again.
             return None;
         } else {
-            hide_hover(editor, window, cx);
+            hide_hover(editor, cx);
         }
     }
 
@@ -273,8 +273,7 @@ fn show_hover(
                 total_delay
             };
 
-            let hover_request =
-                cx.update(|window, cx| provider.hover(&buffer, buffer_position, cx))?;
+            let hover_request = cx.update(|_, cx| provider.hover(&buffer, buffer_position, cx))?;
 
             if let Some(delay) = delay {
                 delay.await;
@@ -478,7 +477,7 @@ fn show_hover(
 
             this.update_in(&mut cx, |editor, window, cx| {
                 if hover_highlights.is_empty() {
-                    editor.clear_background_highlights::<HoverState>(window, cx);
+                    editor.clear_background_highlights::<HoverState>(cx);
                 } else {
                     // Highlight the selected symbol using a background highlight
                     editor.highlight_background::<HoverState>(
@@ -646,7 +645,6 @@ impl HoverState {
         snapshot: &EditorSnapshot,
         visible_rows: Range<DisplayRow>,
         max_size: Size<Pixels>,
-        window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> Option<(DisplayPoint, Vec<AnyElement>)> {
         // If there is a diagnostic, position the popovers based on that.
@@ -681,10 +679,10 @@ impl HoverState {
         let mut elements = Vec::new();
 
         if let Some(diagnostic_popover) = self.diagnostic_popover.as_ref() {
-            elements.push(diagnostic_popover.render(max_size, window, cx));
+            elements.push(diagnostic_popover.render(max_size, cx));
         }
         for info_popover in &mut self.info_popovers {
-            elements.push(info_popover.render(max_size, window, cx));
+            elements.push(info_popover.render(max_size, cx));
         }
 
         Some((point, elements))
@@ -724,17 +722,16 @@ impl InfoPopover {
     pub(crate) fn render(
         &mut self,
         max_size: Size<Pixels>,
-        window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         let mut d = div()
             .id("info_popover")
-            .elevation_2(window, cx)
+            .elevation_2(cx)
             // Prevent a mouse down/move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
-            .on_mouse_move(|_, window, cx| cx.stop_propagation())
-            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            .on_mouse_move(|_, _, cx| cx.stop_propagation())
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                 let mut keyboard_grace = keyboard_grace.borrow_mut();
                 *keyboard_grace = false;
                 cx.stop_propagation();
@@ -752,7 +749,7 @@ impl InfoPopover {
                         .track_scroll(&self.scroll_handle)
                         .child(markdown.clone()),
                 )
-                .child(self.render_vertical_scrollbar(window, cx));
+                .child(self.render_vertical_scrollbar(cx));
         }
         d.into_any_element()
     }
@@ -771,31 +768,27 @@ impl InfoPopover {
         cx.notify();
         self.scroll_handle.set_offset(current);
     }
-    fn render_vertical_scrollbar(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Editor>,
-    ) -> Stateful<Div> {
+    fn render_vertical_scrollbar(&self, cx: &mut ModelContext<Editor>) -> Stateful<Div> {
         div()
             .occlude()
             .id("info-popover-vertical-scroll")
-            .on_mouse_move(cx.listener(|_, _, window, cx| {
+            .on_mouse_move(cx.listener(|_, _, _, cx| {
                 cx.notify();
                 cx.stop_propagation()
             }))
-            .on_hover(|_, window, cx| {
+            .on_hover(|_, _, cx| {
                 cx.stop_propagation();
             })
-            .on_any_mouse_down(|_, window, cx| {
+            .on_any_mouse_down(|_, _, cx| {
                 cx.stop_propagation();
             })
             .on_mouse_up(
                 MouseButton::Left,
-                cx.listener(|_, _, window, cx| {
+                cx.listener(|_, _, _, cx| {
                     cx.stop_propagation();
                 }),
             )
-            .on_scroll_wheel(cx.listener(|_, _, window, cx| {
+            .on_scroll_wheel(cx.listener(|_, _, _, cx| {
                 cx.notify();
             }))
             .h_full()
@@ -821,12 +814,7 @@ pub struct DiagnosticPopover {
 }
 
 impl DiagnosticPopover {
-    pub fn render(
-        &self,
-        max_size: Size<Pixels>,
-        window: &mut Window,
-        cx: &mut ModelContext<Editor>,
-    ) -> AnyElement {
+    pub fn render(&self, max_size: Size<Pixels>, cx: &mut ModelContext<Editor>) -> AnyElement {
         let keyboard_grace = Rc::clone(&self.keyboard_grace);
         let mut markdown_div = div().py_1().px_2();
         if let Some(markdown) = &self.parsed_content {
@@ -850,18 +838,18 @@ impl DiagnosticPopover {
             .max_h(max_size.height)
             .overflow_y_scroll()
             .max_w(max_size.width)
-            .elevation_2_borderless(window, cx)
+            .elevation_2_borderless(cx)
             // Don't draw the background color if the theme
             // allows transparent surfaces.
-            .when(window_is_transparent(window, cx), |this| {
+            .when(theme_is_transparent(cx), |this| {
                 this.bg(gpui::transparent_black())
             })
             // Prevent a mouse move on the popover from being propagated to the editor,
             // because that would dismiss the popover.
-            .on_mouse_move(|_, window, cx| cx.stop_propagation())
+            .on_mouse_move(|_, _, cx| cx.stop_propagation())
             // Prevent a mouse down on the popover from being propagated to the editor,
             // because that would move the cursor.
-            .on_mouse_down(MouseButton::Left, move |_, window, cx| {
+            .on_mouse_down(MouseButton::Left, move |_, _, cx| {
                 let mut keyboard_grace = keyboard_grace.borrow_mut();
                 *keyboard_grace = false;
                 cx.stop_propagation();
@@ -1047,7 +1035,7 @@ mod tests {
         assert_eq!(counter.load(atomic::Ordering::Acquire), 1);
 
         //verify the information popover is still visible and unchanged
-        cx.editor(|editor, window, cx| {
+        cx.editor(|editor, _, cx| {
             assert!(editor.hover_state.visible());
             assert_eq!(
                 editor.hover_state.info_popovers.len(),
@@ -1140,7 +1128,7 @@ mod tests {
             .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
         requests.next().await;
 
-        cx.editor(|editor, window, cx| {
+        cx.editor(|editor, _, cx| {
             assert!(editor.hover_state.visible());
             assert_eq!(
                 editor.hover_state.info_popovers.len(),
@@ -1228,7 +1216,7 @@ mod tests {
         cx.dispatch_action(Hover);
 
         cx.condition(|editor, _| editor.hover_state.visible()).await;
-        cx.editor(|editor, window, cx| {
+        cx.editor(|editor, _, cx| {
             assert_eq!(
                 editor.hover_state.info_popovers.len(),
                 1,
@@ -1286,7 +1274,7 @@ mod tests {
         cx.dispatch_action(Hover);
 
         cx.condition(|editor, _| editor.hover_state.visible()).await;
-        cx.editor(|editor, window, cx| {
+        cx.editor(|editor, _, cx| {
             assert_eq!(
                 editor.hover_state.info_popovers.len(),
                 1,
@@ -1352,7 +1340,7 @@ mod tests {
         cx.dispatch_action(Hover);
 
         cx.condition(|editor, _| editor.hover_state.visible()).await;
-        cx.editor(|editor, window, cx| {
+        cx.editor(|editor, _, cx| {
             assert_eq!(
                 editor.hover_state.info_popovers.len(),
                 1,
@@ -1490,7 +1478,7 @@ mod tests {
         cx.update_editor(|editor, window, cx| hover(editor, &Default::default(), window, cx));
         cx.run_until_parked();
 
-        cx.update_editor(|editor, window, cx| {
+        cx.update_editor(|editor, _, cx| {
             let popover = editor.hover_state.info_popovers.first().unwrap();
             let content = popover.get_rendered_text(cx);
 
@@ -1602,10 +1590,10 @@ mod tests {
             .next()
             .await;
         cx.background_executor.run_until_parked();
-        cx.update_editor(|editor, window, cx| {
+        cx.update_editor(|editor, _, cx| {
             let expected_layers = vec![entire_hint_label.to_string()];
             assert_eq!(expected_layers, cached_hint_labels(editor));
-            assert_eq!(expected_layers, visible_hint_labels(editor, window, cx));
+            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
         });
 
         let inlay_range = cx
@@ -1727,7 +1715,7 @@ mod tests {
         cx.background_executor
             .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
         cx.background_executor.run_until_parked();
-        cx.update_editor(|editor, window, cx| {
+        cx.update_editor(|editor, _, cx| {
             let hover_state = &editor.hover_state;
             assert!(
                 hover_state.diagnostic_popover.is_none() && hover_state.info_popovers.len() == 1
@@ -1782,7 +1770,7 @@ mod tests {
         cx.background_executor
             .advance_clock(Duration::from_millis(get_hover_popover_delay(&cx) + 100));
         cx.background_executor.run_until_parked();
-        cx.update_editor(|editor, window, cx| {
+        cx.update_editor(|editor, _, cx| {
             let hover_state = &editor.hover_state;
             assert!(
                 hover_state.diagnostic_popover.is_none() && hover_state.info_popovers.len() == 1

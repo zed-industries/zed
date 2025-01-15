@@ -359,9 +359,7 @@ impl ButtonCommon for Button {
     /// use ui::Tooltip;
     ///
     /// Button::new("button_id", "Click me!")
-    ///     .tooltip(move |window, cx| {
-    ///         Tooltip::text("This is a tooltip", cx)
-    ///     })
+    ///     .tooltip(Tooltip::text_f("This is a tooltip", cx))
     ///     .on_click(|event, cx| {
     ///         // Handle click event
     ///     });

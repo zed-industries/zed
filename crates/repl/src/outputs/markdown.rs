@@ -16,8 +16,8 @@ pub struct MarkdownView {
 }
 
 impl MarkdownView {
-    pub fn from(text: String, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
-        let task = cx.spawn_in(window, |markdown_view, mut cx| {
+    pub fn from(text: String, cx: &mut ModelContext<Self>) -> Self {
+        let task = cx.spawn(|markdown_view, mut cx| {
             let text = text.clone();
             let parsed = cx
                 .background_executor()
@@ -55,11 +55,7 @@ impl OutputContent for MarkdownView {
         true
     }
 
-    fn buffer_content(
-        &mut self,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Option<Model<Buffer>> {
+    fn buffer_content(&mut self, _: &mut Window, cx: &mut AppContext) -> Option<Model<Buffer>> {
         let buffer = cx.new_model(|cx| {
             // TODO: Bring in the language registry so we can set the language to markdown
             let mut buffer = Buffer::local(self.raw_text.clone(), cx)

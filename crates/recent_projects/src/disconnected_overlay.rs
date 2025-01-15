@@ -70,7 +70,7 @@ impl DisconnectedOverlay {
                     Host::RemoteProject
                 };
 
-                workspace.toggle_modal(window, cx, |window, cx| DisconnectedOverlay {
+                workspace.toggle_modal(window, cx, |_, cx| DisconnectedOverlay {
                     finished: false,
                     workspace: handle,
                     host,
@@ -137,14 +137,14 @@ impl DisconnectedOverlay {
         .detach_and_prompt_err("Failed to reconnect", window, cx, |_, _, _| None);
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut ModelContext<Self>) {
         self.finished = true;
         cx.emit(DismissEvent)
     }
 }
 
 impl Render for DisconnectedOverlay {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let can_reconnect = matches!(self.host, Host::SshRemoteProject(_));
 
         let message = match &self.host {
@@ -169,7 +169,7 @@ impl Render for DisconnectedOverlay {
 
         div()
             .track_focus(&self.focus_handle(cx))
-            .elevation_3(window, cx)
+            .elevation_3(cx)
             .on_action(cx.listener(Self::cancel))
             .occlude()
             .w(rems(24.))
@@ -190,7 +190,7 @@ impl Render for DisconnectedOverlay {
                                     Button::new("close-window", "Close Window")
                                         .style(ButtonStyle::Filled)
                                         .layer(ElevationIndex::ModalSurface)
-                                        .on_click(cx.listener(move |_, _, window, cx| {
+                                        .on_click(cx.listener(move |_, _, window, _| {
                                             window.remove_window();
                                         })),
                                 )

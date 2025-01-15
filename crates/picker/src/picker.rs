@@ -262,7 +262,7 @@ impl<D: PickerDelegate> Picker<D> {
         let mut this = Self {
             delegate,
             head,
-            element_container: Self::create_element_container(container, window, cx),
+            element_container: Self::create_element_container(container, cx),
             pending_update_matches: None,
             confirm_on_update: None,
             width: None,
@@ -278,7 +278,6 @@ impl<D: PickerDelegate> Picker<D> {
 
     fn create_element_container(
         container: ContainerKind,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> ElementContainer {
         match container {
@@ -664,11 +663,7 @@ impl<D: PickerDelegate> Picker<D> {
             )
     }
 
-    fn render_element_container(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> impl IntoElement {
+    fn render_element_container(&self, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let sizing_behavior = if self.max_height.is_some() {
             ListSizingBehavior::Infer
         } else {
@@ -725,7 +720,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
             // as a part of a modal rather than the entire modal.
             //
             // We should revisit how the `Picker` is styled to make it more composable.
-            .when(self.is_modal, |this| this.elevation_3(window, cx))
+            .when(self.is_modal, |this| this.elevation_3(cx))
             .on_action(cx.listener(Self::select_next))
             .on_action(cx.listener(Self::select_prev))
             .on_action(cx.listener(Self::select_first))
@@ -752,7 +747,7 @@ impl<D: PickerDelegate> Render for Picker<D> {
                         .when_some(self.max_height, |div, max_h| div.max_h(max_h))
                         .overflow_hidden()
                         .children(self.delegate.render_header(window, cx))
-                        .child(self.render_element_container(window, cx)),
+                        .child(self.render_element_container(cx)),
                 )
             })
             .when(self.delegate.match_count() == 0, |el| {

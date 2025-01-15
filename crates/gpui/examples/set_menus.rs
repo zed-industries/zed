@@ -30,8 +30,8 @@ fn main() {
             name: "set_menus".into(),
             items: vec![MenuItem::action("Quit", Quit)],
         }]);
-        cx.open_window(WindowOptions::default(), |window, cx| {
-            cx.new_model(|cx| SetMenus {})
+        cx.open_window(WindowOptions::default(), |_, cx| {
+            cx.new_model(|_| SetMenus {})
         })
         .unwrap();
     });

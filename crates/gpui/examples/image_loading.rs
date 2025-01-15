@@ -205,9 +205,9 @@ fn main() {
                 ))),
                 ..Default::default()
             };
-            cx.open_window(options, |window, cx| {
+            cx.open_window(options, |_, cx| {
                 cx.activate(false);
-                cx.new_model(|cx| ImageLoadingExample {})
+                cx.new_model(|_| ImageLoadingExample {})
             })
             .unwrap();
         });

@@ -23,7 +23,7 @@ impl_actions!(vim, [Paste]);
 
 impl Vim {
     pub fn paste(&mut self, action: &Paste, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.record_current_action(window, cx);
+        self.record_current_action(cx);
         self.store_visual_marks(window, cx);
         let count = Vim::take_count(cx).unwrap_or(1);
 
@@ -38,7 +38,7 @@ impl Vim {
                     text,
                     clipboard_selections,
                 }) = Vim::update_globals(cx, |globals, cx| {
-                    globals.read_register(selected_register, Some(editor), window, cx)
+                    globals.read_register(selected_register, Some(editor), cx)
                 })
                 .filter(|reg| !reg.text.is_empty())
                 else {
@@ -48,7 +48,7 @@ impl Vim {
                     .filter(|sel| sel.len() > 1 && vim.mode != Mode::VisualLine);
 
                 if !action.preserve_clipboard && vim.mode.is_visual() {
-                    vim.copy_selections_content(editor, vim.mode == Mode::VisualLine, window, cx);
+                    vim.copy_selections_content(editor, vim.mode == Mode::VisualLine, cx);
                 }
 
                 let (display_map, current_selections) = editor.selections.all_adjusted_display(cx);

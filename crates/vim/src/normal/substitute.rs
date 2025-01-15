@@ -6,15 +6,15 @@ use crate::{motion::Motion, Mode, Vim};
 
 actions!(vim, [Substitute, SubstituteLine]);
 
-pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
-    Vim::action(editor, window, cx, |vim, _: &Substitute, window, cx| {
-        vim.start_recording(window, cx);
+pub(crate) fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+    Vim::action(editor, cx, |vim, _: &Substitute, window, cx| {
+        vim.start_recording(cx);
         let count = Vim::take_count(cx);
         vim.substitute(count, vim.mode == Mode::VisualLine, window, cx);
     });
 
-    Vim::action(editor, window, cx, |vim, _: &SubstituteLine, window, cx| {
-        vim.start_recording(window, cx);
+    Vim::action(editor, cx, |vim, _: &SubstituteLine, window, cx| {
+        vim.start_recording(cx);
         if matches!(vim.mode, Mode::VisualBlock | Mode::Visual) {
             vim.switch_mode(Mode::VisualLine, false, window, cx)
         }
@@ -75,7 +75,7 @@ impl Vim {
                         }
                     })
                 });
-                vim.copy_selections_content(editor, line_mode, window, cx);
+                vim.copy_selections_content(editor, line_mode, cx);
                 let selections = editor.selections.all::<Point>(cx).into_iter();
                 let edits = selections.map(|selection| (selection.start..selection.end, ""));
                 editor.edit(edits, cx);

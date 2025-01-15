@@ -8,7 +8,7 @@ use client::{proto::PeerId, User};
 use futures::StreamExt;
 use gpui::{
     div, surface, AppContext, EventEmitter, FocusHandle, Focusable, InteractiveElement, Model,
-    ModelContext, ParentElement, Render, SharedString, Styled, Task, VisualContext, Window,
+    ModelContext, ParentElement, Render, SharedString, Styled, Task, Window,
 };
 use std::sync::{Arc, Weak};
 use ui::{prelude::*, Icon, IconName};
@@ -66,7 +66,7 @@ impl Focusable for SharedScreen {
     }
 }
 impl Render for SharedScreen {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         div()
             .bg(cx.theme().colors().editor_background)
             .track_focus(&self.focus)
@@ -87,7 +87,7 @@ impl Item for SharedScreen {
         Some(format!("{}'s screen", self.user.github_login).into())
     }
 
-    fn deactivated(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn deactivated(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) {
         if let Some(nav_history) = self.nav_history.as_mut() {
             nav_history.push::<()>(None, cx);
         }

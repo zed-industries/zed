@@ -8,7 +8,7 @@ use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Model, WeakModel, Window};
+use gpui::{AsyncWindowContext, Model, WeakModel};
 use project::Project;
 use remote::ssh_session::SshProjectId;
 use serde::{Deserialize, Serialize};
@@ -16,7 +16,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use ui::AppContext;
 use util::ResultExt;
 use uuid::Uuid;
 

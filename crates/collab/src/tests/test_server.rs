@@ -756,13 +756,13 @@ impl TestClient {
         channel_id: ChannelId,
         cx: &mut VisualTestContext,
     ) {
-        cx.update(|window, cx| {
+        cx.update(|_, cx| {
             let active_call = ActiveCall::global(cx);
             active_call.update(cx, |call, cx| call.join_channel(channel_id, cx))
         })
         .await
         .unwrap();
-        cx.update(|window, cx| {
+        cx.update(|_, cx| {
             let active_call = ActiveCall::global(cx);
             let project = workspace.read(cx).project().clone();
             active_call.update(cx, |call, cx| call.share_project(project, cx))
@@ -857,8 +857,7 @@ pub fn open_channel_notes(
     channel_id: ChannelId,
     cx: &mut VisualTestContext,
 ) -> Task<anyhow::Result<Model<ChannelView>>> {
-    let window =
-        cx.update(|window, cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
+    let window = cx.update(|_, cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
     let view = window.root_model(cx).unwrap();
 
     cx.update(|window, cx| ChannelView::open(channel_id, None, view.clone(), window, cx))

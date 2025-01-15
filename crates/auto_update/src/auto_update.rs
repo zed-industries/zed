@@ -133,7 +133,7 @@ pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
     cx.observe_new_window_models(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|_, action: &Check, window, cx| check(action, window, cx));
 
-        workspace.register_action(|_, action, window, cx| {
+        workspace.register_action(|_, action, _, cx| {
             view_release_notes(action, cx);
         });
     })

@@ -189,7 +189,7 @@ impl ChannelView {
                     window,
                     cx,
                 );
-                this.acknowledge_buffer_version(window, cx);
+                this.acknowledge_buffer_version(cx);
                 this
             })
         })
@@ -224,9 +224,7 @@ impl ChannelView {
             editor
         });
         let _editor_event_subscription =
-            cx.subscribe_in(&editor, window, |_, _, e: &EditorEvent, window, cx| {
-                cx.emit(e.clone())
-            });
+            cx.subscribe(&editor, |_, _, e: &EditorEvent, cx| cx.emit(e.clone()));
 
         cx.subscribe_in(&channel_buffer, window, Self::handle_channel_buffer_event)
             .detach();
@@ -364,7 +362,7 @@ impl ChannelView {
             }
             ChannelBufferEvent::BufferEdited => {
                 if self.editor.read(cx).is_focused(window) {
-                    self.acknowledge_buffer_version(window, cx);
+                    self.acknowledge_buffer_version(cx);
                 } else {
                     self.channel_store.update(cx, |store, cx| {
                         let channel_buffer = self.channel_buffer.read(cx);
@@ -381,11 +379,7 @@ impl ChannelView {
         }
     }
 
-    fn acknowledge_buffer_version(
-        &mut self,
-        window: &mut Window,
-        cx: &mut ModelContext<ChannelView>,
-    ) {
+    fn acknowledge_buffer_version(&mut self, cx: &mut ModelContext<ChannelView>) {
         self.channel_store.update(cx, |store, cx| {
             let channel_buffer = self.channel_buffer.read(cx);
             store.acknowledge_notes_version(
@@ -404,7 +398,7 @@ impl ChannelView {
 impl EventEmitter<EditorEvent> for ChannelView {}
 
 impl Render for ChannelView {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         div()
             .size_full()
             .on_action(cx.listener(Self::copy_link))
@@ -436,7 +430,7 @@ impl Item for ChannelView {
         }
     }
 
-    fn tab_icon(&self, window: &Window, cx: &AppContext) -> Option<Icon> {
+    fn tab_icon(&self, _: &Window, cx: &AppContext) -> Option<Icon> {
         let channel = self.channel(cx)?;
         let icon = match channel.visibility {
             ChannelVisibility::Public => IconName::Public,
@@ -449,7 +443,7 @@ impl Item for ChannelView {
     fn tab_content(
         &self,
         params: TabContentParams,
-        window: &Window,
+        _: &Window,
         cx: &AppContext,
     ) -> gpui::AnyElement {
         let (channel_name, status) = if let Some(channel) = self.channel(cx) {
@@ -672,7 +666,7 @@ impl FollowableItem for ChannelView {
         Editor::to_follow_event(event)
     }
 
-    fn dedup(&self, existing: &Self, window: &Window, cx: &AppContext) -> Option<Dedup> {
+    fn dedup(&self, existing: &Self, _: &Window, cx: &AppContext) -> Option<Dedup> {
         let existing = existing.channel_buffer.read(cx);
         if self.channel_buffer.read(cx).channel_id == existing.channel_id {
             if existing.is_connected() {

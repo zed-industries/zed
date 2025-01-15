@@ -14,7 +14,7 @@ struct WindowShadow {}
 // 3. We need to implement the techniques in here in Zed
 
 impl Render for WindowShadow {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         let decorations = window.window_decorations();
         let rounding = px(10.0);
         let shadow_size = px(10.0);
@@ -31,7 +31,7 @@ impl Render for WindowShadow {
                     .bg(gpui::transparent_black())
                     .child(
                         canvas(
-                            |_bounds, window, cx| {
+                            |_bounds, window, _cx| {
                                 window.insert_hitbox(
                                     Bounds::new(
                                         point(px(0.0), px(0.0)),
@@ -40,7 +40,7 @@ impl Render for WindowShadow {
                                     false,
                                 )
                             },
-                            move |_bounds, hitbox, window, cx| {
+                            move |_bounds, hitbox, window, _cx| {
                                 let mouse = window.mouse_position();
                                 let size = window.window_bounds().get_bounds().size;
                                 let Some(edge) = resize_edge(mouse, shadow_size, size) else {
@@ -76,8 +76,8 @@ impl Render for WindowShadow {
                     .when(!tiling.bottom, |div| div.pb(shadow_size))
                     .when(!tiling.left, |div| div.pl(shadow_size))
                     .when(!tiling.right, |div| div.pr(shadow_size))
-                    .on_mouse_move(|_e, window, cx| window.refresh())
-                    .on_mouse_down(MouseButton::Left, move |e, window, cx| {
+                    .on_mouse_move(|_e, window, _cx| window.refresh())
+                    .on_mouse_down(MouseButton::Left, move |e, window, _cx| {
                         let size = window.window_bounds().get_bounds().size;
                         let pos = e.position;
 
@@ -117,7 +117,7 @@ impl Render for WindowShadow {
                                 }])
                             }),
                     })
-                    .on_mouse_move(|_e, window, cx| {
+                    .on_mouse_move(|_e, _, cx| {
                         cx.stop_propagation();
                     })
                     .bg(gpui::rgb(0xCCCCFF))
@@ -160,11 +160,11 @@ impl Render for WindowShadow {
                                             Decorations::Client { .. } => div
                                                 .on_mouse_down(
                                                     MouseButton::Left,
-                                                    |_e, window, cx| {
+                                                    |_e, window, _| {
                                                         window.start_window_move();
                                                     },
                                                 )
-                                                .on_click(|e, window, cx| {
+                                                .on_click(|e, window, _| {
                                                     if e.down.button == MouseButton::Right {
                                                         window.show_window_menu(e.up.position);
                                                     }
@@ -214,7 +214,7 @@ fn main() {
             },
             |window, cx| {
                 cx.new_model(|cx| {
-                    cx.observe_window_appearance(window, |_, window, cx| {
+                    cx.observe_window_appearance(window, |_, window, _| {
                         window.refresh();
                     })
                     .detach();

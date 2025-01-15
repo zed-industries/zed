@@ -53,7 +53,7 @@ impl MessageEditor {
         let editor = cx.new_model(|cx| {
             let mut editor = Editor::auto_height(10, window, cx);
             editor.set_placeholder_text("Ask anything…", cx);
-            editor.set_show_indent_guides(false, window, cx);
+            editor.set_show_indent_guides(false, cx);
 
             editor
         });
@@ -293,13 +293,8 @@ impl Render for MessageEditor {
                                         .layer(ElevationIndex::ModalSurface)
                                         .child(Label::new("Submit"))
                                         .children(
-                                            KeyBinding::for_action_in(
-                                                &Chat,
-                                                &focus_handle,
-                                                window,
-                                                cx,
-                                            )
-                                            .map(|binding| binding.into_any_element()),
+                                            KeyBinding::for_action_in(&Chat, &focus_handle, window)
+                                                .map(|binding| binding.into_any_element()),
                                         )
                                         .on_click(move |_event, window, cx| {
                                             focus_handle.dispatch_action(&Chat, window, cx);

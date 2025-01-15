@@ -18,7 +18,7 @@ use gpui::{
     AsyncWindowContext, ClickEvent, ClipboardItem, Corner, Div, DragMoveEvent, EntityId,
     EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, Focusable, KeyContext, Model,
     ModelContext, MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel,
-    Render, ScrollHandle, Subscription, Task, VisualContext, WeakFocusHandle, WeakModel, Window,
+    Render, ScrollHandle, Subscription, Task, WeakFocusHandle, WeakModel, Window,
 };
 use itertools::Itertools;
 use language::DiagnosticSeverity;
@@ -431,7 +431,7 @@ impl Pane {
             can_drop_predicate,
             custom_drop_handle: None,
             can_split_predicate: None,
-            should_display_tab_bar: Rc::new(|window, cx| TabBarSettings::get_global(cx).show),
+            should_display_tab_bar: Rc::new(|_, cx| TabBarSettings::get_global(cx).show),
             render_tab_bar_buttons: Rc::new(move |pane, window, cx| {
                 if !pane.has_focus(window, cx) && !pane.context_menu_focused(window, cx) {
                     return (None, None);
@@ -446,7 +446,7 @@ impl Pane {
                             .trigger(
                                 IconButton::new("plus", IconName::Plus)
                                     .icon_size(IconSize::Small)
-                                    .tooltip(|window, cx| Tooltip::text("New...", window, cx)),
+                                    .tooltip(Tooltip::text("New...")),
                             )
                             .anchor(Corner::TopRight)
                             .with_handle(pane.new_item_context_menu_handle.clone())
@@ -479,7 +479,7 @@ impl Pane {
                             .trigger(
                                 IconButton::new("split", IconName::Split)
                                     .icon_size(IconSize::Small)
-                                    .tooltip(|window, cx| Tooltip::text("Split Pane", window, cx)),
+                                    .tooltip(Tooltip::text("Split Pane")),
                             )
                             .anchor(Corner::TopRight)
                             .with_handle(pane.split_item_context_menu_handle.clone())
@@ -706,24 +706,15 @@ impl Pane {
         self.can_split_predicate = can_split_predicate;
     }
 
-    pub fn set_can_navigate(
-        &mut self,
-        can_navigate: bool,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn set_can_navigate(&mut self, can_navigate: bool, cx: &mut ModelContext<Self>) {
         self.toolbar.update(cx, |toolbar, cx| {
-            toolbar.set_can_navigate(can_navigate, window, cx);
+            toolbar.set_can_navigate(can_navigate, cx);
         });
         cx.notify();
     }
 
-    pub fn set_render_tab_bar_buttons<F>(
-        &mut self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-        render: F,
-    ) where
+    pub fn set_render_tab_bar_buttons<F>(&mut self, cx: &mut ModelContext<Self>, render: F)
+    where
         F: 'static
             + Fn(
                 &mut Pane,
@@ -735,12 +726,8 @@ impl Pane {
         cx.notify();
     }
 
-    pub fn set_custom_drop_handle<F>(
-        &mut self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-        handle: F,
-    ) where
+    pub fn set_custom_drop_handle<F>(&mut self, cx: &mut ModelContext<Self>, handle: F)
+    where
         F: 'static
             + Fn(&mut Pane, &dyn Any, &mut Window, &mut ModelContext<Pane>) -> ControlFlow<(), ()>,
     {
@@ -802,14 +789,6 @@ impl Pane {
                 })
             })
         }
-    }
-
-    fn join_into_next(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        cx.emit(Event::JoinIntoNext);
-    }
-
-    fn join_all(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        cx.emit(Event::JoinAll);
     }
 
     fn history_updated(&mut self, cx: &mut ModelContext<Self>) {
@@ -1986,10 +1965,6 @@ impl Pane {
         }
     }
 
-    pub fn focus(&mut self, window: &mut Window, cx: &mut ModelContext<Pane>) {
-        window.focus(&self.focus_handle);
-    }
-
     pub fn focus_active_item(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         if let Some(active_item) = self.active_item() {
             let focus_handle = active_item.item_focus_handle(cx);
@@ -1997,12 +1972,7 @@ impl Pane {
         }
     }
 
-    pub fn split(
-        &mut self,
-        direction: SplitDirection,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn split(&mut self, direction: SplitDirection, cx: &mut ModelContext<Self>) {
         cx.emit(Event::Split(direction));
     }
 
@@ -2195,7 +2165,7 @@ impl Pane {
             Some(DecoratedIcon::new(
                 icon.size(IconSize::Small).color(Color::Muted),
                 Some(
-                    IconDecoration::new(icon_decoration, knockout_item_color, window, cx)
+                    IconDecoration::new(icon_decoration, knockout_item_color, cx)
                         .color(icon_color.color(cx))
                         .position(Point {
                             x: px(-2.),
@@ -2254,7 +2224,7 @@ impl Pane {
             )
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |pane, event: &MouseDownEvent, window, cx| {
+                cx.listener(move |pane, event: &MouseDownEvent, _, cx| {
                     if let Some(id) = pane.preview_item_id {
                         if id == item_id && event.click_count > 1 {
                             pane.set_preview_item_id(None, cx);
@@ -2270,12 +2240,12 @@ impl Pane {
                     is_active,
                     ix,
                 },
-                |tab, _, window, cx| cx.new_model(|_| tab.clone()),
+                |tab, _, _, cx| cx.new_model(|_| tab.clone()),
             )
-            .drag_over::<DraggedTab>(|tab, _, window, cx| {
+            .drag_over::<DraggedTab>(|tab, _, _, cx| {
                 tab.bg(cx.theme().colors().drop_target_background)
             })
-            .drag_over::<DraggedSelection>(|tab, _, window, cx| {
+            .drag_over::<DraggedSelection>(|tab, _, _, cx| {
                 tab.bg(cx.theme().colors().drop_target_background)
             })
             .when_some(self.can_drop_predicate.clone(), |this, p| {
@@ -2298,7 +2268,7 @@ impl Pane {
                 this.handle_external_paths_drop(paths, window, cx)
             }))
             .when_some(item.tab_tooltip_text(cx), |tab, text| {
-                tab.tooltip(move |window, cx| Tooltip::text(text.clone(), window, cx))
+                tab.tooltip(Tooltip::text(text.clone()))
             })
             .start_slot::<Indicator>(indicator)
             .map(|this| {
@@ -2344,9 +2314,7 @@ impl Pane {
                             )
                         })
                     } else {
-                        this.tooltip(move |window, cx| {
-                            Tooltip::text(end_slot_tooltip_text, window, cx)
-                        })
+                        this.tooltip(Tooltip::text(end_slot_tooltip_text))
                     }
                 });
                 this.end_slot(end_slot)
@@ -2519,7 +2487,7 @@ impl Pane {
                                 menu.entry(
                                     "Copy Path",
                                     Some(Box::new(CopyPath)),
-                                    window.handler_for(&pane, move |_, window, cx| {
+                                    window.handler_for(&pane, move |_, _, cx| {
                                         cx.write_to_clipboard(ClipboardItem::new_string(
                                             abs_path.to_string_lossy().to_string(),
                                         ));
@@ -2530,7 +2498,7 @@ impl Pane {
                                 menu.entry(
                                     "Copy Relative Path",
                                     Some(Box::new(CopyRelativePath)),
-                                    window.handler_for(&pane, move |_, window, cx| {
+                                    window.handler_for(&pane, move |_, _, cx| {
                                         cx.write_to_clipboard(ClipboardItem::new_string(
                                             relative_path.to_string_lossy().to_string(),
                                         ));
@@ -2544,7 +2512,7 @@ impl Pane {
                                 Some(Box::new(RevealInProjectPanel {
                                     entry_id: Some(entry_id),
                                 })),
-                                window.handler_for(&pane, move |pane, window, cx| {
+                                window.handler_for(&pane, move |pane, _, cx| {
                                     pane.project
                                         .update(cx, |_, cx| {
                                             cx.emit(project::Event::RevealInProjectPanel(
@@ -2664,10 +2632,10 @@ impl Pane {
                             .child("")
                             .h_full()
                             .flex_grow()
-                            .drag_over::<DraggedTab>(|bar, _, window, cx| {
+                            .drag_over::<DraggedTab>(|bar, _, _, cx| {
                                 bar.bg(cx.theme().colors().drop_target_background)
                             })
-                            .drag_over::<DraggedSelection>(|bar, _, window, cx| {
+                            .drag_over::<DraggedSelection>(|bar, _, _, cx| {
                                 bar.bg(cx.theme().colors().drop_target_background)
                             })
                             .on_drop(cx.listener(
@@ -2709,7 +2677,7 @@ impl Pane {
         )
     }
 
-    pub fn set_zoomed(&mut self, zoomed: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn set_zoomed(&mut self, zoomed: bool, cx: &mut ModelContext<Self>) {
         self.zoomed = zoomed;
         cx.notify();
     }
@@ -3003,7 +2971,7 @@ impl Pane {
                         )
                     }) {
                         let opened_items: Vec<_> = open_task.await;
-                        _ = workspace.update_in(&mut cx, |workspace, window, cx| {
+                        _ = workspace.update(&mut cx, |workspace, cx| {
                             for item in opened_items.into_iter().flatten() {
                                 if let Err(e) = item {
                                     workspace.show_error(&e, cx);
@@ -3078,34 +3046,34 @@ impl Render for Pane {
             .on_action(cx.listener(|pane, _: &AlternateFile, window, cx| {
                 pane.alternate_file(window, cx);
             }))
-            .on_action(cx.listener(|pane, _: &SplitLeft, window, cx| {
-                pane.split(SplitDirection::Left, window, cx)
+            .on_action(
+                cx.listener(|pane, _: &SplitLeft, _, cx| pane.split(SplitDirection::Left, cx)),
+            )
+            .on_action(cx.listener(|pane, _: &SplitUp, _, cx| pane.split(SplitDirection::Up, cx)))
+            .on_action(cx.listener(|pane, _: &SplitHorizontal, _, cx| {
+                pane.split(SplitDirection::horizontal(cx), cx)
             }))
-            .on_action(cx.listener(|pane, _: &SplitUp, window, cx| {
-                pane.split(SplitDirection::Up, window, cx)
+            .on_action(cx.listener(|pane, _: &SplitVertical, _, cx| {
+                pane.split(SplitDirection::vertical(cx), cx)
             }))
-            .on_action(cx.listener(|pane, _: &SplitHorizontal, window, cx| {
-                pane.split(SplitDirection::horizontal(window, cx), window, cx)
-            }))
-            .on_action(cx.listener(|pane, _: &SplitVertical, window, cx| {
-                pane.split(SplitDirection::vertical(window, cx), window, cx)
-            }))
-            .on_action(cx.listener(|pane, _: &SplitRight, window, cx| {
-                pane.split(SplitDirection::Right, window, cx)
-            }))
-            .on_action(cx.listener(|pane, _: &SplitDown, window, cx| {
-                pane.split(SplitDirection::Down, window, cx)
-            }))
+            .on_action(
+                cx.listener(|pane, _: &SplitRight, _, cx| pane.split(SplitDirection::Right, cx)),
+            )
+            .on_action(
+                cx.listener(|pane, _: &SplitDown, _, cx| pane.split(SplitDirection::Down, cx)),
+            )
             .on_action(
                 cx.listener(|pane, _: &GoBack, window, cx| pane.navigate_backward(window, cx)),
             )
             .on_action(
                 cx.listener(|pane, _: &GoForward, window, cx| pane.navigate_forward(window, cx)),
             )
-            .on_action(
-                cx.listener(|pane, _: &JoinIntoNext, window, cx| pane.join_into_next(window, cx)),
-            )
-            .on_action(cx.listener(|pane, _: &JoinAll, window, cx| pane.join_all(window, cx)))
+            .on_action(cx.listener(|_, _: &JoinIntoNext, _, cx| {
+                cx.emit(Event::JoinIntoNext);
+            }))
+            .on_action(cx.listener(|_, _: &JoinAll, _, cx| {
+                cx.emit(Event::JoinAll);
+            }))
             .on_action(cx.listener(Pane::toggle_zoom))
             .on_action(
                 cx.listener(|pane: &mut Pane, action: &ActivateItem, window, cx| {
@@ -3137,17 +3105,15 @@ impl Render for Pane {
                 pane.toggle_pin_tab(action, window, cx);
             }))
             .when(PreviewTabsSettings::get_global(cx).enabled, |this| {
-                this.on_action(
-                    cx.listener(|pane: &mut Pane, _: &TogglePreviewTab, window, cx| {
-                        if let Some(active_item_id) = pane.active_item().map(|i| i.item_id()) {
-                            if pane.is_active_preview_item(active_item_id) {
-                                pane.set_preview_item_id(None, cx);
-                            } else {
-                                pane.set_preview_item_id(Some(active_item_id), cx);
-                            }
+                this.on_action(cx.listener(|pane: &mut Pane, _: &TogglePreviewTab, _, cx| {
+                    if let Some(active_item_id) = pane.active_item().map(|i| i.item_id()) {
+                        if pane.is_active_preview_item(active_item_id) {
+                            pane.set_preview_item_id(None, cx);
+                        } else {
+                            pane.set_preview_item_id(Some(active_item_id), cx);
                         }
-                    }),
-                )
+                    }
+                }))
             })
             .on_action(
                 cx.listener(|pane: &mut Self, action: &CloseActiveItem, window, cx| {
@@ -3198,8 +3164,8 @@ impl Render for Pane {
                     }
                 }),
             )
-            .on_action(cx.listener(
-                |pane: &mut Self, action: &RevealInProjectPanel, window, cx| {
+            .on_action(
+                cx.listener(|pane: &mut Self, action: &RevealInProjectPanel, _, cx| {
                     let entry_id = action
                         .entry_id
                         .map(ProjectEntryId::from_proto)
@@ -3211,8 +3177,8 @@ impl Render for Pane {
                             })
                             .ok();
                     }
-                },
-            ))
+                }),
+            )
             .when(self.active_item().is_some() && display_tab_bar, |pane| {
                 pane.child(self.render_tab_bar(window, cx))
             })

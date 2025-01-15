@@ -119,12 +119,10 @@ pub fn init(cx: &mut AppContext) {
     )
     .detach();
 
-    cx.observe_new_window_models(
-        |terminal_panel: &mut TerminalPanel,
-         window: &mut Window,
-         cx: &mut ModelContext<TerminalPanel>| {
+    cx.observe_new_models(
+        |terminal_panel: &mut TerminalPanel, cx: &mut ModelContext<TerminalPanel>| {
             let settings = AssistantSettings::get_global(cx);
-            terminal_panel.asssistant_enabled(settings.enabled, window, cx);
+            terminal_panel.asssistant_enabled(settings.enabled, cx);
         },
     )
     .detach();
@@ -376,7 +374,7 @@ impl AssistantPanel {
             );
 
             let project = workspace.project().clone();
-            pane.set_custom_drop_handle(window, cx, move |_, dropped_item, window, cx| {
+            pane.set_custom_drop_handle(cx, move |_, dropped_item, window, cx| {
                 let action = maybe!({
                     if project.read(cx).is_local() {
                         if let Some(paths) = dropped_item.downcast_ref::<ExternalPaths>() {
@@ -432,10 +430,10 @@ impl AssistantPanel {
                 ControlFlow::Break(())
             });
 
-            pane.set_can_navigate(true, window, cx);
+            pane.set_can_navigate(true, cx);
             pane.display_nav_history_buttons(None);
             pane.set_should_display_tab_bar(|_, _| true);
-            pane.set_render_tab_bar_buttons(window, cx, move |pane, window, cx| {
+            pane.set_render_tab_bar_buttons(cx, move |pane, _window, cx| {
                 let focus_handle = pane.focus_handle(cx);
                 let left_children = IconButton::new("history", IconName::HistoryRerun)
                     .icon_size(IconSize::Small)
@@ -486,9 +484,7 @@ impl AssistantPanel {
                             .trigger(
                                 IconButton::new("menu", IconName::EllipsisVertical)
                                     .icon_size(IconSize::Small)
-                                    .tooltip(|window, cx| {
-                                        Tooltip::text("Toggle Assistant Menu", window, cx)
-                                    }),
+                                    .tooltip(Tooltip::text("Toggle Assistant Menu")),
                             )
                             .menu(move |window, cx| {
                                 let zoom_label = if _pane.read(cx).is_zoomed() {
@@ -526,12 +522,8 @@ impl AssistantPanel {
         let subscriptions = vec![
             cx.observe(&pane, |_, _, cx| cx.notify()),
             cx.subscribe_in(&pane, window, Self::handle_pane_event),
-            cx.subscribe_in(&context_editor_toolbar, window, Self::handle_toolbar_event),
-            cx.subscribe_in(
-                &model_summary_editor,
-                window,
-                Self::handle_summary_editor_event,
-            ),
+            cx.subscribe(&context_editor_toolbar, Self::handle_toolbar_event),
+            cx.subscribe(&model_summary_editor, Self::handle_summary_editor_event),
             cx.subscribe_in(&context_store, window, Self::handle_context_store_event),
             cx.subscribe_in(
                 &LanguageModelRegistry::global(cx),
@@ -585,13 +577,13 @@ impl AssistantPanel {
 
         cx.spawn_in(window, |this, mut cx| async move {
             while let Some(status) = status_rx.next().await {
-                this.update_in(&mut cx, |this, window, cx| {
+                this.update(&mut cx, |this, cx| {
                     if this.client_status.is_none()
                         || this
                             .client_status
                             .map_or(false, |old_status| old_status != status)
                     {
-                        this.update_zed_ai_notice_visibility(status, window, cx);
+                        this.update_zed_ai_notice_visibility(status, cx);
                     }
                     this.client_status = Some(status);
                 })
@@ -671,9 +663,8 @@ impl AssistantPanel {
 
     fn handle_summary_editor_event(
         &mut self,
-        model_summary_editor: &Model<Editor>,
+        model_summary_editor: Model<Editor>,
         event: &EditorEvent,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if matches!(event, EditorEvent::Edited { .. }) {
@@ -696,7 +687,6 @@ impl AssistantPanel {
     fn update_zed_ai_notice_visibility(
         &mut self,
         client_status: Status,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let active_provider = LanguageModelRegistry::read_global(cx).active_provider();
@@ -712,9 +702,8 @@ impl AssistantPanel {
 
     fn handle_toolbar_event(
         &mut self,
-        _: &Model<ContextEditorToolbarItem>,
+        _: Model<ContextEditorToolbarItem>,
         _: &ContextEditorToolbarItemEvent,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(context_editor) = self.active_context_editor(cx) {
@@ -793,12 +782,12 @@ impl AssistantPanel {
         }
 
         if let Some(status) = self.client_status {
-            self.update_zed_ai_notice_visibility(status, window, cx);
+            self.update_zed_ai_notice_visibility(status, cx);
         }
     }
 
     fn ensure_authenticated(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        if self.is_authenticated(window, cx) {
+        if self.is_authenticated(cx) {
             return;
         }
 
@@ -806,7 +795,7 @@ impl AssistantPanel {
             return;
         };
 
-        let load_credentials = self.authenticate(window, cx);
+        let load_credentials = self.authenticate(cx);
 
         if self.authenticate_provider_task.is_none() {
             self.authenticate_provider_task = Some((
@@ -847,7 +836,7 @@ impl AssistantPanel {
 
         let initial_prompt = action.prompt.clone();
 
-        if assistant_panel.update(cx, |assistant, cx| assistant.is_authenticated(window, cx)) {
+        if assistant_panel.update(cx, |assistant, cx| assistant.is_authenticated(cx)) {
             match inline_assist_target {
                 InlineAssistTarget::Editor(active_editor, include_context) => {
                     InlineAssistant::update_global(cx, |assistant, cx| {
@@ -877,9 +866,8 @@ impl AssistantPanel {
         } else {
             let assistant_panel = assistant_panel.downgrade();
             cx.spawn_in(window, |workspace, mut cx| async move {
-                let Some(task) = assistant_panel.update_in(&mut cx, |assistant, window, cx| {
-                    assistant.authenticate(window, cx)
-                })?
+                let Some(task) =
+                    assistant_panel.update(&mut cx, |assistant, cx| assistant.authenticate(cx))?
                 else {
                     let answer = cx
                         .prompt(
@@ -901,9 +889,7 @@ impl AssistantPanel {
                     return Ok(());
                 };
                 task.await?;
-                if assistant_panel.update_in(&mut cx, |panel, window, cx| {
-                    panel.is_authenticated(window, cx)
-                })? {
+                if assistant_panel.update(&mut cx, |panel, cx| panel.is_authenticated(cx))? {
                     cx.update(|window, cx| match inline_assist_target {
                         InlineAssistTarget::Editor(active_editor, include_context) => {
                             let assistant_panel = if include_context {
@@ -1277,7 +1263,7 @@ impl AssistantPanel {
     fn deploy_prompt_library(
         &mut self,
         _: &DeployPromptLibrary,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         open_prompt_library(self.languages.clone(), cx).detach_and_log_err(cx);
@@ -1403,17 +1389,13 @@ impl AssistantPanel {
         })
     }
 
-    fn is_authenticated(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> bool {
+    fn is_authenticated(&mut self, cx: &mut ModelContext<Self>) -> bool {
         LanguageModelRegistry::read_global(cx)
             .active_provider()
             .map_or(false, |provider| provider.is_authenticated(cx))
     }
 
-    fn authenticate(
-        &mut self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<Task<Result<()>>> {
+    fn authenticate(&mut self, cx: &mut ModelContext<Self>) -> Option<Task<Result<()>>> {
         LanguageModelRegistry::read_global(cx)
             .active_provider()
             .map_or(None, |provider| Some(provider.authenticate(cx)))
@@ -1422,7 +1404,7 @@ impl AssistantPanel {
     fn restart_context_servers(
         workspace: &mut Workspace,
         _action: &context_server::Restart,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Workspace>,
     ) {
         let Some(assistant_panel) = workspace.panel::<AssistantPanel>(cx) else {
@@ -1440,9 +1422,9 @@ impl AssistantPanel {
 }
 
 impl Render for AssistantPanel {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let mut registrar = DivRegistrar::new(
-            |panel, window, cx| {
+            |panel, _, cx| {
                 panel
                     .pane
                     .read(cx)
@@ -1450,7 +1432,6 @@ impl Render for AssistantPanel {
                     .read(cx)
                     .item_of_type::<BufferSearchBar>()
             },
-            window,
             cx,
         );
         BufferSearchBar::register(&mut registrar);
@@ -1493,7 +1474,7 @@ impl Panel for AssistantPanel {
     fn set_position(
         &mut self,
         position: DockPosition,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         settings::update_settings_file::<AssistantSettings>(
@@ -1528,13 +1509,12 @@ impl Panel for AssistantPanel {
         cx.notify();
     }
 
-    fn is_zoomed(&self, window: &Window, cx: &AppContext) -> bool {
+    fn is_zoomed(&self, _: &Window, cx: &AppContext) -> bool {
         self.pane.read(cx).is_zoomed()
     }
 
-    fn set_zoomed(&mut self, zoomed: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.pane
-            .update(cx, |pane, cx| pane.set_zoomed(zoomed, window, cx));
+    fn set_zoomed(&mut self, zoomed: bool, _: &mut Window, cx: &mut ModelContext<Self>) {
+        self.pane.update(cx, |pane, cx| pane.set_zoomed(zoomed, cx));
     }
 
     fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
@@ -1555,7 +1535,7 @@ impl Panel for AssistantPanel {
         Some(proto::PanelId::AssistantPanel)
     }
 
-    fn icon(&self, window: &Window, cx: &AppContext) -> Option<IconName> {
+    fn icon(&self, _: &Window, cx: &AppContext) -> Option<IconName> {
         let settings = AssistantSettings::get_global(cx);
         if !settings.enabled || !settings.button {
             return None;
@@ -1564,7 +1544,7 @@ impl Panel for AssistantPanel {
         Some(IconName::ZedAssistant)
     }
 
-    fn icon_tooltip(&self, window: &Window, cx: &AppContext) -> Option<&'static str> {
+    fn icon_tooltip(&self, _: &Window, _: &AppContext) -> Option<&'static str> {
         Some("Assistant Panel")
     }
 
@@ -1673,14 +1653,14 @@ impl ContextEditor {
         let editor = cx.new_model(|cx| {
             let mut editor =
                 Editor::for_buffer(context.read(cx).buffer().clone(), None, window, cx);
-            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, window, cx);
-            editor.set_show_line_numbers(false, window, cx);
-            editor.set_show_scrollbars(false, window, cx);
-            editor.set_show_git_diff_gutter(false, window, cx);
-            editor.set_show_code_actions(false, window, cx);
-            editor.set_show_runnables(false, window, cx);
-            editor.set_show_wrap_guides(false, window, cx);
-            editor.set_show_indent_guides(false, window, cx);
+            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
+            editor.set_show_line_numbers(false, cx);
+            editor.set_show_scrollbars(false, cx);
+            editor.set_show_git_diff_gutter(false, cx);
+            editor.set_show_code_actions(false, cx);
+            editor.set_show_runnables(false, cx);
+            editor.set_show_wrap_guides(false, cx);
+            editor.set_show_indent_guides(false, cx);
             editor.set_completion_provider(Some(Box::new(completion_provider)));
             editor.set_collaboration_hub(Box::new(project.clone()));
             editor
@@ -1690,7 +1670,7 @@ impl ContextEditor {
             cx.observe(&context, |_, _, cx| cx.notify()),
             cx.subscribe_in(&context, window, Self::handle_context_event),
             cx.subscribe_in(&editor, window, Self::handle_editor_event),
-            cx.subscribe_in(&editor, window, Self::handle_editor_search_event),
+            cx.subscribe(&editor, Self::handle_editor_search_event),
         ];
 
         let sections = context.read(cx).slash_command_output_sections().to_vec();
@@ -1722,8 +1702,8 @@ impl ContextEditor {
             slash_menu_handle: Default::default(),
             dragged_file_worktrees: Vec::new(),
         };
-        this.update_message_headers(window, cx);
-        this.update_image_blocks(window, cx);
+        this.update_message_headers(cx);
+        this.update_image_blocks(cx);
         this.insert_slash_command_output_sections(sections, false, window, cx);
         this.patches_updated(&Vec::new(), &patch_ranges, window, cx);
         this
@@ -1823,12 +1803,7 @@ impl ContextEditor {
         cx.notify();
     }
 
-    fn cancel(
-        &mut self,
-        _: &editor::actions::Cancel,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn cancel(&mut self, _: &editor::actions::Cancel, _: &mut Window, cx: &mut ModelContext<Self>) {
         self.last_error = None;
 
         if self
@@ -1844,10 +1819,10 @@ impl ContextEditor {
     fn cycle_message_role(
         &mut self,
         _: &CycleMessageRole,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        let cursors = self.cursors(window, cx);
+        let cursors = self.cursors(cx);
         self.context.update(cx, |context, cx| {
             let messages = context
                 .messages_for_offsets(cursors, cx)
@@ -1858,7 +1833,7 @@ impl ContextEditor {
         });
     }
 
-    fn cursors(&self, window: &mut Window, cx: &mut AppContext) -> Vec<usize> {
+    fn cursors(&self, cx: &mut AppContext) -> Vec<usize> {
         let selections = self
             .editor
             .update(cx, |editor, cx| editor.selections.all::<usize>(cx));
@@ -2001,8 +1976,8 @@ impl ContextEditor {
 
         match event {
             ContextEvent::MessagesEdited => {
-                self.update_message_headers(window, cx);
-                self.update_image_blocks(window, cx);
+                self.update_message_headers(cx);
+                self.update_image_blocks(cx);
                 self.context.update(cx, |context, cx| {
                     context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx);
                 });
@@ -2163,7 +2138,7 @@ impl ContextEditor {
                             };
                             let render_trailer = {
                                 let command = command.clone();
-                                move |row, _unfold, window: &mut Window, cx: &mut AppContext| {
+                                move |row, _unfold, _: &mut Window, cx: &mut AppContext| {
                                     // TODO: In the future we should investigate how we can expose
                                     // this as a hook on the `SlashCommand` trait so that we don't
                                     // need to special-case it here.
@@ -2757,9 +2732,8 @@ impl ContextEditor {
 
     fn handle_editor_search_event(
         &mut self,
-        _: &Model<Editor>,
+        _: Model<Editor>,
         event: &SearchEvent,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         cx.emit(event.clone());
@@ -2794,7 +2768,7 @@ impl ContextEditor {
         })
     }
 
-    fn esc_kbd(window: &mut Window, cx: &mut AppContext) -> Div {
+    fn esc_kbd(cx: &mut AppContext) -> Div {
         let colors = cx.theme().colors().clone();
 
         h_flex()
@@ -2817,7 +2791,7 @@ impl ContextEditor {
             .child("to cancel")
     }
 
-    fn update_message_headers(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn update_message_headers(&mut self, cx: &mut ModelContext<Self>) {
         self.editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().read(cx).snapshot(cx);
 
@@ -2877,9 +2851,7 @@ impl ContextEditor {
                                             )
                                             .into_any_element(),
                                     );
-                                    note = Some(
-                                        Self::esc_kbd(cx.window, cx.app).into_any_element(),
-                                    );
+                                    note = Some(Self::esc_kbd(cx.app).into_any_element());
                                 }
                                 (animated_label, spinner, note)
                             }
@@ -2979,13 +2951,11 @@ impl ContextEditor {
                                         .icon_color(Color::Error)
                                         .icon_size(IconSize::XSmall)
                                         .icon_position(IconPosition::Start)
-                                        .tooltip(move |window, cx| {
-                                            Tooltip::text("View Details", window, cx)
-                                        })
+                                        .tooltip(Tooltip::text("View Details"))
                                         .on_click({
                                             let context = context.clone();
                                             let error = error.clone();
-                                            move |_, window, cx| {
+                                            move |_, _, cx| {
                                                 context.update(cx, |_, cx| {
                                                     cx.emit(ContextEvent::ShowAssistError(
                                                         error.clone(),
@@ -3052,10 +3022,10 @@ impl ContextEditor {
                     block_index_to_message.push((message.id, MessageMetadata::from(&message)));
                 }
             }
-            editor.replace_blocks(blocks_to_replace, None, window, cx);
+            editor.replace_blocks(blocks_to_replace, None, cx);
             editor.remove_blocks(blocks_to_remove.into_values().collect(), None, cx);
 
-            let ids = editor.insert_blocks(new_blocks, None, window, cx);
+            let ids = editor.insert_blocks(new_blocks, None, cx);
             old_blocks.extend(ids.into_iter().zip(block_index_to_message).map(
                 |(block_id, (message_id, message_meta))| (message_id, (message_meta, block_id)),
             ));
@@ -3067,7 +3037,6 @@ impl ContextEditor {
     /// block surrounding the cursor.
     fn get_selection_or_code_block(
         context_editor_view: &Model<ContextEditor>,
-        window: &mut Window,
         cx: &mut ModelContext<Workspace>,
     ) -> Option<(String, bool)> {
         const CODE_FENCE_DELIMITER: &'static str = "```";
@@ -3127,11 +3096,10 @@ impl ContextEditor {
             return;
         };
 
-        if let Some((text, _)) = Self::get_selection_or_code_block(&context_editor_view, window, cx)
-        {
+        if let Some((text, _)) = Self::get_selection_or_code_block(&context_editor_view, cx) {
             active_editor_view.update(cx, |editor, cx| {
                 editor.insert(&text, window, cx);
-                editor.focus(window, cx);
+                window.focus(&editor.focus_handle(cx));
             })
         }
     }
@@ -3139,13 +3107,13 @@ impl ContextEditor {
     fn copy_code(
         workspace: &mut Workspace,
         _: &CopyCode,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Workspace>,
     ) {
         let result = maybe!({
             let panel = workspace.panel::<AssistantPanel>(cx)?;
             let context_editor_view = panel.read(cx).active_context_editor(cx)?;
-            Self::get_selection_or_code_block(&context_editor_view, window, cx)
+            Self::get_selection_or_code_block(&context_editor_view, cx)
         });
         let Some((text, is_code_block)) = result else {
             return;
@@ -3321,12 +3289,7 @@ impl ContextEditor {
         });
     }
 
-    fn copy(
-        &mut self,
-        _: &editor::actions::Copy,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn copy(&mut self, _: &editor::actions::Copy, _: &mut Window, cx: &mut ModelContext<Self>) {
         if self.editor.read(cx).selections.count() == 1 {
             let (copied_text, metadata, _) = self.get_clipboard_contents(cx);
             cx.write_to_clipboard(ClipboardItem::new_string_with_json_metadata(
@@ -3568,7 +3531,7 @@ impl ContextEditor {
         }
     }
 
-    fn update_image_blocks(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn update_image_blocks(&mut self, cx: &mut ModelContext<Self>) {
         self.editor.update(cx, |editor, cx| {
             let buffer = editor.buffer().read(cx).snapshot(cx);
             let excerpt_id = *buffer.as_singleton().unwrap().0;
@@ -3621,12 +3584,12 @@ impl ContextEditor {
                 .collect::<Vec<_>>();
 
             editor.remove_blocks(old_blocks, None, cx);
-            let ids = editor.insert_blocks(new_blocks, None, window, cx);
+            let ids = editor.insert_blocks(new_blocks, None, cx);
             self.image_blocks = HashSet::from_iter(ids);
         });
     }
 
-    fn split(&mut self, _: &Split, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn split(&mut self, _: &Split, _: &mut Window, cx: &mut ModelContext<Self>) {
         self.context.update(cx, |context, cx| {
             let selections = self.editor.read(cx).selections.disjoint_anchors();
             for selection in selections.as_ref() {
@@ -3639,7 +3602,7 @@ impl ContextEditor {
         });
     }
 
-    fn save(&mut self, _: &Save, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn save(&mut self, _: &Save, _: &mut Window, cx: &mut ModelContext<Self>) {
         self.context.update(cx, |context, cx| {
             context.save(Some(Duration::from_millis(500)), self.fs.clone(), cx)
         });
@@ -3766,11 +3729,7 @@ impl ContextEditor {
         )
     }
 
-    fn render_notice(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<AnyElement> {
+    fn render_notice(&self, cx: &mut ModelContext<Self>) -> Option<AnyElement> {
         use feature_flags::FeatureFlagAppExt;
         let nudge = self.assistant_panel.upgrade().map(|assistant_panel| {
             assistant_panel.read(cx).show_zed_ai_notice && cx.has_flag::<feature_flags::ZedPro>()
@@ -3865,7 +3824,7 @@ impl ContextEditor {
         let (style, tooltip) = match token_state(&self.context, cx) {
             Some(TokenState::NoTokensLeft { .. }) => (
                 ButtonStyle::Tinted(TintColor::Negative),
-                Some(Tooltip::text("Token limit reached", window, cx)),
+                Some(Tooltip::simple("Token limit reached", cx)),
             ),
             Some(TokenState::HasMoreTokens {
                 over_warn_threshold,
@@ -3874,11 +3833,7 @@ impl ContextEditor {
                 let (style, tooltip) = if over_warn_threshold {
                     (
                         ButtonStyle::Tinted(TintColor::Warning),
-                        Some(Tooltip::text(
-                            "Token limit is close to exhaustion",
-                            window,
-                            cx,
-                        )),
+                        Some(Tooltip::simple("Token limit is close to exhaustion", cx)),
                     )
                 } else {
                     (ButtonStyle::Filled, None)
@@ -3912,7 +3867,7 @@ impl ContextEditor {
                 },
             ))
             .children(
-                KeyBinding::for_action_in(&Assist, &focus_handle, window, cx)
+                KeyBinding::for_action_in(&Assist, &focus_handle, window)
                     .map(|binding| binding.into_any_element()),
             )
             .on_click(move |_event, window, cx| {
@@ -3930,7 +3885,7 @@ impl ContextEditor {
         let (style, tooltip) = match token_state(&self.context, cx) {
             Some(TokenState::NoTokensLeft { .. }) => (
                 ButtonStyle::Tinted(TintColor::Negative),
-                Some(Tooltip::text("Token limit reached", window, cx)),
+                Some(Tooltip::simple("Token limit reached", cx)),
             ),
             Some(TokenState::HasMoreTokens {
                 over_warn_threshold,
@@ -3939,11 +3894,7 @@ impl ContextEditor {
                 let (style, tooltip) = if over_warn_threshold {
                     (
                         ButtonStyle::Tinted(TintColor::Warning),
-                        Some(Tooltip::text(
-                            "Token limit is close to exhaustion",
-                            window,
-                            cx,
-                        )),
+                        Some(Tooltip::simple("Token limit is close to exhaustion", cx)),
                     )
                 } else {
                     (ButtonStyle::Filled, None)
@@ -3971,7 +3922,7 @@ impl ContextEditor {
             .layer(ElevationIndex::ModalSurface)
             .child(Label::new("Suggest Edits"))
             .children(
-                KeyBinding::for_action_in(&Edit, &focus_handle, window, cx)
+                KeyBinding::for_action_in(&Edit, &focus_handle, window)
                     .map(|binding| binding.into_any_element()),
             )
             .on_click(move |_event, window, cx| {
@@ -3988,15 +3939,11 @@ impl ContextEditor {
                 .icon_size(IconSize::Small)
                 .icon_color(Color::Muted)
                 .icon_position(IconPosition::Start)
-                .tooltip(|window, cx| Tooltip::text("Type / to insert via keyboard", window, cx)),
+                .tooltip(Tooltip::text("Type / to insert via keyboard")),
         )
     }
 
-    fn render_last_error(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<AnyElement> {
+    fn render_last_error(&self, cx: &mut ModelContext<Self>) -> Option<AnyElement> {
         let last_error = self.last_error.as_ref()?;
 
         Some(
@@ -4007,16 +3954,16 @@ impl ContextEditor {
                 .max_w_96()
                 .py_2()
                 .px_3()
-                .elevation_2(window, cx)
+                .elevation_2(cx)
                 .occlude()
                 .child(match last_error {
                     AssistError::FileRequired => self.render_file_required_error(cx),
                     AssistError::PaymentRequired => self.render_payment_required_error(cx),
                     AssistError::MaxMonthlySpendReached => {
-                        self.render_max_monthly_spend_reached_error(window, cx)
+                        self.render_max_monthly_spend_reached_error(cx)
                     }
                     AssistError::Message(error_message) => {
-                        self.render_assist_error(error_message, window, cx)
+                        self.render_assist_error(error_message, cx)
                     }
                 })
                 .into_any(),
@@ -4049,7 +3996,7 @@ impl ContextEditor {
                     .justify_end()
                     .mt_1()
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
-                        |this, _, window, cx| {
+                        |this, _, _, cx| {
                             this.last_error = None;
                             cx.notify();
                         },
@@ -4082,14 +4029,14 @@ impl ContextEditor {
                     .justify_end()
                     .mt_1()
                     .child(Button::new("subscribe", "Subscribe").on_click(cx.listener(
-                        |this, _, window, cx| {
+                        |this, _, _, cx| {
                             this.last_error = None;
                             cx.open_url(&zed_urls::account_url(cx));
                             cx.notify();
                         },
                     )))
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
-                        |this, _, window, cx| {
+                        |this, _, _, cx| {
                             this.last_error = None;
                             cx.notify();
                         },
@@ -4098,11 +4045,7 @@ impl ContextEditor {
             .into_any()
     }
 
-    fn render_max_monthly_spend_reached_error(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> AnyElement {
+    fn render_max_monthly_spend_reached_error(&self, cx: &mut ModelContext<Self>) -> AnyElement {
         const ERROR_MESSAGE: &str = "You have reached your maximum monthly spend. Increase your spend limit to continue using Zed LLMs.";
 
         v_flex()
@@ -4127,7 +4070,7 @@ impl ContextEditor {
                     .mt_1()
                     .child(
                         Button::new("subscribe", "Update Monthly Spend Limit").on_click(
-                            cx.listener(|this, _, window, cx| {
+                            cx.listener(|this, _, _, cx| {
                                 this.last_error = None;
                                 cx.open_url(&zed_urls::account_url(cx));
                                 cx.notify();
@@ -4135,7 +4078,7 @@ impl ContextEditor {
                         ),
                     )
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
-                        |this, _, window, cx| {
+                        |this, _, _, cx| {
                             this.last_error = None;
                             cx.notify();
                         },
@@ -4147,7 +4090,6 @@ impl ContextEditor {
     fn render_assist_error(
         &self,
         error_message: &SharedString,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> AnyElement {
         v_flex()
@@ -4174,7 +4116,7 @@ impl ContextEditor {
                     .justify_end()
                     .mt_1()
                     .child(Button::new("dismiss", "Dismiss").on_click(cx.listener(
-                        |this, _, window, cx| {
+                        |this, _, _, cx| {
                             this.last_error = None;
                             cx.notify();
                         },
@@ -4384,7 +4326,7 @@ impl Render for ContextEditor {
             .on_action(cx.listener(ContextEditor::assist))
             .on_action(cx.listener(ContextEditor::split))
             .size_full()
-            .children(self.render_notice(window, cx))
+            .children(self.render_notice(cx))
             .child(
                 div()
                     .flex_grow()
@@ -4400,13 +4342,13 @@ impl Render for ContextEditor {
                         .max_w_96()
                         .py_2()
                         .px_3()
-                        .elevation_2(window, cx)
+                        .elevation_2(cx)
                         .bg(cx.theme().colors().surface_background)
                         .occlude()
                         .child(element),
                 )
             })
-            .children(self.render_last_error(window, cx))
+            .children(self.render_last_error(cx))
             .child(
                 h_flex().w_full().relative().child(
                     h_flex()
@@ -4450,7 +4392,7 @@ impl Focusable for ContextEditor {
 impl Item for ContextEditor {
     type Event = editor::EditorEvent;
 
-    fn tab_content_text(&self, window: &Window, cx: &AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, cx: &AppContext) -> Option<SharedString> {
         Some(util::truncate_and_trailoff(&self.title(cx), MAX_TAB_TITLE_LEN).into())
     }
 
@@ -4803,7 +4745,7 @@ impl ContextEditorToolbarItem {
 }
 
 impl Render for ContextEditorToolbarItem {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let left_side = h_flex()
             .group("chat-title-group")
             .gap_1()
@@ -4820,7 +4762,7 @@ impl Render for ContextEditorToolbarItem {
                 div().visible_on_hover("chat-title-group").child(
                     IconButton::new("regenerate-context", IconName::RefreshTitle)
                         .shape(ui::IconButtonShape::Square)
-                        .tooltip(|window, cx| Tooltip::text("Regenerate Title", window, cx))
+                        .tooltip(Tooltip::text("Regenerate Title"))
                         .on_click(cx.listener(move |_, _, _, cx| {
                             cx.emit(ContextEditorToolbarItemEvent::RegenerateSummary)
                         })),
@@ -4909,7 +4851,7 @@ impl ToolbarItemView for ContextEditorToolbarItem {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> ToolbarItemLocation {
         self.active_context_editor = active_pane_item
@@ -4926,7 +4868,7 @@ impl ToolbarItemView for ContextEditorToolbarItem {
     fn pane_focus_update(
         &mut self,
         _pane_focused: bool,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         cx.notify();
@@ -5153,7 +5095,7 @@ impl ConfigurationView {
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let providers = LanguageModelRegistry::read_global(cx).providers();
         let provider_views = providers
             .into_iter()
@@ -5363,7 +5305,7 @@ fn render_docs_slash_command_trailer(
                 ))
                 .tooltip({
                     let package = package.clone();
-                    move |window, cx| Tooltip::text(format!("Indexing {package}…"), window, cx)
+                    Tooltip::text(format!("Indexing {package}…"))
                 })
                 .into_any_element(),
         );
@@ -5378,9 +5320,7 @@ fn render_docs_slash_command_trailer(
                         .size(IconSize::Small)
                         .color(Color::Warning),
                 )
-                .tooltip(move |window, cx| {
-                    Tooltip::text(format!("Failed to index: {latest_error}"), window, cx)
-                })
+                .tooltip(Tooltip::text(format!("Failed to index: {latest_error}")))
                 .into_any_element(),
         )
     }
@@ -5428,7 +5368,7 @@ fn invoked_slash_command_fold_placeholder(
     FoldPlaceholder {
         constrain_width: false,
         merge_adjacent: false,
-        render: Arc::new(move |fold_id, _, window, cx| {
+        render: Arc::new(move |fold_id, _, _, cx| {
             let Some(context) = context.upgrade() else {
                 return Empty.into_any();
             };

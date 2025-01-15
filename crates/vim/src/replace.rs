@@ -11,14 +11,14 @@ use std::sync::Arc;
 
 actions!(vim, [ToggleReplace, UndoReplace]);
 
-pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
-    Vim::action(editor, window, cx, |vim, _: &ToggleReplace, window, cx| {
+pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+    Vim::action(editor, cx, |vim, _: &ToggleReplace, window, cx| {
         vim.replacements = vec![];
-        vim.start_recording(window, cx);
+        vim.start_recording(cx);
         vim.switch_mode(Mode::Replace, false, window, cx);
     });
 
-    Vim::action(editor, window, cx, |vim, _: &UndoReplace, window, cx| {
+    Vim::action(editor, cx, |vim, _: &UndoReplace, window, cx| {
         if vim.mode != Mode::Replace {
             return;
         }

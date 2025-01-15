@@ -6,7 +6,7 @@ use gpui::{
 struct UniformListExample {}
 
 impl Render for UniformListExample {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         div().size_full().bg(rgb(0xffffff)).child(
             uniform_list(
                 cx.model().clone(),
@@ -44,7 +44,7 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |window, cx| cx.new_model(|cx| UniformListExample {}),
+            |_, cx| cx.new_model(|_| UniformListExample {}),
         )
         .unwrap();
     });

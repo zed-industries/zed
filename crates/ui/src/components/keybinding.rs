@@ -16,11 +16,7 @@ pub struct KeyBinding {
 }
 
 impl KeyBinding {
-    pub fn for_action(
-        action: &dyn Action,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Option<Self> {
+    pub fn for_action(action: &dyn Action, window: &mut Window) -> Option<Self> {
         let key_binding = window.bindings_for_action(action).last().cloned()?;
         Some(Self::new(key_binding))
     }
@@ -31,7 +27,6 @@ impl KeyBinding {
         action: &dyn Action,
         focus: &FocusHandle,
         window: &mut Window,
-        cx: &mut AppContext,
     ) -> Option<Self> {
         let key_binding = window
             .bindings_for_action_in(action, focus)
@@ -215,7 +210,6 @@ pub fn text_for_action_in(
     action: &dyn Action,
     focus: &FocusHandle,
     window: &mut Window,
-    cx: &mut AppContext,
 ) -> Option<String> {
     let key_binding = window
         .bindings_for_action_in(action, focus)

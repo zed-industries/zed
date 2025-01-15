@@ -1,7 +1,7 @@
 use crate::{motion::Motion, object::Object, Vim};
 use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, Bias};
-use gpui::{AppContext, ModelContext, Window};
+use gpui::{ModelContext, Window};
 use language::SelectionGoal;
 
 impl Vim {
@@ -12,7 +12,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.stop_recording(window, cx);
+        self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window, cx);
             editor.transact(window, cx, |editor, window, cx| {
@@ -42,7 +42,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.stop_recording(window, cx);
+        self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 let mut original_positions: HashMap<_, _> = Default::default();

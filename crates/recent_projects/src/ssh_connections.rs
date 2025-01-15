@@ -190,9 +190,9 @@ impl SshPrompt {
         text_style.refine(&refinement);
         self.editor.update(cx, |editor, cx| {
             if prompt.contains("yes/no") {
-                editor.set_masked(false, window, cx);
+                editor.set_masked(false, cx);
             } else {
-                editor.set_masked(true, window, cx);
+                editor.set_masked(true, cx);
             }
             editor.set_text_style_refinement(refinement);
             editor.set_cursor_shape(CursorShape::Block, cx);
@@ -210,12 +210,7 @@ impl SshPrompt {
         cx.notify();
     }
 
-    pub fn set_status(
-        &mut self,
-        status: Option<String>,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn set_status(&mut self, status: Option<String>, cx: &mut ModelContext<Self>) {
         self.status_message = status.map(|s| s.into());
         cx.notify();
     }
@@ -293,19 +288,19 @@ impl SshConnectionModal {
             .update(cx, |prompt, cx| prompt.confirm(window, cx))
     }
 
-    pub fn finished(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn finished(&mut self, cx: &mut ModelContext<Self>) {
         self.finished = true;
         cx.emit(DismissEvent);
     }
 
-    fn dismiss(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn dismiss(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut ModelContext<Self>) {
         if let Some(tx) = self
             .prompt
             .update(cx, |prompt, _cx| prompt.cancellation.take())
         {
             tx.send(()).ok();
         }
-        self.finished(window, cx);
+        self.finished(cx);
     }
 }
 
@@ -372,7 +367,7 @@ impl Render for SshConnectionModal {
         let body_color = theme.colors().editor_background;
 
         v_flex()
-            .elevation_3(window, cx)
+            .elevation_3(cx)
             .w(rems(34.))
             .border_1()
             .border_color(theme.colors().border)
@@ -509,9 +504,9 @@ impl remote::SshClientDelegate for SshClientDelegate {
 impl SshClientDelegate {
     fn update_status(&self, status: Option<&str>, cx: &mut AsyncAppContext) {
         self.window
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 self.ui.update(cx, |modal, cx| {
-                    modal.set_status(status.map(|s| s.to_string()), window, cx);
+                    modal.set_status(status.map(|s| s.to_string()), cx);
                 })
             })
             .ok();
@@ -618,9 +613,9 @@ pub async fn open_ssh_project(
             .await;
 
         window
-            .update(cx, |workspace, window, cx| {
+            .update(cx, |workspace, _, cx| {
                 if let Some(ui) = workspace.active_modal::<SshConnectionModal>(cx) {
-                    ui.update(cx, |modal, cx| modal.finished(window, cx))
+                    ui.update(cx, |modal, cx| modal.finished(cx))
                 }
             })
             .ok();
@@ -645,7 +640,7 @@ pub async fn open_ssh_project(
         }
 
         window
-            .update(cx, |workspace, window, cx| {
+            .update(cx, |workspace, _, cx| {
                 if let Some(client) = workspace.project().read(cx).ssh_client().clone() {
                     ExtensionStore::global(cx)
                         .update(cx, |store, cx| store.register_ssh_client(client, cx));

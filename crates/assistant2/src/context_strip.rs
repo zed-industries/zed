@@ -96,7 +96,6 @@ impl Render for ContextStrip {
                                     &ToggleContextPicker,
                                     &self.focus_handle,
                                     window,
-                                    cx,
                                 )
                                 .map(|binding| binding.into_any_element()),
                             )
@@ -108,7 +107,7 @@ impl Render for ContextStrip {
                 ContextPill::new(context.clone()).on_remove({
                     let context = context.clone();
                     let context_store = self.context_store.clone();
-                    Rc::new(cx.listener(move |_this, _event, window, cx| {
+                    Rc::new(cx.listener(move |_this, _event, _, cx| {
                         context_store.update(cx, |this, _cx| {
                             this.remove_context(&context.id);
                         });
@@ -121,12 +120,10 @@ impl Render for ContextStrip {
                     parent.child(
                         IconButton::new("remove-all-context", IconName::Eraser)
                             .icon_size(IconSize::Small)
-                            .tooltip(move |window, cx| {
-                                Tooltip::text("Remove All Context", window, cx)
-                            })
+                            .tooltip(Tooltip::text("Remove All Context"))
                             .on_click({
                                 let context_store = self.context_store.clone();
-                                cx.listener(move |_this, _event, window, cx| {
+                                cx.listener(move |_this, _event, _, cx| {
                                     context_store.update(cx, |this, _cx| this.clear());
                                     cx.notify();
                                 })

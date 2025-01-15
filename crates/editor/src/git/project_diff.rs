@@ -270,7 +270,7 @@ impl ProjectDiffEditor {
                                 continue;
                             };
 
-                            cx.update(|window, cx| {
+                            cx.update(|_, cx| {
                                 buffers.insert(
                                     entry_id,
                                     (
@@ -322,13 +322,7 @@ impl ProjectDiffEditor {
 
                 project_diff_editor
                     .update_in(&mut cx, |project_diff_editor, window, cx| {
-                        project_diff_editor.update_excerpts(
-                            id,
-                            new_changes,
-                            new_entry_order,
-                            window,
-                            cx,
-                        );
+                        project_diff_editor.update_excerpts(id, new_changes, new_entry_order, cx);
                         project_diff_editor.editor.update(cx, |editor, cx| {
                             for change_set in change_sets {
                                 editor.diff_map.add_change_set(change_set, window, cx)
@@ -345,7 +339,7 @@ impl ProjectDiffEditor {
         worktree_id: WorktreeId,
         new_changes: HashMap<ProjectEntryId, Changes>,
         new_entry_order: Vec<(ProjectPath, ProjectEntryId)>,
-        window: &mut Window,
+
         cx: &mut ModelContext<ProjectDiffEditor>,
     ) {
         if let Some(current_order) = self.entry_order.get(&worktree_id) {
@@ -1021,7 +1015,7 @@ impl Item for ProjectDiffEditor {
     fn set_nav_history(
         &mut self,
         nav_history: ItemNavHistory,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.editor.update(cx, |editor, _| {
@@ -1120,7 +1114,7 @@ impl Item for ProjectDiffEditor {
 }
 
 impl Render for ProjectDiffEditor {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let child = if self.buffer_changes.is_empty() {
             div()
                 .bg(cx.theme().colors().editor_background)
@@ -1201,7 +1195,7 @@ mod tests {
             .downcast::<Editor>()
             .expect("did not open an editor for file_a");
         let project_diff_editor = workspace
-            .update(cx, |workspace, window, cx| {
+            .update(cx, |workspace, _, cx| {
                 workspace
                     .active_pane()
                     .read(cx)

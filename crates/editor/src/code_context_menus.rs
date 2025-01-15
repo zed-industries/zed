@@ -84,7 +84,7 @@ impl CodeContextMenu {
         if self.visible() {
             match self {
                 CodeContextMenu::Completions(menu) => menu.select_next(provider, window, cx),
-                CodeContextMenu::CodeActions(menu) => menu.select_next(window, cx),
+                CodeContextMenu::CodeActions(menu) => menu.select_next(cx),
             }
             true
         } else {
@@ -101,7 +101,7 @@ impl CodeContextMenu {
         if self.visible() {
             match self {
                 CodeContextMenu::Completions(menu) => menu.select_last(provider, window, cx),
-                CodeContextMenu::CodeActions(menu) => menu.select_last(window, cx),
+                CodeContextMenu::CodeActions(menu) => menu.select_last(cx),
             }
             true
         } else {
@@ -145,13 +145,10 @@ impl CodeContextMenu {
         style: &EditorStyle,
         max_size: Size<Pixels>,
         workspace: Option<WeakModel<Workspace>>,
-        window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> Option<AnyElement> {
         match self {
-            CodeContextMenu::Completions(menu) => {
-                menu.render_aside(style, max_size, workspace, window, cx)
-            }
+            CodeContextMenu::Completions(menu) => menu.render_aside(style, max_size, workspace, cx),
             CodeContextMenu::CodeActions(_) => None,
         }
     }
@@ -502,7 +499,7 @@ impl CompletionsMenu {
             cx.model().clone(),
             "completions",
             matches.len(),
-            move |_editor, range, window, cx| {
+            move |_editor, range, _, cx| {
                 last_rendered_range.borrow_mut().replace(range.clone());
                 let start_ix = range.start;
                 let completions_guard = completions.borrow_mut();
@@ -639,7 +636,6 @@ impl CompletionsMenu {
         style: &EditorStyle,
         max_size: Size<Pixels>,
         workspace: Option<WeakModel<Workspace>>,
-        window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> Option<AnyElement> {
         if !self.show_completion_documentation {
@@ -661,7 +657,6 @@ impl CompletionsMenu {
                             parsed,
                             &style,
                             workspace,
-                            window,
                             cx,
                         )),
                     Documentation::MultiLineMarkdown(_) => return None,
@@ -934,14 +929,14 @@ pub struct CodeActionsMenu {
 }
 
 impl CodeActionsMenu {
-    fn select_first(&mut self, window: &mut Window, cx: &mut ModelContext<Editor>) {
+    fn select_first(&mut self, _: &mut Window, cx: &mut ModelContext<Editor>) {
         self.selected_item = 0;
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
         cx.notify()
     }
 
-    fn select_prev(&mut self, window: &mut Window, cx: &mut ModelContext<Editor>) {
+    fn select_prev(&mut self, _: &mut Window, cx: &mut ModelContext<Editor>) {
         if self.selected_item > 0 {
             self.selected_item -= 1;
         } else {
@@ -952,7 +947,7 @@ impl CodeActionsMenu {
         cx.notify();
     }
 
-    fn select_next(&mut self, window: &mut Window, cx: &mut ModelContext<Editor>) {
+    fn select_next(&mut self, cx: &mut ModelContext<Editor>) {
         if self.selected_item + 1 < self.actions.len() {
             self.selected_item += 1;
         } else {
@@ -963,7 +958,7 @@ impl CodeActionsMenu {
         cx.notify();
     }
 
-    fn select_last(&mut self, window: &mut Window, cx: &mut ModelContext<Editor>) {
+    fn select_last(&mut self, cx: &mut ModelContext<Editor>) {
         self.selected_item = self.actions.len() - 1;
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
@@ -995,7 +990,7 @@ impl CodeActionsMenu {
             cx.model().clone(),
             "code_actions_menu",
             self.actions.len(),
-            move |_this, range, window, cx| {
+            move |_this, range, _, cx| {
                 actions
                     .iter()
                     .skip(range.start)

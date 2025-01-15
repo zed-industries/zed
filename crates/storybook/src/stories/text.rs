@@ -8,13 +8,13 @@ use story::*;
 pub struct TextStory;
 
 impl TextStory {
-    pub fn view(window: &mut Window, cx: &mut AppContext) -> Model<Self> {
-        cx.new_model(|cx| Self)
+    pub fn view(cx: &mut AppContext) -> Model<Self> {
+        cx.new_model(|_| Self)
     }
 }
 
 impl Render for TextStory {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _: &mut ModelContext<Self>) -> impl IntoElement {
         Story::container()
             .child(Story::title("Text"))
             .children(vec![
@@ -94,7 +94,7 @@ impl Render for TextStory {
                                     ],
                                 ),
                             )
-                            .on_click(vec![2..4, 1..3, 7..9], |range_ix, window, _cx| {
+                            .on_click(vec![2..4, 1..3, 7..9], |range_ix, _, _cx| {
                                 println!("Clicked range {range_ix}");
                             }),
                         )

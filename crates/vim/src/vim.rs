@@ -105,8 +105,8 @@ pub fn init(cx: &mut AppContext) {
     })
     .detach();
 
-    cx.observe_new_window_models(|workspace: &mut Workspace, window, _| {
-        workspace.register_action(|workspace, _: &ToggleVimMode, window, cx| {
+    cx.observe_new_models(|workspace: &mut Workspace, _| {
+        workspace.register_action(|workspace, _: &ToggleVimMode, _, cx| {
             let fs = workspace.app_state().fs.clone();
             let currently_enabled = Vim::enabled(cx);
             update_settings_file::<VimModeSetting>(fs, cx, move |setting, _| {
@@ -114,7 +114,7 @@ pub fn init(cx: &mut AppContext) {
             })
         });
 
-        workspace.register_action(|_, _: &OpenDefaultKeymap, window, cx| {
+        workspace.register_action(|_, _: &OpenDefaultKeymap, _, cx| {
             cx.emit(workspace::Event::OpenBundledFile {
                 text: settings::vim_keymap(),
                 title: "Default Vim Bindings",
@@ -122,11 +122,11 @@ pub fn init(cx: &mut AppContext) {
             });
         });
 
-        workspace.register_action(|workspace, _: &ResetPaneSizes, window, cx| {
+        workspace.register_action(|workspace, _: &ResetPaneSizes, _, cx| {
             workspace.reset_pane_sizes(cx);
         });
 
-        workspace.register_action(|workspace, _: &MaximizePane, window, cx| {
+        workspace.register_action(|workspace, _: &MaximizePane, _, cx| {
             let pane = workspace.active_pane();
             let Some(size) = workspace.bounding_box_for_pane(&pane) else {
                 return;
@@ -290,9 +290,9 @@ impl Vim {
                     let is_relative = editor
                         .addon::<VimAddon>()
                         .map(|vim| vim.view.read(cx).mode != Mode::Insert);
-                    editor.set_relative_line_number(is_relative, window, cx)
+                    editor.set_relative_line_number(is_relative, cx)
                 } else {
-                    editor.set_relative_line_number(None, window, cx)
+                    editor.set_relative_line_number(None, cx)
                 }
             }
             was_toggle = VimSettings::get_global(cx).toggle_relative_line_numbers;
@@ -303,7 +303,7 @@ impl Vim {
             if enabled {
                 Self::activate(editor, window, cx)
             } else {
-                Self::deactivate(editor, window, cx)
+                Self::deactivate(editor, cx)
             }
         })
         .detach();
@@ -318,32 +318,24 @@ impl Vim {
         editor.register_addon(VimAddon { view: vim.clone() });
 
         vim.update(cx, |_, cx| {
-            Vim::action(
-                editor,
-                window,
-                cx,
-                |vim, action: &SwitchMode, window, cx| vim.switch_mode(action.0, false, window, cx),
-            );
+            Vim::action(editor, cx, |vim, action: &SwitchMode, window, cx| {
+                vim.switch_mode(action.0, false, window, cx)
+            });
 
-            Vim::action(
-                editor,
-                window,
-                cx,
-                |vim, action: &PushOperator, window, cx| {
-                    vim.push_operator(action.0.clone(), window, cx)
-                },
-            );
+            Vim::action(editor, cx, |vim, action: &PushOperator, window, cx| {
+                vim.push_operator(action.0.clone(), window, cx)
+            });
 
-            Vim::action(editor, window, cx, |vim, _: &ClearOperators, window, cx| {
+            Vim::action(editor, cx, |vim, _: &ClearOperators, window, cx| {
                 vim.clear_operator(window, cx)
             });
-            Vim::action(editor, window, cx, |vim, n: &Number, window, cx| {
+            Vim::action(editor, cx, |vim, n: &Number, window, cx| {
                 vim.push_count_digit(n.0, window, cx);
             });
-            Vim::action(editor, window, cx, |vim, _: &Tab, window, cx| {
+            Vim::action(editor, cx, |vim, _: &Tab, window, cx| {
                 vim.input_ignored(" ".into(), window, cx)
             });
-            Vim::action(editor, window, cx, |vim, _: &Enter, window, cx| {
+            Vim::action(editor, cx, |vim, _: &Enter, window, cx| {
                 vim.input_ignored("\n".into(), window, cx)
             });
 
@@ -366,7 +358,7 @@ impl Vim {
         })
     }
 
-    fn deactivate(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Editor>) {
+    fn deactivate(editor: &mut Editor, cx: &mut ModelContext<Editor>) {
         editor.set_cursor_shape(CursorShape::Bar, cx);
         editor.set_clip_at_line_ends(false, cx);
         editor.set_collapse_matches(false);
@@ -374,7 +366,7 @@ impl Vim {
         editor.set_autoindent(true);
         editor.selections.line_mode = false;
         editor.unregister_addon::<VimAddon>();
-        editor.set_relative_line_number(None, window, cx);
+        editor.set_relative_line_number(None, cx);
         if let Some(vim) = Vim::globals(cx).focused_vim() {
             if vim.entity_id() == cx.model().entity_id() {
                 Vim::globals(cx).focused_vim = None;
@@ -385,7 +377,6 @@ impl Vim {
     /// Register an action on the editor.
     pub fn action<A: Action>(
         editor: &mut Editor,
-        window: &mut Window,
         cx: &mut ModelContext<Vim>,
         f: impl Fn(&mut Vim, &A, &mut Window, &mut ModelContext<Vim>) + 'static,
     ) {
@@ -457,7 +448,7 @@ impl Vim {
                 }
                 _ if !operator.is_waiting(self.mode) => {
                     self.clear_operator(window, cx);
-                    self.stop_recording_immediately(Box::new(ClearOperators), window, cx)
+                    self.stop_recording_immediately(Box::new(ClearOperators), cx)
                 }
                 _ => {}
             }
@@ -516,7 +507,7 @@ impl Vim {
                 | Operator::OppositeCase
                 | Operator::ToggleComments
         ) {
-            self.start_recording(window, cx)
+            self.start_recording(cx)
         };
         // Since these operations can only be entered with pre-operators,
         // we need to clear the previous operators when pushing,
@@ -529,7 +520,7 @@ impl Vim {
         ) {
             self.operator_stack.clear();
             if let Operator::AddSurrounds { target: None } = operator {
-                self.start_recording(window, cx);
+                self.start_recording(cx);
             }
         };
         self.operator_stack.push(operator);
@@ -576,9 +567,9 @@ impl Vim {
             && self.mode != self.last_mode
             && (self.mode == Mode::Insert || self.last_mode == Mode::Insert)
         {
-            self.update_editor(window, cx, |vim, editor, window, cx| {
+            self.update_editor(window, cx, |vim, editor, _, cx| {
                 let is_relative = vim.mode != Mode::Insert;
-                editor.set_relative_line_number(Some(is_relative), window, cx)
+                editor.set_relative_line_number(Some(is_relative), cx)
             });
         }
 
@@ -600,7 +591,7 @@ impl Vim {
             }
             if last_mode == Mode::Insert || last_mode == Mode::Replace {
                 if let Some(prior_tx) = prior_tx {
-                    editor.group_until_transaction(prior_tx, window, cx)
+                    editor.group_until_transaction(prior_tx, cx)
                 }
             }
 
@@ -814,20 +805,20 @@ impl Vim {
             if let Some(old_vim) = Vim::globals(cx).focused_vim() {
                 if old_vim.entity_id() != cx.model().entity_id() {
                     old_vim.update(cx, |vim, cx| {
-                        vim.update_editor(window, cx, |_, editor, window, cx| {
-                            editor.set_relative_line_number(None, window, cx)
+                        vim.update_editor(window, cx, |_, editor, _, cx| {
+                            editor.set_relative_line_number(None, cx)
                         });
                     });
 
-                    self.update_editor(window, cx, |vim, editor, window, cx| {
+                    self.update_editor(window, cx, |vim, editor, _, cx| {
                         let is_relative = vim.mode != Mode::Insert;
-                        editor.set_relative_line_number(Some(is_relative), window, cx)
+                        editor.set_relative_line_number(Some(is_relative), cx)
                     });
                 }
             } else {
-                self.update_editor(window, cx, |vim, editor, window, cx| {
+                self.update_editor(window, cx, |vim, editor, _, cx| {
                     let is_relative = vim.mode != Mode::Insert;
-                    editor.set_relative_line_number(Some(is_relative), window, cx)
+                    editor.set_relative_line_number(Some(is_relative), cx)
                 });
             }
         }
@@ -835,16 +826,16 @@ impl Vim {
     }
 
     fn blurred(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.stop_recording_immediately(NormalBefore.boxed_clone(), window, cx);
+        self.stop_recording_immediately(NormalBefore.boxed_clone(), cx);
         self.store_visual_marks(window, cx);
         self.clear_operator(window, cx);
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(window, cx, |_, editor, _, cx| {
             editor.set_cursor_shape(language::CursorShape::Hollow, cx);
         });
     }
 
     fn cursor_shape_changed(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(window, cx, |vim, editor, _, cx| {
             editor.set_cursor_shape(vim.cursor_shape(), cx);
         });
     }
@@ -877,7 +868,7 @@ impl Vim {
 
     /// When doing an action that modifies the buffer, we start recording so that `.`
     /// will replay the action.
-    pub fn start_recording(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn start_recording(&mut self, cx: &mut ModelContext<Self>) {
         Vim::update_globals(cx, |globals, cx| {
             if !globals.dot_replaying {
                 globals.dot_recording = true;
@@ -920,7 +911,7 @@ impl Vim {
         })
     }
 
-    pub fn stop_replaying(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn stop_replaying(&mut self, cx: &mut ModelContext<Self>) {
         let globals = Vim::globals(cx);
         globals.dot_replaying = false;
         if let Some(replayer) = globals.replayer.take() {
@@ -931,7 +922,7 @@ impl Vim {
     /// When finishing an action that modifies the buffer, stop recording.
     /// as you usually call this within a keystroke handler we also ensure that
     /// the current action is recorded.
-    pub fn stop_recording(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn stop_recording(&mut self, cx: &mut ModelContext<Self>) {
         let globals = Vim::globals(cx);
         if globals.dot_recording {
             globals.stop_recording_after_next_action = true;
@@ -946,7 +937,7 @@ impl Vim {
     pub fn stop_recording_immediately(
         &mut self,
         action: Box<dyn Action>,
-        window: &mut Window,
+
         cx: &mut ModelContext<Self>,
     ) {
         let globals = Vim::globals(cx);
@@ -962,9 +953,9 @@ impl Vim {
     }
 
     /// Explicitly record one action (equivalents to start_recording and stop_recording)
-    pub fn record_current_action(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.start_recording(window, cx);
-        self.stop_recording(window, cx);
+    pub fn record_current_action(&mut self, cx: &mut ModelContext<Self>) {
+        self.start_recording(cx);
+        self.stop_recording(cx);
     }
 
     fn push_count_digit(
@@ -1117,8 +1108,8 @@ impl Vim {
                 self.current_anchor = Some(newest);
             } else if self.current_anchor.as_ref().unwrap() != &newest {
                 if let Some(tx_id) = self.current_tx.take() {
-                    self.update_editor(window, cx, |_, editor, window, cx| {
-                        editor.group_until_transaction(tx_id, window, cx)
+                    self.update_editor(window, cx, |_, editor, _, cx| {
+                        editor.group_until_transaction(tx_id, cx)
                     });
                 }
             }
@@ -1231,7 +1222,7 @@ impl Vim {
                 Mode::Insert => {
                     self.update_editor(window, cx, |_, editor, window, cx| {
                         if let Some(register) = Vim::update_globals(cx, |globals, cx| {
-                            globals.read_register(text.chars().next(), Some(editor), window, cx)
+                            globals.read_register(text.chars().next(), Some(editor), cx)
                         }) {
                             editor.do_paste(
                                 &register.text.to_string(),
@@ -1268,7 +1259,7 @@ impl Vim {
     }
 
     fn sync_vim_settings(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.update_editor(window, cx, |vim, editor, window, cx| {
+        self.update_editor(window, cx, |vim, editor, _, cx| {
             editor.set_cursor_shape(vim.cursor_shape(), cx);
             editor.set_clip_at_line_ends(vim.clip_at_line_ends(), cx);
             editor.set_collapse_matches(true);

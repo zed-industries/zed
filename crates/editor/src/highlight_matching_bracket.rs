@@ -9,7 +9,7 @@ pub fn refresh_matching_bracket_highlights(
     window: &mut Window,
     cx: &mut ModelContext<Editor>,
 ) {
-    editor.clear_background_highlights::<MatchingBracketHighlight>(window, cx);
+    editor.clear_background_highlights::<MatchingBracketHighlight>(cx);
 
     let newest_selection = editor.selections.newest::<usize>(cx);
     // Don't highlight brackets if the selection isn't empty

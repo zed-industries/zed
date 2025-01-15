@@ -6,8 +6,8 @@ use collections::BTreeMap;
 use futures::Future;
 use git::diff::DiffHunkStatus;
 use gpui::{
-    prelude::*, AnyWindowHandle, AppContext, Keystroke, Model, ModelContext, Pixels, Point,
-    VisualTestContext, Window, WindowHandle,
+    prelude::*, AnyWindowHandle, AppContext, Focusable as _, Keystroke, Model, ModelContext,
+    Pixels, Point, VisualTestContext, Window, WindowHandle,
 };
 use itertools::Itertools;
 use language::{Buffer, BufferSnapshot, LanguageRegistry};
@@ -63,7 +63,8 @@ impl EditorTestContext {
                 window,
                 cx,
             );
-            editor.focus(window, cx);
+
+            window.focus(&editor.focus_handle(cx));
             editor
         });
         let editor_view = editor.root_model(cx).unwrap();
@@ -120,7 +121,8 @@ impl EditorTestContext {
 
         let editor = cx.add_window(|window, cx| {
             let editor = build_editor(buffer, window, cx);
-            editor.focus(window, cx);
+            window.focus(&editor.focus_handle(cx));
+
             editor
         });
 
@@ -162,14 +164,14 @@ impl EditorTestContext {
     where
         F: FnOnce(&MultiBuffer, &AppContext) -> T,
     {
-        self.editor(|editor, window, cx| read(editor.buffer().read(cx), cx))
+        self.editor(|editor, _, cx| read(editor.buffer().read(cx), cx))
     }
 
     pub fn update_multibuffer<F, T>(&mut self, update: F) -> T
     where
         F: FnOnce(&mut MultiBuffer, &mut ModelContext<MultiBuffer>) -> T,
     {
-        self.update_editor(|editor, window, cx| editor.buffer().update(cx, update))
+        self.update_editor(|editor, _, cx| editor.buffer().update(cx, update))
     }
 
     pub fn buffer_text(&mut self) -> String {
@@ -177,7 +179,7 @@ impl EditorTestContext {
     }
 
     pub fn display_text(&mut self) -> String {
-        self.update_editor(|editor, window, cx| editor.display_text(cx))
+        self.update_editor(|editor, _, cx| editor.display_text(cx))
     }
 
     pub fn buffer<F, T>(&mut self, read: F) -> T
@@ -191,7 +193,7 @@ impl EditorTestContext {
     }
 
     pub fn language_registry(&mut self) -> Arc<LanguageRegistry> {
-        self.editor(|editor, window, cx| {
+        self.editor(|editor, _, cx| {
             editor
                 .project
                 .as_ref()
@@ -283,7 +285,7 @@ impl EditorTestContext {
 
     pub fn set_diff_base(&mut self, diff_base: &str) {
         self.cx.run_until_parked();
-        let fs = self.update_editor(|editor, window, cx| {
+        let fs = self.update_editor(|editor, _, cx| {
             editor.project.as_ref().unwrap().read(cx).fs().as_fake()
         });
         let path = self.update_buffer(|buffer, _| buffer.file().unwrap().path().clone());

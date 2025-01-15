@@ -145,7 +145,7 @@ impl RenderOnce for WindowControl {
             .hover(|this| this.bg(self.style.background_hover))
             .active(|this| this.bg(self.style.background_hover))
             .child(icon)
-            .on_mouse_move(|_, window, cx| cx.stop_propagation())
+            .on_mouse_move(|_, _, cx| cx.stop_propagation())
             .on_click(move |_, window, cx| {
                 cx.stop_propagation();
                 match self.icon {

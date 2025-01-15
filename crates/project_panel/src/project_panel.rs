@@ -26,8 +26,8 @@ use gpui::{
     Div, DragMoveEvent, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
     InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model,
     ModelContext, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
-    ScrollStrategy, Stateful, Styled, Subscription, Task, UniformListScrollHandle,
-    VisualContext as _, WeakModel, Window,
+    ScrollStrategy, Stateful, Styled, Subscription, Task, UniformListScrollHandle, WeakModel,
+    Window,
 };
 use indexmap::IndexMap;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
@@ -336,10 +336,9 @@ impl ProjectPanel {
 
             let filename_editor = cx.new_model(|cx| Editor::single_line(window, cx));
 
-            cx.subscribe_in(
+            cx.subscribe(
                 &filename_editor,
-                window,
-                |project_panel, _, editor_event, window, cx| match editor_event {
+                |project_panel, _, editor_event, cx| match editor_event {
                     EditorEvent::BufferEdited | EditorEvent::SelectionsChanged { .. } => {
                         project_panel.autoscroll(cx);
                     }
@@ -359,13 +358,13 @@ impl ProjectPanel {
             )
             .detach();
 
-            cx.observe_global_in::<FileIcons>(window, |_, window, cx| {
+            cx.observe_global::<FileIcons>(|_, cx| {
                 cx.notify();
             })
             .detach();
 
             let mut project_panel_settings = *ProjectPanelSettings::get_global(cx);
-            cx.observe_global_in::<SettingsStore>(window, move |this, window, cx| {
+            cx.observe_global::<SettingsStore>(move |this, cx| {
                 let new_settings = *ProjectPanelSettings::get_global(cx);
                 if project_panel_settings != new_settings {
                     project_panel_settings = new_settings;
@@ -579,7 +578,7 @@ impl ProjectPanel {
             .or_insert(diagnostic_severity);
     }
 
-    fn serialize(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn serialize(&mut self, cx: &mut ModelContext<Self>) {
         let width = self.width;
         self.pending_serialization = cx.background_executor().spawn(
             async move {
@@ -708,14 +707,10 @@ impl ProjectPanel {
             });
 
             window.focus(&context_menu.focus_handle(cx));
-            let subscription = cx.subscribe_in(
-                &context_menu,
-                window,
-                |this, _, _: &DismissEvent, window, cx| {
-                    this.context_menu.take();
-                    cx.notify();
-                },
-            );
+            let subscription = cx.subscribe(&context_menu, |this, _, _: &DismissEvent, cx| {
+                this.context_menu.take();
+                cx.notify();
+            });
             self.context_menu = Some((context_menu, position, subscription));
         }
 
@@ -796,20 +791,19 @@ impl ProjectPanel {
     fn collapse_selected_entry(
         &mut self,
         _: &CollapseSelectedEntry,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let Some((worktree, entry)) = self.selected_entry_handle(cx) else {
             return;
         };
-        self.collapse_entry(entry.clone(), worktree, window, cx)
+        self.collapse_entry(entry.clone(), worktree, cx)
     }
 
     fn collapse_entry(
         &mut self,
         entry: Entry,
         worktree: Model<Worktree>,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let worktree = worktree.read(cx);
@@ -854,7 +848,7 @@ impl ProjectPanel {
     pub fn collapse_all_entries(
         &mut self,
         _: &CollapseAllEntries,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         // By keeping entries for fully collapsed worktrees, we avoid expanding them within update_visible_entries
@@ -963,7 +957,7 @@ impl ProjectPanel {
     ) {
         if let Some((_, entry)) = self.selected_entry(cx) {
             if entry.is_file() {
-                self.open_entry(entry.id, focus_opened_item, allow_preview, window, cx);
+                self.open_entry(entry.id, focus_opened_item, allow_preview, cx);
             } else {
                 self.toggle_expanded(entry.id, window, cx);
             }
@@ -1031,25 +1025,25 @@ impl ProjectPanel {
 
             match new_entry {
                 Err(e) => {
-                    project_panel.update_in(&mut cx, |project_panel, window, cx| {
+                    project_panel.update(&mut cx, |project_panel, cx| {
                         project_panel.marked_entries.clear();
                         project_panel.update_visible_entries(None,  cx);
                     }).ok();
                     Err(e)?;
                 }
                 Ok(CreatedEntry::Included(new_entry)) => {
-                    project_panel.update_in(&mut cx, |project_panel, window, cx| {
+                    project_panel.update(&mut cx, |project_panel, cx| {
                         if let Some(selection) = &mut project_panel.selection {
                             if selection.entry_id == edited_entry_id {
                                 selection.worktree_id = worktree_id;
                                 selection.entry_id = new_entry.id;
                                 project_panel.marked_entries.clear();
-                                project_panel.expand_to_selection(window, cx);
+                                project_panel.expand_to_selection(cx);
                             }
                         }
                         project_panel.update_visible_entries(None, cx);
                         if is_new_entry && !is_dir {
-                            project_panel.open_entry(new_entry.id, true, false, window, cx);
+                            project_panel.open_entry(new_entry.id, true, false, cx);
                         }
                         cx.notify();
                     })?;
@@ -1109,7 +1103,7 @@ impl ProjectPanel {
         entry_id: ProjectEntryId,
         focus_opened_item: bool,
         allow_preview: bool,
-        window: &mut Window,
+
         cx: &mut ModelContext<Self>,
     ) {
         cx.emit(Event::OpenedEntry {
@@ -1119,12 +1113,7 @@ impl ProjectPanel {
         });
     }
 
-    fn split_entry(
-        &mut self,
-        entry_id: ProjectEntryId,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn split_entry(&mut self, entry_id: ProjectEntryId, cx: &mut ModelContext<Self>) {
         cx.emit(Event::SplitEntry { entry_id });
     }
 
@@ -1192,7 +1181,7 @@ impl ProjectPanel {
             });
             self.filename_editor.update(cx, |editor, cx| {
                 editor.clear(window, cx);
-                editor.focus(window, cx);
+                window.focus(&editor.focus_handle(cx));
             });
             self.update_visible_entries(Some((worktree_id, NEW_ENTRY_ID)), cx);
             self.autoscroll(cx);
@@ -1244,7 +1233,7 @@ impl ProjectPanel {
                         editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                             s.select_ranges([0..selection_end])
                         });
-                        editor.focus(window, cx);
+                        window.focus(&editor.focus_handle(cx));
                     });
                     self.update_visible_entries(None, cx);
                     self.autoscroll(cx);
@@ -1347,8 +1336,7 @@ impl ProjectPanel {
             } else {
                 None
             };
-            let next_selection =
-                self.find_next_selection_after_deletion(items_to_delete, window, cx);
+            let next_selection = self.find_next_selection_after_deletion(items_to_delete, cx);
             cx.spawn_in(window, |panel, mut cx| async move {
                 if let Some(answer) = answer {
                     if answer.await != Ok(0) {
@@ -1383,7 +1371,6 @@ impl ProjectPanel {
     fn find_next_selection_after_deletion(
         &self,
         sanitized_entries: BTreeSet<SelectedEntry>,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<SelectedEntry> {
         if sanitized_entries.is_empty() {
@@ -1466,7 +1453,7 @@ impl ProjectPanel {
     fn unfold_directory(
         &mut self,
         _: &UnfoldDirectory,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
@@ -1495,12 +1482,7 @@ impl ProjectPanel {
         }
     }
 
-    fn fold_directory(
-        &mut self,
-        _: &FoldDirectory,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn fold_directory(&mut self, _: &FoldDirectory, _: &mut Window, cx: &mut ModelContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             self.unfolded_dir_ids.remove(&entry.id);
 
@@ -1577,7 +1559,7 @@ impl ProjectPanel {
     fn select_prev_diagnostic(
         &mut self,
         _: &SelectPrevDiagnostic,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let selection = self.find_entry(
@@ -1597,7 +1579,6 @@ impl ProjectPanel {
                         .diagnostics
                         .contains_key(&(worktree_id, entry.path.to_path_buf()))
             },
-            window,
             cx,
         );
 
@@ -1613,7 +1594,7 @@ impl ProjectPanel {
     fn select_next_diagnostic(
         &mut self,
         _: &SelectNextDiagnostic,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let selection = self.find_entry(
@@ -1633,7 +1614,6 @@ impl ProjectPanel {
                         .diagnostics
                         .contains_key(&(worktree_id, entry.path.to_path_buf()))
             },
-            window,
             cx,
         );
 
@@ -1649,7 +1629,7 @@ impl ProjectPanel {
     fn select_prev_git_entry(
         &mut self,
         _: &SelectPrevGitEntry,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let selection = self.find_entry(
@@ -1669,7 +1649,6 @@ impl ProjectPanel {
                         .git_status
                         .is_some_and(|status| matches!(status, GitFileStatus::Modified))
             },
-            window,
             cx,
         );
 
@@ -1685,7 +1664,7 @@ impl ProjectPanel {
     fn select_prev_directory(
         &mut self,
         _: &SelectPrevDirectory,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let selection = self.find_visible_entry(
@@ -1702,7 +1681,6 @@ impl ProjectPanel {
                     }))
                     && entry.is_dir()
             },
-            window,
             cx,
         );
 
@@ -1716,7 +1694,7 @@ impl ProjectPanel {
     fn select_next_directory(
         &mut self,
         _: &SelectNextDirectory,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let selection = self.find_visible_entry(
@@ -1733,7 +1711,6 @@ impl ProjectPanel {
                     }))
                     && entry.is_dir()
             },
-            window,
             cx,
         );
 
@@ -1747,7 +1724,7 @@ impl ProjectPanel {
     fn select_next_git_entry(
         &mut self,
         _: &SelectNextGitEntry,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let selection = self.find_entry(
@@ -1767,7 +1744,6 @@ impl ProjectPanel {
                         .git_status
                         .is_some_and(|status| matches!(status, GitFileStatus::Modified))
             },
-            window,
             cx,
         );
 
@@ -1828,7 +1804,7 @@ impl ProjectPanel {
         }
     }
 
-    fn select_last(&mut self, _: &SelectLast, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_last(&mut self, _: &SelectLast, _: &mut Window, cx: &mut ModelContext<Self>) {
         let worktree = self.visible_entries.last().and_then(|(worktree_id, _, _)| {
             self.project.read(cx).worktree_for_id(*worktree_id, cx)
         });
@@ -1854,7 +1830,7 @@ impl ProjectPanel {
         }
     }
 
-    fn cut(&mut self, _: &Cut, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn cut(&mut self, _: &Cut, _: &mut Window, cx: &mut ModelContext<Self>) {
         let entries = self.disjoint_entries(cx);
         if !entries.is_empty() {
             self.clipboard = Some(ClipboardEntry::Cut(entries));
@@ -1862,7 +1838,7 @@ impl ProjectPanel {
         }
     }
 
-    fn copy(&mut self, _: &Copy, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut ModelContext<Self>) {
         let entries = self.disjoint_entries(cx);
         if !entries.is_empty() {
             self.clipboard = Some(ClipboardEntry::Copied(entries));
@@ -1914,7 +1890,7 @@ impl ProjectPanel {
         Some(new_path)
     }
 
-    fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut ModelContext<Self>) {
         maybe!({
             let (worktree, entry) = self.selected_entry_handle(cx)?;
             let entry = entry.clone();
@@ -2027,7 +2003,7 @@ impl ProjectPanel {
         self.paste(&Paste {}, window, cx);
     }
 
-    fn copy_path(&mut self, _: &CopyPath, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn copy_path(&mut self, _: &CopyPath, _: &mut Window, cx: &mut ModelContext<Self>) {
         let abs_file_paths = {
             let project = self.project.read(cx);
             self.marked_entries()
@@ -2054,7 +2030,7 @@ impl ProjectPanel {
     fn copy_relative_path(
         &mut self,
         _: &CopyRelativePath,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let file_paths = {
@@ -2080,7 +2056,7 @@ impl ProjectPanel {
     fn reveal_in_finder(
         &mut self,
         _: &RevealInFileManager,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some((worktree, entry)) = self.selected_sub_entry(cx) {
@@ -2091,7 +2067,7 @@ impl ProjectPanel {
     fn remove_from_project(
         &mut self,
         _: &RemoveFromProject,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some((worktree, _)) = self.selected_sub_entry(cx) {
@@ -2101,12 +2077,7 @@ impl ProjectPanel {
         }
     }
 
-    fn open_system(
-        &mut self,
-        _: &OpenWithSystem,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn open_system(&mut self, _: &OpenWithSystem, _: &mut Window, cx: &mut ModelContext<Self>) {
         if let Some((worktree, entry)) = self.selected_entry(cx) {
             let abs_path = worktree.abs_path().join(&entry.path);
             cx.open_with_system(&abs_path);
@@ -2172,7 +2143,6 @@ impl ProjectPanel {
         entry_to_move: ProjectEntryId,
         destination: ProjectEntryId,
         destination_is_file: bool,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if self
@@ -2180,9 +2150,9 @@ impl ProjectPanel {
             .read(cx)
             .entry_is_worktree_root(entry_to_move, cx)
         {
-            self.move_worktree_root(entry_to_move, destination, window, cx)
+            self.move_worktree_root(entry_to_move, destination, cx)
         } else {
-            self.move_worktree_entry(entry_to_move, destination, destination_is_file, window, cx)
+            self.move_worktree_entry(entry_to_move, destination, destination_is_file, cx)
         }
     }
 
@@ -2190,7 +2160,6 @@ impl ProjectPanel {
         &mut self,
         entry_to_move: ProjectEntryId,
         destination: ProjectEntryId,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.project.update(cx, |project, cx| {
@@ -2215,7 +2184,6 @@ impl ProjectPanel {
         entry_to_move: ProjectEntryId,
         destination: ProjectEntryId,
         destination_is_file: bool,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if entry_to_move == destination {
@@ -2387,11 +2355,7 @@ impl ProjectPanel {
         Some((worktree, entry))
     }
 
-    fn expand_to_selection(
-        &mut self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<()> {
+    fn expand_to_selection(&mut self, cx: &mut ModelContext<Self>) -> Option<()> {
         let (worktree, entry) = self.selected_entry(cx)?;
         let expanded_dir_ids = self.expanded_dir_ids.entry(worktree.id()).or_default();
 
@@ -2736,9 +2700,9 @@ impl ProjectPanel {
                 })?;
 
                 let opened_entries = task.await?;
-                this.update_in(&mut cx, |this, window, cx| {
+                this.update(&mut cx, |this, cx| {
                     if open_file_after_drop && !opened_entries.is_empty() {
-                        this.open_entry(opened_entries[0], true, false, window, cx);
+                        this.open_entry(opened_entries[0], true, false, cx);
                     }
                 })
             }
@@ -2781,7 +2745,7 @@ impl ProjectPanel {
             });
         } else {
             for selection in selections.items() {
-                self.move_entry(selection.entry_id, target_entry_id, is_file, window, cx);
+                self.move_entry(selection.entry_id, target_entry_id, is_file, cx);
             }
         }
     }
@@ -3059,7 +3023,6 @@ impl ProjectPanel {
         reverse_search: bool,
         only_visible_entries: bool,
         predicate: impl Fn(&Entry, WorktreeId) -> bool,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<Entry> {
         if only_visible_entries {
@@ -3093,7 +3056,6 @@ impl ProjectPanel {
         start: Option<&SelectedEntry>,
         reverse_search: bool,
         predicate: impl Fn(&Entry, WorktreeId) -> bool,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<SelectedEntry> {
         let mut worktree_ids: Vec<_> = self
@@ -3182,7 +3144,7 @@ impl ProjectPanel {
 
         for tree_id in worktree_ids.into_iter() {
             if let Some(found) =
-                self.find_entry_in_worktree(tree_id, reverse_search, false, &predicate, window, cx)
+                self.find_entry_in_worktree(tree_id, reverse_search, false, &predicate, cx)
             {
                 return Some(SelectedEntry {
                     worktree_id: tree_id,
@@ -3199,7 +3161,6 @@ impl ProjectPanel {
         start: Option<&SelectedEntry>,
         reverse_search: bool,
         predicate: impl Fn(&Entry, WorktreeId) -> bool,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<SelectedEntry> {
         let mut worktree_ids: Vec<_> = self
@@ -3270,7 +3231,7 @@ impl ProjectPanel {
 
         for tree_id in worktree_ids.into_iter() {
             if let Some(found) =
-                self.find_entry_in_worktree(tree_id, reverse_search, true, &predicate, window, cx)
+                self.find_entry_in_worktree(tree_id, reverse_search, true, &predicate, cx)
             {
                 return Some(SelectedEntry {
                     worktree_id: tree_id,
@@ -3397,7 +3358,7 @@ impl ProjectPanel {
             .hover(|style| style.bg(bg_hover_color))
             .when(is_local, |div| {
                 div.on_drag_move::<ExternalPaths>(cx.listener(
-                    move |this, event: &DragMoveEvent<ExternalPaths>, window, cx| {
+                    move |this, event: &DragMoveEvent<ExternalPaths>, _, cx| {
                         if event.bounds.contains(&event.event.position) {
                             if this.last_external_paths_drag_over_entry == Some(entry_id) {
                                 return;
@@ -3449,18 +3410,15 @@ impl ProjectPanel {
                     },
                 ))
             })
-            .on_drag(
-                dragged_selection,
-                move |selection, click_offset, window, cx| {
-                    cx.new_model(|_| DraggedProjectEntryView {
-                        details: details.clone(),
-                        width,
-                        click_offset,
-                        selection: selection.active_selection,
-                        selections: selection.marked_selections.clone(),
-                    })
-                },
-            )
+            .on_drag(dragged_selection, move |selection, click_offset, _, cx| {
+                cx.new_model(|_| DraggedProjectEntryView {
+                    details: details.clone(),
+                    width,
+                    click_offset,
+                    selection: selection.active_selection,
+                    selections: selection.marked_selections.clone(),
+                })
+            })
             .drag_over::<DraggedSelection>(move |style, _, _, _| style.bg(item_colors.drag_over))
             .on_drop(
                 cx.listener(move |this, selections: &DraggedSelection, window, cx| {
@@ -3470,7 +3428,7 @@ impl ProjectPanel {
             )
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |this, _, window, cx| {
+                cx.listener(move |this, _, _, cx| {
                     this.mouse_down = true;
                     cx.propagate();
                 }),
@@ -3524,7 +3482,7 @@ impl ProjectPanel {
                         }
                     } else if event.down.modifiers.secondary() {
                         if event.down.click_count > 1 {
-                            this.split_entry(entry_id, window, cx);
+                            this.split_entry(entry_id, cx);
                         } else if !this.marked_entries.insert(selection) {
                             this.marked_entries.remove(&selection);
                         }
@@ -3536,7 +3494,7 @@ impl ProjectPanel {
                         let click_count = event.up.click_count;
                         let focus_opened_item = !preview_tabs_enabled || click_count > 1;
                         let allow_preview = preview_tabs_enabled && click_count == 1;
-                        this.open_entry(entry_id, focus_opened_item, allow_preview, window, cx);
+                        this.open_entry(entry_id, focus_opened_item, allow_preview, cx);
                     }
                 }),
             )
@@ -3591,7 +3549,6 @@ impl ProjectPanel {
                                                 IconDecorationKind::Dot
                                             },
                                             default_color,
-                                            window,
                                             cx,
                                         )
                                         .group_name(Some(GROUP_NAME.into()))
@@ -3657,7 +3614,7 @@ impl ProjectPanel {
                                         ));
                                         let label = div()
                                             .id(id)
-                                            .on_click(cx.listener(move |this, _, window, cx| {
+                                            .on_click(cx.listener(move |this, _, _, cx| {
                                                 if index != active_index {
                                                     if let Some(folds) =
                                                         this.ancestors.get_mut(&entry_id)
@@ -3713,11 +3670,7 @@ impl ProjectPanel {
             )
     }
 
-    fn render_vertical_scrollbar(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<Stateful<Div>> {
+    fn render_vertical_scrollbar(&self, cx: &mut ModelContext<Self>) -> Option<Stateful<Div>> {
         if !Self::should_show_scrollbar(cx)
             || !(self.show_scrollbar || self.vertical_scrollbar_state.is_dragging())
         {
@@ -3727,14 +3680,14 @@ impl ProjectPanel {
             div()
                 .occlude()
                 .id("project-panel-vertical-scroll")
-                .on_mouse_move(cx.listener(|_, _, window, cx| {
+                .on_mouse_move(cx.listener(|_, _, _, cx| {
                     cx.notify();
                     cx.stop_propagation()
                 }))
-                .on_hover(|_, window, cx| {
+                .on_hover(|_, _, cx| {
                     cx.stop_propagation();
                 })
-                .on_any_mouse_down(|_, window, cx| {
+                .on_any_mouse_down(|_, _, cx| {
                     cx.stop_propagation();
                 })
                 .on_mouse_up(
@@ -3750,7 +3703,7 @@ impl ProjectPanel {
                         cx.stop_propagation();
                     }),
                 )
-                .on_scroll_wheel(cx.listener(|_, _, window, cx| {
+                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
                     cx.notify();
                 }))
                 .h_full()
@@ -3767,11 +3720,7 @@ impl ProjectPanel {
         )
     }
 
-    fn render_horizontal_scrollbar(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<Stateful<Div>> {
+    fn render_horizontal_scrollbar(&self, cx: &mut ModelContext<Self>) -> Option<Stateful<Div>> {
         if !Self::should_show_scrollbar(cx)
             || !(self.show_scrollbar || self.horizontal_scrollbar_state.is_dragging())
         {
@@ -3793,14 +3742,14 @@ impl ProjectPanel {
             div()
                 .occlude()
                 .id("project-panel-horizontal-scroll")
-                .on_mouse_move(cx.listener(|_, _, window, cx| {
+                .on_mouse_move(cx.listener(|_, _, _, cx| {
                     cx.notify();
                     cx.stop_propagation()
                 }))
-                .on_hover(|_, window, cx| {
+                .on_hover(|_, _, cx| {
                     cx.stop_propagation();
                 })
-                .on_any_mouse_down(|_, window, cx| {
+                .on_any_mouse_down(|_, _, cx| {
                     cx.stop_propagation();
                 })
                 .on_mouse_up(
@@ -3816,7 +3765,7 @@ impl ProjectPanel {
                         cx.stop_propagation();
                     }),
                 )
-                .on_scroll_wheel(cx.listener(|_, _, window, cx| {
+                .on_scroll_wheel(cx.listener(|_, _, _, cx| {
                     cx.notify();
                 }))
                 .w_full()
@@ -4094,7 +4043,7 @@ impl Render for ProjectPanel {
                         this.hide_scrollbar(window, cx);
                     }
                 }))
-                .on_click(cx.listener(|this, _event, window, cx| {
+                .on_click(cx.listener(|this, _event, _, cx| {
                     cx.stop_propagation();
                     this.selection = None;
                     this.marked_entries.clear();
@@ -4232,18 +4181,13 @@ impl Render for ProjectPanel {
                                             return;
                                         };
 
-                                        this.collapse_entry(
-                                            target_entry.clone(),
-                                            worktree,
-                                            window,
-                                            cx,
-                                        );
+                                        this.collapse_entry(target_entry.clone(), worktree, cx);
                                     }
                                 },
                             ))
                             .with_render_fn(
                                 cx.model().clone(),
-                                move |this, params, window, cx| {
+                                move |this, params, _, cx| {
                                     const LEFT_OFFSET: f32 = 14.;
                                     const PADDING_Y: f32 = 4.;
                                     const HITBOX_OVERDRAW: f32 = 3.;
@@ -4305,11 +4249,10 @@ impl Render for ProjectPanel {
                     .with_width_from_item(self.max_width_item_index)
                     .track_scroll(self.scroll_handle.clone()),
                 )
-                .children(self.render_vertical_scrollbar(window, cx))
-                .when_some(
-                    self.render_horizontal_scrollbar(window, cx),
-                    |this, scrollbar| this.pb_4().child(scrollbar),
-                )
+                .children(self.render_vertical_scrollbar(cx))
+                .when_some(self.render_horizontal_scrollbar(cx), |this, scrollbar| {
+                    this.pb_4().child(scrollbar)
+                })
                 .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                     deferred(
                         anchored()
@@ -4328,7 +4271,7 @@ impl Render for ProjectPanel {
                 .child(
                     Button::new("open_project", "Open a project")
                         .full_width()
-                        .key_binding(KeyBinding::for_action(&workspace::Open, window, cx))
+                        .key_binding(KeyBinding::for_action(&workspace::Open, window))
                         .on_click(cx.listener(|this, _, window, cx| {
                             this.workspace
                                 .update(cx, |_, cx| {
@@ -4338,7 +4281,7 @@ impl Render for ProjectPanel {
                         })),
                 )
                 .when(is_local, |div| {
-                    div.drag_over::<ExternalPaths>(|style, _, window, cx| {
+                    div.drag_over::<ExternalPaths>(|style, _, _, cx| {
                         style.bg(cx.theme().colors().drop_target_background)
                     })
                     .on_drop(cx.listener(
@@ -4369,7 +4312,7 @@ impl Render for ProjectPanel {
 }
 
 impl Render for DraggedProjectEntryView {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let settings = ProjectPanelSettings::get_global(cx);
         let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
 
@@ -4407,7 +4350,7 @@ impl EventEmitter<Event> for ProjectPanel {}
 impl EventEmitter<PanelEvent> for ProjectPanel {}
 
 impl Panel for ProjectPanel {
-    fn position(&self, window: &Window, cx: &AppContext) -> DockPosition {
+    fn position(&self, _: &Window, cx: &AppContext) -> DockPosition {
         match ProjectPanelSettings::get_global(cx).dock {
             ProjectPanelDockPosition::Left => DockPosition::Left,
             ProjectPanelDockPosition::Right => DockPosition::Right,
@@ -4421,7 +4364,7 @@ impl Panel for ProjectPanel {
     fn set_position(
         &mut self,
         position: DockPosition,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         settings::update_settings_file::<ProjectPanelSettings>(
@@ -4437,18 +4380,18 @@ impl Panel for ProjectPanel {
         );
     }
 
-    fn size(&self, window: &Window, cx: &AppContext) -> Pixels {
+    fn size(&self, _: &Window, cx: &AppContext) -> Pixels {
         self.width
             .unwrap_or_else(|| ProjectPanelSettings::get_global(cx).default_width)
     }
 
-    fn set_size(&mut self, size: Option<Pixels>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut ModelContext<Self>) {
         self.width = size;
-        self.serialize(window, cx);
+        self.serialize(cx);
         cx.notify();
     }
 
-    fn icon(&self, window: &Window, cx: &AppContext) -> Option<IconName> {
+    fn icon(&self, _: &Window, cx: &AppContext) -> Option<IconName> {
         ProjectPanelSettings::get_global(cx)
             .button
             .then_some(IconName::FileTree)
@@ -4466,7 +4409,7 @@ impl Panel for ProjectPanel {
         "Project Panel"
     }
 
-    fn starts_open(&self, window: &Window, cx: &AppContext) -> bool {
+    fn starts_open(&self, _: &Window, cx: &AppContext) -> bool {
         let project = &self.project.read(cx);
         project.visible_worktrees(cx).any(|tree| {
             tree.read(cx)
@@ -4816,7 +4759,7 @@ mod tests {
         let workspace =
             cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
-        cx.update(|window, cx| {
+        cx.update(|_, cx| {
             let settings = *ProjectPanelSettings::get_global(cx);
             ProjectPanelSettings::override_global(
                 ProjectPanelSettings {
@@ -5239,7 +5182,7 @@ mod tests {
         );
 
         // Dismiss the rename editor when it loses focus.
-        workspace.update(cx, |_, window, cx| window.blur()).unwrap();
+        workspace.update(cx, |_, window, _| window.blur()).unwrap();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
@@ -7226,7 +7169,7 @@ mod tests {
             &["v root1  <== selected", "      .dockerignore",]
         );
         workspace
-            .update(cx, |workspace, window, cx| {
+            .update(cx, |workspace, _, cx| {
                 assert!(
                     workspace.active_item(cx).is_none(),
                     "Should have no active items in the beginning"
@@ -7263,7 +7206,7 @@ mod tests {
             );
         });
         workspace
-            .update(cx, |workspace, window, cx| {
+            .update(cx, |workspace, _, cx| {
                 let active_entry_path = workspace
                     .active_item(cx)
                     .expect("should have opened and activated the excluded item")
@@ -7320,7 +7263,7 @@ mod tests {
             );
         });
         workspace
-            .update(cx, |workspace, window, cx| {
+            .update(cx, |workspace, _, cx| {
                 let notifications = workspace.notification_ids();
                 assert_eq!(
                     notifications.len(),
@@ -7361,7 +7304,7 @@ mod tests {
             );
         });
         workspace
-            .update(cx, |workspace, window, cx| {
+            .update(cx, |workspace, _, cx| {
                 let notifications = workspace.notification_ids();
                 assert_eq!(
                     notifications.len(),
@@ -8239,7 +8182,7 @@ mod tests {
         cx: &mut TestAppContext,
     ) {
         window
-            .update(cx, |workspace, window, cx| {
+            .update(cx, |workspace, _, cx| {
                 let worktrees = workspace.worktrees(cx).collect::<Vec<_>>();
                 assert_eq!(worktrees.len(), 1);
                 let worktree_id = worktrees[0].read(cx).id();
@@ -8354,7 +8297,7 @@ mod tests {
         fn for_project_item(
             _: Model<Project>,
             project_item: Model<Self::Item>,
-            window: &mut Window,
+            _: &mut Window,
             cx: &mut ModelContext<Self>,
         ) -> Self
         where

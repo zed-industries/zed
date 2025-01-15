@@ -79,7 +79,7 @@ fn main() {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |window, cx| cx.new_model(|cx| SvgExample),
+                |_, cx| cx.new_model(|_| SvgExample),
             )
             .unwrap();
         });

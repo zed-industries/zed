@@ -74,7 +74,7 @@ impl ImageView {
 }
 
 impl Render for ImageView {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, _: &mut ModelContext<Self>) -> impl IntoElement {
         let line_height = window.line_height();
 
         let (height, width) = if self.height as f32 / line_height.0 == u8::MAX as f32 {

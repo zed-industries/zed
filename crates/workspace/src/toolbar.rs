@@ -93,7 +93,7 @@ impl Toolbar {
 }
 
 impl Render for Toolbar {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         if !self.has_any_visible_items() {
             return div();
         }
@@ -165,12 +165,7 @@ impl Toolbar {
         }
     }
 
-    pub fn set_can_navigate(
-        &mut self,
-        can_navigate: bool,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn set_can_navigate(&mut self, can_navigate: bool, cx: &mut ModelContext<Self>) {
         self.can_navigate = can_navigate;
         cx.notify();
     }
@@ -180,7 +175,7 @@ impl Toolbar {
         T: 'static + ToolbarItemView,
     {
         let location = item.set_active_pane_item(self.active_item.as_deref(), window, cx);
-        cx.subscribe_in(&item, window, |this, item, event, window, cx| {
+        cx.subscribe(&item, |this, item, event, cx| {
             if let Some((_, current_location)) = this
                 .items
                 .iter_mut()

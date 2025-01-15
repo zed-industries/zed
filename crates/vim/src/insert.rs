@@ -5,9 +5,9 @@ use language::SelectionGoal;
 
 actions!(vim, [NormalBefore, TemporaryNormal]);
 
-pub fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
-    Vim::action(editor, window, cx, Vim::normal_before);
-    Vim::action(editor, window, cx, Vim::temporary_normal);
+pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+    Vim::action(editor, cx, Vim::normal_before);
+    Vim::action(editor, cx, Vim::temporary_normal);
 }
 
 impl Vim {
@@ -23,7 +23,7 @@ impl Vim {
             return;
         }
         let count = Vim::take_count(cx).unwrap_or(1);
-        self.stop_recording_immediately(action.boxed_clone(), window, cx);
+        self.stop_recording_immediately(action.boxed_clone(), cx);
         if count <= 1 || Vim::globals(cx).dot_replaying {
             self.create_mark("^".into(), false, window, cx);
             self.update_editor(window, cx, |_, editor, window, cx| {

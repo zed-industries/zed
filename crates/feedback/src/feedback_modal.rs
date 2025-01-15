@@ -131,11 +131,7 @@ impl ModalView for FeedbackModal {
 }
 
 impl FeedbackModal {
-    pub fn register(
-        workspace: &mut Workspace,
-        window: &mut Window,
-        cx: &mut ModelContext<Workspace>,
-    ) {
+    pub fn register(workspace: &mut Workspace, _: &mut Window, cx: &mut ModelContext<Workspace>) {
         let _handle = cx.model().downgrade();
         workspace.register_action(move |workspace, _: &GiveFeedback, window, cx| {
             workspace
@@ -193,10 +189,10 @@ impl FeedbackModal {
                 "You can use markdown to organize your feedback with code and links.",
                 cx,
             );
-            editor.set_show_gutter(false, window, cx);
-            editor.set_show_indent_guides(false, window, cx);
+            editor.set_show_gutter(false, cx);
+            editor.set_show_indent_guides(false, cx);
             editor.set_show_inline_completions(Some(false), window, cx);
-            editor.set_vertical_scroll_margin(5, window, cx);
+            editor.set_vertical_scroll_margin(5, cx);
             editor.set_use_modal_editing(false);
             editor
         });
@@ -338,7 +334,7 @@ impl FeedbackModal {
         Ok(())
     }
 
-    fn update_submission_state(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn update_submission_state(&mut self, cx: &mut ModelContext<Self>) {
         if self.awaiting_submission() {
             return;
         }
@@ -421,14 +417,14 @@ impl FeedbackModal {
         matches!(self.submission_state, Some(SubmissionState::CanSubmit))
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn cancel(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut ModelContext<Self>) {
         cx.emit(DismissEvent)
     }
 }
 
 impl Render for FeedbackModal {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
-        self.update_submission_state(window, cx);
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+        self.update_submission_state(cx);
 
         let submit_button_text = if self.awaiting_submission() {
             "Submitting..."
@@ -440,7 +436,7 @@ impl Render for FeedbackModal {
             cx.listener(|_, _, window, cx| window.dispatch_action(Box::new(OpenZedRepo), cx));
 
         v_flex()
-            .elevation_3(window, cx)
+            .elevation_3(cx)
             .key_context("GiveFeedback")
             .on_action(cx.listener(Self::cancel))
             .min_w(rems(40.))
@@ -533,12 +529,8 @@ impl Render for FeedbackModal {
                                     .on_click(cx.listener(|this, _, window, cx| {
                                         this.submit(window, cx).detach();
                                     }))
-                                    .tooltip(move |window, cx| {
-                                        Tooltip::text(
-                                            "Submit feedback to the Zed team.",
-                                            window,
-                                            cx,
-                                        )
+                                    .tooltip(move |_, cx| {
+                                        Tooltip::simple("Submit feedback to the Zed team.", cx)
                                     })
                                     .when(!self.can_submit(), |this| this.disabled(true)),
                             ),

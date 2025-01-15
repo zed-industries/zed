@@ -20,7 +20,7 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
                 return;
             }
 
-            register_backward_compatible_actions(editor, window, cx);
+            register_backward_compatible_actions(editor, cx);
 
             let editor_handle = cx.model().downgrade();
             cx.on_release({
@@ -101,11 +101,7 @@ fn assign_inline_completion_providers(
     }
 }
 
-fn register_backward_compatible_actions(
-    editor: &mut Editor,
-    window: &mut Window,
-    cx: &mut ModelContext<Editor>,
-) {
+fn register_backward_compatible_actions(editor: &mut Editor, cx: &mut ModelContext<Editor>) {
     // We renamed some of these actions to not be copilot-specific, but that
     // would have not been backwards-compatible. So here we are re-registering
     // the actions with the old names to not break people's keymaps.

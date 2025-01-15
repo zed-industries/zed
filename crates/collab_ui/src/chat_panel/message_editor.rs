@@ -105,11 +105,11 @@ impl MessageEditor {
     ) -> Self {
         let this = cx.model().downgrade();
         editor.update(cx, |editor, cx| {
-            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, window, cx);
+            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor.set_use_autoclose(false);
-            editor.set_show_gutter(false, window, cx);
-            editor.set_show_wrap_guides(false, window, cx);
-            editor.set_show_indent_guides(false, window, cx);
+            editor.set_show_gutter(false, cx);
+            editor.set_show_wrap_guides(false, cx);
+            editor.set_show_indent_guides(false, cx);
             editor.set_completion_provider(Some(Box::new(MessageEditorCompletionProvider(this))));
             editor.set_auto_replace_emoji_shortcode(
                 MessageEditorSettings::get_global(cx)
@@ -127,7 +127,7 @@ impl MessageEditor {
 
         cx.subscribe_in(&buffer, window, Self::on_buffer_event)
             .detach();
-        cx.observe_global_in::<settings::SettingsStore>(window, |view, window, cx| {
+        cx.observe_global::<settings::SettingsStore>(|view, cx| {
             view.editor.update(cx, |editor, cx| {
                 editor.set_auto_replace_emoji_shortcode(
                     MessageEditorSettings::get_global(cx)
@@ -182,12 +182,7 @@ impl MessageEditor {
         self.edit_message_id = None;
     }
 
-    pub fn set_channel_chat(
-        &mut self,
-        chat: Model<ChannelChat>,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn set_channel_chat(&mut self, chat: Model<ChannelChat>, cx: &mut ModelContext<Self>) {
         let channel_id = chat.read(cx).channel_id;
         self.channel_chat = Some(chat);
         let channel_name = ChannelStore::global(cx)
@@ -260,7 +255,7 @@ impl MessageEditor {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Completion>>> {
         if let Some((start_anchor, query, candidates)) =
-            self.collect_mention_candidates(buffer, end_anchor, window, cx)
+            self.collect_mention_candidates(buffer, end_anchor, cx)
         {
             if !candidates.is_empty() {
                 return cx.spawn_in(window, |_, cx| async move {
@@ -277,7 +272,7 @@ impl MessageEditor {
         }
 
         if let Some((start_anchor, query, candidates)) =
-            self.collect_emoji_candidates(buffer, end_anchor, window, cx)
+            self.collect_emoji_candidates(buffer, end_anchor, cx)
         {
             if !candidates.is_empty() {
                 return cx.spawn_in(window, |_, cx| async move {
@@ -354,7 +349,6 @@ impl MessageEditor {
         &mut self,
         buffer: &Model<Buffer>,
         end_anchor: Anchor,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<(Anchor, String, Vec<StringMatchCandidate>)> {
         let end_offset = end_anchor.to_offset(buffer.read(cx));
@@ -404,7 +398,6 @@ impl MessageEditor {
         &mut self,
         buffer: &Model<Buffer>,
         end_anchor: Anchor,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<(Anchor, String, &'static [StringMatchCandidate])> {
         static EMOJI_FUZZY_MATCH_CANDIDATES: LazyLock<Vec<StringMatchCandidate>> =
@@ -475,7 +468,7 @@ impl MessageEditor {
             })
             .await;
 
-        this.update_in(&mut cx, |this, window, cx| {
+        this.update(&mut cx, |this, cx| {
             let mut anchor_ranges = Vec::new();
             let mut mentioned_user_ids = Vec::new();
             let mut text = String::new();
@@ -523,7 +516,7 @@ impl MessageEditor {
 }
 
 impl Render for MessageEditor {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let text_style = TextStyle {
             color: if self.editor.read(cx).read_only(cx) {

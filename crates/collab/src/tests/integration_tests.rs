@@ -6174,7 +6174,7 @@ async fn test_right_click_menu_behind_collab_panel(cx: &mut TestAppContext) {
     cx.simulate_resize(size(px(300.), px(300.)));
 
     cx.simulate_keystrokes("cmd-n cmd-n cmd-n");
-    cx.update(|window, cx| window.refresh());
+    cx.update(|window, _cx| window.refresh());
 
     let tab_bounds = cx.debug_bounds("TAB-2").unwrap();
     let new_tab_button_bounds = cx.debug_bounds("ICON-Plus").unwrap();
@@ -6414,8 +6414,8 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     });
 
     // Split pane to the right
-    pane.update_in(cx, |pane, window, cx| {
-        pane.split(workspace::SplitDirection::Right, window, cx);
+    pane.update(cx, |pane, cx| {
+        pane.split(workspace::SplitDirection::Right, cx);
     });
 
     let right_pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());

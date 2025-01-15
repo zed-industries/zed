@@ -45,8 +45,8 @@ fn main() {
                 window_bounds: Some(WindowBounds::Windowed(bounds)),
                 ..Default::default()
             },
-            |window, cx| {
-                cx.new_model(|cx| HelloWorld {
+            |_, cx| {
+                cx.new_model(|_| HelloWorld {
                     text: "World".into(),
                 })
             },

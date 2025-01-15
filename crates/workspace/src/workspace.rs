@@ -367,7 +367,7 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
                                     .and_then(|window| window.downcast::<Workspace>())
                                 {
                                     workspace_window
-                                        .update(cx, |workspace, window, cx| {
+                                        .update(cx, |workspace, _, cx| {
                                             workspace.show_portal_error(err.to_string(), cx);
                                         })
                                         .ok();
@@ -843,7 +843,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        cx.observe_in(&project, window, |_, _, window, cx| cx.notify())
+        cx.observe_in(&project, window, |_, _, _, cx| cx.notify())
             .detach();
         cx.subscribe_in(&project, window, move |this, _, event, window, cx| {
             match event {
@@ -989,11 +989,9 @@ impl Workspace {
         let left_dock = Dock::new(DockPosition::Left, window, cx);
         let bottom_dock = Dock::new(DockPosition::Bottom, window, cx);
         let right_dock = Dock::new(DockPosition::Right, window, cx);
-        let left_dock_buttons = cx.new_model(|cx| PanelButtons::new(left_dock.clone(), window, cx));
-        let bottom_dock_buttons =
-            cx.new_model(|cx| PanelButtons::new(bottom_dock.clone(), window, cx));
-        let right_dock_buttons =
-            cx.new_model(|cx| PanelButtons::new(right_dock.clone(), window, cx));
+        let left_dock_buttons = cx.new_model(|cx| PanelButtons::new(left_dock.clone(), cx));
+        let bottom_dock_buttons = cx.new_model(|cx| PanelButtons::new(bottom_dock.clone(), cx));
+        let right_dock_buttons = cx.new_model(|cx| PanelButtons::new(right_dock.clone(), cx));
         let status_bar = cx.new_model(|cx| {
             let mut status_bar = StatusBar::new(&center_pane.clone(), window, cx);
             status_bar.add_left_item(left_dock_buttons, window, cx);
@@ -1291,7 +1289,7 @@ impl Workspace {
                 .unwrap_or_default();
 
             window
-                .update(&mut cx, |_, window, cx| window.activate_window())
+                .update(&mut cx, |_, window, _| window.activate_window())
                 .log_err();
             Ok((window, opened_items))
         })
@@ -1419,7 +1417,7 @@ impl Workspace {
     ) -> Task<Result<()>> {
         let to_load = if let Some(pane) = pane.upgrade() {
             pane.update(cx, |pane, cx| {
-                pane.focus(window, cx);
+                window.focus(&pane.focus_handle(cx));
                 loop {
                     // Retrieve the weak item handle from the history.
                     let entry = pane.nav_history_mut().pop(mode, cx)?;
@@ -1574,7 +1572,7 @@ impl Workspace {
     pub fn set_titlebar_item(
         &mut self,
         item: AnyView,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.titlebar_item = Some(item);
@@ -1771,7 +1769,7 @@ impl Workspace {
         cx.defer(|cx| {
             cx.windows().iter().find(|window| {
                 window
-                    .update(cx, |_, window, cx| {
+                    .update(cx, |_, window, _| {
                         if window.is_window_active() {
                             //This can only get called when the window's project connection has been lost
                             //so we don't need to prompt the user for anything and instead just close the window
@@ -1978,7 +1976,7 @@ impl Workspace {
                 futures::future::try_join_all(serialize_tasks).await?;
 
                 if remaining_dirty_items.len() > 1 {
-                    let answer = workspace.update_in(&mut cx, |workspace, window, cx| {
+                    let answer = workspace.update_in(&mut cx, |_, window, cx| {
                         let (prompt, detail) = Pane::file_names_for_prompt(
                             &mut remaining_dirty_items.iter().map(|(_, handle)| handle),
                             remaining_dirty_items.len(),
@@ -2006,7 +2004,7 @@ impl Workspace {
 
             for (pane, item) in dirty_items {
                 let (singleton, project_entry_ids) =
-                    cx.update(|window, cx| (item.is_singleton(cx), item.project_entry_ids(cx)))?;
+                    cx.update(|_, cx| (item.is_singleton(cx), item.project_entry_ids(cx)))?;
                 if singleton || !project_entry_ids.is_empty() {
                     if let Some(ix) =
                         pane.update(&mut cx, |pane, _| pane.index_for_item(item.as_ref()))?
@@ -2430,7 +2428,7 @@ impl Workspace {
 
         if focus_center {
             self.active_pane
-                .update(cx, |pane, cx| pane.focus(window, cx))
+                .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)))
         }
 
         cx.notify();
@@ -2528,7 +2526,7 @@ impl Workspace {
 
                 if focus_center {
                     self.active_pane
-                        .update(cx, |pane, cx| pane.focus(window, cx))
+                        .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)))
                 }
 
                 result_panel = panel;
@@ -2572,7 +2570,7 @@ impl Workspace {
         // If a center pane is zoomed, unzoom it.
         for pane in &self.panes {
             if pane != &self.active_pane || dock_to_reveal.is_some() {
-                pane.update(cx, |pane, cx| pane.set_zoomed(false, window, cx));
+                pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
             }
         }
 
@@ -2594,7 +2592,7 @@ impl Workspace {
 
         if focus_center {
             self.active_pane
-                .update(cx, |pane, cx| pane.focus(window, cx))
+                .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)))
         }
 
         if self.zoomed_position != dock_to_reveal {
@@ -3293,7 +3291,7 @@ impl Workspace {
                 self.remove_pane(pane.clone(), focus_on_pane.clone(), window, cx)
             }
             pane::Event::ActivateItem { local } => {
-                cx.on_next_frame(window, |_, window, cx| {
+                cx.on_next_frame(window, |_, window, _| {
                     window.invalidate_character_coordinates();
                 });
 
@@ -3330,14 +3328,14 @@ impl Workspace {
                 }
             }
             pane::Event::Focus => {
-                cx.on_next_frame(window, |_, window, cx| {
+                cx.on_next_frame(window, |_, window, _| {
                     window.invalidate_character_coordinates();
                 });
                 self.handle_pane_focused(pane.clone(), window, cx);
             }
             pane::Event::ZoomIn => {
                 if *pane == self.active_pane {
-                    pane.update(cx, |pane, cx| pane.set_zoomed(true, window, cx));
+                    pane.update(cx, |pane, cx| pane.set_zoomed(true, cx));
                     if pane.read(cx).has_focus(window, cx) {
                         self.zoomed = Some(pane.downgrade().into());
                         self.zoomed_position = None;
@@ -3347,7 +3345,7 @@ impl Workspace {
                 }
             }
             pane::Event::ZoomOut => {
-                pane.update(cx, |pane, cx| pane.set_zoomed(false, window, cx));
+                pane.update(cx, |pane, cx| pane.set_zoomed(false, cx));
                 if self.zoomed_position.is_none() {
                     self.zoomed = None;
                     cx.emit(Event::ZoomChanged);
@@ -3519,7 +3517,7 @@ impl Workspace {
                 if let Some(pane) = dock
                     .read(cx)
                     .active_panel()
-                    .and_then(|panel| panel.pane(window, cx))
+                    .and_then(|panel| panel.pane(cx))
                 {
                     return pane;
                 }
@@ -4123,7 +4121,7 @@ impl Workspace {
         for dock in [&self.left_dock, &self.right_dock, &self.bottom_dock] {
             if dock.focus_handle(cx).contains_focused(window, cx) {
                 if let Some(panel) = dock.read(cx).active_panel() {
-                    if let Some(pane) = panel.pane(window, cx) {
+                    if let Some(pane) = panel.pane(cx) {
                         if let Some(item) = pane.read(cx).active_item() {
                             active_item = Some(item);
                             panel_id = panel.remote_id();
@@ -4144,7 +4142,7 @@ impl Workspace {
         &self,
         project_only: bool,
         update: proto::update_followers::Variant,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut AppContext,
     ) -> Option<()> {
         // If this update only applies to for followers in the current project,
@@ -4221,7 +4219,7 @@ impl Workspace {
         if let Some(panel_id) = panel_id {
             pane = self
                 .activate_panel_for_proto_id(panel_id, window, cx)?
-                .pane(window, cx)?;
+                .pane(cx)?;
             let state = self.follower_states.get_mut(&leader_id)?;
             state.dock_pane = Some(pane.clone());
         } else {
@@ -4386,12 +4384,12 @@ impl Workspace {
     ) {
         self.panes.retain(|p| p != pane);
         if let Some(focus_on) = focus_on {
-            focus_on.update(cx, |pane, cx| pane.focus(window, cx));
+            focus_on.update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
         } else {
             self.panes
                 .last()
                 .unwrap()
-                .update(cx, |pane, cx| pane.focus(window, cx));
+                .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
         }
         if self.last_active_center_pane == Some(pane.downgrade()) {
             self.last_active_center_pane = None;
@@ -4635,7 +4633,7 @@ impl Workspace {
             let mut items_by_project_path = HashMap::default();
             let mut item_ids_by_kind = HashMap::default();
             let mut all_deserialized_items = Vec::default();
-            cx.update(|window, cx| {
+            cx.update(|_, cx| {
                 for item in center_items.unwrap_or_default().into_iter().flatten() {
                     if let Some(serializable_item_handle) = item.to_serializable_item_handle(cx) {
                         item_ids_by_kind
@@ -4841,7 +4839,7 @@ impl Workspace {
         let workspace = Self::new(Default::default(), project, app_state, window, cx);
         workspace
             .active_pane
-            .update(cx, |pane, cx| pane.focus(window, cx));
+            .update(cx, |pane, cx| window.focus(&pane.focus_handle(cx)));
         workspace
     }
 
@@ -4851,13 +4849,12 @@ impl Workspace {
     ) -> &mut Self {
         let callback = Arc::new(callback);
 
-        self.workspace_actions
-            .push(Box::new(move |div, window, cx| {
-                let callback = callback.clone();
-                div.on_action(cx.listener(move |workspace, event, window, cx| {
-                    (callback.clone())(workspace, event, window, cx)
-                }))
-            }));
+        self.workspace_actions.push(Box::new(move |div, _, cx| {
+            let callback = callback.clone();
+            div.on_action(cx.listener(move |workspace, event, window, cx| {
+                (callback.clone())(workspace, event, window, cx)
+            }))
+        }));
         self
     }
 
@@ -4873,7 +4870,7 @@ impl Workspace {
         div
     }
 
-    pub fn has_active_modal(&self, window: &mut Window, cx: &mut AppContext) -> bool {
+    pub fn has_active_modal(&self, _: &mut Window, cx: &mut AppContext) -> bool {
         self.modal_layer.read(cx).has_active_modal()
     }
 
@@ -4897,7 +4894,7 @@ impl Workspace {
     pub fn toggle_centered_layout(
         &mut self,
         _: &ToggleCenteredLayout,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.centered_layout = !self.centered_layout;
@@ -4927,7 +4924,7 @@ impl Workspace {
         }
 
         let leader_border = dock.read(cx).active_panel().and_then(|panel| {
-            let pane = panel.pane(window, cx)?;
+            let pane = panel.pane(cx)?;
             let follower_states = &self.follower_states;
             leader_border_for_pane(follower_states, &pane, window, cx)
         });
@@ -4942,7 +4939,7 @@ impl Workspace {
         )
     }
 
-    pub fn for_window(window: &mut Window, cx: &mut AppContext) -> Option<Model<Workspace>> {
+    pub fn for_window(window: &mut Window, _: &mut AppContext) -> Option<Model<Workspace>> {
         window.root_model().flatten()
     }
 
@@ -4954,7 +4951,7 @@ impl Workspace {
 fn leader_border_for_pane(
     follower_states: &HashMap<PeerId, FollowerState>,
     pane: &Model<Pane>,
-    window: &Window,
+    _: &Window,
     cx: &AppContext,
 ) -> Option<Div> {
     let (leader_id, _follower_state) = follower_states.iter().find_map(|(leader_id, state)| {
@@ -5022,7 +5019,7 @@ fn open_items(
             let restored_project_paths = restored_items
                 .iter()
                 .filter_map(|item| {
-                    cx.update(|window, cx| item.as_ref()?.project_path(cx))
+                    cx.update(|_, cx| item.as_ref()?.project_path(cx))
                         .ok()
                         .flatten()
                 })
@@ -5688,7 +5685,7 @@ async fn join_channel_internal(
         // If you are the first to join a channel, see if you should share your project.
         if room.remote_participants().is_empty() && !room.local_participant_is_guest() {
             if let Some(workspace) = requesting_window {
-                let project = workspace.update(cx, |workspace, window, cx| {
+                let project = workspace.update(cx, |workspace, _, cx| {
                     let project = workspace.project.read(cx);
 
                     if !CallSettings::get_global(cx).share_on_join {
@@ -5831,7 +5828,7 @@ fn activate_any_workspace_window(cx: &mut AsyncAppContext) -> Option<WindowHandl
         for window in cx.windows() {
             if let Some(workspace_window) = window.downcast::<Workspace>() {
                 workspace_window
-                    .update(cx, |_, window, cx| window.activate_window())
+                    .update(cx, |_, window, _| window.activate_window())
                     .ok();
                 return Some(workspace_window);
             }
@@ -6092,7 +6089,7 @@ pub fn open_ssh_project(
             })?
             .await?;
 
-        window.update(&mut cx, |workspace, window, cx| {
+        window.update(&mut cx, |workspace, _, cx| {
             for error in project_path_errors {
                 if error.error_code() == proto::ErrorCode::DevServerProjectPathDoesNotExist {
                     if let Some(path) = error.error_tag("path") {
@@ -6359,7 +6356,7 @@ pub fn client_side_decorations(
                             .ok();
                     }
                 })
-                .on_mouse_down(MouseButton::Left, move |e, window, cx| {
+                .on_mouse_down(MouseButton::Left, move |e, window, _| {
                     let size = window.window_bounds().get_bounds().size;
                     let pos = e.position;
 
@@ -6414,7 +6411,7 @@ pub fn client_side_decorations(
                             }])
                         }),
                 })
-                .on_mouse_move(|_e, window, cx| {
+                .on_mouse_move(|_e, _, cx| {
                     cx.stop_propagation();
                 })
                 .size_full()
@@ -6424,7 +6421,7 @@ pub fn client_side_decorations(
             Decorations::Server => div,
             Decorations::Client { tiling, .. } => div.child(
                 canvas(
-                    |_bounds, window, cx| {
+                    |_bounds, window, _| {
                         window.insert_hitbox(
                             Bounds::new(
                                 point(px(0.0), px(0.0)),
@@ -6568,7 +6565,7 @@ fn move_all_items(
         // This automatically removes duplicate items in the pane
         to_pane.update(cx, |destination, cx| {
             destination.add_item(item_handle, true, true, None, window, cx);
-            destination.focus(window, cx)
+            window.focus(&destination.focus_handle(cx))
         });
     }
 }
@@ -6602,7 +6599,7 @@ pub fn move_item(
     // This automatically removes duplicate items in the pane
     destination.update(cx, |destination, cx| {
         destination.add_item(item_handle, true, true, Some(destination_index), window, cx);
-        destination.focus(window, cx)
+        window.focus(&destination.focus_handle(cx))
     });
 }
 
@@ -7140,7 +7137,7 @@ mod tests {
         item.update(cx, |item, _| assert_eq!(item.save_count, 1));
 
         // Re-activating the window doesn't save the file.
-        cx.update(|window, cx| window.activate_window());
+        cx.update(|window, _| window.activate_window());
         cx.executor().run_until_parked();
         item.update(cx, |item, _| assert_eq!(item.save_count, 1));
 
@@ -7708,7 +7705,7 @@ mod tests {
     struct TestModal(FocusHandle);
 
     impl TestModal {
-        fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+        fn new(_: &mut Window, cx: &mut ModelContext<Self>) -> Self {
             Self(cx.focus_handle())
         }
     }
@@ -8476,7 +8473,7 @@ mod tests {
             fn for_project_item(
                 _project: Model<Project>,
                 _item: Model<Self::Item>,
-                window: &mut Window,
+                _: &mut Window,
                 cx: &mut ModelContext<Self>,
             ) -> Self
             where
@@ -8547,7 +8544,7 @@ mod tests {
             fn for_project_item(
                 _project: Model<Project>,
                 _item: Model<Self::Item>,
-                window: &mut Window,
+                _: &mut Window,
                 cx: &mut ModelContext<Self>,
             ) -> Self
             where
@@ -8590,7 +8587,7 @@ mod tests {
             fn for_project_item(
                 _project: Model<Project>,
                 _item: Model<Self::Item>,
-                window: &mut Window,
+                _: &mut Window,
                 cx: &mut ModelContext<Self>,
             ) -> Self
             where

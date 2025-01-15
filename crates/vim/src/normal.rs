@@ -61,66 +61,56 @@ actions!(
 );
 
 pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
-    Vim::action(editor, window, cx, Vim::insert_after);
-    Vim::action(editor, window, cx, Vim::insert_before);
-    Vim::action(editor, window, cx, Vim::insert_first_non_whitespace);
-    Vim::action(editor, window, cx, Vim::insert_end_of_line);
-    Vim::action(editor, window, cx, Vim::insert_line_above);
-    Vim::action(editor, window, cx, Vim::insert_line_below);
-    Vim::action(editor, window, cx, Vim::insert_at_previous);
-    Vim::action(editor, window, cx, Vim::change_case);
-    Vim::action(editor, window, cx, Vim::convert_to_upper_case);
-    Vim::action(editor, window, cx, Vim::convert_to_lower_case);
-    Vim::action(editor, window, cx, Vim::yank_line);
-    Vim::action(editor, window, cx, Vim::toggle_comments);
-    Vim::action(editor, window, cx, Vim::paste);
+    Vim::action(editor, cx, Vim::insert_after);
+    Vim::action(editor, cx, Vim::insert_before);
+    Vim::action(editor, cx, Vim::insert_first_non_whitespace);
+    Vim::action(editor, cx, Vim::insert_end_of_line);
+    Vim::action(editor, cx, Vim::insert_line_above);
+    Vim::action(editor, cx, Vim::insert_line_below);
+    Vim::action(editor, cx, Vim::insert_at_previous);
+    Vim::action(editor, cx, Vim::change_case);
+    Vim::action(editor, cx, Vim::convert_to_upper_case);
+    Vim::action(editor, cx, Vim::convert_to_lower_case);
+    Vim::action(editor, cx, Vim::yank_line);
+    Vim::action(editor, cx, Vim::toggle_comments);
+    Vim::action(editor, cx, Vim::paste);
 
-    Vim::action(editor, window, cx, |vim, _: &DeleteLeft, window, cx| {
-        vim.record_current_action(window, cx);
+    Vim::action(editor, cx, |vim, _: &DeleteLeft, window, cx| {
+        vim.record_current_action(cx);
         let times = Vim::take_count(cx);
         vim.delete_motion(Motion::Left, times, window, cx);
     });
-    Vim::action(editor, window, cx, |vim, _: &DeleteRight, window, cx| {
-        vim.record_current_action(window, cx);
+    Vim::action(editor, cx, |vim, _: &DeleteRight, window, cx| {
+        vim.record_current_action(cx);
         let times = Vim::take_count(cx);
         vim.delete_motion(Motion::Right, times, window, cx);
     });
-    Vim::action(
-        editor,
-        window,
-        cx,
-        |vim, _: &ChangeToEndOfLine, window, cx| {
-            vim.start_recording(window, cx);
-            let times = Vim::take_count(cx);
-            vim.change_motion(
-                Motion::EndOfLine {
-                    display_lines: false,
-                },
-                times,
-                window,
-                cx,
-            );
-        },
-    );
-    Vim::action(
-        editor,
-        window,
-        cx,
-        |vim, _: &DeleteToEndOfLine, window, cx| {
-            vim.record_current_action(window, cx);
-            let times = Vim::take_count(cx);
-            vim.delete_motion(
-                Motion::EndOfLine {
-                    display_lines: false,
-                },
-                times,
-                window,
-                cx,
-            );
-        },
-    );
-    Vim::action(editor, window, cx, |vim, _: &JoinLines, window, cx| {
-        vim.record_current_action(window, cx);
+    Vim::action(editor, cx, |vim, _: &ChangeToEndOfLine, window, cx| {
+        vim.start_recording(cx);
+        let times = Vim::take_count(cx);
+        vim.change_motion(
+            Motion::EndOfLine {
+                display_lines: false,
+            },
+            times,
+            window,
+            cx,
+        );
+    });
+    Vim::action(editor, cx, |vim, _: &DeleteToEndOfLine, window, cx| {
+        vim.record_current_action(cx);
+        let times = Vim::take_count(cx);
+        vim.delete_motion(
+            Motion::EndOfLine {
+                display_lines: false,
+            },
+            times,
+            window,
+            cx,
+        );
+    });
+    Vim::action(editor, cx, |vim, _: &JoinLines, window, cx| {
+        vim.record_current_action(cx);
         let mut times = Vim::take_count(cx).unwrap_or(1);
         if vim.mode.is_visual() {
             times = 1;
@@ -141,7 +131,7 @@ pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelC
         }
     });
 
-    Vim::action(editor, window, cx, |vim, _: &Undo, window, cx| {
+    Vim::action(editor, cx, |vim, _: &Undo, window, cx| {
         let times = Vim::take_count(cx);
         vim.update_editor(window, cx, |_, editor, window, cx| {
             for _ in 0..times.unwrap_or(1) {
@@ -149,7 +139,7 @@ pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelC
             }
         });
     });
-    Vim::action(editor, window, cx, |vim, _: &Redo, window, cx| {
+    Vim::action(editor, cx, |vim, _: &Redo, window, cx| {
         let times = Vim::take_count(cx);
         vim.update_editor(window, cx, |_, editor, window, cx| {
             for _ in 0..times.unwrap_or(1) {
@@ -294,7 +284,7 @@ impl Vim {
     }
 
     fn insert_after(&mut self, _: &InsertAfter, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.start_recording(window, cx);
+        self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
@@ -309,7 +299,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.start_recording(window, cx);
+        self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
     }
 
@@ -319,7 +309,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.start_recording(window, cx);
+        self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
@@ -339,7 +329,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.start_recording(window, cx);
+        self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
@@ -356,7 +346,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.start_recording(window, cx);
+        self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             if let Some(marks) = vim.marks.get("^") {
@@ -373,7 +363,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.start_recording(window, cx);
+        self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
@@ -414,7 +404,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.start_recording(window, cx);
+        self.start_recording(cx);
         self.switch_mode(Mode::Insert, false, window, cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window, cx);
@@ -465,11 +455,11 @@ impl Vim {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.record_current_action(window, cx);
+        self.record_current_action(cx);
         self.store_visual_marks(window, cx);
         self.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                let original_positions = vim.save_selection_starts(editor, window, cx);
+                let original_positions = vim.save_selection_starts(editor, cx);
                 editor.toggle_comments(&Default::default(), window, cx);
                 vim.restore_selection_cursors(editor, window, cx, original_positions);
             });
@@ -486,7 +476,7 @@ impl Vim {
         cx: &mut ModelContext<Self>,
     ) {
         let count = Vim::take_count(cx).unwrap_or(1);
-        self.stop_recording(window, cx);
+        self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 editor.set_clip_at_line_ends(false, cx);
@@ -526,7 +516,7 @@ impl Vim {
     pub fn save_selection_starts(
         &self,
         editor: &Editor,
-        window: &mut Window,
+
         cx: &mut ModelContext<Editor>,
     ) -> HashMap<usize, Anchor> {
         let (map, selections) = editor.selections.all_display(cx);
@@ -1396,7 +1386,7 @@ mod test {
     #[gpui::test]
     async fn test_subword_motions(cx: &mut gpui::TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
-        cx.update(|window, cx| {
+        cx.update(|_, cx| {
             cx.bind_keys(vec![
                 KeyBinding::new(
                     "w",
@@ -1480,7 +1470,7 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.set_neovim_option("textwidth=5").await;
 
-        cx.update(|window, cx| {
+        cx.update(|_, cx| {
             SettingsStore::update_global(cx, |settings, cx| {
                 settings.update_user_settings::<AllLanguageSettings>(cx, |settings| {
                     settings.defaults.preferred_line_length = Some(5);

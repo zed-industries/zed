@@ -36,7 +36,7 @@ impl Vim {
                         motion.expand_selection(map, selection, times, true, &text_layout_details);
                     });
                 });
-                vim.yank_selections_content(editor, motion.linewise(), window, cx);
+                vim.yank_selections_content(editor, motion.linewise(), cx);
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|_, selection| {
                         let (head, goal) = original_positions.remove(&selection.id).unwrap();
@@ -66,7 +66,7 @@ impl Vim {
                         original_positions.insert(selection.id, original_position);
                     });
                 });
-                vim.yank_selections_content(editor, false, window, cx);
+                vim.yank_selections_content(editor, false, cx);
                 editor.change_selections(None, window, cx, |s| {
                     s.move_with(|_, selection| {
                         let (head, goal) = original_positions.remove(&selection.id).unwrap();
@@ -82,7 +82,6 @@ impl Vim {
         &mut self,
         editor: &mut Editor,
         linewise: bool,
-        window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) {
         self.copy_ranges(
@@ -95,7 +94,6 @@ impl Vim {
                 .iter()
                 .map(|s| s.range())
                 .collect(),
-            window,
             cx,
         )
     }
@@ -104,7 +102,6 @@ impl Vim {
         &mut self,
         editor: &mut Editor,
         linewise: bool,
-        window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) {
         self.copy_ranges(
@@ -117,7 +114,6 @@ impl Vim {
                 .iter()
                 .map(|s| s.range())
                 .collect(),
-            window,
             cx,
         )
     }
@@ -128,7 +124,6 @@ impl Vim {
         linewise: bool,
         is_yank: bool,
         selections: Vec<Range<Point>>,
-        window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) {
         let buffer = editor.buffer().read(cx).snapshot(cx);
@@ -205,7 +200,6 @@ impl Vim {
                 selected_register,
                 is_yank,
                 linewise,
-                window,
                 cx,
             )
         });
@@ -220,12 +214,12 @@ impl Vim {
             |colors| colors.editor_document_highlight_read_background,
             cx,
         );
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             cx.background_executor()
                 .timer(Duration::from_millis(highlight_duration))
                 .await;
-            this.update_in(&mut cx, |editor, window, cx| {
-                editor.clear_background_highlights::<HighlightOnYank>(window, cx)
+            this.update(&mut cx, |editor, cx| {
+                editor.clear_background_highlights::<HighlightOnYank>(cx)
             })
             .ok();
         })

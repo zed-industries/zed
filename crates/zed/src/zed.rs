@@ -164,13 +164,12 @@ pub fn initialize_workspace(
             inline_completion_button::InlineCompletionButton::new(
                 workspace.weak_handle(),
                 app_state.fs.clone(),
-                window,
                 cx,
             )
         });
 
         let diagnostic_summary =
-            cx.new_model(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, window, cx));
+            cx.new_model(|cx| diagnostics::items::DiagnosticIndicator::new(workspace, cx));
         let activity_indicator = activity_indicator::ActivityIndicator::new(
             workspace,
             app_state.languages.clone(),
@@ -178,12 +177,12 @@ pub fn initialize_workspace(
             cx,
         );
         let active_buffer_language =
-            cx.new_model(|cx| language_selector::ActiveBufferLanguage::new(workspace));
+            cx.new_model(|_| language_selector::ActiveBufferLanguage::new(workspace));
         let active_toolchain_language =
             cx.new_model(|cx| toolchain_selector::ActiveToolchain::new(workspace, window, cx));
         let vim_mode_indicator = cx.new_model(|cx| vim::ModeIndicator::new(window, cx));
         let cursor_position =
-            cx.new_model(|cx| go_to_line::cursor_position::CursorPosition::new(workspace));
+            cx.new_model(|_| go_to_line::cursor_position::CursorPosition::new(workspace));
         workspace.status_bar().update(cx, |status_bar, cx| {
             status_bar.add_left_item(diagnostic_summary, window, cx);
             status_bar.add_left_item(activity_indicator, window, cx);
@@ -293,7 +292,7 @@ fn show_software_emulation_warning_if_needed(
             &["Skip", "Troubleshoot and Quit"],
             cx,
         );
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(|_, cx| async move {
             if prompt.await == Ok(1) {
                 cx.update(|cx| {
                     cx.open_url("https://zed.dev/docs/linux#zed-fails-to-open-windows");
@@ -401,29 +400,27 @@ fn initialize_panels(
 fn register_actions(
     app_state: Arc<AppState>,
     workspace: &mut Workspace,
-    window: &mut Window,
+    _: &mut Window,
     cx: &mut ModelContext<Workspace>,
 ) {
     workspace
         .register_action(about)
-        .register_action(|_, _: &Minimize, window, cx| {
+        .register_action(|_, _: &Minimize, window, _| {
             window.minimize_window();
         })
-        .register_action(|_, _: &Zoom, window, cx| {
+        .register_action(|_, _: &Zoom, window, _| {
             window.zoom_window();
         })
-        .register_action(|_, _: &ToggleFullScreen, window, cx| {
+        .register_action(|_, _: &ToggleFullScreen, window, _| {
             window.toggle_fullscreen();
         })
-        .register_action(|_, action: &OpenZedUrl, window, cx| {
+        .register_action(|_, action: &OpenZedUrl, _, cx| {
             OpenListener::global(cx).open_urls(vec![action.url.clone()])
         })
-        .register_action(|_, action: &OpenBrowser, window, cx| cx.open_url(&action.url))
-        .register_action(
-            move |_, _: &zed_actions::IncreaseBufferFontSize, window, cx| {
-                theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
-            },
-        )
+        .register_action(|_, action: &OpenBrowser, _, cx| cx.open_url(&action.url))
+        .register_action(move |_, _: &zed_actions::IncreaseBufferFontSize, _, cx| {
+            theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
+        })
         .register_action(|workspace, _: &workspace::Open, window, cx| {
             workspace
                 .client()
@@ -460,41 +457,35 @@ fn register_actions(
             })
             .detach()
         })
-        .register_action(
-            move |_, _: &zed_actions::DecreaseBufferFontSize, window, cx| {
-                theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
-            },
-        )
-        .register_action(move |_, _: &zed_actions::ResetBufferFontSize, window, cx| {
+        .register_action(move |_, _: &zed_actions::DecreaseBufferFontSize, _, cx| {
+            theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
+        })
+        .register_action(move |_, _: &zed_actions::ResetBufferFontSize, _, cx| {
             theme::reset_buffer_font_size(cx)
         })
-        .register_action(move |_, _: &zed_actions::IncreaseUiFontSize, window, cx| {
+        .register_action(move |_, _: &zed_actions::IncreaseUiFontSize, _, cx| {
             theme::adjust_ui_font_size(cx, |size| *size += px(1.0))
         })
-        .register_action(move |_, _: &zed_actions::DecreaseUiFontSize, window, cx| {
+        .register_action(move |_, _: &zed_actions::DecreaseUiFontSize, _, cx| {
             theme::adjust_ui_font_size(cx, |size| *size -= px(1.0))
         })
-        .register_action(move |_, _: &zed_actions::ResetUiFontSize, window, cx| {
+        .register_action(move |_, _: &zed_actions::ResetUiFontSize, _, cx| {
             theme::reset_ui_font_size(cx)
         })
-        .register_action(
-            move |_, _: &zed_actions::IncreaseBufferFontSize, window, cx| {
-                theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
-            },
-        )
-        .register_action(
-            move |_, _: &zed_actions::DecreaseBufferFontSize, window, cx| {
-                theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
-            },
-        )
-        .register_action(move |_, _: &zed_actions::ResetBufferFontSize, window, cx| {
+        .register_action(move |_, _: &zed_actions::IncreaseBufferFontSize, _, cx| {
+            theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
+        })
+        .register_action(move |_, _: &zed_actions::DecreaseBufferFontSize, _, cx| {
+            theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
+        })
+        .register_action(move |_, _: &zed_actions::ResetBufferFontSize, _, cx| {
             theme::reset_buffer_font_size(cx)
         })
         .register_action(install_cli)
         .register_action(|_, _: &install_cli::RegisterZedScheme, window, cx| {
             cx.spawn_in(window, |workspace, mut cx| async move {
                 register_zed_scheme(&cx).await?;
-                workspace.update_in(&mut cx, |workspace, window, cx| {
+                workspace.update_in(&mut cx, |workspace, _, cx| {
                     struct RegisterZedScheme;
 
                     workspace.show_toast(
@@ -567,7 +558,7 @@ fn register_actions(
         .register_action(
             |_: &mut Workspace,
              _: &OpenAccountSettings,
-             window: &mut Window,
+             _: &mut Window,
              cx: &mut ModelContext<Workspace>| {
                 cx.open_url(&zed_urls::account_url(cx));
             },
@@ -669,7 +660,7 @@ fn register_actions(
         )
         .register_action({
             let app_state = Arc::downgrade(&app_state);
-            move |_, _: &NewWindow, window, cx| {
+            move |_, _: &NewWindow, _, cx| {
                 if let Some(app_state) = app_state.upgrade() {
                     open_new(
                         Default::default(),
@@ -685,7 +676,7 @@ fn register_actions(
         })
         .register_action({
             let app_state = Arc::downgrade(&app_state);
-            move |_, _: &NewFile, window, cx| {
+            move |_, _: &NewFile, _, cx| {
                 if let Some(app_state) = app_state.upgrade() {
                     open_new(
                         Default::default(),
@@ -740,26 +731,26 @@ fn initialize_pane(
 ) {
     pane.update(cx, |pane, cx| {
         pane.toolbar().update(cx, |toolbar, cx| {
-            let multibuffer_hint = cx.new_model(|cx| MultibufferHint::new());
+            let multibuffer_hint = cx.new_model(|_| MultibufferHint::new());
             toolbar.add_item(multibuffer_hint, window, cx);
-            let breadcrumbs = cx.new_model(|cx| Breadcrumbs::new());
+            let breadcrumbs = cx.new_model(|_| Breadcrumbs::new());
             toolbar.add_item(breadcrumbs, window, cx);
             let buffer_search_bar = cx.new_model(|cx| search::BufferSearchBar::new(window, cx));
             toolbar.add_item(buffer_search_bar.clone(), window, cx);
 
-            let proposed_change_bar = cx.new_model(|cx| ProposedChangesEditorToolbar::new());
+            let proposed_change_bar = cx.new_model(|_| ProposedChangesEditorToolbar::new());
             toolbar.add_item(proposed_change_bar, window, cx);
             let quick_action_bar =
-                cx.new_model(|cx| QuickActionBar::new(buffer_search_bar, workspace, window, cx));
+                cx.new_model(|cx| QuickActionBar::new(buffer_search_bar, workspace, cx));
             toolbar.add_item(quick_action_bar, window, cx);
-            let diagnostic_editor_controls = cx.new_model(|cx| diagnostics::ToolbarControls::new());
+            let diagnostic_editor_controls = cx.new_model(|_| diagnostics::ToolbarControls::new());
             toolbar.add_item(diagnostic_editor_controls, window, cx);
-            let project_search_bar = cx.new_model(|cx| ProjectSearchBar::new());
+            let project_search_bar = cx.new_model(|_| ProjectSearchBar::new());
             toolbar.add_item(project_search_bar, window, cx);
-            let lsp_log_item = cx.new_model(|cx| language_tools::LspLogToolbarItemView::new());
+            let lsp_log_item = cx.new_model(|_| language_tools::LspLogToolbarItemView::new());
             toolbar.add_item(lsp_log_item, window, cx);
             let syntax_tree_item =
-                cx.new_model(|cx| language_tools::SyntaxTreeToolbarItemView::new());
+                cx.new_model(|_| language_tools::SyntaxTreeToolbarItemView::new());
             toolbar.add_item(syntax_tree_item, window, cx);
         })
     });
@@ -811,7 +802,7 @@ fn install_cli(
             .await
             .context("error creating CLI symlink")?;
 
-        workspace.update_in(&mut cx, |workspace, window, cx| {
+        workspace.update_in(&mut cx, |workspace, _, cx| {
             struct InstalledZedCli;
 
             workspace.show_toast(
@@ -1184,7 +1175,7 @@ fn open_local_file(
         struct NoOpenFolders;
 
         workspace.show_notification(NotificationId::unique::<NoOpenFolders>(), cx, |cx| {
-            cx.new_model(|cx| MessageNotification::new("This project has no folders open."))
+            cx.new_model(|_| MessageNotification::new("This project has no folders open."))
         })
     }
 }
@@ -3153,7 +3144,7 @@ mod tests {
             cx: &mut TestAppContext,
         ) -> (ProjectPath, DisplayPoint, f32) {
             workspace
-                .update(cx, |workspace, window, cx| {
+                .update(cx, |workspace, _, cx| {
                     let item = workspace.active_item(cx).unwrap();
                     let editor = item.downcast::<Editor>().unwrap();
                     let (selections, scroll_position) = editor.update(cx, |editor, cx| {
@@ -3472,7 +3463,7 @@ mod tests {
             handle_keymap_file_changes(keymap_rx, cx, |_, _| {});
         });
         workspace
-            .update(cx, |workspace, window, cx| {
+            .update(cx, |workspace, _, cx| {
                 workspace.register_action(|_, _: &A, _window, _cx| {});
                 workspace.register_action(|_, _: &B, _window, _cx| {});
                 workspace.register_action(|_, _: &ActivatePreviousPane, _window, _cx| {});
@@ -3779,7 +3770,7 @@ mod tests {
             .unwrap();
         for (key, action) in actions {
             let bindings = cx
-                .update(|cx| window.update(cx, |_, window, cx| window.bindings_for_action(action)))
+                .update(|cx| window.update(cx, |_, window, _| window.bindings_for_action(action)))
                 .unwrap();
             // assert that...
             assert!(

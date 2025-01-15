@@ -127,7 +127,7 @@ impl TerminalInlineAssistant {
         if let Some(prompt_editor) = assist.prompt_editor.as_ref() {
             prompt_editor.update(cx, |this, cx| {
                 this.editor.update(cx, |editor, cx| {
-                    editor.focus(window, cx);
+                    window.focus(&editor.focus_handle(cx));
                     editor.select_all(&SelectAll, window, cx);
                 });
             });
@@ -144,10 +144,10 @@ impl TerminalInlineAssistant {
         let assist_id = prompt_editor.read(cx).id();
         match event {
             PromptEditorEvent::StartRequested => {
-                self.start_assist(assist_id, window, cx);
+                self.start_assist(assist_id, cx);
             }
             PromptEditorEvent::StopRequested => {
-                self.stop_assist(assist_id, window, cx);
+                self.stop_assist(assist_id, cx);
             }
             PromptEditorEvent::ConfirmRequested { execute } => {
                 self.finish_assist(assist_id, false, *execute, window, cx);
@@ -164,12 +164,7 @@ impl TerminalInlineAssistant {
         }
     }
 
-    fn start_assist(
-        &mut self,
-        assist_id: TerminalInlineAssistId,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) {
+    fn start_assist(&mut self, assist_id: TerminalInlineAssistId, cx: &mut AppContext) {
         let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
             assist
         } else {
@@ -200,22 +195,14 @@ impl TerminalInlineAssistant {
             .log_err();
 
         let codegen = assist.codegen.clone();
-        let Some(request) = self
-            .request_for_inline_assist(assist_id, window, cx)
-            .log_err()
-        else {
+        let Some(request) = self.request_for_inline_assist(assist_id, cx).log_err() else {
             return;
         };
 
         codegen.update(cx, |codegen, cx| codegen.start(request, cx));
     }
 
-    fn stop_assist(
-        &mut self,
-        assist_id: TerminalInlineAssistId,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) {
+    fn stop_assist(&mut self, assist_id: TerminalInlineAssistId, cx: &mut AppContext) {
         let assist = if let Some(assist) = self.assists.get_mut(&assist_id) {
             assist
         } else {
@@ -228,7 +215,6 @@ impl TerminalInlineAssistant {
     fn request_for_inline_assist(
         &self,
         assist_id: TerminalInlineAssistId,
-        window: &mut Window,
         cx: &mut AppContext,
     ) -> Result<LanguageModelRequest> {
         let assist = self.assists.get(&assist_id).context("invalid assist")?;
@@ -294,7 +280,7 @@ impl TerminalInlineAssistant {
             assist
                 .terminal
                 .update(cx, |this, cx| {
-                    this.clear_block_below_cursor(window, cx);
+                    this.clear_block_below_cursor(cx);
                     this.focus_handle(cx).focus(window);
                 })
                 .log_err();
@@ -351,7 +337,7 @@ impl TerminalInlineAssistant {
         assist
             .terminal
             .update(cx, |this, cx| {
-                this.clear_block_below_cursor(window, cx);
+                this.clear_block_below_cursor(cx);
                 this.focus_handle(cx).focus(window);
             })
             .is_ok()
@@ -369,7 +355,7 @@ impl TerminalInlineAssistant {
                 assist
                     .terminal
                     .update(cx, |terminal, cx| {
-                        terminal.clear_block_below_cursor(window, cx);
+                        terminal.clear_block_below_cursor(cx);
                         let block = terminal_view::BlockProperties {
                             height,
                             render: Box::new(move |_| prompt_editor.clone().into_any_element()),

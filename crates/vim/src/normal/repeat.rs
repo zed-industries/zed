@@ -45,17 +45,17 @@ fn repeatable_insert(action: &ReplayableAction) -> Option<Box<dyn Action>> {
     }
 }
 
-pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
-    Vim::action(editor, window, cx, |vim, _: &EndRepeat, window, cx| {
+pub(crate) fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+    Vim::action(editor, cx, |vim, _: &EndRepeat, window, cx| {
         Vim::globals(cx).dot_replaying = false;
         vim.switch_mode(Mode::Normal, false, window, cx)
     });
 
-    Vim::action(editor, window, cx, |vim, _: &Repeat, window, cx| {
+    Vim::action(editor, cx, |vim, _: &Repeat, window, cx| {
         vim.repeat(false, window, cx)
     });
 
-    Vim::action(editor, window, cx, |vim, _: &ToggleRecord, window, cx| {
+    Vim::action(editor, cx, |vim, _: &ToggleRecord, window, cx| {
         let globals = Vim::globals(cx);
         if let Some(char) = globals.recording_register.take() {
             globals.last_recorded_register = Some(char)
@@ -64,17 +64,12 @@ pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelC
         }
     });
 
-    Vim::action(
-        editor,
-        window,
-        cx,
-        |vim, _: &ReplayLastRecording, window, cx| {
-            let Some(register) = Vim::globals(cx).last_recorded_register else {
-                return;
-            };
-            vim.replay_register(register, window, cx)
-        },
-    );
+    Vim::action(editor, cx, |vim, _: &ReplayLastRecording, window, cx| {
+        let Some(register) = Vim::globals(cx).last_recorded_register else {
+            return;
+        };
+        vim.replay_register(register, window, cx)
+    });
 }
 
 pub struct ReplayerState {
@@ -134,9 +129,7 @@ impl Replayer {
             ReplayableAction::Action(action) => {
                 if should_replay(&*action) {
                     window.dispatch_action(action.boxed_clone(), cx);
-                    window.defer(cx, move |window, cx| {
-                        Vim::globals(cx).observe_action(action.boxed_clone())
-                    });
+                    cx.defer(move |cx| Vim::globals(cx).observe_action(action.boxed_clone()));
                 }
             }
             ReplayableAction::Insertion {

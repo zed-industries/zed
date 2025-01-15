@@ -152,7 +152,7 @@ impl TerminalOutput {
     /// A new instance of `TerminalOutput` containing the provided text.
     pub fn from(text: &str, window: &mut Window, cx: &mut AppContext) -> Self {
         let mut output = Self::new(window, cx);
-        output.append_text(text, window, cx);
+        output.append_text(text, cx);
         output
     }
 
@@ -182,7 +182,7 @@ impl TerminalOutput {
     /// # Arguments
     ///
     /// * `text` - A string slice containing the text to be appended.
-    pub fn append_text(&mut self, text: &str, window: &mut Window, cx: &mut AppContext) {
+    pub fn append_text(&mut self, text: &str, cx: &mut AppContext) {
         for byte in text.as_bytes() {
             if *byte == b'\n' {
                 // Dirty (?) hack to move the cursor down
@@ -288,7 +288,6 @@ impl Render for TerminalOutput {
                             size: bounds.size,
                         },
                         window,
-                        cx,
                     );
                 }
 
@@ -325,11 +324,7 @@ impl OutputContent for TerminalOutput {
         true
     }
 
-    fn buffer_content(
-        &mut self,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Option<Model<Buffer>> {
+    fn buffer_content(&mut self, _: &mut Window, cx: &mut AppContext) -> Option<Model<Buffer>> {
         if self.full_buffer.as_ref().is_some() {
             return self.full_buffer.clone();
         }

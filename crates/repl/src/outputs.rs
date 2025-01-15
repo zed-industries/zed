@@ -156,7 +156,7 @@ impl Output {
                     el.child(
                         IconButton::new(ElementId::Name("copy-output".into()), IconName::Copy)
                             .style(ButtonStyle::Transparent)
-                            .tooltip(move |window, cx| Tooltip::text("Copy Output", window, cx))
+                            .tooltip(Tooltip::text("Copy Output"))
                             .on_click(cx.listener(move |_, _, window, cx| {
                                 let clipboard_content = v.clipboard_content(window, cx);
 
@@ -174,7 +174,7 @@ impl Output {
                             IconName::FileText,
                         )
                         .style(ButtonStyle::Transparent)
-                        .tooltip(move |window, cx| Tooltip::text("Open in Buffer", window, cx))
+                        .tooltip(Tooltip::text("Open in Buffer"))
                         .on_click(cx.listener({
                             let workspace = workspace.clone();
 
@@ -291,7 +291,7 @@ impl Output {
                 display_id,
             },
             Some(MimeType::Markdown(text)) => {
-                let view = cx.new_model(|cx| MarkdownView::from(text.clone(), window, cx));
+                let view = cx.new_model(|cx| MarkdownView::from(text.clone(), cx));
                 Output::Markdown {
                     content: view,
                     display_id,
@@ -342,7 +342,6 @@ impl ExecutionView {
     pub fn new(
         status: ExecutionStatus,
         workspace: WeakModel<Workspace>,
-        _window: &mut Window,
         _cx: &mut ModelContext<Self>,
     ) -> Self {
         Self {
@@ -474,7 +473,7 @@ impl ExecutionView {
                 // Don't need to add a new output, we already have a terminal output
                 // and can just update the most recent terminal output
                 last_stream.update(cx, |last_stream, cx| {
-                    last_stream.append_text(text, window, cx);
+                    last_stream.append_text(text, cx);
                     cx.notify();
                 });
                 return None;

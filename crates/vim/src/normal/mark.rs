@@ -6,7 +6,7 @@ use editor::{
     scroll::Autoscroll,
     Anchor, Bias, DisplayPoint,
 };
-use gpui::{AppContext, Model, ModelContext, Window};
+use gpui::{ModelContext, Window};
 use language::SelectionGoal;
 
 use crate::{
@@ -55,7 +55,7 @@ impl Vim {
         let mut ends = vec![];
         let mut reversed = vec![];
 
-        self.update_editor(window, cx, |_, editor, window, cx| {
+        self.update_editor(window, cx, |_, editor, _, cx| {
             let (map, selections) = editor.selections.all_display(cx);
             for selection in selections {
                 let end = movement::saturating_left(&map, selection.end);
@@ -86,7 +86,7 @@ impl Vim {
         self.pop_operator(window, cx);
 
         let anchors = match &*text {
-            "{" | "}" => self.update_editor(window, cx, |_, editor, window, cx| {
+            "{" | "}" => self.update_editor(window, cx, |_, editor, _, cx| {
                 let (map, selections) = editor.selections.all_display(cx);
                 selections
                     .into_iter()

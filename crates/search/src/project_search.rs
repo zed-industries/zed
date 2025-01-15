@@ -69,18 +69,15 @@ pub fn init(cx: &mut AppContext) {
         );
         register_workspace_action(
             workspace,
-            move |search_bar, _: &ToggleCaseSensitive, window, cx| {
-                search_bar.toggle_search_option(SearchOptions::CASE_SENSITIVE, window, cx);
+            move |search_bar, _: &ToggleCaseSensitive, _, cx| {
+                search_bar.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
             },
         );
-        register_workspace_action(
-            workspace,
-            move |search_bar, _: &ToggleWholeWord, window, cx| {
-                search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, window, cx);
-            },
-        );
-        register_workspace_action(workspace, move |search_bar, _: &ToggleRegex, window, cx| {
-            search_bar.toggle_search_option(SearchOptions::REGEX, window, cx);
+        register_workspace_action(workspace, move |search_bar, _: &ToggleWholeWord, _, cx| {
+            search_bar.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
+        });
+        register_workspace_action(workspace, move |search_bar, _: &ToggleRegex, _, cx| {
+            search_bar.toggle_search_option(SearchOptions::REGEX, cx);
         });
         register_workspace_action(
             workspace,
@@ -366,7 +363,7 @@ impl Render for ProjectSearchView {
                     None
                 }
             } else {
-                Some(self.landing_text_minor(window, cx).into_any_element())
+                Some(self.landing_text_minor(window).into_any_element())
             };
 
             let page_content = page_content.map(|text| div().child(text));
@@ -433,7 +430,7 @@ impl Item for ProjectSearchView {
         Some(Icon::new(IconName::MagnifyingGlass))
     }
 
-    fn tab_content_text(&self, window: &Window, cx: &AppContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _: &Window, cx: &AppContext) -> Option<SharedString> {
         let last_query: Option<SharedString> = self
             .model
             .read(cx)
@@ -537,7 +534,7 @@ impl Item for ProjectSearchView {
     fn set_nav_history(
         &mut self,
         nav_history: ItemNavHistory,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.results_editor.update(cx, |editor, _| {
@@ -587,7 +584,7 @@ impl ProjectSearchView {
         self.model.read(cx).match_ranges.clone()
     }
 
-    fn toggle_filters(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn toggle_filters(&mut self, cx: &mut ModelContext<Self>) {
         self.filters_enabled = !self.filters_enabled;
         ActiveSettings::update_global(cx, |settings, cx| {
             settings.0.insert(
@@ -604,12 +601,7 @@ impl ProjectSearchView {
         }
     }
 
-    fn toggle_search_option(
-        &mut self,
-        option: SearchOptions,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn toggle_search_option(&mut self, option: SearchOptions, cx: &mut ModelContext<Self>) {
         self.search_options.toggle(option);
         ActiveSettings::update_global(cx, |settings, cx| {
             settings.0.insert(
@@ -715,10 +707,8 @@ impl ProjectSearchView {
             editor
         });
         // Subscribe to query_editor in order to reraise editor events for workspace item activation purposes
-        subscriptions.push(cx.subscribe_in(
-            &query_editor,
-            window,
-            |this, _, event: &EditorEvent, window, cx| {
+        subscriptions.push(
+            cx.subscribe(&query_editor, |this, _, event: &EditorEvent, cx| {
                 if let EditorEvent::Edited { .. } = event {
                     if EditorSettings::get_global(cx).use_smartcase_search {
                         let query = this.search_query_text(cx);
@@ -726,13 +716,13 @@ impl ProjectSearchView {
                             && this.search_options.contains(SearchOptions::CASE_SENSITIVE)
                                 != is_contains_uppercase(&query)
                         {
-                            this.toggle_search_option(SearchOptions::CASE_SENSITIVE, window, cx);
+                            this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
                         }
                     }
                 }
                 cx.emit(ViewEvent::EditorEvent(event.clone()))
-            },
-        ));
+            }),
+        );
         let replacement_editor = cx.new_model(|cx| {
             let mut editor = Editor::single_line(window, cx);
             editor.set_placeholder_text("Replace in project…", cx);
@@ -747,21 +737,17 @@ impl ProjectSearchView {
             editor.set_searchable(false);
             editor
         });
-        subscriptions.push(cx.observe_in(&results_editor, window, |_, _, window, cx| {
-            cx.emit(ViewEvent::UpdateTab)
-        }));
+        subscriptions.push(cx.observe(&results_editor, |_, _, cx| cx.emit(ViewEvent::UpdateTab)));
 
-        subscriptions.push(cx.subscribe_in(
-            &results_editor,
-            window,
-            |this, _, event: &EditorEvent, window, cx| {
+        subscriptions.push(
+            cx.subscribe(&results_editor, |this, _, event: &EditorEvent, cx| {
                 if matches!(event, editor::EditorEvent::SelectionsChanged { .. }) {
-                    this.update_match_index(window, cx);
+                    this.update_match_index(cx);
                 }
                 // Reraise editor events for workspace item activation purposes
                 cx.emit(ViewEvent::EditorEvent(event.clone()));
-            },
-        ));
+            }),
+        );
 
         let included_files_editor = cx.new_model(|cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -770,11 +756,11 @@ impl ProjectSearchView {
             editor
         });
         // Subscribe to include_files_editor in order to reraise editor events for workspace item activation purposes
-        subscriptions.push(cx.subscribe_in(
-            &included_files_editor,
-            window,
-            |_, _, event: &EditorEvent, window, cx| cx.emit(ViewEvent::EditorEvent(event.clone())),
-        ));
+        subscriptions.push(
+            cx.subscribe(&included_files_editor, |_, _, event: &EditorEvent, cx| {
+                cx.emit(ViewEvent::EditorEvent(event.clone()))
+            }),
+        );
 
         let excluded_files_editor = cx.new_model(|cx| {
             let mut editor = Editor::single_line(window, cx);
@@ -783,11 +769,11 @@ impl ProjectSearchView {
             editor
         });
         // Subscribe to excluded_files_editor in order to reraise editor events for workspace item activation purposes
-        subscriptions.push(cx.subscribe_in(
-            &excluded_files_editor,
-            window,
-            |_, _, event: &EditorEvent, window, cx| cx.emit(ViewEvent::EditorEvent(event.clone())),
-        ));
+        subscriptions.push(
+            cx.subscribe(&excluded_files_editor, |_, _, event: &EditorEvent, cx| {
+                cx.emit(ViewEvent::EditorEvent(event.clone()))
+            }),
+        );
 
         let focus_handle = cx.focus_handle();
         subscriptions.push(cx.on_focus_in(&focus_handle, window, |this, window, cx| {
@@ -876,7 +862,7 @@ impl ProjectSearchView {
             .and_then(|item| item.downcast::<ProjectSearchView>())
         {
             let new_query = search_view.update(cx, |search_view, cx| {
-                let new_query = search_view.build_search_query(window, cx);
+                let new_query = search_view.build_search_query(cx);
                 if new_query.is_some() {
                     if let Some(old_query) = search_view.model.read(cx).active_query.clone() {
                         search_view.query_editor.update(cx, |editor, cx| {
@@ -925,9 +911,7 @@ impl ProjectSearchView {
         cx: &mut ModelContext<Workspace>,
     ) {
         let query = workspace.active_item(cx).and_then(|item| {
-            if let Some(buffer_search_query) =
-                buffer_search_query(workspace, item.as_ref(), window, cx)
-            {
+            if let Some(buffer_search_query) = buffer_search_query(workspace, item.as_ref(), cx) {
                 return Some(buffer_search_query);
             }
 
@@ -971,8 +955,8 @@ impl ProjectSearchView {
         });
     }
 
-    fn search(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        if let Some(query) = self.build_search_query(window, cx) {
+    fn search(&mut self, cx: &mut ModelContext<Self>) {
+        if let Some(query) = self.build_search_query(cx) {
             self.model.update(cx, |model, cx| model.search(query, cx));
         }
     }
@@ -981,15 +965,11 @@ impl ProjectSearchView {
         self.query_editor.read(cx).text(cx)
     }
 
-    fn build_search_query(
-        &mut self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<SearchQuery> {
+    fn build_search_query(&mut self, cx: &mut ModelContext<Self>) -> Option<SearchQuery> {
         // Do not bail early in this function, as we want to fill out `self.panels_with_errors`.
         let text = self.query_editor.read(cx).text(cx);
         let open_buffers = if self.included_opened_only {
-            Some(self.open_buffers(window, cx))
+            Some(self.open_buffers(cx))
         } else {
             None
         };
@@ -1093,7 +1073,7 @@ impl ProjectSearchView {
         query
     }
 
-    fn open_buffers(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Vec<Model<Buffer>> {
+    fn open_buffers(&self, cx: &mut ModelContext<Self>) -> Vec<Model<Buffer>> {
         let mut buffers = Vec::new();
         self.workspace
             .update(cx, |workspace, cx| {
@@ -1164,7 +1144,7 @@ impl ProjectSearchView {
             && self.search_options.contains(SearchOptions::CASE_SENSITIVE)
                 != is_contains_uppercase(query)
         {
-            self.toggle_search_option(SearchOptions::CASE_SENSITIVE, window, cx)
+            self.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx)
         }
     }
 
@@ -1201,7 +1181,7 @@ impl ProjectSearchView {
             self.active_match_index = None;
         } else {
             self.active_match_index = Some(0);
-            self.update_match_index(window, cx);
+            self.update_match_index(cx);
             let prev_search_id = mem::replace(&mut self.search_id, self.model.read(cx).search_id);
             let is_new_search = self.search_id != prev_search_id;
             self.results_editor.update(cx, |editor, cx| {
@@ -1229,7 +1209,7 @@ impl ProjectSearchView {
         cx.notify();
     }
 
-    fn update_match_index(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn update_match_index(&mut self, cx: &mut ModelContext<Self>) {
         let results_editor = self.results_editor.read(cx);
         let new_index = active_match_index(
             &self.model.read(cx).match_ranges,
@@ -1246,11 +1226,7 @@ impl ProjectSearchView {
         self.active_match_index.is_some()
     }
 
-    fn landing_text_minor(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> impl IntoElement {
+    fn landing_text_minor(&self, window: &mut Window) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
         v_flex()
             .gap_1()
@@ -1268,7 +1244,6 @@ impl ProjectSearchView {
                         &ToggleFilters,
                         &focus_handle,
                         window,
-                        cx,
                     ))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleFilters.boxed_clone(), cx)
@@ -1283,7 +1258,6 @@ impl ProjectSearchView {
                         &ToggleReplace,
                         &focus_handle,
                         window,
-                        cx,
                     ))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleReplace.boxed_clone(), cx)
@@ -1298,7 +1272,6 @@ impl ProjectSearchView {
                         &ToggleRegex,
                         &focus_handle,
                         window,
-                        cx,
                     ))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleRegex.boxed_clone(), cx)
@@ -1313,7 +1286,6 @@ impl ProjectSearchView {
                         &ToggleCaseSensitive,
                         &focus_handle,
                         window,
-                        cx,
                     ))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleCaseSensitive.boxed_clone(), cx)
@@ -1328,7 +1300,6 @@ impl ProjectSearchView {
                         &ToggleWholeWord,
                         &focus_handle,
                         window,
-                        cx,
                     ))
                     .on_click(|_event, window, cx| {
                         window.dispatch_action(ToggleWholeWord.boxed_clone(), cx)
@@ -1362,7 +1333,6 @@ impl ProjectSearchView {
 fn buffer_search_query(
     workspace: &mut Workspace,
     item: &dyn ItemHandle,
-    window: &mut Window,
     cx: &mut ModelContext<Workspace>,
 ) -> Option<String> {
     let buffer_search_bar = workspace
@@ -1406,7 +1376,7 @@ impl ProjectSearchBar {
                     .is_focused(window)
                 {
                     cx.stop_propagation();
-                    search_view.search(window, cx);
+                    search_view.search(cx);
                 }
             });
         }
@@ -1478,17 +1448,12 @@ impl ProjectSearchBar {
         });
     }
 
-    fn toggle_search_option(
-        &mut self,
-        option: SearchOptions,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> bool {
+    fn toggle_search_option(&mut self, option: SearchOptions, cx: &mut ModelContext<Self>) -> bool {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                search_view.toggle_search_option(option, window, cx);
+                search_view.toggle_search_option(option, cx);
                 if search_view.model.read(cx).active_query.is_some() {
-                    search_view.search(window, cx);
+                    search_view.search(cx);
                 }
             });
 
@@ -1522,7 +1487,7 @@ impl ProjectSearchBar {
     fn toggle_filters(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> bool {
         if let Some(search_view) = self.active_project_search.as_ref() {
             search_view.update(cx, |search_view, cx| {
-                search_view.toggle_filters(window, cx);
+                search_view.toggle_filters(cx);
                 search_view
                     .included_files_editor
                     .update(cx, |_, cx| cx.notify());
@@ -1544,7 +1509,7 @@ impl ProjectSearchBar {
             search_view.update(cx, |search_view, cx| {
                 search_view.toggle_opened_only(window, cx);
                 if search_view.model.read(cx).active_query.is_some() {
-                    search_view.search(window, cx);
+                    search_view.search(cx);
                 }
             });
 
@@ -1744,7 +1709,7 @@ impl Render for ProjectSearchBar {
         let container_width = window.viewport_size().width;
         let input_width = SearchInputWidth::calc_width(container_width);
 
-        let mut input_base_styles = || {
+        let input_base_styles = || {
             h_flex()
                 .min_w_32()
                 .w(input_width)
@@ -1771,22 +1736,22 @@ impl Render for ProjectSearchBar {
                     .child(SearchOptions::CASE_SENSITIVE.as_button(
                         self.is_option_enabled(SearchOptions::CASE_SENSITIVE, cx),
                         focus_handle.clone(),
-                        cx.listener(|this, _, window, cx| {
-                            this.toggle_search_option(SearchOptions::CASE_SENSITIVE, window, cx);
+                        cx.listener(|this, _, _, cx| {
+                            this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
                         }),
                     ))
                     .child(SearchOptions::WHOLE_WORD.as_button(
                         self.is_option_enabled(SearchOptions::WHOLE_WORD, cx),
                         focus_handle.clone(),
-                        cx.listener(|this, _, window, cx| {
-                            this.toggle_search_option(SearchOptions::WHOLE_WORD, window, cx);
+                        cx.listener(|this, _, _, cx| {
+                            this.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
                         }),
                     ))
                     .child(SearchOptions::REGEX.as_button(
                         self.is_option_enabled(SearchOptions::REGEX, cx),
                         focus_handle.clone(),
-                        cx.listener(|this, _, window, cx| {
-                            this.toggle_search_option(SearchOptions::REGEX, window, cx);
+                        cx.listener(|this, _, _, cx| {
+                            this.toggle_search_option(SearchOptions::REGEX, cx);
                         }),
                     )),
             );
@@ -1932,13 +1897,9 @@ impl Render for ProjectSearchBar {
                         },
                     ))
                     .when(limit_reached, |el| {
-                        el.tooltip(|window, cx| {
-                            Tooltip::text(
-                                "Search limits reached.\nTry narrowing your search.",
-                                window,
-                                cx,
-                            )
-                        })
+                        el.tooltip(Tooltip::text(
+                            "Search limits reached.\nTry narrowing your search.",
+                        ))
                     }),
             );
 
@@ -2046,9 +2007,7 @@ impl Render for ProjectSearchBar {
                             IconButton::new("project-search-opened-only", IconName::FileSearch)
                                 .shape(IconButtonShape::Square)
                                 .toggle_state(self.is_opened_only_enabled(cx))
-                                .tooltip(|window, cx| {
-                                    Tooltip::text("Only Search Open Files", window, cx)
-                                })
+                                .tooltip(Tooltip::text("Only Search Open Files"))
                                 .on_click(cx.listener(|this, _, window, cx| {
                                     this.toggle_opened_only(window, cx);
                                 })),
@@ -2059,12 +2018,8 @@ impl Render for ProjectSearchBar {
                                     .search_options
                                     .contains(SearchOptions::INCLUDE_IGNORED),
                                 focus_handle.clone(),
-                                cx.listener(|this, _, window, cx| {
-                                    this.toggle_search_option(
-                                        SearchOptions::INCLUDE_IGNORED,
-                                        window,
-                                        cx,
-                                    );
+                                cx.listener(|this, _, _, cx| {
+                                    this.toggle_search_option(SearchOptions::INCLUDE_IGNORED, cx);
                                 }),
                             ),
                         ),
@@ -2103,11 +2058,11 @@ impl Render for ProjectSearchBar {
             .on_action(cx.listener(|this, action, window, cx| {
                 this.toggle_replace(action, window, cx);
             }))
-            .on_action(cx.listener(|this, _: &ToggleWholeWord, window, cx| {
-                this.toggle_search_option(SearchOptions::WHOLE_WORD, window, cx);
+            .on_action(cx.listener(|this, _: &ToggleWholeWord, _, cx| {
+                this.toggle_search_option(SearchOptions::WHOLE_WORD, cx);
             }))
-            .on_action(cx.listener(|this, _: &ToggleCaseSensitive, window, cx| {
-                this.toggle_search_option(SearchOptions::CASE_SENSITIVE, window, cx);
+            .on_action(cx.listener(|this, _: &ToggleCaseSensitive, _, cx| {
+                this.toggle_search_option(SearchOptions::CASE_SENSITIVE, cx);
             }))
             .on_action(cx.listener(|this, action, window, cx| {
                 if let Some(search) = this.active_project_search.as_ref() {
@@ -2124,8 +2079,8 @@ impl Render for ProjectSearchBar {
                 }
             }))
             .when(search.filters_enabled, |this| {
-                this.on_action(cx.listener(|this, _: &ToggleIncludeIgnored, window, cx| {
-                    this.toggle_search_option(SearchOptions::INCLUDE_IGNORED, window, cx);
+                this.on_action(cx.listener(|this, _: &ToggleIncludeIgnored, _, cx| {
+                    this.toggle_search_option(SearchOptions::INCLUDE_IGNORED, cx);
                 }))
             })
             .on_action(cx.listener(Self::select_next_match))
@@ -2144,15 +2099,14 @@ impl ToolbarItemView for ProjectSearchBar {
     fn set_active_pane_item(
         &mut self,
         active_pane_item: Option<&dyn ItemHandle>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> ToolbarItemLocation {
         cx.notify();
         self.subscription = None;
         self.active_project_search = None;
         if let Some(search) = active_pane_item.and_then(|i| i.downcast::<ProjectSearchView>()) {
-            self.subscription =
-                Some(cx.observe_in(&search, window, |_, _, window, cx| cx.notify()));
+            self.subscription = Some(cx.observe(&search, |_, _, cx| cx.notify()));
             self.active_project_search = Some(search);
             ToolbarItemLocation::PrimaryLeft {}
         } else {
@@ -2226,7 +2180,7 @@ pub fn perform_project_search(
         search_view.query_editor.update(cx, |query_editor, cx| {
             query_editor.set_text(text, window, cx)
         });
-        search_view.search(window, cx);
+        search_view.search(cx);
     });
     cx.run_until_parked();
 }
@@ -2358,7 +2312,7 @@ pub mod tests {
             .unwrap();
 
         search_view
-            .update(cx, |search_view, window, cx| {
+            .update(cx, |search_view, _, cx| {
                 assert_eq!(search_view.active_match_index, Some(1));
                 assert_eq!(
                     search_view
@@ -2482,7 +2436,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("sOMETHINGtHATsURELYdOESnOTeXIST", window, cx)
                     });
-                    search_view.search(window, cx);
+                    search_view.search(cx);
                 });
             })
             .unwrap();
@@ -2526,7 +2480,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("TWO", window, cx)
                     });
-                    search_view.search(window, cx);
+                    search_view.search(cx);
                 });
             })
             .unwrap();
@@ -2717,7 +2671,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("sOMETHINGtHATsURELYdOESnOTeXIST", window, cx)
                     });
-                    search_view.search(window, cx);
+                    search_view.search(cx);
                 });
             })
             .unwrap();
@@ -2762,7 +2716,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("TWO", window, cx)
                     });
-                    search_view.search(window, cx);
+                    search_view.search(cx);
                 })
             })
             .unwrap();
@@ -2865,7 +2819,7 @@ pub mod tests {
                     search_view_2.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("FOUR", window, cx)
                     });
-                    search_view_2.search(window, cx);
+                    search_view_2.search(cx);
                 });
             })
             .unwrap();
@@ -3010,13 +2964,13 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("const", window, cx)
                     });
-                    search_view.search(window, cx);
+                    search_view.search(cx);
                 });
             })
             .unwrap();
         cx.background_executor.run_until_parked();
         window
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
                     assert_eq!(
                 search_view
@@ -3083,7 +3037,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("ONE", window, cx)
                     });
-                    search_view.search(window, cx);
+                    search_view.search(cx);
                 });
             })
             .unwrap();
@@ -3095,7 +3049,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("TWO", window, cx)
                     });
-                    search_view.search(window, cx);
+                    search_view.search(cx);
                 });
             })
             .unwrap();
@@ -3106,7 +3060,7 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("THREE", window, cx)
                     });
-                    search_view.search(window, cx);
+                    search_view.search(cx);
                 })
             })
             .unwrap();
@@ -3124,7 +3078,7 @@ pub mod tests {
 
         // Ensure that the latest input with search settings is active.
         window
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
                     assert_eq!(
                         search_view.query_editor.read(cx).text(cx),
@@ -3145,7 +3099,7 @@ pub mod tests {
             })
             .unwrap();
         window
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
                     assert_eq!(search_view.query_editor.read(cx).text(cx), "");
                     assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
@@ -3161,7 +3115,7 @@ pub mod tests {
             })
             .unwrap();
         window
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
                     assert_eq!(search_view.query_editor.read(cx).text(cx), "");
                     assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
@@ -3179,7 +3133,7 @@ pub mod tests {
             })
             .unwrap();
         window
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
                     assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
                     assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
@@ -3197,7 +3151,7 @@ pub mod tests {
             })
             .unwrap();
         window
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
                     assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
                     assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
@@ -3215,7 +3169,7 @@ pub mod tests {
             })
             .unwrap();
         window
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
                     assert_eq!(search_view.query_editor.read(cx).text(cx), "ONE");
                     assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
@@ -3231,7 +3185,7 @@ pub mod tests {
             })
             .unwrap();
         window
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
                     assert_eq!(search_view.query_editor.read(cx).text(cx), "ONE");
                     assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
@@ -3249,7 +3203,7 @@ pub mod tests {
             })
             .unwrap();
         window
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
                     assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
                     assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
@@ -3263,13 +3217,13 @@ pub mod tests {
                     search_view.query_editor.update(cx, |query_editor, cx| {
                         query_editor.set_text("TWO_NEW", window, cx)
                     });
-                    search_view.search(window, cx);
+                    search_view.search(cx);
                 });
             })
             .unwrap();
         cx.background_executor.run_until_parked();
         window
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
                     assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO_NEW");
                     assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
@@ -3287,7 +3241,7 @@ pub mod tests {
             })
             .unwrap();
         window
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
                     assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
                     assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
@@ -3303,7 +3257,7 @@ pub mod tests {
             })
             .unwrap();
         window
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
                     assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO");
                     assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
@@ -3319,7 +3273,7 @@ pub mod tests {
             })
             .unwrap();
         window
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
                     assert_eq!(search_view.query_editor.read(cx).text(cx), "THREE");
                     assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
@@ -3335,7 +3289,7 @@ pub mod tests {
             })
             .unwrap();
         window
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
                     assert_eq!(search_view.query_editor.read(cx).text(cx), "TWO_NEW");
                     assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
@@ -3351,7 +3305,7 @@ pub mod tests {
             })
             .unwrap();
         window
-            .update(cx, |_, window, cx| {
+            .update(cx, |_, _, cx| {
                 search_view.update(cx, |search_view, cx| {
                     assert_eq!(search_view.query_editor.read(cx).text(cx), "");
                     assert_eq!(search_view.search_options, SearchOptions::CASE_SENSITIVE);
@@ -3480,7 +3434,7 @@ pub mod tests {
                             search_view.query_editor.update(cx, |query_editor, cx| {
                                 query_editor.set_text(query, window, cx)
                             });
-                            search_view.search(window, cx);
+                            search_view.search(cx);
                         });
                     })
                     .unwrap();
@@ -3489,7 +3443,7 @@ pub mod tests {
         let active_query =
             |search_view: &Model<ProjectSearchView>, cx: &mut TestAppContext| -> String {
                 window
-                    .update(cx, |_, window, cx| {
+                    .update(cx, |_, _, cx| {
                         search_view.update(cx, |search_view, cx| {
                             search_view.query_editor.read(cx).text(cx).to_string()
                         })
@@ -3686,7 +3640,7 @@ pub mod tests {
             })
             .unwrap();
         window
-            .update(cx, |workspace, window, cx| {
+            .update(cx, |workspace, _, cx| {
                 assert_eq!(workspace.active_pane(), &first_pane);
                 assert_eq!(first_pane.read(cx).items_len(), 1);
                 assert_eq!(second_pane.read(cx).items_len(), 2);
@@ -3724,7 +3678,7 @@ pub mod tests {
         // The project search view should now be focused in the second pane
         // And the number of items should be unchanged.
         window
-            .update(cx, |_workspace, window, cx| {
+            .update(cx, |_workspace, _, cx| {
                 second_pane.update(cx, |pane, _cx| {
                     assert!(pane
                         .active_item()
@@ -3804,7 +3758,7 @@ pub mod tests {
         // Second search
         perform_search(search_view, "B", cx);
         search_view
-            .update(cx, |search_view, window, cx| {
+            .update(cx, |search_view, _, cx| {
                 search_view.results_editor.update(cx, |results_editor, cx| {
                     // Results are correct...
                     assert_eq!(
@@ -3884,7 +3838,7 @@ pub mod tests {
                     .and_then(|item| item.downcast::<ProjectSearchView>())
             })
             .expect("should open a project search view after spawning a new search");
-        project_search_view.update_in(&mut cx, |search_view, window, cx| {
+        project_search_view.update(&mut cx, |search_view, cx| {
             assert_eq!(
                 search_view.search_query_text(cx),
                 buffer_search_query,
@@ -3919,7 +3873,7 @@ pub mod tests {
                 search_view.query_editor.update(cx, |query_editor, cx| {
                     query_editor.set_text(text, window, cx)
                 });
-                search_view.search(window, cx);
+                search_view.search(cx);
             })
             .unwrap();
         cx.background_executor.run_until_parked();

@@ -130,13 +130,7 @@ impl LayoutRect {
         }
     }
 
-    pub fn paint(
-        &self,
-        origin: Point<Pixels>,
-        dimensions: &TerminalSize,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) {
+    pub fn paint(&self, origin: Point<Pixels>, dimensions: &TerminalSize, window: &mut Window) {
         let position = {
             let alac_point = self.point;
             point(
@@ -439,7 +433,6 @@ impl TerminalElement {
         mode: TermMode,
         hitbox: &Hitbox,
         window: &mut Window,
-        cx: &mut AppContext,
     ) {
         let focus = self.focus.clone();
         let terminal = self.terminal.clone();
@@ -511,10 +504,10 @@ impl TerminalElement {
         );
         self.interactivity.on_scroll_wheel({
             let terminal_view = self.terminal_view.downgrade();
-            move |e, window, cx| {
+            move |e, _, cx| {
                 terminal_view
                     .update(cx, |terminal_view, cx| {
-                        terminal_view.scroll_wheel(e, origin, window, cx);
+                        terminal_view.scroll_wheel(e, origin, cx);
                         cx.notify();
                     })
                     .ok();
@@ -560,7 +553,7 @@ impl TerminalElement {
         }
     }
 
-    fn rem_size(&self, window: &mut Window, cx: &mut AppContext) -> Option<Pixels> {
+    fn rem_size(&self, cx: &mut AppContext) -> Option<Pixels> {
         let settings = ThemeSettings::get_global(cx).clone();
         let buffer_font_size = settings.buffer_font_size(cx);
         let rem_size_scale = {
@@ -615,7 +608,7 @@ impl Element for TerminalElement {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Self::PrepaintState {
-        let rem_size = self.rem_size(window, cx);
+        let rem_size = self.rem_size(cx);
         self.interactivity.prepaint(
             global_id,
             bounds,
@@ -740,9 +733,7 @@ impl Element for TerminalElement {
                     let mut element = div()
                         .size_full()
                         .id("terminal-element")
-                        .tooltip(move |window, cx| {
-                            Tooltip::text(hovered_word.word.clone(), window, cx)
-                        })
+                        .tooltip(Tooltip::text(hovered_word.word.clone()))
                         .into_any_element();
                     element.prepaint_as_root(offset, bounds.size.into(), window, cx);
                     element
@@ -910,7 +901,7 @@ impl Element for TerminalElement {
                 workspace: self.workspace.clone(),
             };
 
-            self.register_mouse_listeners(origin, layout.mode, &layout.hitbox, window, cx);
+            self.register_mouse_listeners(origin, layout.mode, &layout.hitbox, window);
             if self.can_navigate_to_selected_word && layout.last_hovered_word.is_some() {
                 window.set_cursor_style(gpui::CursorStyle::PointingHand, &layout.hitbox);
             } else {
@@ -946,7 +937,7 @@ impl Element for TerminalElement {
                     });
 
                     for rect in &layout.rects {
-                        rect.paint(origin, &layout.dimensions, window, cx);
+                        rect.paint(origin, &layout.dimensions, window);
                     }
 
                     for (relative_highlighted_range, color) in
@@ -962,7 +953,7 @@ impl Element for TerminalElement {
                                 color: *color,
                                 corner_radius: 0.15 * layout.dimensions.line_height,
                             };
-                            hr.paint(bounds, window, cx);
+                            hr.paint(bounds, window);
                         }
                     }
 
@@ -1007,7 +998,7 @@ impl InputHandler for TerminalInputHandler {
     fn selected_text_range(
         &mut self,
         _ignore_disabled_input: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut AppContext,
     ) -> Option<UTF16Selection> {
         if self

@@ -376,7 +376,7 @@ mod tests {
             vec![],
         );
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-        cx.update_editor(|editor, window, cx| {
+        cx.update_editor(|editor, _, cx| {
             assert!(!editor.context_menu_visible());
             assert!(editor.has_active_inline_completion());
             // Since only the copilot is available, it's shown inline
@@ -387,7 +387,7 @@ mod tests {
         // Ensure existing inline completion is interpolated when inserting again.
         cx.simulate_keystroke("c");
         executor.run_until_parked();
-        cx.update_editor(|editor, window, cx| {
+        cx.update_editor(|editor, _, cx| {
             assert!(!editor.context_menu_visible());
             assert!(!editor.context_menu_contains_inline_completion());
             assert!(editor.has_active_inline_completion());
@@ -461,7 +461,7 @@ mod tests {
         // If an edit occurs outside of this editor but no suggestion is being shown,
         // we won't make it visible.
         cx.update_buffer(|buffer, cx| buffer.edit([(6..6, "p")], None, cx));
-        cx.update_editor(|editor, window, cx| {
+        cx.update_editor(|editor, _, cx| {
             assert!(!editor.has_active_inline_completion());
             assert_eq!(editor.display_text(cx), "one.cop\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.cop\ntwo\nthree\n");
@@ -735,7 +735,10 @@ mod tests {
         let editor = cx
             .add_window(|window, cx| Editor::for_multibuffer(multibuffer, None, true, window, cx));
         editor
-            .update(cx, |editor, window, cx| editor.focus(window, cx))
+            .update(cx, |editor, window, cx| {
+                use gpui::Focusable;
+                window.focus(&editor.focus_handle(cx));
+            })
             .unwrap();
         let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
         editor
@@ -761,7 +764,7 @@ mod tests {
             editor.next_inline_completion(&Default::default(), window, cx);
         });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-        _ = editor.update(cx, |editor, window, cx| {
+        _ = editor.update(cx, |editor, _, cx| {
             assert!(editor.has_active_inline_completion());
             assert_eq!(
                 editor.display_text(cx),
@@ -803,7 +806,7 @@ mod tests {
 
         // Ensure the new suggestion is displayed when the debounce timeout expires.
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-        _ = editor.update(cx, |editor, window, cx| {
+        _ = editor.update(cx, |editor, _, cx| {
             assert!(editor.has_active_inline_completion());
             assert_eq!(
                 editor.display_text(cx),
@@ -865,7 +868,7 @@ mod tests {
             editor.next_inline_completion(&Default::default(), window, cx)
         });
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-        cx.update_editor(|editor, window, cx| {
+        cx.update_editor(|editor, _, cx| {
             assert!(!editor.context_menu_visible());
             assert!(editor.has_active_inline_completion());
             assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
@@ -892,7 +895,7 @@ mod tests {
             vec![],
         );
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-        cx.update_editor(|editor, window, cx| {
+        cx.update_editor(|editor, _, cx| {
             assert!(!editor.context_menu_visible());
             assert!(editor.has_active_inline_completion());
             assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
@@ -919,7 +922,7 @@ mod tests {
             vec![],
         );
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
-        cx.update_editor(|editor, window, cx| {
+        cx.update_editor(|editor, _, cx| {
             assert!(editor.context_menu_visible());
             assert!(!editor.context_menu_contains_inline_completion());
             assert!(!editor.has_active_inline_completion(),);
@@ -985,7 +988,10 @@ mod tests {
         let editor = cx
             .add_window(|window, cx| Editor::for_multibuffer(multibuffer, None, true, window, cx));
         editor
-            .update(cx, |editor, window, cx| editor.focus(window, cx))
+            .update(cx, |editor, window, cx| {
+                use gpui::Focusable;
+                window.focus(&editor.focus_handle(cx))
+            })
             .unwrap();
         let copilot_provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
         editor

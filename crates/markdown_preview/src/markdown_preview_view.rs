@@ -421,7 +421,7 @@ impl MarkdownPreviewView {
                     cx,
                     |selections| selections.select_ranges(vec![selection]),
                 );
-                editor.focus(window, cx);
+                window.focus(&editor.focus_handle(cx));
             });
         }
     }

@@ -125,10 +125,9 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         Task::ready(result)
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut AppContext) -> AnyView {
+    fn configuration_view(&self, _: &mut Window, cx: &mut AppContext) -> AnyView {
         let state = self.state.clone();
-        cx.new_model(|cx| ConfigurationView::new(state, window, cx))
-            .into()
+        cx.new_model(|cx| ConfigurationView::new(state, cx)).into()
     }
 
     fn reset_credentials(&self, _cx: &mut AppContext) -> Task<Result<()>> {
@@ -300,14 +299,14 @@ struct ConfigurationView {
 }
 
 impl ConfigurationView {
-    pub fn new(state: Model<State>, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(state: Model<State>, cx: &mut ModelContext<Self>) -> Self {
         let copilot = Copilot::global(cx);
 
         Self {
             copilot_status: copilot.as_ref().map(|copilot| copilot.read(cx).status()),
             state,
             _subscription: copilot.as_ref().map(|copilot| {
-                cx.observe_in(copilot, window, |this, model, window, cx| {
+                cx.observe(copilot, |this, model, cx| {
                     this.copilot_status = Some(model.read(cx).status());
                     cx.notify();
                 })

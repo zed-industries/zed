@@ -1,7 +1,7 @@
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
     actions, AppContext, DismissEvent, EventEmitter, Focusable, Model, ModelContext, ParentElement,
-    Render, Styled, VisualContext, WeakModel, Window,
+    Render, Styled, WeakModel, Window,
 };
 use language::LanguageRegistry;
 use paths::config_dir;
@@ -39,7 +39,7 @@ fn configure_snippets(
 fn open_folder(
     workspace: &mut Workspace,
     _: &OpenFolder,
-    window: &mut Window,
+    _: &mut Window,
     cx: &mut ModelContext<Workspace>,
 ) {
     fs::create_dir_all(config_dir().join("snippets")).notify_err(workspace, cx);
@@ -157,7 +157,7 @@ impl PickerDelegate for ScopeSelectorDelegate {
         self.dismissed(window, cx);
     }
 
-    fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         self.scope_selector
             .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();

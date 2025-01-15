@@ -18,12 +18,12 @@ pub struct UpdateNotification {
 impl EventEmitter<DismissEvent> for UpdateNotification {}
 
 impl Render for UpdateNotification {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let app_name = ReleaseChannel::global(cx).display_name();
 
         v_flex()
             .on_action(cx.listener(UpdateNotification::dismiss))
-            .elevation_3(window, cx)
+            .elevation_3(cx)
             .p_4()
             .child(
                 h_flex()
@@ -64,7 +64,7 @@ impl UpdateNotification {
         Self { version, workspace }
     }
 
-    pub fn dismiss(&mut self, _: &Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn dismiss(&mut self, _: &Cancel, _: &mut Window, cx: &mut ModelContext<Self>) {
         cx.emit(DismissEvent);
     }
 }

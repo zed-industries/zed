@@ -2,7 +2,7 @@ use crate::{motion::Motion, object::Object, state::Mode, Vim};
 use collections::HashMap;
 use editor::{display_map::ToDisplayPoint, Bias, Editor};
 use gpui::actions;
-use gpui::{AppContext, ModelContext, Window};
+use gpui::{ModelContext, Window};
 use language::SelectionGoal;
 
 #[derive(PartialEq, Eq)]
@@ -14,14 +14,14 @@ pub(crate) enum IndentDirection {
 
 actions!(vim, [Indent, Outdent, AutoIndent]);
 
-pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
-    Vim::action(editor, window, cx, |vim, _: &Indent, window, cx| {
-        vim.record_current_action(window, cx);
+pub(crate) fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+    Vim::action(editor, cx, |vim, _: &Indent, window, cx| {
+        vim.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);
         vim.store_visual_marks(window, cx);
         vim.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                let original_positions = vim.save_selection_starts(editor, window, cx);
+                let original_positions = vim.save_selection_starts(editor, cx);
                 for _ in 0..count {
                     editor.indent(&Default::default(), window, cx);
                 }
@@ -33,13 +33,13 @@ pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelC
         }
     });
 
-    Vim::action(editor, window, cx, |vim, _: &Outdent, window, cx| {
-        vim.record_current_action(window, cx);
+    Vim::action(editor, cx, |vim, _: &Outdent, window, cx| {
+        vim.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);
         vim.store_visual_marks(window, cx);
         vim.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                let original_positions = vim.save_selection_starts(editor, window, cx);
+                let original_positions = vim.save_selection_starts(editor, cx);
                 for _ in 0..count {
                     editor.outdent(&Default::default(), window, cx);
                 }
@@ -51,13 +51,13 @@ pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelC
         }
     });
 
-    Vim::action(editor, window, cx, |vim, _: &AutoIndent, window, cx| {
-        vim.record_current_action(window, cx);
+    Vim::action(editor, cx, |vim, _: &AutoIndent, window, cx| {
+        vim.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);
         vim.store_visual_marks(window, cx);
         vim.update_editor(window, cx, |vim, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
-                let original_positions = vim.save_selection_starts(editor, window, cx);
+                let original_positions = vim.save_selection_starts(editor, cx);
                 for _ in 0..count {
                     editor.autoindent(&Default::default(), window, cx);
                 }
@@ -79,7 +79,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.stop_recording(window, cx);
+        self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             let text_layout_details = editor.text_layout_details(window, cx);
             editor.transact(window, cx, |editor, window, cx| {
@@ -114,7 +114,7 @@ impl Vim {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.stop_recording(window, cx);
+        self.stop_recording(cx);
         self.update_editor(window, cx, |_, editor, window, cx| {
             editor.transact(window, cx, |editor, window, cx| {
                 let mut original_positions: HashMap<_, _> = Default::default();

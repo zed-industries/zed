@@ -6,7 +6,7 @@ use gpui::{
     anchored, deferred, div, px, AnyElement, AppContext, Bounds, Corner, DismissEvent,
     DispatchPhase, Element, ElementId, Focusable as _, GlobalElementId, Hitbox, InteractiveElement,
     IntoElement, LayoutId, ManagedView, Model, MouseButton, MouseDownEvent, ParentElement, Pixels,
-    Point, Render, VisualContext, Window,
+    Point, Window,
 };
 
 pub struct RightClickMenu<M: ManagedView> {

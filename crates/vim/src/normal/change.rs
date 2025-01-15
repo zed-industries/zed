@@ -10,7 +10,7 @@ use editor::{
     scroll::Autoscroll,
     Bias, DisplayPoint,
 };
-use gpui::{AppContext, ModelContext, Window};
+use gpui::{ModelContext, Window};
 use language::Selection;
 
 impl Vim {
@@ -76,7 +76,7 @@ impl Vim {
                         }
                     });
                 });
-                vim.copy_selections_content(editor, motion.linewise(), window, cx);
+                vim.copy_selections_content(editor, motion.linewise(), cx);
                 editor.insert("", window, cx);
                 editor.refresh_inline_completion(true, false, window, cx);
             });
@@ -107,7 +107,7 @@ impl Vim {
                     });
                 });
                 if objects_found {
-                    vim.copy_selections_content(editor, false, window, cx);
+                    vim.copy_selections_content(editor, false, cx);
                     editor.insert("", window, cx);
                     editor.refresh_inline_completion(true, false, window, cx);
                 }

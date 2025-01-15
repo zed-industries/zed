@@ -17,7 +17,7 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
         while let Some(incoming_call) = incoming_call.next().await {
             for window in notification_windows.drain(..) {
                 window
-                    .update(&mut cx, |_, window, cx| {
+                    .update(&mut cx, |_, window, _| {
                         window.remove_window();
                     })
                     .log_err();
@@ -36,8 +36,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                         .log_err()
                     {
                         let window = cx
-                            .open_window(options, |window, cx| {
-                                cx.new_model(|cx| {
+                            .open_window(options, |_, cx| {
+                                cx.new_model(|_| {
                                     IncomingCallNotification::new(
                                         incoming_call.clone(),
                                         app_state.clone(),

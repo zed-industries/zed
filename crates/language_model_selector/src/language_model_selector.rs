@@ -143,7 +143,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
     fn set_selected_index(
         &mut self,
         ix: usize,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) {
         self.selected_index = ix.min(self.filtered_models.len().saturating_sub(1));
@@ -214,12 +214,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         })
     }
 
-    fn confirm(
-        &mut self,
-        _secondary: bool,
-        window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
-    ) {
+    fn confirm(&mut self, _secondary: bool, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         if let Some(model_info) = self.filtered_models.get(self.selected_index) {
             let model = model_info.model.clone();
             (self.on_model_changed)(model.clone(), cx);
@@ -228,7 +223,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         }
     }
 
-    fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         self.language_model_selector
             .update(cx, |_this, cx| cx.emit(DismissEvent))
             .ok();
@@ -236,7 +231,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
     fn render_header(
         &self,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<AnyElement> {
         let configured_models_count = LanguageModelRegistry::global(cx)
@@ -265,7 +260,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         use feature_flags::FeatureFlagAppExt;
@@ -337,7 +332,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
 
     fn render_footer(
         &self,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<gpui::AnyElement> {
         use feature_flags::FeatureFlagAppExt;
@@ -374,7 +369,7 @@ impl PickerDelegate for LanguageModelPickerDelegate {
                                 "Try Pro"
                             },
                         )
-                        .on_click(|_, window, cx| cx.open_url(TRY_ZED_PRO_URL)),
+                        .on_click(|_, _, cx| cx.open_url(TRY_ZED_PRO_URL)),
                     })
                 })
                 .child(

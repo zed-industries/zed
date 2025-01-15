@@ -6,8 +6,7 @@ use editor::items::entry_git_aware_label_color;
 use gpui::{
     actions, impl_actions, rems, Action, AnyElement, AppContext, DismissEvent, EntityId,
     EventEmitter, FocusHandle, Focusable, Model, ModelContext, Modifiers, ModifiersChangedEvent,
-    MouseButton, MouseUpEvent, ParentElement, Render, Styled, Task, VisualContext, WeakModel,
-    Window,
+    MouseButton, MouseUpEvent, ParentElement, Render, Styled, Task, WeakModel, Window,
 };
 use picker::{Picker, PickerDelegate};
 use project::Project;
@@ -79,7 +78,7 @@ impl TabSwitcher {
                 else {
                     return;
                 };
-                if let Some(pane) = panel.pane(window, cx) {
+                if let Some(pane) = panel.pane(cx) {
                     weak_pane = pane.downgrade();
                 }
             })
@@ -152,7 +151,7 @@ impl Focusable for TabSwitcher {
 }
 
 impl Render for TabSwitcher {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         v_flex()
             .key_context("TabSwitcher")
             .w(rems(PANEL_WIDTH_REMS))
@@ -224,7 +223,7 @@ impl TabSwitcherDelegate {
         .detach();
     }
 
-    fn update_matches(&mut self, window: &mut Window, cx: &mut AppContext) {
+    fn update_matches(&mut self, _: &mut Window, cx: &mut AppContext) {
         self.matches.clear();
         let Some(pane) = self.pane.upgrade() else {
             return;
@@ -332,7 +331,7 @@ impl PickerDelegate for TabSwitcherDelegate {
     fn set_selected_index(
         &mut self,
         ix: usize,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) {
         self.selected_index = ix;
@@ -370,11 +369,7 @@ impl PickerDelegate for TabSwitcherDelegate {
         });
     }
 
-    fn dismissed(
-        &mut self,
-        window: &mut Window,
-        cx: &mut ModelContext<Picker<TabSwitcherDelegate>>,
-    ) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<Picker<TabSwitcherDelegate>>) {
         self.tab_switcher
             .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
@@ -448,7 +443,7 @@ impl PickerDelegate for TabSwitcherDelegate {
                 IconButton::new("close_tab", IconName::Close)
                     .icon_size(IconSize::Small)
                     .icon_color(indicator_color)
-                    .tooltip(|window, cx| Tooltip::text("Close", window, cx)),
+                    .tooltip(Tooltip::text("Close")),
             )
             .into_any_element();
 

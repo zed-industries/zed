@@ -5,7 +5,7 @@ use futures::channel::oneshot;
 use crate::{
     div, opaque_grey, white, AnyView, AppContext, Context, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, IntoElement, Model, ModelContext, ParentElement, PromptLevel, Render,
-    StatefulInteractiveElement, Styled, VisualContext,
+    StatefulInteractiveElement, Styled,
 };
 
 use super::Window;
@@ -100,7 +100,7 @@ pub struct FallbackPromptRenderer {
 }
 
 impl Render for FallbackPromptRenderer {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let prompt = div()
             .cursor_default()
             .track_focus(&self.focus)
@@ -140,7 +140,7 @@ impl Render for FallbackPromptRenderer {
                     .text_sm()
                     .child(action.clone())
                     .id(ix)
-                    .on_click(cx.listener(move |_, _, window, cx| {
+                    .on_click(cx.listener(move |_, _, _, cx| {
                         cx.emit(PromptResponse(ix));
                     }))
             }));

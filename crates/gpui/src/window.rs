@@ -675,7 +675,7 @@ impl Window {
         platform_window.on_close(Box::new({
             let mut cx = cx.to_async();
             move || {
-                let _ = handle.update(&mut cx, |_, window, cx| window.remove_window());
+                let _ = handle.update(&mut cx, |_, window, _| window.remove_window());
             }
         }));
         platform_window.on_request_frame(Box::new({
@@ -715,12 +715,12 @@ impl Window {
                     })
                 } else if needs_present {
                     handle
-                        .update(&mut cx, |_, window, cx| window.present())
+                        .update(&mut cx, |_, window, _| window.present())
                         .log_err();
                 }
 
                 handle
-                    .update(&mut cx, |_, window, cx| {
+                    .update(&mut cx, |_, window, _| {
                         window.complete_frame();
                     })
                     .log_err();
@@ -769,7 +769,7 @@ impl Window {
             let mut cx = cx.to_async();
             move |active| {
                 handle
-                    .update(&mut cx, |_, window, cx| {
+                    .update(&mut cx, |_, window, _| {
                         window.hovered.set(active);
                         window.refresh();
                     })
@@ -2821,7 +2821,7 @@ impl Window {
     /// and keyboard event dispatch for the element.
     ///
     /// This method should only be called as part of the prepaint phase of element drawing.
-    pub fn set_focus_handle(&mut self, focus_handle: &FocusHandle, cx: &AppContext) {
+    pub fn set_focus_handle(&mut self, focus_handle: &FocusHandle, _: &AppContext) {
         debug_assert_eq!(
             self.draw_phase,
             DrawPhase::Prepaint,
@@ -3831,7 +3831,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     where
         C: Context,
     {
-        Flatten::flatten(cx.update_window(self.any_handle, |root_view, window, _| {
+        Flatten::flatten(cx.update_window(self.any_handle, |root_view, _, _| {
             root_view
                 .downcast::<V>()
                 .map_err(|_| anyhow!("the type of the window's root view has changed"))
@@ -3902,7 +3902,7 @@ impl<V: 'static + Render> WindowHandle<V> {
     /// Will return `None` if the window is closed or currently
     /// borrowed.
     pub fn is_active(&self, cx: &mut AppContext) -> Option<bool> {
-        cx.update_window(self.any_handle, |_, window, cx| window.is_window_active())
+        cx.update_window(self.any_handle, |_, window, _| window.is_window_active())
             .ok()
     }
 }

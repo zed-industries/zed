@@ -38,7 +38,7 @@ impl Editor {
                 self.show_signature_help(&ShowSignatureHelp, window, cx);
             }
             Some(_) => {
-                self.hide_signature_help(window, cx, SignatureHelpHiddenBy::AutoClose);
+                self.hide_signature_help(cx, SignatureHelpHiddenBy::AutoClose);
             }
             None => {}
         }
@@ -47,7 +47,6 @@ impl Editor {
 
     pub(super) fn hide_signature_help(
         &mut self,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
         signature_help_hidden_by: SignatureHelpHiddenBy,
     ) -> bool {
@@ -73,7 +72,7 @@ impl Editor {
         &mut self,
         old_cursor_position: &Anchor,
         backspace_pressed: bool,
-        window: &mut Window,
+
         cx: &mut ModelContext<Self>,
     ) -> bool {
         if !(self.signature_help_state.is_shown() || self.auto_signature_help_enabled(cx)) {

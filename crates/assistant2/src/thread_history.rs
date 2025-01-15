@@ -19,7 +19,7 @@ impl ThreadHistory {
     pub(crate) fn new(
         assistant_panel: WeakModel<AssistantPanel>,
         thread_store: Model<ThreadStore>,
-        window: &mut Window,
+
         cx: &mut ModelContext<Self>,
     ) -> Self {
         Self {
@@ -38,7 +38,7 @@ impl Focusable for ThreadHistory {
 }
 
 impl Render for ThreadHistory {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let threads = self.thread_store.update(cx, |this, cx| this.threads(cx));
 
         v_flex()
@@ -140,14 +140,14 @@ impl RenderOnce for PastThread {
                         IconButton::new("delete", IconName::TrashAlt)
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::Small)
-                            .tooltip(|window, cx| Tooltip::text("Delete Thread", window, cx))
+                            .tooltip(Tooltip::text("Delete Thread"))
                             .on_click({
                                 let assistant_panel = self.assistant_panel.clone();
                                 let id = id.clone();
-                                move |_event, window, cx| {
+                                move |_event, _, cx| {
                                     assistant_panel
                                         .update(cx, |this, cx| {
-                                            this.delete_thread(&id, window, cx);
+                                            this.delete_thread(&id, cx);
                                         })
                                         .ok();
                                 }

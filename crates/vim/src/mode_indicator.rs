@@ -15,7 +15,7 @@ impl ModeIndicator {
     /// Construct a new mode indicator in this window.
     pub fn new(window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
         cx.observe_pending_input(window, |this: &mut Self, window, cx| {
-            this.update_pending_keys(window, cx);
+            this.update_pending_keys(window);
             cx.notify();
         })
         .detach();
@@ -47,7 +47,7 @@ impl ModeIndicator {
         }
     }
 
-    fn update_pending_keys(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn update_pending_keys(&mut self, window: &mut Window) {
         self.pending_keys = window.pending_input_keystrokes().map(|keystrokes| {
             keystrokes
                 .iter()
@@ -63,7 +63,7 @@ impl ModeIndicator {
     fn current_operators_description(
         &self,
         vim: Model<Vim>,
-        window: &mut Window,
+
         cx: &mut ModelContext<Self>,
     ) -> String {
         let recording = Vim::globals(cx)
@@ -95,7 +95,7 @@ impl ModeIndicator {
 }
 
 impl Render for ModeIndicator {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let vim = self.vim();
         let Some(vim) = vim else {
             return div().into_any();
@@ -108,8 +108,7 @@ impl Render for ModeIndicator {
             vim_readable.mode.to_string()
         };
 
-        let current_operators_description =
-            self.current_operators_description(vim.clone(), window, cx);
+        let current_operators_description = self.current_operators_description(vim.clone(), cx);
         let pending = self
             .pending_keys
             .as_ref()

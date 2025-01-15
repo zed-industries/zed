@@ -18,8 +18,7 @@ use feature_flags::FeatureFlagAppExt;
 use gpui::{
     actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
     Focusable, Global, HighlightStyle, InteractiveElement, IntoElement, Model, ModelContext,
-    ParentElement, Render, SharedString, Styled, StyledText, Subscription, Task, VisualContext,
-    WeakModel, Window,
+    ParentElement, Render, SharedString, Styled, StyledText, Subscription, Task, WeakModel, Window,
 };
 use language::{
     Bias, Buffer, BufferRow, BufferSnapshot, Diagnostic, DiagnosticEntry, DiagnosticSeverity,
@@ -93,7 +92,7 @@ impl EventEmitter<EditorEvent> for ProjectDiagnosticsEditor {}
 const DIAGNOSTICS_UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
 impl Render for ProjectDiagnosticsEditor {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let child = if self.path_states.is_empty() {
             div()
                 .bg(cx.theme().colors().editor_background)
@@ -177,7 +176,7 @@ impl ProjectDiagnosticsEditor {
                 window,
                 cx,
             );
-            editor.set_vertical_scroll_margin(5, window, cx);
+            editor.set_vertical_scroll_margin(5, cx);
             editor
         });
         cx.subscribe_in(
@@ -579,7 +578,6 @@ impl ProjectDiagnosticsEditor {
                     })
                 }),
                 Some(Autoscroll::fit()),
-                window,
                 cx,
             );
 
@@ -658,13 +656,13 @@ impl ProjectDiagnosticsEditor {
         }
 
         #[cfg(test)]
-        self.check_invariants(window, cx);
+        self.check_invariants(cx);
 
         cx.notify();
     }
 
     #[cfg(test)]
-    fn check_invariants(&self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn check_invariants(&self, cx: &mut ModelContext<Self>) {
         let mut excerpts = Vec::new();
         for (id, buffer, _) in self.excerpts.read(cx).snapshot(cx).excerpts() {
             if let Some(file) = buffer.file() {
@@ -779,7 +777,7 @@ impl Item for ProjectDiagnosticsEditor {
     fn set_nav_history(
         &mut self,
         nav_history: ItemNavHistory,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.editor.update(cx, |editor, _| {

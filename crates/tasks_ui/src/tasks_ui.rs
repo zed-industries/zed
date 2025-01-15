@@ -47,14 +47,13 @@ pub fn init(cx: &mut AppContext) {
                             cx.spawn_in(window, |workspace, mut cx| async move {
                                 let task_context = context_task.await;
                                 workspace
-                                    .update_in(&mut cx, |workspace, window, cx| {
+                                    .update(&mut cx, |workspace, cx| {
                                         schedule_task(
                                             workspace,
                                             task_source_kind,
                                             &original_task,
                                             &task_context,
                                             false,
-                                            window,
                                             cx,
                                         )
                                     })
@@ -76,7 +75,6 @@ pub fn init(cx: &mut AppContext) {
                                 task_source_kind,
                                 last_scheduled_task,
                                 false,
-                                window,
                                 cx,
                             );
                         }
@@ -186,7 +184,7 @@ fn spawn_task_with_name(
         })?;
 
         let did_spawn = workspace
-            .update_in(&mut cx, |workspace, window, cx| {
+            .update(&mut cx, |workspace, cx| {
                 let (task_source_kind, mut target_task) =
                     tasks.into_iter().find(|(_, task)| task.label == name)?;
                 if let Some(overrides) = &overrides {
@@ -200,7 +198,6 @@ fn spawn_task_with_name(
                     &target_task,
                     &task_context,
                     false,
-                    window,
                     cx,
                 );
                 Some(())

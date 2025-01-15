@@ -198,7 +198,6 @@ pub fn render_parsed_markdown(
     parsed: &language::ParsedMarkdown,
     editor_style: &EditorStyle,
     workspace: Option<WeakModel<Workspace>>,
-    window: &mut Window,
     cx: &mut AppContext,
 ) -> InteractiveText {
     let code_span_background_color = cx
@@ -444,7 +443,7 @@ impl Default for EditorStyle {
     }
 }
 
-pub fn make_inlay_hints_style(window: &mut Window, cx: &mut AppContext) -> HighlightStyle {
+pub fn make_inlay_hints_style(cx: &mut AppContext) -> HighlightStyle {
     let show_background = language_settings::language_settings(None, None, cx)
         .inlay_hints
         .show_background;
@@ -456,7 +455,7 @@ pub fn make_inlay_hints_style(window: &mut Window, cx: &mut AppContext) -> Highl
     }
 }
 
-pub fn make_suggestion_styles(window: &mut Window, cx: &mut AppContext) -> InlineCompletionStyles {
+pub fn make_suggestion_styles(cx: &mut AppContext) -> InlineCompletionStyles {
     InlineCompletionStyles {
         insertion: HighlightStyle {
             color: Some(cx.theme().status().predictive),
@@ -1129,7 +1128,7 @@ impl Editor {
         let editor = cx.model().downgrade();
         let fold_placeholder = FoldPlaceholder {
             constrain_width: true,
-            render: Arc::new(move |fold_id, fold_range, window, cx| {
+            render: Arc::new(move |fold_id, fold_range, _, cx| {
                 let editor = editor.clone();
                 div()
                     .id(fold_id)
@@ -1140,7 +1139,7 @@ impl Editor {
                     .size_full()
                     .cursor_pointer()
                     .child("⋯")
-                    .on_mouse_down(MouseButton::Left, |_, window, cx| cx.stop_propagation())
+                    .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(move |_, window, cx| {
                         editor
                             .update(cx, |editor, cx| {
@@ -1186,13 +1185,9 @@ impl Editor {
         if mode == EditorMode::Full {
             if let Some(project) = project.as_ref() {
                 if buffer.read(cx).is_singleton() {
-                    project_subscriptions.push(cx.observe_in(
-                        project,
-                        window,
-                        |_, _, window, cx| {
-                            cx.emit(EditorEvent::TitleChanged);
-                        },
-                    ));
+                    project_subscriptions.push(cx.observe_in(project, window, |_, _, _, cx| {
+                        cx.emit(EditorEvent::TitleChanged);
+                    }));
                 }
                 project_subscriptions.push(cx.subscribe_in(
                     project,
@@ -1274,7 +1269,7 @@ impl Editor {
             buffer: buffer.clone(),
             display_map: display_map.clone(),
             selections,
-            scroll_manager: ScrollManager::new(window, cx),
+            scroll_manager: ScrollManager::new(cx),
             columnar_selection_tail: None,
             add_selections_state: None,
             select_next_state: None,
@@ -1378,7 +1373,7 @@ impl Editor {
                 cx.observe_in(&display_map, window, Self::on_display_map_changed),
                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
                 cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
-                observe_buffer_font_size_adjustment(window, cx, |_, window, cx| cx.notify()),
+                observe_buffer_font_size_adjustment(window, cx, |_, _, cx| cx.notify()),
                 cx.observe_window_activation(window, |editor, window, cx| {
                     let active = window.is_window_active();
                     editor.blink_manager.update(cx, |blink_manager, cx| {
@@ -1548,7 +1543,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut ModelContext<Workspace>,
     ) {
-        Self::new_file_in_direction(workspace, SplitDirection::vertical(window, cx), window, cx)
+        Self::new_file_in_direction(workspace, SplitDirection::vertical(cx), window, cx)
     }
 
     fn new_file_horizontal(
@@ -1557,12 +1552,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut ModelContext<Workspace>,
     ) {
-        Self::new_file_in_direction(
-            workspace,
-            SplitDirection::horizontal(window, cx),
-            window,
-            cx,
-        )
+        Self::new_file_in_direction(workspace, SplitDirection::horizontal(cx), window, cx)
     }
 
     fn new_file_in_direction(
@@ -2034,7 +2024,7 @@ impl Editor {
                 drop(context_menu);
             }
 
-            hide_hover(self, window, cx);
+            hide_hover(self, cx);
 
             if old_cursor_position.to_display_point(&display_map).row()
                 != new_cursor_position.to_display_point(&display_map).row()
@@ -2092,7 +2082,6 @@ impl Editor {
             if self.should_open_signature_help_automatically(
                 &old_cursor_position,
                 self.signature_help_state.backspace_pressed(),
-                window,
                 cx,
             ) {
                 self.show_signature_help(&ShowSignatureHelp, window, cx);
@@ -2529,7 +2518,7 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
-        if self.clear_expanded_diff_hunks(window, cx) {
+        if self.clear_expanded_diff_hunks(cx) {
             cx.notify();
             return;
         }
@@ -2556,11 +2545,11 @@ impl Editor {
             return true;
         }
 
-        if hide_hover(self, window, cx) {
+        if hide_hover(self, cx) {
             return true;
         }
 
-        if self.hide_signature_help(window, cx, SignatureHelpHiddenBy::Escape) {
+        if self.hide_signature_help(cx, SignatureHelpHiddenBy::Escape) {
             return true;
         }
 
@@ -2584,7 +2573,7 @@ impl Editor {
         }
 
         if self.mode == EditorMode::Full && self.active_diagnostics.is_some() {
-            self.dismiss_diagnostics(window, cx);
+            self.dismiss_diagnostics(cx);
             return true;
         }
 
@@ -3532,7 +3521,7 @@ impl Editor {
     pub fn toggle_inlay_hints(
         &mut self,
         _: &ToggleInlayHints,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.refresh_inlay_hints(
@@ -3770,7 +3759,7 @@ impl Editor {
                         })
                         .ok();
                 }
-                editor.update_in(&mut cx, |editor, window, cx| {
+                editor.update(&mut cx, |editor, cx| {
                     editor.refresh_document_highlights(cx);
                 })?;
             }
@@ -4301,7 +4290,6 @@ impl Editor {
                         task_source_kind,
                         resolved_task,
                         false,
-                        window,
                         cx,
                     );
 
@@ -5072,7 +5060,6 @@ impl Editor {
         _style: &EditorStyle,
         row: DisplayRow,
         is_active: bool,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<IconButton> {
         if self.available_code_actions.is_some() {
@@ -5097,7 +5084,7 @@ impl Editor {
                         }
                     })
                     .on_click(cx.listener(move |editor, _e, window, cx| {
-                        editor.focus(window, cx);
+                        window.focus(&editor.focus_handle(cx));
                         editor.toggle_code_actions(
                             &ToggleCodeActions {
                                 deployed_from_indicator: Some(row),
@@ -5167,9 +5154,9 @@ impl Editor {
         // Try to find a closest, enclosing node using tree-sitter that has a
         // task
         let Some((buffer, buffer_row, tasks)) = self
-            .find_enclosing_node_task(window, cx)
+            .find_enclosing_node_task(cx)
             // Or find the task that's closest in row-distance.
-            .or_else(|| self.find_closest_task(window, cx))
+            .or_else(|| self.find_closest_task(cx))
         else {
             return;
         };
@@ -5184,13 +5171,12 @@ impl Editor {
             resolved.reveal = reveal_strategy;
 
             workspace
-                .update_in(&mut cx, |workspace, window, cx| {
+                .update(&mut cx, |workspace, cx| {
                     workspace::tasks::schedule_resolved_task(
                         workspace,
                         task_source_kind,
                         resolved_task,
                         false,
-                        window,
                         cx,
                     );
                 })
@@ -5201,7 +5187,6 @@ impl Editor {
 
     fn find_closest_task(
         &mut self,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<(Model<Buffer>, u32, Arc<RunnableTasks>)> {
         let cursor_row = self.selections.newest_adjusted(cx).head().row;
@@ -5218,7 +5203,6 @@ impl Editor {
 
     fn find_enclosing_node_task(
         &mut self,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<(Model<Buffer>, u32, Arc<RunnableTasks>)> {
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -5262,7 +5246,6 @@ impl Editor {
         _style: &EditorStyle,
         is_active: bool,
         row: DisplayRow,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> IconButton {
         IconButton::new(("run_indicator", row.0 as usize), ui::IconName::Play)
@@ -5271,7 +5254,7 @@ impl Editor {
             .icon_color(Color::Muted)
             .toggle_state(is_active)
             .on_click(cx.listener(move |editor, _e, window, cx| {
-                editor.focus(window, cx);
+                window.focus(&editor.focus_handle(cx));
                 editor.toggle_code_actions(
                     &ToggleCodeActions {
                         deployed_from_indicator: Some(row),
@@ -5330,7 +5313,6 @@ impl Editor {
         &self,
         style: &EditorStyle,
         max_size: Size<Pixels>,
-        window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> Option<AnyElement> {
         self.context_menu.borrow().as_ref().and_then(|menu| {
@@ -5339,7 +5321,6 @@ impl Editor {
                     style,
                     max_size,
                     self.workspace.as_ref().map(|(w, _)| w.clone()),
-                    window,
                     cx,
                 )
             } else {
@@ -5366,7 +5347,6 @@ impl Editor {
         &mut self,
         choices: &Vec<String>,
         selection: Range<Anchor>,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if selection.start.buffer_id.is_none() {
@@ -5451,7 +5431,7 @@ impl Editor {
 
             if let Some(choices) = &tabstop.choices {
                 if let Some(selection) = tabstop.ranges.first() {
-                    self.show_snippet_choices(choices, selection.clone(), window, cx)
+                    self.show_snippet_choices(choices, selection.clone(), cx)
                 }
             }
 
@@ -5562,7 +5542,7 @@ impl Editor {
 
                 if let Some(choices) = &snippet.choices[snippet.active_index] {
                     if let Some(selection) = current_ranges.first() {
-                        self.show_snippet_choices(&choices, selection.clone(), window, cx);
+                        self.show_snippet_choices(&choices, selection.clone(), cx);
                     }
                 }
 
@@ -6630,7 +6610,7 @@ impl Editor {
             }
         }
 
-        self.transact(window, cx, |this, window, cx| {
+        self.transact(window, cx, |this, _, cx| {
             this.buffer.update(cx, |buffer, cx| {
                 buffer.edit(edits, None, cx);
             });
@@ -6932,16 +6912,11 @@ impl Editor {
         });
     }
 
-    pub fn rewrap(&mut self, _: &Rewrap, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.rewrap_impl(IsVimMode::No, window, cx)
+    pub fn rewrap(&mut self, _: &Rewrap, _: &mut Window, cx: &mut ModelContext<Self>) {
+        self.rewrap_impl(IsVimMode::No, cx)
     }
 
-    pub fn rewrap_impl(
-        &mut self,
-        is_vim_mode: IsVimMode,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn rewrap_impl(&mut self, is_vim_mode: IsVimMode, cx: &mut ModelContext<Self>) {
         let buffer = self.buffer.read(cx).snapshot(cx);
         let selections = self.selections.all::<Point>(cx);
         let mut selections = selections.iter().peekable();
@@ -7215,7 +7190,7 @@ impl Editor {
         self.do_paste(&text, metadata, false, window, cx);
     }
 
-    pub fn copy(&mut self, _: &Copy, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn copy(&mut self, _: &Copy, _: &mut Window, cx: &mut ModelContext<Self>) {
         let selections = self.selections.all::<Point>(cx);
         let buffer = self.buffer.read(cx).read(cx);
         let mut text = String::new();
@@ -7408,17 +7383,12 @@ impl Editor {
         }
     }
 
-    pub fn finalize_last_transaction(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn finalize_last_transaction(&mut self, cx: &mut ModelContext<Self>) {
         self.buffer
             .update(cx, |buffer, cx| buffer.finalize_last_transaction(cx));
     }
 
-    pub fn group_until_transaction(
-        &mut self,
-        tx_id: TransactionId,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn group_until_transaction(&mut self, tx_id: TransactionId, cx: &mut ModelContext<Self>) {
         self.buffer
             .update(cx, |buffer, cx| buffer.group_until_transaction(tx_id, cx));
     }
@@ -9451,9 +9421,7 @@ impl Editor {
             .into_iter()
             .filter_map(|mut runnable| {
                 let tasks = cx
-                    .update(|window, cx| {
-                        Self::templates_with_tags(&project, &mut runnable.runnable, cx)
-                    })
+                    .update(|_, cx| Self::templates_with_tags(&project, &mut runnable.runnable, cx))
                     .ok()?;
                 if tasks.is_empty() {
                     return None;
@@ -9643,40 +9611,35 @@ impl Editor {
     pub fn expand_excerpts(
         &mut self,
         action: &ExpandExcerpts,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.expand_excerpts_for_direction(
-            action.lines,
-            ExpandExcerptDirection::UpAndDown,
-            window,
-            cx,
-        )
+        self.expand_excerpts_for_direction(action.lines, ExpandExcerptDirection::UpAndDown, cx)
     }
 
     pub fn expand_excerpts_down(
         &mut self,
         action: &ExpandExcerptsDown,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.expand_excerpts_for_direction(action.lines, ExpandExcerptDirection::Down, window, cx)
+        self.expand_excerpts_for_direction(action.lines, ExpandExcerptDirection::Down, cx)
     }
 
     pub fn expand_excerpts_up(
         &mut self,
         action: &ExpandExcerptsUp,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.expand_excerpts_for_direction(action.lines, ExpandExcerptDirection::Up, window, cx)
+        self.expand_excerpts_for_direction(action.lines, ExpandExcerptDirection::Up, cx)
     }
 
     pub fn expand_excerpts_for_direction(
         &mut self,
         lines: u32,
         direction: ExpandExcerptDirection,
-        window: &mut Window,
+
         cx: &mut ModelContext<Self>,
     ) {
         let selections = self.selections.disjoint_anchors();
@@ -9704,7 +9667,6 @@ impl Editor {
         &mut self,
         excerpt: ExcerptId,
         direction: ExpandExcerptDirection,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let lines = EditorSettings::get_global(cx).expand_excerpt_lines;
@@ -10635,21 +10597,17 @@ impl Editor {
                         }
                         editor
                     });
-                    cx.subscribe_in(
-                        &rename_editor,
-                        window,
-                        |_, _, e: &EditorEvent, window, cx| {
-                            if e == &EditorEvent::Focused {
-                                cx.emit(EditorEvent::FocusedIn)
-                            }
-                        },
-                    )
+                    cx.subscribe(&rename_editor, |_, _, e: &EditorEvent, cx| {
+                        if e == &EditorEvent::Focused {
+                            cx.emit(EditorEvent::FocusedIn)
+                        }
+                    })
                     .detach();
 
                     let write_highlights =
-                        this.clear_background_highlights::<DocumentHighlightWrite>(window, cx);
+                        this.clear_background_highlights::<DocumentHighlightWrite>(cx);
                     let read_highlights =
-                        this.clear_background_highlights::<DocumentHighlightRead>(window, cx);
+                        this.clear_background_highlights::<DocumentHighlightRead>(cx);
                     let ranges = write_highlights
                         .iter()
                         .flat_map(|(_, ranges)| ranges.iter())
@@ -10695,10 +10653,10 @@ impl Editor {
                                                 status: cx.editor_style.status.clone(),
                                                 inlay_hints_style: HighlightStyle {
                                                     font_weight: Some(FontWeight::BOLD),
-                                                    ..make_inlay_hints_style(cx.window, cx.app)
+                                                    ..make_inlay_hints_style(cx.app)
                                                 },
                                                 inline_completion_styles: make_suggestion_styles(
-                                                    cx.window, cx.app,
+                                                    cx.app,
                                                 ),
                                                 ..EditorStyle::default()
                                             },
@@ -10709,7 +10667,6 @@ impl Editor {
                             priority: 0,
                         }],
                         Some(Autoscroll::fit()),
-                        window,
                         cx,
                     )[0];
                     this.pending_rename = Some(RenameState {
@@ -10766,7 +10723,7 @@ impl Editor {
             )
             .await?;
 
-            editor.update_in(&mut cx, |editor, window, cx| {
+            editor.update(&mut cx, |editor, cx| {
                 editor.refresh_document_highlights(cx);
             })?;
             Ok(())
@@ -10914,7 +10871,7 @@ impl Editor {
     fn restart_language_server(
         &mut self,
         _: &RestartLanguageServer,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(project) = self.project.clone() {
@@ -10929,7 +10886,7 @@ impl Editor {
     fn cancel_language_server_work(
         &mut self,
         _: &actions::CancelLanguageServerWork,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(project) = self.project.clone() {
@@ -10945,12 +10902,12 @@ impl Editor {
         &mut self,
         _: &ShowCharacterPalette,
         window: &mut Window,
-        cx: &mut ModelContext<Self>,
+        _: &mut ModelContext<Self>,
     ) {
         window.show_character_palette();
     }
 
-    fn refresh_active_diagnostics(&mut self, window: &mut Window, cx: &mut ModelContext<Editor>) {
+    fn refresh_active_diagnostics(&mut self, cx: &mut ModelContext<Editor>) {
         if let Some(active_diagnostics) = self.active_diagnostics.as_mut() {
             let buffer = self.buffer.read(cx).snapshot(cx);
             let primary_range_start = active_diagnostics.primary_range.start.to_offset(&buffer);
@@ -10985,7 +10942,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> bool {
-        self.dismiss_diagnostics(window, cx);
+        self.dismiss_diagnostics(cx);
         let snapshot = self.snapshot(window, cx);
         self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
             let buffer = self.buffer.read(cx).snapshot(cx);
@@ -11049,7 +11006,7 @@ impl Editor {
         self.active_diagnostics.is_some()
     }
 
-    fn dismiss_diagnostics(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn dismiss_diagnostics(&mut self, cx: &mut ModelContext<Self>) {
         if let Some(active_diagnostic_group) = self.active_diagnostics.take() {
             self.display_map.update(cx, |display_map, cx| {
                 display_map.remove_blocks(active_diagnostic_group.blocks.into_keys().collect(), cx);
@@ -11094,7 +11051,7 @@ impl Editor {
     ) -> Option<TransactionId> {
         self.start_transaction_at(Instant::now(), window, cx);
         update(self, window, cx);
-        self.end_transaction_at(Instant::now(), window, cx)
+        self.end_transaction_at(Instant::now(), cx)
     }
 
     pub fn start_transaction_at(
@@ -11119,7 +11076,6 @@ impl Editor {
     pub fn end_transaction_at(
         &mut self,
         now: Instant,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<TransactionId> {
         if let Some(transaction_id) = self
@@ -11177,9 +11133,9 @@ impl Editor {
                 let buffer_id = buffer_snapshot.remote_id();
                 if toggled_buffers.insert(buffer_id) {
                     if self.buffer_folded(buffer_id, cx) {
-                        self.unfold_buffer(buffer_id, window, cx);
+                        self.unfold_buffer(buffer_id, cx);
                     } else {
-                        self.fold_buffer(buffer_id, window, cx);
+                        self.fold_buffer(buffer_id, cx);
                     }
                 }
             }
@@ -11263,7 +11219,7 @@ impl Editor {
             ) {
                 let buffer_id = buffer_snapshot.remote_id();
                 if folded_buffers.insert(buffer_id) {
-                    self.fold_buffer(buffer_id, window, cx);
+                    self.fold_buffer(buffer_id, cx);
                 }
             }
         }
@@ -11333,9 +11289,9 @@ impl Editor {
         } else {
             self.toggle_fold_multiple_buffers = cx.spawn_in(window, |editor, mut cx| async move {
                 editor
-                    .update_in(&mut cx, |editor, window, cx| {
+                    .update_in(&mut cx, |editor, _, cx| {
                         for buffer_id in editor.buffer.read(cx).excerpt_buffer_ids() {
-                            editor.fold_buffer(buffer_id, window, cx);
+                            editor.fold_buffer(buffer_id, cx);
                         }
                     })
                     .ok();
@@ -11451,7 +11407,7 @@ impl Editor {
             ) {
                 let buffer_id = buffer_snapshot.remote_id();
                 if unfolded_buffers.insert(buffer_id) {
-                    self.unfold_buffer(buffer_id, window, cx);
+                    self.unfold_buffer(buffer_id, cx);
                 }
             }
         }
@@ -11521,9 +11477,9 @@ impl Editor {
         } else {
             self.toggle_fold_multiple_buffers = cx.spawn_in(window, |editor, mut cx| async move {
                 editor
-                    .update_in(&mut cx, |editor, window, cx| {
+                    .update(&mut cx, |editor, cx| {
                         for buffer_id in editor.buffer.read(cx).excerpt_buffer_ids() {
-                            editor.unfold_buffer(buffer_id, window, cx);
+                            editor.unfold_buffer(buffer_id, cx);
                         }
                     })
                     .ok();
@@ -11599,7 +11555,7 @@ impl Editor {
             if snapshot.intersects_fold(active_diagnostics.primary_range.start) {
                 drop(snapshot);
                 self.active_diagnostics = Some(active_diagnostics);
-                self.dismiss_diagnostics(window, cx);
+                self.dismiss_diagnostics(cx);
             } else {
                 self.active_diagnostics = Some(active_diagnostics);
             }
@@ -11622,12 +11578,7 @@ impl Editor {
         });
     }
 
-    pub fn fold_buffer(
-        &mut self,
-        buffer_id: BufferId,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn fold_buffer(&mut self, buffer_id: BufferId, cx: &mut ModelContext<Self>) {
         if self.buffer().read(cx).is_singleton() || self.buffer_folded(buffer_id, cx) {
             return;
         }
@@ -11644,12 +11595,7 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn unfold_buffer(
-        &mut self,
-        buffer_id: BufferId,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn unfold_buffer(&mut self, buffer_id: BufferId, cx: &mut ModelContext<Self>) {
         if self.buffer().read(cx).is_singleton() || !self.buffer_folded(buffer_id, cx) {
             return;
         }
@@ -11724,12 +11670,7 @@ impl Editor {
         self.display_map.read(cx).fold_placeholder.clone()
     }
 
-    pub fn set_gutter_hovered(
-        &mut self,
-        hovered: bool,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn set_gutter_hovered(&mut self, hovered: bool, cx: &mut ModelContext<Self>) {
         if hovered != self.gutter_hovered {
             self.gutter_hovered = hovered;
             cx.notify();
@@ -11740,7 +11681,7 @@ impl Editor {
         &mut self,
         blocks: impl IntoIterator<Item = BlockProperties<Anchor>>,
         autoscroll: Option<Autoscroll>,
-        window: &mut Window,
+
         cx: &mut ModelContext<Self>,
     ) -> Vec<CustomBlockId> {
         let blocks = self
@@ -11757,7 +11698,7 @@ impl Editor {
         &mut self,
         heights: HashMap<CustomBlockId, u32>,
         autoscroll: Option<Autoscroll>,
-        window: &mut Window,
+
         cx: &mut ModelContext<Self>,
     ) {
         self.display_map
@@ -11772,7 +11713,6 @@ impl Editor {
         &mut self,
         renderers: HashMap<CustomBlockId, RenderBlock>,
         autoscroll: Option<Autoscroll>,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.display_map
@@ -11866,7 +11806,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.transact(window, cx, |this, window, cx| {
+        self.transact(window, cx, |this, _, cx| {
             this.buffer
                 .read(cx)
                 .as_singleton()
@@ -11921,7 +11861,7 @@ impl Editor {
     pub fn set_soft_wrap_mode(
         &mut self,
         mode: language_settings::SoftWrap,
-        window: &mut Window,
+
         cx: &mut ModelContext<Self>,
     ) {
         self.soft_wrap_mode_override = Some(mode);
@@ -11964,7 +11904,7 @@ impl Editor {
     pub fn toggle_soft_wrap(
         &mut self,
         _: &ToggleSoftWrap,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if self.soft_wrap_mode_override.is_some() {
@@ -11985,7 +11925,7 @@ impl Editor {
     pub fn toggle_tab_bar(
         &mut self,
         _: &ToggleTabBar,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let Some(workspace) = self.workspace() else {
@@ -12001,7 +11941,7 @@ impl Editor {
     pub fn toggle_indent_guides(
         &mut self,
         _: &ToggleIndentGuides,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let currently_enabled = self.should_show_indent_guides().unwrap_or_else(|| {
@@ -12022,7 +11962,7 @@ impl Editor {
     pub fn toggle_line_numbers(
         &mut self,
         _: &ToggleLineNumbers,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let mut editor_settings = EditorSettings::get_global(cx).clone();
@@ -12030,11 +11970,7 @@ impl Editor {
         EditorSettings::override_global(editor_settings, cx);
     }
 
-    pub fn should_use_relative_line_numbers(
-        &self,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> bool {
+    pub fn should_use_relative_line_numbers(&self, cx: &mut AppContext) -> bool {
         self.use_relative_line_numbers
             .unwrap_or(EditorSettings::get_global(cx).relative_line_numbers)
     }
@@ -12042,49 +11978,33 @@ impl Editor {
     pub fn toggle_relative_line_numbers(
         &mut self,
         _: &ToggleRelativeLineNumbers,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        let is_relative = self.should_use_relative_line_numbers(window, cx);
-        self.set_relative_line_number(Some(!is_relative), window, cx)
+        let is_relative = self.should_use_relative_line_numbers(cx);
+        self.set_relative_line_number(Some(!is_relative), cx)
     }
 
     pub fn set_relative_line_number(
         &mut self,
         is_relative: Option<bool>,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.use_relative_line_numbers = is_relative;
         cx.notify();
     }
 
-    pub fn set_show_gutter(
-        &mut self,
-        show_gutter: bool,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn set_show_gutter(&mut self, show_gutter: bool, cx: &mut ModelContext<Self>) {
         self.show_gutter = show_gutter;
         cx.notify();
     }
 
-    pub fn set_show_scrollbars(
-        &mut self,
-        show_scrollbars: bool,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn set_show_scrollbars(&mut self, show_scrollbars: bool, cx: &mut ModelContext<Self>) {
         self.show_scrollbars = show_scrollbars;
         cx.notify();
     }
 
-    pub fn set_show_line_numbers(
-        &mut self,
-        show_line_numbers: bool,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn set_show_line_numbers(&mut self, show_line_numbers: bool, cx: &mut ModelContext<Self>) {
         self.show_line_numbers = Some(show_line_numbers);
         cx.notify();
     }
@@ -12092,46 +12012,30 @@ impl Editor {
     pub fn set_show_git_diff_gutter(
         &mut self,
         show_git_diff_gutter: bool,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.show_git_diff_gutter = Some(show_git_diff_gutter);
         cx.notify();
     }
 
-    pub fn set_show_code_actions(
-        &mut self,
-        show_code_actions: bool,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn set_show_code_actions(&mut self, show_code_actions: bool, cx: &mut ModelContext<Self>) {
         self.show_code_actions = Some(show_code_actions);
         cx.notify();
     }
 
-    pub fn set_show_runnables(
-        &mut self,
-        show_runnables: bool,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn set_show_runnables(&mut self, show_runnables: bool, cx: &mut ModelContext<Self>) {
         self.show_runnables = Some(show_runnables);
         cx.notify();
     }
 
-    pub fn set_masked(&mut self, masked: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn set_masked(&mut self, masked: bool, cx: &mut ModelContext<Self>) {
         if self.display_map.read(cx).masked != masked {
             self.display_map.update(cx, |map, _| map.masked = masked);
         }
         cx.notify()
     }
 
-    pub fn set_show_wrap_guides(
-        &mut self,
-        show_wrap_guides: bool,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn set_show_wrap_guides(&mut self, show_wrap_guides: bool, cx: &mut ModelContext<Self>) {
         self.show_wrap_guides = Some(show_wrap_guides);
         cx.notify();
     }
@@ -12139,7 +12043,6 @@ impl Editor {
     pub fn set_show_indent_guides(
         &mut self,
         show_indent_guides: bool,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.show_indent_guides = Some(show_indent_guides);
@@ -12173,7 +12076,7 @@ impl Editor {
     pub fn reveal_in_finder(
         &mut self,
         _: &RevealInFileManager,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(target) = self.target_file(cx) {
@@ -12181,7 +12084,7 @@ impl Editor {
         }
     }
 
-    pub fn copy_path(&mut self, _: &CopyPath, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn copy_path(&mut self, _: &CopyPath, _: &mut Window, cx: &mut ModelContext<Self>) {
         if let Some(file) = self.target_file(cx) {
             if let Some(path) = file.abs_path(cx).to_str() {
                 cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
@@ -12192,7 +12095,7 @@ impl Editor {
     pub fn copy_relative_path(
         &mut self,
         _: &CopyRelativePath,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(file) = self.target_file(cx) {
@@ -12234,7 +12137,7 @@ impl Editor {
     pub fn toggle_selection_menu(
         &mut self,
         _: &ToggleSelectionMenu,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.show_selection_menu = self
@@ -12271,7 +12174,7 @@ impl Editor {
             let blame =
                 cx.new_model(|cx| GitBlame::new(buffer, project, user_triggered, focused, cx));
             self.blame_subscription =
-                Some(cx.observe_in(&blame, window, |_, _, window, cx| cx.notify()));
+                Some(cx.observe_in(&blame, window, |_, _, _, cx| cx.notify()));
             self.blame = Some(blame);
         }
     }
@@ -12399,7 +12302,7 @@ impl Editor {
         cx.spawn_in(window, |_, mut cx| async move {
             match permalink_task.await {
                 Ok(permalink) => {
-                    cx.update(|window, cx| {
+                    cx.update(|_, cx| {
                         cx.write_to_clipboard(ClipboardItem::new_string(permalink.to_string()));
                     })
                     .ok();
@@ -12411,7 +12314,7 @@ impl Editor {
 
                     if let Some(workspace) = workspace {
                         workspace
-                            .update_in(&mut cx, |workspace, window, cx| {
+                            .update_in(&mut cx, |workspace, _, cx| {
                                 struct CopyPermalinkToLine;
 
                                 workspace.show_toast(
@@ -12433,7 +12336,7 @@ impl Editor {
     pub fn copy_file_location(
         &mut self,
         _: &CopyFileLocation,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let selection = self.selections.newest::<Point>(cx).start.row + 1;
@@ -12456,7 +12359,7 @@ impl Editor {
         cx.spawn_in(window, |_, mut cx| async move {
             match permalink_task.await {
                 Ok(permalink) => {
-                    cx.update(|window, cx| {
+                    cx.update(|_, cx| {
                         cx.open_url(permalink.as_ref());
                     })
                     .ok();
@@ -12468,7 +12371,7 @@ impl Editor {
 
                     if let Some(workspace) = workspace {
                         workspace
-                            .update_in(&mut cx, |workspace, window, cx| {
+                            .update(&mut cx, |workspace, cx| {
                                 struct OpenPermalinkToLine;
 
                                 workspace.show_toast(
@@ -12538,7 +12441,6 @@ impl Editor {
         range: Range<Anchor>,
         color: Hsla,
         should_autoscroll: bool,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let snapshot = self.buffer().read(cx).snapshot(cx);
@@ -12616,7 +12518,6 @@ impl Editor {
     pub fn remove_highlighted_rows<T: 'static>(
         &mut self,
         ranges_to_remove: Vec<Range<Anchor>>,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let snapshot = self.buffer().read(cx).snapshot(cx);
@@ -12716,7 +12617,6 @@ impl Editor {
     pub fn set_search_within_ranges(
         &mut self,
         ranges: &[Range<Anchor>],
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.highlight_background::<SearchWithinRange>(
@@ -12730,8 +12630,8 @@ impl Editor {
         self.breadcrumb_header = Some(new_header);
     }
 
-    pub fn clear_search_within_ranges(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.clear_background_highlights::<SearchWithinRange>(window, cx);
+    pub fn clear_search_within_ranges(&mut self, cx: &mut ModelContext<Self>) {
+        self.clear_background_highlights::<SearchWithinRange>(cx);
     }
 
     pub fn highlight_background<T: 'static>(
@@ -12748,7 +12648,6 @@ impl Editor {
 
     pub fn clear_background_highlights<T: 'static>(
         &mut self,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<BackgroundHighlight> {
         let text_highlights = self.background_highlights.remove(&TypeId::of::<T>())?;
@@ -12763,7 +12662,6 @@ impl Editor {
         &mut self,
         ranges: &[Range<Anchor>],
         color_fetcher: fn(&AppContext) -> Hsla,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.gutter_highlights
@@ -12773,7 +12671,6 @@ impl Editor {
 
     pub fn clear_gutter_highlights<T: 'static>(
         &mut self,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<GutterHighlight> {
         cx.notify();
@@ -13087,7 +12984,6 @@ impl Editor {
     pub fn set_show_cursor_when_unfocused(
         &mut self,
         is_enabled: bool,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.show_cursor_when_unfocused = is_enabled;
@@ -13118,7 +13014,7 @@ impl Editor {
             } => {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
-                self.refresh_active_diagnostics(window, cx);
+                self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(window, cx);
                 if self.has_active_inline_completion() {
                     self.update_visible_inline_completion(window, cx);
@@ -13235,7 +13131,7 @@ impl Editor {
             // }
             multi_buffer::Event::Closed => cx.emit(EditorEvent::Closed),
             multi_buffer::Event::DiagnosticsUpdated => {
-                self.refresh_active_diagnostics(window, cx);
+                self.refresh_active_diagnostics(cx);
                 self.scrollbar_marker_state.dirty = true;
                 cx.notify();
             }
@@ -13246,7 +13142,7 @@ impl Editor {
     fn on_display_map_changed(
         &mut self,
         _: Model<DisplayMap>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         cx.notify();
@@ -13756,11 +13652,6 @@ impl Editor {
         });
         supports
     }
-
-    pub fn focus(&self, window: &mut Window, cx: &mut AppContext) {
-        window.focus(&self.focus_handle)
-    }
-
     pub fn is_focused(&self, window: &mut Window) -> bool {
         self.focus_handle.is_focused(window)
     }
@@ -13795,7 +13686,7 @@ impl Editor {
         }
     }
 
-    fn handle_focus_in(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn handle_focus_in(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) {
         cx.emit(EditorEvent::FocusedIn)
     }
 
@@ -13819,7 +13710,7 @@ impl Editor {
             blame.update(cx, GitBlame::blur)
         }
         if !self.hover_state.focused(window, cx) {
-            hide_hover(self, window, cx);
+            hide_hover(self, cx);
         }
 
         self.hide_context_menu(window, cx);
@@ -13835,7 +13726,7 @@ impl Editor {
         let listener = Arc::new(listener);
         self.editor_actions.borrow_mut().insert(
             id,
-            Box::new(move |window, cx| {
+            Box::new(move |window, _| {
                 let listener = listener.clone();
                 window.on_action(TypeId::of::<A>(), move |action, phase, window, cx| {
                     let action = action.downcast_ref().unwrap();
@@ -14482,7 +14373,7 @@ impl CodeActionProvider for Model<Project> {
         &self,
         buffer: &Model<Buffer>,
         range: Range<text::Anchor>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<Vec<CodeAction>>> {
         self.update(cx, |project, cx| {
@@ -14496,7 +14387,7 @@ impl CodeActionProvider for Model<Project> {
         action: CodeAction,
         _excerpt_id: ExcerptId,
         push_to_history: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut AppContext,
     ) -> Task<Result<ProjectTransaction>> {
         self.update(cx, |project, cx| {
@@ -14648,7 +14539,7 @@ impl CompletionProvider for Model<Project> {
         buffer: &Model<Buffer>,
         buffer_position: text::Anchor,
         options: CompletionContext,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> Task<Result<Vec<Completion>>> {
         self.update(cx, |project, cx| {
@@ -14668,7 +14559,7 @@ impl CompletionProvider for Model<Project> {
         buffer: Model<Buffer>,
         completion_indices: Vec<usize>,
         completions: Rc<RefCell<Box<[Completion]>>>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> Task<Result<bool>> {
         self.update(cx, |project, cx| {
@@ -14684,7 +14575,7 @@ impl CompletionProvider for Model<Project> {
         completions: Rc<RefCell<Box<[Completion]>>>,
         completion_index: usize,
         push_to_history: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> Task<Result<Option<language::Transaction>>> {
         self.update(cx, |project, cx| {
@@ -14706,7 +14597,7 @@ impl CompletionProvider for Model<Project> {
         position: language::Anchor,
         text: &str,
         trigger_in_words: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) -> bool {
         let mut chars = text.chars();
@@ -15158,11 +15049,7 @@ impl Focusable for Editor {
 }
 
 impl Render for Editor {
-    fn render<'a>(
-        &mut self,
-        window: &mut Window,
-        cx: &mut ModelContext<'a, Self>,
-    ) -> impl IntoElement {
+    fn render<'a>(&mut self, _: &mut Window, cx: &mut ModelContext<'a, Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
 
         let mut text_style = match self.mode {
@@ -15206,8 +15093,8 @@ impl Render for Editor {
                 scrollbar_width: EditorElement::SCROLLBAR_WIDTH,
                 syntax: cx.theme().syntax().clone(),
                 status: cx.theme().status().clone(),
-                inlay_hints_style: make_inlay_hints_style(window, cx),
-                inline_completion_styles: make_suggestion_styles(window, cx),
+                inlay_hints_style: make_inlay_hints_style(cx),
+                inline_completion_styles: make_suggestion_styles(cx),
                 unnecessary_code_fade: ThemeSettings::get_global(cx).unnecessary_code_fade,
             },
         )
@@ -15219,7 +15106,7 @@ impl ViewInputHandler for Editor {
         &mut self,
         range_utf16: Range<usize>,
         adjusted_range: &mut Option<Range<usize>>,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<String> {
         let snapshot = self.buffer.read(cx).read(cx);
@@ -15234,7 +15121,7 @@ impl ViewInputHandler for Editor {
     fn selected_text_range(
         &mut self,
         ignore_disabled_input: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<UTF16Selection> {
         // Prevent the IME menu from appearing when holding down an alphabetic key
@@ -15254,7 +15141,7 @@ impl ViewInputHandler for Editor {
 
     fn marked_text_range(
         &self,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<Range<usize>> {
         let snapshot = self.buffer.read(cx).read(cx);
@@ -15262,7 +15149,7 @@ impl ViewInputHandler for Editor {
         Some(range.start.to_offset_utf16(&snapshot).0..range.end.to_offset_utf16(&snapshot).0)
     }
 
-    fn unmark_text(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn unmark_text(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) {
         self.clear_highlights::<InputComposition>(cx);
         self.ime_transaction.take();
     }
@@ -15640,7 +15527,7 @@ pub fn diagnostic_block_renderer(
                             cx.write_to_clipboard(ClipboardItem::new_string(message.clone()))
                         }
                     })
-                    .tooltip(|window, cx| Tooltip::text("Copy diagnostic message", window, cx)),
+                    .tooltip(Tooltip::text("Copy diagnostic message")),
             )
         };
 

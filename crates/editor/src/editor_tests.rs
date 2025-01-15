@@ -194,14 +194,14 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
         editor.change_selections(None, window, cx, |s| s.select_ranges([2..4]));
 
         editor.insert("cd", window, cx);
-        editor.end_transaction_at(now, window, cx);
+        editor.end_transaction_at(now, cx);
         assert_eq!(editor.text(cx), "12cd56");
         assert_eq!(editor.selections.ranges(cx), vec![4..4]);
 
         editor.start_transaction_at(now, window, cx);
         editor.change_selections(None, window, cx, |s| s.select_ranges([4..5]));
         editor.insert("e", window, cx);
-        editor.end_transaction_at(now, window, cx);
+        editor.end_transaction_at(now, cx);
         assert_eq!(editor.text(cx), "12cde6");
         assert_eq!(editor.selections.ranges(cx), vec![5..5]);
 
@@ -244,7 +244,7 @@ fn test_undo_redo_with_selection_restoration(cx: &mut TestAppContext) {
 
         // Test empty transactions.
         editor.start_transaction_at(now, window, cx);
-        editor.end_transaction_at(now, window, cx);
+        editor.end_transaction_at(now, cx);
         editor.undo(&Undo, window, cx);
         assert_eq!(editor.text(cx), "12cde6");
     });
@@ -627,7 +627,7 @@ fn test_clone(cx: &mut TestAppContext) {
     });
 
     let cloned_editor = editor
-        .update(cx, |editor, window, cx| {
+        .update(cx, |editor, _, cx| {
             cx.open_window(Default::default(), |window, cx| {
                 cx.new_model(|cx| editor.clone(window, cx))
             })
@@ -656,12 +656,10 @@ fn test_clone(cx: &mut TestAppContext) {
     );
     assert_set_eq!(
         cloned_editor
-            .update(cx, |editor, window, cx| editor
-                .selections
-                .ranges::<Point>(cx))
+            .update(cx, |editor, _, cx| editor.selections.ranges::<Point>(cx))
             .unwrap(),
         editor
-            .update(cx, |editor, window, cx| editor.selections.ranges(cx))
+            .update(cx, |editor, _, cx| editor.selections.ranges(cx))
             .unwrap()
     );
     assert_set_eq!(
@@ -694,11 +692,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
             let handle = cx.model();
             editor.set_nav_history(Some(pane.read(cx).nav_history_for_item(&handle)));
 
-            fn pop_history(
-                editor: &mut Editor,
-                window: &mut Window,
-                cx: &mut AppContext,
-            ) -> Option<NavigationEntry> {
+            fn pop_history(editor: &mut Editor, cx: &mut AppContext) -> Option<NavigationEntry> {
                 editor.nav_history.as_mut().unwrap().pop_backward(cx)
             }
 
@@ -714,7 +708,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
                     DisplayPoint::new(DisplayRow(3), 0)..DisplayPoint::new(DisplayRow(3), 0)
                 ])
             });
-            assert!(pop_history(&mut editor, window, cx).is_none());
+            assert!(pop_history(&mut editor, cx).is_none());
 
             // Move the cursor a large distance.
             // The history can jump back to the previous position.
@@ -723,14 +717,14 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
                     DisplayPoint::new(DisplayRow(13), 0)..DisplayPoint::new(DisplayRow(13), 3)
                 ])
             });
-            let nav_entry = pop_history(&mut editor, window, cx).unwrap();
+            let nav_entry = pop_history(&mut editor, cx).unwrap();
             editor.navigate(nav_entry.data.unwrap(), window, cx);
             assert_eq!(nav_entry.item.id(), cx.entity_id());
             assert_eq!(
                 editor.selections.display_ranges(cx),
                 &[DisplayPoint::new(DisplayRow(3), 0)..DisplayPoint::new(DisplayRow(3), 0)]
             );
-            assert!(pop_history(&mut editor, window, cx).is_none());
+            assert!(pop_history(&mut editor, cx).is_none());
 
             // Move the cursor a small distance via the mouse.
             // Nothing is added to the navigation history.
@@ -740,7 +734,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
                 editor.selections.display_ranges(cx),
                 &[DisplayPoint::new(DisplayRow(5), 0)..DisplayPoint::new(DisplayRow(5), 0)]
             );
-            assert!(pop_history(&mut editor, window, cx).is_none());
+            assert!(pop_history(&mut editor, cx).is_none());
 
             // Move the cursor a large distance via the mouse.
             // The history can jump back to the previous position.
@@ -750,14 +744,14 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
                 editor.selections.display_ranges(cx),
                 &[DisplayPoint::new(DisplayRow(15), 0)..DisplayPoint::new(DisplayRow(15), 0)]
             );
-            let nav_entry = pop_history(&mut editor, window, cx).unwrap();
+            let nav_entry = pop_history(&mut editor, cx).unwrap();
             editor.navigate(nav_entry.data.unwrap(), window, cx);
             assert_eq!(nav_entry.item.id(), cx.entity_id());
             assert_eq!(
                 editor.selections.display_ranges(cx),
                 &[DisplayPoint::new(DisplayRow(5), 0)..DisplayPoint::new(DisplayRow(5), 0)]
             );
-            assert!(pop_history(&mut editor, window, cx).is_none());
+            assert!(pop_history(&mut editor, cx).is_none());
 
             // Set scroll position to check later
             editor.set_scroll_position(gpui::Point::<f32>::new(5.5, 5.5), window, cx);
@@ -768,7 +762,7 @@ async fn test_navigation_history(cx: &mut TestAppContext) {
             editor.set_scroll_position(gpui::Point::<f32>::new(-2.5, -0.5), window, cx);
             assert_ne!(editor.scroll_manager.anchor(), original_scroll_position);
 
-            let nav_entry = pop_history(&mut editor, window, cx).unwrap();
+            let nav_entry = pop_history(&mut editor, cx).unwrap();
             editor.navigate(nav_entry.data.unwrap(), window, cx);
             assert_eq!(editor.scroll_manager.anchor(), original_scroll_position);
 
@@ -1784,93 +1778,38 @@ fn test_prev_next_word_boundary(cx: &mut TestAppContext) {
         });
 
         view.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
-        assert_selection_ranges(
-            "use std::ˇstr::{foo, bar}\n\n  {ˇbaz.qux()}",
-            view,
-            window,
-            cx,
-        );
+        assert_selection_ranges("use std::ˇstr::{foo, bar}\n\n  {ˇbaz.qux()}", view, cx);
 
         view.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
-        assert_selection_ranges(
-            "use stdˇ::str::{foo, bar}\n\n  ˇ{baz.qux()}",
-            view,
-            window,
-            cx,
-        );
+        assert_selection_ranges("use stdˇ::str::{foo, bar}\n\n  ˇ{baz.qux()}", view, cx);
 
         view.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
-        assert_selection_ranges(
-            "use ˇstd::str::{foo, bar}\n\nˇ  {baz.qux()}",
-            view,
-            window,
-            cx,
-        );
+        assert_selection_ranges("use ˇstd::str::{foo, bar}\n\nˇ  {baz.qux()}", view, cx);
 
         view.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
-        assert_selection_ranges(
-            "ˇuse std::str::{foo, bar}\nˇ\n  {baz.qux()}",
-            view,
-            window,
-            cx,
-        );
+        assert_selection_ranges("ˇuse std::str::{foo, bar}\nˇ\n  {baz.qux()}", view, cx);
 
         view.move_to_previous_word_start(&MoveToPreviousWordStart, window, cx);
-        assert_selection_ranges(
-            "ˇuse std::str::{foo, barˇ}\n\n  {baz.qux()}",
-            view,
-            window,
-            cx,
-        );
+        assert_selection_ranges("ˇuse std::str::{foo, barˇ}\n\n  {baz.qux()}", view, cx);
 
         view.move_to_next_word_end(&MoveToNextWordEnd, window, cx);
-        assert_selection_ranges(
-            "useˇ std::str::{foo, bar}ˇ\n\n  {baz.qux()}",
-            view,
-            window,
-            cx,
-        );
+        assert_selection_ranges("useˇ std::str::{foo, bar}ˇ\n\n  {baz.qux()}", view, cx);
 
         view.move_to_next_word_end(&MoveToNextWordEnd, window, cx);
-        assert_selection_ranges(
-            "use stdˇ::str::{foo, bar}\nˇ\n  {baz.qux()}",
-            view,
-            window,
-            cx,
-        );
+        assert_selection_ranges("use stdˇ::str::{foo, bar}\nˇ\n  {baz.qux()}", view, cx);
 
         view.move_to_next_word_end(&MoveToNextWordEnd, window, cx);
-        assert_selection_ranges(
-            "use std::ˇstr::{foo, bar}\n\n  {ˇbaz.qux()}",
-            view,
-            window,
-            cx,
-        );
+        assert_selection_ranges("use std::ˇstr::{foo, bar}\n\n  {ˇbaz.qux()}", view, cx);
 
         view.move_right(&MoveRight, window, cx);
         view.select_to_previous_word_start(&SelectToPreviousWordStart, window, cx);
-        assert_selection_ranges(
-            "use std::«ˇs»tr::{foo, bar}\n\n  {«ˇb»az.qux()}",
-            view,
-            window,
-            cx,
-        );
+        assert_selection_ranges("use std::«ˇs»tr::{foo, bar}\n\n  {«ˇb»az.qux()}", view, cx);
 
         view.select_to_previous_word_start(&SelectToPreviousWordStart, window, cx);
-        assert_selection_ranges(
-            "use std«ˇ::s»tr::{foo, bar}\n\n  «ˇ{b»az.qux()}",
-            view,
-            window,
-            cx,
-        );
+        assert_selection_ranges("use std«ˇ::s»tr::{foo, bar}\n\n  «ˇ{b»az.qux()}", view, cx);
 
         view.select_to_next_word_end(&SelectToNextWordEnd, window, cx);
-        assert_selection_ranges(
-            "use std::«ˇs»tr::{foo, bar}\n\n  {«ˇb»az.qux()}",
-            view,
-            window,
-            cx,
-        );
+        assert_selection_ranges("use std::«ˇs»tr::{foo, bar}\n\n  {«ˇb»az.qux()}", view, cx);
     });
 }
 
@@ -1939,7 +1878,7 @@ async fn test_move_start_of_paragraph_end_of_paragraph(cx: &mut gpui::TestAppCon
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
 
-    let line_height = cx.editor(|editor, window, cx| {
+    let line_height = cx.editor(|editor, window, _| {
         editor
             .style()
             .unwrap()
@@ -2055,7 +1994,7 @@ async fn test_move_start_of_paragraph_end_of_paragraph(cx: &mut gpui::TestAppCon
 async fn test_scroll_page_up_page_down(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorTestContext::new(cx).await;
-    let line_height = cx.editor(|editor, window, cx| {
+    let line_height = cx.editor(|editor, window, _| {
         editor
             .style()
             .unwrap()
@@ -2119,7 +2058,7 @@ async fn test_autoscroll(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorTestContext::new(cx).await;
 
     let line_height = cx.update_editor(|editor, window, cx| {
-        editor.set_vertical_scroll_margin(2, window, cx);
+        editor.set_vertical_scroll_margin(2, cx);
         editor
             .style()
             .unwrap()
@@ -3128,7 +3067,6 @@ fn test_indent_outdent_with_excerpts(cx: &mut TestAppContext) {
 
                     «const c:ˇ» usize = 3;
             "},
-            window,
             cx,
         );
         editor.tab_prev(&TabPrev, window, cx);
@@ -3140,7 +3078,6 @@ fn test_indent_outdent_with_excerpts(cx: &mut TestAppContext) {
 
                 «const c:ˇ» usize = 3;
             "},
-            window,
             cx,
         );
 
@@ -4186,7 +4123,6 @@ fn test_move_line_up_down_with_blocks(cx: &mut TestAppContext) {
                 priority: 0,
             }],
             Some(Autoscroll::fit()),
-            window,
             cx,
         );
         editor.change_selections(None, window, cx, |s| {
@@ -4229,7 +4165,6 @@ async fn test_selections_and_replace_blocks(cx: &mut TestAppContext) {
                 priority: 0,
             }],
             None,
-            window,
             cx,
         );
     });
@@ -5483,7 +5418,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
         });
         view.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
     });
-    editor.update_in(cx, |editor, window, cx| {
+    editor.update(cx, |editor, cx| {
         assert_text_with_selections(
             editor,
             indoc! {r#"
@@ -5493,7 +5428,6 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
                     let var1 = "«textˇ»";
                 }
             "#},
-            window,
             cx,
         );
     });
@@ -5501,7 +5435,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     editor.update_in(cx, |view, window, cx| {
         view.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
     });
-    editor.update_in(cx, |editor, window, cx| {
+    editor.update(cx, |editor, cx| {
         assert_text_with_selections(
             editor,
             indoc! {r#"
@@ -5511,7 +5445,6 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
                     let var1 = "text";
                 }»
             "#},
-            window,
             cx,
         );
     });
@@ -5536,7 +5469,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     editor.update_in(cx, |view, window, cx| {
         view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, window, cx);
     });
-    editor.update_in(cx, |editor, window, cx| {
+    editor.update(cx, |editor, cx| {
         assert_text_with_selections(
             editor,
             indoc! {r#"
@@ -5546,7 +5479,6 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
                     let var1 = "text";
                 }»
             "#},
-            window,
             cx,
         );
     });
@@ -5554,7 +5486,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     editor.update_in(cx, |view, window, cx| {
         view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, window, cx);
     });
-    editor.update_in(cx, |editor, window, cx| {
+    editor.update(cx, |editor, cx| {
         assert_text_with_selections(
             editor,
             indoc! {r#"
@@ -5564,7 +5496,6 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
                     let var1 = "«textˇ»";
                 }
             "#},
-            window,
             cx,
         );
     });
@@ -5572,7 +5503,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     editor.update_in(cx, |view, window, cx| {
         view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, window, cx);
     });
-    editor.update_in(cx, |editor, window, cx| {
+    editor.update(cx, |editor, cx| {
         assert_text_with_selections(
             editor,
             indoc! {r#"
@@ -5582,7 +5513,6 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
                     let var1 = "te«ˇ»xt";
                 }
             "#},
-            window,
             cx,
         );
     });
@@ -5591,7 +5521,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
     editor.update_in(cx, |view, window, cx| {
         view.select_smaller_syntax_node(&SelectSmallerSyntaxNode, window, cx);
     });
-    editor.update_in(cx, |editor, window, cx| {
+    editor.update_in(cx, |editor, _, cx| {
         assert_text_with_selections(
             editor,
             indoc! {r#"
@@ -5601,7 +5531,6 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
                     let var1 = "te«ˇ»xt";
                 }
             "#},
-            window,
             cx,
         );
     });
@@ -5626,7 +5555,7 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
         );
         view.select_larger_syntax_node(&SelectLargerSyntaxNode, window, cx);
     });
-    editor.update_in(cx, |editor, window, cx| {
+    editor.update(cx, |editor, cx| {
         assert_text_with_selections(
             editor,
             indoc! {r#"
@@ -5636,7 +5565,6 @@ async fn test_select_larger_smaller_syntax_node(cx: &mut gpui::TestAppContext) {
                     «let var1 = "text";ˇ»
                 }
             "#},
-            window,
             cx,
         );
     });
@@ -5754,7 +5682,7 @@ async fn test_autoindent_selections(cx: &mut gpui::TestAppContext) {
             "}],
         );
 
-        let buffer = cx.update_editor(|editor, window, cx| {
+        let buffer = cx.update_editor(|editor, _, cx| {
             let buffer = editor.buffer().update(cx, |buffer, _| {
                 buffer.all_buffers().iter().next().unwrap().clone()
             });
@@ -6868,12 +6796,7 @@ async fn test_snippet_placeholder_choices(cx: &mut gpui::TestAppContext) {
             .insert_snippet(&insertion_ranges, snippet, window, cx)
             .unwrap();
 
-        fn assert(
-            editor: &mut Editor,
-            window: &mut Window,
-            cx: &mut ModelContext<Editor>,
-            marked_text: &str,
-        ) {
+        fn assert(editor: &mut Editor, cx: &mut ModelContext<Editor>, marked_text: &str) {
             let (expected_text, selection_ranges) = marked_text_ranges(marked_text, false);
             assert_eq!(editor.text(cx), expected_text);
             assert_eq!(editor.selections.ranges::<usize>(cx), selection_ranges);
@@ -6881,7 +6804,6 @@ async fn test_snippet_placeholder_choices(cx: &mut gpui::TestAppContext) {
 
         assert(
             editor,
-            window,
             cx,
             indoc! {"
             type «» =•
@@ -6915,12 +6837,7 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
             .insert_snippet(&insertion_ranges, snippet, window, cx)
             .unwrap();
 
-        fn assert(
-            editor: &mut Editor,
-            window: &mut Window,
-            cx: &mut ModelContext<Editor>,
-            marked_text: &str,
-        ) {
+        fn assert(editor: &mut Editor, cx: &mut ModelContext<Editor>, marked_text: &str) {
             let (expected_text, selection_ranges) = marked_text_ranges(marked_text, false);
             assert_eq!(editor.text(cx), expected_text);
             assert_eq!(editor.selections.ranges::<usize>(cx), selection_ranges);
@@ -6928,7 +6845,6 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
 
         assert(
             editor,
-            window,
             cx,
             indoc! {"
                 a.f(«one», two, «three») b
@@ -6941,7 +6857,6 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
         assert!(!editor.move_to_prev_snippet_tabstop(window, cx));
         assert(
             editor,
-            window,
             cx,
             indoc! {"
                 a.f(«one», two, «three») b
@@ -6953,7 +6868,6 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
         assert!(editor.move_to_next_snippet_tabstop(window, cx));
         assert(
             editor,
-            window,
             cx,
             indoc! {"
                 a.f(one, «two», three) b
@@ -6965,7 +6879,6 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
         editor.move_to_prev_snippet_tabstop(window, cx);
         assert(
             editor,
-            window,
             cx,
             indoc! {"
                 a.f(«one», two, «three») b
@@ -6977,7 +6890,6 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
         assert!(editor.move_to_next_snippet_tabstop(window, cx));
         assert(
             editor,
-            window,
             cx,
             indoc! {"
                 a.f(one, «two», three) b
@@ -6988,7 +6900,6 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
         assert!(editor.move_to_next_snippet_tabstop(window, cx));
         assert(
             editor,
-            window,
             cx,
             indoc! {"
                 a.f(one, two, three)ˇ b
@@ -7001,7 +6912,6 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
         editor.move_to_prev_snippet_tabstop(window, cx);
         assert(
             editor,
-            window,
             cx,
             indoc! {"
                 a.f(one, two, three)ˇ b
@@ -8416,8 +8326,8 @@ async fn test_signature_help(cx: &mut gpui::TestAppContext) {
     handle_signature_help_request(&mut cx, mocked_response.clone()).await;
     cx.condition(|editor, _| editor.signature_help_state.is_shown())
         .await;
-    cx.update_editor(|editor, window, cx| {
-        editor.hide_signature_help(window, cx, SignatureHelpHiddenBy::Escape);
+    cx.update_editor(|editor, _, cx| {
+        editor.hide_signature_help(cx, SignatureHelpHiddenBy::Escape);
     });
     cx.condition(|editor, _| !editor.signature_help_state.is_shown())
         .await;
@@ -9951,7 +9861,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
         .unwrap()
         .await
         .unwrap();
-    _ = follower.update(cx, |follower, window, cx| {
+    _ = follower.update(cx, |follower, _, cx| {
         assert_eq!(follower.selections.ranges(cx), vec![1..1]);
     });
     assert!(*is_still_following.borrow());
@@ -10001,7 +9911,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
         .unwrap()
         .await
         .unwrap();
-    _ = follower.update(cx, |follower, window, cx| {
+    _ = follower.update(cx, |follower, _, cx| {
         assert_eq!(follower.scroll_position(cx), gpui::Point::new(1.5, 0.0));
         assert_eq!(follower.selections.ranges(cx), vec![0..0]);
     });
@@ -10024,7 +9934,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
         .unwrap()
         .await
         .unwrap();
-    _ = follower.update(cx, |follower, window, cx| {
+    _ = follower.update(cx, |follower, _, cx| {
         assert_eq!(follower.selections.ranges(cx), vec![0..0, 1..1]);
     });
     assert!(*is_still_following.borrow());
@@ -10045,7 +9955,7 @@ async fn test_following(cx: &mut gpui::TestAppContext) {
         .unwrap()
         .await
         .unwrap();
-    _ = follower.update(cx, |follower, window, cx| {
+    _ = follower.update(cx, |follower, _, cx| {
         assert_eq!(follower.selections.ranges(cx), vec![0..2]);
     });
 
@@ -10257,8 +10167,8 @@ async fn go_to_prev_overlapping_diagnostic(
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
-    let lsp_store = cx
-        .update_editor(|editor, window, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
+    let lsp_store =
+        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
 
     cx.set_state(indoc! {"
         ˇfn func(abc def: i32) -> u32 {
@@ -10356,8 +10266,8 @@ async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
         fn func(abˇc def: i32) -> u32 {
         }
     "});
-    let lsp_store = cx
-        .update_editor(|editor, window, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
+    let lsp_store =
+        cx.update_editor(|editor, _, cx| editor.project.as_ref().unwrap().read(cx).lsp_store());
 
     cx.update(|_, cx| {
         lsp_store.update(cx, |lsp_store, cx| {
@@ -10655,7 +10565,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
     let cx = &mut VisualTestContext::from_window(*workspace, cx);
 
     let worktree_id = workspace
-        .update(cx, |workspace, window, cx| {
+        .update(cx, |workspace, _, cx| {
             workspace.project().update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
             })
@@ -10698,7 +10608,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
     });
 
     editor_handle.update_in(cx, |editor, window, cx| {
-        editor.focus(window, cx);
+        window.focus(&editor.focus_handle(cx));
         editor.change_selections(None, window, cx, |s| {
             s.select_ranges([Point::new(0, 21)..Point::new(0, 20)])
         });
@@ -11242,7 +11152,7 @@ async fn test_completions_resolve_happens_once(cx: &mut gpui::TestAppContext) {
     .expect("Completion failed");
     cx.run_until_parked();
 
-    cx.update_editor(|editor, window, cx| {
+    cx.update_editor(|editor, _, cx| {
         assert_eq!(
             resolve_requests_1.load(atomic::Ordering::Acquire),
             1,
@@ -12338,7 +12248,7 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
         .unwrap();
     cx.executor().run_until_parked();
     workspace
-        .update(cx, |workspace, window, cx| {
+        .update(cx, |workspace, _, cx| {
             let active_item = workspace
                 .active_item(cx)
                 .expect("should have an active item after navigating back");
@@ -12394,7 +12304,7 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
         .unwrap();
     cx.executor().run_until_parked();
     workspace
-        .update(cx, |workspace, window, cx| {
+        .update(cx, |workspace, _, cx| {
             let active_item = workspace
                 .active_item(cx)
                 .expect("should have an active item after navigating back from the 2nd buffer");
@@ -12446,7 +12356,7 @@ async fn test_mutlibuffer_in_navigation_history(cx: &mut gpui::TestAppContext) {
         .unwrap();
     cx.executor().run_until_parked();
     workspace
-        .update(cx, |workspace, window, cx| {
+        .update(cx, |workspace, _, cx| {
             let active_item = workspace
                 .active_item(cx)
                 .expect("should have an active item after navigating back from the 3rd buffer");
@@ -14284,10 +14194,10 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut gpui::T
             .unindent(),
     );
 
-    let editors = cx.update_workspace(|workspace, window, cx| {
+    let editors = cx.update_workspace(|workspace, _, cx| {
         workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
     });
-    cx.update_editor(|_, window, test_editor_cx| {
+    cx.update_editor(|_, _, test_editor_cx| {
         assert_eq!(
             editors.len(),
             1,
@@ -14319,10 +14229,10 @@ async fn test_goto_definition_with_find_all_references_fallback(cx: &mut gpui::T
         fn «twoˇ»() {}"#
             .unindent(),
     );
-    let editors = cx.update_workspace(|workspace, window, cx| {
+    let editors = cx.update_workspace(|workspace, _, cx| {
         workspace.items_of_type::<Editor>(cx).collect::<Vec<_>>()
     });
-    cx.update_editor(|_, window, test_editor_cx| {
+    cx.update_editor(|_, _, test_editor_cx| {
         assert_eq!(
             editors.len(),
             2,
@@ -14413,14 +14323,14 @@ async fn test_find_enclosing_node_with_task(cx: &mut gpui::TestAppContext) {
         editor.change_selections(None, window, cx, |s| {
             s.select_ranges([Point::new(4, 5)..Point::new(4, 5)])
         });
-        let (_, row, _) = editor.find_enclosing_node_task(window, cx).unwrap();
+        let (_, row, _) = editor.find_enclosing_node_task(cx).unwrap();
         assert_eq!(row, 3, "Should find task for cursor inside runnable_1");
 
         // Test finding task when cursor is on function name
         editor.change_selections(None, window, cx, |s| {
             s.select_ranges([Point::new(8, 4)..Point::new(8, 4)])
         });
-        let (_, row, _) = editor.find_enclosing_node_task(window, cx).unwrap();
+        let (_, row, _) = editor.find_enclosing_node_task(cx).unwrap();
         assert_eq!(row, 8, "Should find task when cursor is on function name");
     });
 }
@@ -14547,8 +14457,8 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
         full_text,
     );
 
-    multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        editor.fold_buffer(buffer_1.read(cx).remote_id(), window, cx)
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.fold_buffer(buffer_1.read(cx).remote_id(), cx)
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
@@ -14556,8 +14466,8 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
         "After folding the first buffer, its text should not be displayed"
     );
 
-    multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        editor.fold_buffer(buffer_2.read(cx).remote_id(), window, cx)
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.fold_buffer(buffer_2.read(cx).remote_id(), cx)
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
@@ -14565,8 +14475,8 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
         "After folding the second buffer, its text should not be displayed"
     );
 
-    multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        editor.fold_buffer(buffer_3.read(cx).remote_id(), window, cx)
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.fold_buffer(buffer_3.read(cx).remote_id(), cx)
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
@@ -14581,8 +14491,8 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
             .next_line_boundary(Point::new(0, 4));
     });
 
-    multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        editor.unfold_buffer(buffer_2.read(cx).remote_id(), window, cx)
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.unfold_buffer(buffer_2.read(cx).remote_id(), cx)
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
@@ -14590,8 +14500,8 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
         "After unfolding the second buffer, its text should be displayed"
     );
 
-    multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        editor.unfold_buffer(buffer_1.read(cx).remote_id(), window, cx)
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.unfold_buffer(buffer_1.read(cx).remote_id(), cx)
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
@@ -14599,8 +14509,8 @@ async fn test_multi_buffer_folding(cx: &mut gpui::TestAppContext) {
         "After unfolding the first buffer, its and 2nd buffer's text should be displayed"
     );
 
-    multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        editor.unfold_buffer(buffer_3.read(cx).remote_id(), window, cx)
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.unfold_buffer(buffer_3.read(cx).remote_id(), cx)
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
@@ -14702,8 +14612,8 @@ async fn test_multi_buffer_single_excerpts_folding(cx: &mut gpui::TestAppContext
         full_text,
     );
 
-    multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        editor.fold_buffer(buffer_1.read(cx).remote_id(), window, cx)
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.fold_buffer(buffer_1.read(cx).remote_id(), cx)
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
@@ -14711,8 +14621,8 @@ async fn test_multi_buffer_single_excerpts_folding(cx: &mut gpui::TestAppContext
         "After folding the first buffer, its text should not be displayed"
     );
 
-    multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        editor.fold_buffer(buffer_2.read(cx).remote_id(), window, cx)
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.fold_buffer(buffer_2.read(cx).remote_id(), cx)
     });
 
     assert_eq!(
@@ -14721,8 +14631,8 @@ async fn test_multi_buffer_single_excerpts_folding(cx: &mut gpui::TestAppContext
         "After folding the second buffer, its text should not be displayed"
     );
 
-    multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        editor.fold_buffer(buffer_3.read(cx).remote_id(), window, cx)
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.fold_buffer(buffer_3.read(cx).remote_id(), cx)
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
@@ -14730,8 +14640,8 @@ async fn test_multi_buffer_single_excerpts_folding(cx: &mut gpui::TestAppContext
         "After folding the third buffer, its text should not be displayed"
     );
 
-    multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        editor.unfold_buffer(buffer_2.read(cx).remote_id(), window, cx)
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.unfold_buffer(buffer_2.read(cx).remote_id(), cx)
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
@@ -14739,8 +14649,8 @@ async fn test_multi_buffer_single_excerpts_folding(cx: &mut gpui::TestAppContext
         "After unfolding the second buffer, its text should be displayed"
     );
 
-    multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        editor.unfold_buffer(buffer_1.read(cx).remote_id(), window, cx)
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.unfold_buffer(buffer_1.read(cx).remote_id(), cx)
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
@@ -14748,8 +14658,8 @@ async fn test_multi_buffer_single_excerpts_folding(cx: &mut gpui::TestAppContext
         "After unfolding the first buffer, its text should be displayed"
     );
 
-    multi_buffer_editor.update_in(cx, |editor, window, cx| {
-        editor.unfold_buffer(buffer_3.read(cx).remote_id(), window, cx)
+    multi_buffer_editor.update(cx, |editor, cx| {
+        editor.unfold_buffer(buffer_3.read(cx).remote_id(), cx)
     });
     assert_eq!(
         multi_buffer_editor.update(cx, |editor, cx| editor.display_text(cx)),
@@ -15135,12 +15045,7 @@ fn empty_range(row: usize, column: usize) -> Range<DisplayPoint> {
     point..point
 }
 
-fn assert_selection_ranges(
-    marked_text: &str,
-    view: &mut Editor,
-    window: &mut Window,
-    cx: &mut ModelContext<Editor>,
-) {
+fn assert_selection_ranges(marked_text: &str, view: &mut Editor, cx: &mut ModelContext<Editor>) {
     let (text, ranges) = marked_text_ranges(marked_text, true);
     assert_eq!(view.text(cx), text);
     assert_eq!(

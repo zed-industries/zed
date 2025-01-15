@@ -55,7 +55,7 @@ pub fn init(cx: &mut AppContext) {
                 cx.spawn_in(window, |_, mut cx| async move {
                     let specs = specs.await.to_string();
 
-                    cx.update(|window, cx| {
+                    cx.update(|_, cx| {
                         cx.write_to_clipboard(ClipboardItem::new_string(specs.clone()))
                     })
                     .log_err();
@@ -75,7 +75,7 @@ pub fn init(cx: &mut AppContext) {
                 let specs = SystemSpecs::new(window, cx);
                 cx.spawn_in(window, |_, mut cx| async move {
                     let specs = specs.await;
-                    cx.update(|window, cx| {
+                    cx.update(|_, cx| {
                         cx.open_url(&request_feature_url(&specs));
                     })
                     .log_err();
@@ -86,14 +86,14 @@ pub fn init(cx: &mut AppContext) {
                 let specs = SystemSpecs::new(window, cx);
                 cx.spawn_in(window, |_, mut cx| async move {
                     let specs = specs.await;
-                    cx.update(|window, cx| {
+                    cx.update(|_, cx| {
                         cx.open_url(&file_bug_report_url(&specs));
                     })
                     .log_err();
                 })
                 .detach();
             })
-            .register_action(move |_, _: &OpenZedRepo, window, cx| {
+            .register_action(move |_, _: &OpenZedRepo, _, cx| {
                 cx.open_url(zed_repo_url());
             });
     })

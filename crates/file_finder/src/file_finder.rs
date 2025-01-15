@@ -16,7 +16,7 @@ use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
 use gpui::{
     actions, Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable,
     KeyContext, Model, ModelContext, Modifiers, ModifiersChangedEvent, ParentElement, Render,
-    Styled, Task, VisualContext, WeakModel, Window,
+    Styled, Task, WeakModel, Window,
 };
 use new_path_prompt::NewPathPrompt;
 use open_path_prompt::OpenPathPrompt;
@@ -214,7 +214,7 @@ impl FileFinder {
         self.picker.update(cx, |picker, cx| {
             let menu_handle = &picker.delegate.popover_menu_handle;
             if menu_handle.is_deployed() {
-                menu_handle.hide(window, cx);
+                menu_handle.hide(cx);
             } else {
                 menu_handle.show(window, cx);
             }
@@ -289,11 +289,7 @@ impl FileFinder {
         })
     }
 
-    pub fn modal_max_width(
-        width_setting: Option<FileFinderWidth>,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Pixels {
+    pub fn modal_max_width(width_setting: Option<FileFinderWidth>, window: &mut Window) -> Pixels {
         let window_width = window.viewport_size().width;
         let small_width = Pixels(545.);
 
@@ -320,8 +316,7 @@ impl Render for FileFinder {
         let key_context = self.picker.read(cx).delegate.key_context(window, cx);
 
         let file_finder_settings = FileFinderSettings::get_global(cx);
-        let modal_max_width =
-            Self::modal_max_width(file_finder_settings.modal_max_width, window, cx);
+        let modal_max_width = Self::modal_max_width(file_finder_settings.modal_max_width, window);
 
         v_flex()
             .key_context(key_context)
@@ -757,10 +752,10 @@ impl FileFinderDelegate {
             .map(ProjectPanelOrdMatch);
             let did_cancel = cancel_flag.load(atomic::Ordering::Relaxed);
             picker
-                .update_in(&mut cx, |picker, window, cx| {
+                .update(&mut cx, |picker, cx| {
                     picker
                         .delegate
-                        .set_search_matches(search_id, did_cancel, query, matches, window, cx)
+                        .set_search_matches(search_id, did_cancel, query, matches, cx)
                 })
                 .log_err();
         })
@@ -772,7 +767,7 @@ impl FileFinderDelegate {
         did_cancel: bool,
         query: FileSearchQuery,
         matches: impl IntoIterator<Item = ProjectPanelOrdMatch>,
-        window: &mut Window,
+
         cx: &mut ModelContext<Picker<Self>>,
     ) {
         if search_id >= self.latest_search_id {
@@ -981,17 +976,10 @@ impl FileFinderDelegate {
             }
 
             picker
-                .update_in(&mut cx, |picker, window, cx| {
+                .update_in(&mut cx, |picker, _, cx| {
                     let picker_delegate = &mut picker.delegate;
                     let search_id = util::post_inc(&mut picker_delegate.search_count);
-                    picker_delegate.set_search_matches(
-                        search_id,
-                        false,
-                        query,
-                        path_matches,
-                        window,
-                        cx,
-                    );
+                    picker_delegate.set_search_matches(search_id, false, query, path_matches, cx);
 
                     anyhow::Ok(())
                 })
@@ -1041,7 +1029,7 @@ impl PickerDelegate for FileFinderDelegate {
     fn set_selected_index(
         &mut self,
         ix: usize,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) {
         self.has_changed_selected_index = true;
@@ -1268,11 +1256,7 @@ impl PickerDelegate for FileFinderDelegate {
         }
     }
 
-    fn dismissed(
-        &mut self,
-        window: &mut Window,
-        cx: &mut ModelContext<Picker<FileFinderDelegate>>,
-    ) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<Picker<FileFinderDelegate>>) {
         self.file_finder
             .update(cx, |_, cx| cx.emit(DismissEvent))
             .log_err();
@@ -1282,7 +1266,7 @@ impl PickerDelegate for FileFinderDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let settings = FileFinderSettings::get_global(cx);
@@ -1350,7 +1334,7 @@ impl PickerDelegate for FileFinderDelegate {
                 .border_color(cx.theme().colors().border_variant)
                 .child(
                     Button::new("open-selection", "Open")
-                        .key_binding(KeyBinding::for_action(&menu::Confirm, window, cx))
+                        .key_binding(KeyBinding::for_action(&menu::Confirm, window))
                         .on_click(|_, window, cx| {
                             window.dispatch_action(menu::Confirm.boxed_clone(), cx)
                         }),
@@ -1367,7 +1351,6 @@ impl PickerDelegate for FileFinderDelegate {
                                     &ToggleMenu,
                                     &context,
                                     window,
-                                    cx,
                                 )),
                         )
                         .menu({

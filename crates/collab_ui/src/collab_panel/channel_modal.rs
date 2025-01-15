@@ -6,8 +6,8 @@ use client::{
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{
     actions, anchored, deferred, div, AppContext, ClipboardItem, DismissEvent, EventEmitter,
-    Focusable, Model, ModelContext, ParentElement, Render, Styled, Subscription, Task,
-    VisualContext, WeakModel, Window,
+    Focusable, Model, ModelContext, ParentElement, Render, Styled, Subscription, Task, WeakModel,
+    Window,
 };
 use picker::{Picker, PickerDelegate};
 use std::sync::Arc;
@@ -40,8 +40,7 @@ impl ChannelModal {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        cx.observe_in(&channel_store, window, |_, _, window, cx| cx.notify())
-            .detach();
+        cx.observe(&channel_store, |_, _, cx| cx.notify()).detach();
         let channel_modal = cx.model().downgrade();
         let picker = cx.new_model(|cx| {
             Picker::uniform_list(
@@ -95,7 +94,7 @@ impl ChannelModal {
     fn set_channel_visibility(
         &mut self,
         selection: &ToggleState,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.channel_store.update(cx, |channel_store, cx| {
@@ -113,7 +112,7 @@ impl ChannelModal {
         });
     }
 
-    fn dismiss(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn dismiss(&mut self, _: &menu::Cancel, _: &mut Window, cx: &mut ModelContext<Self>) {
         cx.emit(DismissEvent);
     }
 }
@@ -128,7 +127,7 @@ impl Focusable for ChannelModal {
 }
 
 impl Render for ChannelModal {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let channel_store = self.channel_store.read(cx);
         let Some(channel) = channel_store.channel_for_id(self.channel_id) else {
             return div();
@@ -142,7 +141,7 @@ impl Render for ChannelModal {
             .key_context("ChannelModal")
             .on_action(cx.listener(Self::toggle_mode))
             .on_action(cx.listener(Self::dismiss))
-            .elevation_3(window, cx)
+            .elevation_3(cx)
             .w(rems(34.))
             .child(
                 v_flex()
@@ -177,7 +176,7 @@ impl Render for ChannelModal {
                                 Some(
                                     Button::new("copy-link", "Copy Link")
                                         .label_size(LabelSize::Small)
-                                        .on_click(cx.listener(move |this, _, window, cx| {
+                                        .on_click(cx.listener(move |this, _, _, cx| {
                                             if let Some(channel) = this
                                                 .channel_store
                                                 .read(cx)
@@ -375,7 +374,7 @@ impl PickerDelegate for ChannelModalDelegate {
         }
     }
 
-    fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         if self.context_menu.is_none() {
             self.channel_modal
                 .update(cx, |_, cx| {
@@ -389,7 +388,7 @@ impl PickerDelegate for ChannelModalDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window,
+        _: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let user = self.user_at_index(ix)?;

@@ -142,7 +142,6 @@ impl Render for BlameEntryTooltip {
                     &details.parsed_message,
                     &self.editor_style,
                     self.workspace.clone(),
-                    window,
                     cx,
                 )
                 .into_any()
@@ -157,9 +156,9 @@ impl Render for BlameEntryTooltip {
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
         let message_max_height = window.line_height() * 12 + (ui_font_size / 0.4);
 
-        tooltip_container(window, cx, move |this, window, cx| {
+        tooltip_container(window, cx, move |this, _, cx| {
             this.occlude()
-                .on_mouse_move(|_, window, cx| cx.stop_propagation())
+                .on_mouse_move(|_, _, cx| cx.stop_propagation())
                 .child(
                     v_flex()
                         .w(gpui::rems(30.))
@@ -214,7 +213,7 @@ impl Render for BlameEntryTooltip {
                                                 .icon_color(Color::Muted)
                                                 .icon_position(IconPosition::Start)
                                                 .style(ButtonStyle::Subtle)
-                                                .on_click(move |_, window, cx| {
+                                                .on_click(move |_, _, cx| {
                                                     cx.stop_propagation();
                                                     cx.open_url(pr.url.as_str())
                                                 }),
@@ -241,7 +240,7 @@ impl Render for BlameEntryTooltip {
                                                     .as_ref()
                                                     .and_then(|details| details.permalink.clone()),
                                                 |this, url| {
-                                                    this.on_click(move |_, window, cx| {
+                                                    this.on_click(move |_, _, cx| {
                                                         cx.stop_propagation();
                                                         cx.open_url(url.as_str())
                                                     })
@@ -253,7 +252,7 @@ impl Render for BlameEntryTooltip {
                                                 .shape(IconButtonShape::Square)
                                                 .icon_size(IconSize::Small)
                                                 .icon_color(Color::Muted)
-                                                .on_click(move |_, window, cx| {
+                                                .on_click(move |_, _, cx| {
                                                     cx.stop_propagation();
                                                     cx.write_to_clipboard(
                                                         ClipboardItem::new_string(full_sha.clone()),
