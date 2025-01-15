@@ -198,7 +198,6 @@ pub fn init(cx: &mut AppContext) {
         });
 
         workspace.register_action(move |workspace, action: &GoToFileByNumber, cx| {
-            dbg!("go to file");
             let count = Vim::take_count(cx).unwrap_or(1) as usize;
             dbg!(count);
             let navigation = action.0;

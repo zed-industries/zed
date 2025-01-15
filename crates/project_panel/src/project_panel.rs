@@ -844,7 +844,12 @@ impl ProjectPanel {
         cx.notify();
     }
 
-    fn toggle_expanded(&mut self, entry_id: ProjectEntryId, cx: &mut ViewContext<Self>) {
+    fn toggle_expanded_internal(
+        &mut self,
+        entry_id: ProjectEntryId,
+        with_focus: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
         if let Some(worktree_id) = self.project.read(cx).worktree_id_for_entry(entry_id, cx) {
             if let Some(expanded_dir_ids) = self.expanded_dir_ids.get_mut(&worktree_id) {
                 self.project.update(cx, |project, cx| {
@@ -859,10 +864,20 @@ impl ProjectPanel {
                     }
                 });
                 self.update_visible_entries(Some((worktree_id, entry_id)), cx);
-                cx.focus(&self.focus_handle);
+                if with_focus {
+                    cx.focus(&self.focus_handle);
+                }
                 cx.notify();
             }
         }
+    }
+
+    fn toggle_expanded_with_focus(&mut self, entry_id: ProjectEntryId, cx: &mut ViewContext<Self>) {
+        self.toggle_expanded_internal(entry_id, true, cx);
+    }
+
+    fn toggle_expanded(&mut self, entry_id: ProjectEntryId, cx: &mut ViewContext<Self>) {
+        self.toggle_expanded_internal(entry_id, false, cx);
     }
 
     fn select_prev(&mut self, _: &SelectPrev, cx: &mut ViewContext<Self>) {
@@ -932,7 +947,7 @@ impl ProjectPanel {
             if entry.is_file() {
                 self.open_entry(entry.id, focus_opened_item, allow_preview, cx);
             } else {
-                self.toggle_expanded(entry.id, cx);
+                self.toggle_expanded_with_focus(entry.id, cx);
             }
         }
     }
@@ -3312,13 +3327,7 @@ impl ProjectPanel {
             .border_color(border_color)
             .hover(|style| style.bg(bg_hover_color))
             .h_flex()
-            .when_some(file_number, |this, file_number| {
-                this.child(
-                    div()
-                        .px(px(8.))
-                        .child(Label::new(format!("{}", file_number)).color(filename_text_color)),
-                )
-            })
+            .w_full()
             .when(is_local, |div| {
                 div.on_drag_move::<ExternalPaths>(cx.listener(
                     move |this, event: &DragMoveEvent<ExternalPaths>, cx| {
@@ -3448,7 +3457,7 @@ impl ProjectPanel {
                     }
                 } else if kind.is_dir() {
                     this.marked_entries.clear();
-                    this.toggle_expanded(entry_id, cx);
+                    this.toggle_expanded_with_focus(entry_id, cx);
                 } else {
                     let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
                     let click_count = event.up.click_count;
@@ -3457,6 +3466,15 @@ impl ProjectPanel {
                     this.open_entry(entry_id, focus_opened_item, allow_preview, cx);
                 }
             }))
+            .when_some(file_number, |this, file_number| {
+                this.child(
+                    div()
+                        .px(px(8.))
+                        .flex()
+                        .justify_start()
+                        .child(Label::new(format!("{}", file_number)).color(filename_text_color)),
+                )
+            })
             .child(
                 ListItem::new(entry_id.to_proto() as usize)
                     .indent_level(depth)
@@ -3965,7 +3983,7 @@ impl ProjectPanel {
                         }
                     }
                 }
-                FileNumber::Absolute(_) => return,
+                FileNumber::Absolute(count) => return,
             },
             ShowFileNumbers::Off => return,
         };
@@ -8160,7 +8178,7 @@ mod tests {
                 let worktree = worktree.read(cx);
                 if let Ok(relative_path) = path.strip_prefix(worktree.root_name()) {
                     let entry_id = worktree.entry_for_path(relative_path).unwrap().id;
-                    panel.toggle_expanded(entry_id, cx);
+                    panel.toggle_expanded_with_focus(entry_id, cx);
                     return;
                 }
             }
