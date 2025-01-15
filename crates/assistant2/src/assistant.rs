@@ -1,7 +1,6 @@
 mod active_thread;
 mod assistant_model_selector;
 mod assistant_panel;
-mod assistant_settings;
 mod buffer_codegen;
 mod context;
 mod context_picker;
@@ -21,6 +20,7 @@ mod ui;
 
 use std::sync::Arc;
 
+use assistant_settings::AssistantSettings;
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
@@ -31,7 +31,6 @@ use settings::Settings as _;
 use util::ResultExt;
 
 pub use crate::assistant_panel::AssistantPanel;
-use crate::assistant_settings::AssistantSettings;
 pub use crate::inline_assistant::InlineAssistant;
 
 actions!(

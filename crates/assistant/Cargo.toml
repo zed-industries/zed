@@ -24,6 +24,7 @@ test-support = [
 anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
 assets.workspace = true
+assistant_settings.workspace = true
 assistant_slash_command.workspace = true
 assistant_tool.workspace = true
 async-watch.workspace = true
