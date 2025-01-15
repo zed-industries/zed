@@ -1,7 +1,7 @@
 use crate::fallback_themes::zed_default_dark;
 use crate::{
     Appearance, IconTheme, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent,
-    DEFAULT_ICON_THEME_ID,
+    DEFAULT_ICON_THEME_NAME,
 };
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
@@ -647,7 +647,7 @@ impl settings::Settings for ThemeSettings {
                 .icon_theme
                 .as_ref()
                 .and_then(|name| themes.get_icon_theme(name).ok())
-                .unwrap_or_else(|| themes.get_icon_theme(DEFAULT_ICON_THEME_ID).unwrap()),
+                .unwrap_or_else(|| themes.get_icon_theme(DEFAULT_ICON_THEME_NAME).unwrap()),
             ui_density: defaults.ui_density.unwrap_or(UiDensity::Default),
             unnecessary_code_fade: defaults.unnecessary_code_fade.unwrap_or(0.0),
         };

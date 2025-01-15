@@ -12,6 +12,7 @@ mod default_colors;
 mod fallback_themes;
 mod font_family_cache;
 mod icon_theme;
+mod icon_theme_schema;
 mod registry;
 mod scale;
 mod schema;
@@ -34,6 +35,7 @@ use uuid::Uuid;
 pub use crate::default_colors::*;
 pub use crate::font_family_cache::*;
 pub use crate::icon_theme::*;
+pub use crate::icon_theme_schema::*;
 pub use crate::registry::*;
 pub use crate::scale::*;
 pub use crate::schema::*;
@@ -363,4 +365,15 @@ pub async fn read_user_theme(theme_path: &Path, fs: Arc<dyn Fs>) -> Result<Theme
     }
 
     Ok(theme_family)
+}
+
+/// Asynchronously reads the icon theme from the specified path.
+pub async fn read_icon_theme(
+    icon_theme_path: &Path,
+    fs: Arc<dyn Fs>,
+) -> Result<IconThemeFamilyContent> {
+    let reader = fs.open_sync(icon_theme_path).await?;
+    let icon_theme_family: IconThemeFamilyContent = serde_json_lenient::from_reader(reader)?;
+
+    Ok(icon_theme_family)
 }
