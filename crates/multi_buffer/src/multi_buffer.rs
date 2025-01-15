@@ -4143,6 +4143,9 @@ impl MultiBufferSnapshot {
         let transform_end_position = D::from_text_summary(&diff_transforms_cursor.end(&()).input);
 
         if transform_end_position == excerpt_position
+            && diff_transforms_cursor.item().map_or(false, |item| {
+                matches!(item, DiffTransform::BufferContent { .. })
+            })
             && (anchor.diff_base_anchor.is_some() || anchor.text_anchor.bias == Bias::Right)
         {
             diff_transforms_cursor.next(&());
