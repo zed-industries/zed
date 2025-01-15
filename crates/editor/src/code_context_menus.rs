@@ -1,8 +1,8 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    div, px, uniform_list, AnyElement, BackgroundExecutor, Div, FontWeight, ListSizingBehavior,
-    Model, ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText,
-    UniformListScrollHandle, ViewContext, WeakView,
+    div, pulsating_between, px, uniform_list, Animation, AnimationExt, AnyElement,
+    BackgroundExecutor, Div, FontWeight, ListSizingBehavior, Model, ScrollStrategy, SharedString,
+    Size, StrikethroughStyle, StyledText, UniformListScrollHandle, ViewContext, WeakView,
 };
 use language::Buffer;
 use language::{CodeLabel, Documentation};
@@ -10,12 +10,14 @@ use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
 use project::{CodeAction, Completion, TaskSourceKind};
+use settings::Settings;
 use std::{
     cell::RefCell,
     cmp::{min, Reverse},
     iter,
     ops::Range,
     rc::Rc,
+    time::Duration,
 };
 use task::ResolvedTask;
 use ui::{prelude::*, Color, IntoElement, ListItem, Pixels, Popover, Styled};
@@ -28,7 +30,10 @@ use crate::{
     render_parsed_markdown, split_words, styled_runs_for_code_label, CodeActionProvider,
     CompletionId, CompletionProvider, DisplayRow, Editor, EditorStyle, ResolvedTasks,
 };
-use crate::{AcceptInlineCompletion, InlineCompletionMenuHint, InlineCompletionText};
+use crate::{
+    AcceptInlineCompletion, InlineCompletionMenuHint, InlineCompletionMenuState,
+    InlineCompletionText,
+};
 
 pub const MENU_GAP: Pixels = px(4.);
 pub const MENU_ASIDE_X_PADDING: Pixels = px(16.);
@@ -333,7 +338,6 @@ impl CompletionsMenu {
                 entries[0] = hint;
             }
             _ => {
-                self.selected_item += 1;
                 entries.insert(0, hint);
             }
         }
@@ -488,6 +492,8 @@ impl CompletionsMenu {
                     .enumerate()
                     .map(|(ix, mat)| {
                         let item_ix = start_ix + ix;
+                        let buffer_font = theme::ThemeSettings::get_global(cx).buffer_font.clone();
+
                         match mat {
                             CompletionEntry::Match(mat) => {
                                 let candidate_id = mat.candidate_id;
@@ -572,20 +578,41 @@ impl CompletionsMenu {
                                 )
                             }
                             CompletionEntry::InlineCompletionHint(InlineCompletionMenuHint {
-                                provider_name,
-                                ..
+                                provider_name: _,
+                                state,
                             }) => div().min_w(px(250.)).max_w(px(500.)).child(
                                 ListItem::new("inline-completion")
                                     .inset(true)
                                     .toggle_state(item_ix == selected_item)
-                                    .start_slot(Icon::new(IconName::ZedPredict))
-                                    .child(
-                                        StyledText::new(format!(
-                                            "{} Completion",
-                                            SharedString::new_static(provider_name)
-                                        ))
-                                        .with_highlights(&style.text, None),
+                                    .start_slot(
+                                        // TODO DL — This is not pulsating yet for some reason
+                                        Icon::new(IconName::ZedPredict).with_animation(
+                                            "pulsating-icon",
+                                            Animation::new(Duration::from_secs(2))
+                                                .repeat()
+                                                .with_easing(pulsating_between(0.2, 0.8)),
+                                            |icon, delta| icon.alpha(delta),
+                                        ),
                                     )
+                                    .child(
+                                        h_flex()
+                                            .gap_1()
+                                            .child(div().font(buffer_font.clone()).child("Zed AI"))
+                                            .child(div().px_0p5().child("/").opacity(0.2))
+                                            .child(
+                                                div()
+                                                    .font(buffer_font.clone())
+                                                    .child("Edit Prediction")
+                                                    .text_color(cx.theme().colors().text_muted),
+                                            ),
+                                    )
+                                    .when(state.is_none(), |element| {
+                                        element.end_slot(
+                                            Label::new("No completions")
+                                                .size(LabelSize::XSmall)
+                                                .color(Color::Muted),
+                                        )
+                                    })
                                     .on_click(cx.listener(move |editor, _event, cx| {
                                         cx.stop_propagation();
                                         editor.accept_inline_completion(
@@ -641,18 +668,21 @@ impl CompletionsMenu {
                     Documentation::Undocumented => return None,
                 }
             }
-            CompletionEntry::InlineCompletionHint(hint) => match &hint.text {
-                InlineCompletionText::Edit { text, highlights } => div()
-                    .mx_1()
-                    .rounded(px(6.))
-                    .bg(cx.theme().colors().editor_background)
-                    .border_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .child(
-                        gpui::StyledText::new(text.clone())
-                            .with_highlights(&style.text, highlights.clone()),
-                    ),
-                InlineCompletionText::Move(text) => div().child(text.clone()),
+            CompletionEntry::InlineCompletionHint(hint) => match &hint.state {
+                InlineCompletionMenuState::Available(text) => match text {
+                    InlineCompletionText::Edit { text, highlights } => div()
+                        .mx_1()
+                        .rounded_md()
+                        .bg(cx.theme().colors().editor_background)
+                        .child(
+                            StyledText::new(text.clone())
+                                .with_highlights(&style.text, highlights.clone()),
+                        ),
+                    InlineCompletionText::Move(text) => div().child(text.clone()),
+                },
+                InlineCompletionMenuState::Loading | InlineCompletionMenuState::None => {
+                    return None
+                }
             },
         };
 

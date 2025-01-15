@@ -330,6 +330,7 @@ pub struct Icon {
     color: Color,
     size: Rems,
     transformation: Transformation,
+    alpha: Option<f32>,
 }
 
 impl Icon {
@@ -339,6 +340,7 @@ impl Icon {
             color: Color::default(),
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
+            alpha: None,
         }
     }
 
@@ -348,6 +350,7 @@ impl Icon {
             color: Color::default(),
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
+            alpha: None,
         }
     }
 
@@ -371,6 +374,11 @@ impl Icon {
 
     pub fn transform(mut self, transformation: Transformation) -> Self {
         self.transformation = transformation;
+        self
+    }
+
+    pub fn alpha(mut self, alpha: f32) -> Self {
+        self.alpha = Some(alpha);
         self
     }
 }
