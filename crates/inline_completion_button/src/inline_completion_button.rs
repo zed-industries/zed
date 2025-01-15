@@ -201,7 +201,7 @@ impl Render for InlineCompletionButton {
                 );
             }
 
-            InlineCompletionProvider::Zeta => {
+            InlineCompletionProvider::Zed => {
                 if !cx.has_flag::<ZetaFeatureFlag>() {
                     return div();
                 }
