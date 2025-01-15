@@ -730,7 +730,6 @@ impl LspLogView {
 
 * Binary: {BINARY:#?}
 
-* Running in project: {PATH:?}
 
 * Capabilities: {CAPABILITIES}
 
@@ -738,7 +737,6 @@ impl LspLogView {
                 NAME = server.name(),
                 ID = server.server_id(),
                 BINARY = server.binary(),
-                PATH = server.root_path(),
                 CAPABILITIES = serde_json::to_string_pretty(&server.capabilities())
                     .unwrap_or_else(|e| format!("Failed to serialize capabilities: {e}")),
                 CONFIGURATION = serde_json::to_string_pretty(server.configuration())

@@ -942,9 +942,11 @@ fn language_server_for_buffer(
 ) -> Result<(Arc<CachedLspAdapter>, Arc<LanguageServer>)> {
     lsp_store
         .update(cx, |lsp_store, cx| {
-            lsp_store
-                .language_server_for_local_buffer(buffer.read(cx), server_id, cx)
-                .map(|(adapter, server)| (adapter.clone(), server.clone()))
+            buffer.update(cx, |buffer, cx| {
+                lsp_store
+                    .language_server_for_local_buffer(buffer, server_id, cx)
+                    .map(|(adapter, server)| (adapter.clone(), server.clone()))
+            })
         })?
         .ok_or_else(|| anyhow!("no language server found for buffer"))
 }
