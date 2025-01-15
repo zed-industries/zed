@@ -326,7 +326,7 @@ impl RateCompletionModal {
                         .border_b_1()
                         .border_color(border_color)
                         .child(
-                            Label::new("Suggested edits")
+                            Label::new("Suggested Edits")
                                 .size(LabelSize::Small),
                         )
                         .child(
@@ -337,7 +337,7 @@ impl RateCompletionModal {
                                     px(4.),
                                 ))
                                 .trigger(
-                                    Button::new("details", "View raw input")
+                                    Button::new("details", "View Raw Input")
                                         .color(Color::Muted)
                                         .size(ButtonSize::Compact)
                                 )
@@ -379,7 +379,7 @@ impl RateCompletionModal {
                                     .pr_2()
                                     .flex_wrap()
                                     .child(
-                                        Label::new("Ensure you explain why this completion is negative or positive. In case it's negative, report what you expected instead.")
+                                        Label::new("Explain why this completion is good or bad. If it's negative, describe what you expected instead.")
                                             .size(LabelSize::Small)
                                             .color(Color::Muted)
                                     )
@@ -537,7 +537,7 @@ impl Render for RateCompletionModal {
                                         div()
                                             .p_2()
                                             .child(
-                                                Label::new("No completions yet. Use the editor to generate some and rate them!")
+                                                Label::new("No completions yet. Use the editor to generate some, and make sure to rate them!")
                                                     .color(Color::Muted),
                                             )
                                             .into_any_element(),
@@ -568,7 +568,7 @@ impl Render for RateCompletionModal {
                                                 .child(
                                                     h_flex()
                                                         .id("completion-content")
-                                                        .gap_2p5()
+                                                        .gap_3()
                                                         .child(
                                                             Icon::new(icon_name)
                                                                 .color(icon_color)
@@ -577,7 +577,7 @@ impl Render for RateCompletionModal {
                                                         .child(
                                                             v_flex()
                                                                 .child(
-                                                                    h_flex().gap_2()
+                                                                    h_flex().gap_1()
                                                                         .child(Label::new(file_name).size(LabelSize::Small))
                                                                         .when_some(file_path, |this, p| this.child(Label::new(p).size(LabelSize::Small).color(Color::Muted)))
                                                                 )
