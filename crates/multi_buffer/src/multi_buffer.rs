@@ -242,7 +242,7 @@ pub struct ExcerptInfo {
     pub buffer: BufferSnapshot,
     pub buffer_id: BufferId,
     pub range: ExcerptRange<text::Anchor>,
-    pub excerpt_lines: Point,
+    pub end_row: MultiBufferRow,
 }
 
 impl std::fmt::Debug for ExcerptInfo {
@@ -4719,17 +4719,15 @@ impl MultiBufferSnapshot {
             let next_region = cursor.region();
             cursor.next_excerpt();
 
-            let prev_region_start = if let Some(region) = &prev_region {
-                region.range.start.value.unwrap()
-            } else {
-                Point::zero()
-            };
             let next_region_start = if let Some(region) = &next_region {
                 if !bounds.contains(&region.range.start.key) {
                     return None;
                 }
                 region.range.start.value.unwrap()
             } else {
+                if !bounds.contains(&self.len()) {
+                    return None;
+                }
                 self.max_point()
             };
             let next_region_end = if let Some(region) = cursor.region() {
@@ -4738,34 +4736,24 @@ impl MultiBufferSnapshot {
                 self.max_point()
             };
 
-            let prev = prev_region.as_ref().map(|region| {
-                let mut excerpt_lines = next_region_start - prev_region_start;
-                if region.excerpt.has_trailing_newline {
-                    excerpt_lines.row -= 1;
-                    excerpt_lines.column = region.excerpt.text_summary.lines.column
-                };
-                ExcerptInfo {
-                    id: region.excerpt.id,
-                    buffer: region.excerpt.buffer.clone(),
-                    buffer_id: region.excerpt.buffer_id,
-                    range: region.excerpt.range.clone(),
-                    excerpt_lines,
-                }
+            let prev = prev_region.as_ref().map(|region| ExcerptInfo {
+                id: region.excerpt.id,
+                buffer: region.excerpt.buffer.clone(),
+                buffer_id: region.excerpt.buffer_id,
+                range: region.excerpt.range.clone(),
+                end_row: MultiBufferRow(next_region_start.row),
             });
 
-            let next = next_region.as_ref().map(|region| {
-                let mut excerpt_lines = next_region_end - next_region_start;
-                if region.excerpt.has_trailing_newline {
-                    excerpt_lines.row -= 1;
-                    excerpt_lines.column = region.excerpt.text_summary.lines.column
-                };
-                ExcerptInfo {
-                    id: region.excerpt.id,
-                    buffer: region.excerpt.buffer.clone(),
-                    buffer_id: region.excerpt.buffer_id,
-                    range: region.excerpt.range.clone(),
-                    excerpt_lines,
-                }
+            let next = next_region.as_ref().map(|region| ExcerptInfo {
+                id: region.excerpt.id,
+                buffer: region.excerpt.buffer.clone(),
+                buffer_id: region.excerpt.buffer_id,
+                range: region.excerpt.range.clone(),
+                end_row: if region.excerpt.has_trailing_newline {
+                    MultiBufferRow(next_region_end.row - 1)
+                } else {
+                    MultiBufferRow(next_region_end.row)
+                },
             });
 
             if next.is_none() {
@@ -4776,11 +4764,7 @@ impl MultiBufferSnapshot {
                 }
             }
 
-            let row = if let Some(next) = &next_region {
-                MultiBufferRow(next.range.start.value.unwrap().row)
-            } else {
-                self.max_row()
-            };
+            let row = MultiBufferRow(next_region_start.row);
 
             prev_region = next_region;
 
@@ -5364,7 +5348,7 @@ impl MultiBufferSnapshot {
 
 impl<'a, D> MultiBufferCursor<'a, D>
 where
-    D: TextDimension + Ord + Copy + Sub<D, Output = D> + std::fmt::Debug,
+    D: TextDimension + Ord + Sub<D, Output = D>,
 {
     fn seek(&mut self, position: &D) {
         self.cached_region.take();

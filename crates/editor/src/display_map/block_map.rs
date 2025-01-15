@@ -777,14 +777,12 @@ impl BlockMap {
             if let Some(new_buffer_id) = new_buffer_id {
                 let first_excerpt = excerpt_boundary.next.clone().unwrap();
                 if folded_buffers.contains(&new_buffer_id) {
-                    let mut buffer_end = Point::new(excerpt_boundary.row.0, 0)
-                        + excerpt_boundary.next.as_ref().unwrap().excerpt_lines;
+                    let mut last_excerpt_end_row = first_excerpt.end_row;
 
                     while let Some(next_boundary) = boundaries.peek() {
                         if let Some(next_excerpt_boundary) = &next_boundary.next {
                             if next_excerpt_boundary.buffer_id == new_buffer_id {
-                                buffer_end = Point::new(next_boundary.row.0, 0)
-                                    + next_excerpt_boundary.excerpt_lines;
+                                last_excerpt_end_row = next_excerpt_boundary.end_row;
                             } else {
                                 break;
                             }
@@ -793,7 +791,15 @@ impl BlockMap {
                         boundaries.next();
                     }
 
-                    let wrap_end_row = wrap_snapshot.make_wrap_point(buffer_end, Bias::Right).row();
+                    let wrap_end_row = wrap_snapshot
+                        .make_wrap_point(
+                            Point::new(
+                                last_excerpt_end_row.0,
+                                buffer.line_len(last_excerpt_end_row),
+                            ),
+                            Bias::Right,
+                        )
+                        .row();
 
                     return Some((
                         BlockPlacement::Replace(WrapRow(wrap_row)..=WrapRow(wrap_end_row)),
