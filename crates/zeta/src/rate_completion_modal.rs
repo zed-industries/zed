@@ -37,11 +37,27 @@ pub struct RateCompletionModal {
     selected_index: usize,
     focus_handle: FocusHandle,
     _subscription: gpui::Subscription,
+    current_view: RateCompletionView,
 }
 
 struct ActiveCompletion {
     completion: InlineCompletion,
     feedback_editor: View<Editor>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+enum RateCompletionView {
+    SuggestedEdits,
+    RawInput,
+}
+
+impl RateCompletionView {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::SuggestedEdits => "Suggested Edits",
+            Self::RawInput => "Recorded Events & Input",
+        }
+    }
 }
 
 impl RateCompletionModal {
@@ -60,6 +76,7 @@ impl RateCompletionModal {
             focus_handle: cx.focus_handle(),
             active_completion: None,
             _subscription: subscription,
+            current_view: RateCompletionView::SuggestedEdits,
         }
     }
 
@@ -266,6 +283,87 @@ impl RateCompletionModal {
         cx.notify();
     }
 
+    fn render_view_nav(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        h_flex()
+            .h_8()
+            .px_1()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .bg(cx.theme().colors().elevated_surface_background)
+            .gap_1()
+            .child(
+                Button::new(
+                    ElementId::Name("suggested-edits".into()),
+                    RateCompletionView::SuggestedEdits.name(),
+                )
+                .label_size(LabelSize::Small)
+                .on_click(cx.listener(move |this, _, cx| {
+                    this.current_view = RateCompletionView::SuggestedEdits;
+                    cx.notify();
+                }))
+                .toggle_state(self.current_view == RateCompletionView::SuggestedEdits),
+            )
+            .child(
+                Button::new(
+                    ElementId::Name("raw-input".into()),
+                    RateCompletionView::RawInput.name(),
+                )
+                .label_size(LabelSize::Small)
+                .on_click(cx.listener(move |this, _, cx| {
+                    this.current_view = RateCompletionView::RawInput;
+                    cx.notify();
+                }))
+                .toggle_state(self.current_view == RateCompletionView::RawInput),
+            )
+    }
+
+    fn render_suggested_edits(&self, cx: &mut ViewContext<Self>) -> Option<gpui::Stateful<Div>> {
+        let active_completion = self.active_completion.as_ref()?;
+        let bg_color = cx.theme().colors().editor_background;
+
+        Some(
+            div()
+                .id("diff")
+                .p_4()
+                .size_full()
+                .bg(bg_color)
+                .overflow_scroll()
+                .whitespace_nowrap()
+                .child(CompletionDiffElement::new(
+                    &active_completion.completion,
+                    cx,
+                )),
+        )
+    }
+
+    fn render_raw_input(&self, cx: &mut ViewContext<Self>) -> Option<gpui::Stateful<Div>> {
+        Some(
+            v_flex()
+                .size_full()
+                .overflow_hidden()
+                .relative()
+                .child(
+                    div()
+                        .id("raw-input")
+                        .py_4()
+                        .px_6()
+                        .size_full()
+                        .bg(cx.theme().colors().editor_background)
+                        .overflow_scroll()
+                        .child(if let Some(active_completion) = &self.active_completion {
+                            format!(
+                                "{}\n{}",
+                                active_completion.completion.input_events,
+                                active_completion.completion.input_excerpt
+                            )
+                        } else {
+                            "No active completion".to_string()
+                        }),
+                )
+                .id("raw-input-view"),
+        )
+    }
+
     fn render_active_completion(&mut self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
         let active_completion = self.active_completion.as_ref()?;
         let completion_id = active_completion.completion.id;
@@ -281,31 +379,31 @@ impl RateCompletionModal {
             .text(cx)
             .is_empty();
 
-        let label_container = || h_flex().pl_1().gap_1p5();
+        let label_container = h_flex().pl_1().gap_1p5();
 
         Some(
             v_flex()
                 .size_full()
                 .overflow_hidden()
+                .relative()
                 .child(
-                    div()
-                        .id("diff")
-                        .py_4()
-                        .px_6()
+                    v_flex()
                         .size_full()
-                        .bg(bg_color)
-                        .overflow_scroll()
-                        .whitespace_nowrap()
-                        .child(CompletionDiffElement::new(&active_completion.completion, cx)),
+                        .overflow_hidden()
+                        .relative()
+                        .child(self.render_view_nav(cx))
+                        .when_some(match self.current_view {
+                            RateCompletionView::SuggestedEdits => self.render_suggested_edits(cx),
+                            RateCompletionView::RawInput => self.render_raw_input(cx),
+                        }, |this, element| this.child(element))
                 )
-                .when_some((!rated).then(|| ()), |this, _| {
+                .when(!rated, |this| {
                     this.child(
                         h_flex()
                             .p_2()
                             .gap_2()
                             .border_y_1()
                             .border_color(border_color)
-
                             .child(
                                 Icon::new(IconName::Info)
                                     .size(IconSize::XSmall)
@@ -317,14 +415,14 @@ impl RateCompletionModal {
                                     .pr_2()
                                     .flex_wrap()
                                     .child(
-                                        Label::new("Ensure you explain why this completion is negative or positive. In case it's negative, report what you expected instead.")
+                                        Label::new("Explain why this completion is good or bad. If it's negative, describe what you expected instead.")
                                             .size(LabelSize::Small)
                                             .color(Color::Muted)
                                     )
                             )
                     )
                 })
-                .when_some((!rated).then(|| ()), |this, _| {
+                .when(!rated, |this| {
                     this.child(
                         div()
                             .h_40()
@@ -344,7 +442,7 @@ impl RateCompletionModal {
                         .justify_between()
                         .children(if rated {
                             Some(
-                                label_container()
+                                label_container
                                     .child(
                                         Icon::new(IconName::Check)
                                             .size(IconSize::Small)
@@ -354,7 +452,7 @@ impl RateCompletionModal {
                             )
                         } else if active_completion.completion.edits.is_empty() {
                             Some(
-                                label_container()
+                                label_container
                                     .child(
                                         Icon::new(IconName::Warning)
                                             .size(IconSize::Small)
@@ -363,7 +461,7 @@ impl RateCompletionModal {
                                     .child(Label::new("No edits produced.").color(Color::Muted)),
                             )
                         } else {
-                            Some(label_container())
+                            Some(label_container)
                         })
                         .child(
                             h_flex()
@@ -440,16 +538,16 @@ impl Render for RateCompletionModal {
             .shadow_lg()
             .child(
                 v_flex()
-                    .border_r_1()
-                    .border_color(border_color)
                     .w_72()
                     .h_full()
+                    .border_r_1()
+                    .border_color(border_color)
                     .flex_shrink_0()
                     .overflow_hidden()
                     .child(
                         h_flex()
+                            .h_8()
                             .px_2()
-                            .py_1()
                             .justify_between()
                             .border_b_1()
                             .border_color(border_color)
@@ -475,7 +573,7 @@ impl Render for RateCompletionModal {
                                         div()
                                             .p_2()
                                             .child(
-                                                Label::new("No completions yet. Use the editor to generate some and rate them!")
+                                                Label::new("No completions yet. Use the editor to generate some, and make sure to rate them!")
                                                     .color(Color::Muted),
                                             )
                                             .into_any_element(),
@@ -506,7 +604,7 @@ impl Render for RateCompletionModal {
                                                 .child(
                                                     h_flex()
                                                         .id("completion-content")
-                                                        .gap_2p5()
+                                                        .gap_3()
                                                         .child(
                                                             Icon::new(icon_name)
                                                                 .color(icon_color)
@@ -515,7 +613,7 @@ impl Render for RateCompletionModal {
                                                         .child(
                                                             v_flex()
                                                                 .child(
-                                                                    h_flex().gap_2()
+                                                                    h_flex().gap_1()
                                                                         .child(Label::new(file_name).size(LabelSize::Small))
                                                                         .when_some(file_path, |this, p| this.child(Label::new(p).size(LabelSize::Small).color(Color::Muted)))
                                                                 )
