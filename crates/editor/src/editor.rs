@@ -1263,11 +1263,11 @@ impl Editor {
                         if let project::Event::RefreshInlayHints = event {
                             editor
                                 .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
-                        } else if let project::Event::LanguageServerAdded(_, _, _) = event {
-                            editor.tasks_pull_diagnostics_task = Some(editor.refresh_diagnostics(cx));
-                        } else if let project::Event::LanguageServerRemoved(_) = event {
-                            editor.tasks_pull_diagnostics_task = Some(editor.refresh_diagnostics(cx));
-                        }  else if let project::Event::SnippetEdit(id, snippet_edits) = event {
+                        } else if let project::Event::LanguageServerAdded(_, _, _)
+                        | project::Event::LanguageServerRemoved(_) = event
+                        {
+                            editor.refresh_diagnostics(cx);
+                        } else if let project::Event::SnippetEdit(id, snippet_edits) = event {
                             if let Some(buffer) = editor.buffer.read(cx).buffer(*id) {
                                 let focus_handle = editor.focus_handle(cx);
                                 if focus_handle.is_focused(window) {
@@ -12837,31 +12837,21 @@ impl Editor {
         });
     }
 
-    fn refresh_diagnostics(&mut self, cx: &mut ViewContext<Self>) -> Task<()> {
+    fn refresh_diagnostics(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
         let project = self.project.as_ref().map(Model::downgrade);
         let buffer = self.buffer.read(cx);
-        let newest_selection = self.selections.newest_anchor().clone();
-        let (start_buffer, start) = if let Some(output) = self
-            .buffer
-            .read(cx)
-            .text_anchor_for_position(newest_selection.end, cx)
-        {
-            output
-        } else {
-            return Task::ready(());
-        };
+        let cursor_position = self.selections.newest_anchor().head();
+        let (cursor_buffer, cursor_buffer_position) =
+            buffer.text_anchor_for_position(cursor_position, cx)?;
 
-        let (end_buffer, _) =
-            if let Some(output) = buffer.text_anchor_for_position(newest_selection.end, cx) {
-                output
-            } else {
-                return Task::ready(());
-            };
-        if start_buffer != end_buffer {
-            return Task::ready(());
+        if self.tasks_pull_diagnostics_task.is_some() {
+            log::warn!(
+                "Attempted to start diagnostics pull task, but an instance is already running."
+            );
+            return None;
         }
 
-        cx.spawn(|this, mut cx| async move {
+        self.tasks_pull_diagnostics_task = Some(cx.spawn(|this, mut cx| async move {
             cx.background_executor()
                 .timer(DOCUMENT_DIAGNOSTICS_DEBOUNCE_TIMEOUT)
                 .await;
@@ -12870,25 +12860,33 @@ impl Editor {
                 return;
             };
 
-            let Ok(pull_diagnostics_task) = this.update(&mut cx, |_, cx| {
-                project.pull_diagnostics(&start_buffer, start, cx)
-            }) else {
-                return;
+            let diagnostics = if let Some(diagnostics) = cx
+                .update(|cx| project.pull_diagnostics(&cursor_buffer, cursor_buffer_position, cx))
+                .ok()
+            {
+                diagnostics.await.log_err()
+            } else {
+                None
             };
 
-            let diagnostics = cx.background_executor().spawn(pull_diagnostics_task);
-
-            if let Ok(diagnostics) = diagnostics.await {
+            if let Some(diagnostics) = diagnostics {
                 this.update(&mut cx, |editor, cx| {
-                    if project.update_diagnostics(diagnostics, cx).is_ok() {
-                        editor.refresh_active_diagnostics(cx)
+                    if let Err(e) = project.update_diagnostics(diagnostics, cx) {
+                        log::error!("Failed to update project diagnostics: {:?}", e);
                     } else {
-                        log::error!("Failed to update project diagnostics")
+                        editor.refresh_active_diagnostics(cx);
                     }
+                    cx.notify();
                 })
-                .ok();
+                .log_err();
             }
-        })
+
+            this.update(&mut cx, |editor, _| {
+                editor.tasks_pull_diagnostics_task = None;
+            })
+            .ok();
+        }));
+        None
     }
 
     pub fn set_selections_from_remote(
@@ -15308,7 +15306,7 @@ impl Editor {
             } => {
                 self.scrollbar_marker_state.dirty = true;
                 self.active_indent_guides_state.dirty = true;
-                self.tasks_pull_diagnostics_task = Some(self.refresh_diagnostics(cx));
+                self.refresh_diagnostics(cx);
                 self.refresh_active_diagnostics(cx);
                 self.refresh_code_actions(window, cx);
                 if self.has_active_inline_completion() {
