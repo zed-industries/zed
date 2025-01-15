@@ -6,8 +6,8 @@ use anyhow::{Context as _, Result};
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::oneshot, StreamExt};
 use gpui::{
-    hash, prelude::*, AppContext, EventEmitter, Img, Model, ModelContext, Subscription, Task,
-    WeakModel,
+    hash, prelude::*, AppContext, AsyncAppContext, EventEmitter, Img, Model, ModelContext,
+    Subscription, Task, WeakModel,
 };
 use image::{ColorType, GenericImageView};
 use language::{DiskState, File};
@@ -81,43 +81,64 @@ fn image_color_type_description(color_type: ColorType) -> &'static str {
 
 impl ImageItem {
     async fn image_info(
-        image: &ImageItem,
-        project: &Project,
-        cx: &AppContext,
-    ) -> Result<ImageItemMeta, String> {
-        let worktree = project
-            .worktree_for_id(image.project_path(cx).worktree_id, cx)
-            .ok_or_else(|| "Could not find worktree for image".to_string())?;
-        let worktree_root = worktree.read(cx).abs_path();
-        let path = if image.path().is_absolute() {
-            image.path().to_path_buf()
-        } else {
-            worktree_root.join(image.path())
-        };
-        if !path.exists() {
-            return Err(format!("File does not exist at path: {:?}", path));
-        }
-        let path_clone = path.to_path_buf();
-        let img = smol::unblock(move || image::open(&path_clone))
-            .await
-            .map_err(|e| format!("Failed to open image: {}", e))?;
+        image: Model<ImageItem>,
+        project: Model<Project>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<ImageItemMeta> {
+        let project_path = cx
+            .update(|cx| image.read(cx).project_path(cx))
+            .context("Failed to get project path")?;
 
-        let (width, height, color_type) =
-            smol::unblock(move || -> Result<(u32, u32, &'static str), String> {
-                let dimensions = img.dimensions();
-                let img_color_type = image_color_type_description(img.color());
-                Ok((dimensions.0, dimensions.1, img_color_type))
+        let worktree = cx
+            .update(|cx| {
+                project
+                    .read(cx)
+                    .worktree_for_id(project_path.worktree_id, cx)
             })
-            .await
-            .map_err(|e| format!("Failed to process image: {}", e))?;
+            .context("Failed to get worktree")?
+            .ok_or_else(|| anyhow::anyhow!("Worktree not found"))?;
 
-        let fs = project.fs();
+        let worktree_root = cx
+            .update(|cx| worktree.read(cx).abs_path())
+            .context("Failed to get worktree root path")?;
+
+        let image_path = cx
+            .update(|cx| image.read(cx).path().clone())
+            .context("Failed to get image path")?;
+
+        let path = if image_path.is_absolute() {
+            image_path.to_path_buf()
+        } else {
+            worktree_root.join(image_path)
+        };
+
+        if !path.exists() {
+            anyhow::bail!("File does not exist at path: {:?}", path);
+        }
+
+        let path_clone = path.clone();
+        let image_result =
+            smol::unblock(move || image::open(&path_clone).context("Failed to open image")).await?;
+
+        let img = image_result;
+        let dimensions_result = smol::unblock(move || {
+            let dimensions = img.dimensions();
+            let img_color_type = image_color_type_description(img.color());
+            Ok::<_, anyhow::Error>((dimensions.0, dimensions.1, img_color_type))
+        })
+        .await?;
+
+        let (width, height, color_type) = dimensions_result;
+
+        let fs = project
+            .update(cx, move |project, _| project.fs().clone())
+            .context("Failed to get filesystem")?;
 
         let file_metadata = fs
             .metadata(path.as_path())
             .await
-            .map_err(|e| format!("Cannot access image data: {}", e))?
-            .ok_or_else(|| "No metadata found".to_string())?;
+            .context("Failed to access image data")?
+            .ok_or_else(|| anyhow::anyhow!("No metadata found"))?;
         let file_size = file_metadata.len;
 
         Ok(ImageItemMeta {
@@ -137,23 +158,6 @@ impl ImageItem {
 
     pub fn path(&self) -> &Arc<Path> {
         self.file.path()
-    }
-
-    pub async fn load_metadata(
-        &mut self,
-        project: &Project,
-        cx: &AppContext,
-    ) -> Result<ImageItemMeta, String> {
-        match Self::image_info(self, project, cx).await {
-            Ok(metadata) => {
-                self.image_meta = Some(metadata.clone());
-                Ok(metadata)
-            }
-            Err(err) => {
-                println!("Failed to load metadata: {}", err);
-                Err(err)
-            }
-        }
     }
 
     fn file_updated(&mut self, new_file: Arc<dyn File>, cx: &mut ModelContext<Self>) {
@@ -236,20 +240,12 @@ impl ProjectItem for ImageItem {
                 let image_model = project
                     .update(&mut cx, |project, cx| project.open_image(path, cx))?
                     .await?;
+                let image_metadata =
+                    Self::image_info(image_model.clone(), project, &mut cx).await?;
 
-                let project_clone = project.clone();
-
-                if let Ok(()) = image_model.update(&mut cx, |image, cx| {
-                    let project_ref = project_clone.read(cx);
-
-                    if let Ok(metadata) =
-                        futures::executor::block_on(image.load_metadata(&project_ref, cx))
-                    {
-                        image.image_meta = Some(metadata)
-                    }
-                }) {
-                    // image metadata should be avialable now
-                }
+                image_model.update(&mut cx, |image_model, _| {
+                    image_model.image_meta = Some(image_metadata);
+                })?;
 
                 Ok(image_model)
             }))
