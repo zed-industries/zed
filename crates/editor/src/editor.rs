@@ -9277,12 +9277,13 @@ impl Editor {
 
             if let Some((primary_range, group_id)) = group {
                 self.activate_diagnostics(group_id, cx);
+                let primary_range = primary_range.to_offset(&buffer);
                 if self.active_diagnostics.is_some() {
                     self.change_selections(Some(Autoscroll::fit()), cx, |s| {
                         s.select(vec![Selection {
                             id: selection.id,
-                            start: primary_range.start.to_offset(&buffer),
-                            end: primary_range.start.to_offset(&buffer),
+                            start: primary_range.start,
+                            end: primary_range.start,
                             reversed: false,
                             goal: SelectionGoal::None,
                         }]);
