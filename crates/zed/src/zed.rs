@@ -133,7 +133,11 @@ pub fn initialize_workspace(
     prompt_builder: Arc<PromptBuilder>,
     cx: &mut AppContext,
 ) {
-    cx.observe_new_window_models(move |workspace: &mut Workspace, window, cx| {
+    cx.observe_new_models(move |workspace: &mut Workspace, window, cx| {
+        let Some(window) = window else {
+            return;
+        };
+
         let workspace_handle = cx.model().clone();
         let center_pane = workspace.active_pane().clone();
         initialize_pane(workspace, &center_pane, window, cx);

@@ -207,7 +207,7 @@ actions!(debug, [OpenLanguageServerLogs]);
 pub fn init(cx: &mut AppContext) {
     let log_store = cx.new_model(LogStore::new);
 
-    cx.observe_new_models(move |workspace: &mut Workspace, cx| {
+    cx.observe_new_models(move |workspace: &mut Workspace, _, cx| {
         let project = workspace.project();
         if project.read(cx).is_local() || project.read(cx).is_via_ssh() {
             log_store.update(cx, |store, cx| {

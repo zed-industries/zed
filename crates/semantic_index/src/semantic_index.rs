@@ -13,7 +13,6 @@ use collections::HashMap;
 use fs::Fs;
 use gpui::{
     AppContext, AsyncAppContext, BorrowAppContext, Context, Global, Model, ModelContext, WeakModel,
-    Window,
 };
 use language::LineEnding;
 use project::{Project, Worktree};
@@ -59,10 +58,8 @@ impl SemanticDb {
             .context("opening database connection")?;
 
         cx.update(|cx| {
-            cx.observe_new_window_models(
-                |workspace: &mut Workspace,
-                 _window: &mut Window,
-                 cx: &mut ModelContext<Workspace>| {
+            cx.observe_new_models(
+                |workspace: &mut Workspace, _window, cx: &mut ModelContext<Workspace>| {
                     let project = workspace.project().clone();
 
                     if cx.has_global::<SemanticDb>() {

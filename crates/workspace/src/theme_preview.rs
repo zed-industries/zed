@@ -16,7 +16,7 @@ use crate::{Item, Workspace};
 actions!(debug, [OpenThemePreview]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(|workspace: &mut Workspace, _, _| {
+    cx.observe_new_models(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &OpenThemePreview, window, cx| {
             let theme_preview = cx.new_model(|cx| ThemePreview::new(window, cx));
             workspace.add_item_to_active_pane(Box::new(theme_preview), None, true, window, cx)

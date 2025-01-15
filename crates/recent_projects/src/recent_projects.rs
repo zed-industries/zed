@@ -32,11 +32,10 @@ use zed_actions::{OpenRecent, OpenRemote};
 
 pub fn init(cx: &mut AppContext) {
     SshSettings::register(cx);
-    cx.observe_new_window_models(RecentProjects::register)
+    cx.observe_new_models(RecentProjects::register).detach();
+    cx.observe_new_models(RemoteServerProjects::register)
         .detach();
-    cx.observe_new_window_models(RemoteServerProjects::register)
-        .detach();
-    cx.observe_new_window_models(DisconnectedOverlay::register)
+    cx.observe_new_models(DisconnectedOverlay::register)
         .detach();
 }
 
@@ -90,7 +89,7 @@ impl RecentProjects {
 
     fn register(
         workspace: &mut Workspace,
-        _window: &mut Window,
+        _window: Option<&mut Window>,
         _cx: &mut ModelContext<Workspace>,
     ) {
         workspace.register_action(|workspace, open_recent: &OpenRecent, window, cx| {

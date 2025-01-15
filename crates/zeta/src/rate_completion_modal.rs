@@ -27,7 +27,7 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(move |workspace: &mut Workspace, _, _cx| {
+    cx.observe_new_models(move |workspace: &mut Workspace, _, _cx| {
         workspace.register_action(|workspace, _: &RateCompletions, window, cx| {
             RateCompletionModal::toggle(workspace, window, cx);
         });

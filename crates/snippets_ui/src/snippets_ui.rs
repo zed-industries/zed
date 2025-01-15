@@ -14,10 +14,14 @@ use workspace::{notifications::NotifyResultExt, ModalView, Workspace};
 actions!(snippets, [ConfigureSnippets, OpenFolder]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(register).detach();
+    cx.observe_new_models(register).detach();
 }
 
-fn register(workspace: &mut Workspace, _window: &mut Window, _: &mut ModelContext<Workspace>) {
+fn register(
+    workspace: &mut Workspace,
+    _window: Option<&mut Window>,
+    _: &mut ModelContext<Workspace>,
+) {
     workspace.register_action(configure_snippets);
     workspace.register_action(open_folder);
 }

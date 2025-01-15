@@ -220,7 +220,7 @@ pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
     init_settings(cx);
     file_icons::init(assets, cx);
 
-    cx.observe_new_window_models(|workspace: &mut Workspace, _, _| {
+    cx.observe_new_models(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<ProjectPanel>(window, cx);
         });

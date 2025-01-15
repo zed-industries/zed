@@ -21,7 +21,7 @@ use util::ResultExt;
 use workspace::{DismissDecision, ModalView};
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(OutlineView::register).detach();
+    cx.observe_new_models(OutlineView::register).detach();
     zed_actions::outline::TOGGLE_OUTLINE
         .set(|view, window, cx| {
             let Ok(view) = view.downcast::<Editor>() else {
@@ -86,7 +86,7 @@ impl Render for OutlineView {
 }
 
 impl OutlineView {
-    fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Editor>) {
+    fn register(editor: &mut Editor, _: Option<&mut Window>, cx: &mut ModelContext<Editor>) {
         if editor.mode() == EditorMode::Full {
             let handle = cx.model().downgrade();
             editor

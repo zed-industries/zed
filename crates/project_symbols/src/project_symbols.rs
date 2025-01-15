@@ -16,8 +16,8 @@ use workspace::{
 };
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(
-        |workspace: &mut Workspace, _window: &mut Window, _: &mut ModelContext<Workspace>| {
+    cx.observe_new_models(
+        |workspace: &mut Workspace, _window, _: &mut ModelContext<Workspace>| {
             workspace.register_action(
                 |workspace, _: &workspace::ToggleProjectSymbols, window, cx| {
                     let project = workspace.project().clone();

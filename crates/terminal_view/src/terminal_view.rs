@@ -76,7 +76,7 @@ pub fn init(cx: &mut AppContext) {
 
     register_serializable_item::<TerminalView>(cx);
 
-    cx.observe_new_window_models(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new_models(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(TerminalView::deploy);
     })
     .detach();

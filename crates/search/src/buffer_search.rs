@@ -71,10 +71,8 @@ pub enum Event {
 }
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(|workspace: &mut Workspace, _, _| {
-        BufferSearchBar::register(workspace)
-    })
-    .detach();
+    cx.observe_new_models(|workspace: &mut Workspace, _, _| BufferSearchBar::register(workspace))
+        .detach();
 }
 
 pub struct BufferSearchBar {

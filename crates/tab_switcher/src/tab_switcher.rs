@@ -40,11 +40,15 @@ pub struct TabSwitcher {
 impl ModalView for TabSwitcher {}
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(TabSwitcher::register).detach();
+    cx.observe_new_models(TabSwitcher::register).detach();
 }
 
 impl TabSwitcher {
-    fn register(workspace: &mut Workspace, _window: &mut Window, _: &mut ModelContext<Workspace>) {
+    fn register(
+        workspace: &mut Workspace,
+        _window: Option<&mut Window>,
+        _: &mut ModelContext<Workspace>,
+    ) {
         workspace.register_action(|workspace, action: &Toggle, window, cx| {
             let Some(tab_switcher) = workspace.active_modal::<Self>(cx) else {
                 Self::open(action, workspace, window, cx);

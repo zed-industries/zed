@@ -48,8 +48,8 @@ const GIT_PANEL_KEY: &str = "GitPanel";
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(
-        |workspace: &mut Workspace, _window: &mut Window, _cx: &mut ModelContext<Workspace>| {
+    cx.observe_new_models(
+        |workspace: &mut Workspace, _window, _cx: &mut ModelContext<Workspace>| {
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
                 workspace.toggle_panel_focus::<GitPanel>(window, cx);
             });

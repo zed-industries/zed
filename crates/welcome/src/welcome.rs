@@ -30,7 +30,7 @@ const BOOK_ONBOARDING: &str = "https://dub.sh/zed-onboarding";
 pub fn init(cx: &mut AppContext) {
     BaseKeymap::register(cx);
 
-    cx.observe_new_models(|workspace: &mut Workspace, _cx| {
+    cx.observe_new_models(|workspace: &mut Workspace, _, _cx| {
         workspace.register_action(|workspace, _: &Welcome, window, cx| {
             let welcome_page = WelcomePage::new(workspace, cx);
             workspace.add_item_to_active_pane(Box::new(welcome_page), None, true, window, cx)

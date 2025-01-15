@@ -54,7 +54,7 @@ impl Global for ActiveSettings {}
 
 pub fn init(cx: &mut AppContext) {
     cx.set_global(ActiveSettings::default());
-    cx.observe_new_window_models(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new_models(|workspace: &mut Workspace, _window, _cx| {
         register_workspace_action(workspace, move |search_bar, _: &Deploy, window, cx| {
             search_bar.focus_search(window, cx);
         });

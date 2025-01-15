@@ -49,7 +49,7 @@ struct DirectoryState {
 impl OpenPathPrompt {
     pub(crate) fn register(
         workspace: &mut Workspace,
-        _window: &mut Window,
+        _window: Option<&mut Window>,
         _: &mut ModelContext<Workspace>,
     ) {
         workspace.set_prompt_for_open_path(Box::new(|workspace, lister, window, cx| {

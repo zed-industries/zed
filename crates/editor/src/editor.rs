@@ -306,8 +306,8 @@ pub fn init(cx: &mut AppContext) {
     workspace::FollowableViewRegistry::register::<Editor>(cx);
     workspace::register_serializable_item::<Editor>(cx);
 
-    cx.observe_new_window_models(
-        |workspace: &mut Workspace, _window: &mut Window, _cx: &mut ModelContext<Workspace>| {
+    cx.observe_new_models(
+        |workspace: &mut Workspace, _: Option<&mut Window>, _cx: &mut ModelContext<Workspace>| {
             workspace.register_action(Editor::new_file);
             workspace.register_action(Editor::new_file_vertical);
             workspace.register_action(Editor::new_file_horizontal);

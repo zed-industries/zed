@@ -15,7 +15,7 @@ use workspace::{ui::HighlightedLabel, ModalView, Workspace};
 actions!(welcome, [ToggleBaseKeymapSelector]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_models(|workspace: &mut Workspace, _cx| {
+    cx.observe_new_models(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(toggle);
     })
     .detach();

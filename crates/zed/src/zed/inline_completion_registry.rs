@@ -12,10 +12,14 @@ use supermaven::{Supermaven, SupermavenCompletionProvider};
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
     let editors: Rc<RefCell<HashMap<WeakModel<Editor>, AnyWindowHandle>>> = Rc::default();
-    cx.observe_new_window_models({
+    cx.observe_new_models({
         let editors = editors.clone();
         let client = client.clone();
-        move |editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Editor>| {
+        move |editor: &mut Editor, window, cx: &mut ModelContext<Editor>| {
+            let Some(window) = window else {
+                return;
+            };
+
             if editor.mode() != EditorMode::Full {
                 return;
             }

@@ -97,8 +97,8 @@ use zed_actions::InlineAssist;
 
 pub fn init(cx: &mut AppContext) {
     workspace::FollowableViewRegistry::register::<ContextEditor>(cx);
-    cx.observe_new_window_models(
-        |workspace: &mut Workspace, _window: &mut Window, _cx: &mut ModelContext<Workspace>| {
+    cx.observe_new_models(
+        |workspace: &mut Workspace, _window, _cx: &mut ModelContext<Workspace>| {
             workspace
                 .register_action(|workspace, _: &ToggleFocus, window, cx| {
                     let settings = AssistantSettings::get_global(cx);
@@ -120,7 +120,7 @@ pub fn init(cx: &mut AppContext) {
     .detach();
 
     cx.observe_new_models(
-        |terminal_panel: &mut TerminalPanel, cx: &mut ModelContext<TerminalPanel>| {
+        |terminal_panel: &mut TerminalPanel, _, cx: &mut ModelContext<TerminalPanel>| {
             let settings = AssistantSettings::get_global(cx);
             terminal_panel.asssistant_enabled(settings.enabled, cx);
         },

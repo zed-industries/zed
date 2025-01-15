@@ -27,8 +27,7 @@ pub fn init(cx: &mut AppContext) {
     client::init_settings(cx);
     cx.set_global(HitCounts::default());
     command_palette_hooks::init(cx);
-    cx.observe_new_window_models(CommandPalette::register)
-        .detach();
+    cx.observe_new_models(CommandPalette::register).detach();
 }
 
 impl ModalView for CommandPalette {}
@@ -61,7 +60,11 @@ fn normalize_query(input: &str) -> String {
 }
 
 impl CommandPalette {
-    fn register(workspace: &mut Workspace, _window: &mut Window, _: &mut ModelContext<Workspace>) {
+    fn register(
+        workspace: &mut Workspace,
+        _window: Option<&mut Window>,
+        _: &mut ModelContext<Workspace>,
+    ) {
         workspace.register_action(|workspace, _: &Toggle, window, cx| {
             Self::toggle(workspace, "", window, cx)
         });

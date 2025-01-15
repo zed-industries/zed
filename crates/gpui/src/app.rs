@@ -1163,29 +1163,6 @@ impl AppContext {
         self.globals_by_type.insert(global_type, lease.global);
     }
 
-    /// Arrange for the given function to be invoked whenever a view of the specified type is created.
-    /// The function will be passed a mutable reference to the view along with an appropriate context.
-    pub fn observe_new_window_models<V: 'static>(
-        &self,
-        on_new: impl 'static + Fn(&mut V, &mut Window, &mut ModelContext<V>),
-    ) -> Subscription {
-        self.new_model_observer(
-            TypeId::of::<V>(),
-            Box::new(
-                move |any_view: AnyModel, window: &mut Option<&mut Window>, cx: &mut AppContext| {
-                    let Some(window) = window else { return };
-
-                    any_view
-                        .downcast::<V>()
-                        .unwrap()
-                        .update(cx, |view_state, cx| {
-                            on_new(view_state, *window, cx);
-                        })
-                },
-            ),
-        )
-    }
-
     pub(crate) fn new_model_observer(&self, key: TypeId, value: NewModelListener) -> Subscription {
         let (subscription, activate) = self.new_model_observers.insert(key, value);
         activate();
@@ -1196,17 +1173,23 @@ impl AppContext {
     /// The function will be passed a mutable reference to the view along with an appropriate context.
     pub fn observe_new_models<T: 'static>(
         &self,
-        on_new: impl 'static + Fn(&mut T, &mut ModelContext<T>),
+        on_new: impl 'static + Fn(&mut T, Option<&mut Window>, &mut ModelContext<T>),
     ) -> Subscription {
         self.new_model_observer(
             TypeId::of::<T>(),
             Box::new(
-                move |any_model: AnyModel, _: &mut Option<&mut Window>, cx: &mut AppContext| {
+                move |any_model: AnyModel,
+                      window: &mut Option<&mut Window>,
+                      cx: &mut AppContext| {
                     any_model
                         .downcast::<T>()
                         .unwrap()
                         .update(cx, |model_state, cx| {
-                            on_new(model_state, cx);
+                            if let Some(window) = window {
+                                on_new(model_state, Some(window), cx);
+                            } else {
+                                on_new(model_state, None, cx);
+                            }
                         })
                 },
             ),

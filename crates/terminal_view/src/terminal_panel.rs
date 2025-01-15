@@ -49,8 +49,8 @@ const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
 actions!(terminal_panel, [ToggleFocus]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(
-        |workspace: &mut Workspace, _window: &mut Window, _: &mut ModelContext<Workspace>| {
+    cx.observe_new_models(
+        |workspace: &mut Workspace, _window, _: &mut ModelContext<Workspace>| {
             workspace.register_action(TerminalPanel::new_terminal);
             workspace.register_action(TerminalPanel::open_terminal);
             workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {

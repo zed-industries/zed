@@ -100,12 +100,9 @@ pub fn init(cx: &mut AppContext) {
     VimSettings::register(cx);
     VimGlobals::register(cx);
 
-    cx.observe_new_window_models(|editor: &mut Editor, window, cx| {
-        Vim::register(editor, window, cx)
-    })
-    .detach();
+    cx.observe_new_models(Vim::register).detach();
 
-    cx.observe_new_models(|workspace: &mut Workspace, _| {
+    cx.observe_new_models(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleVimMode, _, cx| {
             let fs = workspace.app_state().fs.clone();
             let currently_enabled = Vim::enabled(cx);
@@ -275,7 +272,11 @@ impl Vim {
         })
     }
 
-    fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Editor>) {
+    fn register(editor: &mut Editor, window: Option<&mut Window>, cx: &mut ModelContext<Editor>) {
+        let Some(window) = window else {
+            return;
+        };
+
         if !editor.use_modal_editing() {
             return;
         }

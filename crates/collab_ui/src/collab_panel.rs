@@ -62,7 +62,7 @@ struct ChannelMoveClipboard {
 const COLLABORATION_PANEL_KEY: &str = "CollaborationPanel";
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(|workspace: &mut Workspace, _, _| {
+    cx.observe_new_models(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<CollabPanel>(window, cx);
         });

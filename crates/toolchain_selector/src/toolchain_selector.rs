@@ -18,8 +18,7 @@ use workspace::{ModalView, Workspace};
 actions!(toolchain, [Select]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(ToolchainSelector::register)
-        .detach();
+    cx.observe_new_models(ToolchainSelector::register).detach();
 }
 
 pub struct ToolchainSelector {
@@ -27,7 +26,11 @@ pub struct ToolchainSelector {
 }
 
 impl ToolchainSelector {
-    fn register(workspace: &mut Workspace, _window: &mut Window, _: &mut ModelContext<Workspace>) {
+    fn register(
+        workspace: &mut Workspace,
+        _window: Option<&mut Window>,
+        _: &mut ModelContext<Workspace>,
+    ) {
         workspace.register_action(move |workspace, _: &Select, window, cx| {
             Self::toggle(workspace, window, cx);
         });

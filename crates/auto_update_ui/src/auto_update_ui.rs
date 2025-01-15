@@ -17,7 +17,7 @@ use crate::update_notification::UpdateNotification;
 actions!(auto_update, [ViewReleaseNotesLocally]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new_models(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|workspace, _: &ViewReleaseNotesLocally, window, cx| {
             view_release_notes_locally(workspace, window, cx);
         });

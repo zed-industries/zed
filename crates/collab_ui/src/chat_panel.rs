@@ -37,7 +37,7 @@ const MESSAGE_LOADING_THRESHOLD: usize = 50;
 const CHAT_PANEL_KEY: &str = "ChatPanel";
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_models(|workspace: &mut Workspace, _| {
+    cx.observe_new_models(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &ToggleFocus, window, cx| {
             workspace.toggle_panel_focus::<ChatPanel>(window, cx);
         });

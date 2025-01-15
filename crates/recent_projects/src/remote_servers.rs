@@ -322,7 +322,7 @@ impl Mode {
 impl RemoteServerProjects {
     pub fn register(
         workspace: &mut Workspace,
-        _window: &mut Window,
+        _window: Option<&mut Window>,
         _: &mut ModelContext<Workspace>,
     ) {
         workspace.register_action(|workspace, _: &OpenRemote, window, cx| {

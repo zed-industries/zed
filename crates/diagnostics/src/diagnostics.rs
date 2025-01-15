@@ -54,7 +54,7 @@ impl Global for IncludeWarnings {}
 
 pub fn init(cx: &mut AppContext) {
     ProjectDiagnosticsSettings::register(cx);
-    cx.observe_new_window_models(ProjectDiagnosticsEditor::register)
+    cx.observe_new_models(ProjectDiagnosticsEditor::register)
         .detach();
 }
 
@@ -117,7 +117,11 @@ impl Render for ProjectDiagnosticsEditor {
 }
 
 impl ProjectDiagnosticsEditor {
-    fn register(workspace: &mut Workspace, _window: &mut Window, _: &mut ModelContext<Workspace>) {
+    fn register(
+        workspace: &mut Workspace,
+        _window: Option<&mut Window>,
+        _: &mut ModelContext<Workspace>,
+    ) {
         workspace.register_action(Self::deploy);
     }
 

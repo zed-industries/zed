@@ -16,7 +16,7 @@ use workspace::{ModalView, Workspace};
 use zed_actions::branches::OpenRecent;
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(|workspace: &mut Workspace, _, _| {
+    cx.observe_new_models(|workspace: &mut Workspace, _, _| {
         workspace.register_action(BranchList::open);
     })
     .detach();

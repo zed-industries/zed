@@ -36,7 +36,10 @@ use crate::extension_version_selector::{
 actions!(zed, [InstallDevExtension]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(move |workspace: &mut Workspace, window, cx| {
+    cx.observe_new_models(move |workspace: &mut Workspace, window, cx| {
+        let Some(window) = window else {
+            return;
+        };
         workspace
             .register_action(move |workspace, _: &zed_actions::Extensions, window, cx| {
                 let existing = workspace

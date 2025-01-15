@@ -22,8 +22,7 @@ use workspace::{ModalView, Workspace};
 actions!(language_selector, [Toggle]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(LanguageSelector::register)
-        .detach();
+    cx.observe_new_models(LanguageSelector::register).detach();
 }
 
 pub struct LanguageSelector {
@@ -31,7 +30,11 @@ pub struct LanguageSelector {
 }
 
 impl LanguageSelector {
-    fn register(workspace: &mut Workspace, _window: &mut Window, _: &mut ModelContext<Workspace>) {
+    fn register(
+        workspace: &mut Workspace,
+        _window: Option<&mut Window>,
+        _: &mut ModelContext<Workspace>,
+    ) {
         workspace.register_action(move |workspace, _: &Toggle, window, cx| {
             Self::toggle(workspace, window, cx);
         });

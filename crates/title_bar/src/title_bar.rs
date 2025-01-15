@@ -51,7 +51,10 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(|workspace: &mut Workspace, window, cx| {
+    cx.observe_new_models(|workspace: &mut Workspace, window, cx| {
+        let Some(window) = window else {
+            return;
+        };
         let item = cx.new_model(|cx| TitleBar::new("title-bar", workspace, window, cx));
         workspace.set_titlebar_item(item.into(), window, cx)
     })

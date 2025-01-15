@@ -16,8 +16,8 @@ use zed_actions::theme_selector::Toggle;
 actions!(theme_selector, [Reload]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(
-        |workspace: &mut Workspace, _window: &mut Window, _cx: &mut ModelContext<Workspace>| {
+    cx.observe_new_models(
+        |workspace: &mut Workspace, _window, _cx: &mut ModelContext<Workspace>| {
             workspace.register_action(toggle);
         },
     )

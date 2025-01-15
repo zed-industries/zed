@@ -209,7 +209,7 @@ pub struct NewPathDelegate {
 impl NewPathPrompt {
     pub(crate) fn register(
         workspace: &mut Workspace,
-        _window: &mut Window,
+        _window: Option<&mut Window>,
         _cx: &mut ModelContext<Workspace>,
     ) {
         workspace.set_prompt_for_new_path(Box::new(|workspace, window, cx| {

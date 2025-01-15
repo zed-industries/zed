@@ -28,8 +28,8 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(
-        |workspace: &mut Workspace, _window: &mut Window, _cx: &mut ModelContext<Workspace>| {
+    cx.observe_new_models(
+        |workspace: &mut Workspace, _window, _cx: &mut ModelContext<Workspace>| {
             workspace.register_action(|workspace, _: &Sessions, window, cx| {
                 let existing = workspace
                     .active_pane()
@@ -61,8 +61,12 @@ pub fn init(cx: &mut AppContext) {
     )
     .detach();
 
-    cx.observe_new_window_models(
-        move |editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Editor>| {
+    cx.observe_new_models(
+        move |editor: &mut Editor, window, cx: &mut ModelContext<Editor>| {
+            let Some(window) = window else {
+                return;
+            };
+
             if !editor.use_modal_editing() || !editor.buffer().read(cx).is_singleton() {
                 return;
             }

@@ -69,7 +69,7 @@ pub fn init(
     cx: &mut AppContext,
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
-    cx.observe_new_window_models(|_, window, cx| {
+    cx.observe_new_models(|_, window, cx| {
         let workspace = cx.model().clone();
         InlineAssistant::update_global(cx, |inline_assistant, cx| {
             inline_assistant.register_workspace(&workspace, window, cx)
@@ -118,9 +118,12 @@ impl InlineAssistant {
     pub fn register_workspace(
         &mut self,
         workspace: &Model<Workspace>,
-        window: &mut Window,
+        window: Option<&mut Window>,
         cx: &mut AppContext,
     ) {
+        let Some(window) = window else {
+            return;
+        };
         window
             .subscribe(workspace, cx, |workspace, event, window, cx| {
                 Self::update_global(cx, |this, cx| {

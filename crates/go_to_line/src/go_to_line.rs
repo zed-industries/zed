@@ -15,7 +15,7 @@ use workspace::ModalView;
 
 pub fn init(cx: &mut AppContext) {
     LineIndicatorFormat::register(cx);
-    cx.observe_new_window_models(GoToLine::register).detach();
+    cx.observe_new_models(GoToLine::register).detach();
 }
 
 pub struct GoToLine {
@@ -38,7 +38,7 @@ impl EventEmitter<DismissEvent> for GoToLine {}
 enum GoToLineRowHighlights {}
 
 impl GoToLine {
-    fn register(editor: &mut Editor, _window: &mut Window, cx: &mut ModelContext<Editor>) {
+    fn register(editor: &mut Editor, _window: Option<&mut Window>, cx: &mut ModelContext<Editor>) {
         let handle = cx.model().downgrade();
         editor
             .register_action(move |_: &editor::actions::ToggleGoToLine, window, cx| {

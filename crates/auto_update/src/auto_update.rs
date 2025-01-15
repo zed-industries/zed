@@ -130,7 +130,7 @@ impl Global for GlobalAutoUpdate {}
 pub fn init(http_client: Arc<HttpClientWithUrl>, cx: &mut AppContext) {
     AutoUpdateSetting::register(cx);
 
-    cx.observe_new_window_models(|workspace: &mut Workspace, _window, _cx| {
+    cx.observe_new_models(|workspace: &mut Workspace, _window, _cx| {
         workspace.register_action(|_, action: &Check, window, cx| check(action, window, cx));
 
         workspace.register_action(|_, action, _, cx| {

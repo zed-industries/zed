@@ -182,7 +182,7 @@ pub fn init(
         cx,
     );
 
-    cx.observe_new_models(move |project: &mut Project, cx| {
+    cx.observe_new_models(move |project: &mut Project, _, cx| {
         let http_client = http_client.clone();
         let panic_report_url = panic_report_url.clone();
         let session_id = session_id.clone();

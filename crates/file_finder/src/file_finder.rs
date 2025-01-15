@@ -69,15 +69,17 @@ pub fn init_settings(cx: &mut AppContext) {
 
 pub fn init(cx: &mut AppContext) {
     init_settings(cx);
-    cx.observe_new_window_models(FileFinder::register).detach();
-    cx.observe_new_window_models(NewPathPrompt::register)
-        .detach();
-    cx.observe_new_window_models(OpenPathPrompt::register)
-        .detach();
+    cx.observe_new_models(FileFinder::register).detach();
+    cx.observe_new_models(NewPathPrompt::register).detach();
+    cx.observe_new_models(OpenPathPrompt::register).detach();
 }
 
 impl FileFinder {
-    fn register(workspace: &mut Workspace, _window: &mut Window, _: &mut ModelContext<Workspace>) {
+    fn register(
+        workspace: &mut Workspace,
+        _window: Option<&mut Window>,
+        _: &mut ModelContext<Workspace>,
+    ) {
         workspace.register_action(
             |workspace, action: &workspace::ToggleFileFinder, window, cx| {
                 let Some(file_finder) = workspace.active_modal::<Self>(cx) else {

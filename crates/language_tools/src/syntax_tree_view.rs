@@ -18,7 +18,7 @@ use workspace::{
 actions!(debug, [OpenSyntaxTreeView]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(|workspace: &mut Workspace, _, _| {
+    cx.observe_new_models(|workspace: &mut Workspace, _, _| {
         workspace.register_action(|workspace, _: &OpenSyntaxTreeView, window, cx| {
             let active_item = workspace.active_item(cx);
             let workspace_handle = workspace.weak_handle();

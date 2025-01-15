@@ -47,9 +47,12 @@ impl ModalView for DisconnectedOverlay {
 impl DisconnectedOverlay {
     pub fn register(
         workspace: &mut Workspace,
-        window: &mut Window,
+        window: Option<&mut Window>,
         cx: &mut ModelContext<Workspace>,
     ) {
+        let Some(window) = window else {
+            return;
+        };
         cx.subscribe_in(
             workspace.project(),
             window,

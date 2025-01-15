@@ -21,7 +21,11 @@ impl FeatureFlag for SettingsUiFeatureFlag {
 actions!(zed, [OpenSettingsEditor]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(|workspace: &mut Workspace, window, cx| {
+    cx.observe_new_models(|workspace: &mut Workspace, window, cx| {
+        let Some(window) = window else {
+            return;
+        };
+
         workspace.register_action(|workspace, _: &OpenSettingsEditor, window, cx| {
             let existing = workspace
                 .active_pane()

@@ -9,7 +9,10 @@ pub mod markdown_renderer;
 actions!(markdown, [OpenPreview, OpenPreviewToTheSide]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(|workspace: &mut Workspace, window, cx| {
+    cx.observe_new_models(|workspace: &mut Workspace, window, cx| {
+        let Some(window) = window else {
+            return;
+        };
         markdown_preview_view::MarkdownPreviewView::register(workspace, window, cx);
     })
     .detach();

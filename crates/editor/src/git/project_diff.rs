@@ -34,8 +34,7 @@ use crate::{Editor, EditorEvent, DEFAULT_MULTIBUFFER_CONTEXT};
 actions!(project_diff, [Deploy]);
 
 pub fn init(cx: &mut AppContext) {
-    cx.observe_new_window_models(ProjectDiffEditor::register)
-        .detach();
+    cx.observe_new_models(ProjectDiffEditor::register).detach();
 }
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
@@ -61,7 +60,11 @@ struct Changes {
 }
 
 impl ProjectDiffEditor {
-    fn register(workspace: &mut Workspace, _window: &mut Window, _: &mut ModelContext<Workspace>) {
+    fn register(
+        workspace: &mut Workspace,
+        _window: Option<&mut Window>,
+        _: &mut ModelContext<Workspace>,
+    ) {
         workspace.register_action(Self::deploy);
     }
 
