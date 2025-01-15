@@ -55,7 +55,7 @@ impl RateCompletionView {
     pub fn name(&self) -> &'static str {
         match self {
             Self::SuggestedEdits => "Suggested Edits",
-            Self::RawInput => "Raw Input",
+            Self::RawInput => "Recorded Events & Input",
         }
     }
 }
