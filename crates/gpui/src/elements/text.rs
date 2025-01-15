@@ -2,7 +2,7 @@ use crate::{
     ActiveTooltip, AnyTooltip, AnyView, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
     HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, Point, SharedString, Size, TextOverflow, TextRun, TextStyle, WhiteSpace, WindowContext,
-    WrappedLine, TOOLTIP_DELAY,
+    WrappedLine, WrappedLineLayout, TOOLTIP_DELAY,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
