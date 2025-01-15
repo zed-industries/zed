@@ -352,7 +352,7 @@ pub struct MultiBufferRows<'a> {
     buffer_row_range: Range<u32>,
     point: Point,
     diff_transforms: Cursor<'a, DiffTransform, (Point, ExcerptPoint)>,
-    excerpts: Cursor<'a, Excerpt, Point>,
+    excerpts: Cursor<'a, Excerpt, ExcerptPoint>,
 }
 
 pub struct MultiBufferChunks<'a> {
@@ -1664,24 +1664,39 @@ impl MultiBuffer {
     ) -> Vec<Range<Point>> {
         let snapshot = self.read(cx);
         let buffers = self.buffers.borrow();
-        let mut cursor = snapshot.excerpts.cursor::<(Option<&Locator>, Point)>(&());
-        buffers
+        let mut excerpts = snapshot
+            .excerpts
+            .cursor::<(Option<&Locator>, ExcerptDimension<Point>)>(&());
+        let mut diff_transforms = snapshot
+            .diff_transforms
+            .cursor::<(ExcerptDimension<Point>, OutputDimension<Point>)>(&());
+        diff_transforms.next(&());
+        let locators = buffers
             .get(&buffer_id)
             .into_iter()
-            .flat_map(|state| &state.excerpts)
-            .filter_map(move |locator| {
-                cursor.seek_forward(&Some(locator), Bias::Left, &());
-                cursor.item().and_then(|excerpt| {
-                    if excerpt.locator == *locator {
-                        let excerpt_start = cursor.start().1;
-                        let excerpt_end = excerpt_start + excerpt.text_summary.lines;
-                        Some(excerpt_start..excerpt_end)
-                    } else {
-                        None
-                    }
-                })
-            })
-            .collect()
+            .flat_map(|state| &state.excerpts);
+        let mut result = Vec::new();
+        for locator in locators {
+            excerpts.seek_forward(&Some(locator), Bias::Left, &());
+            if let Some(excerpt) = excerpts.item() {
+                if excerpt.locator == *locator {
+                    let excerpt_start = excerpts.start().1.clone();
+                    let excerpt_end =
+                        ExcerptDimension(excerpt_start.0 + excerpt.text_summary.lines);
+
+                    diff_transforms.seek_forward(&excerpt_start, Bias::Left, &());
+                    let overshoot = excerpt_start.0 - diff_transforms.start().0 .0;
+                    let start = diff_transforms.start().1 .0 + overshoot;
+
+                    diff_transforms.seek_forward(&excerpt_end, Bias::Right, &());
+                    let overshoot = excerpt_end.0 - diff_transforms.start().0 .0;
+                    let end = diff_transforms.start().1 .0 + overshoot;
+
+                    result.push(start..end)
+                }
+            }
+        }
+        result
     }
 
     pub fn excerpt_buffer_ids(&self) -> Vec<BufferId> {
@@ -5340,7 +5355,10 @@ where
         self.cached_region.take();
         self.diff_transforms
             .seek(self.excerpts.start(), Bias::Left, &());
-        if self.diff_transforms.end(&()).1 < *self.excerpts.start() {
+        if self.diff_transforms.end(&()).1 < *self.excerpts.start()
+            || self.diff_transforms.end(&()).1 == *self.excerpts.start()
+                && self.diff_transforms.start().1 < *self.excerpts.start()
+        {
             self.diff_transforms.next(&());
         }
     }
@@ -6268,7 +6286,7 @@ impl<'a> MultiBufferRows<'a> {
         self.point = point;
 
         self.excerpts
-            .seek_forward(&Point::new(excerpt_row, 0), Bias::Right, &());
+            .seek_forward(&ExcerptPoint::new(excerpt_row, 0), Bias::Right, &());
         if self.excerpts.item().is_none() {
             self.excerpts.prev(&());
 
@@ -6279,7 +6297,7 @@ impl<'a> MultiBufferRows<'a> {
         }
 
         if let Some(excerpt) = self.excerpts.item() {
-            let overshoot = excerpt_row - self.excerpts.start().row;
+            let overshoot = excerpt_row - self.excerpts.start().row();
             let excerpt_start = excerpt.range.context.start.to_point(&excerpt.buffer).row;
             self.buffer_row_range.start = excerpt_start + overshoot;
             self.buffer_row_range.end = excerpt_start + excerpt.text_summary.lines.row + 1;
