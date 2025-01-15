@@ -4,7 +4,7 @@ use ui_macros::DerivePathStr;
 
 use crate::{prelude::*, traits::component_preview::ComponentPreview};
 
-const ICON_DECORATION_SIZE: f32 = 11.0;
+const ICON_DECORATION_SIZE: Pixels = px(11.);
 
 /// An icon silhouette used to knockout the background of an element for an icon
 /// to sit on top of it, emulating a stroke/border.
@@ -121,7 +121,7 @@ impl RenderOnce for IconDecoration {
             .absolute()
             .bottom_0()
             .right_0()
-            .size(px(ICON_DECORATION_SIZE))
+            .size(ICON_DECORATION_SIZE)
             .path(self.kind.fg().path())
             .text_color(self.color);
 
@@ -129,7 +129,7 @@ impl RenderOnce for IconDecoration {
             .absolute()
             .bottom_0()
             .right_0()
-            .size(px(ICON_DECORATION_SIZE))
+            .size(ICON_DECORATION_SIZE)
             .path(self.kind.bg().path())
             .text_color(self.knockout_color)
             .map(|this| match self.group_name {
@@ -140,7 +140,7 @@ impl RenderOnce for IconDecoration {
             });
 
         div()
-            .size(px(ICON_DECORATION_SIZE))
+            .size(ICON_DECORATION_SIZE)
             .flex_none()
             .absolute()
             .bottom(self.position.y)
