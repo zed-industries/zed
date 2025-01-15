@@ -2012,10 +2012,6 @@ impl LocalLspStore {
             snapshots.retain(|snapshot| snapshot.version + OLD_VERSIONS_TO_RETAIN >= version);
             Ok(found_snapshot)
         } else {
-            match buffer.read(cx).project_path(cx) {
-                Some(project_path) => log::error!("No LSP snapshots found for buffer with path {:?}", project_path.path),
-                None => log::error!("No LSP snapshots found for buffer without a project path (which is also unexpected)"),
-            }
             Ok((buffer.read(cx)).text_snapshot())
         }
     }
