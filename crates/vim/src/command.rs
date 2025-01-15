@@ -1,28 +1,38 @@
 use anyhow::{anyhow, Result};
+use collections::HashMap;
 use command_palette_hooks::CommandInterceptResult;
 use editor::{
     actions::{SortLinesCaseInsensitive, SortLinesCaseSensitive},
     display_map::ToDisplayPoint,
+    scroll::Autoscroll,
     Bias, Editor, ToPoint,
 };
+use futures::channel::oneshot;
 use gpui::{
     actions, impl_internal_actions, Action, AppContext, Global, ViewContext, WindowContext,
 };
 use language::Point;
+use libc::EDOM;
 use multi_buffer::MultiBufferRow;
 use regex::Regex;
 use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions};
 use serde::Deserialize;
 use std::{
+    io::Write,
     iter::Peekable,
     ops::{Deref, Range},
+    os::unix::process::CommandExt,
+    process::Stdio,
     str::Chars,
     sync::OnceLock,
     time::Instant,
 };
+use task::{HideStrategy, RevealStrategy, SpawnInTerminal, TaskId};
+use ui::ActiveTheme;
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, SaveIntent};
+use zed_actions::RevealTarget;
 
 use crate::{
     motion::{EndOfDocument, Motion, StartOfDocument},
@@ -64,7 +74,14 @@ struct WrappedAction(Box<dyn Action>);
 actions!(vim, [VisualCommand, CountCommand]);
 impl_internal_actions!(
     vim,
-    [GoToLine, YankCommand, WithRange, WithCount, OnMatchingLines]
+    [
+        GoToLine,
+        YankCommand,
+        WithRange,
+        WithCount,
+        OnMatchingLines,
+        ShellExec
+    ]
 );
 
 impl PartialEq for WrappedAction {
@@ -208,6 +225,10 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     });
 
     Vim::action(editor, cx, |vim, action: &OnMatchingLines, cx| {
+        action.run(vim, cx)
+    });
+
+    Vim::action(editor, cx, |vim, action: &ShellExec, cx| {
         action.run(vim, cx)
     })
 }
@@ -817,6 +838,8 @@ pub fn command_interceptor(mut input: &str, cx: &AppContext) -> Option<CommandIn
         } else {
             None
         }
+    } else if query.contains('!') {
+        ShellExec::parse(query, range.clone())
     } else {
         None
     };
@@ -1054,6 +1077,210 @@ impl OnMatchingLines {
             })
             .detach();
         });
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShellExec {
+    command: String,
+    range: Option<CommandRange>,
+    is_read: bool,
+}
+
+impl Vim {
+    pub fn cancel_running_command(&mut self, cx: &mut ViewContext<Self>) {
+        if self.running_command.take().is_some() {
+            self.update_editor(cx, |_, editor, cx| {
+                editor.transact(cx, |editor, cx| {
+                    editor.clear_row_highlights::<ShellExec>();
+                })
+            });
+        }
+    }
+}
+
+impl ShellExec {
+    pub fn parse(query: &str, range: Option<CommandRange>) -> Option<Box<dyn Action>> {
+        let (before, after) = query.split_once('!')?;
+        let before = before.trim();
+
+        if !"read".starts_with(before) {
+            return None;
+        }
+
+        Some(
+            ShellExec {
+                command: after.trim().to_string(),
+                range,
+                is_read: !before.is_empty(),
+            }
+            .boxed_clone(),
+        )
+    }
+
+    pub fn run(&self, vim: &mut Vim, cx: &mut ViewContext<Vim>) {
+        let Some(workspace) = vim.workspace(cx) else {
+            return;
+        };
+        let project = workspace.read(cx).project().clone();
+        let mut process = project.read(cx).exec_in_shell(self.command.clone(), cx);
+        process.stdout(Stdio::piped());
+        process.stderr(Stdio::piped());
+
+        if self.range.is_none() && !self.is_read {
+            workspace.update(cx, |workspace, cx| {
+                let project = workspace.project().read(cx);
+                let cwd = project.first_project_directory(cx);
+                let shell = project.terminal_settings(&cwd, cx).shell.clone();
+                cx.emit(workspace::Event::SpawnTask {
+                    action: Box::new(SpawnInTerminal {
+                        id: TaskId("vim".to_string()),
+                        full_label: self.command.clone(),
+                        label: self.command.clone(),
+                        command: self.command.clone(),
+                        args: Vec::new(),
+                        command_label: self.command.clone(),
+                        cwd,
+                        env: HashMap::default(),
+                        use_new_terminal: true,
+                        allow_concurrent_runs: true,
+                        reveal: RevealStrategy::NoFocus,
+                        reveal_target: RevealTarget::Dock,
+                        hide: HideStrategy::Never,
+                        shell,
+                        show_summary: false,
+                        show_command: false,
+                    }),
+                });
+            });
+            return;
+        };
+
+        let mut input_snapshot = None;
+        let mut input_range = None;
+        let mut needs_newline_prefix = false;
+        vim.update_editor(cx, |vim, editor, cx| {
+            let snapshot = editor.buffer().read(cx).snapshot(cx);
+            let range = if let Some(range) = self.range.clone() {
+                let Some(range) = range.buffer_range(vim, editor, cx).log_err() else {
+                    return;
+                };
+                Point::new(range.start.0, 0)
+                    ..snapshot.clip_point(Point::new(range.end.0 + 1, 0), Bias::Right)
+            } else {
+                let mut end = editor.selections.newest::<Point>(cx).range().end;
+                end = snapshot.clip_point(Point::new(end.row + 1, 0), Bias::Right);
+                needs_newline_prefix = end == snapshot.max_point();
+                end..end
+            };
+            if self.is_read {
+                input_range =
+                    Some(snapshot.anchor_after(range.end)..snapshot.anchor_after(range.end));
+            } else {
+                input_range =
+                    Some(snapshot.anchor_before(range.start)..snapshot.anchor_after(range.end));
+            }
+            editor.highlight_rows::<ShellExec>(
+                input_range.clone().unwrap(),
+                cx.theme().status().unreachable_background,
+                false,
+                cx,
+            );
+
+            if !self.is_read {
+                input_snapshot = Some(snapshot)
+            }
+        });
+
+        let Some(range) = input_range else { return };
+
+        if input_snapshot.is_some() {
+            process.stdin(Stdio::piped());
+        } else {
+            process.stdin(Stdio::null());
+        };
+
+        // https://registerspill.thorstenball.com/p/how-to-lose-control-of-your-shell
+        //
+        // safety: code in pre_exec should be signal safe.
+        // https://man7.org/linux/man-pages/man7/signal-safety.7.html
+        unsafe {
+            process.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        };
+        let is_read = self.is_read;
+
+        let task = cx.spawn(|vim, mut cx| async move {
+            let Some(mut running) = process.spawn().log_err() else {
+                vim.update(&mut cx, |vim, cx| {
+                    vim.cancel_running_command(cx);
+                })
+                .log_err();
+                return;
+            };
+
+            if let Some(mut stdin) = running.stdin.take() {
+                if let Some(snapshot) = input_snapshot {
+                    let range = range.clone();
+                    cx.background_executor()
+                        .spawn(async move {
+                            for chunk in snapshot.text_for_range(range) {
+                                if stdin.write_all(chunk.as_bytes()).log_err().is_none() {
+                                    return;
+                                }
+                            }
+                            stdin.flush().log_err();
+                        })
+                        .detach();
+                }
+            };
+
+            let output = cx
+                .background_executor()
+                .spawn(async move { running.wait_with_output() })
+                .await;
+
+            let Some(output) = output.log_err() else {
+                vim.update(&mut cx, |vim, cx| {
+                    vim.cancel_running_command(cx);
+                })
+                .log_err();
+                return;
+            };
+            let mut text = String::new();
+            if needs_newline_prefix {
+                text.push('\n');
+            }
+            text.push_str(&String::from_utf8_lossy(&output.stdout));
+            text.push_str(&String::from_utf8_lossy(&output.stderr));
+            if !text.is_empty() && text.chars().last() != Some('\n') {
+                text.push('\n');
+            }
+
+            vim.update(&mut cx, |vim, cx| {
+                vim.update_editor(cx, |_, editor, cx| {
+                    editor.transact(cx, |editor, cx| {
+                        editor.edit([(range.clone(), text)], cx);
+                        let snapshot = editor.buffer().read(cx).snapshot(cx);
+                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                            let point = if is_read {
+                                let point = range.end.to_point(&snapshot);
+                                Point::new(point.row.saturating_sub(1), 0)
+                            } else {
+                                let point = range.start.to_point(&snapshot);
+                                Point::new(point.row, 0)
+                            };
+                            s.select_ranges([point..point]);
+                        })
+                    })
+                });
+                vim.cancel_running_command(cx);
+            })
+            .log_err();
+        });
+        vim.running_command.replace(task);
     }
 }
 

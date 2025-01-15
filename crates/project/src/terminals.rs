@@ -13,7 +13,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use task::{Shell, SpawnInTerminal};
+use task::{Shell, ShellBuilder, SpawnInTerminal};
 use terminal::{
     terminal_settings::{self, TerminalSettings, VenvSettings},
     TaskState, TaskStatus, Terminal, TerminalBuilder,
@@ -64,7 +64,7 @@ impl Project {
         }
     }
 
-    fn ssh_details(&self, cx: &AppContext) -> Option<(String, SshCommand)> {
+    pub fn ssh_details(&self, cx: &AppContext) -> Option<(String, SshCommand)> {
         if let Some(ssh_client) = &self.ssh_client {
             let ssh_client = ssh_client.read(cx);
             if let Some(args) = ssh_client.ssh_args() {
@@ -120,6 +120,63 @@ impl Project {
                 project.create_terminal_with_venv(kind, python_venv_directory, window, cx)
             })?
         })
+    }
+
+    pub fn terminal_settings<'a>(
+        &'a self,
+        path: &'a Option<PathBuf>,
+        cx: &'a AppContext,
+    ) -> &'a TerminalSettings {
+        let mut settings_location = None;
+        if let Some(path) = path.as_ref() {
+            if let Some((worktree, _)) = self.find_worktree(path, cx) {
+                settings_location = Some(SettingsLocation {
+                    worktree_id: worktree.read(cx).id(),
+                    path,
+                });
+            }
+        }
+        TerminalSettings::get(settings_location, cx)
+    }
+
+    pub fn exec_in_shell(&self, command: String, cx: &AppContext) -> std::process::Command {
+        let path = self.first_project_directory(cx);
+        let ssh_details = self.ssh_details(cx);
+        let settings = self.terminal_settings(&path, cx).clone();
+
+        let builder = ShellBuilder::new(ssh_details.is_none(), &settings.shell);
+        let (command, args) = builder.build(command, &Vec::new());
+
+        let mut env = self
+            .environment
+            .read(cx)
+            .get_cli_environment()
+            .unwrap_or_default();
+        env.extend(settings.env.clone());
+
+        match &self.ssh_details(cx) {
+            Some((_, ssh_command)) => {
+                let (command, args) = wrap_for_ssh(
+                    ssh_command,
+                    Some((&command, &args)),
+                    path.as_deref(),
+                    env,
+                    None,
+                );
+                let mut command = std::process::Command::new(command);
+                command.args(args);
+                command
+            }
+            None => {
+                let mut command = std::process::Command::new(command);
+                command.args(args);
+                command.envs(env);
+                if let Some(path) = path {
+                    command.current_dir(path);
+                }
+                command
+            }
+        }
     }
 
     pub fn create_terminal_with_venv(
