@@ -45,10 +45,6 @@ struct ActiveCompletion {
     feedback_editor: View<Editor>,
 }
 
-// struct RawPromptDetails {
-//     raw_prompt_details: SharedString,
-// }
-
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 enum RateCompletionView {
     SuggestedEdits,
@@ -63,27 +59,6 @@ impl RateCompletionView {
         }
     }
 }
-
-// impl Render for RawPromptDetails {
-//     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-//         div()
-//             .id("raw-prompt-details")
-//             .p_4()
-//             .elevation_2(cx)
-//             .max_h_96()
-//             .max_w(px(600.))
-//             .overflow_scroll()
-//             .child(self.raw_prompt_details.clone())
-//     }
-// }
-
-// impl EventEmitter<DismissEvent> for RawPromptDetails {}
-
-// impl FocusableView for RawPromptDetails {
-//     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-//         cx.focus_handle()
-//     }
-// }
 
 impl RateCompletionModal {
     pub fn toggle(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
@@ -311,9 +286,10 @@ impl RateCompletionModal {
     fn render_view_nav(&self, cx: &ViewContext<Self>) -> impl IntoElement {
         h_flex()
             .h_8()
-            .px_2()
+            .px_1()
             .border_b_1()
             .border_color(cx.theme().colors().border)
+            .bg(cx.theme().colors().elevated_surface_background)
             .gap_1()
             .child(
                 Button::new(
@@ -348,8 +324,7 @@ impl RateCompletionModal {
         Some(
             div()
                 .id("diff")
-                .py_4()
-                .px_6()
+                .p_4()
                 .size_full()
                 .bg(bg_color)
                 .overflow_scroll()
@@ -405,11 +380,6 @@ impl RateCompletionModal {
             .is_empty();
 
         let label_container = h_flex().pl_1().gap_1p5();
-
-        // let raw_prompt_details = SharedString::from(format!(
-        //     "{}\n{}",
-        //     active_completion.completion.input_events, active_completion.completion.input_excerpt
-        // ));
 
         Some(
             v_flex()
