@@ -77,7 +77,7 @@ impl<Label: Ord + Clone> RootPathTrie<Label> {
     pub(super) fn insert(&mut self, path: &TriePath, value: Label, presence: LabelPresence) {
         self.insert_inner(path, value, presence);
     }
-    pub(super) fn forbid(&mut self, path: &TriePath, value: Label) {
+    pub(super) fn _forbid(&mut self, path: &TriePath, value: Label) {
         let descendants_of = self.insert_inner(path, value.clone(), LabelPresence::Forbidden);
         descendants_of.remove_labels(&value);
     }
@@ -118,14 +118,6 @@ impl<Label: Ord + Clone> RootPathTrie<Label> {
         if let Some(final_entry_name) = path.0.last() {
             current.children.remove(final_entry_name);
         }
-    }
-    fn remove_labels(&mut self, label: &Label) {
-        self.labels.remove(&label);
-        self.children.retain(|_, child| {
-            child.remove_labels(label);
-            // Remove children if they're empty leaf nodes.
-            !child.children.is_empty() || !child.labels.is_empty()
-        });
     }
 }
 

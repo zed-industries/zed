@@ -10,6 +10,7 @@
 
 use std::{
     collections::BTreeMap,
+    path::Path,
     sync::{Arc, OnceLock, Weak},
 };
 
@@ -20,15 +21,20 @@ use language::{
     LspAdapterDelegate,
 };
 use lsp::LanguageServerName;
-use settings::{Settings as _, SettingsLocation};
+use settings::{Settings as _, SettingsLocation, WorktreeId};
 
 use crate::{LanguageServerId, ProjectPath};
 
 use super::{AdapterWrapper, ProjectTree, ProjectTreeEvent};
 
+#[derive(Default)]
+struct ServersForWorktree {
+    roots: HashMap<Arc<Path>, BTreeMap<LanguageServerName, Arc<InnerTreeNode>>>,
+}
+
 pub struct LanguageServerTree {
     project_tree: Model<ProjectTree>,
-    instances: HashMap<ProjectPath, BTreeMap<LanguageServerName, Arc<InnerTreeNode>>>,
+    instances: HashMap<WorktreeId, ServersForWorktree>,
     attach_kind_cache: HashMap<LanguageServerName, Attach>,
     languages: Arc<LanguageRegistry>,
     _subscriptions: Subscription,
@@ -165,7 +171,10 @@ impl LanguageServerTree {
             let attach = self.attach_kind(&adapter);
             let inner_node = self
                 .instances
-                .entry(root_path.clone())
+                .entry(root_path.worktree_id)
+                .or_default()
+                .roots
+                .entry(root_path.path.clone())
                 .or_default()
                 .entry(adapter.0.name.clone())
                 .or_insert_with(|| {
