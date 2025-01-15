@@ -77,10 +77,7 @@ impl<Label: Ord + Clone> RootPathTrie<Label> {
     pub(super) fn insert(&mut self, path: &TriePath, value: Label, presence: LabelPresence) {
         self.insert_inner(path, value, presence);
     }
-    pub(super) fn _forbid(&mut self, path: &TriePath, value: Label) {
-        let descendants_of = self.insert_inner(path, value.clone(), LabelPresence::Forbidden);
-        descendants_of.remove_labels(&value);
-    }
+
     pub(super) fn walk<'a>(
         &'a self,
         path: &TriePath,
