@@ -462,7 +462,9 @@ impl CompletionsMenu {
 
                     len
                 }
-                CompletionEntry::InlineCompletionHint(hint) => hint.label().chars().count(),
+                CompletionEntry::InlineCompletionHint(hint) => {
+                    "Zed AI / ".chars().count() + hint.label().chars().count()
+                }
             })
             .map(|(ix, _)| ix);
         drop(completions);
