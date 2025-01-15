@@ -855,7 +855,7 @@ fn db_status_to_proto(
         repo_path: entry.repo_path,
         simple_status,
         status: Some(proto::GitFileStatus {
-            variant: Some(dbg!(variant)),
+            variant: Some(variant),
         }),
     })
 }
