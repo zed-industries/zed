@@ -12,7 +12,7 @@ use util::ResultExt;
 
 use crate::{
     read_user_theme, refine_theme_family, Appearance, IconTheme, Theme, ThemeFamily,
-    ThemeFamilyContent,
+    ThemeFamilyContent, DEFAULT_ICON_THEME_ID,
 };
 
 /// The metadata for a theme.
@@ -204,6 +204,11 @@ impl ThemeRegistry {
         self.insert_user_theme_families([theme]);
 
         Ok(())
+    }
+
+    /// Returns the default icon theme.
+    pub fn default_icon_theme(&self) -> Result<Arc<IconTheme>> {
+        self.get_icon_theme(DEFAULT_ICON_THEME_ID)
     }
 
     /// Returns the icon theme with the specified name.
