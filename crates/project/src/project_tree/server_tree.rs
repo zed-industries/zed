@@ -164,6 +164,7 @@ impl LanguageServerTree {
             })
             .collect::<Vec<_>>();
 
+        #[allow(clippy::mutable_key_type)]
         let roots = self.project_tree.update(cx, |this, cx| {
             this.root_for_path(path, adapters, delegate, cx)
         });
