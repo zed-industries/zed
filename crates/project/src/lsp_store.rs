@@ -7643,7 +7643,7 @@ impl LspStore {
         cx.emit(LspStoreEvent::LanguageServerAdded(
             server_id,
             language_server.name(),
-            Some(*key.0),
+            Some(key.0),
         ));
         cx.emit(LspStoreEvent::RefreshInlayHints);
 
