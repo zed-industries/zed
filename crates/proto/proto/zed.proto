@@ -1784,8 +1784,9 @@ message RepositoryEntry {
 
 message StatusEntry {
     string repo_path = 1;
+    // Can be removed once collab's min version is >=0.171.0.
     GitStatusCode simple_status = 2;
-    optional GitFileStatus status = 3;
+    GitFileStatus status = 3;
 }
 
 enum GitStatusCode {
