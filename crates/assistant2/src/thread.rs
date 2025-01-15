@@ -3,7 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use assistant_tool::ToolWorkingSet;
 use chrono::{DateTime, Utc};
-use collections::{HashMap, HashSet};
+use collections::{BTreeMap, HashMap, HashSet};
 use futures::future::Shared;
 use futures::{FutureExt as _, StreamExt as _};
 use gpui::{AppContext, EventEmitter, ModelContext, SharedString, Task};
@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
 use util::{post_inc, TryFutureExt as _};
 use uuid::Uuid;
 
-use crate::context::{attach_context_to_message, Context, ContextId};
+use crate::context::{attach_context_to_message, ContextId, ContextSnapshot};
 
 #[derive(Debug, Clone, Copy)]
 pub enum RequestKind {
@@ -64,7 +64,7 @@ pub struct Thread {
     pending_summary: Task<Option<()>>,
     messages: Vec<Message>,
     next_message_id: MessageId,
-    context: HashMap<ContextId, Context>,
+    context: BTreeMap<ContextId, ContextSnapshot>,
     context_by_message: HashMap<MessageId, Vec<ContextId>>,
     completion_count: usize,
     pending_completions: Vec<PendingCompletion>,
@@ -83,7 +83,7 @@ impl Thread {
             pending_summary: Task::ready(None),
             messages: Vec::new(),
             next_message_id: MessageId(0),
-            context: HashMap::default(),
+            context: BTreeMap::default(),
             context_by_message: HashMap::default(),
             completion_count: 0,
             pending_completions: Vec::new(),
@@ -114,6 +114,11 @@ impl Thread {
         self.summary.clone()
     }
 
+    pub fn summary_or_default(&self) -> SharedString {
+        const DEFAULT: SharedString = SharedString::new_static("New Thread");
+        self.summary.clone().unwrap_or(DEFAULT)
+    }
+
     pub fn set_summary(&mut self, summary: impl Into<SharedString>, cx: &mut ModelContext<Self>) {
         self.summary = Some(summary.into());
         cx.emit(ThreadEvent::SummaryChanged);
@@ -127,11 +132,15 @@ impl Thread {
         self.messages.iter()
     }
 
+    pub fn is_streaming(&self) -> bool {
+        !self.pending_completions.is_empty()
+    }
+
     pub fn tools(&self) -> &Arc<ToolWorkingSet> {
         &self.tools
     }
 
-    pub fn context_for_message(&self, id: MessageId) -> Option<Vec<Context>> {
+    pub fn context_for_message(&self, id: MessageId) -> Option<Vec<ContextSnapshot>> {
         let context = self.context_by_message.get(&id)?;
         Some(
             context
@@ -149,7 +158,7 @@ impl Thread {
     pub fn insert_user_message(
         &mut self,
         text: impl Into<String>,
-        context: Vec<Context>,
+        context: Vec<ContextSnapshot>,
         cx: &mut ModelContext<Self>,
     ) {
         let message_id = self.insert_message(Role::User, text, cx);
@@ -352,7 +361,7 @@ impl Thread {
             let result = stream_completion.await;
 
             thread
-                .update(&mut cx, |_thread, cx| match result.as_ref() {
+                .update(&mut cx, |thread, cx| match result.as_ref() {
                     Ok(stop_reason) => match stop_reason {
                         StopReason::ToolUse => {
                             cx.emit(ThreadEvent::UsePendingTools);
@@ -375,6 +384,8 @@ impl Thread {
                                 SharedString::from(error_message.clone()),
                             )));
                         }
+
+                        thread.cancel_last_completion();
                     }
                 })
                 .ok();
@@ -495,6 +506,17 @@ impl Thread {
             tool_use.status = PendingToolUseStatus::Running {
                 _task: insert_output_task.shared(),
             };
+        }
+    }
+
+    /// Cancels the last pending completion, if there are any pending.
+    ///
+    /// Returns whether a completion was canceled.
+    pub fn cancel_last_completion(&mut self) -> bool {
+        if let Some(_last_completion) = self.pending_completions.pop() {
+            true
+        } else {
+            false
         }
     }
 }

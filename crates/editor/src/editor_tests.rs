@@ -3705,7 +3705,6 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
     "});
 
     // Test multiple line, single selection case
-    // Test code hack that covers the fact that to_case crate doesn't support '\n' as a word boundary
     cx.set_state(indoc! {"
         «The quick brown
         fox jumps over
@@ -3719,7 +3718,6 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
     "});
 
     // Test multiple line, single selection case
-    // Test code hack that covers the fact that to_case crate doesn't support '\n' as a word boundary
     cx.set_state(indoc! {"
         «The quick brown
         fox jumps over
@@ -7380,7 +7378,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
             editor.perform_format(
                 project.clone(),
                 FormatTrigger::Manual,
-                FormatTarget::Buffer,
+                FormatTarget::Buffers,
                 cx,
             )
         })
@@ -7418,7 +7416,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     });
     let format = editor
         .update(cx, |editor, cx| {
-            editor.perform_format(project, FormatTrigger::Manual, FormatTarget::Buffer, cx)
+            editor.perform_format(project, FormatTrigger::Manual, FormatTarget::Buffers, cx)
         })
         .unwrap();
     cx.executor().advance_clock(super::FORMAT_TIMEOUT);
@@ -8473,7 +8471,7 @@ async fn test_completion_page_up_down_keys(cx: &mut gpui::TestAppContext) {
     cx.update_editor(|editor, _| {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
-            assert_eq!(completion_menu_entries(&menu.entries), &["first", "last"]);
+            assert_eq!(completion_menu_entries(&menu), &["first", "last"]);
         } else {
             panic!("expected completion menu to be open");
         }
@@ -8566,7 +8564,7 @@ async fn test_completion_sort(cx: &mut gpui::TestAppContext) {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
-                completion_menu_entries(&menu.entries),
+                completion_menu_entries(&menu),
                 &["r", "ret", "Range", "return"]
             );
         } else {
@@ -11080,6 +11078,7 @@ async fn test_completions_default_resolve_data_handling(cx: &mut gpui::TestAppCo
                 assert_eq!(
                     completions_menu
                         .entries
+                        .borrow()
                         .iter()
                         .flat_map(|c| match c {
                             CompletionEntry::Match(mat) => Some(mat.string.clone()),
@@ -11190,7 +11189,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
             assert_eq!(
-                completion_menu_entries(&menu.entries),
+                completion_menu_entries(&menu),
                 &["bg-red", "bg-blue", "bg-yellow"]
             );
         } else {
@@ -11203,10 +11202,7 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.update_editor(|editor, _| {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
-            assert_eq!(
-                completion_menu_entries(&menu.entries),
-                &["bg-blue", "bg-yellow"]
-            );
+            assert_eq!(completion_menu_entries(&menu), &["bg-blue", "bg-yellow"]);
         } else {
             panic!("expected completion menu to be open");
         }
@@ -11220,18 +11216,19 @@ async fn test_completions_in_languages_with_extra_word_characters(cx: &mut gpui:
     cx.update_editor(|editor, _| {
         if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
         {
-            assert_eq!(completion_menu_entries(&menu.entries), &["bg-yellow"]);
+            assert_eq!(completion_menu_entries(&menu), &["bg-yellow"]);
         } else {
             panic!("expected completion menu to be open");
         }
     });
 }
 
-fn completion_menu_entries(entries: &[CompletionEntry]) -> Vec<&str> {
+fn completion_menu_entries(menu: &CompletionsMenu) -> Vec<String> {
+    let entries = menu.entries.borrow();
     entries
         .iter()
         .flat_map(|e| match e {
-            CompletionEntry::Match(mat) => Some(mat.string.as_str()),
+            CompletionEntry::Match(mat) => Some(mat.string.clone()),
             _ => None,
         })
         .collect()
@@ -11294,7 +11291,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
             editor.perform_format(
                 project.clone(),
                 FormatTrigger::Manual,
-                FormatTarget::Buffer,
+                FormatTarget::Buffers,
                 cx,
             )
         })
@@ -11313,7 +11310,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
         editor.perform_format(
             project.clone(),
             FormatTrigger::Manual,
-            FormatTarget::Buffer,
+            FormatTarget::Buffers,
             cx,
         )
     });
@@ -14735,7 +14732,14 @@ fn test_inline_completion_text_with_deletions(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_rename_with_duplicate_edits(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
-    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    let capabilities = lsp::ServerCapabilities {
+        rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        })),
+        ..Default::default()
+    };
+    let mut cx = EditorLspTestContext::new_rust(capabilities, cx).await;
 
     cx.set_state(indoc! {"
         struct Fˇoo {}
@@ -14751,10 +14755,25 @@ async fn test_rename_with_duplicate_edits(cx: &mut gpui::TestAppContext) {
         );
     });
 
-    cx.update_editor(|e, cx| e.rename(&Rename, cx))
-        .expect("Rename was not started")
-        .await
-        .expect("Rename failed");
+    let mut prepare_rename_handler =
+        cx.handle_request::<lsp::request::PrepareRenameRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range {
+                start: lsp::Position {
+                    line: 0,
+                    character: 7,
+                },
+                end: lsp::Position {
+                    line: 0,
+                    character: 10,
+                },
+            })))
+        });
+    let prepare_rename_task = cx
+        .update_editor(|e, cx| e.rename(&Rename, cx))
+        .expect("Prepare rename was not started");
+    prepare_rename_handler.next().await.unwrap();
+    prepare_rename_task.await.expect("Prepare rename failed");
+
     let mut rename_handler =
         cx.handle_request::<lsp::request::Rename, _, _>(move |url, _, _| async move {
             let edit = lsp::TextEdit {
@@ -14775,14 +14794,75 @@ async fn test_rename_with_duplicate_edits(cx: &mut gpui::TestAppContext) {
                 std::collections::HashMap::from_iter(Some((url, vec![edit.clone(), edit]))),
             )))
         });
-    cx.update_editor(|e, cx| e.confirm_rename(&ConfirmRename, cx))
-        .expect("Confirm rename was not started")
-        .await
-        .expect("Confirm rename failed");
+    let rename_task = cx
+        .update_editor(|e, cx| e.confirm_rename(&ConfirmRename, cx))
+        .expect("Confirm rename was not started");
     rename_handler.next().await.unwrap();
+    rename_task.await.expect("Confirm rename failed");
     cx.run_until_parked();
 
     // Despite two edits, only one is actually applied as those are identical
+    cx.assert_editor_state(indoc! {"
+        struct FooRenamedˇ {}
+    "});
+}
+
+#[gpui::test]
+async fn test_rename_without_prepare(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    // These capabilities indicate that the server does not support prepare rename.
+    let capabilities = lsp::ServerCapabilities {
+        rename_provider: Some(lsp::OneOf::Left(true)),
+        ..Default::default()
+    };
+    let mut cx = EditorLspTestContext::new_rust(capabilities, cx).await;
+
+    cx.set_state(indoc! {"
+        struct Fˇoo {}
+    "});
+
+    cx.update_editor(|editor, cx| {
+        let highlight_range = Point::new(0, 7)..Point::new(0, 10);
+        let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
+        editor.highlight_background::<DocumentHighlightRead>(
+            &[highlight_range],
+            |c| c.editor_document_highlight_read_background,
+            cx,
+        );
+    });
+
+    cx.update_editor(|e, cx| e.rename(&Rename, cx))
+        .expect("Prepare rename was not started")
+        .await
+        .expect("Prepare rename failed");
+
+    let mut rename_handler =
+        cx.handle_request::<lsp::request::Rename, _, _>(move |url, _, _| async move {
+            let edit = lsp::TextEdit {
+                range: lsp::Range {
+                    start: lsp::Position {
+                        line: 0,
+                        character: 7,
+                    },
+                    end: lsp::Position {
+                        line: 0,
+                        character: 10,
+                    },
+                },
+                new_text: "FooRenamed".to_string(),
+            };
+            Ok(Some(lsp::WorkspaceEdit::new(
+                std::collections::HashMap::from_iter(Some((url, vec![edit]))),
+            )))
+        });
+    let rename_task = cx
+        .update_editor(|e, cx| e.confirm_rename(&ConfirmRename, cx))
+        .expect("Confirm rename was not started");
+    rename_handler.next().await.unwrap();
+    rename_task.await.expect("Confirm rename failed");
+    cx.run_until_parked();
+
+    // Correct range is renamed, as `surrounding_word` is used to find it.
     cx.assert_editor_state(indoc! {"
         struct FooRenamedˇ {}
     "});

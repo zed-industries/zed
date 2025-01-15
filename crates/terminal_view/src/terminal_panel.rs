@@ -31,7 +31,7 @@ use ui::{
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
-    dock::{DockPosition, Panel, PanelEvent},
+    dock::{DockPosition, Panel, PanelEvent, PanelHandle},
     item::SerializableItem,
     move_active_item, move_item, pane,
     ui::IconName,
@@ -75,6 +75,7 @@ pub struct TerminalPanel {
     deferred_tasks: HashMap<TaskId, Task<()>>,
     assistant_enabled: bool,
     assistant_tab_bar_button: Option<AnyView>,
+    active: bool,
 }
 
 impl TerminalPanel {
@@ -82,7 +83,6 @@ impl TerminalPanel {
         let project = workspace.project();
         let pane = new_terminal_pane(workspace.weak_handle(), project.clone(), false, cx);
         let center = PaneGroup::new(pane.clone());
-        cx.focus_view(&pane);
         let terminal_panel = Self {
             center,
             active_pane: pane,
@@ -95,6 +95,7 @@ impl TerminalPanel {
             deferred_tasks: HashMap::default(),
             assistant_enabled: false,
             assistant_tab_bar_button: None,
+            active: false,
         };
         terminal_panel.apply_tab_bar_buttons(&terminal_panel.active_pane, cx);
         terminal_panel
@@ -278,6 +279,25 @@ impl TerminalPanel {
             })?;
             if let Some(task) = cleanup_task {
                 task.await.log_err();
+            }
+        }
+
+        if let Some(workspace) = workspace.upgrade() {
+            let should_focus = workspace
+                .update(&mut cx, |workspace, cx| {
+                    workspace.active_item(cx).is_none()
+                        && workspace.is_dock_at_position_open(terminal_panel.position(cx), cx)
+                })
+                .unwrap_or(false);
+
+            if should_focus {
+                terminal_panel
+                    .update(&mut cx, |panel, cx| {
+                        panel.active_pane.update(cx, |pane, cx| {
+                            pane.focus_active_item(cx);
+                        });
+                    })
+                    .ok();
             }
         }
 
@@ -1339,7 +1359,9 @@ impl Panel for TerminalPanel {
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if !active || !self.has_no_terminals(cx) {
+        let old_active = self.active;
+        self.active = active;
+        if !active || old_active == active || !self.has_no_terminals(cx) {
             return;
         }
         cx.defer(|this, cx| {

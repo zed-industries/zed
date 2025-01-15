@@ -153,6 +153,24 @@ You can configure ESLint's `rulesCustomizations` setting:
 }
 ```
 
+### Configure ESLint's `workingDirectory`:
+
+You can configure ESLint's `workingDirectory` setting:
+
+```json
+{
+  "lsp": {
+    "eslint": {
+      "settings": {
+        "workingDirectory": {
+          "mode": "auto"
+        }
+      }
+    }
+  }
+}
+```
+
 ## See also
 
 - [Yarn documentation](./yarn.md) for a walkthrough of configuring your project to use Yarn.

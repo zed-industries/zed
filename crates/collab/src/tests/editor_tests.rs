@@ -1007,7 +1007,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
     fake_language_server.start_progress("the-token").await;
 
     executor.advance_clock(SERVER_PROGRESS_THROTTLE_TIMEOUT);
-    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+    fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-token".to_string()),
         value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Report(
             lsp::WorkDoneProgressReport {
@@ -1041,7 +1041,7 @@ async fn test_language_server_statuses(cx_a: &mut TestAppContext, cx_b: &mut Tes
     });
 
     executor.advance_clock(SERVER_PROGRESS_THROTTLE_TIMEOUT);
-    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+    fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-token".to_string()),
         value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Report(
             lsp::WorkDoneProgressReport {

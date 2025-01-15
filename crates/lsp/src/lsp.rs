@@ -45,7 +45,7 @@ const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
-type NotificationHandler = Box<dyn Send + FnMut(Option<RequestId>, Value, AsyncAppContext)>;
+type NotificationHandler = Arc<dyn Send + Sync + Fn(Option<RequestId>, Value, AsyncAppContext)>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
 type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
 
@@ -84,6 +84,10 @@ pub struct LanguageServer {
     process_name: Arc<str>,
     binary: LanguageServerBinary,
     capabilities: RwLock<ServerCapabilities>,
+    /// Configuration sent to the server, stored for display in the language server logs
+    /// buffer. This is represented as the message sent to the LSP in order to avoid cloning it (can
+    /// be large in cases like sending schemas to the json server).
+    configuration: Arc<DidChangeConfigurationParams>,
     code_action_kinds: Option<Vec<CodeActionKind>>,
     notification_handlers: Arc<Mutex<HashMap<&'static str, NotificationHandler>>>,
     response_handlers: Arc<Mutex<Option<HashMap<RequestId, ResponseHandler>>>>,
@@ -459,6 +463,11 @@ impl LanguageServer {
             .log_err()
         });
 
+        let configuration = DidChangeConfigurationParams {
+            settings: Value::Null,
+        }
+        .into();
+
         Self {
             server_id,
             notification_handlers,
@@ -472,6 +481,7 @@ impl LanguageServer {
                 .unwrap_or_default(),
             binary,
             capabilities: Default::default(),
+            configuration,
             code_action_kinds,
             next_id: Default::default(),
             outbound_tx,
@@ -800,6 +810,7 @@ impl LanguageServer {
     pub fn initialize(
         mut self,
         initialize_params: Option<InitializeParams>,
+        configuration: Arc<DidChangeConfigurationParams>,
         cx: &AppContext,
     ) -> Task<Result<Arc<Self>>> {
         let params = if let Some(params) = initialize_params {
@@ -814,8 +825,9 @@ impl LanguageServer {
                 self.process_name = info.name.into();
             }
             self.capabilities = RwLock::new(response.capabilities);
+            self.configuration = configuration;
 
-            self.notify::<notification::Initialized>(InitializedParams {})?;
+            self.notify::<notification::Initialized>(&InitializedParams {})?;
             Ok(Arc::new(self))
         })
     }
@@ -835,7 +847,7 @@ impl LanguageServer {
                 &executor,
                 (),
             );
-            let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, ());
+            let exit = Self::notify_internal::<notification::Exit>(&outbound_tx, &());
             outbound_tx.close();
 
             let server = self.server.clone();
@@ -878,7 +890,7 @@ impl LanguageServer {
     pub fn on_notification<T, F>(&self, f: F) -> Subscription
     where
         T: notification::Notification,
-        F: 'static + Send + FnMut(T::Params, AsyncAppContext),
+        F: 'static + Send + Sync + Fn(T::Params, AsyncAppContext),
     {
         self.on_custom_notification(T::METHOD, f)
     }
@@ -891,7 +903,7 @@ impl LanguageServer {
     where
         T: request::Request,
         T::Params: 'static + Send,
-        F: 'static + FnMut(T::Params, AsyncAppContext) -> Fut + Send,
+        F: 'static + Fn(T::Params, AsyncAppContext) -> Fut + Send + Sync,
         Fut: 'static + Future<Output = Result<T::Result>>,
     {
         self.on_custom_request(T::METHOD, f)
@@ -927,17 +939,27 @@ impl LanguageServer {
     }
 
     #[must_use]
-    fn on_custom_notification<Params, F>(&self, method: &'static str, mut f: F) -> Subscription
+    fn on_custom_notification<Params, F>(&self, method: &'static str, f: F) -> Subscription
     where
-        F: 'static + FnMut(Params, AsyncAppContext) + Send,
-        Params: DeserializeOwned,
+        F: 'static + Fn(Params, AsyncAppContext) + Send + Sync,
+        Params: DeserializeOwned + Send + 'static,
     {
+        let callback = Arc::new(f);
         let prev_handler = self.notification_handlers.lock().insert(
             method,
-            Box::new(move |_, params, cx| {
-                if let Some(params) = serde_json::from_value(params).log_err() {
-                    f(params, cx);
-                }
+            Arc::new(move |_, params, cx| {
+                let callback = callback.clone();
+
+                cx.spawn(move |cx| async move {
+                    if let Some(params) = cx
+                        .background_executor()
+                        .spawn(async move { serde_json::from_value(params).log_err() })
+                        .await
+                    {
+                        callback(params, cx);
+                    }
+                })
+                .detach();
             }),
         );
         assert!(
@@ -951,64 +973,74 @@ impl LanguageServer {
     }
 
     #[must_use]
-    fn on_custom_request<Params, Res, Fut, F>(&self, method: &'static str, mut f: F) -> Subscription
+    fn on_custom_request<Params, Res, Fut, F>(&self, method: &'static str, f: F) -> Subscription
     where
-        F: 'static + FnMut(Params, AsyncAppContext) -> Fut + Send,
+        F: 'static + Fn(Params, AsyncAppContext) -> Fut + Send + Sync,
         Fut: 'static + Future<Output = Result<Res>>,
         Params: DeserializeOwned + Send + 'static,
         Res: Serialize,
     {
         let outbound_tx = self.outbound_tx.clone();
+        let f = Arc::new(f);
         let prev_handler = self.notification_handlers.lock().insert(
             method,
-            Box::new(move |id, params, cx| {
+            Arc::new(move |id, params, cx| {
                 if let Some(id) = id {
-                    match serde_json::from_value(params) {
-                        Ok(params) => {
-                            let response = f(params, cx.clone());
-                            cx.foreground_executor()
-                                .spawn({
-                                    let outbound_tx = outbound_tx.clone();
-                                    async move {
-                                        let response = match response.await {
-                                            Ok(result) => Response {
-                                                jsonrpc: JSON_RPC_VERSION,
-                                                id,
-                                                value: LspResult::Ok(Some(result)),
-                                            },
-                                            Err(error) => Response {
-                                                jsonrpc: JSON_RPC_VERSION,
-                                                id,
-                                                value: LspResult::Error(Some(Error {
-                                                    message: error.to_string(),
-                                                })),
-                                            },
-                                        };
-                                        if let Some(response) =
-                                            serde_json::to_string(&response).log_err()
-                                        {
-                                            outbound_tx.try_send(response).ok();
-                                        }
-                                    }
-                                })
-                                .detach();
-                        }
+                    let f = f.clone();
+                    let deserialized_params = cx
+                        .background_executor()
+                        .spawn(async move { serde_json::from_value(params) });
 
-                        Err(error) => {
-                            log::error!("error deserializing {} request: {:?}", method, error);
-                            let response = AnyResponse {
-                                jsonrpc: JSON_RPC_VERSION,
-                                id,
-                                result: None,
-                                error: Some(Error {
-                                    message: error.to_string(),
-                                }),
-                            };
-                            if let Some(response) = serde_json::to_string(&response).log_err() {
-                                outbound_tx.try_send(response).ok();
+                    cx.spawn({
+                        let outbound_tx = outbound_tx.clone();
+                        move |cx| async move {
+                            match deserialized_params.await {
+                                Ok(params) => {
+                                    let response = f(params, cx.clone());
+                                    let response = match response.await {
+                                        Ok(result) => Response {
+                                            jsonrpc: JSON_RPC_VERSION,
+                                            id,
+                                            value: LspResult::Ok(Some(result)),
+                                        },
+                                        Err(error) => Response {
+                                            jsonrpc: JSON_RPC_VERSION,
+                                            id,
+                                            value: LspResult::Error(Some(Error {
+                                                message: error.to_string(),
+                                            })),
+                                        },
+                                    };
+                                    if let Some(response) =
+                                        serde_json::to_string(&response).log_err()
+                                    {
+                                        outbound_tx.try_send(response).ok();
+                                    }
+                                }
+                                Err(error) => {
+                                    log::error!(
+                                        "error deserializing {} request: {:?}",
+                                        method,
+                                        error
+                                    );
+                                    let response = AnyResponse {
+                                        jsonrpc: JSON_RPC_VERSION,
+                                        id,
+                                        result: None,
+                                        error: Some(Error {
+                                            message: error.to_string(),
+                                        }),
+                                    };
+                                    if let Some(response) =
+                                        serde_json::to_string(&response).log_err()
+                                    {
+                                        outbound_tx.try_send(response).ok();
+                                    }
+                                }
                             }
                         }
-                    }
+                    })
+                    .detach();
                 }
             }),
         );
@@ -1047,6 +1079,10 @@ impl LanguageServer {
 
     pub fn update_capabilities(&self, update: impl FnOnce(&mut ServerCapabilities)) {
         update(self.capabilities.write().deref_mut());
+    }
+
+    pub fn configuration(&self) -> &Value {
+        &self.configuration.settings
     }
 
     /// Get the id of the running language server.
@@ -1146,7 +1182,7 @@ impl LanguageServer {
                 if let Some(outbound_tx) = outbound_tx.upgrade() {
                     Self::notify_internal::<notification::Cancel>(
                         &outbound_tx,
-                        CancelParams {
+                        &CancelParams {
                             id: NumberOrString::Number(id),
                         },
                     )
@@ -1174,13 +1210,13 @@ impl LanguageServer {
     /// Sends a RPC notification to the language server.
     ///
     /// [LSP Specification](https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#notificationMessage)
-    pub fn notify<T: notification::Notification>(&self, params: T::Params) -> Result<()> {
+    pub fn notify<T: notification::Notification>(&self, params: &T::Params) -> Result<()> {
         Self::notify_internal::<T>(&self.outbound_tx, params)
     }
 
     fn notify_internal<T: notification::Notification>(
         outbound_tx: &channel::Sender<String>,
-        params: T::Params,
+        params: &T::Params,
     ) -> Result<()> {
         let message = serde_json::to_string(&Notification {
             jsonrpc: JSON_RPC_VERSION,
@@ -1372,7 +1408,7 @@ impl LanguageServer {
 #[cfg(any(test, feature = "test-support"))]
 impl FakeLanguageServer {
     /// See [`LanguageServer::notify`].
-    pub fn notify<T: notification::Notification>(&self, params: T::Params) {
+    pub fn notify<T: notification::Notification>(&self, params: &T::Params) {
         self.server.notify::<T>(params).ok();
     }
 
@@ -1396,10 +1432,8 @@ impl FakeLanguageServer {
     pub async fn try_receive_notification<T: notification::Notification>(
         &mut self,
     ) -> Option<T::Params> {
-        use futures::StreamExt as _;
-
         loop {
-            let (method, params) = self.notifications_rx.next().await?;
+            let (method, params) = self.notifications_rx.recv().await.ok()?;
             if method == T::METHOD {
                 return Some(serde_json::from_str::<T::Params>(&params).unwrap());
             } else {
@@ -1411,12 +1445,12 @@ impl FakeLanguageServer {
     /// Registers a handler for a specific kind of request. Removes any existing handler for specified request type.
     pub fn handle_request<T, F, Fut>(
         &self,
-        mut handler: F,
+        handler: F,
     ) -> futures::channel::mpsc::UnboundedReceiver<()>
     where
         T: 'static + request::Request,
         T::Params: 'static + Send,
-        F: 'static + Send + FnMut(T::Params, gpui::AsyncAppContext) -> Fut,
+        F: 'static + Send + Sync + Fn(T::Params, gpui::AsyncAppContext) -> Fut,
         Fut: 'static + Send + Future<Output = Result<T::Result>>,
     {
         let (responded_tx, responded_rx) = futures::channel::mpsc::unbounded();
@@ -1440,12 +1474,12 @@ impl FakeLanguageServer {
     /// Registers a handler for a specific kind of notification. Removes any existing handler for specified notification type.
     pub fn handle_notification<T, F>(
         &self,
-        mut handler: F,
+        handler: F,
     ) -> futures::channel::mpsc::UnboundedReceiver<()>
     where
         T: 'static + notification::Notification,
         T::Params: 'static + Send,
-        F: 'static + Send + FnMut(T::Params, gpui::AsyncAppContext),
+        F: 'static + Send + Sync + Fn(T::Params, gpui::AsyncAppContext),
     {
         let (handled_tx, handled_rx) = futures::channel::mpsc::unbounded();
         self.server.remove_notification_handler::<T>();
@@ -1482,7 +1516,7 @@ impl FakeLanguageServer {
         })
         .await
         .unwrap();
-        self.notify::<notification::Progress>(ProgressParams {
+        self.notify::<notification::Progress>(&ProgressParams {
             token: NumberOrString::String(token),
             value: ProgressParamsValue::WorkDone(WorkDoneProgress::Begin(progress)),
         });
@@ -1490,7 +1524,7 @@ impl FakeLanguageServer {
 
     /// Simulate that the server has completed work and notifies about that with the specified token.
     pub fn end_progress(&self, token: impl Into<String>) {
-        self.notify::<notification::Progress>(ProgressParams {
+        self.notify::<notification::Progress>(&ProgressParams {
             token: NumberOrString::String(token.into()),
             value: ProgressParamsValue::WorkDone(WorkDoneProgress::End(Default::default())),
         });
@@ -1540,9 +1574,16 @@ mod tests {
             })
             .detach();
 
-        let server = cx.update(|cx| server.initialize(None, cx)).await.unwrap();
+        let initialize_params = None;
+        let configuration = DidChangeConfigurationParams {
+            settings: Default::default(),
+        };
+        let server = cx
+            .update(|cx| server.initialize(initialize_params, configuration.into(), cx))
+            .await
+            .unwrap();
         server
-            .notify::<notification::DidOpenTextDocument>(DidOpenTextDocumentParams {
+            .notify::<notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
                 text_document: TextDocumentItem::new(
                     Url::from_str("file://a/b").unwrap(),
                     "rust".to_string(),
@@ -1560,11 +1601,11 @@ mod tests {
             "file://a/b"
         );
 
-        fake.notify::<notification::ShowMessage>(ShowMessageParams {
+        fake.notify::<notification::ShowMessage>(&ShowMessageParams {
             typ: MessageType::ERROR,
             message: "ok".to_string(),
         });
-        fake.notify::<notification::PublishDiagnostics>(PublishDiagnosticsParams {
+        fake.notify::<notification::PublishDiagnostics>(&PublishDiagnosticsParams {
             uri: Url::from_str("file://b/c").unwrap(),
             version: Some(5),
             diagnostics: vec![],

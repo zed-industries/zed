@@ -199,7 +199,7 @@
       "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPrevMatch",
-      "cmd-shift-m": "assistant::ToggleModelSelector",
+      "cmd-alt-/": "assistant::ToggleModelSelector",
       "cmd-k h": "assistant::DeployHistory",
       "cmd-k l": "assistant::DeployPromptLibrary",
       "cmd-n": "assistant::NewContext"
@@ -226,7 +226,7 @@
     "bindings": {
       "cmd-n": "assistant2::NewThread",
       "cmd-shift-h": "assistant2::OpenHistory",
-      "cmd-shift-m": "assistant2::ToggleModelSelector",
+      "cmd-alt-/": "assistant2::ToggleModelSelector",
       "cmd-shift-a": "assistant2::ToggleContextPicker",
       "cmd-alt-e": "assistant2::RemoveAllContext"
     }
@@ -236,6 +236,18 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "assistant2::Chat"
+    }
+  },
+  {
+    "context": "ContextStrip",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "assistant2::FocusUp",
+      "right": "assistant2::FocusRight",
+      "left": "assistant2::FocusLeft",
+      "down": "assistant2::FocusDown",
+      "backspace": "assistant2::RemoveFocusedContext",
+      "enter": "assistant2::AcceptSuggestedContext"
     }
   },
   {
@@ -503,7 +515,7 @@
       "cmd-alt-r": "task::Rerun",
       "ctrl-alt-shift-r": ["task::Spawn", { "reveal_target": "center" }]
       // also possible to spawn tasks by name:
-      // "foo-bar": ["task_name::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
+      // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
     }
   },
   // Bindings from Sublime Text
@@ -616,6 +628,7 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-shift-a": "assistant2::ToggleContextPicker",
+      "cmd-alt-/": "assistant2::ToggleModelSelector",
       "cmd-alt-e": "assistant2::RemoveAllContext",
       "ctrl-[": "assistant::CyclePreviousInlineAssist",
       "ctrl-]": "assistant::CycleNextInlineAssist"
@@ -679,6 +692,38 @@
     "use_key_equivalents": true,
     "bindings": {
       "space": "project_panel::Open"
+    }
+  },
+  {
+    "context": "GitPanel && !CommitEditor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "git_panel::Close"
+    }
+  },
+  {
+    "context": "GitPanel && ChangesList",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "menu::SelectPrev",
+      "down": "menu::SelectNext",
+      "cmd-up": "menu::SelectFirst",
+      "cmd-down": "menu::SelectLast",
+      "enter": "menu::Confirm",
+      "space": "git::ToggleStaged",
+      "cmd-shift-space": "git::StageAll",
+      "ctrl-shift-space": "git::UnstageAll",
+      "alt-down": "git_panel::FocusEditor"
+    }
+  },
+  {
+    "context": "GitPanel && CommitEditor > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "alt-up": "git_panel::FocusChanges",
+      "escape": "git_panel::FocusChanges",
+      "cmd-enter": "git::CommitChanges",
+      "cmd-alt-enter": "git::CommitAllChanges"
     }
   },
   {
@@ -805,7 +850,8 @@
     "context": "RateCompletionModal",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-enter": "zeta::ThumbsUp",
+      "cmd-shift-enter": "zeta::ThumbsUpActiveCompletion",
+      "cmd-shift-backspace": "zeta::ThumbsDownActiveCompletion",
       "shift-down": "zeta::NextEdit",
       "shift-up": "zeta::PreviousEdit",
       "right": "zeta::PreviewCompletion"

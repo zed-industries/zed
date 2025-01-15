@@ -39,6 +39,7 @@ telemetry.workspace = true
 telemetry_events.workspace = true
 theme.workspace = true
 ui.workspace = true
+util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 

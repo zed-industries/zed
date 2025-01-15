@@ -129,10 +129,10 @@ use multi_buffer::{
 };
 use project::{
     buffer_store::BufferChangeSet,
-    lsp_store::{FormatTarget, FormatTrigger, OpenLspBufferHandle},
+    lsp_store::{FormatTrigger, LspFormatTarget, OpenLspBufferHandle},
     project_settings::{GitGutterSetting, ProjectSettings},
     CodeAction, Completion, CompletionIntent, DocumentHighlight, InlayHint, Location, LocationLink,
-    LspStore, Project, ProjectItem, ProjectTransaction, TaskSourceKind,
+    LspStore, PrepareRenameResponse, Project, ProjectItem, ProjectTransaction, TaskSourceKind,
 };
 use rand::prelude::*;
 use rpc::{proto::*, ErrorExt};
@@ -258,7 +258,7 @@ pub fn render_parsed_markdown(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) enum InlayId {
+pub enum InlayId {
     InlineCompletion(usize),
     Hint(usize),
 }
@@ -984,6 +984,11 @@ impl InlayHintRefreshReason {
             Self::ExcerptsRemoved(_) => "excerpts removed",
         }
     }
+}
+
+pub enum FormatTarget {
+    Buffers,
+    Ranges(Vec<Range<MultiBufferPoint>>),
 }
 
 pub(crate) struct FocusedBlock {
@@ -1787,6 +1792,17 @@ impl Editor {
         self.refresh_inline_completion(false, true, cx);
     }
 
+    pub fn inline_completions_enabled(&self, cx: &AppContext) -> bool {
+        let cursor = self.selections.newest_anchor().head();
+        if let Some((buffer, buffer_position)) =
+            self.buffer.read(cx).text_anchor_for_position(cursor, cx)
+        {
+            self.should_show_inline_completions(&buffer, buffer_position, cx)
+        } else {
+            false
+        }
+    }
+
     fn should_show_inline_completions(
         &self,
         buffer: &Model<Buffer>,
@@ -2543,7 +2559,7 @@ impl Editor {
             if start_offset > buffer_snapshot.len() || end_offset > buffer_snapshot.len() {
                 continue;
             }
-            if self.selections.disjoint_anchor_ranges().iter().any(|s| {
+            if self.selections.disjoint_anchor_ranges().any(|s| {
                 if s.start.buffer_id != selection.start.buffer_id
                     || s.end.buffer_id != selection.end.buffer_id
                 {
@@ -3592,7 +3608,7 @@ impl Editor {
         }
     }
 
-    fn splice_inlays(
+    pub fn splice_inlays(
         &self,
         to_remove: Vec<InlayId>,
         to_insert: Vec<Inlay>,
@@ -3815,10 +3831,8 @@ impl Editor {
                 return None;
             };
 
-        let mat = completions_menu
-            .entries
-            .get(item_ix.unwrap_or(completions_menu.selected_item))?;
-
+        let entries = completions_menu.entries.borrow();
+        let mat = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
         let mat = match mat {
             CompletionEntry::InlineCompletionHint { .. } => {
                 self.accept_inline_completion(&AcceptInlineCompletion, cx);
@@ -3832,12 +3846,14 @@ impl Editor {
                 mat
             }
         };
+        let candidate_id = mat.candidate_id;
+        drop(entries);
 
         let buffer_handle = completions_menu.buffer;
         let completion = completions_menu
             .completions
             .borrow()
-            .get(mat.candidate_id)?
+            .get(candidate_id)?
             .clone();
         cx.stop_propagation();
 
@@ -3986,7 +4002,7 @@ impl Editor {
         let apply_edits = provider.apply_additional_edits_for_completion(
             buffer_handle,
             completions_menu.completions.clone(),
-            mat.candidate_id,
+            candidate_id,
             true,
             cx,
         );
@@ -4283,12 +4299,26 @@ impl Editor {
         self.available_code_actions.take();
     }
 
-    pub fn push_code_action_provider(
+    pub fn add_code_action_provider(
         &mut self,
         provider: Rc<dyn CodeActionProvider>,
         cx: &mut ViewContext<Self>,
     ) {
+        if self
+            .code_action_providers
+            .iter()
+            .any(|existing_provider| existing_provider.id() == provider.id())
+        {
+            return;
+        }
+
         self.code_action_providers.push(provider);
+        self.refresh_code_actions(cx);
+    }
+
+    pub fn remove_code_action_provider(&mut self, id: Arc<str>, cx: &mut ViewContext<Self>) {
+        self.code_action_providers
+            .retain(|provider| provider.id() != id);
         self.refresh_code_actions(cx);
     }
 
@@ -4481,7 +4511,8 @@ impl Editor {
         if !user_requested
             && (!self.enable_inline_completions
                 || !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx)
-                || !self.is_focused(cx))
+                || !self.is_focused(cx)
+                || buffer.read(cx).is_empty())
         {
             self.discard_inline_completion(false, cx);
             return None;
@@ -4571,6 +4602,23 @@ impl Editor {
         _: &AcceptInlineCompletion,
         cx: &mut ViewContext<Self>,
     ) {
+        let buffer = self.buffer.read(cx);
+        let snapshot = buffer.snapshot(cx);
+        let selection = self.selections.newest_adjusted(cx);
+        let cursor = selection.head();
+        let current_indent = snapshot.indent_size_for_line(MultiBufferRow(cursor.row));
+        let suggested_indents = snapshot.suggested_indents([cursor.row], cx);
+        if let Some(suggested_indent) = suggested_indents.get(&MultiBufferRow(cursor.row)).copied()
+        {
+            if cursor.column < suggested_indent.len
+                && cursor.column <= current_indent.len
+                && current_indent.len <= suggested_indent.len
+            {
+                self.tab(&Default::default(), cx);
+                return;
+            }
+        }
+
         if self.show_inline_completions_in_menu(cx) {
             self.hide_context_menu(cx);
         }
@@ -4685,9 +4733,7 @@ impl Editor {
         let Some(provider) = self.inline_completion_provider() else {
             return;
         };
-        let Some(project) = self.project.as_ref() else {
-            return;
-        };
+
         let Some((_, buffer, _)) = self
             .buffer
             .read(cx)
@@ -4696,15 +4742,20 @@ impl Editor {
             return;
         };
 
-        let project = project.read(cx);
         let extension = buffer
             .read(cx)
             .file()
             .and_then(|file| Some(file.path().extension()?.to_string_lossy().to_string()));
-        project.client().telemetry().report_inline_completion_event(
-            provider.name().into(),
-            accepted,
-            extension,
+
+        let event_type = match accepted {
+            true => "Inline Completion Accepted",
+            false => "Inline Completion Discarded",
+        };
+        telemetry::event!(
+            event_type,
+            provider = provider.name(),
+            suggestion_accepted = accepted,
+            file_extension = extension,
         );
     }
 
@@ -4883,7 +4934,7 @@ impl Editor {
         }
     }
 
-    fn inline_completion_provider(&self) -> Option<Arc<dyn InlineCompletionProviderHandle>> {
+    pub fn inline_completion_provider(&self) -> Option<Arc<dyn InlineCompletionProviderHandle>> {
         Some(self.inline_completion_provider.as_ref()?.provider.clone())
     }
 
@@ -5110,9 +5161,11 @@ impl Editor {
             .borrow()
             .as_ref()
             .map_or(false, |menu| match menu {
-                CodeContextMenu::Completions(menu) => menu.entries.first().map_or(false, |entry| {
-                    matches!(entry, CompletionEntry::InlineCompletionHint(_))
-                }),
+                CodeContextMenu::Completions(menu) => {
+                    menu.entries.borrow().first().map_or(false, |entry| {
+                        matches!(entry, CompletionEntry::InlineCompletionHint(_))
+                    })
+                }
                 CodeContextMenu::CodeActions(_) => false,
             })
     }
@@ -6168,8 +6221,6 @@ impl Editor {
 
     pub fn convert_to_title_case(&mut self, _: &ConvertToTitleCase, cx: &mut ViewContext<Self>) {
         self.manipulate_text(cx, |text| {
-            // Hack to get around the fact that to_case crate doesn't support '\n' as a word boundary
-            // https://github.com/rutrum/convert-case/issues/16
             text.split('\n')
                 .map(|line| line.to_case(Case::Title))
                 .join("\n")
@@ -6190,8 +6241,6 @@ impl Editor {
         cx: &mut ViewContext<Self>,
     ) {
         self.manipulate_text(cx, |text| {
-            // Hack to get around the fact that to_case crate doesn't support '\n' as a word boundary
-            // https://github.com/rutrum/convert-case/issues/16
             text.split('\n')
                 .map(|line| line.to_case(Case::UpperCamel))
                 .join("\n")
@@ -10207,7 +10256,7 @@ impl Editor {
             None => return None,
         };
 
-        Some(self.perform_format(project, FormatTrigger::Manual, FormatTarget::Buffer, cx))
+        Some(self.perform_format(project, FormatTrigger::Manual, FormatTarget::Buffers, cx))
     }
 
     fn format_selections(
@@ -10220,17 +10269,17 @@ impl Editor {
             None => return None,
         };
 
-        let selections = self
+        let ranges = self
             .selections
             .all_adjusted(cx)
             .into_iter()
-            .filter(|s| !s.is_empty())
+            .map(|selection| selection.range())
             .collect_vec();
 
         Some(self.perform_format(
             project,
             FormatTrigger::Manual,
-            FormatTarget::Ranges(selections),
+            FormatTarget::Ranges(ranges),
             cx,
         ))
     }
@@ -10242,15 +10291,41 @@ impl Editor {
         target: FormatTarget,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
-        let buffer = self.buffer().clone();
-        let mut buffers = buffer.read(cx).all_buffers();
-        if trigger == FormatTrigger::Save {
-            buffers.retain(|buffer| buffer.read(cx).is_dirty());
-        }
+        let buffer = self.buffer.clone();
+        let (buffers, target) = match target {
+            FormatTarget::Buffers => {
+                let mut buffers = buffer.read(cx).all_buffers();
+                if trigger == FormatTrigger::Save {
+                    buffers.retain(|buffer| buffer.read(cx).is_dirty());
+                }
+                (buffers, LspFormatTarget::Buffers)
+            }
+            FormatTarget::Ranges(selection_ranges) => {
+                let multi_buffer = buffer.read(cx);
+                let snapshot = multi_buffer.read(cx);
+                let mut buffers = HashSet::default();
+                let mut buffer_id_to_ranges: BTreeMap<BufferId, Vec<Range<text::Anchor>>> =
+                    BTreeMap::new();
+                for selection_range in selection_ranges {
+                    for (excerpt, buffer_range) in snapshot.range_to_buffer_ranges(selection_range)
+                    {
+                        let buffer_id = excerpt.buffer_id();
+                        let start = excerpt.buffer().anchor_before(buffer_range.start);
+                        let end = excerpt.buffer().anchor_after(buffer_range.end);
+                        buffers.insert(multi_buffer.buffer(buffer_id).unwrap());
+                        buffer_id_to_ranges
+                            .entry(buffer_id)
+                            .and_modify(|buffer_ranges| buffer_ranges.push(start..end))
+                            .or_insert_with(|| vec![start..end]);
+                    }
+                }
+                (buffers, LspFormatTarget::Ranges(buffer_id_to_ranges))
+            }
+        };
 
         let mut timeout = cx.background_executor().timer(FORMAT_TIMEOUT).fuse();
         let format = project.update(cx, |project, cx| {
-            project.format(buffers, true, trigger, target, cx)
+            project.format(buffers, target, true, trigger, cx)
         });
 
         cx.spawn(|_, mut cx| async move {
@@ -10506,12 +10581,9 @@ impl Editor {
         } else {
             let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
             let mut toggled_buffers = HashSet::default();
-            for (_, buffer_snapshot, _) in multi_buffer_snapshot.excerpts_in_ranges(
-                self.selections
-                    .disjoint_anchors()
-                    .into_iter()
-                    .map(|selection| selection.range()),
-            ) {
+            for (_, buffer_snapshot, _) in
+                multi_buffer_snapshot.excerpts_in_ranges(self.selections.disjoint_anchor_ranges())
+            {
                 let buffer_id = buffer_snapshot.remote_id();
                 if toggled_buffers.insert(buffer_id) {
                     if self.buffer_folded(buffer_id, cx) {
@@ -10592,12 +10664,9 @@ impl Editor {
         } else {
             let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
             let mut folded_buffers = HashSet::default();
-            for (_, buffer_snapshot, _) in multi_buffer_snapshot.excerpts_in_ranges(
-                self.selections
-                    .disjoint_anchors()
-                    .into_iter()
-                    .map(|selection| selection.range()),
-            ) {
+            for (_, buffer_snapshot, _) in
+                multi_buffer_snapshot.excerpts_in_ranges(self.selections.disjoint_anchor_ranges())
+            {
                 let buffer_id = buffer_snapshot.remote_id();
                 if folded_buffers.insert(buffer_id) {
                     self.fold_buffer(buffer_id, cx);
@@ -10758,12 +10827,9 @@ impl Editor {
         } else {
             let multi_buffer_snapshot = self.buffer.read(cx).snapshot(cx);
             let mut unfolded_buffers = HashSet::default();
-            for (_, buffer_snapshot, _) in multi_buffer_snapshot.excerpts_in_ranges(
-                self.selections
-                    .disjoint_anchors()
-                    .into_iter()
-                    .map(|selection| selection.range()),
-            ) {
+            for (_, buffer_snapshot, _) in
+                multi_buffer_snapshot.excerpts_in_ranges(self.selections.disjoint_anchor_ranges())
+            {
                 let buffer_id = buffer_snapshot.remote_id();
                 if unfolded_buffers.insert(buffer_id) {
                     self.unfold_buffer(buffer_id, cx);
@@ -10847,6 +10913,20 @@ impl Editor {
             })
             .collect::<Vec<_>>();
         self.fold_creases(ranges, true, cx);
+    }
+
+    pub fn fold_ranges<T: ToOffset + Clone>(
+        &mut self,
+        ranges: Vec<Range<T>>,
+        auto_scroll: bool,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
+        let ranges = ranges
+            .into_iter()
+            .map(|r| Crease::simple(r, display_map.fold_placeholder.clone()))
+            .collect::<Vec<_>>();
+        self.fold_creases(ranges, auto_scroll, cx);
     }
 
     pub fn fold_creases<T: ToOffset + Clone>(
@@ -13529,6 +13609,8 @@ pub trait CompletionProvider {
 }
 
 pub trait CodeActionProvider {
+    fn id(&self) -> Arc<str>;
+
     fn code_actions(
         &self,
         buffer: &Model<Buffer>,
@@ -13547,6 +13629,10 @@ pub trait CodeActionProvider {
 }
 
 impl CodeActionProvider for Model<Project> {
+    fn id(&self) -> Arc<str> {
+        "project".into()
+    }
+
     fn code_actions(
         &self,
         buffer: &Model<Buffer>,
@@ -13875,7 +13961,28 @@ impl SemanticsProvider for Model<Project> {
         cx: &mut AppContext,
     ) -> Option<Task<Result<Option<Range<text::Anchor>>>>> {
         Some(self.update(cx, |project, cx| {
-            project.prepare_rename(buffer.clone(), position, cx)
+            let buffer = buffer.clone();
+            let task = project.prepare_rename(buffer.clone(), position, cx);
+            cx.spawn(|_, mut cx| async move {
+                Ok(match task.await? {
+                    PrepareRenameResponse::Success(range) => Some(range),
+                    PrepareRenameResponse::InvalidPosition => None,
+                    PrepareRenameResponse::OnlyUnpreparedRenameSupported => {
+                        // Fallback on using TreeSitter info to determine identifier range
+                        buffer.update(&mut cx, |buffer, _| {
+                            let snapshot = buffer.snapshot();
+                            let (range, kind) = snapshot.surrounding_word(position);
+                            if kind != Some(CharKind::Word) {
+                                return None;
+                            }
+                            Some(
+                                snapshot.anchor_before(range.start)
+                                    ..snapshot.anchor_after(range.end),
+                            )
+                        })?
+                    }
+                })
+            })
         }))
     }
 

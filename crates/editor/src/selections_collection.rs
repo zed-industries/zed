@@ -88,6 +88,12 @@ impl SelectionsCollection {
         self.disjoint.clone()
     }
 
+    pub fn disjoint_anchor_ranges(&self) -> impl Iterator<Item = Range<Anchor>> {
+        // Mapping the Arc slice would borrow it, whereas indexing captures it.
+        let disjoint = self.disjoint_anchors();
+        (0..disjoint.len()).map(move |ix| disjoint[ix].range())
+    }
+
     pub fn pending_anchor(&self) -> Option<Selection<Anchor>> {
         self.pending
             .as_ref()
@@ -315,13 +321,6 @@ impl SelectionsCollection {
         cx: &mut AppContext,
     ) -> Selection<D> {
         self.all(cx).last().unwrap().clone()
-    }
-
-    pub fn disjoint_anchor_ranges(&self) -> Vec<Range<Anchor>> {
-        self.disjoint_anchors()
-            .iter()
-            .map(|s| s.start..s.end)
-            .collect()
     }
 
     #[cfg(any(test, feature = "test-support"))]

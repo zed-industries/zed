@@ -197,9 +197,10 @@ impl ProjectDiffEditor {
                         let snapshot = worktree.read(cx).snapshot();
                         let applicable_entries = snapshot
                             .repositories()
+                            .iter()
                             .flat_map(|entry| {
                                 entry.status().map(|git_entry| {
-                                    (git_entry.status, entry.join(git_entry.repo_path))
+                                    (git_entry.combined_status(), entry.join(git_entry.repo_path))
                                 })
                             })
                             .filter_map(|(status, path)| {

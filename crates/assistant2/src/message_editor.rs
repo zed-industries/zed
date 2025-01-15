@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use editor::actions::MoveUp;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
 use gpui::{
@@ -10,7 +11,7 @@ use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::LanguageModelSelector;
 use rope::Point;
 use settings::Settings;
-use theme::ThemeSettings;
+use theme::{get_ui_font_size, ThemeSettings};
 use ui::{
     prelude::*, ButtonLike, ElevationIndex, KeyBinding, PopoverMenu, PopoverMenuHandle,
     SwitchWithLabel,
@@ -19,7 +20,7 @@ use workspace::Workspace;
 
 use crate::assistant_model_selector::AssistantModelSelector;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
-use crate::context_store::ContextStore;
+use crate::context_store::{refresh_context_store_text, ContextStore};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
@@ -47,7 +48,7 @@ impl MessageEditor {
         thread: Model<Thread>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let context_store = cx.new_model(|_cx| ContextStore::new());
+        let context_store = cx.new_model(|_cx| ContextStore::new(workspace.clone()));
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let inline_context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
@@ -75,7 +76,6 @@ impl MessageEditor {
                 context_store.clone(),
                 workspace.clone(),
                 Some(thread_store.clone()),
-                editor.focus_handle(cx),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::File,
                 cx,
@@ -100,7 +100,12 @@ impl MessageEditor {
             inline_context_picker,
             inline_context_picker_menu_handle,
             model_selector: cx.new_view(|cx| {
-                AssistantModelSelector::new(fs, model_selector_menu_handle.clone(), cx)
+                AssistantModelSelector::new(
+                    fs,
+                    model_selector_menu_handle.clone(),
+                    editor.focus_handle(cx),
+                    cx,
+                )
             }),
             model_selector_menu_handle,
             use_tools: false,
@@ -125,53 +130,58 @@ impl MessageEditor {
         self.send_to_model(RequestKind::Chat, cx);
     }
 
-    fn send_to_model(
-        &mut self,
-        request_kind: RequestKind,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<()> {
+    fn send_to_model(&mut self, request_kind: RequestKind, cx: &mut ViewContext<Self>) {
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
         if provider
             .as_ref()
             .map_or(false, |provider| provider.must_accept_terms(cx))
         {
             cx.notify();
-            return None;
+            return;
         }
 
         let model_registry = LanguageModelRegistry::read_global(cx);
-        let model = model_registry.active_model()?;
+        let Some(model) = model_registry.active_model() else {
+            return;
+        };
 
         let user_message = self.editor.update(cx, |editor, cx| {
             let text = editor.text(cx);
             editor.clear(cx);
             text
         });
-        let context = self
-            .context_store
-            .update(cx, |this, _cx| this.context().clone());
 
-        self.thread.update(cx, |thread, cx| {
-            thread.insert_user_message(user_message, context, cx);
-            let mut request = thread.to_completion_request(request_kind, cx);
+        let refresh_task = refresh_context_store_text(self.context_store.clone(), cx);
 
-            if self.use_tools {
-                request.tools = thread
-                    .tools()
-                    .tools(cx)
-                    .into_iter()
-                    .map(|tool| LanguageModelRequestTool {
-                        name: tool.name(),
-                        description: tool.description(),
-                        input_schema: tool.input_schema(),
-                    })
-                    .collect();
-            }
+        let thread = self.thread.clone();
+        let context_store = self.context_store.clone();
+        let use_tools = self.use_tools;
+        cx.spawn(move |_, mut cx| async move {
+            refresh_task.await;
+            thread
+                .update(&mut cx, |thread, cx| {
+                    let context = context_store.read(cx).snapshot(cx).collect::<Vec<_>>();
+                    thread.insert_user_message(user_message, context, cx);
+                    let mut request = thread.to_completion_request(request_kind, cx);
 
-            thread.stream_completion(request, model, cx)
-        });
+                    if use_tools {
+                        request.tools = thread
+                            .tools()
+                            .tools(cx)
+                            .into_iter()
+                            .map(|tool| LanguageModelRequestTool {
+                                name: tool.name(),
+                                description: tool.description(),
+                                input_schema: tool.input_schema(),
+                            })
+                            .collect();
+                    }
 
-        None
+                    thread.stream_completion(request, model, cx)
+                })
+                .ok();
+        })
+        .detach();
     }
 
     fn handle_editor_event(
@@ -211,11 +221,26 @@ impl MessageEditor {
     fn handle_context_strip_event(
         &mut self,
         _context_strip: View<ContextStrip>,
-        ContextStripEvent::PickerDismissed: &ContextStripEvent,
+        event: &ContextStripEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        let editor_focus_handle = self.editor.focus_handle(cx);
-        cx.focus(&editor_focus_handle);
+        match event {
+            ContextStripEvent::PickerDismissed
+            | ContextStripEvent::BlurredEmpty
+            | ContextStripEvent::BlurredDown => {
+                let editor_focus_handle = self.editor.focus_handle(cx);
+                cx.focus(&editor_focus_handle);
+            }
+            ContextStripEvent::BlurredUp => {}
+        }
+    }
+
+    fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
+        if self.context_picker_menu_handle.is_deployed() {
+            cx.propagate();
+        } else {
+            cx.focus_view(&self.context_strip);
+        }
     }
 }
 
@@ -239,6 +264,7 @@ impl Render for MessageEditor {
             .on_action(cx.listener(Self::toggle_model_selector))
             .on_action(cx.listener(Self::toggle_context_picker))
             .on_action(cx.listener(Self::remove_all_context))
+            .on_action(cx.listener(Self::move_up))
             .size_full()
             .gap_2()
             .p_2()
@@ -271,12 +297,18 @@ impl Render for MessageEditor {
                     })
                     .child(
                         PopoverMenu::new("inline-context-picker")
-                            .menu(move |_cx| Some(inline_context_picker.clone()))
+                            .menu(move |cx| {
+                                inline_context_picker.update(cx, |this, cx| {
+                                    this.init(cx);
+                                });
+
+                                Some(inline_context_picker.clone())
+                            })
                             .attach(gpui::Corner::TopLeft)
                             .anchor(gpui::Corner::BottomLeft)
                             .offset(gpui::Point {
                                 x: px(0.0),
-                                y: px(-16.0),
+                                y: (-get_ui_font_size(cx) * 2) - px(4.0),
                             })
                             .with_handle(self.inline_context_picker_menu_handle.clone()),
                     )
