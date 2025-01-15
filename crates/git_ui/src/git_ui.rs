@@ -5,7 +5,7 @@ use futures::StreamExt as _;
 use git::repository::{GitRepository, RepoPath};
 use git::status::FileStatus;
 use git_panel_settings::GitPanelSettings;
-use gpui::{actions, AppContext, Hsla, Model};
+use gpui::{AppContext, Hsla, Model};
 use project::{Project, WorktreeId};
 use std::sync::Arc;
 use sum_tree::SumTree;
@@ -16,39 +16,14 @@ use worktree::RepositoryEntry;
 pub mod git_panel;
 mod git_panel_settings;
 
-actions!(
-    git,
-    [
-        StageFile,
-        UnstageFile,
-        ToggleStaged,
-        // Revert actions are currently in the editor crate:
-        // editor::RevertFile,
-        // editor::RevertSelectedHunks
-        StageAll,
-        UnstageAll,
-        RevertAll,
-        CommitChanges,
-        CommitAllChanges,
-        ClearCommitMessage
-    ]
-);
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StatusAction {
+    Stage,
+    Unstage,
+}
 
 pub fn init(cx: &mut AppContext) {
     GitPanelSettings::register(cx);
-}
-
-#[derive(Default, Debug, PartialEq, Eq, Clone, Copy)]
-pub enum GitViewMode {
-    #[default]
-    List,
-    Tree,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum StatusAction {
-    Stage,
-    Unstage,
 }
 
 pub struct GitState {
@@ -59,11 +34,10 @@ pub struct GitState {
     /// are currently being viewed or modified in the UI.
     active_repository: Option<(WorktreeId, RepositoryEntry, Arc<dyn GitRepository>)>,
 
-    updater_tx: mpsc::UnboundedSender<(Arc<dyn GitRepository>, Vec<RepoPath>, StatusAction)>,
+    update_sender: mpsc::UnboundedSender<(Arc<dyn GitRepository>, Vec<RepoPath>, StatusAction)>,
 
-    all_repositories: HashMap<WorktreeId, SumTree<RepositoryEntry>>,
-
-    list_view_mode: GitViewMode,
+    // TODO replace this with a list of names and IDs
+    _all_repositories: HashMap<WorktreeId, SumTree<RepositoryEntry>>,
 }
 
 impl GitState {
@@ -87,9 +61,8 @@ impl GitState {
         GitState {
             commit_message: None,
             active_repository: None,
-            updater_tx,
-            list_view_mode: GitViewMode::default(),
-            all_repositories: HashMap::default(),
+            update_sender: updater_tx,
+            _all_repositories: HashMap::default(),
         }
     }
 
@@ -118,7 +91,7 @@ impl GitState {
 
     pub fn stage_entry(&mut self, repo_path: RepoPath) {
         if let Some((_, _, git_repo)) = self.active_repository.as_ref() {
-            let _ = self.updater_tx.unbounded_send((
+            let _ = self.update_sender.unbounded_send((
                 git_repo.clone(),
                 vec![repo_path],
                 StatusAction::Stage,
@@ -128,7 +101,7 @@ impl GitState {
 
     pub fn unstage_entry(&mut self, repo_path: RepoPath) {
         if let Some((_, _, git_repo)) = self.active_repository.as_ref() {
-            let _ = self.updater_tx.unbounded_send((
+            let _ = self.update_sender.unbounded_send((
                 git_repo.clone(),
                 vec![repo_path],
                 StatusAction::Unstage,
@@ -139,14 +112,14 @@ impl GitState {
     pub fn stage_entries(&mut self, entries: Vec<RepoPath>) {
         if let Some((_, _, git_repo)) = self.active_repository.as_ref() {
             let _ =
-                self.updater_tx
+                self.update_sender
                     .unbounded_send((git_repo.clone(), entries, StatusAction::Stage));
         }
     }
 
     fn act_on_all(&mut self, action: StatusAction) {
         if let Some((_, active_repository, git_repo)) = self.active_repository.as_ref() {
-            let _ = self.updater_tx.unbounded_send((
+            let _ = self.update_sender.unbounded_send((
                 git_repo.clone(),
                 active_repository
                     .status()

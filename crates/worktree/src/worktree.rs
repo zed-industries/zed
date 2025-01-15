@@ -198,6 +198,7 @@ pub struct RepositoryEntry {
     pub work_directory_id: ProjectEntryId,
     pub work_directory: WorkDirectory,
     pub(crate) branch: Option<Arc<str>>,
+    // FIXME add a method for getting the repo name
 }
 
 impl Deref for RepositoryEntry {

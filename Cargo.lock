@@ -9741,6 +9741,7 @@ dependencies = [
  "smol",
  "snippet",
  "snippet_provider",
+ "sum_tree",
  "task",
  "tempfile",
  "terminal",
