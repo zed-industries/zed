@@ -214,7 +214,13 @@ impl PathBuilder {
 
     /// Builds a [`Path`] from a [`lyon::VertexBuffers`].
     pub fn build_path(buf: VertexBuffers<lyon::math::Point, u16>) -> Path<Pixels> {
-        let mut path = Path::new(Point::default());
+        if buf.vertices.is_empty() {
+            return Path::new(Point::default());
+        }
+
+        let first_point = buf.vertices[0];
+
+        let mut path = Path::new(first_point.into());
         for i in 0..buf.indices.len() / 3 {
             let i0 = buf.indices[i * 3] as usize;
             let i1 = buf.indices[i * 3 + 1] as usize;

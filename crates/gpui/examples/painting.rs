@@ -81,7 +81,7 @@ impl PaintingViewer {
         lines.push((
             path,
             linear_gradient(
-                90.,
+                180.,
                 linear_color_stop(gpui::blue(), 0.4),
                 linear_color_stop(gpui::red(), 1.),
             ),
