@@ -7643,7 +7643,7 @@ impl LspStore {
         cx.emit(LspStoreEvent::LanguageServerAdded(
             server_id,
             language_server.name(),
-            Some(key.0.clone()),
+            Some(*key.0),
         ));
         cx.emit(LspStoreEvent::RefreshInlayHints);
 
@@ -8442,7 +8442,7 @@ impl LanguageServerState {
             }
         }
     }
-    fn remove_workspace_folder(&self, uri: Url) {
+    fn _remove_workspace_folder(&self, uri: Url) {
         match self {
             LanguageServerState::Starting {
                 pending_workspace_folders,

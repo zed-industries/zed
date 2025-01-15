@@ -132,8 +132,8 @@ impl LanguageServerTree {
             worktree_id: path.worktree_id,
             path: &path.path,
         };
-        let settings = AllLanguageSettings::get(Some(settings_location.clone()), cx).language(
-            Some(settings_location.clone()),
+        let settings = AllLanguageSettings::get(Some(settings_location), cx).language(
+            Some(settings_location),
             Some(language_name),
             cx,
         );

@@ -130,6 +130,7 @@ impl ProjectTree {
             worktree_store,
         })
     }
+    #[allow(clippy::mutable_key_type)]
     fn root_for_path(
         &mut self,
         ProjectPath { worktree_id, path }: ProjectPath,
@@ -138,6 +139,7 @@ impl ProjectTree {
         cx: &mut AppContext,
     ) -> BTreeMap<AdapterWrapper, ProjectPath> {
         debug_assert_eq!(delegate.worktree_id(), worktree_id);
+        #[allow(clippy::mutable_key_type)]
         let mut roots = BTreeMap::from_iter(
             adapters
                 .into_iter()
