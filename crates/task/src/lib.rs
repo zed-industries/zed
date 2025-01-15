@@ -347,6 +347,7 @@ impl ShellBuilder {
 
 #[cfg(target_os = "windows")]
 impl ShellBuilder {
+    /// Returns the label to show in the terminal tab
     pub fn command_label(&self, command_label: &str) -> String {
         match self.windows_shell_type() {
             WindowsShellType::Powershell => {
@@ -361,6 +362,7 @@ impl ShellBuilder {
         }
     }
 
+    /// Returns the program and arguments to run this task in a shell.
     pub fn build(mut self, task_command: String, task_args: &Vec<String>) -> (String, Vec<String>) {
         let combined_command = task_args
             .into_iter()
