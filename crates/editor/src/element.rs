@@ -3389,7 +3389,10 @@ impl EditorElement {
                     Some(element)
                 }
             }
-            InlineCompletion::Edit(edits) => {
+            InlineCompletion::Edit {
+                edits,
+                edit_preview,
+            } => {
                 if self.editor.read(cx).has_active_completions_menu() {
                     return None;
                 }
@@ -3417,12 +3420,18 @@ impl EditorElement {
                     return None;
                 }
 
-                let crate::InlineCompletionText::Edit { text, highlights } =
-                    crate::inline_completion_edit_text(editor_snapshot, edits, false, cx)
-                else {
+                let highlighted_edits = if let Some(edit_preview) = edit_preview {
+                    crate::inline_completion_edit_text(
+                        editor_snapshot,
+                        edits,
+                        edit_preview,
+                        false,
+                        cx,
+                    )
+                } else {
                     return None;
                 };
-                let line_count = text.lines().count() + 1;
+                let line_count = highlighted_edits.text.lines().count() + 1;
 
                 let longest_row =
                     editor_snapshot.longest_row_in_range(edit_start.row()..edit_end.row() + 1);
@@ -3440,8 +3449,8 @@ impl EditorElement {
                     .width
                 };
 
-                let styled_text =
-                    gpui::StyledText::new(text.clone()).with_highlights(&style.text, highlights);
+                let styled_text = gpui::StyledText::new(highlighted_edits.text.clone())
+                    .with_highlights(&style.text, highlighted_edits.highlights);
 
                 let mut element = div()
                     .bg(cx.theme().colors().editor_background)

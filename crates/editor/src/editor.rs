@@ -99,8 +99,9 @@ use itertools::Itertools;
 use language::{
     language_settings::{self, all_language_settings, language_settings, InlayHintSettings},
     markdown, point_from_lsp, AutoindentMode, BracketPair, Buffer, Capability, CharKind, CodeLabel,
-    CursorShape, Diagnostic, DiagnosticEntry, Documentation, IndentKind, IndentSize, Language,
-    OffsetRangeExt, Point, Selection, SelectionGoal, TransactionId,
+    CursorShape, Diagnostic, DiagnosticEntry, Documentation, EditPreview, HighlightedEdits,
+    IndentKind, IndentSize, Language, OffsetRangeExt, Point, Selection, SelectionGoal,
+    TransactionId,
 };
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
@@ -479,14 +480,14 @@ impl InlineCompletionMenuHint {
 #[derive(Clone, Debug)]
 enum InlineCompletionText {
     Move(SharedString),
-    Edit {
-        text: SharedString,
-        highlights: Vec<(Range<usize>, HighlightStyle)>,
-    },
+    Edit(HighlightedEdits),
 }
 
 enum InlineCompletion {
-    Edit(Vec<(Range<Anchor>, String)>),
+    Edit {
+        edits: Vec<(Range<Anchor>, String)>,
+        edit_preview: Option<EditPreview>,
+    },
     Move(Anchor),
 }
 
@@ -4672,7 +4673,7 @@ impl Editor {
                     selections.select_anchor_ranges([position..position]);
                 });
             }
-            InlineCompletion::Edit(edits) => {
+            InlineCompletion::Edit { edits, .. } => {
                 if let Some(provider) = self.inline_completion_provider() {
                     provider.accept(cx);
                 }
@@ -4719,7 +4720,7 @@ impl Editor {
                     selections.select_anchor_ranges([position..position]);
                 });
             }
-            InlineCompletion::Edit(edits) => {
+            InlineCompletion::Edit { edits, .. } => {
                 if edits.len() == 1 && edits[0].0.start == edits[0].0.end {
                     let text = edits[0].1.as_str();
                     let mut partial_completion = text
@@ -4841,8 +4842,8 @@ impl Editor {
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
 
-        let completion = provider.suggest(&buffer, cursor_buffer_position, cx)?;
-        let edits = completion
+        let inline_completion = provider.suggest(&buffer, cursor_buffer_position, cx)?;
+        let edits = inline_completion
             .edits
             .into_iter()
             .flat_map(|(range, new_text)| {
@@ -4908,7 +4909,10 @@ impl Editor {
             }
 
             invalidation_row_range = edit_start_row..edit_end_row;
-            completion = InlineCompletion::Edit(edits);
+            completion = InlineCompletion::Edit {
+                edits,
+                edit_preview: inline_completion.edit_preview,
+            };
         };
 
         let invalidation_range = multibuffer
@@ -4949,20 +4953,29 @@ impl Editor {
             let editor_snapshot = self.snapshot(cx);
 
             let text = match &self.active_inline_completion.as_ref()?.completion {
-                InlineCompletion::Edit(edits) => {
-                    inline_completion_edit_text(&editor_snapshot, edits, true, cx)
-                }
+                InlineCompletion::Edit {
+                    edits,
+                    edit_preview,
+                } => edit_preview.as_ref().map(|edit_preview| {
+                    InlineCompletionText::Edit(inline_completion_edit_text(
+                        &editor_snapshot,
+                        &edits,
+                        edit_preview,
+                        true,
+                        cx,
+                    ))
+                }),
                 InlineCompletion::Move(target) => {
                     let target_point =
                         target.to_point(&editor_snapshot.display_snapshot.buffer_snapshot);
                     let target_line = target_point.row + 1;
-                    InlineCompletionText::Move(
+                    Some(InlineCompletionText::Move(
                         format!("Jump to edit in line {}", target_line).into(),
-                    )
+                    ))
                 }
             };
 
-            Some(InlineCompletionMenuHint::Loaded { text })
+            Some(InlineCompletionMenuHint::Loaded { text: text? })
         } else if provider.is_refreshing(cx) {
             Some(InlineCompletionMenuHint::Loading)
         } else {
@@ -14859,10 +14872,11 @@ pub fn diagnostic_block_renderer(
 
 fn inline_completion_edit_text(
     editor_snapshot: &EditorSnapshot,
-    edits: &Vec<(Range<Anchor>, String)>,
+    edits: &[(Range<Anchor>, String)],
+    edit_preview: &EditPreview,
     include_deletions: bool,
     cx: &WindowContext,
-) -> InlineCompletionText {
+) -> HighlightedEdits {
     let edit_start = edits
         .first()
         .unwrap()
@@ -14870,43 +14884,7 @@ fn inline_completion_edit_text(
         .start
         .to_display_point(editor_snapshot);
 
-    let mut text = String::new();
-    let mut offset = DisplayPoint::new(edit_start.row(), 0).to_offset(editor_snapshot, Bias::Left);
-    let mut highlights = Vec::new();
-    for (old_range, new_text) in edits {
-        let old_offset_range = old_range.to_offset(&editor_snapshot.buffer_snapshot);
-        text.extend(
-            editor_snapshot
-                .buffer_snapshot
-                .chunks(offset..old_offset_range.start, false)
-                .map(|chunk| chunk.text),
-        );
-        offset = old_offset_range.end;
-
-        let start = text.len();
-        let color = if include_deletions && new_text.is_empty() {
-            text.extend(
-                editor_snapshot
-                    .buffer_snapshot
-                    .chunks(old_offset_range.start..offset, false)
-                    .map(|chunk| chunk.text),
-            );
-            cx.theme().status().deleted_background
-        } else {
-            text.push_str(new_text);
-            cx.theme().status().created_background
-        };
-        let end = text.len();
-
-        highlights.push((
-            start..end,
-            HighlightStyle {
-                background_color: Some(color),
-                ..Default::default()
-            },
-        ));
-    }
-
+    let offset = DisplayPoint::new(edit_start.row(), 0).to_offset(editor_snapshot, Bias::Left);
     let edit_end = edits
         .last()
         .unwrap()
@@ -14915,17 +14893,19 @@ fn inline_completion_edit_text(
         .to_display_point(editor_snapshot);
     let end_of_line = DisplayPoint::new(edit_end.row(), editor_snapshot.line_len(edit_end.row()))
         .to_offset(editor_snapshot, Bias::Right);
-    text.extend(
-        editor_snapshot
-            .buffer_snapshot
-            .chunks(offset..end_of_line, false)
-            .map(|chunk| chunk.text),
-    );
 
-    InlineCompletionText::Edit {
-        text: text.into(),
-        highlights,
-    }
+    //TODO: Remove this extra allocation
+    let edits = edits
+        .iter()
+        .map(|(anchor, text)| {
+            (
+                anchor.start.text_anchor..anchor.end.text_anchor,
+                text.clone(),
+            )
+        })
+        .collect::<Vec<_>>();
+
+    edit_preview.highlight_edits(offset..end_of_line, &edits, include_deletions, cx)
 }
 
 pub fn highlight_diagnostic_message(

@@ -392,6 +392,7 @@ impl SyntaxSnapshot {
             .edits_since::<usize>(&self.parsed_version)
             .map(|edit| edit.new)
             .collect::<Vec<_>>();
+        println!("Re-parsing with ranges: {:?}", edit_ranges);
         self.reparse_with_ranges(text, root_language.clone(), edit_ranges, registry.as_ref());
 
         if let Some(registry) = registry {

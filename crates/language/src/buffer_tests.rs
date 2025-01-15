@@ -2718,6 +2718,38 @@ fn test_undo_after_merge_into_base(cx: &mut TestAppContext) {
     branch.read_with(cx, |branch, _| assert_eq!(branch.text(), "ABCdefgHIjk"));
 }
 
+#[gpui::test]
+async fn test_preview_edits(cx: &mut TestAppContext) {
+    cx.update(|cx| {
+        init_settings(cx, |_| {});
+        theme::init(theme::LoadThemes::JustBase, cx);
+    });
+
+    let text = r#"struct Human {
+        pub first_name: String,
+        pub last_name: String,
+        year_of_birth: u32,
+    }"#
+    .unindent();
+
+    let buffer =
+        cx.new_model(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
+    let edits: Arc<[(Range<Anchor>, String)]> = buffer.read_with(cx, |buffer, _| {
+        Arc::from([(
+            buffer.anchor_before(43)..buffer.anchor_before(46),
+            "sur".to_string(),
+        )])
+    });
+
+    let edit_preview = buffer
+        .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))
+        .await;
+
+    let highlighted_edits = cx.read(|cx| edit_preview.highlight_edits(0..70, &edits, true, cx));
+
+    assert_eq!(highlighted_edits.text, "const A: usize = 20;".to_string());
+}
+
 #[gpui::test(iterations = 100)]
 fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
     let min_peers = env::var("MIN_PEERS")

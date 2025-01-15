@@ -90,7 +90,10 @@ fn completion_from_diff(
         edits.push((edit_range, edit_text));
     }
 
-    InlineCompletion { edits }
+    InlineCompletion {
+        edits,
+        edit_preview: None,
+    }
 }
 
 impl InlineCompletionProvider for SupermavenCompletionProvider {

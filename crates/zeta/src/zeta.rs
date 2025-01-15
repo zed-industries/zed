@@ -15,8 +15,8 @@ use gpui::{
 };
 use http_client::{HttpClient, Method};
 use language::{
-    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, OffsetRangeExt,
-    Point, ToOffset, ToPoint,
+    language_settings::all_language_settings, Anchor, Buffer, BufferSnapshot, EditPreview,
+    OffsetRangeExt, Point, ToOffset, ToPoint,
 };
 use language_models::LlmApiToken;
 use rpc::{PredictEditsParams, PredictEditsResponse, EXPIRED_LLM_TOKEN_HEADER_NAME};
@@ -77,6 +77,7 @@ pub struct InlineCompletion {
     cursor_offset: usize,
     edits: Arc<[(Range<Anchor>, String)]>,
     snapshot: BufferSnapshot,
+    edit_preview: EditPreview,
     input_outline: Arc<str>,
     input_events: Arc<str>,
     input_excerpt: Arc<str>,
@@ -579,52 +580,25 @@ and then another
         cx: &AsyncAppContext,
     ) -> Task<Result<InlineCompletion>> {
         let snapshot = snapshot.clone();
-        cx.background_executor().spawn(async move {
-            let content = output_excerpt.replace(CURSOR_MARKER, "");
+        cx.spawn(|cx| async move {
+            let edits: Arc<[(Range<Anchor>, String)]> = cx
+                .background_executor()
+                .spawn({
+                    // todo avoid clone?
+                    let output_excerpt = output_excerpt.clone();
+                    let excerpt_range = excerpt_range.clone();
+                    let snapshot = snapshot.clone();
+                    async move { Self::parse_edits(&output_excerpt, excerpt_range, &snapshot) }
+                })
+                .await?
+                .into();
 
-            let start_markers = content
-                .match_indices(EDITABLE_REGION_START_MARKER)
-                .collect::<Vec<_>>();
-            anyhow::ensure!(
-                start_markers.len() == 1,
-                "expected exactly one start marker, found {}",
-                start_markers.len()
-            );
-
-            let end_markers = content
-                .match_indices(EDITABLE_REGION_END_MARKER)
-                .collect::<Vec<_>>();
-            anyhow::ensure!(
-                end_markers.len() == 1,
-                "expected exactly one end marker, found {}",
-                end_markers.len()
-            );
-
-            let sof_markers = content
-                .match_indices(START_OF_FILE_MARKER)
-                .collect::<Vec<_>>();
-            anyhow::ensure!(
-                sof_markers.len() <= 1,
-                "expected at most one start-of-file marker, found {}",
-                sof_markers.len()
-            );
-
-            let codefence_start = start_markers[0].0;
-            let content = &content[codefence_start..];
-
-            let newline_ix = content.find('\n').context("could not find newline")?;
-            let content = &content[newline_ix + 1..];
-
-            let codefence_end = content
-                .rfind(&format!("\n{EDITABLE_REGION_END_MARKER}"))
-                .context("could not find end marker")?;
-            let new_text = &content[..codefence_end];
-
-            let old_text = snapshot
-                .text_for_range(excerpt_range.clone())
-                .collect::<String>();
-
-            let edits = Self::compute_edits(old_text, new_text, excerpt_range.start, &snapshot);
+            let edit_preview = buffer
+                .read_with(&cx, {
+                    let edits = edits.clone();
+                    |buffer, cx| buffer.preview_edits(edits, cx)
+                })?
+                .await;
 
             Ok(InlineCompletion {
                 id: InlineCompletionId::new(),
@@ -632,6 +606,7 @@ and then another
                 excerpt_range,
                 cursor_offset,
                 edits: edits.into(),
+                edit_preview,
                 snapshot: snapshot.clone(),
                 input_outline: input_outline.into(),
                 input_events: input_events.into(),
@@ -641,6 +616,63 @@ and then another
                 response_received_at: Instant::now(),
             })
         })
+    }
+
+    fn parse_edits(
+        output_excerpt: &str,
+        excerpt_range: Range<usize>,
+        snapshot: &BufferSnapshot,
+    ) -> Result<Vec<(Range<Anchor>, String)>> {
+        let content = output_excerpt.replace(CURSOR_MARKER, "");
+
+        let start_markers = content
+            .match_indices(EDITABLE_REGION_START_MARKER)
+            .collect::<Vec<_>>();
+        anyhow::ensure!(
+            start_markers.len() == 1,
+            "expected exactly one start marker, found {}",
+            start_markers.len()
+        );
+
+        let end_markers = content
+            .match_indices(EDITABLE_REGION_END_MARKER)
+            .collect::<Vec<_>>();
+        anyhow::ensure!(
+            end_markers.len() == 1,
+            "expected exactly one end marker, found {}",
+            end_markers.len()
+        );
+
+        let sof_markers = content
+            .match_indices(START_OF_FILE_MARKER)
+            .collect::<Vec<_>>();
+        anyhow::ensure!(
+            sof_markers.len() <= 1,
+            "expected at most one start-of-file marker, found {}",
+            sof_markers.len()
+        );
+
+        let codefence_start = start_markers[0].0;
+        let content = &content[codefence_start..];
+
+        let newline_ix = content.find('\n').context("could not find newline")?;
+        let content = &content[newline_ix + 1..];
+
+        let codefence_end = content
+            .rfind(&format!("\n{EDITABLE_REGION_END_MARKER}"))
+            .context("could not find end marker")?;
+        let new_text = &content[..codefence_end];
+
+        let old_text = snapshot
+            .text_for_range(excerpt_range.clone())
+            .collect::<String>();
+
+        Ok(Self::compute_edits(
+            old_text,
+            new_text,
+            excerpt_range.start,
+            &snapshot,
+        ))
     }
 
     pub fn compute_edits(
@@ -1181,6 +1213,7 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
 
         Some(inline_completion::InlineCompletion {
             edits: edits[edit_start_ix..edit_end_ix].to_vec(),
+            edit_preview: Some(completion.edit_preview.clone()),
         })
     }
 }

@@ -26,7 +26,7 @@ use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
     AnyElement, AppContext, Context as _, EventEmitter, HighlightStyle, Model, ModelContext,
-    Pixels, Task, TaskLabel, WindowContext,
+    Pixels, SharedString, Task, TaskLabel, WindowContext,
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
@@ -65,7 +65,7 @@ pub use text::{
     Subscription, TextDimension, TextSummary, ToOffset, ToOffsetUtf16, ToPoint, ToPointUtf16,
     Transaction, TransactionId, Unclipped,
 };
-use theme::SyntaxTheme;
+use theme::{ActiveTheme as _, SyntaxTheme};
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
 use util::{debug_panic, maybe, RangeExt};
@@ -603,6 +603,70 @@ impl IndentGuide {
     }
 }
 
+#[derive(Clone)]
+pub struct EditPreview {
+    old_snapshot: text::BufferSnapshot,
+    new_snapshot: text::BufferSnapshot,
+    syntax_snapshot: SyntaxSnapshot,
+}
+
+#[derive(Clone, Debug)]
+pub struct HighlightedEdits {
+    pub text: SharedString,
+    pub highlights: Vec<(Range<usize>, HighlightStyle)>,
+}
+
+impl EditPreview {
+    pub fn highlight_edits(
+        &self,
+        range: Range<usize>,
+        edits: &[(Range<Anchor>, String)],
+        include_deletions: bool,
+        cx: &AppContext,
+    ) -> HighlightedEdits {
+        let mut text = String::new();
+        let mut highlights = Vec::new();
+        let mut offset = range.start;
+
+        for (old_range, new_text) in edits {
+            let old_offset_range = old_range.to_offset(&self.old_snapshot);
+            text.extend(
+                self.old_snapshot
+                    .text_for_range(offset..old_offset_range.start),
+            );
+            offset = old_offset_range.end;
+
+            let start = text.len();
+            let color = if include_deletions && new_text.is_empty() {
+                text.extend(
+                    self.old_snapshot
+                        .text_for_range(offset..old_offset_range.start),
+                );
+                cx.theme().status().deleted_background
+            } else {
+                text.push_str(new_text);
+                cx.theme().status().created_background
+            };
+            let end = text.len();
+
+            highlights.push((
+                start..end,
+                HighlightStyle {
+                    background_color: Some(color),
+                    ..Default::default()
+                },
+            ));
+        }
+
+        text.extend(self.old_snapshot.text_for_range(offset..range.end));
+
+        HighlightedEdits {
+            text: text.into(),
+            highlights,
+        }
+    }
+}
+
 impl Buffer {
     /// Create a new buffer with the given base text.
     pub fn local<T: Into<String>>(base_text: T, cx: &ModelContext<Self>) -> Self {
@@ -829,47 +893,37 @@ impl Buffer {
         &self,
         edits: Arc<[(Range<Anchor>, String)]>,
         cx: &AppContext,
-    ) -> Task<(text::BufferSnapshot, SyntaxSnapshot)> {
-        struct EditPreview {
-            old_snapshot: text::BufferSnapshot,
-            new_snapshot: text::BufferSnapshot,
-            syntax_snapshot: SyntaxSnapshot,
-        }
+    ) -> Task<EditPreview> {
+        println!("Previewing {} edits", edits.len());
 
-        impl EditPreview {
-            fn new(
-                old_snapshot: text::BufferSnapshot,
-                new_snapshot: text::BufferSnapshot,
-                syntax_snapshot: SyntaxSnapshot,
-            ) -> Self {
-                Self {
-                    old_snapshot,
-                    new_snapshot,
-                    syntax_snapshot,
-                }
-            }
-
-            fn highlight_edits(
-                &self,
-                range: Range<usize>,
-                edits: &[Edit<usize>],
-                include_deletions: bool,
-            ) -> (String, Vec<HighlightStyle>) {
-                todo!()
-            }
-        }
-
+        let snapshot = self.text.snapshot();
         let mut branch_buffer = self.text.branch();
         let mut syntax_snapshot = self.syntax_map.lock().snapshot();
         let registry = self.language_registry();
         let language = self.language().cloned();
         cx.background_executor().spawn(async move {
-            branch_buffer.edit(edits);
-            let buffer_snapshot = branch_buffer.snapshot();
-            if let Some(language) = language {
-                syntax_snapshot.reparse(&buffer_snapshot, registry, language);
+            println!("---- Buffer text ---- \n{}\n------", branch_buffer.text());
+            for (range, text) in edits.iter() {
+                println!(
+                    "Edit: (old range: {:?}) at {:?}",
+                    range.to_offset(&snapshot),
+                    text,
+                );
             }
-            (buffer_snapshot, syntax_snapshot)
+
+            if !edits.is_empty() {
+                //TODO: can we avoid cloning the edits?
+                branch_buffer.edit(edits.iter().cloned());
+                if let Some(language) = language {
+                    syntax_snapshot.reparse(&branch_buffer.snapshot(), registry, language);
+                    println!("Reparsed!");
+                }
+            }
+            EditPreview {
+                old_snapshot: snapshot,
+                new_snapshot: branch_buffer.snapshot(),
+                syntax_snapshot,
+            }
         })
     }
 
