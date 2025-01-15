@@ -389,19 +389,12 @@ impl Vim {
         self.editor.upgrade()
     }
 
-    pub fn workspace(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<Model<Workspace>> {
-        window
-            .window_handle()
-            .downcast::<Workspace>()
-            .and_then(|handle| handle.root(cx).ok())
+    pub fn workspace(&self, window: &mut Window) -> Option<Model<Workspace>> {
+        window.root_model::<Workspace>().flatten()
     }
 
     pub fn pane(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<Model<Pane>> {
-        self.workspace(window, cx)
+        self.workspace(window)
             .map(|workspace| workspace.read(cx).focused_pane(window, cx))
     }
 

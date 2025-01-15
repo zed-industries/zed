@@ -95,7 +95,7 @@ impl Deref for WrappedAction {
 
 pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
     Vim::action(editor, cx, |vim, _: &VisualCommand, window, cx| {
-        let Some(workspace) = vim.workspace(window, cx) else {
+        let Some(workspace) = vim.workspace(window) else {
             return;
         };
         workspace.update(cx, |workspace, cx| {
@@ -104,7 +104,7 @@ pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>)
     });
 
     Vim::action(editor, cx, |vim, _: &CountCommand, window, cx| {
-        let Some(workspace) = vim.workspace(window, cx) else {
+        let Some(workspace) = vim.workspace(window) else {
             return;
         };
         let count = Vim::take_count(cx).unwrap_or(1);
@@ -126,7 +126,7 @@ pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>)
         let buffer_row = match result {
             None => return,
             Some(e @ Err(_)) => {
-                let Some(workspace) = vim.workspace(window, cx) else {
+                let Some(workspace) = vim.workspace(window) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
@@ -178,7 +178,7 @@ pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>)
         let range = match result {
             None => return,
             Some(e @ Err(_)) => {
-                let Some(workspace) = vim.workspace(window, cx) else {
+                let Some(workspace) = vim.workspace(window) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
@@ -949,7 +949,7 @@ impl OnMatchingLines {
         let range = match result {
             None => return,
             Some(e @ Err(_)) => {
-                let Some(workspace) = vim.workspace(window, cx) else {
+                let Some(workspace) = vim.workspace(window) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {
@@ -966,7 +966,7 @@ impl OnMatchingLines {
         let mut regexes = match Regex::new(&self.search) {
             Ok(regex) => vec![(regex, !self.invert)],
             e @ Err(_) => {
-                let Some(workspace) = vim.workspace(window, cx) else {
+                let Some(workspace) = vim.workspace(window) else {
                     return;
                 };
                 workspace.update(cx, |workspace, cx| {

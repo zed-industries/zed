@@ -93,6 +93,7 @@ impl CommandPaletteFilter {
 }
 
 /// The result of intercepting a command palette command.
+#[derive(Debug)]
 pub struct CommandInterceptResult {
     /// The action produced as a result of the interception.
     pub action: Box<dyn Action>,
