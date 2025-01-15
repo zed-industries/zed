@@ -1586,6 +1586,9 @@ impl ReferenceMultibuffer {
                 {
                     continue;
                 }
+                if buffer_range.is_empty() {
+                    continue;
+                }
 
                 let hunk_offset = hunk.buffer_range.start.to_offset(buffer);
                 if hunk_offset >= start {
