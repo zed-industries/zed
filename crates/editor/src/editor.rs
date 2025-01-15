@@ -461,11 +461,24 @@ type CompletionId = usize;
 #[derive(Debug, Clone)]
 struct InlineCompletionMenuHint {
     provider_name: &'static str,
-    text: InlineCompletionText,
+    state: InlineCompletionMenuState,
+}
+
+#[derive(Debug, Clone)]
+pub enum InlineCompletionMenuState {
+    Loading,
+    Available(InlineCompletionText),
+    None,
+}
+
+impl InlineCompletionMenuState {
+    pub fn is_none(&self) -> bool {
+        matches!(self, InlineCompletionMenuState::None)
+    }
 }
 
 #[derive(Clone, Debug)]
-enum InlineCompletionText {
+pub enum InlineCompletionText {
     Move(SharedString),
     Edit {
         text: SharedString,
@@ -3824,37 +3837,47 @@ impl Editor {
     ) -> Option<Task<std::result::Result<(), anyhow::Error>>> {
         use language::ToOffset as _;
 
-        let completions_menu =
-            if let CodeContextMenu::Completions(menu) = self.hide_context_menu(cx)? {
-                menu
-            } else {
-                return None;
-            };
+        let context_menu = self.context_menu.borrow();
+        let Some(CodeContextMenu::Completions(completions_menu)) = context_menu.as_ref() else {
+            return None;
+        };
+
+        // Used to not hold references to `context_menu` when borrowing self as mutable.
+        enum DoInlineCompletionOrMatchCompletion {
+            DoInlineCompletion,
+            DoMatchCompletion(usize),
+        }
+        use DoInlineCompletionOrMatchCompletion::*;
 
         let entries = completions_menu.entries.borrow();
         let mat = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
-        let mat = match mat {
-            CompletionEntry::InlineCompletionHint { .. } => {
+        let candidate_id = match mat {
+            CompletionEntry::InlineCompletionHint { .. } => DoInlineCompletion,
+            CompletionEntry::Match(mat) => DoMatchCompletion(mat.candidate_id),
+        };
+
+        let buffer_handle = completions_menu.buffer.clone();
+        let completions = completions_menu.completions.clone();
+
+        drop(entries);
+        drop(context_menu);
+
+        let candidate_id = match candidate_id {
+            DoInlineCompletion => {
                 self.accept_inline_completion(&AcceptInlineCompletion, cx);
                 cx.stop_propagation();
                 return Some(Task::ready(Ok(())));
             }
-            CompletionEntry::Match(mat) => {
+            DoMatchCompletion(candidate_id) => {
+                self.hide_context_menu(cx);
                 if self.show_inline_completions_in_menu(cx) {
                     self.discard_inline_completion(true, cx);
                 }
-                mat
+                candidate_id
             }
         };
-        let candidate_id = mat.candidate_id;
-        drop(entries);
 
-        let buffer_handle = completions_menu.buffer;
-        let completion = completions_menu
-            .completions
-            .borrow()
-            .get(candidate_id)?
-            .clone();
+        let completion = completions.borrow().get(candidate_id)?.clone();
         cx.stop_propagation();
 
         let snippet;
@@ -4001,7 +4024,7 @@ impl Editor {
         drop(completion);
         let apply_edits = provider.apply_additional_edits_for_completion(
             buffer_handle,
-            completions_menu.completions.clone(),
+            completions,
             candidate_id,
             true,
             cx,
@@ -4518,8 +4541,8 @@ impl Editor {
             return None;
         }
 
-        self.update_visible_inline_completion(cx);
         provider.refresh(buffer, cursor_buffer_position, debounce, cx);
+        self.update_visible_inline_completion(cx);
         Some(())
     }
 
@@ -4618,6 +4641,11 @@ impl Editor {
                 return;
             }
         }
+
+        // Confirming with no inline completion does nothing, so don't hide the context menu.
+        if self.active_inline_completion.is_none() {
+            return;
+        };
 
         if self.show_inline_completions_in_menu(cx) {
             self.hide_context_menu(cx);
@@ -4801,7 +4829,11 @@ impl Editor {
         let (buffer, cursor_buffer_position) =
             self.buffer.read(cx).text_anchor_for_position(cursor, cx)?;
 
-        let completion = provider.suggest(&buffer, cursor_buffer_position, cx)?;
+        let Some(completion) = provider.suggest(&buffer, cursor_buffer_position, cx) else {
+            self.update_menu_inline_completion(cx);
+            return None;
+        };
+
         let edits = completion
             .edits
             .into_iter()
@@ -4884,7 +4916,13 @@ impl Editor {
             invalidation_range,
         });
 
-        if self.show_inline_completions_in_menu(cx) && self.has_active_completions_menu() {
+        self.update_menu_inline_completion(cx);
+
+        Some(())
+    }
+
+    fn update_menu_inline_completion(&mut self, cx: &mut ViewContext<Self>) {
+        if self.show_inline_completions_in_menu(cx) {
             if let Some(hint) = self.inline_completion_menu_hint(cx) {
                 match self.context_menu.borrow_mut().as_mut() {
                     Some(CodeContextMenu::Completions(menu)) => {
@@ -4896,16 +4934,16 @@ impl Editor {
         }
 
         cx.notify();
-
-        Some(())
     }
 
     fn inline_completion_menu_hint(
         &mut self,
         cx: &mut ViewContext<Self>,
     ) -> Option<InlineCompletionMenuHint> {
+        let provider = self.inline_completion_provider()?;
+        let provider_name = provider.display_name();
+
         if self.has_active_inline_completion() {
-            let provider_name = self.inline_completion_provider()?.display_name();
             let editor_snapshot = self.snapshot(cx);
 
             let text = match &self.active_inline_completion.as_ref()?.completion {
@@ -4924,10 +4962,19 @@ impl Editor {
 
             Some(InlineCompletionMenuHint {
                 provider_name,
-                text,
+                state: InlineCompletionMenuState::Available(text),
             })
         } else {
-            None
+            let state = if provider.is_refreshing(cx) {
+                InlineCompletionMenuState::Loading
+            } else {
+                InlineCompletionMenuState::None
+            };
+
+            Some(InlineCompletionMenuHint {
+                provider_name,
+                state,
+            })
         }
     }
 

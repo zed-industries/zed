@@ -28,7 +28,10 @@ use crate::{
     render_parsed_markdown, split_words, styled_runs_for_code_label, CodeActionProvider,
     CompletionId, CompletionProvider, DisplayRow, Editor, EditorStyle, ResolvedTasks,
 };
-use crate::{AcceptInlineCompletion, InlineCompletionMenuHint, InlineCompletionText};
+use crate::{
+    AcceptInlineCompletion, InlineCompletionMenuHint, InlineCompletionMenuState,
+    InlineCompletionText,
+};
 
 pub const MENU_GAP: Pixels = px(4.);
 pub const MENU_ASIDE_X_PADDING: Pixels = px(16.);
@@ -333,7 +336,6 @@ impl CompletionsMenu {
                 entries[0] = hint;
             }
             _ => {
-                self.selected_item += 1;
                 entries.insert(0, hint);
             }
         }
@@ -573,7 +575,7 @@ impl CompletionsMenu {
                             }
                             CompletionEntry::InlineCompletionHint(InlineCompletionMenuHint {
                                 provider_name,
-                                ..
+                                state,
                             }) => div().min_w(px(250.)).max_w(px(500.)).child(
                                 ListItem::new("inline-completion")
                                     .inset(true)
@@ -586,6 +588,11 @@ impl CompletionsMenu {
                                         ))
                                         .with_highlights(&style.text, None),
                                     )
+                                    .when(state.is_none(), |element| {
+                                        element.end_slot(
+                                            Label::new("No completions").size(LabelSize::XSmall),
+                                        )
+                                    })
                                     .on_click(cx.listener(move |editor, _event, cx| {
                                         cx.stop_propagation();
                                         editor.accept_inline_completion(
@@ -641,18 +648,22 @@ impl CompletionsMenu {
                     Documentation::Undocumented => return None,
                 }
             }
-            CompletionEntry::InlineCompletionHint(hint) => match &hint.text {
-                InlineCompletionText::Edit { text, highlights } => div()
-                    .mx_1()
-                    .rounded(px(6.))
-                    .bg(cx.theme().colors().editor_background)
-                    .border_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .child(
-                        gpui::StyledText::new(text.clone())
-                            .with_highlights(&style.text, highlights.clone()),
-                    ),
-                InlineCompletionText::Move(text) => div().child(text.clone()),
+            CompletionEntry::InlineCompletionHint(hint) => match &hint.state {
+                InlineCompletionMenuState::Available(text) => match text {
+                    InlineCompletionText::Edit { text, highlights } => div()
+                        .mx_1()
+                        .rounded(px(6.))
+                        .bg(cx.theme().colors().editor_background)
+                        .border_1()
+                        .border_color(cx.theme().colors().border_variant)
+                        .child(
+                            gpui::StyledText::new(text.clone())
+                                .with_highlights(&style.text, highlights.clone()),
+                        ),
+                    InlineCompletionText::Move(text) => div().child(text.clone()),
+                },
+                InlineCompletionMenuState::Loading => return None,
+                InlineCompletionMenuState::None => return None,
             },
         };
 
