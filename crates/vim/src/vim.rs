@@ -1240,7 +1240,7 @@ impl Vim {
                     .map_or(false, |provider| provider.show_completions_in_normal_mode()),
                 _ => false,
             };
-            editor.set_inline_completions_enabled(enable_inline_completions);
+            editor.set_inline_completions_enabled(enable_inline_completions, cx);
         });
         cx.notify()
     }

@@ -1732,8 +1732,12 @@ impl Editor {
         self.input_enabled = input_enabled;
     }
 
-    pub fn set_inline_completions_enabled(&mut self, enabled: bool) {
+    pub fn set_inline_completions_enabled(&mut self, enabled: bool, cx: &mut ViewContext<Self>) {
         self.enable_inline_completions = enabled;
+        if !self.enable_inline_completions {
+            self.take_active_inline_completion(cx);
+            cx.notify();
+        }
     }
 
     pub fn set_autoindent(&mut self, autoindent: bool) {
@@ -4785,6 +4789,7 @@ impl Editor {
                 || (!self.completion_tasks.is_empty() && !self.has_active_inline_completion()));
         if completions_menu_has_precedence
             || !offset_selection.is_empty()
+            || !self.enable_inline_completions
             || self
                 .active_inline_completion
                 .as_ref()
