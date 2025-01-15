@@ -1,3 +1,5 @@
+use std::rc::Rc;
+
 use collections::HashMap;
 
 use crate::{Action, KeyBindingContextPredicate, Keystroke};
@@ -8,7 +10,7 @@ use smallvec::SmallVec;
 pub struct KeyBinding {
     pub(crate) action: Box<dyn Action>,
     pub(crate) keystrokes: SmallVec<[Keystroke; 2]>,
-    pub(crate) context_predicate: Option<KeyBindingContextPredicate>,
+    pub(crate) context_predicate: Option<Rc<KeyBindingContextPredicate>>,
 }
 
 impl Clone for KeyBinding {
@@ -22,8 +24,13 @@ impl Clone for KeyBinding {
 }
 
 impl KeyBinding {
-    /// Construct a new keybinding from the given data.
-    pub fn new<A: Action>(keystrokes: &str, action: A, context_predicate: Option<&str>) -> Self {
+    /// Construct a new keybinding from the given data. Panics on parse error.
+    pub fn new<A: Action>(keystrokes: &str, action: A, context: Option<&str>) -> Self {
+        let context_predicate = if let Some(context) = context {
+            Some(KeyBindingContextPredicate::parse(context).unwrap().into())
+        } else {
+            None
+        };
         Self::load(keystrokes, Box::new(action), context_predicate, None).unwrap()
     }
 
@@ -31,15 +38,9 @@ impl KeyBinding {
     pub fn load(
         keystrokes: &str,
         action: Box<dyn Action>,
-        context: Option<&str>,
+        context_predicate: Option<Rc<KeyBindingContextPredicate>>,
         key_equivalents: Option<&HashMap<char, char>>,
     ) -> Result<Self> {
-        let context = if let Some(context) = context {
-            Some(KeyBindingContextPredicate::parse(context)?)
-        } else {
-            None
-        };
-
         let mut keystrokes: SmallVec<[Keystroke; 2]> = keystrokes
             .split_whitespace()
             .map(Keystroke::parse)
@@ -58,7 +59,7 @@ impl KeyBinding {
         Ok(Self {
             keystrokes,
             action,
-            context_predicate: context,
+            context_predicate,
         })
     }
 
@@ -88,8 +89,8 @@ impl KeyBinding {
     }
 
     /// Get the predicate used to match this binding
-    pub fn predicate(&self) -> Option<&KeyBindingContextPredicate> {
-        self.context_predicate.as_ref()
+    pub fn predicate(&self) -> Option<Rc<KeyBindingContextPredicate>> {
+        self.context_predicate.as_ref().map(|rc| rc.clone())
     }
 }
 

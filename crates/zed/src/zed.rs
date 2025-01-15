@@ -1009,7 +1009,7 @@ pub fn handle_keymap_file_changes(
 fn reload_keymaps(cx: &mut AppContext, keymap_content: &KeymapFile) {
     cx.clear_key_bindings();
     load_default_keymap(cx);
-    keymap_content.clone().add_to_cx(cx).log_err();
+    keymap_content.add_to_cx(cx).log_err();
     cx.set_menus(app_menus());
     cx.set_dock_menu(vec![MenuItem::action("New Window", workspace::NewWindow)]);
 }

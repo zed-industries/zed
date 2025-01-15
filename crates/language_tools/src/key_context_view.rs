@@ -52,7 +52,7 @@ impl KeyContextView {
                 .into_iter()
                 .map(|binding| {
                     let match_state = if let Some(predicate) = binding.predicate() {
-                        if this.matches(predicate) {
+                        if this.matches(&predicate) {
                             if this.action_matches(&e.action, binding.action()) {
                                 Some(true)
                             } else {

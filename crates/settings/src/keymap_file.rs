@@ -1,7 +1,9 @@
+use std::rc::Rc;
+
 use crate::{settings_store::parse_json_with_comments, SettingsAssets};
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use collections::{BTreeMap, HashMap};
-use gpui::{Action, AppContext, KeyBinding, NoAction, SharedString};
+use gpui::{Action, AppContext, KeyBinding, KeyBindingContextPredicate, NoAction, SharedString};
 use schemars::{
     gen::{SchemaGenerator, SchemaSettings},
     schema::{ArrayValidation, InstanceType, Schema, SchemaObject, SubschemaValidation},
@@ -9,31 +11,34 @@ use schemars::{
 };
 use serde::Deserialize;
 use serde_json::Value;
-use util::{asset_str, ResultExt};
+use std::fmt::Write;
+use util::asset_str;
 
 #[derive(Debug, Deserialize, Default, Clone, JsonSchema)]
 #[serde(transparent)]
-pub struct KeymapFile(Vec<KeymapBlock>);
+pub struct KeymapFile(Vec<KeymapSection>);
 
 #[derive(Debug, Deserialize, Default, Clone, JsonSchema)]
-pub struct KeymapBlock {
+pub struct KeymapSection {
     #[serde(default)]
-    context: Option<String>,
+    context: String,
     #[serde(default)]
-    use_key_equivalents: Option<bool>,
+    use_key_equivalents: bool,
     bindings: BTreeMap<String, KeymapAction>,
 }
 
-impl KeymapBlock {
-    pub fn context(&self) -> Option<&str> {
-        self.context.as_deref()
-    }
-
+impl KeymapSection {
     pub fn bindings(&self) -> &BTreeMap<String, KeymapAction> {
         &self.bindings
     }
 }
 
+/// Keymap action as a JSON value, since it can either be null for no action, or the name of the
+/// action, or an array of the name of the action and the action input data.
+///
+/// Unlike the other deserializable types here, this doc-comment will not be included in the
+/// generated JSON schema, as it manually defines its `JsonSchema` impl. The actual schema used for
+/// it is automatically generated in `KeymapFile::generate_json_schema`.
 #[derive(Debug, Deserialize, Default, Clone)]
 #[serde(transparent)]
 pub struct KeymapAction(Value);
@@ -52,10 +57,14 @@ impl std::fmt::Display for KeymapAction {
 }
 
 impl JsonSchema for KeymapAction {
+    /// This is used when generating the JSON schema for the `KeymapAction` type, so that it can
+    /// reference the keymap action schema.
     fn schema_name() -> String {
         "KeymapAction".into()
     }
 
+    /// This schema will be replaced with the full action schema in
+    /// `KeymapFile::generate_json_schema`.
     fn json_schema(_: &mut SchemaGenerator) -> Schema {
         Schema::Bool(true)
     }
@@ -75,68 +84,129 @@ impl KeymapFile {
         parse_json_with_comments::<Self>(content)
     }
 
-    pub fn add_to_cx(self, cx: &mut AppContext) -> Result<()> {
+    pub fn add_to_cx(&self, cx: &mut AppContext) -> Result<()> {
         let key_equivalents = crate::key_equivalents::get_key_equivalents(&cx.keyboard_layout());
 
-        for KeymapBlock {
+        // Accumulate errors in order to support partial load of user keymap in the presence of
+        // errors in context and binding parsing.
+        let mut errors = Vec::new();
+        let mut success_count = 0;
+        let mut failure_count = 0;
+
+        for KeymapSection {
             context,
             use_key_equivalents,
             bindings,
-        } in self.0
+        } in self.0.iter()
         {
-            let bindings = bindings
-                .into_iter()
-                .filter_map(|(keystroke, action)| {
-                    let action = action.0;
-
-                    // This is a workaround for a limitation in serde: serde-rs/json#497
-                    // We want to deserialize the action data as a `RawValue` so that we can
-                    // deserialize the action itself dynamically directly from the JSON
-                    // string. But `RawValue` currently does not work inside of an untagged enum.
-                    match action {
-                        Value::Array(items) => {
-                            let Ok([name, data]): Result<[serde_json::Value; 2], _> =
-                                items.try_into()
-                            else {
-                                return Some(Err(anyhow!("Expected array of length 2")));
-                            };
-                            let serde_json::Value::String(name) = name else {
-                                return Some(Err(anyhow!(
-                                    "Expected first item in array to be a string."
-                                )));
-                            };
-                            cx.build_action(&name, Some(data))
-                        }
-                        Value::String(name) => cx.build_action(&name, None),
-                        Value::Null => Ok(no_action()),
-                        _ => {
-                            return Some(Err(anyhow!("Expected two-element array, got {action:?}")))
-                        }
+            let context_predicate: Option<Rc<KeyBindingContextPredicate>> = if context.is_empty() {
+                None
+            } else {
+                match KeyBindingContextPredicate::parse(context) {
+                    Ok(context_predicate) => Some(context_predicate.into()),
+                    Err(err) => {
+                        failure_count += bindings.len();
+                        errors.push((context, format!("Context parse error: {}", err)));
+                        continue;
                     }
-                    .with_context(|| {
-                        format!(
-                            "invalid binding value for keystroke {keystroke}, context {context:?}"
-                        )
-                    })
-                    .log_err()
-                    .map(|action| {
-                        KeyBinding::load(
-                            &keystroke,
-                            action,
-                            context.as_deref(),
-                            if use_key_equivalents.unwrap_or_default() {
-                                key_equivalents.as_ref()
-                            } else {
-                                None
-                            },
-                        )
-                    })
-                })
-                .collect::<Result<Vec<_>>>()?;
+                }
+            };
 
+            let key_equivalents = if *use_key_equivalents {
+                key_equivalents.as_ref()
+            } else {
+                None
+            };
+
+            let mut section_errors = String::new();
+            let bindings = bindings
+                .iter()
+                .map(|(keystrokes, action)| {
+                    (
+                        keystrokes,
+                        Self::load_keybinding(
+                            keystrokes,
+                            action,
+                            context_predicate.clone(),
+                            key_equivalents,
+                            cx,
+                        ),
+                    )
+                })
+                .flat_map(|(keystrokes, result)| {
+                    result
+                        .inspect_err(|err| {
+                            failure_count += 1;
+                            write!(section_errors, "\n\n  Binding \"{keystrokes}\": {err}")
+                                .unwrap();
+                        })
+                        .ok()
+                })
+                .collect::<Vec<_>>();
+            if !section_errors.is_empty() {
+                errors.push((context, section_errors))
+            }
+
+            success_count += bindings.len();
             cx.bind_keys(bindings);
         }
-        Ok(())
+
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            let mut error_message = format!(
+                "Encountered errors in keymap file. \
+                Loaded {success_count} bindings, and failed to load {failure_count} bindings.\n\n"
+            );
+            for (context, section_errors) in errors {
+                if context.is_empty() {
+                    write!(
+                        error_message,
+                        "In keymap section without context predicate:"
+                    )
+                    .unwrap()
+                } else {
+                    write!(
+                        error_message,
+                        "In keymap section with context \"{context}\":"
+                    )
+                    .unwrap()
+                }
+                write!(error_message, "{section_errors}").unwrap();
+            }
+            Err(anyhow!(error_message))
+        }
+    }
+
+    fn load_keybinding(
+        keystrokes: &str,
+        action: &KeymapAction,
+        context: Option<Rc<KeyBindingContextPredicate>>,
+        key_equivalents: Option<&HashMap<char, char>>,
+        cx: &mut AppContext,
+    ) -> Result<KeyBinding> {
+        let action = match &action.0 {
+            Value::Array(items) => {
+                if items.len() != 2 {
+                    return Err(anyhow!(
+                        "Expected array for an action with input data to have a length of 2."
+                    ));
+                }
+                let serde_json::Value::String(ref name) = items[0] else {
+                    return Err(anyhow!(
+                        "Expected first item to be the name of an action that takes input data. \
+                        Instead got {}",
+                        items[0]
+                    ));
+                };
+                cx.build_action(&name, Some(items[1].clone()))
+            }
+            Value::String(name) => cx.build_action(&name, None),
+            Value::Null => Ok(NoAction.boxed_clone()),
+            _ => Err(anyhow!("Expected two-element array, got {action:?}")),
+        };
+
+        KeyBinding::load(keystrokes, action?, context, key_equivalents)
     }
 
     pub fn generate_json_schema_for_registered_actions(cx: &mut AppContext) -> Value {
@@ -308,23 +378,21 @@ impl KeymapFile {
         }
         .into();
 
+        // The `KeymapSection` schema will reference the `KeymapAction` schema by name, so replacing
+        // the definition of `KeymapAction` results in the full action schema being used.
         let mut root_schema = generator.into_root_schema_for::<KeymapFile>();
         root_schema
             .definitions
-            .insert("KeymapAction".to_owned(), action_schema);
+            .insert(KeymapAction::schema_name(), action_schema);
 
         // This and other json schemas can be viewed via `debug: open language server logs` ->
         // `json-language-server` -> `Server Info`.
         serde_json::to_value(root_schema).unwrap()
     }
 
-    pub fn blocks(&self) -> &[KeymapBlock] {
+    pub fn sections(&self) -> &[KeymapSection] {
         &self.0
     }
-}
-
-fn no_action() -> Box<dyn gpui::Action> {
-    gpui::NoAction.boxed_clone()
 }
 
 #[cfg(test)]
