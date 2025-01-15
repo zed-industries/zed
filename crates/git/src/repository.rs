@@ -54,7 +54,14 @@ pub trait GitRepository: Send + Sync {
     /// Returns the path to the repository, typically the `.git` folder.
     fn dot_git_dir(&self) -> PathBuf;
 
-    fn update_index(&self, stage: &[RepoPath], unstage: &[RepoPath]) -> Result<()>;
+    /// Updates the index to match the worktree at the given paths.
+    ///
+    /// If any of the paths have been deleted from the worktree, they will be removed from the index if found there.
+    fn stage_paths(&self, paths: &[RepoPath]) -> Result<()>;
+    /// Updates the index to match HEAD at the given paths.
+    ///
+    /// If any of the paths were previously staged but do not exist in HEAD, they will be removed from the index.
+    fn unstage_paths(&self, paths: &[RepoPath]) -> Result<()>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -233,31 +240,43 @@ impl GitRepository for RealGitRepository {
         )
     }
 
-    fn update_index(&self, stage: &[RepoPath], unstage: &[RepoPath]) -> Result<()> {
+    fn stage_paths(&self, paths: &[RepoPath]) -> Result<()> {
         let working_directory = self
             .repository
             .lock()
             .workdir()
             .context("failed to read git work directory")?
             .to_path_buf();
-        if !stage.is_empty() {
-            let add = new_std_command(&self.git_binary_path)
+
+        if !paths.is_empty() {
+            let cmd = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
-                .args(["add", "--"])
-                .args(stage.iter().map(|p| p.as_ref()))
+                .args(["update-index", "--add", "--remove", "--"])
+                .args(paths.iter().map(|p| p.as_ref()))
                 .status()?;
-            if !add.success() {
-                return Err(anyhow!("Failed to stage files: {add}"));
+            if !cmd.success() {
+                return Err(anyhow!("Failed to stage paths: {cmd}"));
             }
         }
-        if !unstage.is_empty() {
-            let rm = new_std_command(&self.git_binary_path)
+        Ok(())
+    }
+
+    fn unstage_paths(&self, paths: &[RepoPath]) -> Result<()> {
+        let working_directory = self
+            .repository
+            .lock()
+            .workdir()
+            .context("failed to read git work directory")?
+            .to_path_buf();
+
+        if !paths.is_empty() {
+            let cmd = new_std_command(&self.git_binary_path)
                 .current_dir(&working_directory)
-                .args(["restore", "--staged", "--"])
-                .args(unstage.iter().map(|p| p.as_ref()))
+                .args(["reset", "--quiet", "--"])
+                .args(paths.iter().map(|p| p.as_ref()))
                 .status()?;
-            if !rm.success() {
-                return Err(anyhow!("Failed to unstage files: {rm}"));
+            if !cmd.success() {
+                return Err(anyhow!("Failed to unstage paths: {cmd}"));
             }
         }
         Ok(())
@@ -404,7 +423,11 @@ impl GitRepository for FakeGitRepository {
             .cloned()
     }
 
-    fn update_index(&self, _stage: &[RepoPath], _unstage: &[RepoPath]) -> Result<()> {
+    fn stage_paths(&self, _paths: &[RepoPath]) -> Result<()> {
+        unimplemented!()
+    }
+
+    fn unstage_paths(&self, _paths: &[RepoPath]) -> Result<()> {
         unimplemented!()
     }
 }
