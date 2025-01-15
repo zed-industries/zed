@@ -1755,18 +1755,20 @@ impl MultiBuffer {
     ) -> Option<(Model<Buffer>, Point, ExcerptId)> {
         let snapshot = self.read(cx);
         let point = point.to_point(&snapshot);
-        let mut cursor = snapshot.excerpts.cursor::<Point>(&());
-        cursor.seek(&point, Bias::Right, &());
-        if cursor.item().is_none() {
-            cursor.prev(&());
-        }
+        let mut cursor = snapshot.cursor::<Point>();
+        cursor.seek(&point);
 
-        cursor.item().map(|excerpt| {
-            let excerpt_start = excerpt.range.context.start.to_point(&excerpt.buffer);
-            let buffer_point = excerpt_start + point - *cursor.start();
-            let buffer = self.buffers.borrow()[&excerpt.buffer_id].buffer.clone();
+        cursor.region().and_then(|region| {
+            if !region.is_main_buffer {
+                return None;
+            }
 
-            (buffer, buffer_point, excerpt.id)
+            let overshoot = point - region.range.start;
+            let buffer_point = region.buffer_range.start + overshoot;
+            let buffer = self.buffers.borrow()[&region.buffer.remote_id()]
+                .buffer
+                .clone();
+            Some((buffer, buffer_point, region.excerpt.id))
         })
     }
 
@@ -3885,52 +3887,16 @@ impl MultiBufferSnapshot {
         &self,
         row: MultiBufferRow,
     ) -> Option<(&BufferSnapshot, Range<Point>)> {
-        let mut cursor = self.excerpts.cursor::<Point>(&());
-        let mut diff_transforms_cursor = self.diff_transforms.cursor::<(Point, ExcerptPoint)>(&());
-
+        let mut cursor = self.cursor::<Point>();
         let point = Point::new(row.0, 0);
-        diff_transforms_cursor.seek(&point, Bias::Right, &());
-        if diff_transforms_cursor.item().is_none() && diff_transforms_cursor.start().0 == point {
-            diff_transforms_cursor.prev(&());
-        }
-
-        let overshoot = point - diff_transforms_cursor.start().0;
-
-        if let Some(DiffTransform::DeletedHunk {
-            buffer_id,
-            base_text_byte_range,
-            ..
-        }) = diff_transforms_cursor.item()
-        {
-            let diff = self.diffs.get(&buffer_id).expect("buffer_id not found");
-            let buffer = &diff.base_text;
-            let hunk_start = buffer.offset_to_point(base_text_byte_range.start);
-            let hunk_end = buffer.offset_to_point(base_text_byte_range.end);
-            let line_start = hunk_start + overshoot;
-            let line_end = Point::new(line_start.row, buffer.line_len(line_start.row));
-            return Some((buffer, line_start..line_end.min(hunk_end)));
-        } else {
-            let excerpt_point = diff_transforms_cursor.start().1 + ExcerptPoint::wrap(overshoot);
-            cursor.seek(&excerpt_point.value, Bias::Right, &());
-            if cursor.item().is_none() && *cursor.start() == excerpt_point.value {
-                cursor.prev(&());
-            }
-
-            if let Some(excerpt) = cursor.item() {
-                let overshoot = excerpt_point.row() - cursor.start().row;
-                let excerpt_start = excerpt.range.context.start.to_point(&excerpt.buffer);
-                let excerpt_end = excerpt.range.context.end.to_point(&excerpt.buffer);
-                let buffer_row = excerpt_start.row + overshoot;
-                let line_start = Point::new(buffer_row, 0);
-                let line_end = Point::new(buffer_row, excerpt.buffer.line_len(buffer_row));
-                return Some((
-                    &excerpt.buffer,
-                    line_start.max(excerpt_start)..line_end.min(excerpt_end),
-                ));
-            }
-        }
-
-        None
+        cursor.seek(&point);
+        let region = cursor.region()?;
+        let overshoot = point - region.range.start;
+        let buffer_point = region.buffer_range.start + overshoot;
+        let line_start = Point::new(buffer_point.row, 0).max(region.buffer_range.start);
+        let line_end = Point::new(buffer_point.row, region.buffer.line_len(buffer_point.row))
+            .min(region.buffer_range.end);
+        Some((region.buffer, line_start..line_end))
     }
 
     pub fn max_point(&self) -> Point {
