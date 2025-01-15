@@ -7,12 +7,10 @@ use editor::{
     scroll::Autoscroll,
     Bias, Editor, ToPoint,
 };
-use futures::channel::oneshot;
 use gpui::{
     actions, impl_internal_actions, Action, AppContext, Global, ViewContext, WindowContext,
 };
 use language::Point;
-use libc::EDOM;
 use multi_buffer::MultiBufferRow;
 use regex::Regex;
 use schemars::JsonSchema;
@@ -1091,11 +1089,53 @@ impl Vim {
     pub fn cancel_running_command(&mut self, cx: &mut ViewContext<Self>) {
         if self.running_command.take().is_some() {
             self.update_editor(cx, |_, editor, cx| {
-                editor.transact(cx, |editor, cx| {
+                editor.transact(cx, |editor, _| {
                     editor.clear_row_highlights::<ShellExec>();
                 })
             });
         }
+    }
+
+    fn prepare_shell_command(&mut self, command: &str, cx: &mut ViewContext<Self>) -> String {
+        let mut ret = String::new();
+        // N.B. non-standard escaping rules:
+        // * !echo % => "echo README.md"
+        // * !echo \% => "echo %"
+        // * !echo \\% => echo \%
+        // * !echo \\\% => echo \\%
+        for c in command.chars() {
+            if c != '%' && c != '!' {
+                ret.push(c);
+                continue;
+            } else if ret.chars().last() == Some('\\') {
+                ret.pop();
+                ret.push(c);
+                continue;
+            }
+            match c {
+                '%' => {
+                    self.update_editor(cx, |_, editor, cx| {
+                        if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
+                            if let Some(file) = buffer.read(cx).file() {
+                                if let Some(local) = file.as_local() {
+                                    if let Some(str) = local.path().to_str() {
+                                        ret.push_str(str)
+                                    }
+                                }
+                            }
+                        }
+                    });
+                }
+                '!' => {
+                    if let Some(command) = &self.last_command {
+                        ret.push_str(command)
+                    }
+                }
+                _ => {}
+            }
+        }
+        self.last_command = Some(ret.clone());
+        ret
     }
 }
 
@@ -1122,10 +1162,9 @@ impl ShellExec {
         let Some(workspace) = vim.workspace(cx) else {
             return;
         };
+
         let project = workspace.read(cx).project().clone();
-        let mut process = project.read(cx).exec_in_shell(self.command.clone(), cx);
-        process.stdout(Stdio::piped());
-        process.stderr(Stdio::piped());
+        let command = vim.prepare_shell_command(&self.command, cx);
 
         if self.range.is_none() && !self.is_read {
             workspace.update(cx, |workspace, cx| {
@@ -1137,7 +1176,7 @@ impl ShellExec {
                         id: TaskId("vim".to_string()),
                         full_label: self.command.clone(),
                         label: self.command.clone(),
-                        command: self.command.clone(),
+                        command: command.clone(),
                         args: Vec::new(),
                         command_label: self.command.clone(),
                         cwd,
@@ -1193,6 +1232,10 @@ impl ShellExec {
         });
 
         let Some(range) = input_range else { return };
+
+        let mut process = project.read(cx).exec_in_shell(command, cx);
+        process.stdout(Stdio::piped());
+        process.stderr(Stdio::piped());
 
         if input_snapshot.is_some() {
             process.stdin(Stdio::piped());

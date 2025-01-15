@@ -221,6 +221,7 @@ pub(crate) struct Vim {
 
     editor: WeakView<Editor>,
 
+    last_command: Option<String>,
     running_command: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -265,8 +266,10 @@ impl Vim {
             selected_register: None,
             search: SearchState::default(),
 
-            editor: editor.downgrade(),
+            last_command: None,
             running_command: None,
+
+            editor: editor.downgrade(),
             _subscriptions: vec![
                 cx.observe_keystrokes(Self::observe_keystrokes),
                 cx.subscribe(&editor, |this, _, event, cx| {
