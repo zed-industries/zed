@@ -440,6 +440,13 @@ async fn predict_edits(
     _country_code_header: Option<TypedHeader<CloudflareIpCountryHeader>>,
     Json(params): Json<PredictEditsParams>,
 ) -> Result<impl IntoResponse> {
+    if !claims.is_staff && !claims.has_predict_edits_feature_flag {
+        return Err(Error::http(
+            StatusCode::FORBIDDEN,
+            format!("no access to Zed's edit prediction feature"),
+        ));
+    }
+
     let api_url = state
         .config
         .prediction_api_url
