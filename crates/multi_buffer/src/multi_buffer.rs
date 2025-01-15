@@ -1657,36 +1657,6 @@ impl MultiBuffer {
         excerpts
     }
 
-    pub fn ranges_for_buffer(
-        &self,
-        buffer_id: BufferId,
-        cx: &AppContext,
-    ) -> Vec<(ExcerptId, Range<Point>, Range<text::Anchor>)> {
-        let mut ranges = Vec::new();
-        let snapshot = self.read(cx);
-        for locator in self
-            .buffers
-            .borrow()
-            .get(&buffer_id)
-            .map(|state| &state.excerpts)
-            .into_iter()
-            .flatten()
-        {
-            let mut cursor = snapshot.excerpts.cursor::<(Option<&Locator>, Point)>(&());
-            cursor.seek_forward(&Some(locator), Bias::Left, &());
-            if let Some(excerpt) = cursor.item() {
-                if excerpt.locator == *locator {
-                    ranges.push((
-                        excerpt.id,
-                        cursor.start().1..cursor.end(&()).1,
-                        excerpt.range.context.clone(),
-                    ));
-                }
-            }
-        }
-        ranges
-    }
-
     pub fn excerpt_ranges_for_buffer(
         &self,
         buffer_id: BufferId,
