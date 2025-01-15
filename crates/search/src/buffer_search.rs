@@ -3,7 +3,8 @@ mod registrar;
 use crate::{
     search_bar::render_nav_button, FocusSearch, NextHistoryQuery, PreviousHistoryQuery, ReplaceAll,
     ReplaceNext, SearchOptions, SelectAllMatches, SelectNextMatch, SelectPrevMatch,
-    ToggleCaseSensitive, ToggleRegex, ToggleReplace, ToggleSelection, ToggleWholeWord,
+    ToggleCaseSensitive, ToggleFilters, ToggleRegex, ToggleReplace, ToggleSelection,
+    ToggleWholeWord,
 };
 use any_vec::AnyVec;
 use collections::HashMap;
@@ -18,6 +19,8 @@ use gpui::{
     Render, ScrollHandle, Styled, Subscription, Task, TextStyle, View, ViewContext,
     VisualContext as _, WindowContext,
 };
+use util::paths::PathMatcher;
+
 use project::{
     search::SearchQuery,
     search_history::{SearchHistory, SearchHistoryCursor},
@@ -82,6 +85,10 @@ pub struct BufferSearchBar {
     query_editor_focused: bool,
     replacement_editor: View<Editor>,
     replacement_editor_focused: bool,
+    included_files_editor: View<Editor>,
+    included_files_editor_focused: bool,
+    excluded_files_editor: View<Editor>,
+    excluded_files_editor_focused: bool,
     active_searchable_item: Option<Box<dyn SearchableItemHandle>>,
     active_match_index: Option<usize>,
     active_searchable_item_subscription: Option<Subscription>,
@@ -97,6 +104,7 @@ pub struct BufferSearchBar {
     search_history_cursor: SearchHistoryCursor,
     replace_enabled: bool,
     selection_search_enabled: bool,
+    filters_enabled: bool,
     scroll_handle: ScrollHandle,
     editor_scroll_handle: ScrollHandle,
     editor_needed_width: Pixels,
@@ -194,6 +202,8 @@ impl Render for BufferSearchBar {
         let should_show_replace_input = self.replace_enabled && supported_options.replacement;
         let in_replace = self.replacement_editor.focus_handle(cx).is_focused(cx);
 
+        let should_show_filters = self.filters_enabled && supported_options.filters;
+
         let mut key_context = KeyContext::new_with_defaults();
         key_context.add("BufferSearchBar");
         if in_replace {
@@ -266,6 +276,30 @@ impl Render for BufferSearchBar {
                 h_flex()
                     .gap_1()
                     .min_w_64()
+                    .when(supported_options.filters, |this| {
+                        this.child(
+                            IconButton::new("project-search-filter-button", IconName::Filter)
+                                .shape(IconButtonShape::Square)
+                                .tooltip(|cx| {
+                                    Tooltip::for_action("Toggle Filters", &ToggleFilters, cx)
+                                })
+                                .on_click(cx.listener(|this, _, cx| {
+                                    this.toggle_filters(cx);
+                                }))
+                                .toggle_state(self.filters_enabled)
+                                .tooltip({
+                                    let focus_handle = focus_handle.clone();
+                                    move |cx| {
+                                        Tooltip::for_action_in(
+                                            "Toggle Filters",
+                                            &ToggleFilters,
+                                            &focus_handle,
+                                            cx,
+                                        )
+                                    }
+                                }),
+                        )
+                    })
                     .when(supported_options.replacement, |this| {
                         this.child(
                             IconButton::new(
@@ -423,6 +457,41 @@ impl Render for BufferSearchBar {
                 )
         });
 
+        // TODO: replace with filter line
+        let filter_line = should_show_filters.then(|| {
+            h_flex()
+                .w_full()
+                .gap_2()
+                .child(
+                    input_base_styles()
+                        .on_action(
+                            cx.listener(|this, action, cx| this.previous_history_query(action, cx)),
+                        )
+                        .on_action(
+                            cx.listener(|this, action, cx| this.next_history_query(action, cx)),
+                        )
+                        .child(self.render_text_input(
+                            &self.included_files_editor,
+                            cx.theme().colors().text,
+                            cx,
+                        )),
+                )
+                .child(
+                    input_base_styles()
+                        .on_action(
+                            cx.listener(|this, action, cx| this.previous_history_query(action, cx)),
+                        )
+                        .on_action(
+                            cx.listener(|this, action, cx| this.next_history_query(action, cx)),
+                        )
+                        .child(self.render_text_input(
+                            &self.excluded_files_editor,
+                            cx.theme().colors().text,
+                            cx,
+                        )),
+                )
+        });
+
         v_flex()
             .id("buffer_search")
             .gap_2()
@@ -475,6 +544,7 @@ impl Render for BufferSearchBar {
                     }),
             )
             .children(replace_line)
+            .children(filter_line)
     }
 }
 
@@ -587,6 +657,22 @@ impl BufferSearchBar {
         let replacement_editor = cx.new_view(Editor::single_line);
         cx.subscribe(&replacement_editor, Self::on_replacement_editor_event)
             .detach();
+        let included_files_editor = cx.new_view(|cx| {
+            let mut editor = Editor::single_line(cx);
+            editor.set_placeholder_text("Include: crates/**/*.toml", cx);
+
+            editor
+        });
+        cx.subscribe(&included_files_editor, Self::on_included_files_editor_event)
+            .detach();
+        let excluded_files_editor = cx.new_view(|cx| {
+            let mut editor = Editor::single_line(cx);
+            editor.set_placeholder_text("Exclude: vendor/*, *.lock", cx);
+
+            editor
+        });
+        cx.subscribe(&excluded_files_editor, Self::on_excluded_files_editor_event)
+            .detach();
 
         let search_options = SearchOptions::from_settings(&EditorSettings::get_global(cx).search);
 
@@ -595,6 +681,10 @@ impl BufferSearchBar {
             query_editor_focused: false,
             replacement_editor,
             replacement_editor_focused: false,
+            included_files_editor,
+            included_files_editor_focused: false,
+            excluded_files_editor,
+            excluded_files_editor_focused: false,
             active_searchable_item: None,
             active_searchable_item_subscription: None,
             active_match_index: None,
@@ -613,6 +703,7 @@ impl BufferSearchBar {
             active_search: None,
             replace_enabled: false,
             selection_search_enabled: false,
+            filters_enabled: false,
             scroll_handle: ScrollHandle::new(),
             editor_scroll_handle: ScrollHandle::new(),
             editor_needed_width: px(0.),
@@ -961,6 +1052,32 @@ impl BufferSearchBar {
         }
     }
 
+    fn on_included_files_editor_event(
+        &mut self,
+        _: View<Editor>,
+        event: &editor::EditorEvent,
+        _: &mut ViewContext<Self>,
+    ) {
+        match event {
+            editor::EditorEvent::Focused => self.included_files_editor_focused = true,
+            editor::EditorEvent::Blurred => self.included_files_editor_focused = false,
+            _ => {}
+        }
+    }
+
+    fn on_excluded_files_editor_event(
+        &mut self,
+        _: View<Editor>,
+        event: &editor::EditorEvent,
+        _: &mut ViewContext<Self>,
+    ) {
+        match event {
+            editor::EditorEvent::Focused => self.excluded_files_editor_focused = true,
+            editor::EditorEvent::Blurred => self.excluded_files_editor_focused = false,
+            _ => {}
+        }
+    }
+
     fn on_active_searchable_item_event(&mut self, event: &SearchEvent, cx: &mut ViewContext<Self>) {
         match event {
             SearchEvent::MatchesInvalidated => {
@@ -1033,6 +1150,18 @@ impl BufferSearchBar {
 
         if let Some(active_searchable_item) = self.active_searchable_item.as_ref() {
             self.query_contains_error = false;
+
+            let included_files =
+                match Self::parse_path_matches(&self.included_files_editor.read(cx).text(cx)) {
+                    Ok(included_files) => included_files,
+                    Err(_e) => PathMatcher::default(),
+                };
+            let excluded_files =
+                match Self::parse_path_matches(&self.excluded_files_editor.read(cx).text(cx)) {
+                    Ok(excluded_files) => excluded_files,
+                    Err(_e) => PathMatcher::default(),
+                };
+
             if query.is_empty() {
                 self.clear_active_searchable_item_matches(cx);
                 let _ = done_tx.send(());
@@ -1049,8 +1178,8 @@ impl BufferSearchBar {
                             self.search_options.contains(SearchOptions::WHOLE_WORD),
                             self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                             false,
-                            Default::default(),
-                            Default::default(),
+                            included_files,
+                            excluded_files,
                             None,
                         ) {
                             Ok(query) => query.with_replacement(self.replacement(cx)),
@@ -1067,8 +1196,8 @@ impl BufferSearchBar {
                             self.search_options.contains(SearchOptions::WHOLE_WORD),
                             self.search_options.contains(SearchOptions::CASE_SENSITIVE),
                             false,
-                            Default::default(),
-                            Default::default(),
+                            included_files,
+                            excluded_files,
                             None,
                         ) {
                             Ok(query) => query.with_replacement(self.replacement(cx)),
@@ -1122,6 +1251,16 @@ impl BufferSearchBar {
             }
         }
         done_rx
+    }
+
+    fn parse_path_matches(text: &str) -> anyhow::Result<PathMatcher> {
+        let queries = text
+            .split(',')
+            .map(str::trim)
+            .filter(|maybe_glob_str| !maybe_glob_str.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        Ok(PathMatcher::new(&queries)?)
     }
 
     pub fn update_match_index(&mut self, cx: &mut ViewContext<Self>) {
@@ -1218,6 +1357,13 @@ impl BufferSearchBar {
             self.focus(&handle, cx);
             cx.notify();
         }
+    }
+
+    fn toggle_filters(&mut self, cx: &mut ViewContext<Self>) -> bool {
+        self.filters_enabled = !self.filters_enabled;
+        cx.notify();
+
+        true
     }
 
     fn replace_next(&mut self, _: &ReplaceNext, cx: &mut ViewContext<Self>) {

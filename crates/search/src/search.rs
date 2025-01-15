@@ -29,6 +29,7 @@ actions!(
         ToggleRegex,
         ToggleReplace,
         ToggleSelection,
+        ToggleFilters,
         SelectNextMatch,
         SelectPrevMatch,
         SelectAllMatches,
