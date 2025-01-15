@@ -141,48 +141,46 @@ mod tests {
     use gpui::rgba;
     use lsp::{CompletionItem, CompletionItemKind};
 
-    pub static COLOR_TABLE: LazyLock<Vec<(&'static str, Option<u32>)>> = LazyLock::new(|| {
-        vec![
-            // -- Invalid --
-            // Invalid hex
-            ("f0f", None),
-            ("#fof", None),
-            // Extra field
-            ("rgb(255, 0, 0, 0.0)", None),
-            ("hsl(120, 0, 0, 0.0)", None),
-            // Missing field
-            ("rgba(255, 0, 0)", None),
-            ("hsla(120, 0, 0)", None),
-            // No decimal after zero
-            ("rgba(255, 0, 0, 0)", None),
-            ("hsla(120, 0, 0, 0)", None),
-            // Decimal after one
-            ("rgba(255, 0, 0, 1.0)", None),
-            ("hsla(120, 0, 0, 1.0)", None),
-            // HEX (sRGB)
-            ("#f0f", Some(0xFF00FFFF)),
-            ("#ff0000", Some(0xFF0000FF)),
-            // RGB / RGBA (sRGB)
-            ("rgb(255, 0, 0)", Some(0xFF0000FF)),
-            ("rgba(255, 0, 0, 0.4)", Some(0xFF000066)),
-            ("rgba(255, 0, 0, 1)", Some(0xFF0000FF)),
-            ("rgb(20%, 0%, 0%)", Some(0x330000FF)),
-            ("rgba(20%, 0%, 0%, 1)", Some(0x330000FF)),
-            ("rgb(0%, 20%, 0%)", Some(0x003300FF)),
-            ("rgba(0%, 20%, 0%, 1)", Some(0x003300FF)),
-            ("rgb(0%, 0%, 20%)", Some(0x000033FF)),
-            ("rgba(0%, 0%, 20%, 1)", Some(0x000033FF)),
-            // HSL / HSLA (sRGB)
-            ("hsl(0, 100%, 50%)", Some(0xFF0000FF)),
-            ("hsl(120, 100%, 50%)", Some(0x00FF00FF)),
-            ("hsla(0, 100%, 50%, 0.0)", Some(0xFF000000)),
-            ("hsla(0, 100%, 50%, 0.4)", Some(0xFF000066)),
-            ("hsla(0, 100%, 50%, 1)", Some(0xFF0000FF)),
-            ("hsla(120, 100%, 50%, 0.0)", Some(0x00FF0000)),
-            ("hsla(120, 100%, 50%, 0.4)", Some(0x00FF0066)),
-            ("hsla(120, 100%, 50%, 1)", Some(0x00FF00FF)),
-        ]
-    });
+    pub const COLOR_TABLE: &[(&'static str, Option<u32>)] = &[
+        // -- Invalid --
+        // Invalid hex
+        ("f0f", None),
+        ("#fof", None),
+        // Extra field
+        ("rgb(255, 0, 0, 0.0)", None),
+        ("hsl(120, 0, 0, 0.0)", None),
+        // Missing field
+        ("rgba(255, 0, 0)", None),
+        ("hsla(120, 0, 0)", None),
+        // No decimal after zero
+        ("rgba(255, 0, 0, 0)", None),
+        ("hsla(120, 0, 0, 0)", None),
+        // Decimal after one
+        ("rgba(255, 0, 0, 1.0)", None),
+        ("hsla(120, 0, 0, 1.0)", None),
+        // HEX (sRGB)
+        ("#f0f", Some(0xFF00FFFF)),
+        ("#ff0000", Some(0xFF0000FF)),
+        // RGB / RGBA (sRGB)
+        ("rgb(255, 0, 0)", Some(0xFF0000FF)),
+        ("rgba(255, 0, 0, 0.4)", Some(0xFF000066)),
+        ("rgba(255, 0, 0, 1)", Some(0xFF0000FF)),
+        ("rgb(20%, 0%, 0%)", Some(0x330000FF)),
+        ("rgba(20%, 0%, 0%, 1)", Some(0x330000FF)),
+        ("rgb(0%, 20%, 0%)", Some(0x003300FF)),
+        ("rgba(0%, 20%, 0%, 1)", Some(0x003300FF)),
+        ("rgb(0%, 0%, 20%)", Some(0x000033FF)),
+        ("rgba(0%, 0%, 20%, 1)", Some(0x000033FF)),
+        // HSL / HSLA (sRGB)
+        ("hsl(0, 100%, 50%)", Some(0xFF0000FF)),
+        ("hsl(120, 100%, 50%)", Some(0x00FF00FF)),
+        ("hsla(0, 100%, 50%, 0.0)", Some(0xFF000000)),
+        ("hsla(0, 100%, 50%, 0.4)", Some(0xFF000066)),
+        ("hsla(0, 100%, 50%, 1)", Some(0xFF0000FF)),
+        ("hsla(120, 100%, 50%, 0.0)", Some(0x00FF0000)),
+        ("hsla(120, 100%, 50%, 0.4)", Some(0x00FF0066)),
+        ("hsla(120, 100%, 50%, 1)", Some(0x00FF00FF)),
+    ];
 
     #[test]
     fn can_extract_from_label() {
