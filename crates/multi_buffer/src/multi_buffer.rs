@@ -2520,7 +2520,8 @@ impl MultiBuffer {
         let mut edits = Vec::new();
 
         let mut excerpt_edits = changes.into_iter().peekable();
-        let mut delta = 0_isize;
+        let mut output_delta = 0_isize;
+        let mut excerpt_delta = 0_isize;
         while let Some((mut edit, mut operation)) = excerpt_edits.next() {
             // Keep any transforms that are before the edit.
             let mut preserved_transforms = cursor.slice(&edit.old.start, Bias::Left, &());
@@ -2568,7 +2569,7 @@ impl MultiBuffer {
                             let hunk_excerpt_end = excerpt_start
                                 + ExcerptOffset::new(hunk_buffer_range.end - excerpt_buffer_start);
                             let hunk_excerpt_old_start = ExcerptOffset::new(
-                                (hunk_excerpt_start.value as isize - delta) as usize,
+                                (hunk_excerpt_start.value as isize - excerpt_delta) as usize,
                             );
 
                             // Record edits for any hunks which are no longer present.
@@ -2581,8 +2582,9 @@ impl MultiBuffer {
                                 };
                                 if let DiffTransform::DeletedHunk { .. } = item {
                                     let old_range = cursor.start().1..cursor.end(&()).1;
-                                    let new_offset = (old_range.start as isize + delta) as usize;
-                                    delta -= (old_range.end - old_range.start) as isize;
+                                    let new_offset =
+                                        (old_range.start as isize + output_delta) as usize;
+                                    output_delta -= (old_range.end - old_range.start) as isize;
                                     let edit = Edit {
                                         old: old_range,
                                         new: new_offset..new_offset,
@@ -2665,7 +2667,7 @@ impl MultiBuffer {
                                         let old_end = old_start + previous_expanded_summary.len;
                                         let new_start = new_transforms.summary().output.len;
                                         let new_end = new_start + base_text_summary.len;
-                                        delta += base_text_summary.len as isize
+                                        output_delta += base_text_summary.len as isize
                                             - previous_expanded_summary.len as isize;
                                         let edit = Edit {
                                             old: old_start..old_end,
@@ -2702,15 +2704,15 @@ impl MultiBuffer {
                     excerpts_cursor.next(&());
                 }
 
-                let start_delta = delta;
+                let start_output_delta = output_delta;
                 while cursor.end(&()).0 <= edit.old.end {
                     let Some(item) = cursor.item() else {
                         break;
                     };
                     if let DiffTransform::DeletedHunk { .. } = item {
                         let old_range = cursor.start().1..cursor.end(&()).1;
-                        let new_offset = (old_range.start as isize + delta) as usize;
-                        delta -= (old_range.end - old_range.start) as isize;
+                        let new_offset = (old_range.start as isize + output_delta) as usize;
+                        output_delta -= (old_range.end - old_range.start) as isize;
                         let edit = Edit {
                             old: old_range,
                             new: new_offset..new_offset,
@@ -2733,10 +2735,10 @@ impl MultiBuffer {
                 if let DiffChangeKind::InputEdited = operation {
                     let edit_old_end =
                         cursor.start().1 + (edit.old.end.saturating_sub(cursor.start().0)).value;
-                    let edit_new_start = (edit_old_start as isize + start_delta) as usize;
-                    delta += (edit.new.end - edit.new.start).value as isize
+                    let edit_new_start = (edit_old_start as isize + start_output_delta) as usize;
+                    output_delta += (edit.new.end - edit.new.start).value as isize
                         - (edit.old.end - edit.old.start).value as isize;
-                    let edit_new_end = (edit_old_end as isize + delta) as usize;
+                    let edit_new_end = (edit_old_end as isize + output_delta) as usize;
                     let edit = Edit {
                         old: edit_old_start..edit_old_end,
                         new: edit_new_start..edit_new_end,
@@ -2747,6 +2749,8 @@ impl MultiBuffer {
                 if excerpt_edits.peek().map_or(false, |(next_edit, _)| {
                     next_edit.old.start < cursor.end(&()).0
                 }) {
+                    excerpt_delta += (edit.new.end - edit.new.start).value as isize
+                        - (edit.old.end - edit.old.start).value as isize;
                     (edit, operation) = excerpt_edits.next().unwrap();
                     continue;
                 }
@@ -2763,6 +2767,9 @@ impl MultiBuffer {
                 end_of_current_insert,
             );
             cursor.next(&());
+
+            excerpt_delta += (edit.new.end - edit.new.start).value as isize
+                - (edit.old.end - edit.old.start).value as isize;
         }
 
         self.append_transforms(&mut new_transforms, cursor.suffix(&()));
