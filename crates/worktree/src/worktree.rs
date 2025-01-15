@@ -306,7 +306,7 @@ impl RepositoryEntry {
 /// project root and the .git folder is located in a parent directory.
 #[derive(Clone, Debug, Ord, PartialOrd, Eq, PartialEq, Hash)]
 pub struct WorkDirectory {
-    path: Arc<Path>,
+    pub path: Arc<Path>,
 
     /// If location_in_repo is set, it means the .git folder is external
     /// and in a parent folder of the project root.

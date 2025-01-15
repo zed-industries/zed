@@ -1,4 +1,5 @@
 use crate::git_panel_settings::StatusStyle;
+use crate::repo_selector::{RepoSelector, RepoSelectorTrigger};
 use crate::{first_repository_in_project, first_worktree_repository};
 use crate::{
     git_panel_settings::GitPanelSettings, git_status_icon, CommitAllChanges, CommitChanges,
@@ -89,6 +90,7 @@ pub struct GitPanel {
     show_scrollbar: bool,
     rebuild_requested: Arc<AtomicBool>,
     git_state: Model<GitState>,
+    repo_selector: View<RepoSelector>,
     commit_editor: View<Editor>,
     /// The visible entries in the list, accounting for folding & expanded state.
     ///
@@ -117,6 +119,8 @@ impl GitPanel {
             let state = git_state.read(cx);
             state.commit_message.clone()
         };
+        let repo_selector =
+            cx.new_view(|cx| RepoSelector::new(project.clone(), git_state.clone(), cx));
 
         let git_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
             let focus_handle = cx.focus_handle();
@@ -321,6 +325,7 @@ impl GitPanel {
                 hide_scrollbar_task: None,
                 rebuild_requested,
                 commit_editor,
+                repo_selector,
                 git_state,
                 reveal_in_editor: Task::ready(()),
                 project,
@@ -1293,6 +1298,12 @@ impl Render for GitPanel {
             } else {
                 self.render_empty_state(cx).into_any_element()
             })
+            .child(
+                h_flex()
+                    .w_full()
+                    .flex_none()
+                    .child(RepoSelectorTrigger::new(self.git_state.clone())),
+            )
             .child(self.render_divider(cx))
             .child(self.render_commit_editor(cx))
     }

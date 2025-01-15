@@ -14,6 +14,7 @@ use worktree::RepositoryEntry;
 
 pub mod git_panel;
 mod git_panel_settings;
+mod repo_selector;
 
 actions!(
     git,

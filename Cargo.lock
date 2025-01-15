@@ -5121,6 +5121,7 @@ dependencies = [
  "gpui",
  "language",
  "menu",
+ "picker",
  "project",
  "schemars",
  "serde",
