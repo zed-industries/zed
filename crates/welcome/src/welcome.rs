@@ -5,8 +5,6 @@ mod multibuffer_hint;
 use client::Client;
 use client::{telemetry::Telemetry, TelemetrySettings};
 use db::kvp::KEY_VALUE_STORE;
-use feature_flags::FeatureFlagAppExt;
-use feature_flags::ZedPro;
 use gpui::{
     actions, svg, Action, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement,
     ParentElement, Render, Styled, Subscription, Task, View, ViewContext, VisualContext, WeakView,
@@ -168,7 +166,7 @@ impl Render for WelcomePage {
                                             })),
                                     )
                                     .child({
-                                        if cx.has_flag::<ZedPro>() && self.is_signed_out {
+                                        if self.is_signed_out {
                                             Button::new(
                                                 "sign-in-to-enable-zed-ai",
                                                 "Sign in to enable Zed AI",

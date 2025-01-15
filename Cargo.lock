@@ -14989,7 +14989,6 @@ dependencies = [
  "copilot",
  "db",
  "editor",
- "feature_flags",
  "fuzzy",
  "gpui",
  "install_cli",

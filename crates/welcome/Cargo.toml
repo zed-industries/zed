@@ -19,7 +19,6 @@ anyhow.workspace = true
 client.workspace = true
 copilot.workspace = true
 db.workspace = true
-feature_flags.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
 install_cli.workspace = true
