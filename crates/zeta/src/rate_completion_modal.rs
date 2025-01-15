@@ -1,12 +1,12 @@
 use crate::{CompletionDiffElement, InlineCompletion, InlineCompletionRating, Zeta};
 use editor::Editor;
 use gpui::{
-    actions, point, prelude::*, AppContext, Corner, DismissEvent, EventEmitter, FocusHandle,
-    FocusableView, Model, View, ViewContext,
+    actions, prelude::*, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
+    View, ViewContext,
 };
 use language::language_settings;
 use std::time::Duration;
-use ui::{prelude::*, KeyBinding, List, ListItem, ListItemSpacing, PopoverMenu, Tooltip};
+use ui::{prelude::*, KeyBinding, List, ListItem, ListItemSpacing, Tooltip};
 use workspace::{ModalView, Workspace};
 
 actions!(
@@ -37,6 +37,7 @@ pub struct RateCompletionModal {
     selected_index: usize,
     focus_handle: FocusHandle,
     _subscription: gpui::Subscription,
+    current_view: RateCompletionView,
 }
 
 struct ActiveCompletion {
@@ -44,30 +45,45 @@ struct ActiveCompletion {
     feedback_editor: View<Editor>,
 }
 
-struct RawPromptDetails {
-    raw_prompt_details: SharedString,
+// struct RawPromptDetails {
+//     raw_prompt_details: SharedString,
+// }
+
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+enum RateCompletionView {
+    SuggestedEdits,
+    RawInput,
 }
 
-impl Render for RawPromptDetails {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        div()
-            .id("raw-prompt-details")
-            .p_4()
-            .elevation_2(cx)
-            .max_h_96()
-            .max_w(px(600.))
-            .overflow_scroll()
-            .child(self.raw_prompt_details.clone())
+impl RateCompletionView {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::SuggestedEdits => "Suggested Edits",
+            Self::RawInput => "Raw Input",
+        }
     }
 }
 
-impl EventEmitter<DismissEvent> for RawPromptDetails {}
+// impl Render for RawPromptDetails {
+//     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+//         div()
+//             .id("raw-prompt-details")
+//             .p_4()
+//             .elevation_2(cx)
+//             .max_h_96()
+//             .max_w(px(600.))
+//             .overflow_scroll()
+//             .child(self.raw_prompt_details.clone())
+//     }
+// }
 
-impl FocusableView for RawPromptDetails {
-    fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
-        cx.focus_handle()
-    }
-}
+// impl EventEmitter<DismissEvent> for RawPromptDetails {}
+
+// impl FocusableView for RawPromptDetails {
+//     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
+//         cx.focus_handle()
+//     }
+// }
 
 impl RateCompletionModal {
     pub fn toggle(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
@@ -85,6 +101,7 @@ impl RateCompletionModal {
             focus_handle: cx.focus_handle(),
             active_completion: None,
             _subscription: subscription,
+            current_view: RateCompletionView::SuggestedEdits,
         }
     }
 
@@ -291,6 +308,87 @@ impl RateCompletionModal {
         cx.notify();
     }
 
+    fn render_view_nav(&self, cx: &ViewContext<Self>) -> impl IntoElement {
+        h_flex()
+            .h_8()
+            .px_2()
+            .border_b_1()
+            .border_color(cx.theme().colors().border)
+            .gap_1()
+            .child(
+                Button::new(
+                    ElementId::Name("suggested-edits".into()),
+                    RateCompletionView::SuggestedEdits.name(),
+                )
+                .label_size(LabelSize::Small)
+                .on_click(cx.listener(move |this, _, cx| {
+                    this.current_view = RateCompletionView::SuggestedEdits;
+                    cx.notify();
+                }))
+                .toggle_state(self.current_view == RateCompletionView::SuggestedEdits),
+            )
+            .child(
+                Button::new(
+                    ElementId::Name("raw-input".into()),
+                    RateCompletionView::RawInput.name(),
+                )
+                .label_size(LabelSize::Small)
+                .on_click(cx.listener(move |this, _, cx| {
+                    this.current_view = RateCompletionView::RawInput;
+                    cx.notify();
+                }))
+                .toggle_state(self.current_view == RateCompletionView::RawInput),
+            )
+    }
+
+    fn render_suggested_edits(&self, cx: &mut ViewContext<Self>) -> Option<gpui::Stateful<Div>> {
+        let active_completion = self.active_completion.as_ref()?;
+        let bg_color = cx.theme().colors().editor_background;
+
+        Some(
+            div()
+                .id("diff")
+                .py_4()
+                .px_6()
+                .size_full()
+                .bg(bg_color)
+                .overflow_scroll()
+                .whitespace_nowrap()
+                .child(CompletionDiffElement::new(
+                    &active_completion.completion,
+                    cx,
+                )),
+        )
+    }
+
+    fn render_raw_input(&self, cx: &mut ViewContext<Self>) -> Option<gpui::Stateful<Div>> {
+        Some(
+            v_flex()
+                .size_full()
+                .overflow_hidden()
+                .relative()
+                .child(
+                    div()
+                        .id("raw-input")
+                        .py_4()
+                        .px_6()
+                        .size_full()
+                        .bg(cx.theme().colors().editor_background)
+                        .overflow_scroll()
+                        .child(if let Some(active_completion) = &self.active_completion {
+                            format!(
+                                "{}\n{}",
+                                active_completion.completion.input_events,
+                                active_completion.completion.input_excerpt
+                            )
+                        } else {
+                            "No active completion".to_string()
+                        }),
+                )
+                .id("raw-input-view"),
+        )
+    }
+
     fn render_active_completion(&mut self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
         let active_completion = self.active_completion.as_ref()?;
         let completion_id = active_completion.completion.id;
@@ -308,10 +406,10 @@ impl RateCompletionModal {
 
         let label_container = h_flex().pl_1().gap_1p5();
 
-        let raw_prompt_details = SharedString::from(format!(
-            "{}\n{}",
-            active_completion.completion.input_events, active_completion.completion.input_excerpt
-        ));
+        // let raw_prompt_details = SharedString::from(format!(
+        //     "{}\n{}",
+        //     active_completion.completion.input_events, active_completion.completion.input_excerpt
+        // ));
 
         Some(
             v_flex()
@@ -319,47 +417,15 @@ impl RateCompletionModal {
                 .overflow_hidden()
                 .relative()
                 .child(
-                    h_flex()
-                        .px_2()
-                        .py_1()
-                        .justify_between()
-                        .border_b_1()
-                        .border_color(border_color)
-                        .child(
-                            Label::new("Suggested Edits")
-                                .size(LabelSize::Small),
-                        )
-                        .child(
-                            PopoverMenu::new("raw-input-menu")
-                                .anchor(Corner::TopRight)
-                                .offset(point(
-                                    px(0.),
-                                    px(4.),
-                                ))
-                                .trigger(
-                                    Button::new("details", "View Raw Input")
-                                        .color(Color::Muted)
-                                        .size(ButtonSize::Compact)
-                                )
-                                .menu(move |cx| {
-                                    Some(cx.new_view(|_| {
-                                        RawPromptDetails {
-                                            raw_prompt_details: raw_prompt_details.clone()
-                                        }
-                                    }))
-                                }),
-                        )
-                )
-                .child(
-                    div()
-                        .id("diff")
-                        .py_4()
-                        .px_6()
+                    v_flex()
                         .size_full()
-                        .bg(bg_color)
-                        .overflow_scroll()
-                        .whitespace_nowrap()
-                        .child(CompletionDiffElement::new(&active_completion.completion, cx)),
+                        .overflow_hidden()
+                        .relative()
+                        .child(self.render_view_nav(cx))
+                        .when_some(match self.current_view {
+                            RateCompletionView::SuggestedEdits => self.render_suggested_edits(cx),
+                            RateCompletionView::RawInput => self.render_raw_input(cx),
+                        }, |this, element| this.child(element))
                 )
                 .when(!rated, |this| {
                     this.child(
@@ -502,16 +568,16 @@ impl Render for RateCompletionModal {
             .shadow_lg()
             .child(
                 v_flex()
-                    .border_r_1()
-                    .border_color(border_color)
                     .w_72()
                     .h_full()
+                    .border_r_1()
+                    .border_color(border_color)
                     .flex_shrink_0()
                     .overflow_hidden()
                     .child(
                         h_flex()
+                            .h_8()
                             .px_2()
-                            .py_1()
                             .justify_between()
                             .border_b_1()
                             .border_color(border_color)
