@@ -72,16 +72,16 @@ pub fn init(
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
     cx.observe_new_views(|_, cx| {
+        let workspace = cx.view().clone();
+        InlineAssistant::update_global(cx, |inline_assistant, cx| {
+            inline_assistant.register_workspace(&workspace, cx)
+        });
+
         cx.observe_flag::<Assistant2FeatureFlag, _>({
             |is_assistant2_enabled, _view, cx| {
-                if is_assistant2_enabled {
-                    // Assistant2 enabled, nothing to do for Assistant1.
-                } else {
-                    let workspace = cx.view().clone();
-                    InlineAssistant::update_global(cx, |inline_assistant, cx| {
-                        inline_assistant.register_workspace(&workspace, cx)
-                    })
-                }
+                InlineAssistant::update_global(cx, |inline_assistant, _cx| {
+                    inline_assistant.is_assistant2_enabled = is_assistant2_enabled;
+                });
             }
         })
         .detach();
@@ -102,6 +102,7 @@ pub struct InlineAssistant {
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Arc<Telemetry>,
     fs: Arc<dyn Fs>,
+    is_assistant2_enabled: bool,
 }
 
 impl Global for InlineAssistant {}
@@ -123,6 +124,7 @@ impl InlineAssistant {
             prompt_builder,
             telemetry,
             fs,
+            is_assistant2_enabled: false,
         }
     }
 
@@ -183,15 +185,22 @@ impl InlineAssistant {
         item: &dyn ItemHandle,
         cx: &mut WindowContext,
     ) {
+        let is_assistant2_enabled = self.is_assistant2_enabled;
+
         if let Some(editor) = item.act_as::<Editor>(cx) {
             editor.update(cx, |editor, cx| {
-                editor.push_code_action_provider(
-                    Rc::new(AssistantCodeActionProvider {
-                        editor: cx.view().downgrade(),
-                        workspace: workspace.downgrade(),
-                    }),
-                    cx,
-                );
+                if is_assistant2_enabled {
+                    editor
+                        .remove_code_action_provider(ASSISTANT_CODE_ACTION_PROVIDER_ID.into(), cx);
+                } else {
+                    editor.add_code_action_provider(
+                        Rc::new(AssistantCodeActionProvider {
+                            editor: cx.view().downgrade(),
+                            workspace: workspace.downgrade(),
+                        }),
+                        cx,
+                    );
+                }
             });
         }
     }
@@ -3437,7 +3446,13 @@ struct AssistantCodeActionProvider {
     workspace: WeakView<Workspace>,
 }
 
+const ASSISTANT_CODE_ACTION_PROVIDER_ID: &str = "assistant";
+
 impl CodeActionProvider for AssistantCodeActionProvider {
+    fn id(&self) -> Arc<str> {
+        ASSISTANT_CODE_ACTION_PROVIDER_ID.into()
+    }
+
     fn code_actions(
         &self,
         buffer: &Model<Buffer>,

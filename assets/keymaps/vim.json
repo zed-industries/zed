@@ -391,6 +391,9 @@
     "bindings": {
       "w": "vim::Word",
       "shift-w": ["vim::Word", { "ignorePunctuation": true }],
+      // Subword TextObject
+      // "w": "vim::Subword",
+      // "shift-w": ["vim::Subword", { "ignorePunctuation": true }],
       "t": "vim::Tag",
       "s": "vim::Sentence",
       "p": "vim::Paragraph",

@@ -2,9 +2,33 @@ use crate::repository::{GitFileStatus, RepoPath};
 use anyhow::{anyhow, Result};
 use std::{path::Path, process::Stdio, sync::Arc};
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct GitStatusPair {
+    // Not both `None`.
+    pub index_status: Option<GitFileStatus>,
+    pub worktree_status: Option<GitFileStatus>,
+}
+
+impl GitStatusPair {
+    pub fn is_staged(&self) -> Option<bool> {
+        match (self.index_status, self.worktree_status) {
+            (Some(_), None) => Some(true),
+            (None, Some(_)) => Some(false),
+            (Some(GitFileStatus::Untracked), Some(GitFileStatus::Untracked)) => Some(false),
+            (Some(_), Some(_)) => None,
+            (None, None) => unreachable!(),
+        }
+    }
+
+    // TODO reconsider uses of this
+    pub fn combined(&self) -> GitFileStatus {
+        self.index_status.or(self.worktree_status).unwrap()
+    }
+}
+
 #[derive(Clone)]
 pub struct GitStatus {
-    pub entries: Arc<[(RepoPath, GitFileStatus)]>,
+    pub entries: Arc<[(RepoPath, GitStatusPair)]>,
 }
 
 impl GitStatus {
@@ -20,6 +44,7 @@ impl GitStatus {
                 "status",
                 "--porcelain=v1",
                 "--untracked-files=all",
+                "--no-renames",
                 "-z",
             ])
             .args(path_prefixes.iter().map(|path_prefix| {
@@ -47,35 +72,31 @@ impl GitStatus {
         let mut entries = stdout
             .split('\0')
             .filter_map(|entry| {
-                if entry.is_char_boundary(3) {
-                    let (status, path) = entry.split_at(3);
-                    let status = status.trim();
-                    Some((
-                        RepoPath(Path::new(path).into()),
-                        match status {
-                            "A" => GitFileStatus::Added,
-                            "M" => GitFileStatus::Modified,
-                            "D" => GitFileStatus::Deleted,
-                            "??" => GitFileStatus::Untracked,
-                            _ => return None,
-                        },
-                    ))
-                } else {
-                    None
+                let sep = entry.get(2..3)?;
+                if sep != " " {
+                    return None;
+                };
+                let path = &entry[3..];
+                let status = entry[0..2].as_bytes();
+                let index_status = GitFileStatus::from_byte(status[0]);
+                let worktree_status = GitFileStatus::from_byte(status[1]);
+                if (index_status, worktree_status) == (None, None) {
+                    return None;
                 }
+                let path = RepoPath(Path::new(path).into());
+                Some((
+                    path,
+                    GitStatusPair {
+                        index_status,
+                        worktree_status,
+                    },
+                ))
             })
             .collect::<Vec<_>>();
-        entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(&b));
         Ok(Self {
             entries: entries.into(),
         })
-    }
-
-    pub fn get(&self, path: &Path) -> Option<GitFileStatus> {
-        self.entries
-            .binary_search_by(|(repo_path, _)| repo_path.0.as_ref().cmp(path))
-            .ok()
-            .map(|index| self.entries[index].1)
     }
 }
 

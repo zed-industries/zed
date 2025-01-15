@@ -1221,7 +1221,7 @@ impl RandomizedTest for ProjectCollaborationTest {
                                         id,
                                         guest_project.remote_id(),
                                     );
-                                    assert_eq!(guest_snapshot.repositories().collect::<Vec<_>>(), host_snapshot.repositories().collect::<Vec<_>>(),
+                                    assert_eq!(guest_snapshot.repositories().iter().collect::<Vec<_>>(), host_snapshot.repositories().iter().collect::<Vec<_>>(),
                                         "{} has different repositories than the host for worktree {:?} and project {:?}",
                                         client.username,
                                         host_snapshot.abs_path(),

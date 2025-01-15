@@ -1,56 +1,216 @@
 use ::settings::Settings;
-use git::repository::GitFileStatus;
-use gpui::{actions, AppContext, Context, Global, Hsla, Model};
-use settings::GitPanelSettings;
+use collections::HashMap;
+use futures::channel::mpsc;
+use futures::StreamExt as _;
+use git::repository::{GitFileStatus, GitRepository, RepoPath};
+use git_panel_settings::GitPanelSettings;
+use gpui::{actions, AppContext, Context, Global, Hsla, Model, ModelContext};
+use project::{Project, WorktreeId};
+use std::sync::Arc;
+use sum_tree::SumTree;
 use ui::{Color, Icon, IconName, IntoElement, SharedString};
+use util::ResultExt as _;
+use worktree::RepositoryEntry;
 
 pub mod git_panel;
-mod settings;
+mod git_panel_settings;
 
 actions!(
-    git_ui,
+    git,
     [
+        StageFile,
+        UnstageFile,
+        ToggleStaged,
+        // Revert actions are currently in the editor crate:
+        // editor::RevertFile,
+        // editor::RevertSelectedHunks
         StageAll,
         UnstageAll,
         RevertAll,
-        CommitStagedChanges,
+        CommitChanges,
         CommitAllChanges,
-        ClearMessage
+        ClearCommitMessage
     ]
 );
 
 pub fn init(cx: &mut AppContext) {
     GitPanelSettings::register(cx);
-    let git_state = cx.new_model(|_cx| GitState::new());
+    let git_state = cx.new_model(GitState::new);
     cx.set_global(GlobalGitState(git_state));
+}
+
+#[derive(Default, Debug, PartialEq, Eq, Clone)]
+pub enum GitViewMode {
+    #[default]
+    List,
+    Tree,
 }
 
 struct GlobalGitState(Model<GitState>);
 
 impl Global for GlobalGitState {}
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum StatusAction {
+    Stage,
+    Unstage,
+}
+
 pub struct GitState {
+    /// The current commit message being composed.
     commit_message: Option<SharedString>,
+
+    /// When a git repository is selected, this is used to track which repository's changes
+    /// are currently being viewed or modified in the UI.
+    active_repository: Option<(WorktreeId, RepositoryEntry, Arc<dyn GitRepository>)>,
+
+    updater_tx: mpsc::UnboundedSender<(Arc<dyn GitRepository>, Vec<RepoPath>, StatusAction)>,
+
+    all_repositories: HashMap<WorktreeId, SumTree<RepositoryEntry>>,
+
+    list_view_mode: GitViewMode,
 }
 
 impl GitState {
-    pub fn new() -> Self {
+    pub fn new(cx: &mut ModelContext<'_, Self>) -> Self {
+        let (updater_tx, mut updater_rx) =
+            mpsc::unbounded::<(Arc<dyn GitRepository>, Vec<RepoPath>, StatusAction)>();
+        cx.spawn(|_, cx| async move {
+            while let Some((git_repo, paths, action)) = updater_rx.next().await {
+                cx.background_executor()
+                    .spawn(async move {
+                        match action {
+                            StatusAction::Stage => git_repo.stage_paths(&paths),
+                            StatusAction::Unstage => git_repo.unstage_paths(&paths),
+                        }
+                    })
+                    .await
+                    .log_err();
+            }
+        })
+        .detach();
         GitState {
             commit_message: None,
+            active_repository: None,
+            updater_tx,
+            list_view_mode: GitViewMode::default(),
+            all_repositories: HashMap::default(),
         }
-    }
-
-    pub fn set_message(&mut self, message: Option<SharedString>) {
-        self.commit_message = message;
-    }
-
-    pub fn clear_message(&mut self) {
-        self.commit_message = None;
     }
 
     pub fn get_global(cx: &mut AppContext) -> Model<GitState> {
         cx.global::<GlobalGitState>().0.clone()
     }
+
+    pub fn activate_repository(
+        &mut self,
+        worktree_id: WorktreeId,
+        active_repository: RepositoryEntry,
+        git_repo: Arc<dyn GitRepository>,
+    ) {
+        self.active_repository = Some((worktree_id, active_repository, git_repo));
+    }
+
+    pub fn active_repository(
+        &self,
+    ) -> Option<&(WorktreeId, RepositoryEntry, Arc<dyn GitRepository>)> {
+        self.active_repository.as_ref()
+    }
+
+    pub fn commit_message(&mut self, message: Option<SharedString>) {
+        self.commit_message = message;
+    }
+
+    pub fn clear_commit_message(&mut self) {
+        self.commit_message = None;
+    }
+
+    pub fn stage_entry(&mut self, repo_path: RepoPath) {
+        if let Some((_, _, git_repo)) = self.active_repository.as_ref() {
+            let _ = self.updater_tx.unbounded_send((
+                git_repo.clone(),
+                vec![repo_path],
+                StatusAction::Stage,
+            ));
+        }
+    }
+
+    pub fn unstage_entry(&mut self, repo_path: RepoPath) {
+        if let Some((_, _, git_repo)) = self.active_repository.as_ref() {
+            let _ = self.updater_tx.unbounded_send((
+                git_repo.clone(),
+                vec![repo_path],
+                StatusAction::Unstage,
+            ));
+        }
+    }
+
+    pub fn stage_entries(&mut self, entries: Vec<RepoPath>) {
+        if let Some((_, _, git_repo)) = self.active_repository.as_ref() {
+            let _ =
+                self.updater_tx
+                    .unbounded_send((git_repo.clone(), entries, StatusAction::Stage));
+        }
+    }
+
+    fn act_on_all(&mut self, action: StatusAction) {
+        if let Some((_, active_repository, git_repo)) = self.active_repository.as_ref() {
+            let _ = self.updater_tx.unbounded_send((
+                git_repo.clone(),
+                active_repository
+                    .status()
+                    .map(|entry| entry.repo_path)
+                    .collect(),
+                action,
+            ));
+        }
+    }
+
+    pub fn stage_all(&mut self) {
+        self.act_on_all(StatusAction::Stage);
+    }
+
+    pub fn unstage_all(&mut self) {
+        self.act_on_all(StatusAction::Unstage);
+    }
+}
+
+pub fn first_worktree_repository(
+    project: &Model<Project>,
+    worktree_id: WorktreeId,
+    cx: &mut AppContext,
+) -> Option<(RepositoryEntry, Arc<dyn GitRepository>)> {
+    project
+        .read(cx)
+        .worktree_for_id(worktree_id, cx)
+        .and_then(|worktree| {
+            let snapshot = worktree.read(cx).snapshot();
+            let repo = snapshot.repositories().iter().next()?.clone();
+            let git_repo = worktree
+                .read(cx)
+                .as_local()?
+                .get_local_repo(&repo)?
+                .repo()
+                .clone();
+            Some((repo, git_repo))
+        })
+}
+
+pub fn first_repository_in_project(
+    project: &Model<Project>,
+    cx: &mut AppContext,
+) -> Option<(WorktreeId, RepositoryEntry, Arc<dyn GitRepository>)> {
+    project.read(cx).worktrees(cx).next().and_then(|worktree| {
+        let snapshot = worktree.read(cx).snapshot();
+        let repo = snapshot.repositories().iter().next()?.clone();
+        let git_repo = worktree
+            .read(cx)
+            .as_local()?
+            .get_local_repo(&repo)?
+            .repo()
+            .clone();
+        Some((snapshot.id(), repo, git_repo))
+    })
 }
 
 const ADDED_COLOR: Hsla = Hsla {

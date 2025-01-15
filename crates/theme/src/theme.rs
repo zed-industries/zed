@@ -11,6 +11,7 @@
 mod default_colors;
 mod fallback_themes;
 mod font_family_cache;
+mod icon_theme;
 mod registry;
 mod scale;
 mod schema;
@@ -32,6 +33,7 @@ use uuid::Uuid;
 
 pub use crate::default_colors::*;
 pub use crate::font_family_cache::*;
+pub use crate::icon_theme::*;
 pub use crate::registry::*;
 pub use crate::scale::*;
 pub use crate::schema::*;
