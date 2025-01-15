@@ -751,7 +751,7 @@ impl Path<Pixels> {
         self.current = to;
     }
 
-    fn push_triangle(
+    pub(crate) fn push_triangle(
         &mut self,
         xy: (Point<Pixels>, Point<Pixels>, Point<Pixels>),
         st: (Point<f32>, Point<f32>, Point<f32>),

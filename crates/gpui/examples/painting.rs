@@ -1,85 +1,61 @@
 use gpui::{
-    canvas, div, point, prelude::*, px, rgb, size, App, AppContext, Bounds, Hsla, MouseDownEvent,
-    Path, Pixels, Point, Render, ViewContext, WindowContext, WindowOptions,
+    canvas, div, linear_color_stop, linear_gradient, point, prelude::*, px, rgb, size, App,
+    AppContext, Background, Bounds, ColorSpace, FillOptions, MouseDownEvent, Path, PathBuilder,
+    Pixels, Point, Render, StrokeOptions, ViewContext, WindowContext, WindowOptions,
 };
 
 struct PaintingViewer {
-    default_lines: Vec<(Path<Pixels>, Hsla)>,
+    default_lines: Vec<(Path<Pixels>, Background)>,
     lines: Vec<Vec<Point<Pixels>>>,
     start: Point<Pixels>,
     _painting: bool,
 }
 
-/// Build tiny-skia PathBuilder into a Path with stroke
-fn stroke_path(
-    builder: tiny_skia::PathBuilder,
-    stroke: &tiny_skia::Stroke,
-    cx: &WindowContext,
-) -> Option<Path<Pixels>> {
-    let skia_path = builder.finish()?;
-    let skia_path = skia_path.stroke(stroke, cx.scale_factor())?;
-    let first_p = skia_path.points().first()?;
-    let mut path = Path::new(point(px(first_p.x), px(first_p.y)));
-    for segment in skia_path.segments() {
-        match segment {
-            tiny_skia::PathSegment::MoveTo(p) => {
-                path.move_to(point(px(p.x), px(p.y)));
-            }
-            tiny_skia::PathSegment::LineTo(p) => {
-                path.line_to(point(px(p.x), px(p.y)));
-            }
-            tiny_skia::PathSegment::QuadTo(p1, p2) => {
-                path.curve_to(point(px(p1.x), px(p1.y)), point(px(p2.x), px(p2.y)));
-            }
-            tiny_skia::PathSegment::CubicTo(_p1, _p2, _p3) => {
-                // TODO: convert cubic to quadratic
-            }
-            _ => {}
-        }
-    }
-    Some(path)
-}
-
 impl PaintingViewer {
-    fn new(cx: &WindowContext) -> Self {
+    fn new(_: &WindowContext) -> Self {
         let mut lines = vec![];
 
         // draw a line
-        let stroke = tiny_skia::Stroke {
-            width: 4.0,
-            ..Default::default()
-        };
-        let mut builder = tiny_skia::PathBuilder::new();
-        builder.move_to(50.0, 180.);
-        builder.line_to(100.0, 120.);
-        let path = stroke_path(builder, &stroke, cx).unwrap();
-        let mut builder = tiny_skia::PathBuilder::new();
-        lines.push((path, rgb(0xdc2626).into()));
-        builder.move_to(50.0, 120.);
-        builder.line_to(100.0, 180.);
-        let path = stroke_path(builder, &stroke, cx).unwrap();
+        let mut builder = PathBuilder::stroke(StrokeOptions::default().with_line_width(1.0));
+        builder.move_to(point(px(50.), px(180.)));
+        builder.line_to(point(px(100.), px(120.)));
+        builder.move_to(point(px(50.), px(120.)));
+        builder.line_to(point(px(100.), px(180.)));
+        let path = builder.build().unwrap();
         lines.push((path, rgb(0xdc2626).into()));
 
         // draw a lightening bolt ⚡
-        let mut path = Path::new(point(px(150.), px(200.)));
-        path.line_to(point(px(200.), px(125.)));
-        path.line_to(point(px(200.), px(175.)));
-        path.line_to(point(px(250.), px(100.)));
+        let mut builder = PathBuilder::fill(FillOptions::default());
+        builder.move_to(point(px(150.), px(200.)));
+        builder.line_to(point(px(200.), px(125.)));
+        builder.line_to(point(px(200.), px(175.)));
+        builder.line_to(point(px(250.), px(100.)));
+        let path = builder.build().unwrap();
         lines.push((path, rgb(0x1d4ed8).into()));
 
         // draw a ⭐
-        let mut path = Path::new(point(px(350.), px(100.)));
-        path.line_to(point(px(370.), px(160.)));
-        path.line_to(point(px(430.), px(160.)));
-        path.line_to(point(px(380.), px(200.)));
-        path.line_to(point(px(400.), px(260.)));
-        path.line_to(point(px(350.), px(220.)));
-        path.line_to(point(px(300.), px(260.)));
-        path.line_to(point(px(320.), px(200.)));
-        path.line_to(point(px(270.), px(160.)));
-        path.line_to(point(px(330.), px(160.)));
-        path.line_to(point(px(350.), px(100.)));
-        lines.push((path, rgb(0xfacc15).into()));
+        let mut builder = PathBuilder::fill(FillOptions::default());
+        builder.move_to(point(px(350.), px(100.)));
+        builder.line_to(point(px(370.), px(160.)));
+        builder.line_to(point(px(430.), px(160.)));
+        builder.line_to(point(px(380.), px(200.)));
+        builder.line_to(point(px(400.), px(260.)));
+        builder.line_to(point(px(350.), px(220.)));
+        builder.line_to(point(px(300.), px(260.)));
+        builder.line_to(point(px(320.), px(200.)));
+        builder.line_to(point(px(270.), px(160.)));
+        builder.line_to(point(px(330.), px(160.)));
+        builder.line_to(point(px(350.), px(100.)));
+        let path = builder.build().unwrap();
+        lines.push((
+            path,
+            linear_gradient(
+                180.,
+                linear_color_stop(rgb(0xFACC15), 0.7),
+                linear_color_stop(rgb(0xD56D0C), 1.),
+            )
+            .color_space(ColorSpace::Oklab),
+        ));
 
         let square_bounds = Bounds {
             origin: point(px(450.), px(100.)),
@@ -88,39 +64,42 @@ impl PaintingViewer {
         let height = square_bounds.size.height;
         let horizontal_offset = height;
         let vertical_offset = px(30.);
-        let mut path = Path::new(square_bounds.bottom_left());
-        path.curve_to(
+        let mut builder = PathBuilder::fill(FillOptions::default());
+        builder.move_to(square_bounds.bottom_left());
+        builder.curve_to(
             square_bounds.origin + point(horizontal_offset, vertical_offset),
             square_bounds.origin + point(px(0.0), vertical_offset),
         );
-        path.line_to(square_bounds.top_right() + point(-horizontal_offset, vertical_offset));
-        path.curve_to(
+        builder.line_to(square_bounds.top_right() + point(-horizontal_offset, vertical_offset));
+        builder.curve_to(
             square_bounds.bottom_right(),
             square_bounds.top_right() + point(px(0.0), vertical_offset),
         );
-        path.line_to(square_bounds.bottom_left());
-        lines.push((path, rgb(0x16a34a).into()));
+        builder.line_to(square_bounds.bottom_left());
+        let path = builder.build().unwrap();
+        lines.push((
+            path,
+            linear_gradient(
+                90.,
+                linear_color_stop(gpui::blue(), 0.4),
+                linear_color_stop(gpui::red(), 1.),
+            ),
+        ));
 
         // draw a wave
-        let mut builder = tiny_skia::PathBuilder::new();
-        builder.move_to(40.0, 320.);
-        for i in 0..80 {
-            builder.line_to(
-                40.0 + i as f32 * 10.0,
-                320.0 + (i as f32 * 10.0).sin() * 40.0,
-            );
+        let options = StrokeOptions::default()
+            .with_line_width(1.)
+            .with_line_join(lyon::path::LineJoin::Bevel);
+        let mut builder = PathBuilder::stroke(options);
+        builder.move_to(point(px(40.), px(320.)));
+        for i in 0..50 {
+            builder.line_to(point(
+                px(40.0 + i as f32 * 10.0),
+                px(320.0 + (i as f32 * 10.0).sin() * 40.0),
+            ));
         }
-        let path = stroke_path(
-            builder,
-            &tiny_skia::Stroke {
-                width: 1.0,
-                line_cap: tiny_skia::LineCap::Round,
-                ..Default::default()
-            },
-            cx,
-        )
-        .unwrap();
-        lines.push((path, rgb(0xe00b00).into()));
+        let path = builder.build().unwrap();
+        lines.push((path, gpui::green().into()));
 
         Self {
             default_lines: lines.clone(),
@@ -180,24 +159,20 @@ impl Render for PaintingViewer {
                                     cx.paint_path(path, color);
                                 }
 
-                                let stroke = tiny_skia::Stroke {
-                                    width: 1.0,
-                                    ..Default::default()
-                                };
-
                                 for points in lines {
                                     if points.len() < 2 {
                                         continue;
                                     }
 
-                                    let mut builder = tiny_skia::PathBuilder::new();
-                                    let first_p = points.first().unwrap();
-                                    builder.move_to(first_p.x.0, first_p.y.0);
-                                    for p in points.iter().skip(1) {
-                                        builder.line_to(p.x.0, p.y.0);
+                                    let mut builder = PathBuilder::stroke(StrokeOptions::default().with_line_width(1.0));
+                                    for (i, p) in points.into_iter().enumerate() {
+                                        if i == 0 {
+                                            builder.move_to(p);
+                                        } else {
+                                            builder.line_to(p);
+                                        }
                                     }
-
-                                    if let Some(path) = stroke_path(builder, &stroke, cx) {
+                                    if let Ok(path) = builder.build() {
                                         cx.paint_path(path, gpui::black());
                                     }
                                 }
