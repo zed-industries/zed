@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use call::{ActiveCall, ParticipantLocation, Room};
 use client::{proto::PeerId, User};
-use gpui::{actions, AppContext, Task, WindowContext};
-use gpui::{canvas, point, AnyElement, Hsla, IntoElement, MouseButton, Path, Styled};
+use gpui::{actions, AppContext, PathBuilder, Task, WindowContext};
+use gpui::{canvas, point, AnyElement, Hsla, IntoElement, MouseButton, Styled};
 use rpc::proto::{self};
 use theme::ActiveTheme;
 use ui::{prelude::*, Avatar, AvatarAudioStatusIndicator, Facepile, TintColor, Tooltip};
@@ -73,18 +73,21 @@ fn render_color_ribbon(color: Hsla) -> impl Element {
             let height = bounds.size.height;
             let horizontal_offset = height;
             let vertical_offset = px(height.0 / 2.0);
-            let mut path = Path::new(bounds.bottom_left());
-            path.curve_to(
+            let mut builder = PathBuilder::fill();
+            builder.move_to(bounds.bottom_left());
+            builder.curve_to(
                 bounds.origin + point(horizontal_offset, vertical_offset),
                 bounds.origin + point(px(0.0), vertical_offset),
             );
-            path.line_to(bounds.top_right() + point(-horizontal_offset, vertical_offset));
-            path.curve_to(
+            builder.line_to(bounds.top_right() + point(-horizontal_offset, vertical_offset));
+            builder.curve_to(
                 bounds.bottom_right(),
                 bounds.top_right() + point(px(0.0), vertical_offset),
             );
-            path.line_to(bounds.bottom_left());
-            cx.paint_path(path, color);
+            builder.line_to(bounds.bottom_left());
+            if let Ok(path) = builder.build() {
+                cx.paint_path(path, color);
+            }
         },
     )
     .h_1()
