@@ -674,7 +674,7 @@ pub fn init(assets: impl AssetSource, cx: &mut AppContext) {
                 return;
             };
 
-            outline_panel.update(cx, |panel, cx| panel.next_position(cx));
+            outline_panel.update(cx, |panel, cx| panel.move_to_next_position(cx));
         });
     })
     .detach();

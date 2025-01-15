@@ -63,7 +63,7 @@ pub fn init(cx: &mut AppContext) {
                     return;
                 };
 
-                terminal_panel.update(cx, |panel, cx| panel.next_position(cx));
+                terminal_panel.update(cx, |panel, cx| panel.move_to_next_position(cx));
             });
         },
     )
