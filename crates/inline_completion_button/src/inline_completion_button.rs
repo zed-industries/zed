@@ -208,10 +208,6 @@ impl Render for InlineCompletionButton {
                     return div();
                 }
 
-                let this = cx.view().clone();
-                let button = IconButton::new("zeta", IconName::ZedPredict)
-                    .tooltip(|cx| Tooltip::text("Edit Prediction", cx));
-
                 if !self
                     .user_store
                     .read(cx)
@@ -221,14 +217,22 @@ impl Render for InlineCompletionButton {
                     let workspace = self.workspace.clone();
                     let user_store = self.user_store.clone();
 
-                    return div().child(button.on_click(cx.listener(move |_, _, cx| {
-                        let user_store = user_store.clone();
+                    return div().child(
+                        IconButton::new("zeta", IconName::ZedPredict)
+                            .tooltip(|cx| Tooltip::text("Accept Terms to use", cx))
+                            .on_click(cx.listener(move |_, _, cx| {
+                                let user_store = user_store.clone();
 
-                        if let Some(workspace) = workspace.upgrade() {
-                            ZedPredictTos::toggle(workspace, user_store, cx);
-                        }
-                    })));
+                                if let Some(workspace) = workspace.upgrade() {
+                                    ZedPredictTos::toggle(workspace, user_store, cx);
+                                }
+                            })),
+                    );
                 }
+
+                let this = cx.view().clone();
+                let button = IconButton::new("zeta", IconName::ZedPredict)
+                    .tooltip(|cx| Tooltip::text("Edit Prediction", cx));
 
                 let is_refreshing = self
                     .inline_completion_provider
