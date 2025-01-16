@@ -2942,7 +2942,7 @@ pub mod tests {
             .update(cx, |editor, cx| {
                 assert_eq!(
                     vec!["main hint #0".to_string(), "other hint #0".to_string()],
-                    cached_hint_labels(editor),
+                    sorted_cached_hint_labels(editor),
                     "Cache should update for both excerpts despite hints display was disabled"
                 );
                 assert!(
