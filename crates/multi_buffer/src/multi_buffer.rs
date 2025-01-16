@@ -2558,15 +2558,12 @@ impl MultiBuffer {
                         let base_text = &diff_state.base_text;
                         let buffer = &excerpt.buffer;
                         let excerpt_buffer_start = excerpt.range.context.start.to_offset(buffer);
+                        let excerpt_buffer_end = excerpt_buffer_start + excerpt.text_summary.len;
                         let edit_buffer_start = excerpt_buffer_start
                             + edit.new.start.value.saturating_sub(excerpt_start.value);
                         let edit_buffer_end = excerpt_buffer_start
-                            + edit
-                                .new
-                                .end
-                                .value
-                                .saturating_sub(excerpt_start.value)
-                                .min(excerpt.text_summary.len);
+                            + edit.new.end.value.saturating_sub(excerpt_start.value);
+                        let edit_buffer_end = edit_buffer_end.min(excerpt_buffer_end);
                         let edit_anchor_range = buffer.anchor_before(edit_buffer_start)
                             ..buffer.anchor_after(edit_buffer_end);
 
@@ -2657,7 +2654,7 @@ impl MultiBuffer {
                             if should_expand_hunk {
                                 if !hunk.diff_base_byte_range.is_empty()
                                     && hunk_buffer_range.start >= edit_buffer_start
-                                    && hunk_buffer_range.start < edit_buffer_end
+                                    && hunk_buffer_range.start < excerpt_buffer_end
                                 {
                                     let mut text_cursor =
                                         base_text.as_rope().cursor(hunk.diff_base_byte_range.start);
