@@ -43,8 +43,6 @@ To use a different set of admin users, you can create your own version of that j
 
 ### On macOS and Linux
 
-### On macOS and Linux
-
 Ensure that Postgres is configured and running, then run Zed's collaboration server and the `livekit` dev server:
 
 ```sh
@@ -66,7 +64,7 @@ This script starts one to four instances of Zed, depending on the `-2`, `-3` or 
 Since `foreman` is not available on Windows, you can run the following commands in separate terminals:
 
 ```powershell
-cargo run --package=collab serve all
+cargo run --package=collab -- serve all
 ```
 
 If you have added the `livekit-server` binary to your `PATH`, you can run:
