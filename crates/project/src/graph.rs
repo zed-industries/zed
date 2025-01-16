@@ -74,7 +74,7 @@ impl Graph {
                         return cycle;
                     }
                 } else if stack.contains(&neighbor) {
-                    return Some(Cycle { src_node: node, dst_node: *neighbor });
+                    return Some(Cycle { src_node: *neighbor, dst_node: node });
                 }
             }
 
