@@ -243,9 +243,7 @@ pub(crate) struct LinkedEditingRange {
 }
 
 #[derive(Clone, Debug)]
-pub(crate) struct GetDocumentDiagnostics {
-    pub position: Anchor,
-}
+pub(crate) struct GetDocumentDiagnostics {}
 
 #[async_trait(?Send)]
 impl LspCommand for PrepareRename {
@@ -3436,9 +3434,6 @@ impl LspCommand for GetDocumentDiagnostics {
         proto::GetDocumentDiagnostics {
             project_id,
             buffer_id: buffer.remote_id().into(),
-            position: Some(language::proto::serialize_anchor(
-                &buffer.anchor_before(self.position),
-            )),
             version: serialize_version(&buffer.version()),
         }
     }
@@ -3449,16 +3444,12 @@ impl LspCommand for GetDocumentDiagnostics {
         buffer: Model<Buffer>,
         mut cx: AsyncAppContext,
     ) -> Result<Self> {
-        let position = message
-            .position
-            .and_then(deserialize_anchor)
-            .ok_or_else(|| anyhow!("invalid position"))?;
         buffer
             .update(&mut cx, |buffer, _| {
                 buffer.wait_for_version(deserialize_version(&message.version))
             })?
             .await?;
-        Ok(Self { position })
+        Ok(Self {})
     }
 
     fn response_to_proto(
