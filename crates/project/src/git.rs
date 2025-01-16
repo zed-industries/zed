@@ -119,7 +119,6 @@ impl GitState {
     /// Get a count of all entries in the active repository, including
     /// untracked files.
     pub fn entry_count(&self) -> usize {
-        // FIXME replace status().count() with a constant-time way to get the count of statuses
         self.active_repository
             .as_ref()
             .map_or(0, |(_, entry, _)| entry.status_len())
