@@ -1,16 +1,18 @@
 use std::{cell::RefCell, rc::Rc, sync::Arc};
 
-use client::Client;
+use client::{Client, UserStore};
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::{Editor, EditorMode};
 use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
-use gpui::{AnyWindowHandle, AppContext, Context, ViewContext, WeakView};
+use gpui::{AnyWindowHandle, AppContext, Context, Model, ViewContext, WeakView};
 use language::language_settings::{all_language_settings, InlineCompletionProvider};
 use settings::SettingsStore;
 use supermaven::{Supermaven, SupermavenCompletionProvider};
+use workspace::Workspace;
+use zeta::ZedPredictTos;
 
-pub fn init(client: Arc<Client>, cx: &mut AppContext) {
+pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
     let editors: Rc<RefCell<HashMap<WeakView<Editor>, AnyWindowHandle>>> = Rc::default();
     cx.observe_new_views({
         let editors = editors.clone();
@@ -73,7 +75,37 @@ pub fn init(client: Arc<Client>, cx: &mut AppContext) {
             let new_provider = all_language_settings(None, cx).inline_completions.provider;
             if new_provider != provider {
                 provider = new_provider;
-                assign_inline_completion_providers(&editors, provider, &client, cx)
+                assign_inline_completion_providers(&editors, provider, &client, cx);
+
+                if !user_store
+                    .read(cx)
+                    .current_user_has_accepted_terms()
+                    .unwrap_or(false)
+                {
+                    match provider {
+                        InlineCompletionProvider::Zed => {
+                            let Some(window) = cx.active_window() else {
+                                return;
+                            };
+
+                            let Some(workspace) = window
+                                .downcast::<Workspace>()
+                                .and_then(|w| w.root_view(cx).ok())
+                            else {
+                                return;
+                            };
+
+                            window
+                                .update(cx, |_, cx| {
+                                    ZedPredictTos::toggle(workspace, user_store.clone(), cx);
+                                })
+                                .ok();
+                        }
+                        InlineCompletionProvider::None
+                        | InlineCompletionProvider::Copilot
+                        | InlineCompletionProvider::Supermaven => {}
+                    }
+                }
             }
         }
     })
