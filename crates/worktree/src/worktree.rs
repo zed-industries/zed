@@ -198,7 +198,6 @@ pub struct RepositoryEntry {
     pub work_directory_id: ProjectEntryId,
     pub work_directory: WorkDirectory,
     pub(crate) branch: Option<Arc<str>>,
-    // FIXME add a method for getting the repo name
 }
 
 impl Deref for RepositoryEntry {
@@ -2582,6 +2581,17 @@ impl Snapshot {
 
     pub fn repositories(&self) -> &SumTree<RepositoryEntry> {
         &self.repositories
+    }
+
+    pub fn repositories_with_abs_paths(
+        &self,
+    ) -> impl '_ + Iterator<Item = (&RepositoryEntry, PathBuf)> {
+        let base = self.abs_path();
+        self.repositories.iter().map(|repo| {
+            let path = repo.work_directory.location_in_repo.as_deref();
+            let path = path.unwrap_or(repo.work_directory.as_ref());
+            (repo, base.join(path))
+        })
     }
 
     /// Get the repository whose work directory corresponds to the given path.
