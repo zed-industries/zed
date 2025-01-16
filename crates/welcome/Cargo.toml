@@ -28,6 +28,7 @@ schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 ui.workspace = true
+telemetry.workspace = true
 util.workspace = true
 vim_mode_setting.workspace = true
 workspace.workspace = true

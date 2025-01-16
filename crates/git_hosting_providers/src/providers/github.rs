@@ -1,5 +1,5 @@
 use std::str::FromStr;
-use std::sync::{Arc, OnceLock};
+use std::sync::{Arc, LazyLock};
 
 use anyhow::{bail, Context, Result};
 use async_trait::async_trait;
@@ -15,9 +15,9 @@ use git::{
 };
 
 fn pull_request_number_regex() -> &'static Regex {
-    static PULL_REQUEST_NUMBER_REGEX: OnceLock<Regex> = OnceLock::new();
-
-    PULL_REQUEST_NUMBER_REGEX.get_or_init(|| Regex::new(r"\(#(\d+)\)$").unwrap())
+    static PULL_REQUEST_NUMBER_REGEX: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\(#(\d+)\)$").unwrap());
+    &PULL_REQUEST_NUMBER_REGEX
 }
 
 #[derive(Debug, Deserialize)]

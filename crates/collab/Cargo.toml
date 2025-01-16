@@ -34,6 +34,7 @@ collections.workspace = true
 dashmap.workspace = true
 derive_more.workspace = true
 envy = "0.4.2"
+fireworks.workspace = true
 futures.workspace = true
 google_ai.workspace = true
 hex.workspace = true

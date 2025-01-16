@@ -18,10 +18,10 @@ use std::{
 };
 use theme::{ActiveTheme, SyntaxTheme, ThemeSettings};
 use ui::{
-    h_flex, relative, tooltip_container, v_flex, Checkbox, Clickable, Color, FluentBuilder,
-    IconButton, IconName, IconSize, InteractiveElement, Label, LabelCommon, LabelSize, LinkPreview,
-    StatefulInteractiveElement, StyledExt, StyledImage, ToggleState, ViewContext, VisibleOnHover,
-    VisualContext as _,
+    h_flex, relative, tooltip_container, v_flex, ButtonCommon, Checkbox, Clickable, Color,
+    FluentBuilder, IconButton, IconName, IconSize, InteractiveElement, Label, LabelCommon,
+    LabelSize, LinkPreview, StatefulInteractiveElement, StyledExt, StyledImage, ToggleState,
+    Tooltip, ViewContext, VisibleOnHover, VisualContext as _,
 };
 use workspace::Workspace;
 
@@ -385,6 +385,7 @@ fn render_markdown_code_block(
                 cx.write_to_clipboard(ClipboardItem::new_string(contents.to_string()));
             }
         })
+        .tooltip(|cx| Tooltip::text("Copy code block", cx))
         .visible_on_hover("markdown-block");
 
     cx.with_common_p(div())

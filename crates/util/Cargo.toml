@@ -24,6 +24,7 @@ futures-lite.workspace = true
 futures.workspace = true
 git2 = { workspace = true, optional = true }
 globset.workspace = true
+itertools.workspace = true
 log.workspace = true
 rand = { workspace = true, optional = true }
 regex.workspace = true
@@ -34,6 +35,9 @@ smol.workspace = true
 take-until = "0.2.0"
 tempfile = { workspace = true, optional = true }
 unicase.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 tendril = "0.4.3"

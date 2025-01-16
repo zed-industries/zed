@@ -278,7 +278,7 @@ mod tests {
     use project::{Project, ProjectEntryId};
     use serde_json::json;
     use settings::SettingsStore;
-    use smol::{channel, stream::StreamExt};
+    use smol::channel;
     use std::{future, path::Path, sync::Arc};
 
     fn init_test(cx: &mut TestAppContext) {
@@ -496,9 +496,9 @@ mod tests {
             cx.update(|cx| EmbeddingIndex::embed_files(provider.clone(), chunked_files_rx, cx));
         embed_files_task.task.await.unwrap();
 
-        let mut embedded_files_rx = embed_files_task.files;
+        let embedded_files_rx = embed_files_task.files;
         let mut embedded_files = Vec::new();
-        while let Some((embedded_file, _)) = embedded_files_rx.next().await {
+        while let Ok((embedded_file, _)) = embedded_files_rx.recv().await {
             embedded_files.push(embedded_file);
         }
 

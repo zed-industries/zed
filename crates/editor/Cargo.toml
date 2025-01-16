@@ -72,6 +72,7 @@ smol.workspace = true
 snippet.workspace = true
 sum_tree.workspace = true
 task.workspace = true
+telemetry.workspace = true
 text.workspace = true
 time.workspace = true
 time_format.workspace = true

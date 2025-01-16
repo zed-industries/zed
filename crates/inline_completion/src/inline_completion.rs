@@ -19,12 +19,16 @@ pub struct InlineCompletion {
 
 pub trait InlineCompletionProvider: 'static + Sized {
     fn name() -> &'static str;
+    fn display_name() -> &'static str;
+    fn show_completions_in_menu() -> bool;
+    fn show_completions_in_normal_mode() -> bool;
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &AppContext,
     ) -> bool;
+    fn is_refreshing(&self) -> bool;
     fn refresh(
         &mut self,
         buffer: Model<Buffer>,
@@ -51,12 +55,16 @@ pub trait InlineCompletionProvider: 'static + Sized {
 
 pub trait InlineCompletionProviderHandle {
     fn name(&self) -> &'static str;
+    fn display_name(&self) -> &'static str;
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,
         cursor_position: language::Anchor,
         cx: &AppContext,
     ) -> bool;
+    fn show_completions_in_menu(&self) -> bool;
+    fn show_completions_in_normal_mode(&self) -> bool;
+    fn is_refreshing(&self, cx: &AppContext) -> bool;
     fn refresh(
         &self,
         buffer: Model<Buffer>,
@@ -89,6 +97,18 @@ where
         T::name()
     }
 
+    fn display_name(&self) -> &'static str {
+        T::display_name()
+    }
+
+    fn show_completions_in_menu(&self) -> bool {
+        T::show_completions_in_menu()
+    }
+
+    fn show_completions_in_normal_mode(&self) -> bool {
+        T::show_completions_in_normal_mode()
+    }
+
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,
@@ -96,6 +116,10 @@ where
         cx: &AppContext,
     ) -> bool {
         self.read(cx).is_enabled(buffer, cursor_position, cx)
+    }
+
+    fn is_refreshing(&self, cx: &AppContext) -> bool {
+        self.read(cx).is_refreshing()
     }
 
     fn refresh(

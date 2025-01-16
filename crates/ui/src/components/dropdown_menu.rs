@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-use gpui::{AnchorCorner, ClickEvent, CursorStyle, MouseButton, View};
+use gpui::{ClickEvent, Corner, CursorStyle, MouseButton, View};
 
 use crate::{prelude::*, ContextMenu, PopoverMenu};
 
@@ -46,7 +46,7 @@ impl RenderOnce for DropdownMenu {
             .full_width(self.full_width)
             .menu(move |_cx| Some(self.menu.clone()))
             .trigger(DropdownMenuTrigger::new(self.label).full_width(self.full_width))
-            .attach(AnchorCorner::BottomLeft)
+            .attach(Corner::BottomLeft)
     }
 }
 

@@ -143,16 +143,19 @@ fn populate_pane_items(
     pane: &mut Pane,
     items: Vec<View<TerminalView>>,
     active_item: Option<u64>,
-    cx: &mut ViewContext<'_, Pane>,
+    cx: &mut ViewContext<Pane>,
 ) {
     let mut item_index = pane.items_len();
+    let mut active_item_index = None;
     for item in items {
-        let activate_item = Some(item.item_id().as_u64()) == active_item;
+        if Some(item.item_id().as_u64()) == active_item {
+            active_item_index = Some(item_index);
+        }
         pane.add_item(Box::new(item), false, false, None, cx);
         item_index += 1;
-        if activate_item {
-            pane.activate_item(item_index, false, false, cx);
-        }
+    }
+    if let Some(index) = active_item_index {
+        pane.activate_item(index, false, false, cx);
     }
 }
 
@@ -251,7 +254,13 @@ async fn deserialize_pane_group(
                 let terminal = terminal.await.ok()?;
                 pane.update(cx, |pane, cx| {
                     let terminal_view = Box::new(cx.new_view(|cx| {
-                        TerminalView::new(terminal, workspace.clone(), Some(workspace_id), cx)
+                        TerminalView::new(
+                            terminal,
+                            workspace.clone(),
+                            Some(workspace_id),
+                            project.downgrade(),
+                            cx,
+                        )
                     }));
                     pane.add_item(terminal_view, true, false, None, cx);
                 })

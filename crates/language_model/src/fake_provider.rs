@@ -4,12 +4,11 @@ use crate::{
     LanguageModelProviderState, LanguageModelRequest,
 };
 use futures::{channel::mpsc, future::BoxFuture, stream::BoxStream, FutureExt, StreamExt};
-use gpui::{AnyView, AppContext, AsyncAppContext, Task};
+use gpui::{AnyView, AppContext, AsyncAppContext, Model, Task, WindowContext};
 use http_client::Result;
 use parking_lot::Mutex;
 use serde::Serialize;
 use std::sync::Arc;
-use ui::WindowContext;
 
 pub fn language_model_id() -> LanguageModelId {
     LanguageModelId::from("fake".to_string())
@@ -33,7 +32,7 @@ pub struct FakeLanguageModelProvider;
 impl LanguageModelProviderState for FakeLanguageModelProvider {
     type ObservableEntity = ();
 
-    fn observable_entity(&self) -> Option<gpui::Model<Self::ObservableEntity>> {
+    fn observable_entity(&self) -> Option<Model<Self::ObservableEntity>> {
         None
     }
 }

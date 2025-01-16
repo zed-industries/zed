@@ -281,7 +281,7 @@ fn tab_items_for_queries(
 
 fn active_item_buffer(
     workspace: &mut Workspace,
-    cx: &mut ui::ViewContext<Workspace>,
+    cx: &mut ViewContext<Workspace>,
 ) -> anyhow::Result<BufferSnapshot> {
     let active_editor = workspace
         .active_item(cx)

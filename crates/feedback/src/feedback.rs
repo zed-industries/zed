@@ -21,13 +21,26 @@ const fn zed_repo_url() -> &'static str {
     "https://github.com/zed-industries/zed"
 }
 
-const fn request_feature_url() -> &'static str {
-    "https://github.com/zed-industries/zed/issues/new?assignees=&labels=admin+read%2Ctriage%2Cenhancement&projects=&template=0_feature_request.yml"
+fn request_feature_url(specs: &SystemSpecs) -> String {
+    format!(
+        concat!(
+            "https://github.com/zed-industries/zed/issues/new",
+            "?labels=admin+read%2Ctriage%2Cenhancement",
+            "&template=0_feature_request.yml",
+            "&environment={}"
+        ),
+        urlencoding::encode(&specs.to_string())
+    )
 }
 
 fn file_bug_report_url(specs: &SystemSpecs) -> String {
     format!(
-        "https://github.com/zed-industries/zed/issues/new?assignees=&labels=admin+read%2Ctriage%2Cbug&projects=&template=1_bug_report.yml&environment={}",
+        concat!(
+            "https://github.com/zed-industries/zed/issues/new",
+            "?labels=admin+read%2Ctriage%2Cbug",
+            "&template=1_bug_report.yml",
+            "&environment={}"
+        ),
         urlencoding::encode(&specs.to_string())
     )
 }
@@ -57,7 +70,15 @@ pub fn init(cx: &mut AppContext) {
                 .detach();
             })
             .register_action(|_, _: &RequestFeature, cx| {
-                cx.open_url(request_feature_url());
+                let specs = SystemSpecs::new(cx);
+                cx.spawn(|_, mut cx| async move {
+                    let specs = specs.await;
+                    cx.update(|cx| {
+                        cx.open_url(&request_feature_url(&specs));
+                    })
+                    .log_err();
+                })
+                .detach();
             })
             .register_action(move |_, _: &FileBugReport, cx| {
                 let specs = SystemSpecs::new(cx);

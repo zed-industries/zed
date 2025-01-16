@@ -13,6 +13,18 @@ The PHP extension offers both `phpactor` and `intelephense` language server supp
 
 `phpactor` is enabled by default.
 
+## Phpactor
+
+The Zed PHP Extension can install `phpactor` automatically but requires `php` to installed and available in your path:
+
+```sh
+# brew install php            # macOS
+# sudo apt-get install php    # Debian/Ubuntu
+# yum install php             # CentOS/RHEL
+# pacman -S php               # Arch Linux
+which php
+```
+
 ## Intelephense
 
 [Intelephense](https://intelephense.com/) is a [proprietary](https://github.com/bmewburn/vscode-intelephense/blob/master/LICENSE.txt#L29) language server for PHP operating under a freemium model. Certain features require purchase of a [premium license](https://intelephense.com/). To use these features you must place your [license.txt file](https://intelephense.com/faq.html) at `~/intelephense/licence.txt` inside your home directory.

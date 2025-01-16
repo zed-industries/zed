@@ -21,6 +21,7 @@ OPTIONS
   -2, -3, -4, ...   Spawn multiple Zed instances, with their windows tiled.
   --top             Arrange the Zed windows so they take up the top half of the screen.
   --stable          Use stable Zed release installed on local machine for all instances (except for the first one).
+  --preview         Like --stable, but uses the locally-installed preview release instead.
 `.trim();
 
 const { spawn, execSync, execFileSync } = require("child_process");
@@ -48,6 +49,7 @@ let instanceCount = 1;
 let isReleaseMode = false;
 let isTop = false;
 let othersOnStable = false;
+let othersOnPreview = false;
 let isStateful = false;
 
 const args = process.argv.slice(2);
@@ -68,6 +70,8 @@ while (args.length > 0) {
     process.exit(0);
   } else if (arg === "--stable") {
     othersOnStable = true;
+  } else if (arg === "--preview") {
+    othersOnPreview = true;
   } else {
     break;
   }
@@ -172,6 +176,8 @@ setTimeout(() => {
     let binaryPath = zedBinary;
     if (i != 0 && othersOnStable) {
       binaryPath = "/Applications/Zed.app/Contents/MacOS/zed";
+    } else if (i != 0 && othersOnPreview) {
+      binaryPath = "/Applications/Zed Preview.app/Contents/MacOS/zed";
     }
     spawn(binaryPath, i == 0 ? args : [], {
       stdio: "inherit",

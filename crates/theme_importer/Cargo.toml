@@ -16,7 +16,7 @@ indexmap.workspace = true
 log.workspace = true
 palette.workspace = true
 rust-embed.workspace = true
-schemars = { workspace = true, features = ["indexmap"] }
+schemars = { workspace = true, features = ["indexmap2"] }
 serde.workspace = true
 serde_json.workspace = true
 serde_json_lenient.workspace = true

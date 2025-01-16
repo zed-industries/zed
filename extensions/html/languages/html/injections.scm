@@ -1,7 +1,7 @@
 (script_element
-  (raw_text) @content
-  (#set! "language" "javascript"))
+  (raw_text) @injection.content
+  (#set! injection.language "javascript"))
 
 (style_element
-  (raw_text) @content
-  (#set! "language" "css"))
+  (raw_text) @injection.content
+  (#set! injection.language "css"))

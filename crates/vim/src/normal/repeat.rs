@@ -134,7 +134,11 @@ impl Replayer {
                         let Ok(workspace) = handle.downcast::<Workspace>() else {
                             return;
                         };
-                        let Some(editor) = workspace.read(cx).active_item_as::<Editor>(cx) else {
+                        let Some(editor) = workspace
+                            .read(cx)
+                            .active_item(cx)
+                            .and_then(|item| item.act_as::<Editor>(cx))
+                        else {
                             return;
                         };
                         editor.update(cx, |editor, cx| {

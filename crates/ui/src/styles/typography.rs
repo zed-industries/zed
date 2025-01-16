@@ -1,5 +1,6 @@
 use gpui::{
-    div, rems, IntoElement, ParentElement, Rems, RenderOnce, SharedString, Styled, WindowContext,
+    div, rems, AppContext, IntoElement, ParentElement, Rems, RenderOnce, SharedString, Styled,
+    WindowContext,
 };
 use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
@@ -130,7 +131,7 @@ pub enum TextSize {
 
 impl TextSize {
     /// Returns the text size in rems.
-    pub fn rems(self, cx: &WindowContext) -> Rems {
+    pub fn rems(self, cx: &AppContext) -> Rems {
         let theme_settings = ThemeSettings::get_global(cx);
 
         match self {

@@ -17,8 +17,8 @@ pub struct CopilotCompletionProvider {
     completions: Vec<Completion>,
     active_completion_index: usize,
     file_extension: Option<String>,
-    pending_refresh: Task<Result<()>>,
-    pending_cycling_refresh: Task<Result<()>>,
+    pending_refresh: Option<Task<Result<()>>>,
+    pending_cycling_refresh: Option<Task<Result<()>>>,
     copilot: Model<Copilot>,
 }
 
@@ -30,8 +30,8 @@ impl CopilotCompletionProvider {
             completions: Vec::new(),
             active_completion_index: 0,
             file_extension: None,
-            pending_refresh: Task::ready(Ok(())),
-            pending_cycling_refresh: Task::ready(Ok(())),
+            pending_refresh: None,
+            pending_cycling_refresh: None,
             copilot,
         }
     }
@@ -53,6 +53,22 @@ impl CopilotCompletionProvider {
 impl InlineCompletionProvider for CopilotCompletionProvider {
     fn name() -> &'static str {
         "copilot"
+    }
+
+    fn display_name() -> &'static str {
+        "Copilot"
+    }
+
+    fn show_completions_in_menu() -> bool {
+        false
+    }
+
+    fn show_completions_in_normal_mode() -> bool {
+        false
+    }
+
+    fn is_refreshing(&self) -> bool {
+        self.pending_refresh.is_some()
     }
 
     fn is_enabled(
@@ -80,7 +96,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
         cx: &mut ModelContext<Self>,
     ) {
         let copilot = self.copilot.clone();
-        self.pending_refresh = cx.spawn(|this, mut cx| async move {
+        self.pending_refresh = Some(cx.spawn(|this, mut cx| async move {
             if debounce {
                 cx.background_executor()
                     .timer(COPILOT_DEBOUNCE_TIMEOUT)
@@ -96,7 +112,8 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             this.update(&mut cx, |this, cx| {
                 if !completions.is_empty() {
                     this.cycled = false;
-                    this.pending_cycling_refresh = Task::ready(Ok(()));
+                    this.pending_refresh = None;
+                    this.pending_cycling_refresh = None;
                     this.completions.clear();
                     this.active_completion_index = 0;
                     this.buffer_id = Some(buffer.entity_id());
@@ -117,7 +134,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             })?;
 
             Ok(())
-        });
+        }));
     }
 
     fn cycle(
@@ -149,7 +166,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
             cx.notify();
         } else {
             let copilot = self.copilot.clone();
-            self.pending_cycling_refresh = cx.spawn(|this, mut cx| async move {
+            self.pending_cycling_refresh = Some(cx.spawn(|this, mut cx| async move {
                 let completions = copilot
                     .update(&mut cx, |copilot, cx| {
                         copilot.completions_cycling(&buffer, cursor_position, cx)
@@ -173,7 +190,7 @@ impl InlineCompletionProvider for CopilotCompletionProvider {
                 })?;
 
                 Ok(())
-            });
+            }));
         }
     }
 
@@ -322,11 +339,14 @@ mod tests {
         );
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, cx| {
-            // We want to show both: the inline completion and the completion menu
             assert!(editor.context_menu_visible());
-            assert!(editor.has_active_inline_completion());
+            assert!(!editor.context_menu_contains_inline_completion());
+            assert!(!editor.has_active_inline_completion());
+            // Since we have both, the copilot suggestion is not shown inline
+            assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
+            assert_eq!(editor.display_text(cx), "one.\ntwo\nthree\n");
 
-            // Confirming a completion inserts it and hides the context menu, without showing
+            // Confirming a non-copilot completion inserts it and hides the context menu, without showing
             // the copilot suggestion afterwards.
             editor
                 .confirm_completion(&Default::default(), cx)
@@ -338,13 +358,14 @@ mod tests {
             assert_eq!(editor.display_text(cx), "one.completion_a\ntwo\nthree\n");
         });
 
-        // Reset editor and test that accepting completions works
+        // Reset editor and only return copilot suggestions
         cx.set_state(indoc! {"
             oneˇ
             two
             three
         "});
         cx.simulate_keystroke(".");
+
         drop(handle_completion_request(
             &mut cx,
             indoc! {"
@@ -352,7 +373,7 @@ mod tests {
                 two
                 three
             "},
-            vec!["completion_a", "completion_b"],
+            vec![],
         ));
         handle_copilot_completion_request(
             &copilot_lsp,
@@ -365,8 +386,9 @@ mod tests {
         );
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, cx| {
-            assert!(editor.context_menu_visible());
+            assert!(!editor.context_menu_visible());
             assert!(editor.has_active_inline_completion());
+            // Since only the copilot is available, it's shown inline
             assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.\ntwo\nthree\n");
         });
@@ -376,6 +398,7 @@ mod tests {
         executor.run_until_parked();
         cx.update_editor(|editor, cx| {
             assert!(!editor.context_menu_visible());
+            assert!(!editor.context_menu_contains_inline_completion());
             assert!(editor.has_active_inline_completion());
             assert_eq!(editor.display_text(cx), "one.copilot1\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
@@ -395,6 +418,7 @@ mod tests {
         cx.update_editor(|editor, cx| {
             assert!(!editor.context_menu_visible());
             assert!(editor.has_active_inline_completion());
+            assert!(!editor.context_menu_contains_inline_completion());
             assert_eq!(editor.display_text(cx), "one.copilot2\ntwo\nthree\n");
             assert_eq!(editor.text(cx), "one.c\ntwo\nthree\n");
 
@@ -897,8 +921,8 @@ mod tests {
         executor.advance_clock(COPILOT_DEBOUNCE_TIMEOUT);
         cx.update_editor(|editor, cx| {
             assert!(editor.context_menu_visible());
-            assert!(editor.has_active_inline_completion(),);
-            assert_eq!(editor.display_text(cx), "one\ntwo.foo()\nthree\n");
+            assert!(!editor.context_menu_contains_inline_completion());
+            assert!(!editor.has_active_inline_completion(),);
             assert_eq!(editor.text(cx), "one\ntwo.\nthree\n");
         });
     }

@@ -33,7 +33,6 @@ pub fn assign_kernelspec(
     });
 
     let fs = store.read(cx).fs().clone();
-    let telemetry = store.read(cx).telemetry().clone();
 
     if let Some(session) = store.read(cx).get_session(weak_editor.entity_id()).cloned() {
         // Drop previous session, start new one
@@ -44,8 +43,7 @@ pub fn assign_kernelspec(
         });
     }
 
-    let session = cx
-        .new_view(|cx| Session::new(weak_editor.clone(), fs, telemetry, kernel_specification, cx));
+    let session = cx.new_view(|cx| Session::new(weak_editor.clone(), fs, kernel_specification, cx));
 
     weak_editor
         .update(cx, |_editor, cx| {
@@ -105,15 +103,13 @@ pub fn run(editor: WeakView<Editor>, move_down: bool, cx: &mut WindowContext) ->
             .ok_or_else(|| anyhow::anyhow!("No kernel found for language: {}", language.name()))?;
 
         let fs = store.read(cx).fs().clone();
-        let telemetry = store.read(cx).telemetry().clone();
 
         let session = if let Some(session) = store.read(cx).get_session(editor.entity_id()).cloned()
         {
             session
         } else {
             let weak_editor = editor.downgrade();
-            let session = cx
-                .new_view(|cx| Session::new(weak_editor, fs, telemetry, kernel_specification, cx));
+            let session = cx.new_view(|cx| Session::new(weak_editor, fs, kernel_specification, cx));
 
             editor.update(cx, |_editor, cx| {
                 cx.notify();

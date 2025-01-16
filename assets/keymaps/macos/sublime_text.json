@@ -4,7 +4,25 @@
       "cmd-shift-[": "pane::ActivatePrevItem",
       "cmd-shift-]": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem",
-      "ctrl-pagedown": "pane::ActivateNextItem"
+      "ctrl-pagedown": "pane::ActivateNextItem",
+      "ctrl-1": ["workspace::ActivatePane", 0],
+      "ctrl-2": ["workspace::ActivatePane", 1],
+      "ctrl-3": ["workspace::ActivatePane", 2],
+      "ctrl-4": ["workspace::ActivatePane", 3],
+      "ctrl-5": ["workspace::ActivatePane", 4],
+      "ctrl-6": ["workspace::ActivatePane", 5],
+      "ctrl-7": ["workspace::ActivatePane", 6],
+      "ctrl-8": ["workspace::ActivatePane", 7],
+      "ctrl-9": ["workspace::ActivatePane", 8],
+      "ctrl-shift-1": ["workspace::MoveItemToPane", { "destination": 0, "focus": true }],
+      "ctrl-shift-2": ["workspace::MoveItemToPane", { "destination": 1 }],
+      "ctrl-shift-3": ["workspace::MoveItemToPane", { "destination": 2 }],
+      "ctrl-shift-4": ["workspace::MoveItemToPane", { "destination": 3 }],
+      "ctrl-shift-5": ["workspace::MoveItemToPane", { "destination": 4 }],
+      "ctrl-shift-6": ["workspace::MoveItemToPane", { "destination": 5 }],
+      "ctrl-shift-7": ["workspace::MoveItemToPane", { "destination": 6 }],
+      "ctrl-shift-8": ["workspace::MoveItemToPane", { "destination": 7 }],
+      "ctrl-shift-9": ["workspace::MoveItemToPane", { "destination": 8 }]
     }
   },
   {
@@ -20,6 +38,8 @@
       "cmd-shift-a": "editor::SelectLargerSyntaxNode",
       "cmd-shift-d": "editor::DuplicateSelection",
       "ctrl-cmd-g": "editor::SelectAllMatches", // find_all_under
+      "f5": "editor::SortLinesCaseSensitive",
+      "ctrl-f5": "editor::SortLinesCaseInsensitive",
       "shift-f12": "editor::FindAllReferences",
       "alt-cmd-down": "editor::GoToDefinition",
       "ctrl-alt-cmd-down": "editor::GoToDefinitionSplit",

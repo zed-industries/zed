@@ -20,8 +20,13 @@ body:
   - type: textarea
     id: environment
     attributes:
-      label: Environment
-      description: Run the `copy system specs into clipboard` command palette action and paste the output in the field below. If you are unable to run the command, please include your Zed version and release channel, operating system and version, RAM amount, and architecture.
+      label: Zed Version and System Specs
+      description: Zed version, release channel, architecture (x86_64 or aarch64), OS (macOS version / Linux distro and version) and RAM amount.
+      placeholder: |
+        <!-- In Zed run `copy system specs into clipboard` from the Zed command palette and paste here. -->
+        <!-- Alternatively spawn `file bug report` and this field will be autopopulated -->
+        <!-- If Zed won't launch, include the equivalent with other relevant details (e.g. video card driver version for display bugs, etc) -->
+        <!-- Zed Version: 0.xxx.x; Channel: Stable, OS: macOS xx.xx, RAM: XXGB, Architecture: x86_64"
     validations:
       required: true
   - type: textarea

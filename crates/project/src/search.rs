@@ -10,12 +10,10 @@ use std::{
     io::{BufRead, BufReader, Read},
     ops::Range,
     path::Path,
-    sync::{Arc, LazyLock, OnceLock},
+    sync::{Arc, LazyLock},
 };
 use text::Anchor;
 use util::paths::PathMatcher;
-
-static TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX: OnceLock<Regex> = OnceLock::new();
 
 pub enum SearchResult {
     Buffer {
@@ -265,16 +263,17 @@ impl SearchQuery {
                 regex, replacement, ..
             } => {
                 if let Some(replacement) = replacement {
-                    let replacement = TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX
-                        .get_or_init(|| Regex::new(r"\\\\|\\n|\\t").unwrap())
-                        .replace_all(replacement, |c: &Captures| {
-                            match c.get(0).unwrap().as_str() {
-                                r"\\" => "\\",
-                                r"\n" => "\n",
-                                r"\t" => "\t",
-                                x => unreachable!("Unexpected escape sequence: {}", x),
-                            }
-                        });
+                    static TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX: LazyLock<Regex> =
+                        LazyLock::new(|| Regex::new(r"\\\\|\\n|\\t").unwrap());
+                    let replacement = TEXT_REPLACEMENT_SPECIAL_CHARACTERS_REGEX.replace_all(
+                        replacement,
+                        |c: &Captures| match c.get(0).unwrap().as_str() {
+                            r"\\" => "\\",
+                            r"\n" => "\n",
+                            r"\t" => "\t",
+                            x => unreachable!("Unexpected escape sequence: {}", x),
+                        },
+                    );
                     Some(regex.replace(text, replacement))
                 } else {
                     None

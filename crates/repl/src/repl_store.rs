@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use client::telemetry::Telemetry;
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
 use gpui::{
@@ -28,15 +27,14 @@ pub struct ReplStore {
     kernel_specifications: Vec<KernelSpecification>,
     selected_kernel_for_worktree: HashMap<WorktreeId, KernelSpecification>,
     kernel_specifications_for_worktree: HashMap<WorktreeId, Vec<KernelSpecification>>,
-    telemetry: Arc<Telemetry>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl ReplStore {
     const NAMESPACE: &'static str = "repl";
 
-    pub(crate) fn init(fs: Arc<dyn Fs>, telemetry: Arc<Telemetry>, cx: &mut AppContext) {
-        let store = cx.new_model(move |cx| Self::new(fs, telemetry, cx));
+    pub(crate) fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
+        let store = cx.new_model(move |cx| Self::new(fs, cx));
 
         store
             .update(cx, |store, cx| store.refresh_kernelspecs(cx))
@@ -49,14 +47,13 @@ impl ReplStore {
         cx.global::<GlobalReplStore>().0.clone()
     }
 
-    pub fn new(fs: Arc<dyn Fs>, telemetry: Arc<Telemetry>, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(fs: Arc<dyn Fs>, cx: &mut ModelContext<Self>) -> Self {
         let subscriptions = vec![cx.observe_global::<SettingsStore>(move |this, cx| {
             this.set_enabled(JupyterSettings::enabled(cx), cx);
         })];
 
         let this = Self {
             fs,
-            telemetry,
             enabled: JupyterSettings::enabled(cx),
             sessions: HashMap::default(),
             kernel_specifications: Vec::new(),
@@ -70,10 +67,6 @@ impl ReplStore {
 
     pub fn fs(&self) -> &Arc<dyn Fs> {
         &self.fs
-    }
-
-    pub fn telemetry(&self) -> &Arc<Telemetry> {
-        &self.telemetry
     }
 
     pub fn is_enabled(&self) -> bool {

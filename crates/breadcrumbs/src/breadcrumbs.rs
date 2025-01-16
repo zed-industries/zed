@@ -39,10 +39,17 @@ impl EventEmitter<ToolbarItemEvent> for Breadcrumbs {}
 impl Render for Breadcrumbs {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         const MAX_SEGMENTS: usize = 12;
-        let element = h_flex().text_ui(cx);
+
+        let element = h_flex()
+            .id("breadcrumb-container")
+            .flex_grow()
+            .overflow_x_scroll()
+            .text_ui(cx);
+
         let Some(active_item) = self.active_item.as_ref() else {
             return element;
         };
+
         let Some(mut segments) = active_item.breadcrumbs(cx.theme(), cx) else {
             return element;
         };
@@ -52,6 +59,7 @@ impl Render for Breadcrumbs {
             prefix_end_ix,
             segments.len().saturating_sub(MAX_SEGMENTS / 2),
         );
+
         if suffix_start_ix > prefix_end_ix {
             segments.splice(
                 prefix_end_ix..suffix_start_ix,
@@ -82,6 +90,7 @@ impl Render for Breadcrumbs {
         });
 
         let breadcrumbs_stack = h_flex().gap_1().children(breadcrumbs);
+
         match active_item
             .downcast::<Editor>()
             .map(|editor| editor.downgrade())
@@ -93,8 +102,11 @@ impl Render for Breadcrumbs {
                     .on_click({
                         let editor = editor.clone();
                         move |_, cx| {
-                            if let Some(editor) = editor.upgrade() {
-                                outline::toggle(editor, &editor::actions::ToggleOutline, cx)
+                            if let Some((editor, callback)) = editor
+                                .upgrade()
+                                .zip(zed_actions::outline::TOGGLE_OUTLINE.get())
+                            {
+                                callback(editor.to_any(), cx);
                             }
                         }
                     })
@@ -102,15 +114,15 @@ impl Render for Breadcrumbs {
                         if let Some(editor) = editor.upgrade() {
                             let focus_handle = editor.read(cx).focus_handle(cx);
                             Tooltip::for_action_in(
-                                "Show symbol outline",
-                                &editor::actions::ToggleOutline,
+                                "Show Symbol Outline",
+                                &zed_actions::outline::ToggleOutline,
                                 &focus_handle,
                                 cx,
                             )
                         } else {
                             Tooltip::for_action(
-                                "Show symbol outline",
-                                &editor::actions::ToggleOutline,
+                                "Show Symbol Outline",
+                                &zed_actions::outline::ToggleOutline,
                                 cx,
                             )
                         }

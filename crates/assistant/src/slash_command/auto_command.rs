@@ -5,7 +5,7 @@ use assistant_slash_command::{
 };
 use feature_flags::FeatureFlag;
 use futures::StreamExt;
-use gpui::{AppContext, AsyncAppContext, Task, WeakView};
+use gpui::{AppContext, AsyncAppContext, AsyncWindowContext, Task, WeakView, WindowContext};
 use language::{CodeLabel, LspAdapterDelegate};
 use language_model::{
     LanguageModelCompletionEvent, LanguageModelRegistry, LanguageModelRequest,
@@ -14,7 +14,7 @@ use language_model::{
 use semantic_index::{FileSummary, SemanticDb};
 use smol::channel;
 use std::sync::{atomic::AtomicBool, Arc};
-use ui::{prelude::*, BorrowAppContext, WindowContext};
+use ui::{prelude::*, BorrowAppContext};
 use util::ResultExt;
 use workspace::Workspace;
 
@@ -115,7 +115,7 @@ impl SlashCommand for AutoCommand {
             return Task::ready(Err(anyhow!("no project indexer")));
         };
 
-        let task = cx.spawn(|cx: gpui::AsyncWindowContext| async move {
+        let task = cx.spawn(|cx: AsyncWindowContext| async move {
             let summaries = project_index
                 .read_with(&cx, |project_index, cx| project_index.all_summaries(cx))?
                 .await?;

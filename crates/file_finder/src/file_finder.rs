@@ -884,7 +884,7 @@ impl FileFinderDelegate {
     fn lookup_absolute_path(
         &self,
         query: FileSearchQuery,
-        cx: &mut ViewContext<'_, Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Task<()> {
         cx.spawn(|picker, mut cx| async move {
             let Some(project) = picker
@@ -1261,8 +1261,8 @@ impl PickerDelegate for FileFinderDelegate {
                 .child(
                     PopoverMenu::new("menu-popover")
                         .with_handle(self.popover_menu_handle.clone())
-                        .attach(gpui::AnchorCorner::TopRight)
-                        .anchor(gpui::AnchorCorner::BottomRight)
+                        .attach(gpui::Corner::TopRight)
+                        .anchor(gpui::Corner::BottomRight)
                         .trigger(
                             Button::new("actions-trigger", "Split Options")
                                 .selected_label_color(Color::Accent)

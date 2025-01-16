@@ -1,6 +1,6 @@
 use std::time::{Duration, Instant};
 
-use crate::{AnyElement, Element, ElementId, GlobalElementId, IntoElement};
+use crate::{AnyElement, Element, ElementId, GlobalElementId, IntoElement, WindowContext};
 
 pub use easing::*;
 
@@ -104,7 +104,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
     fn request_layout(
         &mut self,
         global_id: Option<&GlobalElementId>,
-        cx: &mut crate::WindowContext,
+        cx: &mut WindowContext,
     ) -> (crate::LayoutId, Self::RequestLayoutState) {
         cx.with_element_state(global_id.unwrap(), |state, cx| {
             let state = state.unwrap_or_else(|| AnimationState {
@@ -145,7 +145,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
         _id: Option<&GlobalElementId>,
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::RequestLayoutState,
-        cx: &mut crate::WindowContext,
+        cx: &mut WindowContext,
     ) -> Self::PrepaintState {
         element.prepaint(cx);
     }
@@ -156,7 +156,7 @@ impl<E: IntoElement + 'static> Element for AnimationElement<E> {
         _bounds: crate::Bounds<crate::Pixels>,
         element: &mut Self::RequestLayoutState,
         _: &mut Self::PrepaintState,
-        cx: &mut crate::WindowContext,
+        cx: &mut WindowContext,
     ) {
         element.paint(cx);
     }

@@ -236,12 +236,12 @@ impl Element for Scrollbar {
             let padded_bounds = if is_vertical {
                 Bounds::from_corners(
                     bounds.origin + point(Pixels::ZERO, extra_padding),
-                    bounds.lower_right() - point(Pixels::ZERO, extra_padding * 3),
+                    bounds.bottom_right() - point(Pixels::ZERO, extra_padding * 3),
                 )
             } else {
                 Bounds::from_corners(
                     bounds.origin + point(extra_padding, Pixels::ZERO),
-                    bounds.lower_right() - point(extra_padding * 3, Pixels::ZERO),
+                    bounds.bottom_right() - point(extra_padding * 3, Pixels::ZERO),
                 )
             };
 

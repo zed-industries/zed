@@ -8,6 +8,7 @@ pub fn parse_markdown(text: &str) -> Vec<(Range<usize>, MarkdownEvent)> {
     let mut options = Options::all();
     options.remove(pulldown_cmark::Options::ENABLE_DEFINITION_LIST);
     options.remove(pulldown_cmark::Options::ENABLE_YAML_STYLE_METADATA_BLOCKS);
+    options.remove(pulldown_cmark::Options::ENABLE_MATH);
 
     let mut events = Vec::new();
     let mut within_link = false;

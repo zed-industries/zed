@@ -6,7 +6,7 @@ use crate::{
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
 use fs::Fs;
-use futures::{stream::StreamExt, FutureExt};
+use futures::FutureExt;
 use gpui::{
     AppContext, Entity, EntityId, EventEmitter, Model, ModelContext, Subscription, Task, WeakModel,
 };
@@ -80,7 +80,7 @@ impl ProjectIndex {
     ) -> Self {
         let language_registry = project.read(cx).languages().clone();
         let fs = project.read(cx).fs().clone();
-        let (status_tx, mut status_rx) = channel::unbounded();
+        let (status_tx, status_rx) = channel::unbounded();
         let mut this = ProjectIndex {
             db_connection,
             project: project.downgrade(),
@@ -92,7 +92,7 @@ impl ProjectIndex {
             embedding_provider,
             _subscription: cx.subscribe(&project, Self::handle_project_event),
             _maintain_status: cx.spawn(|this, mut cx| async move {
-                while status_rx.next().await.is_some() {
+                while status_rx.recv().await.is_ok() {
                     if this
                         .update(&mut cx, |this, cx| this.update_status(cx))
                         .is_err()

@@ -1,9 +1,10 @@
 use crate::{
-    assistant_settings::AssistantSettings, humanize_token_count, prompts::PromptBuilder,
-    AssistantPanel, AssistantPanelEvent, CharOperation, CycleNextInlineAssist,
-    CyclePreviousInlineAssist, LineDiff, LineOperation, RequestType, StreamingDiff,
+    humanize_token_count, prompts::PromptBuilder, AssistantPanel, AssistantPanelEvent,
+    CharOperation, CycleNextInlineAssist, CyclePreviousInlineAssist, LineDiff, LineOperation,
+    RequestType, StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
+use assistant_settings::AssistantSettings;
 use client::{telemetry::Telemetry, ErrorExt};
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
@@ -16,7 +17,9 @@ use editor::{
     EditorStyle, ExcerptId, ExcerptRange, GutterDimensions, MultiBuffer, MultiBufferSnapshot,
     ToOffset as _, ToPoint,
 };
-use feature_flags::{FeatureFlagAppExt as _, ZedPro};
+use feature_flags::{
+    Assistant2FeatureFlag, FeatureFlagAppExt as _, FeatureFlagViewExt as _, ZedPro,
+};
 use fs::Fs;
 use futures::{
     channel::mpsc,
@@ -47,6 +50,7 @@ use std::{
     iter, mem,
     ops::{Range, RangeInclusive},
     pin::Pin,
+    rc::Rc,
     sync::Arc,
     task::{self, Poll},
     time::{Duration, Instant},
@@ -72,7 +76,16 @@ pub fn init(
         let workspace = cx.view().clone();
         InlineAssistant::update_global(cx, |inline_assistant, cx| {
             inline_assistant.register_workspace(&workspace, cx)
+        });
+
+        cx.observe_flag::<Assistant2FeatureFlag, _>({
+            |is_assistant2_enabled, _view, cx| {
+                InlineAssistant::update_global(cx, |inline_assistant, _cx| {
+                    inline_assistant.is_assistant2_enabled = is_assistant2_enabled;
+                });
+            }
         })
+        .detach();
     })
     .detach();
 }
@@ -90,6 +103,7 @@ pub struct InlineAssistant {
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Arc<Telemetry>,
     fs: Arc<dyn Fs>,
+    is_assistant2_enabled: bool,
 }
 
 impl Global for InlineAssistant {}
@@ -111,6 +125,7 @@ impl InlineAssistant {
             prompt_builder,
             telemetry,
             fs,
+            is_assistant2_enabled: false,
         }
     }
 
@@ -132,7 +147,7 @@ impl InlineAssistant {
             };
             let enabled = AssistantSettings::get_global(cx).enabled;
             terminal_panel.update(cx, |terminal_panel, cx| {
-                terminal_panel.asssistant_enabled(enabled, cx)
+                terminal_panel.set_assistant_enabled(enabled, cx)
             });
         })
         .detach();
@@ -171,15 +186,22 @@ impl InlineAssistant {
         item: &dyn ItemHandle,
         cx: &mut WindowContext,
     ) {
+        let is_assistant2_enabled = self.is_assistant2_enabled;
+
         if let Some(editor) = item.act_as::<Editor>(cx) {
             editor.update(cx, |editor, cx| {
-                editor.push_code_action_provider(
-                    Arc::new(AssistantCodeActionProvider {
-                        editor: cx.view().downgrade(),
-                        workspace: workspace.downgrade(),
-                    }),
-                    cx,
-                );
+                if is_assistant2_enabled {
+                    editor
+                        .remove_code_action_provider(ASSISTANT_CODE_ACTION_PROVIDER_ID.into(), cx);
+                } else {
+                    editor.add_code_action_provider(
+                        Rc::new(AssistantCodeActionProvider {
+                            editor: cx.view().downgrade(),
+                            workspace: workspace.downgrade(),
+                        }),
+                        cx,
+                    );
+                }
             });
         }
     }
@@ -796,10 +818,11 @@ impl InlineAssistant {
             if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
                 let language_name = assist.editor.upgrade().and_then(|editor| {
                     let multibuffer = editor.read(cx).buffer().read(cx);
-                    let ranges = multibuffer.range_to_buffer_ranges(assist.range.clone(), cx);
+                    let multibuffer_snapshot = multibuffer.snapshot(cx);
+                    let ranges = multibuffer_snapshot.range_to_buffer_ranges(assist.range.clone());
                     ranges
                         .first()
-                        .and_then(|(buffer, _, _)| buffer.read(cx).language())
+                        .and_then(|(excerpt, _)| excerpt.buffer().language())
                         .map(|language| language.name())
                 });
                 report_assistant_event(
@@ -1555,7 +1578,7 @@ impl Render for PromptEditor {
                                             anchored()
                                                 .position_mode(gpui::AnchoredPositionMode::Local)
                                                 .position(point(px(0.), px(24.)))
-                                                .anchor(gpui::AnchorCorner::TopLeft)
+                                                .anchor(gpui::Corner::TopLeft)
                                                 .child(self.render_rate_limit_notice(cx)),
                                         )
                                     })),
@@ -2614,26 +2637,29 @@ impl EventEmitter<CodegenEvent> for CodegenAlternative {}
 
 impl CodegenAlternative {
     pub fn new(
-        buffer: Model<MultiBuffer>,
+        multi_buffer: Model<MultiBuffer>,
         range: Range<Anchor>,
         active: bool,
         telemetry: Option<Arc<Telemetry>>,
         builder: Arc<PromptBuilder>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-        let snapshot = buffer.read(cx).snapshot(cx);
+        let snapshot = multi_buffer.read(cx).snapshot(cx);
 
-        let (old_buffer, _, _) = buffer
-            .read(cx)
-            .range_to_buffer_ranges(range.clone(), cx)
+        let (old_excerpt, _) = snapshot
+            .range_to_buffer_ranges(range.clone())
             .pop()
             .unwrap();
         let old_buffer = cx.new_model(|cx| {
-            let old_buffer = old_buffer.read(cx);
-            let text = old_buffer.as_rope().clone();
-            let line_ending = old_buffer.line_ending();
-            let language = old_buffer.language().cloned();
-            let language_registry = old_buffer.language_registry();
+            let text = old_excerpt.buffer().as_rope().clone();
+            let line_ending = old_excerpt.buffer().line_ending();
+            let language = old_excerpt.buffer().language().cloned();
+            let language_registry = multi_buffer
+                .read(cx)
+                .buffer(old_excerpt.buffer_id())
+                .unwrap()
+                .read(cx)
+                .language_registry();
 
             let mut buffer = Buffer::local_normalized(text, line_ending, cx);
             buffer.set_language(language, cx);
@@ -2644,7 +2670,7 @@ impl CodegenAlternative {
         });
 
         Self {
-            buffer: buffer.clone(),
+            buffer: multi_buffer.clone(),
             old_buffer,
             edit_position: None,
             message_id: None,
@@ -2655,7 +2681,7 @@ impl CodegenAlternative {
             generation: Task::ready(()),
             diff: Diff::default(),
             telemetry,
-            _subscription: cx.subscribe(&buffer, Self::handle_buffer_event),
+            _subscription: cx.subscribe(&multi_buffer, Self::handle_buffer_event),
             builder,
             active,
             edits: Vec::new(),
@@ -2866,10 +2892,11 @@ impl CodegenAlternative {
         let telemetry = self.telemetry.clone();
         let language_name = {
             let multibuffer = self.buffer.read(cx);
-            let ranges = multibuffer.range_to_buffer_ranges(self.range.clone(), cx);
+            let snapshot = multibuffer.snapshot(cx);
+            let ranges = snapshot.range_to_buffer_ranges(self.range.clone());
             ranges
                 .first()
-                .and_then(|(buffer, _, _)| buffer.read(cx).language())
+                .and_then(|(excerpt, _)| excerpt.buffer().language())
                 .map(|language| language.name())
         };
 
@@ -3420,7 +3447,13 @@ struct AssistantCodeActionProvider {
     workspace: WeakView<Workspace>,
 }
 
+const ASSISTANT_CODE_ACTION_PROVIDER_ID: &str = "assistant";
+
 impl CodeActionProvider for AssistantCodeActionProvider {
+    fn id(&self) -> Arc<str> {
+        ASSISTANT_CODE_ACTION_PROVIDER_ID.into()
+    }
+
     fn code_actions(
         &self,
         buffer: &Model<Buffer>,

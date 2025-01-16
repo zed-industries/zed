@@ -13,9 +13,11 @@ path = "src/file_icons.rs"
 doctest = false
 
 [dependencies]
+collections.workspace = true
 gpui.workspace = true
-util.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-collections.workspace = true
+settings.workspace = true
+theme.workspace = true
+util.workspace = true

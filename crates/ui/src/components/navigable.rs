@@ -18,14 +18,14 @@ pub struct NavigableEntry {
 
 impl NavigableEntry {
     /// Creates a new [NavigableEntry] for a given scroll handle.
-    pub fn new(scroll_handle: &ScrollHandle, cx: &WindowContext<'_>) -> Self {
+    pub fn new(scroll_handle: &ScrollHandle, cx: &WindowContext) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
             scroll_anchor: Some(ScrollAnchor::for_handle(scroll_handle.clone())),
         }
     }
     /// Create a new [NavigableEntry] that cannot be scrolled to.
-    pub fn focusable(cx: &WindowContext<'_>) -> Self {
+    pub fn focusable(cx: &WindowContext) -> Self {
         Self {
             focus_handle: cx.focus_handle(),
             scroll_anchor: None,
@@ -51,7 +51,7 @@ impl Navigable {
 
     fn find_focused(
         selectable_children: &[NavigableEntry],
-        cx: &mut WindowContext<'_>,
+        cx: &mut WindowContext,
     ) -> Option<usize> {
         selectable_children
             .iter()
@@ -59,7 +59,7 @@ impl Navigable {
     }
 }
 impl RenderOnce for Navigable {
-    fn render(self, _: &mut WindowContext<'_>) -> impl crate::IntoElement {
+    fn render(self, _: &mut WindowContext) -> impl crate::IntoElement {
         div()
             .on_action({
                 let children = self.selectable_children.clone();

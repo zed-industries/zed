@@ -1,4 +1,3 @@
-use client::telemetry::Telemetry;
 use fs::Fs;
 use fuzzy::{match_strings, StringMatch, StringMatchCandidate};
 use gpui::{
@@ -27,12 +26,10 @@ pub fn init(cx: &mut AppContext) {
 
 pub fn toggle(workspace: &mut Workspace, toggle: &Toggle, cx: &mut ViewContext<Workspace>) {
     let fs = workspace.app_state().fs.clone();
-    let telemetry = workspace.client().telemetry().clone();
     workspace.toggle_modal(cx, |cx| {
         let delegate = ThemeSelectorDelegate::new(
             cx.view().downgrade(),
             fs,
-            telemetry,
             toggle.themes_filter.as_ref(),
             cx,
         );
@@ -74,7 +71,6 @@ pub struct ThemeSelectorDelegate {
     original_theme: Arc<Theme>,
     selection_completed: bool,
     selected_index: usize,
-    telemetry: Arc<Telemetry>,
     view: WeakView<ThemeSelector>,
 }
 
@@ -82,7 +78,6 @@ impl ThemeSelectorDelegate {
     fn new(
         weak_view: WeakView<ThemeSelector>,
         fs: Arc<dyn Fs>,
-        telemetry: Arc<Telemetry>,
         themes_filter: Option<&Vec<String>>,
         cx: &mut ViewContext<ThemeSelector>,
     ) -> Self {
@@ -123,7 +118,6 @@ impl ThemeSelectorDelegate {
             original_theme: original_theme.clone(),
             selected_index: 0,
             selection_completed: false,
-            telemetry,
             view: weak_view,
         };
 
@@ -180,8 +174,7 @@ impl PickerDelegate for ThemeSelectorDelegate {
 
         let theme_name = cx.theme().name.clone();
 
-        self.telemetry
-            .report_setting_event("theme", theme_name.to_string());
+        telemetry::event!("Settings Changed", setting = "theme", value = theme_name);
 
         let appearance = Appearance::from(cx.appearance());
 

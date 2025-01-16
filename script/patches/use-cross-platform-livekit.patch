@@ -3,7 +3,7 @@ index 9ba10e56ba..bb69440691 100644
 --- a/crates/call/Cargo.toml
 +++ b/crates/call/Cargo.toml
 @@ -41,10 +41,10 @@ serde_derive.workspace = true
- settings.workspace = true
+ telemetry.workspace = true
  util.workspace = true
  
 -[target.'cfg(target_os = "macos")'.dependencies]

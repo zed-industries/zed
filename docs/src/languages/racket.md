@@ -1,6 +1,6 @@
 # Racket
 
-Racket support is available through the [Racket extension](https://github.com/zed-industries/zed/tree/main/extensions/racket).
+Racket support is available through the [Racket extension](https://github.com/zed-extensions/racket).
 
 - Tree Sitter: [zed-industries/tree-sitter-racket](https://github.com/zed-industries/tree-sitter-racket)
 

@@ -238,5 +238,46 @@ impl ThreadStore {
         Async programming in Rust provides a powerful way to write concurrent code that's both safe and efficient. It's particularly useful for servers, network programming, and any application that deals with many concurrent operations.".unindent(), cx);
             thread
         }));
+
+        self.threads.push(cx.new_model(|cx| {
+            let mut thread = Thread::new(self.tools.clone(), cx);
+            thread.set_summary("Rust code with long lines", cx);
+            thread.insert_user_message("Could you write me some Rust code with long lines?", Vec::new(), cx);
+            thread.insert_message(Role::Assistant, r#"Here's some Rust code with some intentionally long lines:
+            ```rust
+            use std::collections::{HashMap, HashSet};
+            use std::sync::{Arc, Mutex};
+            use std::thread;
+
+            fn main() {
+                let very_long_vector = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25];
+
+                let complicated_hashmap: HashMap<String, Vec<(i32, f64, String)>> = [("key1".to_string(), vec![(1, 1.1, "value1".to_string()), (2, 2.2, "value2".to_string())]), ("key2".to_string(), vec![(3, 3.3, "value3".to_string()), (4, 4.4, "value4".to_string())])].iter().cloned().collect();
+
+                let nested_structure = Arc::new(Mutex::new(HashMap::new()));
+
+                let long_closure = |x: i32, y: i32, z: i32| -> i32 { let result = x * y + z; println!("The result of the long closure calculation is: {}", result); result };
+
+                let thread_handles: Vec<_> = (0..10).map(|i| {
+                    let nested_structure_clone = Arc::clone(&nested_structure);
+                    thread::spawn(move || {
+                        let mut lock = nested_structure_clone.lock().unwrap();
+                        lock.entry(format!("thread_{}", i)).or_insert_with(|| HashSet::new()).insert(i * i);
+                    })
+                }).collect();
+
+                for handle in thread_handles {
+                    handle.join().unwrap();
+                }
+
+                println!("The final state of the nested structure is: {:?}", nested_structure.lock().unwrap());
+
+                let complex_expression = very_long_vector.iter().filter(|&&x| x % 2 == 0).map(|&x| x * x).fold(0, |acc, x| acc + x) + long_closure(5, 10, 15);
+
+                println!("The result of the complex expression is: {}", complex_expression);
+            }
+            ```"#.unindent(), cx);
+            thread
+        }));
     }
 }
