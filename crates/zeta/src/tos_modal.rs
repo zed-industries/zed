@@ -101,7 +101,13 @@ impl Render for ZedPredictTos {
                             .full_width()
                             .on_click(cx.listener(Self::view_terms))
                     })
-                    .child(Button::new("cancel", "Cancel").full_width()),
+                    .child(
+                        Button::new("cancel", "Cancel")
+                            .full_width()
+                            .on_click(cx.listener(|_, _: &ClickEvent, cx| {
+                                cx.emit(DismissEvent);
+                            })),
+                    ),
             )
     }
 }
