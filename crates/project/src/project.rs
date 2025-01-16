@@ -1,3 +1,4 @@
+mod graph;
 pub mod buffer_store;
 mod color_extractor;
 pub mod connection_manager;

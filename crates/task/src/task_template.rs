@@ -61,6 +61,12 @@ pub struct TaskTemplate {
     /// Represents the tags which this template attaches to. Adding this removes this task from other UI.
     #[serde(default)]
     pub tags: Vec<String>,
+    /// A list of other tasks to be run before executing this task, referenced by label
+    #[serde(default)]
+    pub pre: Vec<String>,
+    /// A list of other tasks to be run after executing this task, referenced by label
+    #[serde(default)]
+    pub post: Vec<String>,
     /// Which shell to use when spawning the task.
     #[serde(default)]
     pub shell: Shell,

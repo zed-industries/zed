@@ -21,7 +21,7 @@ use text::{Point, ToPoint};
 use util::{post_inc, NumericPrefixWithSuffix, ResultExt as _};
 use worktree::WorktreeId;
 
-use crate::worktree_store::WorktreeStore;
+use crate::{graph::{Cycle, Graph}, worktree_store::WorktreeStore};
 
 /// Inventory tracks available tasks for a given project.
 #[derive(Debug, Default)]
@@ -57,6 +57,21 @@ pub enum TaskSourceKind {
 }
 
 impl TaskSourceKind {
+    pub fn friendly_path(&self) -> Cow<'_, str> {
+        match self {
+            Self::UserInput => format!("custom-task").into(),
+            Self::Language { name } => format!("{name}-language-tasks").into(),
+            Self::AbsPath {
+                abs_path,
+                ..
+            } => abs_path.to_string_lossy(),
+            Self::Worktree {
+                directory_in_worktree,
+                ..
+            } => format!("{}", directory_in_worktree.join("tasks.json").display()).into()
+        }
+    }
+
     pub fn to_id_base(&self) -> String {
         match self {
             TaskSourceKind::UserInput => "oneshot".to_string(),
@@ -104,6 +119,71 @@ impl Inventory {
         self.worktree_templates_from_settings(worktree)
             .chain(language_tasks)
             .collect()
+    }
+
+    /// Verify that the current task dependency graph does not contain any cycles
+    pub fn check_task_dep_graph(&self) {
+        // collect all tasks from all available worktrees
+        let tasks = self
+            .templates_from_settings
+            .worktree
+            .iter()
+            .flat_map(|leaf| {
+                self.worktree_templates_from_settings(Some(*leaf.0))
+                    .chain(self.global_templates_from_settings())
+                    .collect_vec()
+            })
+            .unique_by(|(_, task)| task.label.clone())
+            .collect_vec();
+
+        // map task labels to their dep graph node idx, source, and dependencies
+        let tasks = tasks
+            .iter()
+            .enumerate()
+            .map(|(idx, (source, task))| (
+                task.label.as_str(),
+                (
+                    idx as u32,
+                    source,
+                    task.pre.iter().map(|s| s.as_str()).unique().collect_vec()
+                )
+            ))
+            .collect::<HashMap<_, _>>();
+
+        // map node idxs to task labels for retreival if a cycle is found
+        let node_idx_map = tasks
+            .iter()
+            .map(|(label, (idx, _, _))| (*idx, *label))
+            .collect::<HashMap<_, _>>();
+
+        let mut dep_graph = Graph::new();
+
+        for (_, (node_idx, _, pre)) in &tasks {
+            dep_graph.add_node(*node_idx);
+
+            for pre_label in pre {
+                if let Some((pre_node_idx, _, _)) = tasks.get(pre_label) {
+                    dep_graph.add_edge(*node_idx, *pre_node_idx);
+                }
+            }
+        }
+
+        for node in node_idx_map.keys() {
+            if let Some(Cycle { src_node, dst_node }) = dep_graph.has_cycle(*node) {
+                let src_label = node_idx_map.get(&src_node).unwrap();
+                let dst_label = node_idx_map.get(&dst_node).unwrap();
+
+                let src_info = tasks.get(src_label).unwrap();
+                let dst_info = tasks.get(dst_label).unwrap();
+
+                // error reporting in the UI is WIP, this is here so I can verify with the logs at runtime
+
+                let src_fmt = format!("(task source: {}, task label: {})", src_info.1.friendly_path(), src_label);
+                let dst_fmt = format!("(task source: {}, task label: {})", dst_info.1.friendly_path(), dst_label);
+
+                log::error!("found cycle: source task: {src_fmt}, dependent task: {dst_fmt}");
+            }
+        }
     }
 
     /// Pulls its task sources relevant to the worktree and the language given and resolves them with the [`TaskContext`] given.
@@ -324,6 +404,9 @@ impl Inventory {
             }
             None => parsed_templates.global = new_templates.collect(),
         }
+
+        self.check_task_dep_graph();
+
         Ok(())
     }
 }
