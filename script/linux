@@ -34,6 +34,7 @@ if [[ -n $apt ]]; then
     libvulkan1
     libgit2-dev
     make
+    mold
     cmake
     clang
     jq
