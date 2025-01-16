@@ -1599,7 +1599,10 @@ impl ReferenceMultibuffer {
                 if hunk_offset >= start {
                     // Add the buffer text before the hunk
                     expected_text.extend(buffer.text_for_range(start..hunk_offset));
-                    let start_point = buffer.offset_to_point(start);
+                    let mut start_point = buffer.offset_to_point(start);
+                    if start_point.column != 0 {
+                        start_point.row += 1;
+                    }
                     let end_point = buffer.offset_to_point(hunk_offset);
                     for row in start_point.row..end_point.row {
                         expected_buffer_rows.push(RowInfo {
@@ -1620,8 +1623,16 @@ impl ReferenceMultibuffer {
                         if !base_text.ends_with('\n') {
                             base_text.push('\n');
                         }
+                        let partial_first_line = !expected_text.ends_with('\n');
                         expected_text.push_str(&base_text);
-                        for _ in base_text.matches('\n') {
+                        for (ix, _) in base_text.matches('\n').enumerate() {
+                            if partial_first_line && ix == 0 {
+                                expected_buffer_rows.push(dbg!(RowInfo {
+                                    buffer_row: Some(end_point.row),
+                                    diff_status: None,
+                                }));
+                                continue;
+                            }
                             expected_buffer_rows.push(RowInfo {
                                 buffer_row: None,
                                 diff_status: Some(DiffHunkStatus::Removed),
@@ -1642,8 +1653,11 @@ impl ReferenceMultibuffer {
 
             expected_text.extend(buffer.text_for_range(start..buffer_range.end));
             expected_text.push('\n');
-            let buffer_row_range =
-                buffer.offset_to_point(start).row..=buffer.offset_to_point(buffer_range.end).row;
+            let mut start_point = buffer.offset_to_point(start);
+            if start_point.column != 0 {
+                start_point.row += 1;
+            }
+            let buffer_row_range = start_point.row..=buffer.offset_to_point(buffer_range.end).row;
             for row in buffer_row_range {
                 expected_buffer_rows.push(RowInfo {
                     buffer_row: Some(row),
