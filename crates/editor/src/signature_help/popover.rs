@@ -39,7 +39,8 @@ impl SignatureHelpPopover {
             .child(div().p_2().child(crate::render_parsed_markdown(
                 "signature_help_popover_content",
                 &self.parsed_content,
-                style,
+                &style.syntax,
+                &style.text,
                 workspace,
                 cx,
             )))

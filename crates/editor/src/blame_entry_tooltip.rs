@@ -135,7 +135,8 @@ impl Render for BlameEntryTooltip {
                 crate::render_parsed_markdown(
                     "blame-message",
                     &details.parsed_message,
-                    &self.editor_style,
+                    &self.editor_style.syntax,
+                    &self.editor_style.text,
                     self.workspace.clone(),
                     cx,
                 )

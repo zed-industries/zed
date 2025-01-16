@@ -197,7 +197,8 @@ pub(crate) const SCROLL_CENTER_TOP_BOTTOM_DEBOUNCE_TIMEOUT: Duration = Duration:
 pub fn render_parsed_markdown(
     element_id: impl Into<ElementId>,
     parsed: &language::ParsedMarkdown,
-    editor_style: &EditorStyle,
+    syntax_theme: &SyntaxTheme,
+    text_style: &TextStyle,
     workspace: Option<WeakView<Workspace>>,
     cx: &mut WindowContext,
 ) -> InteractiveText {
@@ -208,7 +209,7 @@ pub fn render_parsed_markdown(
 
     let highlights = gpui::combine_highlights(
         parsed.highlights.iter().filter_map(|(range, highlight)| {
-            let highlight = highlight.to_highlight_style(&editor_style.syntax)?;
+            let highlight = highlight.to_highlight_style(syntax_theme)?;
             Some((range.clone(), highlight))
         }),
         parsed
@@ -241,7 +242,7 @@ pub fn render_parsed_markdown(
 
     InteractiveText::new(
         element_id,
-        StyledText::new(parsed.text.clone()).with_highlights(&editor_style.text, highlights),
+        StyledText::new(parsed.text.clone()).with_highlights(&text_style, highlights),
     )
     .on_click(link_ranges, move |clicked_range_ix, cx| {
         match &links[clicked_range_ix] {

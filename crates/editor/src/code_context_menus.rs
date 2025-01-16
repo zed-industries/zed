@@ -632,7 +632,8 @@ impl CompletionsMenu {
                         .child(render_parsed_markdown(
                             "completions_markdown",
                             parsed,
-                            &style,
+                            &style.syntax,
+                            &style.text,
                             workspace,
                             cx,
                         )),
