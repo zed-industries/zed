@@ -347,34 +347,37 @@ impl ShellBuilder {
 
 #[cfg(target_os = "windows")]
 impl ShellBuilder {
+    /// Returns the label to show in the terminal tab
     pub fn command_label(&self, command_label: &str) -> String {
         match self.windows_shell_type() {
             WindowsShellType::Powershell => {
-                format!("{} -C '{}'", self.program, spawn_task.command_label)
+                format!("{} -C '{}'", self.program, command_label)
             }
             WindowsShellType::Cmd => {
-                format!("{} /C '{}'", self.program, spawn_task.command_label)
+                format!("{} /C '{}'", self.program, command_label)
             }
             WindowsShellType::Other => {
-                format!("{} -i -c '{}'", self.program, spawn_task.command_label)
+                format!("{} -i -c '{}'", self.program, command_label)
             }
         }
     }
 
+    /// Returns the program and arguments to run this task in a shell.
     pub fn build(mut self, task_command: String, task_args: &Vec<String>) -> (String, Vec<String>) {
         let combined_command = task_args
             .into_iter()
             .fold(task_command, |mut command, arg| {
                 command.push(' ');
-                command.push_str(&to_windows_shell_variable(windows_shell_type, arg));
+                command.push_str(&self.to_windows_shell_variable(arg.to_string()));
                 command
             });
 
         match self.windows_shell_type() {
-            WindowsShellType::Powershell => user_args.extend(["-C".to_owned(), combined_command]),
-            WindowsShellType::Cmd => user_args.extend(["/C".to_owned(), combined_command]),
+            WindowsShellType::Powershell => self.args.extend(["-C".to_owned(), combined_command]),
+            WindowsShellType::Cmd => self.args.extend(["/C".to_owned(), combined_command]),
             WindowsShellType::Other => {
-                user_args.extend(["-i".to_owned(), "-c".to_owned(), combined_command])
+                self.args
+                    .extend(["-i".to_owned(), "-c".to_owned(), combined_command])
             }
         }
 

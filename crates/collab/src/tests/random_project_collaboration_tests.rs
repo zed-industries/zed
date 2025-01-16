@@ -6,7 +6,7 @@ use call::ActiveCall;
 use collections::{BTreeMap, HashMap};
 use editor::Bias;
 use fs::{FakeFs, Fs as _};
-use git::repository::GitFileStatus;
+use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{BackgroundExecutor, Model, TestAppContext};
 use language::{
     range_to_lsp, FakeLspAdapter, Language, LanguageConfig, LanguageMatcher, PointUtf16,
@@ -127,7 +127,7 @@ enum GitOperation {
     },
     WriteGitStatuses {
         repo_path: PathBuf,
-        statuses: Vec<(PathBuf, GitFileStatus)>,
+        statuses: Vec<(PathBuf, FileStatus)>,
         git_operation: bool,
     },
 }
@@ -1458,17 +1458,7 @@ fn generate_git_operation(rng: &mut StdRng, client: &TestClient) -> GitOperation
 
             let statuses = file_paths
                 .into_iter()
-                .map(|paths| {
-                    (
-                        paths,
-                        match rng.gen_range(0..3_u32) {
-                            0 => GitFileStatus::Added,
-                            1 => GitFileStatus::Modified,
-                            2 => GitFileStatus::Conflict,
-                            _ => unreachable!(),
-                        },
-                    )
-                })
+                .map(|path| (path, gen_status(rng)))
                 .collect::<Vec<_>>();
 
             let git_operation = rng.gen::<bool>();
@@ -1612,4 +1602,42 @@ fn gen_file_name(rng: &mut StdRng) -> String {
         name.push(letter);
     }
     name
+}
+
+fn gen_status(rng: &mut StdRng) -> FileStatus {
+    fn gen_status_code(rng: &mut StdRng) -> StatusCode {
+        match rng.gen_range(0..7) {
+            0 => StatusCode::Modified,
+            1 => StatusCode::TypeChanged,
+            2 => StatusCode::Added,
+            3 => StatusCode::Deleted,
+            4 => StatusCode::Renamed,
+            5 => StatusCode::Copied,
+            6 => StatusCode::Unmodified,
+            _ => unreachable!(),
+        }
+    }
+
+    fn gen_unmerged_status_code(rng: &mut StdRng) -> UnmergedStatusCode {
+        match rng.gen_range(0..3) {
+            0 => UnmergedStatusCode::Updated,
+            1 => UnmergedStatusCode::Added,
+            2 => UnmergedStatusCode::Deleted,
+            _ => unreachable!(),
+        }
+    }
+
+    match rng.gen_range(0..4) {
+        0 => FileStatus::Untracked,
+        1 => FileStatus::Ignored,
+        2 => FileStatus::Unmerged(UnmergedStatus {
+            first_head: gen_unmerged_status_code(rng),
+            second_head: gen_unmerged_status_code(rng),
+        }),
+        3 => FileStatus::Tracked(TrackedStatus {
+            index_status: gen_status_code(rng),
+            worktree_status: gen_status_code(rng),
+        }),
+        _ => unreachable!(),
+    }
 }
