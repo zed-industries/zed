@@ -30,7 +30,10 @@ use super::{AdapterWrapper, ProjectTree, ProjectTreeEvent};
 
 #[derive(Default)]
 struct ServersForWorktree {
-    roots: BTreeMap<Arc<Path>, BTreeMap<LanguageServerName, Arc<InnerTreeNode>>>,
+    roots: BTreeMap<
+        Arc<Path>,
+        BTreeMap<LanguageServerName, (Arc<InnerTreeNode>, BTreeSet<LanguageName>)>,
+    >,
 }
 
 pub struct LanguageServerTree {
@@ -145,7 +148,11 @@ impl LanguageServerTree {
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut AppContext,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
-        let adapters = self.adapters_for_language(&path, language_name, cx);
+        let settings_location = SettingsLocation {
+            worktree_id: path.worktree_id,
+            path: &path.path,
+        };
+        let adapters = self.adapters_for_language(settings_location, language_name, cx);
         self.get_with_adapters(path, adapters, delegate, cx)
     }
 
@@ -171,23 +178,23 @@ impl LanguageServerTree {
                 .or_default()
                 .entry(adapter.0.name.clone())
                 .or_insert_with(|| {
-                    Arc::new(InnerTreeNode::new(adapter.0.name(), attach, root_path))
+                    (
+                        Arc::new(InnerTreeNode::new(adapter.0.name(), attach, root_path)),
+                        Default::default(),
+                    )
                 });
-            Arc::downgrade(inner_node).into()
+            Arc::downgrade(&inner_node.0).into()
         })
     }
 
     fn adapters_for_language(
         &self,
-        path: &ProjectPath,
+        settings_location: SettingsLocation,
         language_name: &LanguageName,
         cx: &AppContext,
     ) -> Vec<Arc<CachedLspAdapter>> {
         let available_lsp_adapters = self.languages.lsp_adapters(&language_name);
-        let settings_location = SettingsLocation {
-            worktree_id: path.worktree_id,
-            path: &path.path,
-        };
+
         let settings = AllLanguageSettings::get(Some(settings_location), cx).language(
             Some(settings_location),
             Some(language_name),
@@ -245,17 +252,41 @@ impl LanguageServerTree {
             all_instances.extend(servers.roots.values().flat_map(|servers_at_node| {
                 servers_at_node
                     .values()
-                    .filter_map(|server_node| server_node.id.get().copied())
+                    .filter_map(|(server_node, _)| server_node.id.get().copied())
             }));
             let Some(delegate) = get_delegate(*worktree_id, cx) else {
                 // If worktree is no longer around, we're just going to shut down all of the language servers (since they've been added to all_instances).
                 continue;
             };
             for (path, servers_for_path) in &servers.roots {
-                for name in servers_for_path.keys() {
-                    let Some(adapter) = self.languages.adapter_for_name(&name) else {
-                        unreachable!();
+                for (name, (_, languages)) in servers_for_path {
+                    let settings_location = SettingsLocation {
+                        worktree_id: *worktree_id,
+                        path: &path,
                     };
+                    // Verify which of the previous languages still have this server enabled.
+                    let enabled_languages = languages
+                        .iter()
+                        .filter_map(|language_name| {
+                            self.adapters_for_language(settings_location, language_name, cx)
+                                .into_iter()
+                                .find_map(|adapter| {
+                                    adapter
+                                        .name()
+                                        .eq(&name)
+                                        .then(|| Some((language_name.clone(), adapter)))
+                                })
+                        })
+                        .flatten()
+                        .collect::<BTreeMap<_, _>>();
+                    let Some(adapter) = enabled_languages
+                        .first_key_value()
+                        .map(|(_, adapter)| adapter.clone())
+                    else {
+                        // Since all languages that have had this server enabled are now disabled, we can remove the server entirely.
+                        continue;
+                    };
+
                     for new_node in self.get_with_adapters(
                         ProjectPath {
                             path: path.clone(),
@@ -266,7 +297,7 @@ impl LanguageServerTree {
                         cx,
                     ) {
                         new_node.server_id_or_try_init(|disposition| {
-                            let Some(existing_node) = servers
+                            let Some((existing_node, _)) = servers
                                 .roots
                                 .get(&disposition.path.path)
                                 .and_then(|roots| roots.get(disposition.server_name))
@@ -281,7 +312,6 @@ impl LanguageServerTree {
                                 return Ok(spawn_language_server(disposition));
                             };
                             if let Some(id) = existing_node.id.get().copied() {
-                                dbg!("Yay");
                                 // If we have a node with ID assigned (and it's parameters match `disposition`), reuse the id.
                                 referenced_instances.insert(id);
                                 Ok(id)
