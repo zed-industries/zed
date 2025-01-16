@@ -1,10 +1,10 @@
-use super::{
-    create_label_for_command, search_command::add_search_result_section, SlashCommand,
-    SlashCommandOutput,
-};
+use super::{create_label_for_command, search_command::add_search_result_section};
 use crate::PromptBuilder;
 use anyhow::{anyhow, Result};
-use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection, SlashCommandResult};
+use assistant_slash_command::{
+    ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
+    SlashCommandResult,
+};
 use feature_flags::FeatureFlag;
 use gpui::{AppContext, Task, WeakView, WindowContext};
 use language::{Anchor, CodeLabel, LspAdapterDelegate};

@@ -1,4 +1,4 @@
-use crate::slash_command::file_command::{FileCommandMetadata, FileSlashCommand};
+use crate::file_command::{FileCommandMetadata, FileSlashCommand};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,

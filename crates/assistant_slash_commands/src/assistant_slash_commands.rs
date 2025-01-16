@@ -16,3 +16,23 @@ pub mod streaming_example_command;
 pub mod symbols_command;
 pub mod tab_command;
 pub mod terminal_command;
+
+use gpui::AppContext;
+use language::{CodeLabel, HighlightId};
+use ui::ActiveTheme as _;
+
+pub fn create_label_for_command(
+    command_name: &str,
+    arguments: &[&str],
+    cx: &AppContext,
+) -> CodeLabel {
+    let mut label = CodeLabel::default();
+    label.push_str(command_name, None);
+    label.push_str(" ", None);
+    label.push_str(
+        &arguments.join(" "),
+        cx.theme().syntax().highlight_id("comment").map(HighlightId),
+    );
+    label.filter_range = 0..command_name.len();
+    label
+}

@@ -561,7 +561,7 @@ mod test {
     use settings::SettingsStore;
     use smol::stream::StreamExt;
 
-    use crate::slash_command::file_command::collect_files;
+    use super::collect_files;
 
     pub fn init_test(cx: &mut gpui::TestAppContext) {
         if std::env::var("RUST_LOG").is_ok() {

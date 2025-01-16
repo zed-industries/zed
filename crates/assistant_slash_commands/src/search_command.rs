@@ -14,8 +14,8 @@ use std::{
 use ui::{prelude::*, IconName};
 use workspace::Workspace;
 
-use crate::slash_command::create_label_for_command;
-use crate::slash_command::file_command::{build_entry_output_section, codeblock_fence_for_path};
+use crate::create_label_for_command;
+use crate::file_command::{build_entry_output_section, codeblock_fence_for_path};
 
 pub(crate) struct SearchSlashCommandFeatureFlag;
 
