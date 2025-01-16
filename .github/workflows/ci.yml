@@ -21,7 +21,6 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
-  RUSTFLAGS: "-D warnings"
 
 jobs:
   check_docs_only:
@@ -128,6 +127,11 @@ jobs:
         with:
           clean: false
 
+      - name: Configure CI
+        run: |
+          mkdir ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+
       - name: cargo clippy
         if: needs.check_docs_only.outputs.docs_only == 'false'
         run: ./script/clippy
@@ -192,6 +196,11 @@ jobs:
         if: needs.check_docs_only.outputs.docs_only == 'false'
         run: ./script/linux
 
+      - name: Configure CI
+        run: |
+          mkdir ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+
       - name: cargo clippy
         if: needs.check_docs_only.outputs.docs_only == 'false'
         run: ./script/clippy
@@ -233,6 +242,11 @@ jobs:
         if: needs.check_docs_only.outputs.docs_only == 'false'
         run: ./script/remote-server && ./script/install-mold 2.34.0
 
+      - name: Configure CI
+        run: |
+          mkdir ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+
       - name: Build Remote Server
         if: needs.check_docs_only.outputs.docs_only == 'false'
         run: cargo build -p remote_server
@@ -259,6 +273,11 @@ jobs:
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-provider: "github"
+
+      - name: Configure CI
+        run: |
+          mkdir ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
 
       - name: cargo clippy
         if: needs.check_docs_only.outputs.docs_only == 'false'
