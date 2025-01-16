@@ -1,8 +1,10 @@
 mod completion_diff_element;
 mod rate_completion_modal;
+mod tos_modal;
 
 pub(crate) use completion_diff_element::*;
 pub use rate_completion_modal::*;
+pub use tos_modal::*;
 
 use anyhow::{anyhow, Context as _, Result};
 use arrayvec::ArrayVec;

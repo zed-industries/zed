@@ -1,12 +1,13 @@
 use anyhow::Result;
+use client::UserStore;
 use copilot::{Copilot, Status};
 use editor::{scroll::Autoscroll, Editor};
 use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
 use fs::Fs;
 use gpui::{
     actions, div, pulsating_between, Action, Animation, AnimationExt, AppContext,
-    AsyncWindowContext, Corner, Entity, IntoElement, ParentElement, Render, Subscription, View,
-    ViewContext, WeakView, WindowContext,
+    AsyncWindowContext, Corner, Entity, IntoElement, Model, ParentElement, Render, Subscription,
+    View, ViewContext, WeakView, WindowContext,
 };
 use language::{
     language_settings::{
@@ -27,7 +28,7 @@ use workspace::{
     StatusItemView, Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
-use zeta::RateCompletionModal;
+use zeta::{RateCompletionModal, ZetaTosModal};
 
 actions!(zeta, [RateCompletions]);
 
@@ -43,6 +44,7 @@ pub struct InlineCompletionButton {
     inline_completion_provider: Option<Arc<dyn inline_completion::InlineCompletionProviderHandle>>,
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
+    user_store: Model<UserStore>,
 }
 
 enum SupermavenButtonStatus {
@@ -210,6 +212,22 @@ impl Render for InlineCompletionButton {
                 let button = IconButton::new("zeta", IconName::ZedPredict)
                     .tooltip(|cx| Tooltip::text("Edit Prediction", cx));
 
+                if !self
+                    .user_store
+                    .read(cx)
+                    .current_user_has_accepted_terms()
+                    .unwrap_or(false)
+                {
+                    let workspace = self.workspace.clone();
+                    return div().child(button.on_click(cx.listener(move |this, _, cx| {
+                        workspace
+                            .update(cx, |this, cx| {
+                                ZetaTosModal::toggle(this, cx);
+                            })
+                            .ok();
+                    })));
+                }
+
                 let is_refreshing = self
                     .inline_completion_provider
                     .as_ref()
@@ -244,6 +262,7 @@ impl InlineCompletionButton {
     pub fn new(
         workspace: WeakView<Workspace>,
         fs: Arc<dyn Fs>,
+        user_store: Model<UserStore>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         if let Some(copilot) = Copilot::global(cx) {
@@ -261,6 +280,7 @@ impl InlineCompletionButton {
             inline_completion_provider: None,
             workspace,
             fs,
+            user_store,
         }
     }
 
