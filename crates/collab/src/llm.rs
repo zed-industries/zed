@@ -512,7 +512,7 @@ async fn predict_edits(
                         claims.system_id.clone(),
                         json!({
                             "model": model.to_string(),
-                            "prompt_len": prompt.len(),
+                            "prompt": prompt,
                         }),
                     )
                     .write(&kinesis_client, &kinesis_stream)
