@@ -219,7 +219,9 @@ impl Render for InlineCompletionButton {
 
                     return div().child(
                         IconButton::new("zeta", IconName::ZedPredict)
-                            .tooltip(|cx| Tooltip::text("Accept Terms to use", cx))
+                            .tooltip(|cx| {
+                                Tooltip::text("Edit Predictions (needs accepted terms)", cx)
+                            })
                             .on_click(cx.listener(move |_, _, cx| {
                                 let user_store = user_store.clone();
 
