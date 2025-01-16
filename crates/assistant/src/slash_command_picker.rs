@@ -1,11 +1,11 @@
 use std::sync::Arc;
 
+use assistant_slash_command::SlashCommandWorkingSet;
 use gpui::{AnyElement, DismissEvent, SharedString, Task, WeakView};
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger, Tooltip};
 
 use crate::assistant_panel::ContextEditor;
-use crate::SlashCommandWorkingSet;
 
 #[derive(IntoElement)]
 pub(super) struct SlashCommandSelector<T: PopoverTrigger> {
