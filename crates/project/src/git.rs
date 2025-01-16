@@ -122,6 +122,6 @@ impl GitState {
         // FIXME replace status().count() with a constant-time way to get the count of statuses
         self.active_repository
             .as_ref()
-            .map_or(0, |(_, entry, _)| entry.status().count())
+            .map_or(0, |(_, entry, _)| entry.status_len())
     }
 }

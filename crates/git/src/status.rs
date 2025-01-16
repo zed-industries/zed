@@ -171,7 +171,7 @@ impl FileStatus {
             FileStatus::Tracked(TrackedStatus {
                 index_status,
                 worktree_status,
-            }) => index_status.summary() + worktree_status.summary(),
+            }) => index_status.to_summary() + worktree_status.to_summary() + GitSummary::UNCHANGED,
         }
     }
 }
@@ -190,13 +190,15 @@ impl StatusCode {
         }
     }
 
-    fn summary(self) -> GitSummary {
+    fn to_summary(self) -> GitSummary {
         match self {
-            StatusCode::Modified | StatusCode::TypeChanged => GitSummary::MODIFIED,
-            StatusCode::Added => GitSummary::ADDED,
-            StatusCode::Deleted => GitSummary::DELETED,
+            StatusCode::Modified | StatusCode::TypeChanged => {
+                GitSummary::MODIFIED - GitSummary::UNCHANGED
+            }
+            StatusCode::Added => GitSummary::ADDED - GitSummary::UNCHANGED,
+            StatusCode::Deleted => GitSummary::DELETED - GitSummary::UNCHANGED,
             StatusCode::Renamed | StatusCode::Copied | StatusCode::Unmodified => {
-                GitSummary::UNCHANGED
+                GitSummary::default()
             }
         }
     }
@@ -220,6 +222,7 @@ pub struct GitSummary {
     pub conflict: usize,
     pub untracked: usize,
     pub deleted: usize,
+    pub count: usize,
 }
 
 impl GitSummary {
@@ -254,6 +257,7 @@ impl GitSummary {
         conflict: 0,
         untracked: 0,
         deleted: 0,
+        count: 1,
     };
 }
 
@@ -291,6 +295,7 @@ impl std::ops::AddAssign for GitSummary {
         self.conflict += rhs.conflict;
         self.untracked += rhs.untracked;
         self.deleted += rhs.deleted;
+        self.count += rhs.count;
     }
 }
 
@@ -304,6 +309,7 @@ impl std::ops::Sub for GitSummary {
             conflict: self.conflict - rhs.conflict,
             untracked: self.untracked - rhs.untracked,
             deleted: self.deleted - rhs.deleted,
+            count: self.count - rhs.count,
         }
     }
 }

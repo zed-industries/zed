@@ -359,7 +359,7 @@ impl GitPanel {
         git_panel
     }
 
-    fn git_state<'a>(&self, cx: &'a AppContext) -> Option<Model<GitState>> {
+    fn git_state(&self, cx: &AppContext) -> Option<Model<GitState>> {
         self.project.read(cx).git_state().cloned()
     }
 

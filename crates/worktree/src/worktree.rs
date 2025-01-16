@@ -227,6 +227,10 @@ impl RepositoryEntry {
         self.statuses_by_path.iter().cloned()
     }
 
+    pub fn status_len(&self) -> usize {
+        self.statuses_by_path.summary().item_summary.count
+    }
+
     pub fn status_for_path(&self, path: &RepoPath) -> Option<StatusEntry> {
         self.statuses_by_path
             .get(&PathKey(path.0.clone()), &())
