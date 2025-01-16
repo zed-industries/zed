@@ -374,8 +374,8 @@ impl LanguageRegistry {
         let initializer = adapter.initializer.take();
         let adapter = CachedLspAdapter::new(Arc::new(adapter));
 
-        let mut state = self.state.write();
         {
+            let mut state = self.state.write();
             state
                 .lsp_adapters
                 .entry(language_name.clone())
