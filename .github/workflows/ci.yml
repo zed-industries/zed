@@ -220,7 +220,7 @@ jobs:
           cargo build -p zed
           cargo check -p workspace
 
-      # Event the Linux runner is not stateful, in theory there is no need to do this cleanup.
+      # Even the Linux runner is not stateful, in theory there is no need to do this cleanup.
       # But, to avoid potential issues in the future if we choose to use a stateful Linux runner and forget to add code
       # to clean up the config file, I’ve included the cleanup code here as a precaution.
       # While it’s not strictly necessary at this moment, I believe it’s better to err on the side of caution.
