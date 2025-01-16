@@ -1,12 +1,10 @@
 use std::sync::Arc;
 
-use collections::HashMap;
 use futures::channel::mpsc;
 use futures::StreamExt as _;
 use git::repository::{GitRepository, RepoPath};
 use gpui::{AppContext, SharedString};
 use settings::WorktreeId;
-use sum_tree::SumTree;
 use util::ResultExt as _;
 use worktree::RepositoryEntry;
 

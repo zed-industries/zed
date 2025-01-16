@@ -1,5 +1,4 @@
 use crate::git_panel_settings::StatusStyle;
-use crate::{first_repository_in_project, first_worktree_repository};
 use crate::{git_panel_settings::GitPanelSettings, git_status_icon};
 use anyhow::{Context as _, Result};
 use db::kvp::KEY_VALUE_STORE;
@@ -99,6 +98,44 @@ pub struct GitPanel {
     reveal_in_editor: Task<()>,
 }
 
+fn first_worktree_repository(
+    project: &Model<Project>,
+    worktree_id: WorktreeId,
+    cx: &mut AppContext,
+) -> Option<(RepositoryEntry, Arc<dyn GitRepository>)> {
+    project
+        .read(cx)
+        .worktree_for_id(worktree_id, cx)
+        .and_then(|worktree| {
+            let snapshot = worktree.read(cx).snapshot();
+            let repo = snapshot.repositories().iter().next()?.clone();
+            let git_repo = worktree
+                .read(cx)
+                .as_local()?
+                .get_local_repo(&repo)?
+                .repo()
+                .clone();
+            Some((repo, git_repo))
+        })
+}
+
+fn first_repository_in_project(
+    project: &Model<Project>,
+    cx: &mut AppContext,
+) -> Option<(WorktreeId, RepositoryEntry, Arc<dyn GitRepository>)> {
+    project.read(cx).worktrees(cx).next().and_then(|worktree| {
+        let snapshot = worktree.read(cx).snapshot();
+        let repo = snapshot.repositories().iter().next()?.clone();
+        let git_repo = worktree
+            .read(cx)
+            .as_local()?
+            .get_local_repo(&repo)?
+            .repo()
+            .clone();
+        Some((snapshot.id(), repo, git_repo))
+    })
+}
+
 impl GitPanel {
     pub fn load(
         workspace: WeakView<Workspace>,
@@ -135,7 +172,7 @@ impl GitPanel {
                 let Some(git_state) = project.read(cx).git_state().cloned() else {
                     return;
                 };
-                git_state.update(cx, |git_state, cx| {
+                git_state.update(cx, |git_state, _| {
                     match event {
                         project::Event::WorktreeRemoved(id) => {
                             let Some((worktree_id, _, _)) = git_state.active_repository.as_ref()
@@ -161,11 +198,7 @@ impl GitPanel {
                                 this.schedule_update();
                             }
                         }
-                        Event::WorktreeAdded(id) => {
-                            let Some(worktree) = project.read(cx).worktree_for_id(*id, cx) else {
-                                return;
-                            };
-                            let snapshot = worktree.read(cx).snapshot();
+                        Event::WorktreeAdded(_) => {
                             let Some(first_id) = first_worktree_id else {
                                 return;
                             };
