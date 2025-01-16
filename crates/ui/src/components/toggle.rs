@@ -311,7 +311,7 @@ impl Switch {
         self
     }
 
-    /// Display the keybinding that triggers the swtich action.
+    /// Display the keybinding that triggers the switch action.
     pub fn key_binding(mut self, key_binding: impl Into<Option<KeyBinding>>) -> Self {
         self.key_binding = key_binding.into();
         self
