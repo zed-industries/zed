@@ -120,7 +120,6 @@ mod graph_test {
         for edge in GRAPH {
             graph.add_edge(edge[0], edge[1]);
         }
-        dbg!(&graph);
 
         assert_matches!(graph.has_cycle(1), Some(Cycle { src_node: 3, dst_node: 1 }));
         assert_matches!(graph.has_cycle(2), Some(Cycle { src_node: 1, dst_node: 2 }));
