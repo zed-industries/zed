@@ -1655,16 +1655,14 @@ impl ReferenceMultibuffer {
             }
 
             // Add the buffer text for the rest of the excerpt.
-            if buffer_range.end > offset {
-                let len = text.len();
-                text.extend(buffer.text_for_range(offset..buffer_range.end));
-                text.push('\n');
-                regions.push(ReferenceRegion {
-                    range: len..text.len(),
-                    buffer_start: Some(buffer.offset_to_point(offset)),
-                    status: None,
-                });
-            }
+            let len = text.len();
+            text.extend(buffer.text_for_range(offset..buffer_range.end));
+            text.push('\n');
+            regions.push(ReferenceRegion {
+                range: len..text.len(),
+                buffer_start: Some(buffer.offset_to_point(offset)),
+                status: None,
+            });
         }
 
         // Remove final trailing newline.
@@ -1687,12 +1685,15 @@ impl ReferenceMultibuffer {
                 let row_info = regions
                     .iter()
                     .find(|region| region.range.contains(&ix))
-                    .map_or(RowInfo::default(), |region| RowInfo {
-                        diff_status: region.status,
-                        buffer_row: region.buffer_start.map(|start_point| {
+                    .map_or(RowInfo::default(), |region| {
+                        let buffer_row = region.buffer_start.map(|start_point| {
                             start_point.row
                                 + text[region.range.start..ix].matches('\n').count() as u32
-                        }),
+                        });
+                        RowInfo {
+                            diff_status: region.status,
+                            buffer_row,
+                        }
                     });
                 ix += line.len() + 1;
                 row_info
@@ -1962,9 +1963,15 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
 
         log::info!("Multibuffer content:\n{}", actual_diff);
 
-        pretty_assertions::assert_eq!(actual_diff, expected_diff);
-        pretty_assertions::assert_eq!(actual_text, expected_text);
+        assert_eq!(
+            actual_row_infos.len(),
+            actual_text.split('\n').count(),
+            "line count: {}",
+            actual_text.split('\n').count()
+        );
         pretty_assertions::assert_eq!(actual_row_infos, expected_row_infos);
+        pretty_assertions::assert_eq!(actual_text, expected_text);
+        pretty_assertions::assert_eq!(actual_diff, expected_diff);
 
         for _ in 0..5 {
             let start_row = rng.gen_range(0..=expected_row_infos.len());
@@ -2279,7 +2286,7 @@ fn assert_new_snapshot(
         .row_infos(MultiBufferRow(0))
         .collect::<Vec<_>>();
     let actual_diff = format_diff(&actual_text, &line_infos, &Default::default());
-    pretty_assertions::assert_eq!(expected_diff, actual_diff);
+    pretty_assertions::assert_eq!(actual_diff, expected_diff);
     check_edits(
         snapshot,
         &new_snapshot,

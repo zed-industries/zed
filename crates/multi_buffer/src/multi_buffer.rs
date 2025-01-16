@@ -349,10 +349,9 @@ pub struct DiffTransformSummary {
 
 #[derive(Clone)]
 pub struct MultiBufferRows<'a> {
-    buffer_row_range: Range<u32>,
     point: Point,
-    diff_transforms: Cursor<'a, DiffTransform, (Point, ExcerptPoint)>,
-    excerpts: Cursor<'a, Excerpt, ExcerptPoint>,
+    is_empty: bool,
+    cursor: MultiBufferCursor<'a, Point>,
 }
 
 pub struct MultiBufferChunks<'a> {
@@ -388,6 +387,7 @@ pub struct ReversedMultiBufferBytes<'a> {
     chunk: &'a [u8],
 }
 
+#[derive(Clone)]
 struct MultiBufferCursor<'a, D: TextDimension> {
     excerpts: Cursor<'a, Excerpt, ExcerptDimension<D>>,
     diff_transforms: Cursor<'a, DiffTransform, (OutputDimension<D>, ExcerptDimension<D>)>,
@@ -399,6 +399,7 @@ struct MultiBufferCursor<'a, D: TextDimension> {
 struct MultiBufferRegion<'a, D: TextDimension> {
     buffer: &'a BufferSnapshot,
     is_main_buffer: bool,
+    is_inserted_hunk: bool,
     excerpt: &'a Excerpt,
     buffer_range: Range<D>,
     range: Range<D>,
@@ -3675,11 +3676,12 @@ impl MultiBufferSnapshot {
     }
 
     pub fn row_infos(&self, start_row: MultiBufferRow) -> MultiBufferRows {
+        let mut cursor = self.cursor::<Point>();
+        cursor.seek(&Point::new(start_row.0, 0));
         let mut result = MultiBufferRows {
-            buffer_row_range: 0..0,
             point: Point::new(0, 0),
-            diff_transforms: self.diff_transforms.cursor::<(Point, ExcerptPoint)>(&()),
-            excerpts: self.excerpts.cursor(&()),
+            is_empty: self.excerpts.is_empty(),
+            cursor,
         };
         result.seek(start_row);
         result
@@ -5346,7 +5348,7 @@ where
         self.diff_transforms
             .seek(&OutputDimension(*position), Bias::Right, &());
         if self.diff_transforms.item().is_none() && *position == self.diff_transforms.start().0 .0 {
-            self.excerpts.prev(&());
+            self.diff_transforms.prev(&());
         }
 
         let mut excerpt_position = self.diff_transforms.start().1 .0;
@@ -5458,70 +5460,77 @@ where
 
     fn build_region(&self) -> Option<MultiBufferRegion<'a, D>> {
         let excerpt = self.excerpts.item()?;
-        if let Some(DiffTransform::DeletedHunk {
-            buffer_id,
-            base_text_byte_range,
-            has_trailing_newline,
-            ..
-        }) = self.diff_transforms.item()
-        {
-            let diff = self.diffs.get(&buffer_id)?;
-            let buffer = &diff.base_text;
-            let mut rope_cursor = buffer.as_rope().cursor(0);
-            let buffer_start = rope_cursor.summary::<D>(base_text_byte_range.start);
-            let buffer_range_len = rope_cursor.summary::<D>(base_text_byte_range.end);
-            let mut buffer_end = buffer_start;
-            buffer_end.add_assign(&buffer_range_len);
-            let start = self.diff_transforms.start().0 .0;
-            let end = self.diff_transforms.end(&()).0 .0;
-            Some(MultiBufferRegion {
-                buffer,
-                excerpt,
-                has_trailing_newline: *has_trailing_newline,
-                is_main_buffer: false,
-                buffer_range: buffer_start..buffer_end,
-                range: start..end,
-            })
-        } else {
-            let buffer = &excerpt.buffer;
-            let buffer_context_start = excerpt.range.context.start.summary::<D>(buffer);
-
-            let mut start = self.diff_transforms.start().0 .0;
-            let mut buffer_start = buffer_context_start;
-            if self.diff_transforms.start().1 < *self.excerpts.start() {
-                let overshoot = self.excerpts.start().0 - self.diff_transforms.start().1 .0;
-                start.add_assign(&overshoot);
-            } else {
-                let overshoot = self.diff_transforms.start().1 .0 - self.excerpts.start().0;
-                buffer_start.add_assign(&overshoot);
-            }
-
-            let mut end;
-            let mut buffer_end;
-            let has_trailing_newline;
-            if self.diff_transforms.end(&()).1 .0 < self.excerpts.end(&()).0 {
-                let overshoot = self.diff_transforms.end(&()).1 .0 - self.excerpts.start().0;
-                end = self.diff_transforms.end(&()).0 .0;
-                buffer_end = buffer_context_start;
-                buffer_end.add_assign(&overshoot);
-                has_trailing_newline = false;
-            } else {
-                let overshoot = self.excerpts.end(&()).0 - self.diff_transforms.start().1 .0;
-                end = self.diff_transforms.start().0 .0;
-                end.add_assign(&overshoot);
-                buffer_end = excerpt.range.context.end.summary::<D>(buffer);
-                has_trailing_newline = excerpt.has_trailing_newline;
-            };
-
-            Some(MultiBufferRegion {
-                buffer,
-                excerpt,
+        let is_inserted_hunk = match self.diff_transforms.item() {
+            Some(DiffTransform::DeletedHunk {
+                buffer_id,
+                base_text_byte_range,
                 has_trailing_newline,
-                is_main_buffer: true,
-                buffer_range: buffer_start..buffer_end,
-                range: start..end,
-            })
+                ..
+            }) => {
+                let diff = self.diffs.get(&buffer_id)?;
+                let buffer = &diff.base_text;
+                let mut rope_cursor = buffer.as_rope().cursor(0);
+                let buffer_start = rope_cursor.summary::<D>(base_text_byte_range.start);
+                let buffer_range_len = rope_cursor.summary::<D>(base_text_byte_range.end);
+                let mut buffer_end = buffer_start;
+                buffer_end.add_assign(&buffer_range_len);
+                let start = self.diff_transforms.start().0 .0;
+                let end = self.diff_transforms.end(&()).0 .0;
+                return Some(MultiBufferRegion {
+                    buffer,
+                    excerpt,
+                    has_trailing_newline: *has_trailing_newline,
+                    is_main_buffer: false,
+                    is_inserted_hunk: false,
+                    buffer_range: buffer_start..buffer_end,
+                    range: start..end,
+                });
+            }
+            Some(DiffTransform::BufferContent {
+                is_inserted_hunk, ..
+            }) => *is_inserted_hunk,
+            None => false,
+        };
+
+        let buffer = &excerpt.buffer;
+        let buffer_context_start = excerpt.range.context.start.summary::<D>(buffer);
+
+        let mut start = self.diff_transforms.start().0 .0;
+        let mut buffer_start = buffer_context_start;
+        if self.diff_transforms.start().1 < *self.excerpts.start() {
+            let overshoot = self.excerpts.start().0 - self.diff_transforms.start().1 .0;
+            start.add_assign(&overshoot);
+        } else {
+            let overshoot = self.diff_transforms.start().1 .0 - self.excerpts.start().0;
+            buffer_start.add_assign(&overshoot);
         }
+
+        let mut end;
+        let mut buffer_end;
+        let has_trailing_newline;
+        if self.diff_transforms.end(&()).1 .0 < self.excerpts.end(&()).0 {
+            let overshoot = self.diff_transforms.end(&()).1 .0 - self.excerpts.start().0;
+            end = self.diff_transforms.end(&()).0 .0;
+            buffer_end = buffer_context_start;
+            buffer_end.add_assign(&overshoot);
+            has_trailing_newline = false;
+        } else {
+            let overshoot = self.excerpts.end(&()).0 - self.diff_transforms.start().1 .0;
+            end = self.diff_transforms.start().0 .0;
+            end.add_assign(&overshoot);
+            buffer_end = excerpt.range.context.end.summary::<D>(buffer);
+            has_trailing_newline = excerpt.has_trailing_newline;
+        };
+
+        Some(MultiBufferRegion {
+            buffer,
+            excerpt,
+            has_trailing_newline,
+            is_main_buffer: true,
+            is_inserted_hunk,
+            buffer_range: buffer_start..buffer_end,
+            range: start..end,
+        })
     }
 
     fn excerpt(&self) -> Option<&'a Excerpt> {
@@ -6262,62 +6271,8 @@ impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for Point {
 
 impl<'a> MultiBufferRows<'a> {
     pub fn seek(&mut self, MultiBufferRow(row): MultiBufferRow) {
-        let point = Point::new(row, 0);
-        self.diff_transforms.seek_forward(&point, Bias::Right, &());
-
-        let (diff_transform_start, excerpt_transform_start) = self.diff_transforms.start();
-        let overshoot = if matches!(
-            self.diff_transforms.item(),
-            Some(DiffTransform::BufferContent { .. }) | None
-        ) {
-            point.row - diff_transform_start.row
-        } else {
-            0
-        };
-
-        let excerpt_row = excerpt_transform_start.row() + overshoot;
-        self.buffer_row_range = 0..0;
-        self.point = point;
-
-        self.excerpts
-            .seek_forward(&ExcerptPoint::new(excerpt_row, 0), Bias::Right, &());
-        if self.excerpts.item().is_none() {
-            self.excerpts.prev(&());
-
-            if self.excerpts.item().is_none() && excerpt_row == 0 {
-                self.buffer_row_range = 0..1;
-                return;
-            }
-        }
-
-        if let Some(excerpt) = self.excerpts.item() {
-            let overshoot = excerpt_row - self.excerpts.start().row();
-            let excerpt_start = excerpt.range.context.start.to_point(&excerpt.buffer).row;
-            self.buffer_row_range.start = excerpt_start + overshoot;
-            self.buffer_row_range.end = excerpt_start + excerpt.text_summary.lines.row + 1;
-        }
-    }
-    fn next_excerpt_row(&mut self) -> Option<(u32, bool)> {
-        loop {
-            if !self.buffer_row_range.is_empty() {
-                let row = self.buffer_row_range.start;
-                self.buffer_row_range.start += 1;
-                let is_inserted_line = if let Some(excerpt) = self.excerpts.item() {
-                    self.buffer_row_range.is_empty()
-                        && excerpt.has_trailing_newline
-                        && excerpt.text_summary.last_line_chars == 0
-                } else {
-                    false
-                };
-                return Some((row, is_inserted_line));
-            }
-            self.excerpts.item()?;
-            self.excerpts.next(&());
-            let excerpt = self.excerpts.item()?;
-            self.buffer_row_range.start = excerpt.range.context.start.to_point(&excerpt.buffer).row;
-            self.buffer_row_range.end =
-                self.buffer_row_range.start + excerpt.text_summary.lines.row + 1;
-        }
+        self.point = Point::new(row, 0);
+        self.cursor.seek(&self.point);
     }
 }
 
@@ -6325,30 +6280,39 @@ impl<'a> Iterator for MultiBufferRows<'a> {
     type Item = RowInfo;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.point >= self.diff_transforms.end(&()).0 {
-            self.diff_transforms.next(&());
+        if self.is_empty && self.point.row == 0 {
+            self.point.row += 1;
+            return Some(RowInfo {
+                buffer_row: Some(0),
+                diff_status: None,
+            });
         }
-        let diff_transform = self.diff_transforms.item();
-        let result = if let Some(DiffTransform::DeletedHunk { .. }) = diff_transform {
+
+        let mut region = self.cursor.region()?;
+        if self.point >= region.range.end {
+            self.cursor.next();
+            let next_region = self.cursor.region();
+            if next_region.is_some() || self.point > region.range.end {
+                region = next_region?;
+            }
+        }
+
+        let result = if region.is_main_buffer {
+            let overshoot = self.point - region.range.start;
+            let buffer_point = region.buffer_range.start + overshoot;
+            Some(RowInfo {
+                buffer_row: Some(buffer_point.row),
+                diff_status: if region.is_inserted_hunk && self.point < region.range.end {
+                    Some(DiffHunkStatus::Added)
+                } else {
+                    None
+                },
+            })
+        } else {
             Some(RowInfo {
                 buffer_row: None,
                 diff_status: Some(DiffHunkStatus::Removed),
             })
-        } else {
-            let diff_status = if let Some(DiffTransform::BufferContent {
-                is_inserted_hunk: true,
-                ..
-            }) = diff_transform
-            {
-                Some(DiffHunkStatus::Added)
-            } else {
-                None
-            };
-            self.next_excerpt_row()
-                .map(|(row, is_inserted_line)| RowInfo {
-                    buffer_row: Some(row),
-                    diff_status: if is_inserted_line { None } else { diff_status },
-                })
         };
         self.point += Point::new(1, 0);
         result
