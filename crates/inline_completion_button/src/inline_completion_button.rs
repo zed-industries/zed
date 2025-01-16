@@ -224,11 +224,9 @@ impl Render for InlineCompletionButton {
                     return div().child(button.on_click(cx.listener(move |_, _, cx| {
                         let user_store = user_store.clone();
 
-                        workspace
-                            .update(cx, move |this, cx| {
-                                ZedPredictTos::toggle(this, user_store, cx);
-                            })
-                            .ok();
+                        if let Some(workspace) = workspace.upgrade() {
+                            ZedPredictTos::toggle(workspace, user_store, cx);
+                        }
                     })));
                 }
 

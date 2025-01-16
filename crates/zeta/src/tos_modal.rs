@@ -1,7 +1,7 @@
 use client::UserStore;
 use gpui::{
     AppContext, ClickEvent, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
-    MouseDownEvent, Render,
+    MouseDownEvent, Render, View,
 };
 use ui::prelude::*;
 use workspace::{ModalView, Workspace};
@@ -9,24 +9,33 @@ use workspace::{ModalView, Workspace};
 pub struct ZedPredictTos {
     focus_handle: FocusHandle,
     user_store: Model<UserStore>,
+    workspace: View<Workspace>,
     viewed: bool,
 }
 
 impl ZedPredictTos {
-    fn new(user_store: Model<UserStore>, cx: &mut ViewContext<Self>) -> Self {
+    fn new(
+        workspace: View<Workspace>,
+        user_store: Model<UserStore>,
+        cx: &mut ViewContext<Self>,
+    ) -> Self {
         ZedPredictTos {
             viewed: false,
             focus_handle: cx.focus_handle(),
             user_store,
+            workspace,
         }
     }
 
     pub fn toggle(
-        workspace: &mut Workspace,
+        workspace: View<Workspace>,
         user_store: Model<UserStore>,
-        cx: &mut ViewContext<Workspace>,
+        cx: &mut WindowContext,
     ) {
-        workspace.toggle_modal(cx, |cx| ZedPredictTos::new(user_store, cx));
+        workspace.update(cx, |this, cx| {
+            let workspace = cx.view().clone();
+            this.toggle_modal(cx, |cx| ZedPredictTos::new(workspace, user_store, cx));
+        });
     }
 
     fn view_terms(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
@@ -40,12 +49,17 @@ impl ZedPredictTos {
             .user_store
             .update(cx, |this, cx| this.accept_terms_of_service(cx));
 
-        cx.spawn(|this, mut cx| async move {
-            task.await?;
+        let workspace = self.workspace.clone();
 
-            this.update(&mut cx, |_, cx| {
-                cx.emit(DismissEvent);
-            })
+        cx.spawn(|this, mut cx| async move {
+            match task.await {
+                Ok(_) => this.update(&mut cx, |_, cx| {
+                    cx.emit(DismissEvent);
+                }),
+                Err(err) => workspace.update(&mut cx, |this, cx| {
+                    this.show_error(&err, cx);
+                }),
+            }
         })
         .detach_and_log_err(cx);
     }
