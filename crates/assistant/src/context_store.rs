@@ -1,10 +1,9 @@
-use crate::SlashCommandId;
 use crate::{
     Context, ContextEvent, ContextId, ContextOperation, ContextVersion, SavedContext,
     SavedContextMetadata,
 };
 use anyhow::{anyhow, Context as _, Result};
-use assistant_slash_command::SlashCommandWorkingSet;
+use assistant_slash_command::{SlashCommandId, SlashCommandWorkingSet};
 use assistant_tool::{ToolId, ToolWorkingSet};
 use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
 use clock::ReplicaId;

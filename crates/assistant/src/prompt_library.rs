@@ -1,6 +1,6 @@
-use crate::SlashCommandWorkingSet;
 use crate::{slash_command::SlashCommandCompletionProvider, AssistantPanel, InlineAssistant};
 use anyhow::Result;
+use assistant_slash_command::SlashCommandWorkingSet;
 use collections::{HashMap, HashSet};
 use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
 use gpui::{

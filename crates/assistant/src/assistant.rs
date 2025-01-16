@@ -12,35 +12,34 @@ pub mod slash_command_settings;
 mod streaming_diff;
 mod terminal_inline_assistant;
 
-pub use ::prompt_library::PromptBuilder;
-use ::prompt_library::PromptLoadingParams;
-pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
+use std::path::PathBuf;
+use std::sync::Arc;
+
+use ::prompt_library::{PromptBuilder, PromptLoadingParams};
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::SlashCommandRegistry;
-pub use assistant_slash_command::{SlashCommandId, SlashCommandWorkingSet};
 use assistant_slash_commands::{ProjectSlashCommandFeatureFlag, SearchSlashCommandFeatureFlag};
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
-pub use context::*;
-pub use context_store::*;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::impl_internal_actions;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
-pub(crate) use inline_assistant::*;
 use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
 };
-pub use patch::*;
 use semantic_index::{CloudEmbeddingProvider, SemanticDb};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use std::path::PathBuf;
-use std::sync::Arc;
-pub(crate) use streaming_diff::*;
 use util::ResultExt;
 
+pub use crate::assistant_panel::{AssistantPanel, AssistantPanelEvent};
+pub use crate::context::*;
+pub use crate::context_store::*;
+pub(crate) use crate::inline_assistant::*;
+pub use crate::patch::*;
 use crate::slash_command_settings::SlashCommandSettings;
+pub(crate) use crate::streaming_diff::*;
 
 actions!(
     assistant,

@@ -1,7 +1,7 @@
 use super::{AssistantEdit, MessageCacheMetadata};
 use crate::{
     assistant_panel, AssistantEditKind, CacheStatus, Context, ContextEvent, ContextId,
-    ContextOperation, InvokedSlashCommandId, MessageId, MessageStatus, PromptBuilder,
+    ContextOperation, InvokedSlashCommandId, MessageId, MessageStatus,
 };
 use anyhow::Result;
 use assistant_slash_command::{
@@ -22,6 +22,7 @@ use language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Rol
 use parking_lot::Mutex;
 use pretty_assertions::assert_eq;
 use project::Project;
+use prompt_library::PromptBuilder;
 use rand::prelude::*;
 use serde_json::json;
 use settings::SettingsStore;
