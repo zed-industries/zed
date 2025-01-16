@@ -1,7 +1,7 @@
 use crate::{Event, *};
+use ::git::diff::assert_hunks;
 use fs::FakeFs;
 use futures::{future, StreamExt};
-use git::diff::assert_hunks;
 use gpui::{AppContext, SemanticVersion, UpdateGlobal};
 use http_client::Url;
 use language::{
