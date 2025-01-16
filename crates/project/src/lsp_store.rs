@@ -7402,15 +7402,6 @@ impl LspStore {
         cx: &mut ModelContext<Self>,
     ) {
         let worktree_id = worktree.read(cx).id();
-        {
-            let weak = cx.to_async();
-            cx.foreground_executor().spawn(|cx| async move {
-                cx.background_executor().spawn(async move {}).await;
-                weak.update(|cx| {
-                    dbg!("!!");
-                });
-            });
-        }
 
         let lsp_adapters = self.languages.clone().lsp_adapters(&language);
         let ids = lsp_adapters
