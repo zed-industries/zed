@@ -23,7 +23,7 @@ use workspace::Workspace;
 
 use crate::create_label_for_command;
 
-pub(crate) struct DiagnosticsSlashCommand;
+pub struct DiagnosticsSlashCommand;
 
 impl DiagnosticsSlashCommand {
     fn search_paths(

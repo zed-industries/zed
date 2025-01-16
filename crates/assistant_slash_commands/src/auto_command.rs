@@ -26,7 +26,7 @@ impl FeatureFlag for AutoSlashCommandFeatureFlag {
     const NAME: &'static str = "auto-slash-command";
 }
 
-pub(crate) struct AutoCommand;
+pub struct AutoCommand;
 
 impl SlashCommand for AutoCommand {
     fn name(&self) -> String {

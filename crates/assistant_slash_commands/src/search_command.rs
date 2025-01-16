@@ -17,7 +17,7 @@ use workspace::Workspace;
 use crate::create_label_for_command;
 use crate::file_command::{build_entry_output_section, codeblock_fence_for_path};
 
-pub(crate) struct SearchSlashCommandFeatureFlag;
+pub struct SearchSlashCommandFeatureFlag;
 
 impl FeatureFlag for SearchSlashCommandFeatureFlag {
     const NAME: &'static str = "search-slash-command";
@@ -27,7 +27,7 @@ impl FeatureFlag for SearchSlashCommandFeatureFlag {
     }
 }
 
-pub(crate) struct SearchSlashCommand;
+pub struct SearchSlashCommand;
 
 impl SlashCommand for SearchSlashCommand {
     fn name(&self) -> String {

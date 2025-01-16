@@ -13,7 +13,7 @@ use text::OffsetRangeExt;
 use ui::prelude::*;
 use workspace::Workspace;
 
-pub(crate) struct DeltaSlashCommand;
+pub struct DeltaSlashCommand;
 
 impl SlashCommand for DeltaSlashCommand {
     fn name(&self) -> String {

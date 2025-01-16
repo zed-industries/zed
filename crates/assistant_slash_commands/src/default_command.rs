@@ -13,7 +13,7 @@ use std::{
 use ui::prelude::*;
 use workspace::Workspace;
 
-pub(crate) struct DefaultSlashCommand;
+pub struct DefaultSlashCommand;
 
 impl SlashCommand for DefaultSlashCommand {
     fn name(&self) -> String {

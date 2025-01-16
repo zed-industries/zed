@@ -2,11 +2,11 @@ use crate::assistant_panel::ContextEditor;
 use crate::SlashCommandWorkingSet;
 use anyhow::Result;
 use assistant_slash_command::AfterCompletion;
-pub use assistant_slash_command::{SlashCommand, SlashCommandOutput};
+pub use assistant_slash_command::SlashCommand;
 use editor::{CompletionProvider, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
-use gpui::{AppContext, Model, Task, ViewContext, WeakView, WindowContext};
-use language::{Anchor, Buffer, CodeLabel, Documentation, HighlightId, LanguageServerId, ToPoint};
+use gpui::{Model, Task, ViewContext, WeakView, WindowContext};
+use language::{Anchor, Buffer, Documentation, LanguageServerId, ToPoint};
 use parking_lot::Mutex;
 use project::CompletionIntent;
 use rope::Point;
@@ -19,7 +19,6 @@ use std::{
         Arc,
     },
 };
-use ui::ActiveTheme;
 use workspace::Workspace;
 
 pub(crate) struct SlashCommandCompletionProvider {

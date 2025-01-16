@@ -1,25 +1,22 @@
-use crate::slash_command::file_command::codeblock_fence_for_path;
 use crate::{
-    humanize_token_count,
-    prompt_library::open_prompt_library,
-    slash_command::{
-        default_command::DefaultSlashCommand,
-        docs_command::{DocsSlashCommand, DocsSlashCommandArgs},
-        file_command, SlashCommandCompletionProvider,
-    },
-    slash_command_picker,
-    terminal_inline_assistant::TerminalInlineAssistant,
-    Assist, AssistantPatch, AssistantPatchStatus, CacheStatus, ConfirmCommand, Content, Context,
-    ContextEvent, ContextId, ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole,
-    DeployHistory, DeployPromptLibrary, Edit, InlineAssistant, InsertDraggedFiles,
-    InsertIntoEditor, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
-    MessageMetadata, MessageStatus, NewContext, ParsedSlashCommand, PendingSlashCommandStatus,
-    QuoteSelection, RemoteContextMetadata, RequestType, SavedContextMetadata, Split, ToggleFocus,
+    humanize_token_count, prompt_library::open_prompt_library,
+    slash_command::SlashCommandCompletionProvider, slash_command_picker,
+    terminal_inline_assistant::TerminalInlineAssistant, Assist, AssistantPatch,
+    AssistantPatchStatus, CacheStatus, ConfirmCommand, Content, Context, ContextEvent, ContextId,
+    ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole, DeployHistory,
+    DeployPromptLibrary, Edit, InlineAssistant, InsertDraggedFiles, InsertIntoEditor,
+    InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId, MessageMetadata,
+    MessageStatus, NewContext, ParsedSlashCommand, PendingSlashCommandStatus, QuoteSelection,
+    RemoteContextMetadata, RequestType, SavedContextMetadata, Split, ToggleFocus,
     ToggleModelSelector,
 };
 use anyhow::Result;
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
+use assistant_slash_commands::{
+    selections_creases, DefaultSlashCommand, DocsSlashCommand, DocsSlashCommandArgs,
+    FileSlashCommand,
+};
 use assistant_tool::ToolWorkingSet;
 use client::{proto, zed_urls, Client, Status};
 use collections::{hash_map, BTreeSet, HashMap, HashSet};
@@ -3032,7 +3029,7 @@ impl ContextEditor {
 
         cx.spawn(|_, mut cx| async move {
             let (paths, dragged_file_worktrees) = paths.await;
-            let cmd_name = file_command::FileSlashCommand.name();
+            let cmd_name = FileSlashCommand.name();
 
             context_editor_view
                 .update(&mut cx, |context_editor, cx| {

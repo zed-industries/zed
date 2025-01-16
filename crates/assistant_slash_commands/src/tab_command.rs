@@ -18,7 +18,7 @@ use workspace::Workspace;
 
 use crate::file_command::append_buffer_to_output;
 
-pub(crate) struct TabSlashCommand;
+pub struct TabSlashCommand;
 
 const ALL_TABS_COMPLETION_ITEM: &str = "all";
 

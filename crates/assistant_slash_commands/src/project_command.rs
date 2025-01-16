@@ -1,4 +1,9 @@
-use super::{create_label_for_command, search_command::add_search_result_section};
+use std::{
+    fmt::Write as _,
+    ops::DerefMut,
+    sync::{atomic::AtomicBool, Arc},
+};
+
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
@@ -12,21 +17,16 @@ use prompt_library::PromptBuilder;
 use schemars::JsonSchema;
 use semantic_index::SemanticDb;
 use serde::Deserialize;
+use ui::prelude::*;
+use workspace::Workspace;
+
+use super::{create_label_for_command, search_command::add_search_result_section};
 
 pub struct ProjectSlashCommandFeatureFlag;
 
 impl FeatureFlag for ProjectSlashCommandFeatureFlag {
     const NAME: &'static str = "project-slash-command";
 }
-
-use std::{
-    fmt::Write as _,
-    ops::DerefMut,
-    sync::{atomic::AtomicBool, Arc},
-};
-
-use ui::prelude::*;
-use workspace::Workspace;
 
 pub struct ProjectSlashCommand {
     prompt_builder: Arc<PromptBuilder>,

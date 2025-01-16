@@ -15,7 +15,7 @@ use workspace::Workspace;
 
 use crate::file_command::codeblock_fence_for_path;
 
-pub(crate) struct SelectionCommand;
+pub struct SelectionCommand;
 
 impl SlashCommand for SelectionCommand {
     fn name(&self) -> String {

@@ -1,4 +1,3 @@
-use crate::slash_command::context_server_command;
 use crate::SlashCommandId;
 use crate::{
     Context, ContextEvent, ContextId, ContextOperation, ContextVersion, SavedContext,
@@ -837,14 +836,14 @@ impl ContextStore {
                                 if let Some(prompts) = protocol.list_prompts().await.log_err() {
                                     let slash_command_ids = prompts
                                         .into_iter()
-                                        .filter(context_server_command::acceptable_prompt)
+                                        .filter(assistant_slash_commands::acceptable_prompt)
                                         .map(|prompt| {
                                             log::info!(
                                                 "registering context server command: {:?}",
                                                 prompt.name
                                             );
                                             slash_command_working_set.insert(Arc::new(
-                                                context_server_command::ContextServerSlashCommand::new(
+                                                assistant_slash_commands::ContextServerSlashCommand::new(
                                                     context_server_manager.clone(),
                                                     &server,
                                                     prompt,

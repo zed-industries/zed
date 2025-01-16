@@ -21,7 +21,7 @@ use ui::prelude::*;
 use util::ResultExt;
 use workspace::Workspace;
 
-pub(crate) struct FileSlashCommand;
+pub struct FileSlashCommand;
 
 impl FileSlashCommand {
     fn search_paths(

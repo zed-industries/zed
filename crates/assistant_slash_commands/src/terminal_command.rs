@@ -14,7 +14,7 @@ use workspace::{dock::Panel, Workspace};
 
 use super::create_label_for_command;
 
-pub(crate) struct TerminalSlashCommand;
+pub struct TerminalSlashCommand;
 
 const LINE_COUNT_ARG: &str = "--line-count";
 
