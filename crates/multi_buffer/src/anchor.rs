@@ -73,10 +73,10 @@ impl Anchor {
                 if let Some(diff_base) = snapshot.diffs.get(&excerpt.buffer_id) {
                     let self_anchor = self
                         .diff_base_anchor
-                        .filter(|a| a.buffer_id == Some(diff_base.base_text.remote_id()));
+                        .filter(|a| diff_base.base_text.can_resolve(a));
                     let other_anchor = other
                         .diff_base_anchor
-                        .filter(|a| a.buffer_id == Some(diff_base.base_text.remote_id()));
+                        .filter(|a| diff_base.base_text.can_resolve(a));
                     return match (self_anchor, other_anchor) {
                         (Some(a), Some(b)) => a.cmp(&b, &diff_base.base_text),
                         (Some(_), None) => match other.text_anchor.bias {

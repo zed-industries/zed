@@ -4171,9 +4171,9 @@ impl MultiBufferSnapshot {
                     let mut in_deleted_hunk = false;
                     if let Some(diff_base_anchor) = &anchor.diff_base_anchor {
                         if let Some(diff) = self.diffs.get(buffer_id) {
-                            if diff_base_anchor.buffer_id == Some(diff.base_text.remote_id()) {
+                            if diff.base_text.can_resolve(&diff_base_anchor) {
                                 let base_text_offset = diff_base_anchor.to_offset(&diff.base_text);
-                                if base_text_byte_range.start <= base_text_offset
+                                if base_text_offset >= base_text_byte_range.start
                                     && base_text_offset <= base_text_byte_range.end
                                 {
                                     let position_in_hunk =
@@ -4191,6 +4191,7 @@ impl MultiBufferSnapshot {
                     }
                     if !in_deleted_hunk {
                         position = diff_transforms.end(&()).1 .0;
+                        dbg!(position);
                     }
                 }
                 _ => {
@@ -4467,41 +4468,33 @@ impl MultiBufferSnapshot {
         self.anchor_at(position, Bias::Right)
     }
 
-    // buffer content ] [ deleted item ] [\n] [ buffer content
-    //                1 2              3 4  5 6
-    // 1: bias left (diff base = none)
-    // 2: bias left (diff base = some)
-    // 3: bias left (diff base = some)
-    // 4: <-- merged into case 3
-    // 5: <-- merged into case 6
-    // 6: bias right (diff base = none)
     pub fn anchor_at<T: ToOffset>(&self, position: T, mut bias: Bias) -> Anchor {
         let offset = position.to_offset(self);
 
         // Find the given position in the diff transforms. Determine the corresponding
         // offset in the excerpts, and whether the position is within a deleted hunk.
-        let mut diff_transform_cursor = self.diff_transforms.cursor::<(usize, ExcerptOffset)>(&());
-        diff_transform_cursor.seek(&offset, Bias::Right, &());
+        let mut diff_transforms = self.diff_transforms.cursor::<(usize, ExcerptOffset)>(&());
+        diff_transforms.seek(&offset, Bias::Right, &());
 
-        if offset == diff_transform_cursor.start().0 && bias == Bias::Left {
-            if let Some(prev_item) = diff_transform_cursor.prev_item() {
+        if offset == diff_transforms.start().0 && bias == Bias::Left {
+            if let Some(prev_item) = diff_transforms.prev_item() {
                 match prev_item {
                     DiffTransform::DeletedHunk { .. } => {
-                        diff_transform_cursor.prev(&());
+                        diff_transforms.prev(&());
                     }
                     _ => {}
                 }
             }
         }
-        let offset_in_transform = offset - diff_transform_cursor.start().0;
-        let mut excerpt_offset = diff_transform_cursor.start().1;
+        let offset_in_transform = offset - diff_transforms.start().0;
+        let mut excerpt_offset = diff_transforms.start().1;
         let mut diff_base_anchor = None;
         if let Some(DiffTransform::DeletedHunk {
             buffer_id,
             base_text_byte_range,
             has_trailing_newline,
             ..
-        }) = diff_transform_cursor.item()
+        }) = diff_transforms.item()
         {
             let diff_base = self.diffs.get(buffer_id).expect("missing diff base");
             if offset_in_transform > base_text_byte_range.len() {
@@ -4528,16 +4521,16 @@ impl MultiBufferSnapshot {
             };
         }
 
-        let mut cursor = self
+        let mut excerpts = self
             .excerpts
             .cursor::<(ExcerptOffset, Option<ExcerptId>)>(&());
-        cursor.seek(&excerpt_offset, Bias::Right, &());
-        if cursor.item().is_none() && excerpt_offset == cursor.start().0 && bias == Bias::Left {
-            cursor.prev(&());
+        excerpts.seek(&excerpt_offset, Bias::Right, &());
+        if excerpts.item().is_none() && excerpt_offset == excerpts.start().0 && bias == Bias::Left {
+            excerpts.prev(&());
         }
-        if let Some(excerpt) = cursor.item() {
-            let mut overshoot = excerpt_offset.saturating_sub(cursor.start().0).value;
-            if excerpt.has_trailing_newline && excerpt_offset == cursor.end(&()).0 {
+        if let Some(excerpt) = excerpts.item() {
+            let mut overshoot = excerpt_offset.saturating_sub(excerpts.start().0).value;
+            if excerpt.has_trailing_newline && excerpt_offset == excerpts.end(&()).0 {
                 overshoot -= 1;
                 bias = Bias::Right;
             }
