@@ -1,5 +1,4 @@
 use crate::slash_command::file_command::codeblock_fence_for_path;
-use crate::slash_command_working_set::SlashCommandWorkingSet;
 use crate::{
     humanize_token_count,
     prompt_library::open_prompt_library,
@@ -21,7 +20,7 @@ use crate::{
 };
 use anyhow::Result;
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
-use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
+use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
 use assistant_tool::ToolWorkingSet;
 use client::{proto, zed_urls, Client, Status};
 use collections::{hash_map, BTreeSet, HashMap, HashSet};
