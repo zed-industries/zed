@@ -227,6 +227,10 @@ impl RepositoryEntry {
         self.statuses_by_path.iter().cloned()
     }
 
+    pub fn status_len(&self) -> usize {
+        self.statuses_by_path.summary().item_summary.count
+    }
+
     pub fn status_for_path(&self, path: &RepoPath) -> Option<StatusEntry> {
         self.statuses_by_path
             .get(&PathKey(path.0.clone()), &())
@@ -5718,7 +5722,7 @@ impl<'a> GitTraversal<'a> {
             if statuses.seek_forward(&PathTarget::Path(repo_path.as_ref()), Bias::Left, &()) {
                 self.current_entry_summary = Some(statuses.item().unwrap().status.into());
             } else {
-                self.current_entry_summary = Some(GitSummary::zero(&()));
+                self.current_entry_summary = Some(GitSummary::UNCHANGED);
             }
         }
     }
@@ -5755,7 +5759,7 @@ impl<'a> GitTraversal<'a> {
 
     pub fn entry(&self) -> Option<GitEntryRef<'a>> {
         let entry = self.traversal.cursor.item()?;
-        let git_summary = self.current_entry_summary.unwrap_or_default();
+        let git_summary = self.current_entry_summary.unwrap_or(GitSummary::UNCHANGED);
         Some(GitEntryRef { entry, git_summary })
     }
 }

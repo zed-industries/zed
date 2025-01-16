@@ -73,52 +73,54 @@ impl GitState {
         self.commit_message = None;
     }
 
-    pub fn stage_entry(&mut self, repo_path: RepoPath) {
+    fn act_on_entries(&self, entries: Vec<RepoPath>, action: StatusAction) {
+        if entries.is_empty() {
+            return;
+        }
         if let Some((_, _, git_repo)) = self.active_repository.as_ref() {
-            let _ = self.update_sender.unbounded_send((
-                git_repo.clone(),
-                vec![repo_path],
-                StatusAction::Stage,
-            ));
+            let _ = self
+                .update_sender
+                .unbounded_send((git_repo.clone(), entries, action));
         }
     }
 
-    pub fn unstage_entry(&mut self, repo_path: RepoPath) {
-        if let Some((_, _, git_repo)) = self.active_repository.as_ref() {
-            let _ = self.update_sender.unbounded_send((
-                git_repo.clone(),
-                vec![repo_path],
-                StatusAction::Unstage,
-            ));
-        }
+    pub fn stage_entries(&self, entries: Vec<RepoPath>) {
+        self.act_on_entries(entries, StatusAction::Stage);
     }
 
-    pub fn stage_entries(&mut self, entries: Vec<RepoPath>) {
-        if let Some((_, _, git_repo)) = self.active_repository.as_ref() {
-            let _ =
-                self.update_sender
-                    .unbounded_send((git_repo.clone(), entries, StatusAction::Stage));
-        }
+    pub fn unstage_entries(&self, entries: Vec<RepoPath>) {
+        self.act_on_entries(entries, StatusAction::Unstage);
     }
 
-    fn act_on_all(&mut self, action: StatusAction) {
-        if let Some((_, active_repository, git_repo)) = self.active_repository.as_ref() {
-            let _ = self.update_sender.unbounded_send((
-                git_repo.clone(),
-                active_repository
-                    .status()
-                    .map(|entry| entry.repo_path)
-                    .collect(),
-                action,
-            ));
-        }
+    pub fn stage_all(&self) {
+        let Some((_, entry, _)) = self.active_repository.as_ref() else {
+            return;
+        };
+        let to_stage = entry
+            .status()
+            .filter(|entry| !entry.status.is_staged().unwrap_or(false))
+            .map(|entry| entry.repo_path.clone())
+            .collect();
+        self.stage_entries(to_stage);
     }
 
-    pub fn stage_all(&mut self) {
-        self.act_on_all(StatusAction::Stage);
+    pub fn unstage_all(&self) {
+        let Some((_, entry, _)) = self.active_repository.as_ref() else {
+            return;
+        };
+        let to_unstage = entry
+            .status()
+            .filter(|entry| entry.status.is_staged().unwrap_or(true))
+            .map(|entry| entry.repo_path.clone())
+            .collect();
+        self.unstage_entries(to_unstage);
     }
 
-    pub fn unstage_all(&mut self) {
-        self.act_on_all(StatusAction::Unstage);
+    /// Get a count of all entries in the active repository, including
+    /// untracked files.
+    pub fn entry_count(&self) -> usize {
+        self.active_repository
+            .as_ref()
+            .map_or(0, |(_, entry, _)| entry.status_len())
     }
 }

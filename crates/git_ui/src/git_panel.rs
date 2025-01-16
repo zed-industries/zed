@@ -88,10 +88,6 @@ pub struct GitPanel {
     show_scrollbar: bool,
     rebuild_requested: Arc<AtomicBool>,
     commit_editor: View<Editor>,
-    /// The visible entries in the list, accounting for folding & expanded state.
-    ///
-    /// At this point it doesn't matter what repository the entry belongs to,
-    /// as only one repositories' entries are visible in the list at a time.
     visible_entries: Vec<GitListEntry>,
     all_staged: Option<bool>,
     width: Option<Pixels>,
@@ -363,8 +359,8 @@ impl GitPanel {
         git_panel
     }
 
-    fn git_state<'a>(&self, cx: &'a AppContext) -> Option<&'a Model<GitState>> {
-        self.project.read(cx).git_state()
+    fn git_state(&self, cx: &AppContext) -> Option<Model<GitState>> {
+        self.project.read(cx).git_state().cloned()
     }
 
     fn active_repository<'a>(
@@ -578,7 +574,7 @@ impl GitPanel {
     }
 
     fn select_first_entry_if_none(&mut self, cx: &mut ViewContext<Self>) {
-        if !self.no_entries() && self.selected_entry.is_none() {
+        if !self.no_entries(cx) && self.selected_entry.is_none() {
             self.selected_entry = Some(0);
             self.scroll_to_selected_entry(cx);
             cx.notify();
@@ -597,15 +593,24 @@ impl GitPanel {
             .and_then(|i| self.visible_entries.get(i))
     }
 
+    fn open_selected(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+        if let Some(entry) = self
+            .selected_entry
+            .and_then(|i| self.visible_entries.get(i))
+        {
+            self.open_entry(entry, cx);
+        }
+    }
+
     fn toggle_staged_for_entry(&mut self, entry: &GitListEntry, cx: &mut ViewContext<Self>) {
-        let Some(git_state) = self.git_state(cx).cloned() else {
+        let Some(git_state) = self.git_state(cx) else {
             return;
         };
         git_state.update(cx, |git_state, _| {
             if entry.status.is_staged().unwrap_or(false) {
-                git_state.unstage_entry(entry.repo_path.clone());
+                git_state.stage_entries(vec![entry.repo_path.clone()]);
             } else {
-                git_state.stage_entry(entry.repo_path.clone());
+                git_state.stage_entries(vec![entry.repo_path.clone()]);
             }
         });
         cx.notify();
@@ -614,15 +619,6 @@ impl GitPanel {
     fn toggle_staged_for_selected(&mut self, _: &git::ToggleStaged, cx: &mut ViewContext<Self>) {
         if let Some(selected_entry) = self.get_selected_entry().cloned() {
             self.toggle_staged_for_entry(&selected_entry, cx);
-        }
-    }
-
-    fn open_selected(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        if let Some(entry) = self
-            .selected_entry
-            .and_then(|i| self.visible_entries.get(i))
-        {
-            self.open_entry(entry, cx);
         }
     }
 
@@ -646,32 +642,25 @@ impl GitPanel {
     }
 
     fn stage_all(&mut self, _: &git::StageAll, cx: &mut ViewContext<Self>) {
-        let to_stage = self
-            .visible_entries
-            .iter_mut()
-            .filter_map(|entry| {
-                let is_unstaged = !entry.is_staged.unwrap_or(false);
-                entry.is_staged = Some(true);
-                is_unstaged.then(|| entry.repo_path.clone())
-            })
-            .collect();
-        self.all_staged = Some(true);
-        let Some(git_state) = self.git_state(cx).cloned() else {
+        let Some(git_state) = self.git_state(cx) else {
             return;
         };
-        git_state.update(cx, |git_state, _| git_state.stage_entries(to_stage));
+        for entry in &mut self.visible_entries {
+            entry.is_staged = Some(true);
+        }
+        self.all_staged = Some(true);
+        git_state.read(cx).stage_all();
     }
 
     fn unstage_all(&mut self, _: &git::UnstageAll, cx: &mut ViewContext<Self>) {
-        // This should only be called when all entries are staged.
+        let Some(git_state) = self.git_state(cx) else {
+            return;
+        };
         for entry in &mut self.visible_entries {
             entry.is_staged = Some(false);
         }
         self.all_staged = Some(false);
-        let Some(git_state) = self.git_state(cx).cloned() else {
-            return;
-        };
-        git_state.update(cx, |git_state, _| git_state.unstage_all());
+        git_state.read(cx).unstage_all();
     }
 
     fn discard_all(&mut self, _: &git::RevertAll, _cx: &mut ViewContext<Self>) {
@@ -680,7 +669,7 @@ impl GitPanel {
     }
 
     fn clear_message(&mut self, cx: &mut ViewContext<Self>) {
-        let Some(git_state) = self.git_state(cx).cloned() else {
+        let Some(git_state) = self.git_state(cx) else {
             return;
         };
         git_state.update(cx, |git_state, _| {
@@ -690,9 +679,27 @@ impl GitPanel {
             .update(cx, |editor, cx| editor.set_text("", cx));
     }
 
+    fn can_commit(&self, commit_all: bool, cx: &AppContext) -> bool {
+        let Some(git_state) = self.git_state(cx) else {
+            return false;
+        };
+        let has_message = !self.commit_editor.read(cx).text(cx).is_empty();
+        let has_changes = git_state.read(cx).entry_count() > 0;
+        let has_staged_changes = self
+            .visible_entries
+            .iter()
+            .any(|entry| entry.is_staged == Some(true));
+
+        has_message && (commit_all || has_staged_changes) && has_changes
+    }
+
     /// Commit all staged changes
     fn commit_changes(&mut self, _: &git::CommitChanges, cx: &mut ViewContext<Self>) {
         self.clear_message(cx);
+
+        if !self.can_commit(false, cx) {
+            return;
+        }
 
         // TODO: Implement commit all staged
         println!("Commit staged changes triggered");
@@ -702,16 +709,17 @@ impl GitPanel {
     fn commit_all_changes(&mut self, _: &git::CommitAllChanges, cx: &mut ViewContext<Self>) {
         self.clear_message(cx);
 
+        if !self.can_commit(true, cx) {
+            return;
+        }
+
         // TODO: Implement commit all changes
         println!("Commit all changes triggered");
     }
 
-    fn no_entries(&self) -> bool {
-        self.visible_entries.is_empty()
-    }
-
-    fn entry_count(&self) -> usize {
-        self.visible_entries.len()
+    fn no_entries(&self, cx: &mut ViewContext<Self>) -> bool {
+        self.git_state(cx)
+            .map_or(true, |git_state| git_state.read(cx).entry_count() == 0)
     }
 
     fn for_each_visible_entry(
@@ -828,7 +836,7 @@ impl GitPanel {
         if let language::BufferEvent::Reparsed | language::BufferEvent::Edited = event {
             let commit_message = self.commit_editor.update(cx, |editor, cx| editor.text(cx));
 
-            let Some(git_state) = self.git_state(cx).cloned() else {
+            let Some(git_state) = self.git_state(cx) else {
                 return;
             };
             git_state.update(cx, |git_state, _| {
@@ -866,8 +874,11 @@ impl GitPanel {
 
     pub fn render_panel_header(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
+        let entry_count = self
+            .git_state(cx)
+            .map_or(0, |git_state| git_state.read(cx).entry_count());
 
-        let changes_string = match self.entry_count() {
+        let changes_string = match entry_count {
             0 => "No changes".to_string(),
             1 => "1 change".to_string(),
             n => format!("{} changes", n),
@@ -887,7 +898,7 @@ impl GitPanel {
                     .child(
                         Checkbox::new(
                             "all-changes",
-                            if self.no_entries() {
+                            if self.no_entries(cx) {
                                 ToggleState::Selected
                             } else {
                                 self.all_staged
@@ -1108,7 +1119,8 @@ impl GitPanel {
     }
 
     fn render_entries(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let entry_count = self.entry_count();
+        let entry_count = self.visible_entries.len();
+
         h_flex()
             .size_full()
             .overflow_hidden()
@@ -1228,14 +1240,16 @@ impl GitPanel {
                                 ToggleState::Indeterminate => None,
                             };
                             let repo_path = repo_path.clone();
-                            let Some(git_state) = this.git_state(cx).cloned() else {
+                            let Some(git_state) = this.git_state(cx) else {
                                 return;
                             };
                             git_state.update(cx, |git_state, _| match toggle {
                                 ToggleState::Selected | ToggleState::Indeterminate => {
-                                    git_state.stage_entry(repo_path);
+                                    git_state.stage_entries(vec![repo_path]);
                                 }
-                                ToggleState::Unselected => git_state.unstage_entry(repo_path),
+                                ToggleState::Unselected => {
+                                    git_state.unstage_entries(vec![repo_path])
+                                }
                             })
                         });
                     }
@@ -1330,7 +1344,7 @@ impl Render for GitPanel {
             .bg(ElevationIndex::Surface.bg(cx))
             .child(self.render_panel_header(cx))
             .child(self.render_divider(cx))
-            .child(if !self.no_entries() {
+            .child(if !self.no_entries(cx) {
                 self.render_entries(cx).into_any_element()
             } else {
                 self.render_empty_state(cx).into_any_element()

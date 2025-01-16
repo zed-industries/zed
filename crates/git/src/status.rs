@@ -171,7 +171,13 @@ impl FileStatus {
             FileStatus::Tracked(TrackedStatus {
                 index_status,
                 worktree_status,
-            }) => index_status.summary() + worktree_status.summary(),
+            }) => {
+                let mut summary = index_status.to_summary() + worktree_status.to_summary();
+                if summary != GitSummary::UNCHANGED {
+                    summary.count = 1;
+                };
+                summary
+            }
         }
     }
 }
@@ -190,11 +196,23 @@ impl StatusCode {
         }
     }
 
-    fn summary(self) -> GitSummary {
+    /// Returns the contribution of this status code to the Git summary.
+    ///
+    /// Note that this does not include the count field, which must be set manually.
+    fn to_summary(self) -> GitSummary {
         match self {
-            StatusCode::Modified | StatusCode::TypeChanged => GitSummary::MODIFIED,
-            StatusCode::Added => GitSummary::ADDED,
-            StatusCode::Deleted => GitSummary::DELETED,
+            StatusCode::Modified | StatusCode::TypeChanged => GitSummary {
+                modified: 1,
+                ..GitSummary::UNCHANGED
+            },
+            StatusCode::Added => GitSummary {
+                added: 1,
+                ..GitSummary::UNCHANGED
+            },
+            StatusCode::Deleted => GitSummary {
+                deleted: 1,
+                ..GitSummary::UNCHANGED
+            },
             StatusCode::Renamed | StatusCode::Copied | StatusCode::Unmodified => {
                 GitSummary::UNCHANGED
             }
@@ -220,31 +238,19 @@ pub struct GitSummary {
     pub conflict: usize,
     pub untracked: usize,
     pub deleted: usize,
+    pub count: usize,
 }
 
 impl GitSummary {
-    pub const ADDED: Self = Self {
-        added: 1,
-        ..Self::UNCHANGED
-    };
-
-    pub const MODIFIED: Self = Self {
-        modified: 1,
-        ..Self::UNCHANGED
-    };
-
     pub const CONFLICT: Self = Self {
         conflict: 1,
-        ..Self::UNCHANGED
-    };
-
-    pub const DELETED: Self = Self {
-        deleted: 1,
+        count: 1,
         ..Self::UNCHANGED
     };
 
     pub const UNTRACKED: Self = Self {
         untracked: 1,
+        count: 1,
         ..Self::UNCHANGED
     };
 
@@ -254,6 +260,7 @@ impl GitSummary {
         conflict: 0,
         untracked: 0,
         deleted: 0,
+        count: 0,
     };
 }
 
@@ -291,6 +298,7 @@ impl std::ops::AddAssign for GitSummary {
         self.conflict += rhs.conflict;
         self.untracked += rhs.untracked;
         self.deleted += rhs.deleted;
+        self.count += rhs.count;
     }
 }
 
@@ -304,6 +312,7 @@ impl std::ops::Sub for GitSummary {
             conflict: self.conflict - rhs.conflict,
             untracked: self.untracked - rhs.untracked,
             deleted: self.deleted - rhs.deleted,
+            count: self.count - rhs.count,
         }
     }
 }
