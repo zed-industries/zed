@@ -59,7 +59,7 @@ pub enum TaskSourceKind {
 impl TaskSourceKind {
     pub fn friendly_path(&self) -> Cow<'_, str> {
         match self {
-            Self::UserInput => format!("custom-task").into(),
+            Self::UserInput => Cow::Borrowed("custom-task"),
             Self::Language { name } => format!("{name}-language-tasks").into(),
             Self::AbsPath {
                 abs_path,
