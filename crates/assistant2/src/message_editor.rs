@@ -329,7 +329,12 @@ impl Render for MessageEditor {
                                             ToggleState::Unselected
                                             | ToggleState::Indeterminate => false,
                                         };
-                                    })),
+                                    }))
+                                    .key_binding(KeyBinding::for_action_in(
+                                        &ChatMode,
+                                        &focus_handle,
+                                        cx,
+                                    )),
                             )
                             .child(
                                 h_flex().gap_1().child(self.model_selector.clone()).child(
