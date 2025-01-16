@@ -4418,7 +4418,8 @@ impl LspStore {
             Documentation::Undocumented
         } else if response.documentation_is_markdown {
             Documentation::MultiLineMarkdown(
-                markdown::parse_markdown(&response.documentation, &language_registry, None).await,
+                markdown::parse_markdown(&response.documentation, Some(&language_registry), None)
+                    .await,
             )
         } else if response.documentation.lines().count() <= 1 {
             Documentation::SingleLine(response.documentation)
