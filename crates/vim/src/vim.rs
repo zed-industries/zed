@@ -133,7 +133,7 @@ pub fn init(cx: &mut AppContext) {
             };
 
             let theme = ThemeSettings::get_global(cx);
-            let height = theme.buffer_font_size(cx) * theme.buffer_line_height.value();
+            let height = theme.buffer_font_size() * theme.buffer_line_height.value();
 
             let desired_size = if let Some(count) = Vim::take_count(cx) {
                 height * count
@@ -151,11 +151,11 @@ pub fn init(cx: &mut AppContext) {
             };
             let Ok(width) = cx
                 .text_system()
-                .advance(font_id, theme.buffer_font_size(cx), 'm')
+                .advance(font_id, theme.buffer_font_size(), 'm')
             else {
                 return;
             };
-            let height = theme.buffer_font_size(cx) * theme.buffer_line_height.value();
+            let height = theme.buffer_font_size() * theme.buffer_line_height.value();
 
             let (axis, amount) = match action.0 {
                 ResizeIntent::Lengthen => (Axis::Vertical, height),

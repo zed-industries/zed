@@ -22,7 +22,7 @@ mod styles;
 use std::path::Path;
 use std::sync::Arc;
 
-use ::settings::{Settings, SettingsStore};
+use ::settings::Settings;
 use anyhow::Result;
 use fs::Fs;
 use gpui::{
@@ -100,16 +100,6 @@ pub fn init(themes_to_load: LoadThemes, cx: &mut AppContext) {
 
     ThemeSettings::register(cx);
     FontFamilyCache::init_global(cx);
-
-    let mut prev_buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
-    cx.observe_global::<SettingsStore>(move |cx| {
-        let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
-        if buffer_font_size != prev_buffer_font_size {
-            prev_buffer_font_size = buffer_font_size;
-            reset_buffer_font_size(cx);
-        }
-    })
-    .detach();
 }
 
 /// Implementing this trait allows accessing the active theme.
