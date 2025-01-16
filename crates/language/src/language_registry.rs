@@ -344,15 +344,37 @@ impl LanguageRegistry {
         adapter: Arc<dyn LspAdapter>,
     ) -> Arc<CachedLspAdapter> {
         let cached = CachedLspAdapter::new(adapter);
-
         self.state
             .write()
             .lsp_adapters
             .entry(language_name)
             .or_default()
             .push(cached.clone());
-
         cached
+    }
+
+    pub fn get_or_register_lsp_adapter(
+        &self,
+        language_name: LanguageName,
+        server_name: LanguageServerName,
+        build_adapter: impl FnOnce() -> Arc<dyn LspAdapter> + 'static,
+    ) -> Arc<CachedLspAdapter> {
+        let registered = self
+            .state
+            .write()
+            .lsp_adapters
+            .entry(language_name.clone())
+            .or_default()
+            .iter()
+            .find(|cached_adapter| cached_adapter.name == server_name)
+            .cloned();
+
+        if let Some(found) = registered {
+            found
+        } else {
+            let adapter = build_adapter();
+            self.register_lsp_adapter(language_name, adapter)
+        }
     }
 
     /// Register a fake language server and adapter
@@ -367,15 +389,12 @@ impl LanguageRegistry {
         let adapter_name = LanguageServerName(adapter.name.into());
         let capabilities = adapter.capabilities.clone();
         let initializer = adapter.initializer.take();
-        let adapter = CachedLspAdapter::new(Arc::new(adapter));
-
         self.state
             .write()
             .lsp_adapters
             .entry(language_name.clone())
             .or_default()
-            .push(adapter.clone());
-
+            .push(CachedLspAdapter::new(Arc::new(adapter)));
         self.register_fake_language_server(adapter_name, capabilities, initializer)
     }
 
@@ -388,13 +407,12 @@ impl LanguageRegistry {
         adapter: crate::FakeLspAdapter,
     ) {
         let language_name = language_name.into();
-        let adapter = CachedLspAdapter::new(Arc::new(adapter));
-        let mut state = self.state.write();
-        state
+        self.state
+            .write()
             .lsp_adapters
             .entry(language_name.clone())
             .or_default()
-            .push(adapter.clone());
+            .push(CachedLspAdapter::new(Arc::new(adapter)));
     }
 
     /// Register a fake language server (without the adapter)

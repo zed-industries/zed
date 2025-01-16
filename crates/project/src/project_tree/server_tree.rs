@@ -9,12 +9,12 @@
 //! This module defines a Project Tree.
 
 use std::{
-    collections::{BTreeMap, BTreeSet},
+    collections::{btree_map::Entry, BTreeMap, BTreeSet},
     path::Path,
     sync::{Arc, Weak},
 };
 
-use collections::HashMap;
+use collections::{HashMap, IndexMap};
 use gpui::{AppContext, Context as _, Model, Subscription};
 use language::{
     language_settings::AllLanguageSettings, Attach, CachedLspAdapter, LanguageName,
@@ -22,9 +22,9 @@ use language::{
 };
 use lsp::LanguageServerName;
 use once_cell::sync::OnceCell;
-use settings::{Settings as _, SettingsLocation, WorktreeId};
+use settings::{Settings, SettingsLocation, WorktreeId};
 
-use crate::{LanguageServerId, ProjectPath};
+use crate::{project_settings::LspSettings, LanguageServerId, ProjectPath};
 
 use super::{AdapterWrapper, ProjectTree, ProjectTreeEvent};
 
@@ -54,6 +54,7 @@ pub(crate) struct LaunchDisposition<'a> {
     pub(crate) server_name: &'a LanguageServerName,
     pub(crate) attach: Attach,
     pub(crate) path: ProjectPath,
+    pub(crate) settings: Arc<LspSettings>,
 }
 
 impl LanguageServerTreeNode {
@@ -81,6 +82,7 @@ impl LanguageServerTreeNode {
                     server_name: &this.name,
                     attach: this.attach,
                     path: this.path.clone(),
+                    settings: this.settings.clone(),
                 })
             })
             .ok()
@@ -100,15 +102,22 @@ struct InnerTreeNode {
     name: LanguageServerName,
     attach: Attach,
     path: ProjectPath,
+    settings: Arc<LspSettings>,
 }
 
 impl InnerTreeNode {
-    fn new(name: LanguageServerName, attach: Attach, path: ProjectPath) -> Self {
+    fn new(
+        name: LanguageServerName,
+        attach: Attach,
+        path: ProjectPath,
+        settings: LspSettings,
+    ) -> Self {
         InnerTreeNode {
             id: Default::default(),
             name,
             attach,
             path,
+            settings: Arc::new(settings),
         }
     }
 }
@@ -159,16 +168,26 @@ impl LanguageServerTree {
     fn get_with_adapters<'a>(
         &'a mut self,
         path: ProjectPath,
-        adapters: Vec<Arc<CachedLspAdapter>>,
+        adapters: IndexMap<AdapterWrapper, LspSettings>,
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut AppContext,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         #[allow(clippy::mutable_key_type)]
         let roots = self.project_tree.update(cx, |this, cx| {
-            this.root_for_path(path, adapters, delegate, cx)
+            this.root_for_path(
+                path,
+                adapters
+                    .iter()
+                    .map(|(adapter, _)| adapter.0.clone())
+                    .collect(),
+                delegate,
+                cx,
+            )
         });
-        roots.into_iter().map(|(adapter, root_path)| {
+
+        roots.into_iter().filter_map(move |(adapter, root_path)| {
             let attach = self.attach_kind(&adapter);
+
             let inner_node = self
                 .instances
                 .entry(root_path.worktree_id)
@@ -176,14 +195,25 @@ impl LanguageServerTree {
                 .roots
                 .entry(root_path.path.clone())
                 .or_default()
-                .entry(adapter.0.name.clone())
-                .or_insert_with(|| {
-                    (
-                        Arc::new(InnerTreeNode::new(adapter.0.name(), attach, root_path)),
+                .entry(adapter.0.name.clone());
+            match inner_node {
+                Entry::Vacant(vacant_entry) => {
+                    let settings = adapters.get(&adapter).cloned()?;
+                    let entry = vacant_entry.insert((
+                        Arc::new(InnerTreeNode::new(
+                            adapter.0.name(),
+                            attach,
+                            root_path,
+                            settings,
+                        )),
                         Default::default(),
-                    )
-                });
-            Arc::downgrade(&inner_node.0).into()
+                    ));
+                    Some(Arc::downgrade(&entry.0).into())
+                }
+                Entry::Occupied(occupied_entry) => {
+                    Some(Arc::downgrade(&occupied_entry.get().0).into())
+                }
+            }
         })
     }
 
@@ -192,14 +222,16 @@ impl LanguageServerTree {
         settings_location: SettingsLocation,
         language_name: &LanguageName,
         cx: &AppContext,
-    ) -> Vec<Arc<CachedLspAdapter>> {
-        let available_lsp_adapters = self.languages.lsp_adapters(&language_name);
-
+    ) -> IndexMap<AdapterWrapper, LspSettings> {
         let settings = AllLanguageSettings::get(Some(settings_location), cx).language(
             Some(settings_location),
             Some(language_name),
             cx,
         );
+        if !settings.enable_language_server {
+            return Default::default();
+        }
+        let available_lsp_adapters = self.languages.lsp_adapters(&language_name);
         let available_language_servers = available_lsp_adapters
             .iter()
             .map(|lsp_adapter| lsp_adapter.name.clone())
@@ -207,10 +239,10 @@ impl LanguageServerTree {
 
         let desired_language_servers =
             settings.customized_language_servers(&available_language_servers);
-        let adapters = desired_language_servers
+        let adapters_with_settings = desired_language_servers
             .into_iter()
             .filter_map(|desired_adapter| {
-                if let Some(adapter) = available_lsp_adapters
+                let adapter = if let Some(adapter) = available_lsp_adapters
                     .iter()
                     .find(|adapter| adapter.name == desired_adapter)
                 {
@@ -223,11 +255,20 @@ impl LanguageServerTree {
                     Some(adapter)
                 } else {
                     None
-                }
+                }?;
+                let adapter_settings = crate::lsp_store::language_server_settings_for(
+                    settings_location,
+                    &adapter.name,
+                    cx,
+                )
+                .cloned()
+                .unwrap_or_default();
+                Some((AdapterWrapper(adapter), adapter_settings))
             })
-            .collect::<Vec<_>>();
-        adapters
+            .collect::<IndexMap<_, _>>();
+        adapters_with_settings
     }
+
     pub(crate) fn on_settings_changed(
         &mut self,
         get_delegate: &mut dyn FnMut(
@@ -238,7 +279,6 @@ impl LanguageServerTree {
         on_language_server_removed: &mut dyn FnMut(LanguageServerId),
         cx: &mut AppContext,
     ) {
-        dbg!("On settings changed!");
         // Settings are checked at query time. Thus, to avoid messing with inference of applicable settings, we're just going to clear ourselves and let the next query repopulate.
         // We're going to optimistically re-run the queries and re-assign the same language server id when a language server still exists at a given tree node.
         let old_instances = std::mem::take(&mut self.instances);
@@ -247,6 +287,7 @@ impl LanguageServerTree {
         let mut referenced_instances = BTreeSet::new();
         // Re-map the old tree onto a new one. In the process we'll get a list of servers we have to shut down.
         let mut all_instances = BTreeSet::new();
+
         for (worktree_id, servers) in &old_instances {
             // Record all initialized node ids.
             all_instances.extend(servers.roots.values().flat_map(|servers_at_node| {
@@ -258,6 +299,8 @@ impl LanguageServerTree {
                 // If worktree is no longer around, we're just going to shut down all of the language servers (since they've been added to all_instances).
                 continue;
             };
+            // src/foo/main.rs -> [src/]
+            // src/ -> [src/]
             for (path, servers_for_path) in &servers.roots {
                 for (name, (_, languages)) in servers_for_path {
                     let settings_location = SettingsLocation {
@@ -265,24 +308,24 @@ impl LanguageServerTree {
                         path: &path,
                     };
                     // Verify which of the previous languages still have this server enabled.
+
+                    let mut adapter_with_settings = IndexMap::new();
                     let enabled_languages = languages
                         .iter()
                         .filter_map(|language_name| {
                             self.adapters_for_language(settings_location, language_name, cx)
                                 .into_iter()
-                                .find_map(|adapter| {
-                                    adapter
-                                        .name()
-                                        .eq(&name)
-                                        .then(|| Some((language_name.clone(), adapter)))
+                                .find_map(|(lsp_adapter, lsp_settings)| {
+                                    if &lsp_adapter.0.name() != name {
+                                        return None;
+                                    }
+                                    adapter_with_settings.insert(lsp_adapter, lsp_settings);
+
+                                    Some(language_name.clone())
                                 })
                         })
-                        .flatten()
-                        .collect::<BTreeMap<_, _>>();
-                    let Some(adapter) = enabled_languages
-                        .first_key_value()
-                        .map(|(_, adapter)| adapter.clone())
-                    else {
+                        .collect::<BTreeSet<_>>();
+                    if adapter_with_settings.is_empty() {
                         // Since all languages that have had this server enabled are now disabled, we can remove the server entirely.
                         continue;
                     };
@@ -292,11 +335,12 @@ impl LanguageServerTree {
                             path: path.clone(),
                             worktree_id: *worktree_id,
                         },
-                        vec![adapter],
+                        adapter_with_settings,
                         delegate.clone(),
                         cx,
                     ) {
                         new_node.server_id_or_try_init(|disposition| {
+                            // todo: what about binary arguments?
                             let Some((existing_node, _)) = servers
                                 .roots
                                 .get(&disposition.path.path)

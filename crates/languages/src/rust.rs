@@ -87,6 +87,7 @@ impl LspAdapter for RustLspAdapter {
                 outermost_cargo_toml = Some(Arc::from(path));
             }
         }
+
         outermost_cargo_toml
     }
     async fn check_if_user_installed(

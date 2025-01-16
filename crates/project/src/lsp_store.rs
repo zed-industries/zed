@@ -1819,6 +1819,7 @@ impl LocalLspStore {
                          server_name,
                          attach,
                          path,
+                         settings,
                      }| match attach {
                         language::Attach::InstancePerRoot => {
                             // todo: handle instance per root proper.
@@ -7359,12 +7360,27 @@ impl LspStore {
                 .spawn(request)
                 .detach_and_log_err(cx);
         } else {
+            // buffers == ["./src/main.rs", "./Cargo.toml"]
+
+            // on_settings_changed
+
+            // self.restart_local_language_servers()
+            let Some(local) = self.as_local_mut() else {
+                return;
+            };
             let language_server_lookup_info: HashSet<(Model<Worktree>, LanguageName)> = buffers
                 .into_iter()
                 .filter_map(|buffer| {
                     let buffer = buffer.read(cx);
                     let file = buffer.file()?;
                     let worktree = File::from_dyn(Some(file))?.worktree.clone();
+                    // ? should we use language_for_file ?
+                    //
+                    // why not?
+                    //
+                    // previously we had just one instance so we didn't care about the paths
+                    //
+                    // now, when we restart LSP we need to pass them to the ServerTree cause we care about the paths
                     let language =
                         self.languages
                             .language_for_file(file, Some(buffer.as_rope()), cx)?;
@@ -7382,10 +7398,19 @@ impl LspStore {
     fn restart_local_language_servers(
         &mut self,
         worktree: Model<Worktree>,
-        language: LanguageName,
+        servers: Vec<LanguageServerId>,
         cx: &mut ModelContext<Self>,
     ) {
         let worktree_id = worktree.read(cx).id();
+        {
+            let weak = cx.to_async();
+            cx.foreground_executor().spawn(|cx| async move {
+                cx.background_executor().spawn(async move {}).await;
+                weak.update(|cx| {
+                    dbg!("!!");
+                });
+            });
+        }
 
         let lsp_adapters = self.languages.clone().lsp_adapters(&language);
         let ids = lsp_adapters
@@ -8602,20 +8627,27 @@ impl LspAdapter for SshLspAdapter {
     }
 }
 
-pub fn language_server_settings<'a, 'b: 'a>(
+pub fn language_server_settings<'a>(
     delegate: &'a dyn LspAdapterDelegate,
     language: &LanguageServerName,
-    cx: &'b AppContext,
+    cx: &'a AppContext,
 ) -> Option<&'a LspSettings> {
-    ProjectSettings::get(
-        Some(SettingsLocation {
+    language_server_settings_for(
+        SettingsLocation {
             worktree_id: delegate.worktree_id(),
             path: delegate.worktree_root_path(),
-        }),
+        },
+        language,
         cx,
     )
-    .lsp
-    .get(language)
+}
+
+pub(crate) fn language_server_settings_for<'a>(
+    location: SettingsLocation<'a>,
+    language: &LanguageServerName,
+    cx: &'a AppContext,
+) -> Option<&'a LspSettings> {
+    ProjectSettings::get(Some(location), cx).lsp.get(language)
 }
 
 pub struct LocalLspAdapterDelegate {

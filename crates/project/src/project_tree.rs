@@ -84,6 +84,14 @@ impl PartialEq for AdapterWrapper {
     }
 }
 
+impl Eq for AdapterWrapper {}
+
+impl std::hash::Hash for AdapterWrapper {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.0.name.hash(state);
+    }
+}
+
 impl PartialOrd for AdapterWrapper {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.0.name.cmp(&other.0.name))
@@ -95,8 +103,6 @@ impl Ord for AdapterWrapper {
         self.0.name.cmp(&other.0.name)
     }
 }
-
-impl Eq for AdapterWrapper {}
 
 impl Borrow<LanguageServerName> for AdapterWrapper {
     fn borrow(&self) -> &LanguageServerName {
