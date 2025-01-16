@@ -1,0 +1,2 @@
+[target.'cfg(all())']
+rustflags = ["-D", "warnings"]
