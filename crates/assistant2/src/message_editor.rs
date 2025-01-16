@@ -13,8 +13,7 @@ use rope::Point;
 use settings::Settings;
 use theme::{get_ui_font_size, ThemeSettings};
 use ui::{
-    prelude::*, ButtonLike, ElevationIndex, KeyBinding, PopoverMenu, PopoverMenuHandle,
-    SwitchWithLabel,
+    prelude::*, ButtonLike, ElevationIndex, KeyBinding, PopoverMenu, PopoverMenuHandle, Switch,
 };
 use workspace::Workspace;
 
@@ -315,19 +314,17 @@ impl Render for MessageEditor {
                     .child(
                         h_flex()
                             .justify_between()
-                            .child(SwitchWithLabel::new(
-                                "use-tools",
-                                Label::new("Tools").size(LabelSize::Small),
-                                self.use_tools.into(),
-                                cx.listener(|this, selection, _cx| {
-                                    this.use_tools = match selection {
-                                        ToggleState::Selected => true,
-                                        ToggleState::Unselected | ToggleState::Indeterminate => {
-                                            false
-                                        }
-                                    };
-                                }),
-                            ))
+                            .child(
+                                Switch::new("use-tools", self.use_tools.into())
+                                    .label("Tools")
+                                    .on_click(cx.listener(|this, selection, _cx| {
+                                        this.use_tools = match selection {
+                                            ToggleState::Selected => true,
+                                            ToggleState::Unselected
+                                            | ToggleState::Indeterminate => false,
+                                        };
+                                    })),
+                            )
                             .child(
                                 h_flex().gap_1().child(self.model_selector.clone()).child(
                                     ButtonLike::new("chat")
