@@ -46,7 +46,7 @@ use zed_actions::InlineAssist;
 
 const TERMINAL_PANEL_KEY: &str = "TerminalPanel";
 
-actions!(terminal_panel, [ToggleFocus, NextDockPosition]);
+actions!(terminal_panel, [ToggleFocus]);
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -57,13 +57,6 @@ pub fn init(cx: &mut AppContext) {
                 if is_enabled_in_workspace(workspace, cx) {
                     workspace.toggle_panel_focus::<TerminalPanel>(cx);
                 }
-            });
-            workspace.register_action(|workspace, _: &NextDockPosition, cx| {
-                let Some(terminal_panel) = workspace.panel::<TerminalPanel>(cx) else {
-                    return;
-                };
-
-                terminal_panel.update(cx, |panel, cx| panel.move_to_next_position(cx));
             });
         },
     )

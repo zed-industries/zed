@@ -133,6 +133,7 @@ actions!(
         CopyRelativePath,
         Feedback,
         FollowNextCollaborator,
+        MoveFocusedPanelToNextPosition,
         NewCenterTerminal,
         NewFile,
         NewFileSplitVertical,
@@ -1747,6 +1748,23 @@ impl Workspace {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx)
+    }
+
+    pub fn move_focused_panel_to_next_position(
+        &mut self,
+        _: &MoveFocusedPanelToNextPosition,
+        cx: &mut ViewContext<Self>,
+    ) {
+        [&self.left_dock, &self.bottom_dock, &self.right_dock]
+            .iter()
+            .find(|dock| dock.focus_handle(cx).contains_focused(cx))
+            .map(|dock| {
+                dock.update(cx, |dock, cx| {
+                    dock.active_panel()
+                        .filter(|panel| panel.focus_handle(cx).contains_focused(cx))
+                        .map(|panel| panel.move_to_next_position(cx));
+                })
+            });
     }
 
     pub fn prepare_to_close(
@@ -4492,6 +4510,7 @@ impl Workspace {
             .on_action(cx.listener(Self::close_window))
             .on_action(cx.listener(Self::activate_pane_at_index))
             .on_action(cx.listener(Self::move_item_to_pane_at_index))
+            .on_action(cx.listener(Self::move_focused_panel_to_next_position))
             .on_action(cx.listener(|workspace, _: &Unfollow, cx| {
                 let pane = workspace.active_pane().clone();
                 workspace.unfollow_in_pane(&pane, cx);
