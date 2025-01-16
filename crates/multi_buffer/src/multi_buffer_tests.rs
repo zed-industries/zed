@@ -2385,7 +2385,7 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
         assert_eq!(
             anchor_after.to_offset(snapshot),
             clipped_left,
-            "anchor_after({clipped_left}).to_offset"
+            "anchor_after({clipped_left}).to_offset {anchor_after:?}"
         );
         let anchor_before = snapshot.anchor_before(clipped_left);
         assert_eq!(

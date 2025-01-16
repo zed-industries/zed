@@ -12,13 +12,7 @@ pub struct Anchor {
     pub buffer_id: Option<BufferId>,
     pub excerpt_id: ExcerptId,
     pub text_anchor: text::Anchor,
-    pub diff_base_anchor: Option<DiffBaseAnchor>,
-}
-
-#[derive(Clone, Copy, Eq, PartialEq, Debug, Hash)]
-pub struct DiffBaseAnchor {
-    pub text_anchor: text::Anchor,
-    pub version: usize,
+    pub diff_base_anchor: Option<text::Anchor>,
 }
 
 impl Anchor {
@@ -77,12 +71,12 @@ impl Anchor {
             }
             if self.diff_base_anchor.is_some() || other.diff_base_anchor.is_some() {
                 if let Some(diff_base) = snapshot.diffs.get(&excerpt.buffer_id) {
-                    let self_anchor = self.diff_base_anchor.and_then(|a| {
-                        (a.version == diff_base.base_text_version).then(|| a.text_anchor)
-                    });
-                    let other_anchor = other.diff_base_anchor.and_then(|a| {
-                        (a.version == diff_base.base_text_version).then(|| a.text_anchor)
-                    });
+                    let self_anchor = self
+                        .diff_base_anchor
+                        .filter(|a| a.buffer_id == Some(diff_base.base_text.remote_id()));
+                    let other_anchor = other
+                        .diff_base_anchor
+                        .filter(|a| a.buffer_id == Some(diff_base.base_text.remote_id()));
                     return match (self_anchor, other_anchor) {
                         (Some(a), Some(b)) => a.cmp(&b, &diff_base.base_text),
                         (Some(_), None) => match other.text_anchor.bias {
@@ -112,10 +106,10 @@ impl Anchor {
                     buffer_id: self.buffer_id,
                     excerpt_id: self.excerpt_id,
                     text_anchor: self.text_anchor.bias_left(&excerpt.buffer),
-                    diff_base_anchor: self.diff_base_anchor.map(|mut a| {
+                    diff_base_anchor: self.diff_base_anchor.map(|a| {
                         if let Some(base) = snapshot.diffs.get(&excerpt.buffer_id) {
-                            if a.version == base.base_text_version {
-                                a.text_anchor = a.text_anchor.bias_left(&base.base_text)
+                            if a.buffer_id == Some(base.base_text.remote_id()) {
+                                return a.bias_left(&base.base_text);
                             }
                         }
                         a
@@ -133,10 +127,10 @@ impl Anchor {
                     buffer_id: self.buffer_id,
                     excerpt_id: self.excerpt_id,
                     text_anchor: self.text_anchor.bias_right(&excerpt.buffer),
-                    diff_base_anchor: self.diff_base_anchor.map(|mut a| {
+                    diff_base_anchor: self.diff_base_anchor.map(|a| {
                         if let Some(base) = snapshot.diffs.get(&excerpt.buffer_id) {
-                            if a.version == base.base_text_version {
-                                a.text_anchor = a.text_anchor.bias_right(&base.base_text)
+                            if a.buffer_id == Some(base.base_text.remote_id()) {
+                                return a.bias_right(&base.base_text);
                             }
                         }
                         a

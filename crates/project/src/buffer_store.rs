@@ -67,7 +67,6 @@ pub struct BufferChangeSet {
     pub diff_to_buffer: git::diff::BufferDiff,
     pub recalculate_diff_task: Option<Task<Result<()>>>,
     pub diff_updated_futures: Vec<oneshot::Sender<()>>,
-    pub base_text_version: usize,
     pub language_registry: Option<Arc<LanguageRegistry>>,
 }
 
@@ -2255,7 +2254,6 @@ impl BufferChangeSet {
             diff_to_buffer: git::diff::BufferDiff::new(buffer),
             recalculate_diff_task: None,
             diff_updated_futures: Vec::new(),
-            base_text_version: 0,
             language: buffer.language().cloned(),
             language_registry: buffer.language_registry(),
         }
@@ -2314,7 +2312,6 @@ impl BufferChangeSet {
             self.base_text = None;
             self.diff_to_buffer = BufferDiff::new(&buffer_snapshot);
             self.recalculate_diff_task.take();
-            self.base_text_version += 1;
             cx.notify();
         }
     }
@@ -2364,7 +2361,6 @@ impl BufferChangeSet {
                 .await;
             this.update(&mut cx, |this, cx| {
                 if let Some(new_base_text) = new_base_text {
-                    this.base_text_version += 1;
                     this.base_text = Some(new_base_text)
                 }
                 this.diff_to_buffer = diff;
@@ -2389,7 +2385,6 @@ impl BufferChangeSet {
     ) {
         let diff = BufferDiff::build(&base_text, &buffer_snapshot);
         if base_text_changed {
-            self.base_text_version += 1;
             self.base_text = Some(
                 cx.background_executor()
                     .clone()
