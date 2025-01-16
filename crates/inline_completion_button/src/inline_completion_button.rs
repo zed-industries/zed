@@ -219,10 +219,14 @@ impl Render for InlineCompletionButton {
                     .unwrap_or(false)
                 {
                     let workspace = self.workspace.clone();
-                    return div().child(button.on_click(cx.listener(move |this, _, cx| {
+                    let user_store = self.user_store.clone();
+
+                    return div().child(button.on_click(cx.listener(move |_, _, cx| {
+                        let user_store = user_store.clone();
+
                         workspace
-                            .update(cx, |this, cx| {
-                                ZetaTosModal::toggle(this, cx);
+                            .update(cx, move |this, cx| {
+                                ZetaTosModal::toggle(this, user_store, cx);
                             })
                             .ok();
                     })));

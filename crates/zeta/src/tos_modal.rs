@@ -1,24 +1,53 @@
+use client::UserStore;
 use gpui::{
-    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, MouseDownEvent, Render,
+    AppContext, ClickEvent, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
+    MouseDownEvent, Render,
 };
-use ui::{prelude::*, Vector, VectorName};
+use ui::prelude::*;
 use workspace::{ModalView, Workspace};
 
 pub struct ZetaTosModal {
     focus_handle: FocusHandle,
+    user_store: Model<UserStore>,
+    viewed: bool,
 }
 
 impl ZetaTosModal {
-    fn new(cx: &mut ViewContext<Self>) -> Self {
+    fn new(user_store: Model<UserStore>, cx: &mut ViewContext<Self>) -> Self {
         ZetaTosModal {
+            viewed: false,
             focus_handle: cx.focus_handle(),
+            user_store,
         }
     }
 
-    pub fn toggle(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
-        // if let Some(zeta) = Zeta::global(cx) {
-        workspace.toggle_modal(cx, |cx| ZetaTosModal::new(cx));
-        // }
+    pub fn toggle(
+        workspace: &mut Workspace,
+        user_store: Model<UserStore>,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        workspace.toggle_modal(cx, |cx| ZetaTosModal::new(user_store, cx));
+    }
+
+    fn view_terms(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
+        self.viewed = true;
+        cx.open_url("https://zed.dev/terms-of-service");
+        cx.notify();
+    }
+
+    fn accept_terms(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
+        let task = self
+            .user_store
+            .update(cx, |this, cx| this.accept_terms_of_service(cx));
+
+        cx.spawn(|this, mut cx| async move {
+            task.await?;
+
+            this.update(&mut cx, |_, cx| {
+                cx.emit(DismissEvent);
+            })
+        })
+        .detach_and_log_err(cx);
     }
 }
 
@@ -55,17 +84,23 @@ impl Render for ZetaTosModal {
                     .child(Headline::new("Zed AI").size(HeadlineSize::Large))
                     .child(Icon::new(IconName::ZedPredict).size(IconSize::Humongous)),
             )
-            .child("Welcome! Please accept our Terms of Service to use Edit Predictions.")
+            .child("Please read and accept our Terms of Service to use Edit Predictions.")
             .child(
                 v_flex()
                     .mt_2()
                     .gap_2()
                     .w_full()
-                    .child(
+                    .child(if self.viewed {
+                        Button::new("accept-tos", "Accept Terms of Service")
+                            .style(ButtonStyle::Filled)
+                            .full_width()
+                            .on_click(cx.listener(Self::accept_terms))
+                    } else {
                         Button::new("view-tos", "View Terms of Service")
                             .style(ButtonStyle::Filled)
-                            .full_width(),
-                    )
+                            .full_width()
+                            .on_click(cx.listener(Self::view_terms))
+                    })
                     .child(Button::new("cancel", "Cancel").full_width()),
             )
     }
