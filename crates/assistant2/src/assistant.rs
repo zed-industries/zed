@@ -43,6 +43,7 @@ actions!(
         RemoveAllContext,
         OpenHistory,
         Chat,
+        ChatMode,
         CycleNextInlineAssist,
         CyclePreviousInlineAssist,
         FocusUp,
