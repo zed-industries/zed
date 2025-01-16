@@ -2,7 +2,6 @@ use crate::slash_command::file_command::codeblock_fence_for_path;
 use crate::{
     humanize_token_count,
     prompt_library::open_prompt_library,
-    prompts::PromptBuilder,
     slash_command::{
         default_command::DefaultSlashCommand,
         docs_command::{DocsSlashCommand, DocsSlashCommandArgs},
@@ -59,6 +58,7 @@ use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::lsp_store::LocalLspAdapterDelegate;
 use project::{Project, Worktree};
+use prompt_library::PromptBuilder;
 use rope::Point;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};

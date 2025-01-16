@@ -22,7 +22,6 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
-assets.workspace = true
 assistant_settings.workspace = true
 assistant_slash_command.workspace = true
 assistant_tool.workspace = true
@@ -42,7 +41,6 @@ futures.workspace = true
 fuzzy.workspace = true
 globset.workspace = true
 gpui.workspace = true
-handlebars.workspace = true
 html_to_markdown.workspace = true
 http_client.workspace = true
 indexed_docs.workspace = true

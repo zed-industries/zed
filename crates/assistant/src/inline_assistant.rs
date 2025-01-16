@@ -1,7 +1,7 @@
 use crate::{
-    humanize_token_count, prompts::PromptBuilder, AssistantPanel, AssistantPanelEvent,
-    CharOperation, CycleNextInlineAssist, CyclePreviousInlineAssist, LineDiff, LineOperation,
-    RequestType, StreamingDiff,
+    humanize_token_count, AssistantPanel, AssistantPanelEvent, CharOperation,
+    CycleNextInlineAssist, CyclePreviousInlineAssist, LineDiff, LineOperation, RequestType,
+    StreamingDiff,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_settings::AssistantSettings;
@@ -41,6 +41,7 @@ use language_models::report_assistant_event;
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, ProjectTransaction};
+use prompt_library::PromptBuilder;
 use rope::Rope;
 use settings::{update_settings_file, Settings, SettingsStore};
 use smol::future::FutureExt;

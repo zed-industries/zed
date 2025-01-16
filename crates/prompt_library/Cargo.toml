@@ -13,12 +13,17 @@ path = "src/prompt_library.rs"
 
 [dependencies]
 anyhow.workspace = true
+assets.workspace = true
 chrono.workspace = true
 collections.workspace = true
+fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
+handlebars.workspace = true
 heed.workspace = true
+language.workspace = true
+log.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 rope.workspace = true

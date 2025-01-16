@@ -9,7 +9,6 @@ mod context_strip;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod message_editor;
-mod prompts;
 mod streaming_diff;
 mod terminal_codegen;
 mod terminal_inline_assistant;
@@ -26,7 +25,7 @@ use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
 use gpui::{actions, AppContext};
-use prompts::PromptLoadingParams;
+use prompt_library::{PromptBuilder, PromptLoadingParams};
 use settings::Settings as _;
 use util::ResultExt;
 
@@ -62,7 +61,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, stdout_is_a_pty: bool, cx: &mu
     AssistantSettings::register(cx);
     assistant_panel::init(cx);
 
-    let prompt_builder = prompts::PromptBuilder::new(Some(PromptLoadingParams {
+    let prompt_builder = PromptBuilder::new(Some(PromptLoadingParams {
         fs: fs.clone(),
         repo_path: stdout_is_a_pty
             .then(|| std::env::current_dir().log_err())
@@ -71,7 +70,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, stdout_is_a_pty: bool, cx: &mu
     }))
     .log_err()
     .map(Arc::new)
-    .unwrap_or_else(|| Arc::new(prompts::PromptBuilder::new(None).unwrap()));
+    .unwrap_or_else(|| Arc::new(PromptBuilder::new(None).unwrap()));
     inline_assistant::init(
         fs.clone(),
         prompt_builder.clone(),

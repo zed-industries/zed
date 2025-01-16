@@ -14,7 +14,6 @@ doctest = false
 
 [dependencies]
 anyhow.workspace = true
-assets.workspace = true
 assistant_settings.workspace = true
 assistant_tool.workspace = true
 async-watch.workspace = true
@@ -32,7 +31,6 @@ fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
-handlebars.workspace = true
 html_to_markdown.workspace = true
 http_client.workspace = true
 itertools.workspace = true
@@ -47,9 +45,9 @@ menu.workspace = true
 multi_buffer.workspace = true
 ordered-float.workspace = true
 parking_lot.workspace = true
-paths.workspace = true
 picker.workspace = true
 project.workspace = true
+prompt_library.workspace = true
 proto.workspace = true
 rope.workspace = true
 serde.workspace = true

@@ -3,7 +3,6 @@ use crate::context_store::ContextStore;
 use crate::inline_prompt_editor::{
     CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
 };
-use crate::prompts::PromptBuilder;
 use crate::terminal_codegen::{CodegenEvent, TerminalCodegen, CLEAR_INPUT};
 use crate::thread_store::ThreadStore;
 use anyhow::{Context as _, Result};
@@ -20,6 +19,7 @@ use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use language_models::report_assistant_event;
+use prompt_library::PromptBuilder;
 use std::sync::Arc;
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::TerminalView;
