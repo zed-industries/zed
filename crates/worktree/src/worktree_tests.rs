@@ -1512,9 +1512,9 @@ async fn test_bump_mtime_of_git_repo_workdir(cx: &mut TestAppContext) {
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new(""), GitSummary::MODIFIED),
+            (Path::new(""), MODIFIED),
             (Path::new("a.txt"), GitSummary::UNCHANGED),
-            (Path::new("b/c.txt"), GitSummary::MODIFIED),
+            (Path::new("b/c.txt"), MODIFIED),
         ],
     );
 }
@@ -2811,7 +2811,7 @@ async fn test_traverse_with_git_status(cx: &mut TestAppContext) {
     assert_eq!(entry.git_summary, GitSummary::UNCHANGED);
     let entry = traversal.next().unwrap();
     assert_eq!(entry.path.as_ref(), Path::new("x/x2.txt"));
-    assert_eq!(entry.git_summary, GitSummary::MODIFIED);
+    assert_eq!(entry.git_summary, MODIFIED);
     let entry = traversal.next().unwrap();
     assert_eq!(entry.path.as_ref(), Path::new("x/y/y1.txt"));
     assert_eq!(entry.git_summary, GitSummary::CONFLICT);
@@ -2820,13 +2820,13 @@ async fn test_traverse_with_git_status(cx: &mut TestAppContext) {
     assert_eq!(entry.git_summary, GitSummary::UNCHANGED);
     let entry = traversal.next().unwrap();
     assert_eq!(entry.path.as_ref(), Path::new("x/z.txt"));
-    assert_eq!(entry.git_summary, GitSummary::ADDED);
+    assert_eq!(entry.git_summary, ADDED);
     let entry = traversal.next().unwrap();
     assert_eq!(entry.path.as_ref(), Path::new("z/z1.txt"));
     assert_eq!(entry.git_summary, GitSummary::UNCHANGED);
     let entry = traversal.next().unwrap();
     assert_eq!(entry.path.as_ref(), Path::new("z/z2.txt"));
-    assert_eq!(entry.git_summary, GitSummary::ADDED);
+    assert_eq!(entry.git_summary, ADDED);
 }
 
 #[gpui::test]
@@ -2893,10 +2893,7 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
     check_git_statuses(
         &snapshot,
         &[
-            (
-                Path::new(""),
-                GitSummary::CONFLICT + GitSummary::MODIFIED + GitSummary::ADDED,
-            ),
+            (Path::new(""), GitSummary::CONFLICT + MODIFIED + ADDED),
             (Path::new("g"), GitSummary::CONFLICT),
             (Path::new("g/h2.txt"), GitSummary::CONFLICT),
         ],
@@ -2905,16 +2902,13 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
     check_git_statuses(
         &snapshot,
         &[
-            (
-                Path::new(""),
-                GitSummary::CONFLICT + GitSummary::ADDED + GitSummary::MODIFIED,
-            ),
-            (Path::new("a"), GitSummary::ADDED + GitSummary::MODIFIED),
-            (Path::new("a/b"), GitSummary::ADDED),
-            (Path::new("a/b/c1.txt"), GitSummary::ADDED),
+            (Path::new(""), GitSummary::CONFLICT + ADDED + MODIFIED),
+            (Path::new("a"), ADDED + MODIFIED),
+            (Path::new("a/b"), ADDED),
+            (Path::new("a/b/c1.txt"), ADDED),
             (Path::new("a/b/c2.txt"), GitSummary::UNCHANGED),
-            (Path::new("a/d"), GitSummary::MODIFIED),
-            (Path::new("a/d/e2.txt"), GitSummary::MODIFIED),
+            (Path::new("a/d"), MODIFIED),
+            (Path::new("a/d/e2.txt"), MODIFIED),
             (Path::new("f"), GitSummary::UNCHANGED),
             (Path::new("f/no-status.txt"), GitSummary::UNCHANGED),
             (Path::new("g"), GitSummary::CONFLICT),
@@ -2925,12 +2919,12 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new("a/b"), GitSummary::ADDED),
-            (Path::new("a/b/c1.txt"), GitSummary::ADDED),
+            (Path::new("a/b"), ADDED),
+            (Path::new("a/b/c1.txt"), ADDED),
             (Path::new("a/b/c2.txt"), GitSummary::UNCHANGED),
-            (Path::new("a/d"), GitSummary::MODIFIED),
+            (Path::new("a/d"), MODIFIED),
             (Path::new("a/d/e1.txt"), GitSummary::UNCHANGED),
-            (Path::new("a/d/e2.txt"), GitSummary::MODIFIED),
+            (Path::new("a/d/e2.txt"), MODIFIED),
             (Path::new("f"), GitSummary::UNCHANGED),
             (Path::new("f/no-status.txt"), GitSummary::UNCHANGED),
             (Path::new("g"), GitSummary::CONFLICT),
@@ -2940,10 +2934,10 @@ async fn test_propagate_git_statuses(cx: &mut TestAppContext) {
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new("a/b/c1.txt"), GitSummary::ADDED),
+            (Path::new("a/b/c1.txt"), ADDED),
             (Path::new("a/b/c2.txt"), GitSummary::UNCHANGED),
             (Path::new("a/d/e1.txt"), GitSummary::UNCHANGED),
-            (Path::new("a/d/e2.txt"), GitSummary::MODIFIED),
+            (Path::new("a/d/e2.txt"), MODIFIED),
             (Path::new("f/no-status.txt"), GitSummary::UNCHANGED),
         ],
     );
@@ -3016,49 +3010,43 @@ async fn test_propagate_statuses_for_repos_under_project(cx: &mut TestAppContext
 
     check_git_statuses(
         &snapshot,
-        &[
-            (Path::new("x"), GitSummary::ADDED),
-            (Path::new("x/x1.txt"), GitSummary::ADDED),
-        ],
+        &[(Path::new("x"), ADDED), (Path::new("x/x1.txt"), ADDED)],
     );
 
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new("y"), GitSummary::CONFLICT + GitSummary::MODIFIED),
+            (Path::new("y"), GitSummary::CONFLICT + MODIFIED),
             (Path::new("y/y1.txt"), GitSummary::CONFLICT),
-            (Path::new("y/y2.txt"), GitSummary::MODIFIED),
+            (Path::new("y/y2.txt"), MODIFIED),
         ],
     );
 
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new("z"), GitSummary::MODIFIED),
-            (Path::new("z/z2.txt"), GitSummary::MODIFIED),
+            (Path::new("z"), MODIFIED),
+            (Path::new("z/z2.txt"), MODIFIED),
         ],
     );
 
     check_git_statuses(
         &snapshot,
-        &[
-            (Path::new("x"), GitSummary::ADDED),
-            (Path::new("x/x1.txt"), GitSummary::ADDED),
-        ],
+        &[(Path::new("x"), ADDED), (Path::new("x/x1.txt"), ADDED)],
     );
 
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new("x"), GitSummary::ADDED),
-            (Path::new("x/x1.txt"), GitSummary::ADDED),
+            (Path::new("x"), ADDED),
+            (Path::new("x/x1.txt"), ADDED),
             (Path::new("x/x2.txt"), GitSummary::UNCHANGED),
-            (Path::new("y"), GitSummary::CONFLICT + GitSummary::MODIFIED),
+            (Path::new("y"), GitSummary::CONFLICT + MODIFIED),
             (Path::new("y/y1.txt"), GitSummary::CONFLICT),
-            (Path::new("y/y2.txt"), GitSummary::MODIFIED),
-            (Path::new("z"), GitSummary::MODIFIED),
+            (Path::new("y/y2.txt"), MODIFIED),
+            (Path::new("z"), MODIFIED),
             (Path::new("z/z1.txt"), GitSummary::UNCHANGED),
-            (Path::new("z/z2.txt"), GitSummary::MODIFIED),
+            (Path::new("z/z2.txt"), MODIFIED),
         ],
     );
 }
@@ -3139,9 +3127,9 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new("z"), GitSummary::ADDED),
+            (Path::new("z"), ADDED),
             (Path::new("z/z1.txt"), GitSummary::UNCHANGED),
-            (Path::new("z/z2.txt"), GitSummary::ADDED),
+            (Path::new("z/z2.txt"), ADDED),
         ],
     );
 
@@ -3149,7 +3137,7 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new("x"), GitSummary::MODIFIED + GitSummary::ADDED),
+            (Path::new("x"), MODIFIED + ADDED),
             (Path::new("x/y"), GitSummary::CONFLICT),
             (Path::new("x/y/y1.txt"), GitSummary::CONFLICT),
         ],
@@ -3159,13 +3147,13 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
     check_git_statuses(
         &snapshot,
         &[
-            (Path::new("x"), GitSummary::MODIFIED + GitSummary::ADDED),
+            (Path::new("x"), MODIFIED + ADDED),
             (Path::new("x/x1.txt"), GitSummary::UNCHANGED),
-            (Path::new("x/x2.txt"), GitSummary::MODIFIED),
+            (Path::new("x/x2.txt"), MODIFIED),
             (Path::new("x/y"), GitSummary::CONFLICT),
             (Path::new("x/y/y1.txt"), GitSummary::CONFLICT),
             (Path::new("x/y/y2.txt"), GitSummary::UNCHANGED),
-            (Path::new("x/z.txt"), GitSummary::ADDED),
+            (Path::new("x/z.txt"), ADDED),
         ],
     );
 
@@ -3174,7 +3162,7 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
         &snapshot,
         &[
             (Path::new(""), GitSummary::UNCHANGED),
-            (Path::new("x"), GitSummary::MODIFIED + GitSummary::ADDED),
+            (Path::new("x"), MODIFIED + ADDED),
             (Path::new("x/x1.txt"), GitSummary::UNCHANGED),
         ],
     );
@@ -3184,16 +3172,16 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
         &snapshot,
         &[
             (Path::new(""), GitSummary::UNCHANGED),
-            (Path::new("x"), GitSummary::MODIFIED + GitSummary::ADDED),
+            (Path::new("x"), MODIFIED + ADDED),
             (Path::new("x/x1.txt"), GitSummary::UNCHANGED),
-            (Path::new("x/x2.txt"), GitSummary::MODIFIED),
+            (Path::new("x/x2.txt"), MODIFIED),
             (Path::new("x/y"), GitSummary::CONFLICT),
             (Path::new("x/y/y1.txt"), GitSummary::CONFLICT),
             (Path::new("x/y/y2.txt"), GitSummary::UNCHANGED),
-            (Path::new("x/z.txt"), GitSummary::ADDED),
-            (Path::new("z"), GitSummary::ADDED),
+            (Path::new("x/z.txt"), ADDED),
+            (Path::new("z"), ADDED),
             (Path::new("z/z1.txt"), GitSummary::UNCHANGED),
-            (Path::new("z/z2.txt"), GitSummary::ADDED),
+            (Path::new("z/z2.txt"), ADDED),
         ],
     );
 }
@@ -3237,6 +3225,17 @@ fn check_git_statuses(snapshot: &Snapshot, expected_statuses: &[(&Path, GitSumma
         .collect::<Vec<_>>();
     assert_eq!(found_statuses, expected_statuses);
 }
+
+const ADDED: GitSummary = GitSummary {
+    added: 1,
+    count: 1,
+    ..GitSummary::UNCHANGED
+};
+const MODIFIED: GitSummary = GitSummary {
+    modified: 1,
+    count: 1,
+    ..GitSummary::UNCHANGED
+};
 
 #[track_caller]
 fn git_init(path: &Path) -> git2::Repository {
