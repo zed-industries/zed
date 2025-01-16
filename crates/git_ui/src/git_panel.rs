@@ -147,7 +147,7 @@ impl GitPanel {
         let language_registry = workspace.app_state().languages.clone();
         let current_commit_message = git_state
             .as_ref()
-            .and_then(|git_state| git_state.read(cx).commit_message.clone());
+            .map(|git_state| git_state.read(cx).commit_message.clone());
 
         let git_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
             let focus_handle = cx.focus_handle();
@@ -668,53 +668,20 @@ impl GitPanel {
         println!("Discard all triggered");
     }
 
-    fn clear_message(&mut self, cx: &mut ViewContext<Self>) {
+    /// Commit all staged changes
+    fn commit_changes(&mut self, _: &git::CommitChanges, cx: &mut ViewContext<Self>) {
         let Some(git_state) = self.git_state(cx) else {
             return;
         };
-        git_state.update(cx, |git_state, _| {
-            git_state.clear_commit_message();
-        });
+        git_state.update(cx, |git_state, _| git_state.commit());
         self.commit_editor
             .update(cx, |editor, cx| editor.set_text("", cx));
     }
 
-    fn can_commit(&self, commit_all: bool, cx: &AppContext) -> bool {
-        let Some(git_state) = self.git_state(cx) else {
-            return false;
-        };
-        let has_message = !self.commit_editor.read(cx).text(cx).is_empty();
-        let has_changes = git_state.read(cx).entry_count() > 0;
-        let has_staged_changes = self
-            .visible_entries
-            .iter()
-            .any(|entry| entry.is_staged == Some(true));
-
-        has_message && (commit_all || has_staged_changes) && has_changes
-    }
-
-    /// Commit all staged changes
-    fn commit_changes(&mut self, _: &git::CommitChanges, cx: &mut ViewContext<Self>) {
-        self.clear_message(cx);
-
-        if !self.can_commit(false, cx) {
-            return;
-        }
-
-        // TODO: Implement commit all staged
-        println!("Commit staged changes triggered");
-    }
-
     /// Commit all changes, regardless of whether they are staged or not
     fn commit_all_changes(&mut self, _: &git::CommitAllChanges, cx: &mut ViewContext<Self>) {
-        self.clear_message(cx);
-
-        if !self.can_commit(true, cx) {
-            return;
-        }
-
-        // TODO: Implement commit all changes
-        println!("Commit all changes triggered");
+        self.stage_all(&StageAll, cx);
+        self.commit_changes(&CommitChanges, cx);
     }
 
     fn no_entries(&self, cx: &mut ViewContext<Self>) -> bool {
@@ -840,7 +807,7 @@ impl GitPanel {
                 return;
             };
             git_state.update(cx, |git_state, _| {
-                git_state.commit_message = Some(commit_message.into())
+                git_state.commit_message = commit_message.into();
             });
 
             cx.notify();
