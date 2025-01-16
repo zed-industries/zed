@@ -48,7 +48,7 @@ shfmt --version
       "formatter": {
         "external": {
           "command": "shfmt",
-          // Change `--indent 2` to match your preferred tab_size 
+          // Change `--indent 2` to match your preferred tab_size
           "arguments": ["--filename", "{buffer_path}", "--indent", "2"]
         }
       }
