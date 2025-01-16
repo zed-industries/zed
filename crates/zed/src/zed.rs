@@ -39,7 +39,7 @@ use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
     initial_project_settings_content, initial_tasks_content, KeymapFile, Settings, SettingsStore,
-    DEFAULT_KEYMAP_PATH,
+    DEFAULT_KEYMAP_PATH, VIM_KEYMAP_PATH,
 };
 use std::any::TypeId;
 use std::path::PathBuf;
@@ -1022,7 +1022,7 @@ pub fn load_default_keymap(cx: &mut AppContext) {
 
     KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap();
     if VimModeSetting::get_global(cx).0 {
-        KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
+        KeymapFile::load_asset(VIM_KEYMAP_PATH, cx).unwrap();
     }
 
     if let Some(asset_path) = base_keymap.asset_path() {
