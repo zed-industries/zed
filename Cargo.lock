@@ -372,9 +372,9 @@ dependencies = [
 name = "assistant"
 version = "0.1.0"
 dependencies = [
- "anthropic",
  "anyhow",
  "assets",
+ "assistant_settings",
  "assistant_slash_command",
  "assistant_tool",
  "async-watch",
@@ -411,7 +411,6 @@ dependencies = [
  "markdown",
  "menu",
  "multi_buffer",
- "ollama",
  "open_ai",
  "ordered-float 2.10.1",
  "parking_lot",
@@ -436,6 +435,7 @@ dependencies = [
  "smallvec",
  "smol",
  "strum",
+ "telemetry",
  "telemetry_events",
  "terminal",
  "terminal_view",
@@ -455,9 +455,9 @@ dependencies = [
 name = "assistant2"
 version = "0.1.0"
 dependencies = [
- "anthropic",
  "anyhow",
  "assets",
+ "assistant_settings",
  "assistant_tool",
  "async-watch",
  "chrono",
@@ -488,8 +488,6 @@ dependencies = [
  "markdown",
  "menu",
  "multi_buffer",
- "ollama",
- "open_ai",
  "ordered-float 2.10.1",
  "parking_lot",
  "paths",
@@ -498,10 +496,8 @@ dependencies = [
  "proto",
  "rand 0.8.5",
  "rope",
- "schemars",
  "serde",
  "serde_json",
- "serde_json_lenient",
  "settings",
  "similar",
  "smol",
@@ -518,6 +514,27 @@ dependencies = [
  "uuid",
  "workspace",
  "zed_actions",
+]
+
+[[package]]
+name = "assistant_settings"
+version = "0.1.0"
+dependencies = [
+ "anthropic",
+ "anyhow",
+ "feature_flags",
+ "fs",
+ "gpui",
+ "language_model",
+ "lmstudio",
+ "log",
+ "ollama",
+ "open_ai",
+ "paths",
+ "schemars",
+ "serde",
+ "serde_json_lenient",
+ "settings",
 ]
 
 [[package]]
@@ -1656,7 +1673,7 @@ dependencies = [
  "bitflags 2.6.0",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "log",
  "prettyplease",
  "proc-macro2",
@@ -2022,7 +2039,6 @@ dependencies = [
  "audio",
  "client",
  "collections",
- "feature_flags",
  "fs",
  "futures 0.3.31",
  "gpui",
@@ -2600,6 +2616,7 @@ dependencies = [
  "envy",
  "extension",
  "file_finder",
+ "fireworks",
  "fs",
  "futures 0.3.31",
  "git",
@@ -4486,6 +4503,8 @@ dependencies = [
  "serde",
  "serde_derive",
  "serde_json",
+ "settings",
+ "theme",
  "util",
 ]
 
@@ -4510,6 +4529,17 @@ dependencies = [
  "libc",
  "libredox",
  "windows-sys 0.59.0",
+]
+
+[[package]]
+name = "fireworks"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "http_client",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -4716,13 +4746,11 @@ dependencies = [
  "rope",
  "serde",
  "serde_json",
- "shlex",
  "smol",
  "tempfile",
  "text",
  "time",
  "util",
- "which 6.0.3",
  "windows 0.58.0",
 ]
 
@@ -5101,6 +5129,7 @@ dependencies = [
  "collections",
  "db",
  "editor",
+ "futures 0.3.31",
  "git",
  "gpui",
  "language",
@@ -5111,6 +5140,7 @@ dependencies = [
  "serde_derive",
  "serde_json",
  "settings",
+ "sum_tree",
  "theme",
  "ui",
  "util",
@@ -6668,6 +6698,7 @@ dependencies = [
  "gpui",
  "http_client",
  "image",
+ "lmstudio",
  "log",
  "ollama",
  "open_ai",
@@ -6713,6 +6744,7 @@ dependencies = [
  "gpui",
  "http_client",
  "language_model",
+ "lmstudio",
  "menu",
  "ollama",
  "open_ai",
@@ -7182,6 +7214,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "lmstudio"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures 0.3.31",
+ "http_client",
+ "schemars",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "lock_api"
 version = "0.4.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7193,9 +7237,9 @@ dependencies = [
 
 [[package]]
 name = "log"
-version = "0.4.22"
+version = "0.4.25"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a7a70ba024b9dc04c27ea2f0c0548feb474ec5c54bba33a7f72f873a39d07b24"
+checksum = "04cbf5b083de1c7e0222a7a51dbfdba1cbe1c6ab0b15e29fff3f6c077fd9cd9f"
 dependencies = [
  "serde",
  "value-bag",
@@ -9320,6 +9364,7 @@ dependencies = [
  "env_logger 0.11.6",
  "gpui",
  "menu",
+ "schemars",
  "serde",
  "serde_json",
  "ui",
@@ -9609,9 +9654,9 @@ dependencies = [
 
 [[package]]
 name = "proc-macro2"
-version = "1.0.92"
+version = "1.0.93"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "37d3544b3f2748c54e147655edb5025752e2303145b5aefb3c3ea2c78b973bb0"
+checksum = "60946a68e5f9d28b0dc1c21bb8a97ee7d018a8b322fa57838ba31cc878e22d99"
 dependencies = [
  "unicode-ident",
 ]
@@ -9825,7 +9870,7 @@ checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes 1.9.0",
  "heck 0.5.0",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "log",
  "multimap 0.10.0",
  "once_cell",
@@ -9858,7 +9903,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81bddcdb20abf9501610992b6759a4c888aef7d1a7247ef75e2404275ac24af1"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn 2.0.90",
@@ -11173,9 +11218,9 @@ dependencies = [
 
 [[package]]
 name = "sea-orm"
-version = "1.1.3"
+version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0dbcf83248860dc632c46c7e81a221e041b50d0006191756cb001d9e8afc60a9"
+checksum = "1a93194430b419da0801f404baf3b986399d6a2a4f43bc79bc96dea83f92ca43"
 dependencies = [
  "async-stream",
  "async-trait",
@@ -11201,9 +11246,9 @@ dependencies = [
 
 [[package]]
 name = "sea-orm-macros"
-version = "1.1.3"
+version = "1.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "49ce6f08134f3681b1ca92185b96fac898f26d9b4f5538d13f7032ef243d14b2"
+checksum = "d19e8f22fb474a8a622eb516c46885a080535d8d559386188f525977eaad32b3"
 dependencies = [
  "heck 0.4.1",
  "proc-macro2",
@@ -11266,6 +11311,7 @@ dependencies = [
  "language",
  "menu",
  "project",
+ "schemars",
  "serde",
  "serde_json",
  "settings",
@@ -12647,6 +12693,7 @@ dependencies = [
  "menu",
  "picker",
  "project",
+ "schemars",
  "serde",
  "serde_json",
  "settings",
@@ -12840,6 +12887,7 @@ dependencies = [
  "language",
  "project",
  "rand 0.8.5",
+ "schemars",
  "search",
  "serde",
  "serde_json",
@@ -13174,6 +13222,7 @@ dependencies = [
  "project",
  "remote",
  "rpc",
+ "schemars",
  "serde",
  "settings",
  "smallvec",
@@ -13622,8 +13671,8 @@ dependencies = [
 
 [[package]]
 name = "tree-sitter-gomod"
-version = "1.0.2"
-source = "git+https://github.com/zed-industries/tree-sitter-go-mod?rev=a9aea5e358cde4d0f8ff20b7bc4fa311e359c7ca#a9aea5e358cde4d0f8ff20b7bc4fa311e359c7ca"
+version = "1.1.1"
+source = "git+https://github.com/camdencheek/tree-sitter-go-mod?rev=6efb59652d30e0e9cd5f3b3a669afd6f1a926d3c#6efb59652d30e0e9cd5f3b3a669afd6f1a926d3c"
 dependencies = [
  "cc",
  "tree-sitter-language",
@@ -16067,7 +16116,7 @@ dependencies = [
 
 [[package]]
 name = "zed"
-version = "0.170.0"
+version = "0.171.0"
 dependencies = [
  "activity_indicator",
  "anyhow",
@@ -16075,6 +16124,7 @@ dependencies = [
  "assets",
  "assistant",
  "assistant2",
+ "assistant_settings",
  "assistant_tools",
  "async-watch",
  "audio",

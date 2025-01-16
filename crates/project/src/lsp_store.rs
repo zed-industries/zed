@@ -286,9 +286,17 @@ impl LocalLspStore {
 
                         Self::setup_lsp_messages(this.clone(), &language_server, delegate, adapter);
 
+                        let did_change_configuration_params =
+                            Arc::new(lsp::DidChangeConfigurationParams {
+                                settings: workspace_config,
+                            });
                         let language_server = cx
                             .update(|cx| {
-                                language_server.initialize(Some(initialization_params), cx)
+                                language_server.initialize(
+                                    Some(initialization_params),
+                                    did_change_configuration_params.clone(),
+                                    cx,
+                                )
                             })?
                             .await
                             .inspect_err(|_| {
@@ -302,9 +310,7 @@ impl LocalLspStore {
 
                         language_server
                             .notify::<lsp::notification::DidChangeConfiguration>(
-                                lsp::DidChangeConfigurationParams {
-                                    settings: workspace_config,
-                                },
+                                &did_change_configuration_params,
                             )
                             .ok();
 
@@ -1922,7 +1928,7 @@ impl LocalLspStore {
             };
 
             server
-                .notify::<lsp::notification::DidOpenTextDocument>(lsp::DidOpenTextDocumentParams {
+                .notify::<lsp::notification::DidOpenTextDocument>(&lsp::DidOpenTextDocumentParams {
                     text_document: lsp::TextDocumentItem::new(
                         uri.clone(),
                         adapter.language_id(&language.name()),
@@ -1968,7 +1974,7 @@ impl LocalLspStore {
             for (_, language_server) in self.language_servers_for_buffer(buffer, cx) {
                 language_server
                     .notify::<lsp::notification::DidCloseTextDocument>(
-                        lsp::DidCloseTextDocumentParams {
+                        &lsp::DidCloseTextDocumentParams {
                             text_document: lsp::TextDocumentIdentifier::new(file_url.clone()),
                         },
                     )
@@ -2006,10 +2012,6 @@ impl LocalLspStore {
             snapshots.retain(|snapshot| snapshot.version + OLD_VERSIONS_TO_RETAIN >= version);
             Ok(found_snapshot)
         } else {
-            match buffer.read(cx).project_path(cx) {
-                Some(project_path) => log::error!("No LSP snapshots found for buffer with path {:?}", project_path.path),
-                None => log::error!("No LSP snapshots found for buffer without a project path (which is also unexpected)"),
-            }
             Ok((buffer.read(cx)).text_snapshot())
         }
     }
@@ -3500,24 +3502,30 @@ impl LspStore {
         };
         let file = File::from_dyn(buffer.file()).and_then(File::as_local);
         if let (Some(file), Some(language_server)) = (file, language_server) {
-            let lsp_params = match request.to_lsp(&file.abs_path(cx), buffer, &language_server, cx)
-            {
-                Ok(lsp_params) => lsp_params,
+            let lsp_params = match request.to_lsp_params_or_response(
+                &file.abs_path(cx),
+                buffer,
+                &language_server,
+                cx,
+            ) {
+                Ok(LspParamsOrResponse::Params(lsp_params)) => lsp_params,
+                Ok(LspParamsOrResponse::Response(response)) => return Task::ready(Ok(response)),
                 Err(err) => {
-                    log::error!(
-                        "Preparing LSP request to {} failed: {}",
+                    let message = format!(
+                        "{} via {} failed: {}",
+                        request.display_name(),
                         language_server.name(),
                         err
                     );
-                    return Task::ready(Err(err));
+                    log::warn!("{}", message);
+                    return Task::ready(Err(anyhow!(message)));
                 }
             };
             let status = request.status();
+            if !request.check_capabilities(language_server.adapter_server_capabilities()) {
+                return Task::ready(Ok(Default::default()));
+            }
             return cx.spawn(move |this, cx| async move {
-                if !request.check_capabilities(language_server.adapter_server_capabilities()) {
-                    return Ok(Default::default());
-                }
-
                 let lsp_request = language_server.request::<R::LspRequest>(lsp_params);
 
                 let id = lsp_request.id();
@@ -3560,8 +3568,14 @@ impl LspStore {
                 let result = lsp_request.await;
 
                 let response = result.map_err(|err| {
-                    log::warn!("LSP request to {} failed: {}", language_server.name(), err);
-                    err
+                    let message = format!(
+                        "{} via {} failed: {}",
+                        request.display_name(),
+                        language_server.name(),
+                        err
+                    );
+                    log::warn!("{}", message);
+                    anyhow!(message)
                 })?;
 
                 let response = request
@@ -4404,7 +4418,8 @@ impl LspStore {
             Documentation::Undocumented
         } else if response.documentation_is_markdown {
             Documentation::MultiLineMarkdown(
-                markdown::parse_markdown(&response.documentation, &language_registry, None).await,
+                markdown::parse_markdown(&response.documentation, Some(&language_registry), None)
+                    .await,
             )
         } else if response.documentation.lines().count() <= 1 {
             Documentation::SingleLine(response.documentation)
@@ -5056,7 +5071,7 @@ impl LspStore {
 
             language_server
                 .notify::<lsp::notification::DidChangeTextDocument>(
-                    lsp::DidChangeTextDocumentParams {
+                    &lsp::DidChangeTextDocumentParams {
                         text_document: lsp::VersionedTextDocumentIdentifier::new(
                             uri.clone(),
                             next_version,
@@ -5092,7 +5107,7 @@ impl LspStore {
                 };
                 server
                     .notify::<lsp::notification::DidSaveTextDocument>(
-                        lsp::DidSaveTextDocumentParams {
+                        &lsp::DidSaveTextDocumentParams {
                             text_document: text_document.clone(),
                             text,
                         },
@@ -5162,7 +5177,7 @@ impl LspStore {
 
                 server
                     .notify::<lsp::notification::DidChangeConfiguration>(
-                        lsp::DidChangeConfigurationParams { settings },
+                        &lsp::DidChangeConfigurationParams { settings },
                     )
                     .ok();
             }
@@ -6203,7 +6218,7 @@ impl LspStore {
 
                 if filter.should_send_did_rename(&old_uri, is_dir) {
                     language_server
-                        .notify::<DidRenameFiles>(RenameFilesParams {
+                        .notify::<DidRenameFiles>(&RenameFilesParams {
                             files: vec![FileRename {
                                 old_uri: old_uri.clone(),
                                 new_uri: new_uri.clone(),
@@ -6310,7 +6325,7 @@ impl LspStore {
             if !changes.is_empty() {
                 server
                     .notify::<lsp::notification::DidChangeWatchedFiles>(
-                        lsp::DidChangeWatchedFilesParams { changes },
+                        &lsp::DidChangeWatchedFilesParams { changes },
                     )
                     .log_err();
             }
@@ -7522,7 +7537,7 @@ impl LspStore {
                     let uri = lsp::Url::from_file_path(file.abs_path(cx)).unwrap();
                     language_server
                         .notify::<lsp::notification::DidOpenTextDocument>(
-                            lsp::DidOpenTextDocumentParams {
+                            &lsp::DidOpenTextDocumentParams {
                                 text_document: lsp::TextDocumentItem::new(
                                     uri,
                                     adapter.language_id(&language.name()),
@@ -7627,7 +7642,7 @@ impl LspStore {
                     if progress.is_cancellable {
                         server
                             .notify::<lsp::notification::WorkDoneProgressCancel>(
-                                WorkDoneProgressCancelParams {
+                                &WorkDoneProgressCancelParams {
                                     token: lsp::NumberOrString::String(token.clone()),
                                 },
                             )
@@ -7637,7 +7652,7 @@ impl LspStore {
                     if progress.is_cancellable {
                         server
                             .notify::<lsp::notification::WorkDoneProgressCancel>(
-                                WorkDoneProgressCancelParams {
+                                &WorkDoneProgressCancelParams {
                                     token: lsp::NumberOrString::String(token.clone()),
                                 },
                             )
@@ -7772,7 +7787,7 @@ impl LspStore {
                     };
                     if !params.changes.is_empty() {
                         server
-                            .notify::<lsp::notification::DidChangeWatchedFiles>(params)
+                            .notify::<lsp::notification::DidChangeWatchedFiles>(&params)
                             .log_err();
                     }
                 }

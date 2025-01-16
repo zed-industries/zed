@@ -1,82 +1,84 @@
 //! This module contains all actions supported by [`Editor`].
 use super::*;
-use gpui::{action_aliases, action_as};
+use gpui::{action_as, action_with_deprecated_aliases};
+use schemars::JsonSchema;
 use util::serde::default_true;
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct SelectNext {
     #[serde(default)]
     pub replace_newest: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct SelectPrevious {
     #[serde(default)]
     pub replace_newest: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct MoveToBeginningOfLine {
     #[serde(default = "default_true")]
     pub stop_at_soft_wraps: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct SelectToBeginningOfLine {
     #[serde(default)]
     pub(super) stop_at_soft_wraps: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct MovePageUp {
     #[serde(default)]
     pub(super) center_cursor: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct MovePageDown {
     #[serde(default)]
     pub(super) center_cursor: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct MoveToEndOfLine {
     #[serde(default = "default_true")]
     pub stop_at_soft_wraps: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct SelectToEndOfLine {
     #[serde(default)]
     pub(super) stop_at_soft_wraps: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct ToggleCodeActions {
     // Display row from which the action was deployed.
     #[serde(default)]
+    #[serde(skip)]
     pub deployed_from_indicator: Option<DisplayRow>,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct ConfirmCompletion {
     #[serde(default)]
     pub item_ix: Option<usize>,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct ComposeCompletion {
     #[serde(default)]
     pub item_ix: Option<usize>,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct ConfirmCodeAction {
     #[serde(default)]
     pub item_ix: Option<usize>,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct ToggleComments {
     #[serde(default)]
     pub advance_downwards: bool,
@@ -84,84 +86,87 @@ pub struct ToggleComments {
     pub ignore_indent: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct FoldAt {
+    #[serde(skip)]
     pub buffer_row: MultiBufferRow,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct UnfoldAt {
+    #[serde(skip)]
     pub buffer_row: MultiBufferRow,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct MoveUpByLines {
     #[serde(default)]
     pub(super) lines: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct MoveDownByLines {
     #[serde(default)]
     pub(super) lines: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct SelectUpByLines {
     #[serde(default)]
     pub(super) lines: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct SelectDownByLines {
     #[serde(default)]
     pub(super) lines: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct ExpandExcerpts {
     #[serde(default)]
     pub(super) lines: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct ExpandExcerptsUp {
     #[serde(default)]
     pub(super) lines: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct ExpandExcerptsDown {
     #[serde(default)]
     pub(super) lines: u32,
 }
-#[derive(PartialEq, Clone, Deserialize, Default)]
+
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct ShowCompletions {
     #[serde(default)]
     pub(super) trigger: Option<String>,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct HandleInput(pub String);
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct DeleteToNextWordEnd {
     #[serde(default)]
     pub ignore_newlines: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct DeleteToPreviousWordStart {
     #[serde(default)]
     pub ignore_newlines: bool,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct FoldAtLevel {
     pub level: u32,
 }
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct SpawnNearestTask {
     #[serde(default)]
     pub reveal: task::RevealStrategy,
@@ -389,4 +394,4 @@ gpui::actions!(
 
 action_as!(go_to_line, ToggleGoToLine as Toggle);
 
-action_aliases!(editor, OpenSelectedFilename, [OpenFile]);
+action_with_deprecated_aliases!(editor, OpenSelectedFilename, ["editor::OpenFile"]);

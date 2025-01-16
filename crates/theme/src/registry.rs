@@ -11,7 +11,9 @@ use parking_lot::RwLock;
 use util::ResultExt;
 
 use crate::{
-    read_user_theme, refine_theme_family, Appearance, Theme, ThemeFamily, ThemeFamilyContent,
+    read_icon_theme, read_user_theme, refine_theme_family, Appearance, AppearanceContent,
+    ChevronIcons, DirectoryIcons, IconDefinition, IconTheme, Theme, ThemeFamily,
+    ThemeFamilyContent, DEFAULT_ICON_THEME_NAME,
 };
 
 /// The metadata for a theme.
@@ -36,6 +38,7 @@ impl Global for GlobalThemeRegistry {}
 
 struct ThemeRegistryState {
     themes: HashMap<SharedString, Arc<Theme>>,
+    icon_themes: HashMap<SharedString, Arc<IconTheme>>,
 }
 
 /// The registry for themes.
@@ -67,6 +70,7 @@ impl ThemeRegistry {
         let registry = Self {
             state: RwLock::new(ThemeRegistryState {
                 themes: HashMap::default(),
+                icon_themes: HashMap::default(),
             }),
             assets,
         };
@@ -74,6 +78,12 @@ impl ThemeRegistry {
         // We're loading the Zed default theme, as we need a theme to be loaded
         // for tests.
         registry.insert_theme_families([crate::fallback_themes::zed_default_themes()]);
+
+        let default_icon_theme = crate::default_icon_theme();
+        registry.state.write().icon_themes.insert(
+            default_icon_theme.name.clone(),
+            Arc::new(default_icon_theme),
+        );
 
         registry
     }
@@ -193,6 +203,82 @@ impl ThemeRegistry {
         let theme = read_user_theme(theme_path, fs).await?;
 
         self.insert_user_theme_families([theme]);
+
+        Ok(())
+    }
+
+    /// Returns the default icon theme.
+    pub fn default_icon_theme(&self) -> Result<Arc<IconTheme>> {
+        self.get_icon_theme(DEFAULT_ICON_THEME_NAME)
+    }
+
+    /// Returns the icon theme with the specified name.
+    pub fn get_icon_theme(&self, name: &str) -> Result<Arc<IconTheme>> {
+        self.state
+            .read()
+            .icon_themes
+            .get(name)
+            .ok_or_else(|| anyhow!("icon theme not found: {name}"))
+            .cloned()
+    }
+
+    /// Removes the icon themes with the given names from the registry.
+    pub fn remove_icon_themes(&self, icon_themes_to_remove: &[SharedString]) {
+        self.state
+            .write()
+            .icon_themes
+            .retain(|name, _| !icon_themes_to_remove.contains(name))
+    }
+
+    /// Loads the icon theme from the specified path and adds it to the registry.
+    ///
+    /// The `icons_root_dir` parameter indicates the root directory from which
+    /// the relative paths to icons in the theme should be resolved against.
+    pub async fn load_icon_theme(
+        &self,
+        icon_theme_path: &Path,
+        icons_root_dir: &Path,
+        fs: Arc<dyn Fs>,
+    ) -> Result<()> {
+        let icon_theme_family = read_icon_theme(icon_theme_path, fs).await?;
+
+        let mut state = self.state.write();
+        for icon_theme in icon_theme_family.themes {
+            let icon_theme = IconTheme {
+                id: uuid::Uuid::new_v4().to_string(),
+                name: icon_theme.name.into(),
+                appearance: match icon_theme.appearance {
+                    AppearanceContent::Light => Appearance::Light,
+                    AppearanceContent::Dark => Appearance::Dark,
+                },
+                directory_icons: DirectoryIcons {
+                    collapsed: icon_theme.directory_icons.collapsed,
+                    expanded: icon_theme.directory_icons.expanded,
+                },
+                chevron_icons: ChevronIcons {
+                    collapsed: icon_theme.chevron_icons.collapsed,
+                    expanded: icon_theme.chevron_icons.expanded,
+                },
+                file_icons: icon_theme
+                    .file_icons
+                    .into_iter()
+                    .map(|(key, icon)| {
+                        let path = icons_root_dir.join(icon.path.as_ref());
+
+                        (
+                            key,
+                            IconDefinition {
+                                path: path.to_string_lossy().to_string().into(),
+                            },
+                        )
+                    })
+                    .collect(),
+            };
+
+            state
+                .icon_themes
+                .insert(icon_theme.name.clone(), Arc::new(icon_theme));
+        }
 
         Ok(())
     }

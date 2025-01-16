@@ -1,7 +1,6 @@
 #![cfg_attr(target_os = "windows", allow(unused, dead_code))]
 
 pub mod assistant_panel;
-pub mod assistant_settings;
 mod context;
 pub mod context_store;
 mod inline_assistant;
@@ -26,7 +25,7 @@ pub use context::*;
 pub use context_store::*;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
-use gpui::impl_actions;
+use gpui::impl_internal_actions;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
 pub(crate) use inline_assistant::*;
 use language_model::{
@@ -74,13 +73,13 @@ actions!(
     ]
 );
 
-#[derive(PartialEq, Clone, Deserialize)]
+#[derive(PartialEq, Clone)]
 pub enum InsertDraggedFiles {
     ProjectPaths(Vec<PathBuf>),
     ExternalFiles(Vec<PathBuf>),
 }
 
-impl_actions!(assistant, [InsertDraggedFiles]);
+impl_internal_actions!(assistant, [InsertDraggedFiles]);
 
 const DEFAULT_CONTEXT_LINES: usize = 50;
 

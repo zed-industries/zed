@@ -212,9 +212,18 @@ impl LspAdapter for TypeScriptLspAdapter {
             _ => None,
         }?;
 
-        let text = match &item.detail {
-            Some(detail) => format!("{} {}", item.label, detail),
-            None => item.label.clone(),
+        let one_line = |s: &str| s.replace("    ", "").replace('\n', " ");
+
+        let text = if let Some(description) = item
+            .label_details
+            .as_ref()
+            .and_then(|label_details| label_details.description.as_ref())
+        {
+            format!("{} {}", item.label, one_line(description))
+        } else if let Some(detail) = &item.detail {
+            format!("{} {}", item.label, one_line(detail))
+        } else {
+            item.label.clone()
         };
 
         Some(language::CodeLabel {
@@ -379,6 +388,11 @@ impl LspAdapter for EsLintLspAdapter {
             }
         }
 
+        let working_directory = eslint_user_settings
+            .get("workingDirectory")
+            .cloned()
+            .unwrap_or_else(|| json!({"mode": "auto"}));
+
         let problems = eslint_user_settings
             .get("problems")
             .cloned()
@@ -400,7 +414,7 @@ impl LspAdapter for EsLintLspAdapter {
                 "rulesCustomizations": rules_customizations,
                 "run": "onType",
                 "nodePath": node_path,
-                "workingDirectory": {"mode": "auto"},
+                "workingDirectory": working_directory,
                 "workspaceFolder": {
                     "uri": workspace_root,
                     "name": workspace_root.file_name()

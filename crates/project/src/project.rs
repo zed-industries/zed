@@ -39,10 +39,7 @@ use futures::{
 pub use image_store::{ImageItem, ImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
 
-use git::{
-    blame::Blame,
-    repository::{GitFileStatus, GitRepository},
-};
+use git::{blame::Blame, repository::GitRepository, status::FileStatus};
 use gpui::{
     AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context as _, EventEmitter, Hsla,
     Model, ModelContext, SharedString, Task, WeakModel, WindowContext,
@@ -306,6 +303,14 @@ impl ProjectPath {
             path: Path::new("").into(),
         }
     }
+}
+
+#[derive(Debug, Default)]
+pub enum PrepareRenameResponse {
+    Success(Range<Anchor>),
+    OnlyUnpreparedRenameSupported,
+    #[default]
+    InvalidPosition,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1454,7 +1459,7 @@ impl Project {
         &self,
         project_path: &ProjectPath,
         cx: &AppContext,
-    ) -> Option<GitFileStatus> {
+    ) -> Option<FileStatus> {
         self.worktree_for_id(project_path.worktree_id, cx)
             .and_then(|worktree| worktree.read(cx).status_for_file(&project_path.path))
     }
@@ -2921,7 +2926,7 @@ impl Project {
         buffer: Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<Range<Anchor>>>> {
+    ) -> Task<Result<PrepareRenameResponse>> {
         self.request_lsp(
             buffer,
             LanguageServerToQuery::Primary,
@@ -2934,19 +2939,19 @@ impl Project {
         buffer: Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<Range<Anchor>>>> {
+    ) -> Task<Result<PrepareRenameResponse>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.prepare_rename_impl(buffer, position, cx)
     }
 
-    fn perform_rename_impl(
+    pub fn perform_rename<T: ToPointUtf16>(
         &mut self,
         buffer: Model<Buffer>,
-        position: PointUtf16,
+        position: T,
         new_name: String,
-        push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ProjectTransaction>> {
+        let push_to_history = true;
         let position = position.to_point_utf16(buffer.read(cx));
         self.request_lsp(
             buffer,
@@ -2958,17 +2963,6 @@ impl Project {
             },
             cx,
         )
-    }
-
-    pub fn perform_rename<T: ToPointUtf16>(
-        &mut self,
-        buffer: Model<Buffer>,
-        position: T,
-        new_name: String,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<ProjectTransaction>> {
-        let position = position.to_point_utf16(buffer.read(cx));
-        self.perform_rename_impl(buffer, position, new_name, true, cx)
     }
 
     pub fn on_type_format<T: ToPointUtf16>(

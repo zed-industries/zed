@@ -73,7 +73,7 @@ use ui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 use util::{RangeExt, ResultExt};
-use workspace::{item::Item, Workspace};
+use workspace::{item::Item, notifications::NotifyTaskExt, Workspace};
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -382,14 +382,14 @@ impl EditorElement {
         register_action(view, cx, Editor::expand_all_hunk_diffs);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.format(action, cx) {
-                task.detach_and_log_err(cx);
+                task.detach_and_notify_err(cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.format_selections(action, cx) {
-                task.detach_and_log_err(cx);
+                task.detach_and_notify_err(cx);
             } else {
                 cx.propagate();
             }
@@ -399,35 +399,35 @@ impl EditorElement {
         register_action(view, cx, Editor::show_character_palette);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.confirm_completion(action, cx) {
-                task.detach_and_log_err(cx);
+                task.detach_and_notify_err(cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.compose_completion(action, cx) {
-                task.detach_and_log_err(cx);
+                task.detach_and_notify_err(cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.confirm_code_action(action, cx) {
-                task.detach_and_log_err(cx);
+                task.detach_and_notify_err(cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.rename(action, cx) {
-                task.detach_and_log_err(cx);
+                task.detach_and_notify_err(cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.confirm_rename(action, cx) {
-                task.detach_and_log_err(cx);
+                task.detach_and_notify_err(cx);
             } else {
                 cx.propagate();
             }
@@ -543,8 +543,29 @@ impl EditorElement {
                         // and run the selection logic.
                         modifiers.alt = false;
                     } else {
+                        let scroll_position_row =
+                            position_map.scroll_pixel_position.y / position_map.line_height;
+                        let display_row = (((event.position - gutter_hitbox.bounds.origin).y
+                            + position_map.scroll_pixel_position.y)
+                            / position_map.line_height)
+                            as u32;
+                        let multi_buffer_row = position_map
+                            .snapshot
+                            .display_point_to_point(
+                                DisplayPoint::new(DisplayRow(display_row), 0),
+                                Bias::Right,
+                            )
+                            .row;
+                        let line_offset_from_top = display_row - scroll_position_row as u32;
                         // if double click is made without alt, open the corresponding excerp
-                        editor.open_excerpts(&OpenExcerpts, cx);
+                        editor.open_excerpts_common(
+                            Some(JumpData::MultiBufferRow {
+                                row: MultiBufferRow(multi_buffer_row),
+                                line_offset_from_top,
+                            }),
+                            false,
+                            cx,
+                        );
                         return;
                     }
                 }

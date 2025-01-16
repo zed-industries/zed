@@ -13,7 +13,8 @@ use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
 use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::{channel::mpsc, StreamExt as _};
-use git::repository::GitFileStatus;
+
+use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{
     px, size, AppContext, BackgroundExecutor, Model, Modifiers, MouseButton, MouseDownEvent,
     TestAppContext, UpdateGlobal,
@@ -2889,11 +2890,20 @@ async fn test_git_status_sync(
     const A_TXT: &str = "a.txt";
     const B_TXT: &str = "b.txt";
 
+    const A_STATUS_START: FileStatus = FileStatus::Tracked(TrackedStatus {
+        index_status: StatusCode::Added,
+        worktree_status: StatusCode::Modified,
+    });
+    const B_STATUS_START: FileStatus = FileStatus::Unmerged(UnmergedStatus {
+        first_head: UnmergedStatusCode::Updated,
+        second_head: UnmergedStatusCode::Deleted,
+    });
+
     client_a.fs().set_status_for_repo_via_git_operation(
         Path::new("/dir/.git"),
         &[
-            (Path::new(A_TXT), GitFileStatus::Added),
-            (Path::new(B_TXT), GitFileStatus::Added),
+            (Path::new(A_TXT), A_STATUS_START),
+            (Path::new(B_TXT), B_STATUS_START),
         ],
     );
 
@@ -2913,7 +2923,7 @@ async fn test_git_status_sync(
     #[track_caller]
     fn assert_status(
         file: &impl AsRef<Path>,
-        status: Option<GitFileStatus>,
+        status: Option<FileStatus>,
         project: &Project,
         cx: &AppContext,
     ) {
@@ -2926,20 +2936,29 @@ async fn test_git_status_sync(
     }
 
     project_local.read_with(cx_a, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(GitFileStatus::Added), project, cx);
-        assert_status(&Path::new(B_TXT), Some(GitFileStatus::Added), project, cx);
+        assert_status(&Path::new(A_TXT), Some(A_STATUS_START), project, cx);
+        assert_status(&Path::new(B_TXT), Some(B_STATUS_START), project, cx);
     });
 
     project_remote.read_with(cx_b, |project, cx| {
-        assert_status(&Path::new(A_TXT), Some(GitFileStatus::Added), project, cx);
-        assert_status(&Path::new(B_TXT), Some(GitFileStatus::Added), project, cx);
+        assert_status(&Path::new(A_TXT), Some(A_STATUS_START), project, cx);
+        assert_status(&Path::new(B_TXT), Some(B_STATUS_START), project, cx);
+    });
+
+    const A_STATUS_END: FileStatus = FileStatus::Tracked(TrackedStatus {
+        index_status: StatusCode::Added,
+        worktree_status: StatusCode::Unmodified,
+    });
+    const B_STATUS_END: FileStatus = FileStatus::Tracked(TrackedStatus {
+        index_status: StatusCode::Deleted,
+        worktree_status: StatusCode::Unmodified,
     });
 
     client_a.fs().set_status_for_repo_via_working_copy_change(
         Path::new("/dir/.git"),
         &[
-            (Path::new(A_TXT), GitFileStatus::Modified),
-            (Path::new(B_TXT), GitFileStatus::Modified),
+            (Path::new(A_TXT), A_STATUS_END),
+            (Path::new(B_TXT), B_STATUS_END),
         ],
     );
 
@@ -2949,33 +2968,13 @@ async fn test_git_status_sync(
     // Smoke test status reading
 
     project_local.read_with(cx_a, |project, cx| {
-        assert_status(
-            &Path::new(A_TXT),
-            Some(GitFileStatus::Modified),
-            project,
-            cx,
-        );
-        assert_status(
-            &Path::new(B_TXT),
-            Some(GitFileStatus::Modified),
-            project,
-            cx,
-        );
+        assert_status(&Path::new(A_TXT), Some(A_STATUS_END), project, cx);
+        assert_status(&Path::new(B_TXT), Some(B_STATUS_END), project, cx);
     });
 
     project_remote.read_with(cx_b, |project, cx| {
-        assert_status(
-            &Path::new(A_TXT),
-            Some(GitFileStatus::Modified),
-            project,
-            cx,
-        );
-        assert_status(
-            &Path::new(B_TXT),
-            Some(GitFileStatus::Modified),
-            project,
-            cx,
-        );
+        assert_status(&Path::new(A_TXT), Some(A_STATUS_END), project, cx);
+        assert_status(&Path::new(B_TXT), Some(B_STATUS_END), project, cx);
     });
 
     // And synchronization while joining
@@ -2983,18 +2982,8 @@ async fn test_git_status_sync(
     executor.run_until_parked();
 
     project_remote_c.read_with(cx_c, |project, cx| {
-        assert_status(
-            &Path::new(A_TXT),
-            Some(GitFileStatus::Modified),
-            project,
-            cx,
-        );
-        assert_status(
-            &Path::new(B_TXT),
-            Some(GitFileStatus::Modified),
-            project,
-            cx,
-        );
+        assert_status(&Path::new(A_TXT), Some(A_STATUS_END), project, cx);
+        assert_status(&Path::new(B_TXT), Some(B_STATUS_END), project, cx);
     });
 }
 
@@ -3900,7 +3889,7 @@ async fn test_collaborating_with_diagnostics(
         .receive_notification::<lsp::notification::DidOpenTextDocument>()
         .await;
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-        lsp::PublishDiagnosticsParams {
+        &lsp::PublishDiagnosticsParams {
             uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
             version: None,
             diagnostics: vec![lsp::Diagnostic {
@@ -3920,7 +3909,7 @@ async fn test_collaborating_with_diagnostics(
         .await
         .unwrap();
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-        lsp::PublishDiagnosticsParams {
+        &lsp::PublishDiagnosticsParams {
             uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
             version: None,
             diagnostics: vec![lsp::Diagnostic {
@@ -3994,7 +3983,7 @@ async fn test_collaborating_with_diagnostics(
 
     // Simulate a language server reporting more errors for a file.
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-        lsp::PublishDiagnosticsParams {
+        &lsp::PublishDiagnosticsParams {
             uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
             version: None,
             diagnostics: vec![
@@ -4088,7 +4077,7 @@ async fn test_collaborating_with_diagnostics(
 
     // Simulate a language server reporting no errors for a file.
     fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-        lsp::PublishDiagnosticsParams {
+        &lsp::PublishDiagnosticsParams {
             uri: lsp::Url::from_file_path("/a/a.rs").unwrap(),
             version: None,
             diagnostics: vec![],
@@ -4183,7 +4172,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
         })
         .await
         .unwrap();
-    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+    fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
         value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::Begin(
             lsp::WorkDoneProgressBegin {
@@ -4194,7 +4183,7 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
     });
     for file_name in file_names {
         fake_language_server.notify::<lsp::notification::PublishDiagnostics>(
-            lsp::PublishDiagnosticsParams {
+            &lsp::PublishDiagnosticsParams {
                 uri: lsp::Url::from_file_path(Path::new("/test").join(file_name)).unwrap(),
                 version: None,
                 diagnostics: vec![lsp::Diagnostic {
@@ -4206,8 +4195,9 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
                 }],
             },
         );
+        executor.run_until_parked();
     }
-    fake_language_server.notify::<lsp::notification::Progress>(lsp::ProgressParams {
+    fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
         value: lsp::ProgressParamsValue::WorkDone(lsp::WorkDoneProgress::End(
             lsp::WorkDoneProgressEnd { message: None },

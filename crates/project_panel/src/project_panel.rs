@@ -1,10 +1,10 @@
 mod project_panel_settings;
 mod utils;
 
+use anyhow::{anyhow, Context as _, Result};
 use client::{ErrorCode, ErrorExt};
-use language::DiagnosticSeverity;
-use settings::{Settings, SettingsStore};
-
+use collections::{hash_map, BTreeSet, HashMap};
+use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
     items::{
@@ -15,11 +15,7 @@ use editor::{
     Editor, EditorEvent, EditorSettings, ShowScrollbar,
 };
 use file_icons::FileIcons;
-
-use anyhow::{anyhow, Context as _, Result};
-use collections::{hash_map, BTreeSet, HashMap};
-use command_palette_hooks::CommandPaletteFilter;
-use git::repository::GitFileStatus;
+use git::status::GitSummary;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
     AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
@@ -30,6 +26,7 @@ use gpui::{
     VisualContext as _, WeakView, WindowContext,
 };
 use indexmap::IndexMap;
+use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::{
     relativize_path, Entry, EntryKind, FileNumber, Fs, Project, ProjectEntryId, ProjectPath,
@@ -39,7 +36,9 @@ use project_panel_settings::{
     ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics, ShowFileNumbers,
     ShowIndentGuides,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::{Settings, SettingsStore};
 use smallvec::SmallVec;
 use std::any::TypeId;
 use std::{
@@ -147,19 +146,19 @@ struct EntryDetails {
     is_cut: bool,
     filename_text_color: Color,
     diagnostic_severity: Option<DiagnosticSeverity>,
-    git_status: Option<GitFileStatus>,
+    git_status: GitSummary,
     is_private: bool,
     worktree_id: WorktreeId,
     canonical_path: Option<Box<Path>>,
 }
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize)]
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
 struct Delete {
     #[serde(default)]
     pub skip_prompt: bool,
 }
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize)]
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
 struct Trash {
     #[serde(default)]
     pub skip_prompt: bool,
@@ -1604,9 +1603,7 @@ impl ProjectPanel {
                         }
                     }))
                     && entry.is_file()
-                    && entry
-                        .git_status
-                        .is_some_and(|status| matches!(status, GitFileStatus::Modified))
+                    && entry.git_summary.modified > 0
             },
             cx,
         );
@@ -1684,9 +1681,7 @@ impl ProjectPanel {
                         }
                     }))
                     && entry.is_file()
-                    && entry
-                        .git_status
-                        .is_some_and(|status| matches!(status, GitFileStatus::Modified))
+                    && entry.git_summary.modified > 0
             },
             cx,
         );
@@ -2437,7 +2432,7 @@ impl ProjectPanel {
                             char_bag: entry.char_bag,
                             is_fifo: entry.is_fifo,
                         },
-                        git_status: entry.git_status,
+                        git_summary: entry.git_summary,
                     });
                 }
                 let worktree_abs_path = worktree.read(cx).abs_path();
@@ -2835,7 +2830,9 @@ impl ProjectPanel {
                         .collect()
                 });
                 for entry in visible_worktree_entries[entry_range].iter() {
-                    let status = git_status_setting.then_some(entry.git_status).flatten();
+                    let status = git_status_setting
+                        .then_some(entry.git_summary)
+                        .unwrap_or_default();
                     let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
                     let icon = match entry.kind {
                         EntryKind::File => {
@@ -3515,11 +3512,9 @@ impl ProjectPanel {
                         )
                     })
                     .child(if let Some(icon) = &icon {
-                        // Check if there's a diagnostic severity and get the decoration color
                         if let Some((_, decoration_color)) =
                             entry_diagnostic_aware_icon_decoration_and_color(diagnostic_severity)
                         {
-                            // Determine if the diagnostic is a warning
                             let is_warning = diagnostic_severity
                                 .map(|severity| matches!(severity, DiagnosticSeverity::WARNING))
                                 .unwrap_or(false);

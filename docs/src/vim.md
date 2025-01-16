@@ -424,7 +424,7 @@ The [Sneak motion](https://github.com/justinmk/vim-sneak) feature allows for qui
 
 ### Restoring common text editing keybindings
 
-If you're using vim mode on Linux or Windows, you may find it overrides keybindings you can't live without: `ctrl+v` to copy, `ctrl+f` to search, etc. You can restore them by copying this data into your keymap:
+If you're using vim mode on Linux or Windows, you may find it overrides keybindings you can't live without: `ctrl+v` to paste, `ctrl+f` to search, etc. You can restore them by copying this data into your keymap:
 
 ```json
 {

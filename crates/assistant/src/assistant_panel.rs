@@ -1,7 +1,6 @@
 use crate::slash_command::file_command::codeblock_fence_for_path;
 use crate::slash_command_working_set::SlashCommandWorkingSet;
 use crate::{
-    assistant_settings::{AssistantDockPosition, AssistantSettings},
     humanize_token_count,
     prompt_library::open_prompt_library,
     prompts::PromptBuilder,
@@ -21,6 +20,7 @@ use crate::{
     ToggleModelSelector,
 };
 use anyhow::Result;
+use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
 use assistant_tool::ToolWorkingSet;
 use client::{proto, zed_urls, Client, Status};

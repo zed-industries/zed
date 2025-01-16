@@ -47,12 +47,9 @@ windows.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 ashpd.workspace = true
-which.workspace = true
-shlex.workspace = true
 
 [dev-dependencies]
 gpui = { workspace = true, features = ["test-support"] }
 
 [features]
 test-support = ["gpui/test-support", "git/test-support"]
-

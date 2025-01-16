@@ -49,25 +49,25 @@ use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, ResizeIntent, Workspace};
 
 /// Used to resize the current pane
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 pub struct ResizePane(pub ResizeIntent);
 
 /// An Action to Switch between modes
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 pub struct SwitchMode(pub Mode);
 
 /// PushOperator is used to put vim into a "minor" mode,
 /// where it's waiting for a specific next set of keystrokes.
 /// For example 'd' needs a motion to complete.
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 pub struct PushOperator(pub Operator);
 
 /// Number is used to manage vim's count. Pushing a digit
-/// multiplis the current value by 10 and adds the digit.
-#[derive(Clone, Deserialize, PartialEq)]
+/// multiplies the current value by 10 and adds the digit.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 struct Number(usize);
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 struct SelectRegister(String);
 
 /// Used to resize the current pane
@@ -1277,7 +1277,7 @@ impl Vim {
                     .map_or(false, |provider| provider.show_completions_in_normal_mode()),
                 _ => false,
             };
-            editor.set_inline_completions_enabled(enable_inline_completions);
+            editor.set_inline_completions_enabled(enable_inline_completions, cx);
         });
         cx.notify()
     }

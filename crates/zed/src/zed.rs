@@ -39,7 +39,7 @@ use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
     initial_project_settings_content, initial_tasks_content, KeymapFile, Settings, SettingsStore,
-    DEFAULT_KEYMAP_PATH,
+    DEFAULT_KEYMAP_PATH, VIM_KEYMAP_PATH,
 };
 use std::any::TypeId;
 use std::path::PathBuf;
@@ -1022,7 +1022,7 @@ pub fn load_default_keymap(cx: &mut AppContext) {
 
     KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap();
     if VimModeSetting::get_global(cx).0 {
-        KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
+        KeymapFile::load_asset(VIM_KEYMAP_PATH, cx).unwrap();
     }
 
     if let Some(asset_path) = base_keymap.asset_path() {
@@ -3500,6 +3500,73 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         assert_key_bindings_for(workspace.into(), cx, vec![("6", &Deploy)], line!());
+    }
+
+    #[gpui::test]
+    async fn test_generate_keymap_json_schema_for_registered_actions(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_keymap_test(cx);
+        cx.update(|cx| {
+            // Make sure it doesn't panic.
+            KeymapFile::generate_json_schema_for_registered_actions(cx);
+        });
+    }
+
+    /// Actions that don't build from empty input won't work from command palette invocation.
+    #[gpui::test]
+    async fn test_actions_build_with_empty_input(cx: &mut gpui::TestAppContext) {
+        init_keymap_test(cx);
+        cx.update(|cx| {
+            let all_actions = cx.all_action_names();
+            let mut failing_names = Vec::new();
+            let mut errors = Vec::new();
+            for action in all_actions {
+                match action.to_string().as_str() {
+                    "vim::FindCommand"
+                    | "vim::Literal"
+                    | "vim::ResizePane"
+                    | "vim::SwitchMode"
+                    | "vim::PushOperator"
+                    | "vim::Number"
+                    | "vim::SelectRegister"
+                    | "terminal::SendText"
+                    | "terminal::SendKeystroke"
+                    | "app_menu::OpenApplicationMenu"
+                    | "app_menu::NavigateApplicationMenuInDirection"
+                    | "picker::ConfirmInput"
+                    | "editor::HandleInput"
+                    | "editor::FoldAtLevel"
+                    | "pane::ActivateItem"
+                    | "workspace::ActivatePane"
+                    | "workspace::ActivatePaneInDirection"
+                    | "workspace::MoveItemToPane"
+                    | "workspace::MoveItemToPaneInDirection"
+                    | "workspace::OpenTerminal"
+                    | "workspace::SwapPaneInDirection"
+                    | "workspace::SendKeystrokes"
+                    | "zed::OpenBrowser"
+                    | "zed::OpenZedUrl" => {}
+                    _ => {
+                        let result = cx.build_action(action, None);
+                        match &result {
+                            Ok(_) => {}
+                            Err(err) => {
+                                failing_names.push(action);
+                                errors.push(format!("{action} failed to build: {err:?}"));
+                            }
+                        }
+                    }
+                }
+            }
+            if errors.len() > 0 {
+                panic!(
+                    "Failed to build actions using {{}} as input: {:?}. Errors:\n{}",
+                    failing_names,
+                    errors.join("\n")
+                );
+            }
+        });
     }
 
     #[gpui::test]
