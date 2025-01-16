@@ -38,6 +38,7 @@ use crate::{
         search::{FindCommand, ReplaceCommand, Replacement},
         JoinLines,
     },
+    object::Object,
     state::Mode,
     visual::VisualDeleteLine,
     Vim,
@@ -69,7 +70,7 @@ pub struct WithCount {
 #[derive(Debug)]
 struct WrappedAction(Box<dyn Action>);
 
-actions!(vim, [VisualCommand, CountCommand]);
+actions!(vim, [VisualCommand, CountCommand, ShellCommand]);
 impl_internal_actions!(
     vim,
     [
@@ -111,17 +112,27 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         })
     });
 
+    Vim::action(editor, cx, |vim, _: &ShellCommand, cx| {
+        let Some(workspace) = vim.workspace(cx) else {
+            return;
+        };
+        workspace.update(cx, |workspace, cx| {
+            command_palette::CommandPalette::toggle(workspace, "'<,'>!", cx);
+        })
+    });
+
     Vim::action(editor, cx, |vim, _: &CountCommand, cx| {
         let Some(workspace) = vim.workspace(cx) else {
             return;
         };
         let count = Vim::take_count(cx).unwrap_or(1);
+        let n = if count > 1 {
+            format!(".,.+{}", count.saturating_sub(1))
+        } else {
+            ".".to_string()
+        };
         workspace.update(cx, |workspace, cx| {
-            command_palette::CommandPalette::toggle(
-                workspace,
-                &format!(".,.+{}", count.saturating_sub(1)),
-                cx,
-            );
+            command_palette::CommandPalette::toggle(workspace, &n, cx);
         })
     });
 
@@ -1136,6 +1147,82 @@ impl Vim {
         }
         self.last_command = Some(ret.clone());
         ret
+    }
+
+    pub fn shell_command_motion(
+        &mut self,
+        motion: Motion,
+        times: Option<usize>,
+        cx: &mut ViewContext<Vim>,
+    ) {
+        self.stop_recording(cx);
+        let Some(workspace) = self.workspace(cx) else {
+            return;
+        };
+        let command = self.update_editor(cx, |_, editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            let start = editor.selections.newest_display(cx);
+            let text_layout_details = editor.text_layout_details(cx);
+            let mut range = motion
+                .range(&snapshot, start.clone(), times, false, &text_layout_details)
+                .unwrap_or(start.range());
+            if range.start != start.start {
+                editor.change_selections(None, cx, |s| {
+                    s.select_ranges([
+                        range.start.to_point(&snapshot)..range.start.to_point(&snapshot)
+                    ]);
+                })
+            }
+            if range.end.row() > range.start.row() && range.end.column() != 0 {
+                *range.end.row_mut() -= 1
+            }
+            if range.end.row() == range.start.row() {
+                format!(".!")
+            } else {
+                format!(".,.+{}!", (range.end.row() - range.start.row()).0)
+            }
+        });
+        if let Some(command) = command {
+            workspace.update(cx, |workspace, cx| {
+                command_palette::CommandPalette::toggle(workspace, &command, cx);
+            });
+        }
+    }
+
+    pub fn shell_command_object(
+        &mut self,
+        object: Object,
+        around: bool,
+        cx: &mut ViewContext<Vim>,
+    ) {
+        self.stop_recording(cx);
+        let Some(workspace) = self.workspace(cx) else {
+            return;
+        };
+        let command = self.update_editor(cx, |_, editor, cx| {
+            let snapshot = editor.snapshot(cx);
+            let start = editor.selections.newest_display(cx);
+            let range = object
+                .range(&snapshot, start.clone(), around)
+                .unwrap_or(start.range());
+            if range.start != start.start {
+                editor.change_selections(None, cx, |s| {
+                    s.select_ranges([
+                        range.start.to_point(&snapshot)..range.start.to_point(&snapshot)
+                    ]);
+                })
+            }
+            if range.end.row() == range.start.row() {
+                format!(".!")
+            } else {
+                format!(".,.+{}!", (range.end.row() - range.start.row()).0)
+            }
+        });
+        if let Some(command) = command {
+            workspace.update(cx, |workspace, cx| {
+                command_palette::CommandPalette::toggle(workspace, &command, cx);
+            });
+        }
     }
 }
 

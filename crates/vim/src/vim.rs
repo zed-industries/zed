@@ -76,7 +76,6 @@ actions!(
         ClearOperators,
         Tab,
         Enter,
-        Object,
         InnerObject,
         FindForward,
         FindBackward,
