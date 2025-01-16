@@ -24,6 +24,7 @@ test-support = [
 anyhow.workspace = true
 assistant_settings.workspace = true
 assistant_slash_command.workspace = true
+assistant_slash_commands.workspace = true
 assistant_tool.workspace = true
 async-watch.workspace = true
 cargo_toml.workspace = true

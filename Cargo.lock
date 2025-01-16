@@ -375,6 +375,7 @@ dependencies = [
  "anyhow",
  "assistant_settings",
  "assistant_slash_command",
+ "assistant_slash_commands",
  "assistant_tool",
  "async-watch",
  "cargo_toml",
@@ -557,6 +558,44 @@ dependencies = [
 [[package]]
 name = "assistant_slash_commands"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assistant_slash_command",
+ "cargo_toml",
+ "chrono",
+ "collections",
+ "context_server",
+ "editor",
+ "env_logger 0.11.6",
+ "feature_flags",
+ "fs",
+ "futures 0.3.31",
+ "fuzzy",
+ "globset",
+ "gpui",
+ "html_to_markdown",
+ "http_client",
+ "indexed_docs",
+ "language",
+ "language_model",
+ "log",
+ "pretty_assertions",
+ "project",
+ "prompt_library",
+ "rope",
+ "schemars",
+ "semantic_index",
+ "serde",
+ "serde_json",
+ "settings",
+ "smol",
+ "terminal_view",
+ "text",
+ "toml 0.8.19",
+ "ui",
+ "util",
+ "workspace",
+]
 
 [[package]]
 name = "assistant_tool"
