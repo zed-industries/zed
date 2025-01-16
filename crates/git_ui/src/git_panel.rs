@@ -956,6 +956,10 @@ impl GitPanel {
     pub fn render_commit_editor(&self, cx: &ViewContext<Self>) -> impl IntoElement {
         let editor = self.commit_editor.clone();
         let editor_focus_handle = editor.read(cx).focus_handle(cx).clone();
+        let (can_commit, can_commit_all) = self.git_state(cx).map_or((false, false), |git_state| {
+            let git_state = git_state.read(cx);
+            (git_state.can_commit(false), git_state.can_commit(true))
+        });
 
         let focus_handle_1 = self.focus_handle(cx).clone();
         let focus_handle_2 = self.focus_handle(cx).clone();
@@ -971,6 +975,7 @@ impl GitPanel {
                     cx,
                 )
             })
+            .disabled(!can_commit)
             .on_click(
                 cx.listener(|this, _: &ClickEvent, cx| this.commit_changes(&CommitChanges, cx)),
             );
@@ -986,6 +991,7 @@ impl GitPanel {
                     cx,
                 )
             })
+            .disabled(!can_commit_all)
             .on_click(cx.listener(|this, _: &ClickEvent, cx| {
                 this.commit_all_changes(&CommitAllChanges, cx)
             }));
