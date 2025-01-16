@@ -736,6 +736,10 @@ impl EditorElement {
     fn mouse_up(
         editor: &mut Editor,
         event: &MouseUpEvent,
+        #[cfg_attr(
+            not(any(target_os = "linux", target_os = "freebsd")),
+            allow(unused_variables)
+        )]
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
         window: &mut Window,
