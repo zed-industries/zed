@@ -28,7 +28,7 @@ use workspace::{
     StatusItemView, Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
-use zeta::{RateCompletionModal, ZetaTosModal};
+use zeta::{RateCompletionModal, ZedPredictTos};
 
 actions!(zeta, [RateCompletions]);
 
@@ -226,7 +226,7 @@ impl Render for InlineCompletionButton {
 
                         workspace
                             .update(cx, move |this, cx| {
-                                ZetaTosModal::toggle(this, user_store, cx);
+                                ZedPredictTos::toggle(this, user_store, cx);
                             })
                             .ok();
                     })));

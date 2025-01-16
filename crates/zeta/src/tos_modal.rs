@@ -6,15 +6,15 @@ use gpui::{
 use ui::prelude::*;
 use workspace::{ModalView, Workspace};
 
-pub struct ZetaTosModal {
+pub struct ZedPredictTos {
     focus_handle: FocusHandle,
     user_store: Model<UserStore>,
     viewed: bool,
 }
 
-impl ZetaTosModal {
+impl ZedPredictTos {
     fn new(user_store: Model<UserStore>, cx: &mut ViewContext<Self>) -> Self {
-        ZetaTosModal {
+        ZedPredictTos {
             viewed: false,
             focus_handle: cx.focus_handle(),
             user_store,
@@ -26,7 +26,7 @@ impl ZetaTosModal {
         user_store: Model<UserStore>,
         cx: &mut ViewContext<Workspace>,
     ) {
-        workspace.toggle_modal(cx, |cx| ZetaTosModal::new(user_store, cx));
+        workspace.toggle_modal(cx, |cx| ZedPredictTos::new(user_store, cx));
     }
 
     fn view_terms(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
@@ -51,20 +51,20 @@ impl ZetaTosModal {
     }
 }
 
-impl EventEmitter<DismissEvent> for ZetaTosModal {}
+impl EventEmitter<DismissEvent> for ZedPredictTos {}
 
-impl FocusableView for ZetaTosModal {
+impl FocusableView for ZedPredictTos {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl ModalView for ZetaTosModal {}
+impl ModalView for ZedPredictTos {}
 
-impl Render for ZetaTosModal {
+impl Render for ZedPredictTos {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
-            .id("zeta accept tos")
+            .id("zed predict accept tos")
             .track_focus(&self.focus_handle(cx))
             .elevation_3(cx)
             .w_96()
