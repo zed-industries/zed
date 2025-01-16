@@ -2,6 +2,7 @@ use gpui::{div, hsla, prelude::*, AnyView, ElementId, Hsla, IntoElement, Styled,
 use std::sync::Arc;
 
 use crate::utils::is_light;
+use crate::{prelude::*, ElevationIndex, KeyBinding};
 use crate::{Color, Icon, IconName, ToggleState};
 
 // TODO: Checkbox, CheckboxWithLabel, and Switch could all be
@@ -273,6 +274,7 @@ pub struct Switch {
     disabled: bool,
     on_click: Option<Box<dyn Fn(&ToggleState, &mut WindowContext) + 'static>>,
     label: Option<SharedString>,
+    key_binding: Option<KeyBinding>,
 }
 
 impl Switch {
@@ -309,6 +311,11 @@ impl Switch {
         self
     }
 
+    /// Display the keybinding that triggers the swtich action.
+    pub fn key_binding(mut self, key_binding: impl Into<Option<KeyBinding>>) -> Self {
+        self.key_binding = key_binding.into();
+        self
+    }
 }
 
 impl RenderOnce for Switch {
@@ -385,6 +392,7 @@ impl RenderOnce for Switch {
             .when_some(self.label, |this, label| {
                 this.child(Label::new(label).size(LabelSize::Small))
             })
+            .children(self.key_binding)
     }
 }
 
@@ -623,6 +631,13 @@ impl ComponentPreview for Switch {
                         Switch::new("switch_with_label", ToggleState::Selected)
                             .label("Always save on quit"),
                     ),
+                    single_example(
+                        "Keybinding",
+                        Switch::new("switch_with_label", ToggleState::Selected)
+                            .key_binding(theme_preview_keybinding("cmd-shift-e")),
+                    ),
+                ],
+            ),
         ]
     }
 }
