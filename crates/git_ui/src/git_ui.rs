@@ -10,6 +10,7 @@ use project::{Project, WorktreeId};
 use std::sync::Arc;
 use sum_tree::SumTree;
 use ui::{Color, Icon, IconName, IntoElement, SharedString};
+use util::ResultExt as _;
 use worktree::RepositoryEntry;
 
 pub mod git_panel;
@@ -26,15 +27,9 @@ pub fn init(cx: &mut AppContext) {
 }
 
 pub struct GitState {
-    // optional composed string
-    // optional contextual string for current collaborators
-    // methods for adding or triming out collaborator string
-    // one or more optional suggested messages
-    // arrow up/down
     /// The current commit message being composed.
     commit_message: Option<SharedString>,
 
-    // needs to be on project
     /// When a git repository is selected, this is used to track which repository's changes
     /// are currently being viewed or modified in the UI.
     active_repository: Option<(WorktreeId, RepositoryEntry, Arc<dyn GitRepository>)>,
