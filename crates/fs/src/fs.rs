@@ -5,6 +5,8 @@ mod mac_watcher;
 pub mod fs_watcher;
 
 use anyhow::{anyhow, Result};
+#[cfg(any(test, feature = "test-support"))]
+use git::status::FileStatus;
 use git::GitHostingProviderRegistry;
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
@@ -41,7 +43,7 @@ use util::ResultExt;
 #[cfg(any(test, feature = "test-support"))]
 use collections::{btree_map, BTreeMap};
 #[cfg(any(test, feature = "test-support"))]
-use git::repository::{FakeGitRepositoryState, GitFileStatus};
+use git::repository::FakeGitRepositoryState;
 #[cfg(any(test, feature = "test-support"))]
 use parking_lot::Mutex;
 #[cfg(any(test, feature = "test-support"))]
@@ -1285,11 +1287,11 @@ impl FakeFs {
     pub fn set_status_for_repo_via_working_copy_change(
         &self,
         dot_git: &Path,
-        statuses: &[(&Path, GitFileStatus)],
+        statuses: &[(&Path, FileStatus)],
     ) {
         self.with_git_state(dot_git, false, |state| {
-            state.worktree_statuses.clear();
-            state.worktree_statuses.extend(
+            state.statuses.clear();
+            state.statuses.extend(
                 statuses
                     .iter()
                     .map(|(path, content)| ((**path).into(), *content)),
@@ -1305,11 +1307,11 @@ impl FakeFs {
     pub fn set_status_for_repo_via_git_operation(
         &self,
         dot_git: &Path,
-        statuses: &[(&Path, GitFileStatus)],
+        statuses: &[(&Path, FileStatus)],
     ) {
         self.with_git_state(dot_git, true, |state| {
-            state.worktree_statuses.clear();
-            state.worktree_statuses.extend(
+            state.statuses.clear();
+            state.statuses.extend(
                 statuses
                     .iter()
                     .map(|(path, content)| ((**path).into(), *content)),

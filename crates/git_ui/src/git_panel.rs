@@ -8,8 +8,7 @@ use anyhow::{Context as _, Result};
 use db::kvp::KEY_VALUE_STORE;
 use editor::scroll::ScrollbarAutoHide;
 use editor::{Editor, EditorSettings, ShowScrollbar};
-use git::repository::{GitFileStatus, RepoPath};
-use git::status::GitStatusPair;
+use git::{repository::RepoPath, status::FileStatus};
 use gpui::*;
 use language::Buffer;
 use menu::{SelectFirst, SelectLast, SelectNext, SelectPrev};
@@ -72,7 +71,7 @@ pub struct GitListEntry {
     depth: usize,
     display_name: String,
     repo_path: RepoPath,
-    status: GitStatusPair,
+    status: FileStatus,
     is_staged: Option<bool>,
 }
 
@@ -665,7 +664,7 @@ impl GitPanel {
             .skip(range.start)
             .take(range.end - range.start)
         {
-            let status = entry.status.clone();
+            let status = entry.status;
             let filename = entry
                 .repo_path
                 .file_name()
@@ -1072,22 +1071,23 @@ impl GitPanel {
         let repo_path = entry_details.repo_path.clone();
         let selected = self.selected_entry == Some(ix);
         let status_style = GitPanelSettings::get_global(cx).status_style;
-        // TODO revisit, maybe use a different status here?
-        let status = entry_details.status.combined();
+        let status = entry_details.status;
 
         let mut label_color = cx.theme().colors().text;
         if status_style == StatusStyle::LabelColor {
-            label_color = match status {
-                GitFileStatus::Added => cx.theme().status().created,
-                GitFileStatus::Modified => cx.theme().status().modified,
-                GitFileStatus::Conflict => cx.theme().status().conflict,
-                GitFileStatus::Deleted => cx.theme().colors().text_disabled,
-                // TODO: Should we even have this here?
-                GitFileStatus::Untracked => cx.theme().colors().text_placeholder,
+            label_color = if status.is_conflicted() {
+                cx.theme().status().conflict
+            } else if status.is_modified() {
+                cx.theme().status().modified
+            } else if status.is_deleted() {
+                cx.theme().colors().text_disabled
+            } else {
+                cx.theme().status().created
             }
         }
 
-        let path_color = matches!(status, GitFileStatus::Deleted)
+        let path_color = status
+            .is_deleted()
             .then_some(cx.theme().colors().text_disabled)
             .unwrap_or(cx.theme().colors().text_muted);
 
@@ -1175,7 +1175,7 @@ impl GitPanel {
             .child(
                 h_flex()
                     .text_color(label_color)
-                    .when(status == GitFileStatus::Deleted, |this| this.line_through())
+                    .when(status.is_deleted(), |this| this.line_through())
                     .when_some(repo_path.parent(), |this, parent| {
                         let parent_str = parent.to_string_lossy();
                         if !parent_str.is_empty() {
