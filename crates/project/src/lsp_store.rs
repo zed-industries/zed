@@ -5089,8 +5089,7 @@ impl LspStore {
 
     pub fn document_diagnostic(
         &mut self,
-        buffer_handle: &Model<Buffer>,
-        position: Anchor,
+        buffer_handle: Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Option<LspDiagnostics>>>> {
         let buffer = buffer_handle.read(cx);
@@ -5105,8 +5104,7 @@ impl LspStore {
                     proto::AllLanguageServers {},
                 )),
                 request: Some(proto::multi_lsp_query::Request::GetDocumentDiagnostics(
-                    GetDocumentDiagnostics { position }
-                        .to_proto(upstream_project_id, buffer_handle.read(cx)),
+                    GetDocumentDiagnostics {}.to_proto(upstream_project_id, buffer_handle.read(cx)),
                 )),
             });
             let buffer = buffer_handle.clone();
@@ -5128,7 +5126,7 @@ impl LspStore {
                             }
                         })
                         .map(|diagnostics_response| {
-                            GetDocumentDiagnostics { position }.response_from_proto(
+                            GetDocumentDiagnostics {}.response_from_proto(
                                 diagnostics_response,
                                 project.clone(),
                                 buffer.clone(),
@@ -5146,9 +5144,9 @@ impl LspStore {
             })
         } else {
             let all_actions_task = self.request_multiple_lsp_locally(
-                buffer_handle,
-                Some(position),
-                GetDocumentDiagnostics { position },
+                &buffer_handle,
+                Some(0),
+                GetDocumentDiagnostics {},
                 cx,
             );
             cx.spawn(|_, _| async move { Ok(all_actions_task.await.into_iter().collect()) })
@@ -6574,7 +6572,7 @@ fn pull_diagnostic(
                     .update(&mut cx, |project, cx| {
                         project.request_multiple_lsp_locally(
                             &buffer,
-                            Some(get_document_diagnostics.position),
+                            Some(0),
                             get_document_diagnostics,
                             cx,
                         )
