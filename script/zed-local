@@ -126,7 +126,7 @@ if (platform === "darwin") {
   }
 }
 
-if (!(platform === "win32")) {
+if (platform !== "win32") {
   screenHeight -= titleBarHeight;
 }
 
