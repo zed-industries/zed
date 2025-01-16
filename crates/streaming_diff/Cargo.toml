@@ -17,4 +17,4 @@ rope.workspace = true
 
 [dev-dependencies]
 rand.workspace = true
-util.workspace = true
+util = { workspace = true, features = ["test-support"] }
