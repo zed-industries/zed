@@ -1359,8 +1359,9 @@ mod tests {
             RefreshLlmTokenListener::register(client.clone(), cx);
         });
         let server = FakeServer::for_client(42, &client, cx).await;
+        let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
+        let zeta = cx.new_model(|cx| Zeta::new(client, user_store, cx));
 
-        let zeta = cx.new_model(|cx| Zeta::new(client, cx));
         let buffer = cx.new_model(|cx| Buffer::local(buffer_content, cx));
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
         let completion_task =
