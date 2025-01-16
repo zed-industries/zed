@@ -17,6 +17,7 @@ pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppConte
     cx.observe_new_views({
         let editors = editors.clone();
         let client = client.clone();
+        let user_store = user_store.clone();
         move |editor: &mut Editor, cx: &mut ViewContext<Editor>| {
             if editor.mode() != EditorMode::Full {
                 return;
@@ -37,7 +38,7 @@ pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppConte
                 .borrow_mut()
                 .insert(editor_handle, cx.window_handle());
             let provider = all_language_settings(None, cx).inline_completions.provider;
-            assign_inline_completion_provider(editor, provider, &client, cx);
+            assign_inline_completion_provider(editor, provider, &client, user_store.clone(), cx);
         }
     })
     .detach();
@@ -46,7 +47,13 @@ pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppConte
     for (editor, window) in editors.borrow().iter() {
         _ = window.update(cx, |_window, cx| {
             _ = editor.update(cx, |editor, cx| {
-                assign_inline_completion_provider(editor, provider, &client, cx);
+                assign_inline_completion_provider(
+                    editor,
+                    provider,
+                    &client,
+                    user_store.clone(),
+                    cx,
+                );
             })
         });
     }
@@ -58,9 +65,10 @@ pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppConte
     cx.observe_flag::<PredictEditsFeatureFlag, _>({
         let editors = editors.clone();
         let client = client.clone();
+        let user_store = user_store.clone();
         move |active, cx| {
             let provider = all_language_settings(None, cx).inline_completions.provider;
-            assign_inline_completion_providers(&editors, provider, &client, cx);
+            assign_inline_completion_providers(&editors, provider, &client, user_store.clone(), cx);
             if active && !cx.is_action_available(&zeta::ClearHistory) {
                 cx.on_action(clear_zeta_edit_history);
             }
@@ -71,11 +79,18 @@ pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppConte
     cx.observe_global::<SettingsStore>({
         let editors = editors.clone();
         let client = client.clone();
+        let user_store = user_store.clone();
         move |cx| {
             let new_provider = all_language_settings(None, cx).inline_completions.provider;
             if new_provider != provider {
                 provider = new_provider;
-                assign_inline_completion_providers(&editors, provider, &client, cx);
+                assign_inline_completion_providers(
+                    &editors,
+                    provider,
+                    &client,
+                    user_store.clone(),
+                    cx,
+                );
 
                 if !user_store
                     .read(cx)
@@ -122,12 +137,19 @@ fn assign_inline_completion_providers(
     editors: &Rc<RefCell<HashMap<WeakView<Editor>, AnyWindowHandle>>>,
     provider: InlineCompletionProvider,
     client: &Arc<Client>,
+    user_store: Model<UserStore>,
     cx: &mut AppContext,
 ) {
     for (editor, window) in editors.borrow().iter() {
         _ = window.update(cx, |_window, cx| {
             _ = editor.update(cx, |editor, cx| {
-                assign_inline_completion_provider(editor, provider, &client, cx);
+                assign_inline_completion_provider(
+                    editor,
+                    provider,
+                    &client,
+                    user_store.clone(),
+                    cx,
+                );
             })
         });
     }
@@ -173,6 +195,7 @@ fn assign_inline_completion_provider(
     editor: &mut Editor,
     provider: language::language_settings::InlineCompletionProvider,
     client: &Arc<Client>,
+    user_store: Model<UserStore>,
     cx: &mut ViewContext<Editor>,
 ) {
     match provider {
@@ -201,7 +224,7 @@ fn assign_inline_completion_provider(
             if cx.has_flag::<PredictEditsFeatureFlag>()
                 || (cfg!(debug_assertions) && client.status().borrow().is_connected())
             {
-                let zeta = zeta::Zeta::register(client.clone(), cx);
+                let zeta = zeta::Zeta::register(client.clone(), user_store, cx);
                 if let Some(buffer) = editor.buffer().read(cx).as_singleton() {
                     if buffer.read(cx).file().is_some() {
                         zeta.update(cx, |zeta, cx| {

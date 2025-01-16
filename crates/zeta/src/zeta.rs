@@ -8,7 +8,7 @@ pub use tos_modal::*;
 
 use anyhow::{anyhow, Context as _, Result};
 use arrayvec::ArrayVec;
-use client::Client;
+use client::{Client, UserStore};
 use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
 use gpui::{
@@ -164,6 +164,8 @@ pub struct Zeta {
     rated_completions: HashSet<InlineCompletionId>,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
+    tos_accepted: bool,
+    _user_store_subscription: Subscription,
 }
 
 impl Zeta {
@@ -171,9 +173,13 @@ impl Zeta {
         cx.try_global::<ZetaGlobal>().map(|global| global.0.clone())
     }
 
-    pub fn register(client: Arc<Client>, cx: &mut AppContext) -> Model<Self> {
+    pub fn register(
+        client: Arc<Client>,
+        user_store: Model<UserStore>,
+        cx: &mut AppContext,
+    ) -> Model<Self> {
         Self::global(cx).unwrap_or_else(|| {
-            let model = cx.new_model(|cx| Self::new(client, cx));
+            let model = cx.new_model(|cx| Self::new(client, user_store, cx));
             cx.set_global(ZetaGlobal(model.clone()));
             model
         })
@@ -183,7 +189,7 @@ impl Zeta {
         self.events.clear();
     }
 
-    fn new(client: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
+    fn new(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut ModelContext<Self>) -> Self {
         let refresh_llm_token_listener = language_models::RefreshLlmTokenListener::global(cx);
 
         Self {
@@ -205,6 +211,16 @@ impl Zeta {
                     .detach_and_log_err(cx);
                 },
             ),
+            tos_accepted: user_store
+                .read(cx)
+                .current_user_has_accepted_terms()
+                .unwrap_or(false),
+            _user_store_subscription: cx.subscribe(&user_store, |this, _, event, _| match event {
+                client::user::Event::TermsStatusUpdated { accepted } => {
+                    this.tos_accepted = *accepted;
+                }
+                _ => {}
+            }),
         }
     }
 
@@ -1034,6 +1050,10 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         debounce: bool,
         cx: &mut ModelContext<Self>,
     ) {
+        if !self.zeta.read(cx).tos_accepted {
+            return;
+        }
+
         let pending_completion_id = self.next_pending_completion_id;
         self.next_pending_completion_id += 1;
 
