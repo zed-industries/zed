@@ -1177,7 +1177,7 @@ impl Vim {
                 *range.end.row_mut() -= 1
             }
             if range.end.row() == range.start.row() {
-                format!(".!")
+                ".!".to_string()
             } else {
                 format!(".,.+{}!", (range.end.row() - range.start.row()).0)
             }
@@ -1213,7 +1213,7 @@ impl Vim {
                 })
             }
             if range.end.row() == range.start.row() {
-                format!(".!")
+                ".!".to_string()
             } else {
                 format!(".,.+{}!", (range.end.row() - range.start.row()).0)
             }
