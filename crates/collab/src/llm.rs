@@ -520,7 +520,7 @@ async fn predict_edits(
                     .log_err();
                 }
             });
-            Err(anyhow!("timeout"))?
+            Err(anyhow!("request timed out"))?
         },
         response = response => {
             let duration = request_start.elapsed();
