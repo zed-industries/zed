@@ -55,6 +55,7 @@ Zed supports hundreds of programming languages and text formats. Some work out-o
 - [Rust](./languages/rust.md)
 - [Scala](./languages/scala.md)
 - [Scheme](./languages/scheme.md)
+- [Shell Script](./languages/sh.md)
 - [Svelte](./languages/svelte.md)
 - [Swift](./languages/swift.md)
 - [TailwindCSS](./languages/tailwindcss.md)
