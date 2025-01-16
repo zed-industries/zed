@@ -138,7 +138,6 @@ impl GitPanel {
                 git_state.update(cx, |git_state, cx| {
                     match event {
                         project::Event::WorktreeRemoved(id) => {
-                            git_state.all_repositories.remove(id);
                             let Some((worktree_id, _, _)) = git_state.active_repository.as_ref()
                             else {
                                 return;
@@ -167,9 +166,6 @@ impl GitPanel {
                                 return;
                             };
                             let snapshot = worktree.read(cx).snapshot();
-                            git_state
-                                .all_repositories
-                                .insert(*id, snapshot.repositories().clone());
                             let Some(first_id) = first_worktree_id else {
                                 return;
                             };
