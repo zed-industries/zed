@@ -1,6 +1,7 @@
 mod persistence;
 pub mod terminal_element;
 pub mod terminal_panel;
+pub mod terminal_scrollbar;
 pub mod terminal_tab_tooltip;
 
 use collections::HashSet;
@@ -9,7 +10,7 @@ use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     anchored, deferred, div, impl_actions, AnyElement, AppContext, DismissEvent, EventEmitter,
     FocusHandle, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
-    MouseDownEvent, Pixels, Render, ScrollWheelEvent, Styled, Subscription, Task, View,
+    MouseDownEvent, Pixels, Render, ScrollWheelEvent, Stateful, Styled, Subscription, Task, View,
     VisualContext, WeakModel, WeakView,
 };
 use language::Bias;
@@ -28,6 +29,7 @@ use terminal::{
 };
 use terminal_element::{is_blank, TerminalElement};
 use terminal_panel::TerminalPanel;
+use terminal_scrollbar::{TerminalScrollbar, TerminalScrollbarState};
 use terminal_tab_tooltip::TerminalTooltip;
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
 use util::{
@@ -619,6 +621,58 @@ impl TerminalView {
             subscribe_for_terminal_events(&terminal, self.workspace.clone(), cx);
         self.terminal = terminal;
     }
+
+    fn render_scrollbar(&self, cx: &mut ViewContext<Self>) -> Option<Stateful<Div>> {
+        // if self.vertical_scrollbar_state.is_dragging()
+        // {
+        //     return None;
+        // }
+
+        let terminal = self.terminal.read(cx);
+        let scrollbar = TerminalScrollbar::new(TerminalScrollbarState::new(
+            terminal.total_lines(),
+            terminal.viewport_lines(),
+            terminal.last_content.display_offset,
+        ));
+
+        let Some(scrollbar) = scrollbar else {
+            return None;
+        };
+
+        Some(
+            div()
+                .occlude()
+                .id("terminal-view-scroll")
+                .on_mouse_move(cx.listener(|_, _, cx| {
+                    cx.notify();
+                    cx.stop_propagation()
+                }))
+                .on_hover(|_, cx| {
+                    cx.stop_propagation();
+                })
+                .on_any_mouse_down(|_, cx| {
+                    cx.stop_propagation();
+                })
+                .on_mouse_up(
+                    MouseButton::Left,
+                    cx.listener(|terminal_view, _, cx| {
+                        // todo
+                        cx.stop_propagation();
+                    }),
+                )
+                .on_scroll_wheel(cx.listener(|_, _, cx| {
+                    cx.notify();
+                }))
+                .h_full()
+                .absolute()
+                .right_1()
+                .top_1()
+                .bottom_0()
+                .w(px(12.))
+                .cursor_default()
+                .child(scrollbar),
+        )
+    }
 }
 
 fn subscribe_for_terminal_events(
@@ -975,16 +1029,21 @@ impl Render for TerminalView {
             )
             .child(
                 // TODO: Oddly this wrapper div is needed for TerminalElement to not steal events from the context menu
-                div().size_full().child(TerminalElement::new(
-                    terminal_handle,
-                    terminal_view_handle,
-                    self.workspace.clone(),
-                    self.focus_handle.clone(),
-                    focused,
-                    self.should_show_cursor(focused, cx),
-                    self.can_navigate_to_selected_word,
-                    self.block_below_cursor.clone(),
-                )),
+                div()
+                    .size_full()
+                    .child(TerminalElement::new(
+                        terminal_handle,
+                        terminal_view_handle,
+                        self.workspace.clone(),
+                        self.focus_handle.clone(),
+                        focused,
+                        self.should_show_cursor(focused, cx),
+                        self.can_navigate_to_selected_word,
+                        self.block_below_cursor.clone(),
+                    ))
+                    .when_some(self.render_scrollbar(cx), |div, scrollbar| {
+                        div.child(scrollbar)
+                    }),
             )
             .children(self.context_menu.as_ref().map(|(menu, position, _)| {
                 deferred(
