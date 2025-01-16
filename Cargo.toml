@@ -116,6 +116,7 @@ members = [
     "crates/sqlez_macros",
     "crates/story",
     "crates/storybook",
+    "crates/streaming_diff",
     "crates/sum_tree",
     "crates/supermaven",
     "crates/supermaven_api",
@@ -307,6 +308,7 @@ sqlez = { path = "crates/sqlez" }
 sqlez_macros = { path = "crates/sqlez_macros" }
 story = { path = "crates/story" }
 storybook = { path = "crates/storybook" }
+streaming_diff = { path = "crates/streaming_diff" }
 sum_tree = { path = "crates/sum_tree" }
 supermaven = { path = "crates/supermaven" }
 supermaven_api = { path = "crates/supermaven_api" }

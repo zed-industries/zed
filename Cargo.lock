@@ -405,7 +405,6 @@ dependencies = [
  "menu",
  "multi_buffer",
  "open_ai",
- "ordered-float 2.10.1",
  "parking_lot",
  "paths",
  "picker",
@@ -428,6 +427,7 @@ dependencies = [
  "similar",
  "smallvec",
  "smol",
+ "streaming_diff",
  "strum",
  "telemetry",
  "telemetry_events",
@@ -479,7 +479,6 @@ dependencies = [
  "markdown",
  "menu",
  "multi_buffer",
- "ordered-float 2.10.1",
  "parking_lot",
  "picker",
  "project",
@@ -492,6 +491,7 @@ dependencies = [
  "settings",
  "similar",
  "smol",
+ "streaming_diff",
  "telemetry_events",
  "terminal",
  "terminal_view",
@@ -12345,6 +12345,16 @@ dependencies = [
  "theme",
  "title_bar",
  "ui",
+]
+
+[[package]]
+name = "streaming_diff"
+version = "0.1.0"
+dependencies = [
+ "ordered-float 2.10.1",
+ "rand 0.8.5",
+ "rope",
+ "util",
 ]
 
 [[package]]

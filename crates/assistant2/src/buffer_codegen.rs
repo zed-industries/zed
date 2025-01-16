@@ -1,7 +1,6 @@
 use crate::context::attach_context_to_message;
 use crate::context_store::ContextStore;
 use crate::inline_prompt_editor::CodegenStatus;
-use crate::streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff};
 use anyhow::{Context as _, Result};
 use client::telemetry::Telemetry;
 use collections::HashSet;
@@ -29,6 +28,7 @@ use std::{
     task::{self, Poll},
     time::Instant,
 };
+use streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff};
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 
 pub struct BufferCodegen {
