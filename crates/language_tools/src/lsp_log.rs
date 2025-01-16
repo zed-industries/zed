@@ -19,7 +19,6 @@ use workspace::{
     item::{Item, ItemHandle},
     searchable::{SearchEvent, SearchableItem, SearchableItemHandle},
     SplitDirection, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace, WorkspaceId,
-    WORKSPACE_DB,
 };
 
 const SEND_LINE: &str = "// Send:";

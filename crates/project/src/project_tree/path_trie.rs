@@ -36,7 +36,6 @@ pub(super) struct RootPathTrie<Label> {
 /// such scan more than once.
 #[derive(Clone, Copy, Debug, PartialOrd, PartialEq, Ord, Eq)]
 pub(super) enum LabelPresence {
-    Forbidden,
     KnownAbsent,
     Present,
 }

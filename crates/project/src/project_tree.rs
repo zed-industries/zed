@@ -25,7 +25,7 @@ use crate::{
     ProjectPath,
 };
 
-pub(crate) use server_tree::LanguageServerTree;
+pub(crate) use server_tree::{LanguageServerTree, LaunchDisposition};
 
 struct WorktreeRoots {
     roots: RootPathTrie<LanguageServerName>,
@@ -164,9 +164,6 @@ impl ProjectTree {
         worktree_roots.update(cx, |this, _| {
             this.roots.walk(&key, &mut |path, labels| {
                 for (label, presence) in labels {
-
-                    debug_assert_ne!(*presence, LabelPresence::Forbidden, "Forbidden labels are not implemented yet");
-
                     if let Some((marked_path, current_presence)) = roots.get_mut(label) {
                         if *current_presence > *presence {
                             debug_assert!(false, "RootPathTrie precondition violation; while walking the tree label presence is only allowed to increase");

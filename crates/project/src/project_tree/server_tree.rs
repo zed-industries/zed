@@ -11,7 +11,7 @@
 use std::{
     collections::{BTreeMap, BTreeSet},
     path::Path,
-    sync::{Arc, OnceLock, Weak},
+    sync::{Arc, Weak},
 };
 
 use collections::HashMap;
@@ -21,6 +21,7 @@ use language::{
     LanguageRegistry, LspAdapterDelegate,
 };
 use lsp::LanguageServerName;
+use once_cell::sync::OnceCell;
 use settings::{Settings as _, SettingsLocation, WorktreeId};
 
 use crate::{LanguageServerId, ProjectPath};
@@ -46,10 +47,10 @@ pub struct LanguageServerTree {
 #[derive(Clone)]
 pub(crate) struct LanguageServerTreeNode(Weak<InnerTreeNode>);
 
-struct LaunchDisposition<'a> {
-    server_name: &'a LanguageServerName,
-    attach: Attach,
-    path: ProjectPath,
+pub(crate) struct LaunchDisposition<'a> {
+    pub(crate) server_name: &'a LanguageServerName,
+    pub(crate) attach: Attach,
+    pub(crate) path: ProjectPath,
 }
 
 impl LanguageServerTreeNode {
@@ -64,14 +65,23 @@ impl LanguageServerTreeNode {
         &self,
         init: impl FnOnce(LaunchDisposition) -> LanguageServerId,
     ) -> Option<LanguageServerId> {
+        self.server_id_or_try_init(|disposition| Ok(init(disposition)))
+    }
+    fn server_id_or_try_init(
+        &self,
+        init: impl FnOnce(LaunchDisposition) -> Result<LanguageServerId, ()>,
+    ) -> Option<LanguageServerId> {
         let this = self.0.upgrade()?;
-        Some(*this.id.get_or_init(|| {
-            init(LaunchDisposition {
-                server_name: &this.name,
-                attach: this.attach,
-                path: this.path.clone(),
+        this.id
+            .get_or_try_init(|| {
+                init(LaunchDisposition {
+                    server_name: &this.name,
+                    attach: this.attach,
+                    path: this.path.clone(),
+                })
             })
-        }))
+            .ok()
+            .copied()
     }
 }
 
@@ -83,7 +93,7 @@ impl From<Weak<InnerTreeNode>> for LanguageServerTreeNode {
 
 #[derive(Debug)]
 struct InnerTreeNode {
-    id: OnceLock<LanguageServerId>,
+    id: OnceCell<LanguageServerId>,
     name: LanguageServerName,
     attach: Attach,
     path: ProjectPath,
@@ -92,7 +102,7 @@ struct InnerTreeNode {
 impl InnerTreeNode {
     fn new(name: LanguageServerName, attach: Attach, path: ProjectPath) -> Self {
         InnerTreeNode {
-            id: OnceLock::new(),
+            id: Default::default(),
             name,
             attach,
             path,
@@ -136,6 +146,16 @@ impl LanguageServerTree {
         cx: &mut AppContext,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         let adapters = self.adapters_for_language(&path, language_name, cx);
+        self.get_with_adapters(path, adapters, delegate, cx)
+    }
+
+    fn get_with_adapters<'a>(
+        &'a mut self,
+        path: ProjectPath,
+        adapters: Vec<Arc<CachedLspAdapter>>,
+        delegate: Arc<dyn LspAdapterDelegate>,
+        cx: &mut AppContext,
+    ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
         #[allow(clippy::mutable_key_type)]
         let roots = self.project_tree.update(cx, |this, cx| {
             this.root_for_path(path, adapters, delegate, cx)
@@ -203,39 +223,79 @@ impl LanguageServerTree {
     }
     pub(crate) fn on_settings_changed(
         &mut self,
-        get_delegate: &mut dyn FnMut(WorktreeId, &mut AppContext) -> Arc<dyn LspAdapterDelegate>,
-        mut on_language_server_added: &mut dyn FnMut(LaunchDisposition),
-        mut on_language_server_removed: &mut dyn FnMut(LanguageServerId),
+        get_delegate: &mut dyn FnMut(
+            WorktreeId,
+            &mut AppContext,
+        ) -> Option<Arc<dyn LspAdapterDelegate>>,
+        spawn_language_server: &mut dyn FnMut(LaunchDisposition) -> LanguageServerId,
+        on_language_server_removed: &mut dyn FnMut(LanguageServerId),
         cx: &mut AppContext,
     ) {
+        dbg!("On settings changed!");
         // Settings are checked at query time. Thus, to avoid messing with inference of applicable settings, we're just going to clear ourselves and let the next query repopulate.
         // We're going to optimistically re-run the queries and re-assign the same language server id when a language server still exists at a given tree node.
         let old_instances = std::mem::take(&mut self.instances);
+        let old_attach_kinds = std::mem::take(&mut self.attach_kind_cache);
 
         let mut referenced_instances = BTreeSet::new();
         // Re-map the old tree onto a new one. In the process we'll get a list of servers we have to shut down.
         let mut all_instances = BTreeSet::new();
-        for (worktree_id, servers) in old_instances {
-            let delegate = get_delegate(worktree_id, cx);
-
+        for (worktree_id, servers) in &old_instances {
             // Record all initialized node ids.
             all_instances.extend(servers.roots.values().flat_map(|servers_at_node| {
                 servers_at_node
                     .values()
-                    .filter_map(|server_node| server_node.id.get())
+                    .filter_map(|server_node| server_node.id.get().copied())
             }));
-            while let Some((path, servers)) = servers.roots.pop_first() {
-                for (name, nodes) in servers {
-                    self.get(
+            let Some(delegate) = get_delegate(*worktree_id, cx) else {
+                // If worktree is no longer around, we're just going to shut down all of the language servers (since they've been added to all_instances).
+                continue;
+            };
+            for (path, servers_for_path) in &servers.roots {
+                for name in servers_for_path.keys() {
+                    let Some(adapter) = self.languages.adapter_for_name(&name) else {
+                        unreachable!();
+                    };
+                    for new_node in self.get_with_adapters(
                         ProjectPath {
                             path: path.clone(),
-                            worktree_id,
+                            worktree_id: *worktree_id,
                         },
+                        vec![adapter],
                         delegate.clone(),
                         cx,
-                    );
+                    ) {
+                        new_node.server_id_or_try_init(|disposition| {
+                            let Some(existing_node) = servers
+                                .roots
+                                .get(&disposition.path.path)
+                                .and_then(|roots| roots.get(disposition.server_name))
+                                .filter(|_| {
+                                    old_attach_kinds
+                                        .get(disposition.server_name)
+                                        .map_or(false, |old_attach| {
+                                            disposition.attach == *old_attach
+                                        })
+                                })
+                            else {
+                                return Ok(spawn_language_server(disposition));
+                            };
+                            if let Some(id) = existing_node.id.get().copied() {
+                                dbg!("Yay");
+                                // If we have a node with ID assigned (and it's parameters match `disposition`), reuse the id.
+                                referenced_instances.insert(id);
+                                Ok(id)
+                            } else {
+                                // Otherwise, if we do have a node but it does not have an ID assigned, keep it that way.
+                                Err(())
+                            }
+                        });
+                    }
                 }
             }
+        }
+        for server_to_remove in all_instances.difference(&referenced_instances) {
+            on_language_server_removed(*server_to_remove);
         }
     }
 }

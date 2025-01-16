@@ -6,7 +6,7 @@ use crate::{
     lsp_ext_command,
     prettier_store::{self, PrettierStore, PrettierStoreEvent},
     project_settings::{LspSettings, ProjectSettings},
-    project_tree::{LanguageServerTree, ProjectTree},
+    project_tree::{LanguageServerTree, LaunchDisposition, ProjectTree},
     relativize_path, resolve_path,
     toolchain_store::{EmptyToolchainStore, ToolchainStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
@@ -1815,12 +1815,16 @@ impl LocalLspStore {
             .into_iter()
             .filter_map(|server_node| {
                 let server_id = server_node.server_id_or_init(
-                    |adapter_name, attach, project_path| match attach {
+                    |LaunchDisposition {
+                         server_name,
+                         attach,
+                         path,
+                     }| match attach {
                         language::Attach::InstancePerRoot => {
                             // todo: handle instance per root proper.
                             if let Some(server_ids) = self
                                 .language_server_ids
-                                .get(&(worktree_id, adapter_name.clone()))
+                                .get(&(worktree_id, server_name.clone()))
                             {
                                 server_ids.iter().cloned().next().unwrap()
                             } else {
@@ -1831,7 +1835,7 @@ impl LocalLspStore {
                                     self.languages
                                         .lsp_adapters(&language_name)
                                         .into_iter()
-                                        .find(|adapter| &adapter.name() == adapter_name)
+                                        .find(|adapter| &adapter.name() == server_name)
                                         .expect("To find LSP adapter"),
                                     language_name,
                                     cx,
@@ -1842,14 +1846,14 @@ impl LocalLspStore {
                         language::Attach::Shared => {
                             if let Some(server_ids) = self
                                 .language_server_ids
-                                .get(&(worktree_id, adapter_name.clone()))
+                                .get(&(worktree_id, server_name.clone()))
                             {
                                 debug_assert_eq!(server_ids.len(), 1);
                                 let server_id = server_ids.iter().cloned().next().unwrap();
 
                                 if let Some(state) = self.language_servers.get(&server_id) {
                                     let uri = Url::from_directory_path(
-                                        worktree.read(cx).abs_path().join(&project_path.path),
+                                        worktree.read(cx).abs_path().join(&path.path),
                                     );
                                     if let Ok(uri) = uri {
                                         state.add_workspace_folder(uri);
@@ -1864,7 +1868,7 @@ impl LocalLspStore {
                                     self.languages
                                         .lsp_adapters(&language_name)
                                         .into_iter()
-                                        .find(|adapter| &adapter.name() == adapter_name)
+                                        .find(|adapter| &adapter.name() == server_name)
                                         .expect("To find LSP adapter"),
                                     language_name,
                                     cx,
@@ -3781,7 +3785,6 @@ impl LspStore {
     }
 
     fn on_settings_changed(&mut self, cx: &mut ModelContext<Self>) {
-        let mut language_servers_to_start = Vec::new();
         let mut language_formatters_to_check = Vec::new();
         for buffer in self.buffer_store.read(cx).buffers() {
             let buffer = buffer.read(cx);
@@ -3789,17 +3792,6 @@ impl LspStore {
             let buffer_language = buffer.language();
             let settings = language_settings(buffer_language.map(|l| l.name()), buffer.file(), cx);
             if let Some(language) = buffer_language {
-                if settings.enable_language_server
-                    && self
-                        .as_local()
-                        .unwrap()
-                        .registered_buffers
-                        .contains_key(&buffer.remote_id())
-                {
-                    if let Some(file) = buffer_file {
-                        language_servers_to_start.push((file.worktree.clone(), language.name()));
-                    }
-                }
                 language_formatters_to_check.push((
                     buffer_file.map(|f| f.worktree_id(cx)),
                     settings.into_owned(),
@@ -3807,8 +3799,6 @@ impl LspStore {
             }
         }
 
-        let mut language_servers_to_stop = Vec::new();
-        let mut language_servers_to_restart = Vec::new();
         let languages = self.languages.to_vec();
 
         let new_lsp_settings = ProjectSettings::get_global(cx).lsp.clone();
@@ -3816,55 +3806,33 @@ impl LspStore {
         else {
             return;
         };
-        for (worktree_id, started_lsp_name) in self.as_local().unwrap().language_server_ids.keys() {
-            let language = languages.iter().find_map(|l| {
-                let adapter = self
-                    .languages
-                    .lsp_adapters(&l.name())
-                    .iter()
-                    .find(|adapter| adapter.name == *started_lsp_name)?
-                    .clone();
-                Some((l, adapter))
-            });
-            if let Some((language, adapter)) = language {
-                let worktree = self.worktree_for_id(*worktree_id, cx).ok();
-                let root_file = worktree.as_ref().and_then(|worktree| {
-                    worktree
-                        .update(cx, |tree, cx| tree.root_file(cx))
-                        .map(|f| f as _)
-                });
-                let settings = language_settings(Some(language.name()), root_file.as_ref(), cx);
-                if !settings.enable_language_server {
-                    language_servers_to_stop.push((worktree_id, started_lsp_name.clone()));
-                } else if let Some(worktree) = worktree {
-                    let server_name = &adapter.name;
-                    match (
-                        current_lsp_settings.get(server_name),
-                        new_lsp_settings.get(server_name),
-                    ) {
-                        (None, None) => {}
-                        (Some(_), None) | (None, Some(_)) => {
-                            language_servers_to_restart.push((worktree, language.name()));
-                        }
-                        (Some(current_lsp_settings), Some(new_lsp_settings)) => {
-                            if current_lsp_settings != new_lsp_settings {
-                                language_servers_to_restart.push((worktree, language.name()));
-                            }
-                        }
-                    }
-                }
-            }
-        }
+        self.as_local().map(|local| {
+            local.lsp_tree.update(cx, |this, cx| {
+                let mut get_adapter =
+                    |worktree_id, cx: &mut AppContext| -> Option<Arc<dyn LspAdapterDelegate>> {
+                        let worktree = local
+                            .worktree_store
+                            .read(cx)
+                            .worktree_for_id(worktree_id, cx)?;
+                        Some(LocalLspAdapterDelegate::from_local_lsp(
+                            local, &worktree, cx,
+                        ))
+                    };
+                this.on_settings_changed(
+                    &mut get_adapter,
+                    &mut |disposition| todo!(),
+                    &mut |id| {
+                        dbg!(id);
+                    }, //self.stop_local_language_server(id, cx).detach(),
+                    cx,
+                );
+            })
+        });
 
         if let Some(prettier_store) = self.as_local().map(|s| s.prettier_store.clone()) {
             prettier_store.update(cx, |prettier_store, cx| {
                 prettier_store.on_settings_changed(language_formatters_to_check, cx)
             })
-        }
-
-        // Restart all language servers with changed initialization options.
-        for (worktree, language) in language_servers_to_restart {
-            self.restart_local_language_servers(worktree, language, cx);
         }
 
         cx.notify();

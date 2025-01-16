@@ -96,6 +96,7 @@ struct LanguageRegistryState {
     available_languages: Vec<AvailableLanguage>,
     grammars: HashMap<Arc<str>, AvailableGrammar>,
     lsp_adapters: HashMap<LanguageName, Vec<Arc<CachedLspAdapter>>>,
+    all_lsp_adapters: HashMap<LanguageServerName, Arc<CachedLspAdapter>>,
     available_lsp_adapters:
         HashMap<LanguageServerName, Arc<dyn Fn() -> Arc<CachedLspAdapter> + 'static + Send + Sync>>,
     loading_languages: HashMap<LanguageId, Vec<oneshot::Sender<Result<Arc<Language>>>>>,
@@ -222,6 +223,7 @@ impl LanguageRegistry {
                 language_settings: Default::default(),
                 loading_languages: Default::default(),
                 lsp_adapters: Default::default(),
+                all_lsp_adapters: Default::default(),
                 available_lsp_adapters: HashMap::default(),
                 subscription: watch::channel(),
                 theme: Default::default(),
@@ -344,37 +346,18 @@ impl LanguageRegistry {
         adapter: Arc<dyn LspAdapter>,
     ) -> Arc<CachedLspAdapter> {
         let cached = CachedLspAdapter::new(adapter);
-        self.state
-            .write()
+        let mut state = self.state.write();
+
+        state
             .lsp_adapters
             .entry(language_name)
             .or_default()
             .push(cached.clone());
+        state
+            .all_lsp_adapters
+            .insert(cached.name.clone(), cached.clone());
+
         cached
-    }
-
-    pub fn get_or_register_lsp_adapter(
-        &self,
-        language_name: LanguageName,
-        server_name: LanguageServerName,
-        build_adapter: impl FnOnce() -> Arc<dyn LspAdapter> + 'static,
-    ) -> Arc<CachedLspAdapter> {
-        let registered = self
-            .state
-            .write()
-            .lsp_adapters
-            .entry(language_name.clone())
-            .or_default()
-            .iter()
-            .find(|cached_adapter| cached_adapter.name == server_name)
-            .cloned();
-
-        if let Some(found) = registered {
-            found
-        } else {
-            let adapter = build_adapter();
-            self.register_lsp_adapter(language_name, adapter)
-        }
     }
 
     /// Register a fake language server and adapter
@@ -389,12 +372,17 @@ impl LanguageRegistry {
         let adapter_name = LanguageServerName(adapter.name.into());
         let capabilities = adapter.capabilities.clone();
         let initializer = adapter.initializer.take();
-        self.state
-            .write()
-            .lsp_adapters
-            .entry(language_name.clone())
-            .or_default()
-            .push(CachedLspAdapter::new(Arc::new(adapter)));
+        let adapter = CachedLspAdapter::new(Arc::new(adapter));
+
+        let mut state = self.state.write();
+        {
+            state
+                .lsp_adapters
+                .entry(language_name.clone())
+                .or_default()
+                .push(adapter.clone());
+            state.all_lsp_adapters.insert(adapter.name(), adapter);
+        }
         self.register_fake_language_server(adapter_name, capabilities, initializer)
     }
 
@@ -407,12 +395,14 @@ impl LanguageRegistry {
         adapter: crate::FakeLspAdapter,
     ) {
         let language_name = language_name.into();
-        self.state
-            .write()
+        let adapter = CachedLspAdapter::new(Arc::new(adapter));
+        let mut state = self.state.write();
+        state
             .lsp_adapters
             .entry(language_name.clone())
             .or_default()
-            .push(CachedLspAdapter::new(Arc::new(adapter)));
+            .push(adapter.clone());
+        state.all_lsp_adapters.insert(adapter.name(), adapter);
     }
 
     /// Register a fake language server (without the adapter)
@@ -878,6 +868,10 @@ impl LanguageRegistry {
             .get(language_name)
             .cloned()
             .unwrap_or_default()
+    }
+
+    pub fn adapter_for_name(&self, name: &LanguageServerName) -> Option<Arc<CachedLspAdapter>> {
+        self.state.read().all_lsp_adapters.get(name).cloned()
     }
 
     pub fn update_lsp_status(
