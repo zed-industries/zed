@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-use crate::prelude::*;
+use crate::{prelude::*, KeyBinding};
 use gpui::{AnyElement, SharedString};
 
 /// Which side of the preview to show labels on
@@ -197,4 +197,8 @@ pub fn example_group_with_title<T>(
     examples: Vec<ComponentExample<T>>,
 ) -> ComponentExampleGroup<T> {
     ComponentExampleGroup::with_title(title, examples)
+}
+
+pub fn theme_preview_keybinding(keystrokes: &str) -> KeyBinding {
+    KeyBinding::new(gpui::KeyBinding::new(keystrokes, gpui::NoAction {}, None))
 }
