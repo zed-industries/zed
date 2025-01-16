@@ -555,6 +555,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "assistant_slash_commands"
+version = "0.1.0"
+
+[[package]]
 name = "assistant_tool"
 version = "0.1.0"
 dependencies = [

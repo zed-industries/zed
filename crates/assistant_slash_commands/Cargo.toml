@@ -1,0 +1,14 @@
+[package]
+name = "assistant_slash_commands"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/assistant_slash_commands.rs"
+
+[dependencies]
