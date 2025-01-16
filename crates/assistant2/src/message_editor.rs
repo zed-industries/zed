@@ -313,7 +313,10 @@ impl Render for MessageEditor {
                             .anchor(gpui::Corner::BottomLeft)
                             .offset(gpui::Point {
                                 x: px(0.0),
-                                y: px(-ThemeSettings::get_global(cx).ui_font_size.0.max(6.0) * 2.0)
+                                y: px(-ThemeSettings::clamp_font_size(
+                                    ThemeSettings::get_global(cx).ui_font_size,
+                                )
+                                .0 * 2.0)
                                     - px(4.0),
                             })
                             .with_handle(self.inline_context_picker_menu_handle.clone()),
