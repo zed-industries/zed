@@ -574,6 +574,7 @@
       "ctrl-shift-h": "assistant2::OpenHistory",
       "ctrl-alt-/": "assistant2::ToggleModelSelector",
       "ctrl-shift-a": "assistant2::ToggleContextPicker",
+      "ctrl-e": "assistant2::ChatMode",
       "ctrl-alt-e": "assistant2::RemoveAllContext"
     }
   },

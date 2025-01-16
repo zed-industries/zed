@@ -229,6 +229,7 @@
       "cmd-shift-h": "assistant2::OpenHistory",
       "cmd-alt-/": "assistant2::ToggleModelSelector",
       "cmd-shift-a": "assistant2::ToggleContextPicker",
+      "cmd-e": "assistant2::ChatMode",
       "cmd-alt-e": "assistant2::RemoveAllContext"
     }
   },

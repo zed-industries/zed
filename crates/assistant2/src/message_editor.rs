@@ -23,7 +23,7 @@ use crate::context_store::{refresh_context_store_text, ContextStore};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
-use crate::{Chat, RemoveAllContext, ToggleContextPicker, ToggleModelSelector};
+use crate::{Chat, ChatMode, RemoveAllContext, ToggleContextPicker, ToggleModelSelector};
 
 pub struct MessageEditor {
     thread: Model<Thread>,
@@ -114,6 +114,11 @@ impl MessageEditor {
 
     fn toggle_model_selector(&mut self, _: &ToggleModelSelector, cx: &mut ViewContext<Self>) {
         self.model_selector_menu_handle.toggle(cx)
+    }
+
+    fn toggle_chat_mode(&mut self, _: &ChatMode, cx: &mut ViewContext<Self>) {
+        self.use_tools = !self.use_tools;
+        cx.notify();
     }
 
     fn toggle_context_picker(&mut self, _: &ToggleContextPicker, cx: &mut ViewContext<Self>) {
@@ -264,6 +269,7 @@ impl Render for MessageEditor {
             .on_action(cx.listener(Self::toggle_context_picker))
             .on_action(cx.listener(Self::remove_all_context))
             .on_action(cx.listener(Self::move_up))
+            .on_action(cx.listener(Self::toggle_chat_mode))
             .size_full()
             .gap_2()
             .p_2()
@@ -323,7 +329,12 @@ impl Render for MessageEditor {
                                             ToggleState::Unselected
                                             | ToggleState::Indeterminate => false,
                                         };
-                                    })),
+                                    }))
+                                    .key_binding(KeyBinding::for_action_in(
+                                        &ChatMode,
+                                        &focus_handle,
+                                        cx,
+                                    )),
                             )
                             .child(
                                 h_flex().gap_1().child(self.model_selector.clone()).child(
