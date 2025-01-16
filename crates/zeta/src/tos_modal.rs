@@ -96,7 +96,7 @@ impl Render for ZedPredictTos {
                     .w_full()
                     .justify_between()
                     .child(Headline::new("Zed AI").size(HeadlineSize::Large))
-                    .child(Icon::new(IconName::ZedPredict).size(IconSize::Humongous)),
+                    .child(Icon::new(IconName::ZedPredict).size(IconSize::XLarge)),
             )
             .child("Please read and accept our Terms of Service to use Edit Predictions.")
             .child(
