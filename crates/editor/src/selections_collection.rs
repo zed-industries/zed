@@ -323,7 +323,7 @@ impl SelectionsCollection {
         self.all(cx).last().unwrap().clone()
     }
 
-    pub fn ranges<D: TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug>(
+    pub fn ranges<D: TextDimension + Ord + Sub<D, Output = D>>(
         &self,
         cx: &mut AppContext,
     ) -> Vec<Range<D>> {
@@ -920,7 +920,7 @@ pub(crate) fn resolve_selections<'a, D, I>(
     map: &'a DisplaySnapshot,
 ) -> impl 'a + Iterator<Item = Selection<D>>
 where
-    D: TextDimension + Clone + Copy + Ord + Sub<D, Output = D>,
+    D: TextDimension + Ord + Sub<D, Output = D>,
     I: 'a + IntoIterator<Item = &'a Selection<Anchor>>,
 {
     let (to_convert, selections) = resolve_selections_display(selections, map).tee();

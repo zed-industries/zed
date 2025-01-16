@@ -3341,7 +3341,7 @@ impl MultiBufferSnapshot {
     ) -> impl Iterator<Item = (Range<D>, M, &'a Excerpt)> + 'a
     where
         I: Iterator<Item = (Range<D>, M)> + 'a,
-        D: TextDimension + Ord + Copy + Sub<D, Output = D> + std::fmt::Debug,
+        D: TextDimension + Ord + Sub<D, Output = D>,
     {
         let max_position = D::from_text_summary(&self.text_summary());
         let mut current_excerpt_metadata: Option<(ExcerptId, I)> = None;
@@ -3751,7 +3751,7 @@ impl MultiBufferSnapshot {
         clip_buffer_position: fn(&text::BufferSnapshot, D, Bias) -> D,
     ) -> D
     where
-        D: TextDimension + Copy + Sub<D, Output = D> + Ord + std::fmt::Debug,
+        D: TextDimension + Ord + Sub<D, Output = D>,
     {
         let mut cursor = self.cursor();
         cursor.seek(&position);
@@ -3775,8 +3775,8 @@ impl MultiBufferSnapshot {
         convert_buffer_dimension: fn(&text::BufferSnapshot, D1) -> D2,
     ) -> D2
     where
-        D1: TextDimension + Copy + Ord + Sub<D1, Output = D1> + std::fmt::Debug,
-        D2: TextDimension + Copy + Ord + Sub<D2, Output = D2> + std::fmt::Debug,
+        D1: TextDimension + Ord + Sub<D1, Output = D1>,
+        D2: TextDimension + Ord + Sub<D2, Output = D2>,
     {
         let mut cursor = self.cursor::<DimensionPair<D1, D2>>();
         cursor.seek(&DimensionPair { key, value: None });
@@ -4109,7 +4109,7 @@ impl MultiBufferSnapshot {
 
     pub fn summary_for_anchor<D>(&self, anchor: &Anchor) -> D
     where
-        D: TextDimension + Ord + Sub<D, Output = D> + Clone + std::fmt::Debug,
+        D: TextDimension + Ord + Sub<D, Output = D>,
     {
         let mut cursor = self.excerpts.cursor::<ExcerptSummary>(&());
         let locator = self.excerpt_locator_for_id(anchor.excerpt_id);
@@ -4150,7 +4150,7 @@ impl MultiBufferSnapshot {
         diff_transforms: &mut Cursor<DiffTransform, (ExcerptDimension<D>, OutputDimension<D>)>,
     ) -> D
     where
-        D: TextDimension + Sub<D, Output = D> + Ord + std::fmt::Debug,
+        D: TextDimension + Ord + Sub<D, Output = D>,
     {
         loop {
             let transform_end_position = diff_transforms.end(&()).0 .0;
@@ -4194,7 +4194,7 @@ impl MultiBufferSnapshot {
                     }
                 }
                 _ => {
-                    if anchor.diff_base_anchor.is_some() && at_transform_end {
+                    if at_transform_end && anchor.diff_base_anchor.is_some() {
                         diff_transforms.next(&());
                         continue;
                     }
@@ -4240,7 +4240,7 @@ impl MultiBufferSnapshot {
 
     pub fn summaries_for_anchors<'a, D, I>(&'a self, anchors: I) -> Vec<D>
     where
-        D: TextDimension + Ord + Sub<D, Output = D> + std::fmt::Debug,
+        D: TextDimension + Ord + Sub<D, Output = D>,
         I: 'a + IntoIterator<Item = &'a Anchor>,
     {
         let mut anchors = anchors.into_iter().peekable();
@@ -6209,9 +6209,7 @@ impl<'a, D: TextDimension + Ord>
     }
 }
 
-impl<'a, D: TextDimension + Default> sum_tree::Dimension<'a, DiffTransformSummary>
-    for ExcerptDimension<D>
-{
+impl<'a, D: TextDimension> sum_tree::Dimension<'a, DiffTransformSummary> for ExcerptDimension<D> {
     fn zero(_: &()) -> Self {
         ExcerptDimension(D::default())
     }
@@ -6221,9 +6219,7 @@ impl<'a, D: TextDimension + Default> sum_tree::Dimension<'a, DiffTransformSummar
     }
 }
 
-impl<'a, D: TextDimension + Default> sum_tree::Dimension<'a, DiffTransformSummary>
-    for OutputDimension<D>
-{
+impl<'a, D: TextDimension> sum_tree::Dimension<'a, DiffTransformSummary> for OutputDimension<D> {
     fn zero(_: &()) -> Self {
         OutputDimension(D::default())
     }
