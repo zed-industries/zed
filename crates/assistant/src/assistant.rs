@@ -10,15 +10,14 @@ mod prompts;
 mod slash_command;
 pub(crate) mod slash_command_picker;
 pub mod slash_command_settings;
-mod slash_command_working_set;
 mod streaming_diff;
 mod terminal_inline_assistant;
 
 use crate::slash_command::project_command::ProjectSlashCommandFeatureFlag;
-pub use crate::slash_command_working_set::{SlashCommandId, SlashCommandWorkingSet};
 pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::SlashCommandRegistry;
+pub use assistant_slash_command::{SlashCommandId, SlashCommandWorkingSet};
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub use context::*;
