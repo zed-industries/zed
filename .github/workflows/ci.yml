@@ -308,7 +308,7 @@ jobs:
       # Since the Windows runners are stateful, so we need to remove the config file to prevent potential bug.
       - name: Clean CI config file
         if: always()
-        run: rm -rf ./../.cargo
+        run: Remove-Item -Path "./../.cargo" -Recurse -Force
 
   bundle-mac:
     timeout-minutes: 60
