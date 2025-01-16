@@ -1,8 +1,8 @@
 use super::{AssistantEdit, MessageCacheMetadata};
 use crate::{
-    assistant_panel, prompt_library, slash_command::file_command, AssistantEditKind, CacheStatus,
-    Context, ContextEvent, ContextId, ContextOperation, InvokedSlashCommandId, MessageId,
-    MessageStatus, PromptBuilder,
+    assistant_panel, slash_command::file_command, AssistantEditKind, CacheStatus, Context,
+    ContextEvent, ContextId, ContextOperation, InvokedSlashCommandId, MessageId, MessageStatus,
+    PromptBuilder,
 };
 use anyhow::Result;
 use assistant_slash_command::{

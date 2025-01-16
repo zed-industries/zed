@@ -396,7 +396,6 @@ dependencies = [
  "globset",
  "gpui",
  "handlebars 4.5.0",
- "heed",
  "html_to_markdown",
  "http_client",
  "indexed_docs",
@@ -418,6 +417,7 @@ dependencies = [
  "picker",
  "pretty_assertions",
  "project",
+ "prompt_library",
  "proto",
  "rand 0.8.5",
  "regex",
@@ -9818,6 +9818,26 @@ dependencies = [
  "parking_lot",
  "protobuf",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "prompt_library"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "collections",
+ "futures 0.3.31",
+ "fuzzy",
+ "gpui",
+ "heed",
+ "parking_lot",
+ "paths",
+ "rope",
+ "serde",
+ "text",
+ "util",
+ "uuid",
 ]
 
 [[package]]
