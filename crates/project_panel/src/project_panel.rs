@@ -3322,6 +3322,12 @@ impl ProjectPanel {
             relative_line_numbers,
         );
 
+        let file_number_color = if is_marked {
+            Color::Default
+        } else {
+            Color::Muted
+        };
+
         div()
             .id(entry_id.to_proto() as usize)
             .group(GROUP_NAME)
@@ -3478,7 +3484,7 @@ impl ProjectPanel {
                         .px(px(8.))
                         .flex()
                         .justify_start()
-                        .child(Label::new(format!("{}", file_number)).color(filename_text_color)),
+                        .child(Label::new(format!("{}", file_number)).color(file_number_color)),
                 )
             })
             .child(
@@ -3938,8 +3944,6 @@ impl ProjectPanel {
             .unwrap_or_default()
             .2;
 
-        dbg!(relative_line_numbers);
-
         match (show_file_numbers, relative_line_numbers) {
             (ShowFileNumbers::On, true) => {
                 let selection_line_number = if let Some(selection) = self.selection {
@@ -3947,10 +3951,14 @@ impl ProjectPanel {
                 } else {
                     0
                 };
-                return Some(
-                    selection_line_number.max(entry_line_number)
-                        - selection_line_number.min(entry_line_number),
-                );
+                let line_number = selection_line_number.max(entry_line_number)
+                    - selection_line_number.min(entry_line_number);
+
+                if line_number == 0 {
+                    return Some(entry_line_number);
+                } else {
+                    return Some(line_number);
+                }
             }
             (ShowFileNumbers::On, false) => Some(entry_line_number),
             (ShowFileNumbers::Off, _) => None,
