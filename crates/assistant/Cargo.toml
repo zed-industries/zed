@@ -51,7 +51,6 @@ lsp.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
 open_ai = { workspace = true, features = ["schemars"] }
-ordered-float.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
 picker.workspace = true
@@ -71,6 +70,7 @@ settings.workspace = true
 similar.workspace = true
 smallvec.workspace = true
 smol.workspace = true
+streaming_diff.workspace = true
 strum.workspace = true
 telemetry.workspace = true
 telemetry_events.workspace = true

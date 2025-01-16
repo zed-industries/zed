@@ -9,7 +9,6 @@ mod prompt_library;
 mod slash_command;
 pub(crate) mod slash_command_picker;
 pub mod slash_command_settings;
-mod streaming_diff;
 mod terminal_inline_assistant;
 
 use std::path::PathBuf;
@@ -39,7 +38,6 @@ pub use crate::context_store::*;
 pub(crate) use crate::inline_assistant::*;
 pub use crate::patch::*;
 use crate::slash_command_settings::SlashCommandSettings;
-pub(crate) use crate::streaming_diff::*;
 
 actions!(
     assistant,

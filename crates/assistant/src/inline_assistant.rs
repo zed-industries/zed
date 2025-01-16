@@ -1,7 +1,6 @@
 use crate::{
-    humanize_token_count, AssistantPanel, AssistantPanelEvent, CharOperation,
-    CycleNextInlineAssist, CyclePreviousInlineAssist, LineDiff, LineOperation, RequestType,
-    StreamingDiff,
+    humanize_token_count, AssistantPanel, AssistantPanelEvent, CycleNextInlineAssist,
+    CyclePreviousInlineAssist, RequestType,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_settings::AssistantSettings;
@@ -56,6 +55,7 @@ use std::{
     task::{self, Poll},
     time::{Duration, Instant},
 };
+use streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff};
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::{OffsetRangeExt, ToPoint as _};
