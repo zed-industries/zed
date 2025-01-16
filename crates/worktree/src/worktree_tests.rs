@@ -6,7 +6,8 @@ use anyhow::Result;
 use fs::{FakeFs, Fs, RealFs, RemoveOptions};
 use git::{
     status::{
-        FileStatus, GitSummary, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
+        FileStatus, GitSummary, StatusCode, TrackedStatus, TrackedSummary, UnmergedStatus,
+        UnmergedStatusCode,
     },
     GITIGNORE,
 };
@@ -3227,12 +3228,12 @@ fn check_git_statuses(snapshot: &Snapshot, expected_statuses: &[(&Path, GitSumma
 }
 
 const ADDED: GitSummary = GitSummary {
-    added: 1,
+    index: TrackedSummary::ADDED,
     count: 1,
     ..GitSummary::UNCHANGED
 };
 const MODIFIED: GitSummary = GitSummary {
-    modified: 1,
+    index: TrackedSummary::MODIFIED,
     count: 1,
     ..GitSummary::UNCHANGED
 };

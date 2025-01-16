@@ -4,7 +4,7 @@ use futures::channel::mpsc;
 use futures::StreamExt as _;
 use git::{
     repository::{GitRepository, RepoPath},
-    status::GitSummary,
+    status::{GitSummary, TrackedSummary},
 };
 use gpui::{AppContext, SharedString};
 use settings::WorktreeId;
@@ -132,8 +132,10 @@ impl GitState {
     }
 
     fn have_staged_changes(&self) -> bool {
-        // FIXME need to make the GitSummary more complex...
-        true
+        let Some((_, entry, _)) = self.active_repository.as_ref() else {
+            return false;
+        };
+        entry.status_summary().index != TrackedSummary::UNCHANGED
     }
 
     pub fn can_commit(&self, commit_all: bool) -> bool {
