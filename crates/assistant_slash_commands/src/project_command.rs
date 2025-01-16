@@ -1,5 +1,4 @@
 use super::{create_label_for_command, search_command::add_search_result_section};
-use crate::PromptBuilder;
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
@@ -9,6 +8,7 @@ use feature_flags::FeatureFlag;
 use gpui::{AppContext, Task, WeakView, WindowContext};
 use language::{Anchor, CodeLabel, LspAdapterDelegate};
 use language_model::{LanguageModelRegistry, LanguageModelTool};
+use prompt_library::PromptBuilder;
 use schemars::JsonSchema;
 use semantic_index::SemanticDb;
 use serde::Deserialize;
