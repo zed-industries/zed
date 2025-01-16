@@ -16,7 +16,7 @@ use text::LineEnding;
 use ui::{IconName, SharedString};
 use workspace::Workspace;
 
-use crate::slash_command::create_label_for_command;
+use crate::create_label_for_command;
 
 pub struct ContextServerSlashCommand {
     server_manager: Model<ContextServerManager>,

@@ -1,14 +1,14 @@
 use super::{AssistantEdit, MessageCacheMetadata};
 use crate::{
-    assistant_panel, slash_command::file_command, AssistantEditKind, CacheStatus, Context,
-    ContextEvent, ContextId, ContextOperation, InvokedSlashCommandId, MessageId, MessageStatus,
-    PromptBuilder,
+    assistant_panel, AssistantEditKind, CacheStatus, Context, ContextEvent, ContextId,
+    ContextOperation, InvokedSlashCommandId, MessageId, MessageStatus, PromptBuilder,
 };
 use anyhow::Result;
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandContent, SlashCommandEvent, SlashCommandOutput,
     SlashCommandOutputSection, SlashCommandRegistry, SlashCommandResult, SlashCommandWorkingSet,
 };
+use assistant_slash_commands::FileSlashCommand;
 use assistant_tool::ToolWorkingSet;
 use collections::{HashMap, HashSet};
 use fs::FakeFs;
@@ -407,7 +407,7 @@ async fn test_slash_commands(cx: &mut TestAppContext) {
     .await;
 
     let slash_command_registry = cx.update(SlashCommandRegistry::default_global);
-    slash_command_registry.register_command(file_command::FileSlashCommand, false);
+    slash_command_registry.register_command(FileSlashCommand, false);
 
     let registry = Arc::new(LanguageRegistry::test(cx.executor()));
     let prompt_builder = Arc::new(PromptBuilder::new(None).unwrap());

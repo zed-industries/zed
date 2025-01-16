@@ -8,6 +8,7 @@ members = [
     "crates/assistant2",
     "crates/assistant_settings",
     "crates/assistant_slash_command",
+    "crates/assistant_slash_commands",
     "crates/assistant_tool",
     "crates/assistant_tools",
     "crates/audio",
@@ -198,6 +199,7 @@ assistant = { path = "crates/assistant" }
 assistant2 = { path = "crates/assistant2" }
 assistant_settings = { path = "crates/assistant_settings" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
+assistant_slash_commands = { path = "crates/assistant_slash_commands" }
 assistant_tool = { path = "crates/assistant_tool" }
 assistant_tools = { path = "crates/assistant_tools" }
 audio = { path = "crates/audio" }

@@ -12,13 +12,13 @@ pub mod slash_command_settings;
 mod streaming_diff;
 mod terminal_inline_assistant;
 
-use crate::slash_command::project_command::ProjectSlashCommandFeatureFlag;
 pub use ::prompt_library::PromptBuilder;
 use ::prompt_library::PromptLoadingParams;
 pub use assistant_panel::{AssistantPanel, AssistantPanelEvent};
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::SlashCommandRegistry;
 pub use assistant_slash_command::{SlashCommandId, SlashCommandWorkingSet};
+use assistant_slash_commands::{ProjectSlashCommandFeatureFlag, SearchSlashCommandFeatureFlag};
 use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 pub use context::*;
@@ -35,18 +35,11 @@ pub use patch::*;
 use semantic_index::{CloudEmbeddingProvider, SemanticDb};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-use slash_command::search_command::SearchSlashCommandFeatureFlag;
-use slash_command::{
-    auto_command, cargo_workspace_command, default_command, delta_command, diagnostics_command,
-    docs_command, fetch_command, file_command, now_command, project_command, prompt_command,
-    search_command, selection_command, symbols_command, tab_command, terminal_command,
-};
 use std::path::PathBuf;
 use std::sync::Arc;
 pub(crate) use streaming_diff::*;
 use util::ResultExt;
 
-use crate::slash_command::streaming_example_command;
 use crate::slash_command_settings::SlashCommandSettings;
 
 actions!(
@@ -317,27 +310,28 @@ fn update_active_language_model_from_settings(cx: &mut AppContext) {
 fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut AppContext) {
     let slash_command_registry = SlashCommandRegistry::global(cx);
 
-    slash_command_registry.register_command(file_command::FileSlashCommand, true);
-    slash_command_registry.register_command(delta_command::DeltaSlashCommand, true);
-    slash_command_registry.register_command(symbols_command::OutlineSlashCommand, true);
-    slash_command_registry.register_command(tab_command::TabSlashCommand, true);
+    slash_command_registry.register_command(assistant_slash_commands::FileSlashCommand, true);
+    slash_command_registry.register_command(assistant_slash_commands::DeltaSlashCommand, true);
+    slash_command_registry.register_command(assistant_slash_commands::OutlineSlashCommand, true);
+    slash_command_registry.register_command(assistant_slash_commands::TabSlashCommand, true);
     slash_command_registry
-        .register_command(cargo_workspace_command::CargoWorkspaceSlashCommand, true);
-    slash_command_registry.register_command(prompt_command::PromptSlashCommand, true);
-    slash_command_registry.register_command(selection_command::SelectionCommand, true);
-    slash_command_registry.register_command(default_command::DefaultSlashCommand, false);
-    slash_command_registry.register_command(terminal_command::TerminalSlashCommand, true);
-    slash_command_registry.register_command(now_command::NowSlashCommand, false);
-    slash_command_registry.register_command(diagnostics_command::DiagnosticsSlashCommand, true);
-    slash_command_registry.register_command(fetch_command::FetchSlashCommand, true);
+        .register_command(assistant_slash_commands::CargoWorkspaceSlashCommand, true);
+    slash_command_registry.register_command(assistant_slash_commands::PromptSlashCommand, true);
+    slash_command_registry.register_command(assistant_slash_commands::SelectionCommand, true);
+    slash_command_registry.register_command(assistant_slash_commands::DefaultSlashCommand, false);
+    slash_command_registry.register_command(assistant_slash_commands::TerminalSlashCommand, true);
+    slash_command_registry.register_command(assistant_slash_commands::NowSlashCommand, false);
+    slash_command_registry
+        .register_command(assistant_slash_commands::DiagnosticsSlashCommand, true);
+    slash_command_registry.register_command(assistant_slash_commands::FetchSlashCommand, true);
 
     if let Some(prompt_builder) = prompt_builder {
-        cx.observe_flag::<project_command::ProjectSlashCommandFeatureFlag, _>({
+        cx.observe_flag::<assistant_slash_commands::ProjectSlashCommandFeatureFlag, _>({
             let slash_command_registry = slash_command_registry.clone();
             move |is_enabled, _cx| {
                 if is_enabled {
                     slash_command_registry.register_command(
-                        project_command::ProjectSlashCommand::new(prompt_builder.clone()),
+                        assistant_slash_commands::ProjectSlashCommand::new(prompt_builder.clone()),
                         true,
                     );
                 }
@@ -346,23 +340,24 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
         .detach();
     }
 
-    cx.observe_flag::<auto_command::AutoSlashCommandFeatureFlag, _>({
+    cx.observe_flag::<assistant_slash_commands::AutoSlashCommandFeatureFlag, _>({
         let slash_command_registry = slash_command_registry.clone();
         move |is_enabled, _cx| {
             if is_enabled {
                 // [#auto-staff-ship] TODO remove this when /auto is no longer staff-shipped
-                slash_command_registry.register_command(auto_command::AutoCommand, true);
+                slash_command_registry
+                    .register_command(assistant_slash_commands::AutoCommand, true);
             }
         }
     })
     .detach();
 
-    cx.observe_flag::<streaming_example_command::StreamingExampleSlashCommandFeatureFlag, _>({
+    cx.observe_flag::<assistant_slash_commands::StreamingExampleSlashCommandFeatureFlag, _>({
         let slash_command_registry = slash_command_registry.clone();
         move |is_enabled, _cx| {
             if is_enabled {
                 slash_command_registry.register_command(
-                    streaming_example_command::StreamingExampleSlashCommand,
+                    assistant_slash_commands::StreamingExampleSlashCommand,
                     false,
                 );
             }
@@ -374,11 +369,12 @@ fn register_slash_commands(prompt_builder: Option<Arc<PromptBuilder>>, cx: &mut 
     cx.observe_global::<SettingsStore>(update_slash_commands_from_settings)
         .detach();
 
-    cx.observe_flag::<search_command::SearchSlashCommandFeatureFlag, _>({
+    cx.observe_flag::<assistant_slash_commands::SearchSlashCommandFeatureFlag, _>({
         let slash_command_registry = slash_command_registry.clone();
         move |is_enabled, _cx| {
             if is_enabled {
-                slash_command_registry.register_command(search_command::SearchSlashCommand, true);
+                slash_command_registry
+                    .register_command(assistant_slash_commands::SearchSlashCommand, true);
             }
         }
     })
@@ -390,17 +386,17 @@ fn update_slash_commands_from_settings(cx: &mut AppContext) {
     let settings = SlashCommandSettings::get_global(cx);
 
     if settings.docs.enabled {
-        slash_command_registry.register_command(docs_command::DocsSlashCommand, true);
+        slash_command_registry.register_command(assistant_slash_commands::DocsSlashCommand, true);
     } else {
-        slash_command_registry.unregister_command(docs_command::DocsSlashCommand);
+        slash_command_registry.unregister_command(assistant_slash_commands::DocsSlashCommand);
     }
 
     if settings.cargo_workspace.enabled {
         slash_command_registry
-            .register_command(cargo_workspace_command::CargoWorkspaceSlashCommand, true);
+            .register_command(assistant_slash_commands::CargoWorkspaceSlashCommand, true);
     } else {
         slash_command_registry
-            .unregister_command(cargo_workspace_command::CargoWorkspaceSlashCommand);
+            .unregister_command(assistant_slash_commands::CargoWorkspaceSlashCommand);
     }
 }
 

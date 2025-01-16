@@ -16,9 +16,9 @@ use ui::{prelude::*, ActiveTheme, WindowContext};
 use util::ResultExt;
 use workspace::Workspace;
 
-use crate::slash_command::file_command::append_buffer_to_output;
+use crate::file_command::append_buffer_to_output;
 
-pub(crate) struct TabSlashCommand;
+pub struct TabSlashCommand;
 
 const ALL_TABS_COMPLETION_ITEM: &str = "all";
 

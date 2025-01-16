@@ -1,4 +1,4 @@
-use crate::slash_command::file_command::{FileCommandMetadata, FileSlashCommand};
+use crate::file_command::{FileCommandMetadata, FileSlashCommand};
 use anyhow::{anyhow, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
@@ -13,7 +13,7 @@ use text::OffsetRangeExt;
 use ui::prelude::*;
 use workspace::Workspace;
 
-pub(crate) struct DeltaSlashCommand;
+pub struct DeltaSlashCommand;
 
 impl SlashCommand for DeltaSlashCommand {
     fn name(&self) -> String {

@@ -19,7 +19,7 @@ use ui::prelude::*;
 use util::{maybe, ResultExt};
 use workspace::Workspace;
 
-pub(crate) struct DocsSlashCommand;
+pub struct DocsSlashCommand;
 
 impl DocsSlashCommand {
     pub const NAME: &'static str = "docs";
@@ -367,7 +367,7 @@ fn is_item_path_delimiter(char: char) -> bool {
 }
 
 #[derive(Debug, PartialEq, Clone)]
-pub(crate) enum DocsSlashCommandArgs {
+pub enum DocsSlashCommandArgs {
     NoProvider,
     SearchPackageDocs {
         provider: ProviderId,

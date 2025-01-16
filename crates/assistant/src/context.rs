@@ -2,14 +2,15 @@
 mod context_tests;
 
 use crate::{
-    slash_command::{file_command::FileCommandMetadata, SlashCommandLine},
-    AssistantEdit, AssistantPatch, AssistantPatchStatus, MessageId, MessageStatus,
+    slash_command::SlashCommandLine, AssistantEdit, AssistantPatch, AssistantPatchStatus,
+    MessageId, MessageStatus,
 };
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
     SlashCommandContent, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
     SlashCommandWorkingSet,
 };
+use assistant_slash_commands::FileCommandMetadata;
 use assistant_tool::ToolWorkingSet;
 use client::{self, proto, telemetry::Telemetry};
 use clock::ReplicaId;

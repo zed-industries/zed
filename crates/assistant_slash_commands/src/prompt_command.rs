@@ -10,7 +10,7 @@ use std::sync::{atomic::AtomicBool, Arc};
 use ui::prelude::*;
 use workspace::Workspace;
 
-pub(crate) struct PromptSlashCommand;
+pub struct PromptSlashCommand;
 
 impl SlashCommand for PromptSlashCommand {
     fn name(&self) -> String {
