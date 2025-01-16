@@ -171,7 +171,7 @@ impl FileStatus {
             FileStatus::Tracked(TrackedStatus {
                 index_status,
                 worktree_status,
-            }) => index_status.to_summary() + worktree_status.to_summary() + GitSummary::UNCHANGED,
+            }) => index_status.to_summary() + worktree_status.to_summary(),
         }
     }
 }
@@ -192,11 +192,9 @@ impl StatusCode {
 
     fn to_summary(self) -> GitSummary {
         match self {
-            StatusCode::Modified | StatusCode::TypeChanged => {
-                GitSummary::MODIFIED - GitSummary::UNCHANGED
-            }
-            StatusCode::Added => GitSummary::ADDED - GitSummary::UNCHANGED,
-            StatusCode::Deleted => GitSummary::DELETED - GitSummary::UNCHANGED,
+            StatusCode::Modified | StatusCode::TypeChanged => GitSummary::MODIFIED,
+            StatusCode::Added => GitSummary::ADDED,
+            StatusCode::Deleted => GitSummary::DELETED,
             StatusCode::Renamed | StatusCode::Copied | StatusCode::Unmodified => {
                 GitSummary::default()
             }
@@ -257,7 +255,7 @@ impl GitSummary {
         conflict: 0,
         untracked: 0,
         deleted: 0,
-        count: 1,
+        count: 0,
     };
 }
 
