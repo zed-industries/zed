@@ -2725,29 +2725,79 @@ async fn test_preview_edits(cx: &mut TestAppContext) {
         theme::init(theme::LoadThemes::JustBase, cx);
     });
 
-    let text = r#"struct Human {
-        pub first_name: String,
-        pub last_name: String,
-        year_of_birth: u32,
-    }"#
-    .unindent();
+    let text = indoc! {r#"
+        struct Human {
+            pub first_name: String,
+            pub last_name: String,
+            year_of_birth: u32,
+        }
+
+        impl Human {
+            fn new(first_name: String, last_name: String, year_of_birth: u32) -> Self {
+                Self {
+                    first_name,
+                    last_name,
+                    year_of_birth,
+                }
+            }
+        }"#
+    };
 
     let buffer =
         cx.new_model(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
-    let edits: Arc<[(Range<Anchor>, String)]> = buffer.read_with(cx, |buffer, _| {
-        Arc::from([(
-            buffer.anchor_before(43)..buffer.anchor_before(46),
-            "sur".to_string(),
-        )])
-    });
+    let highlighted_edits = preview_edits(
+        &buffer,
+        cx,
+        [
+            (Point::new(2, 8)..Point::new(2, 13), "sur"),
+            (Point::new(7, 31)..Point::new(7, 36), "sur"),
+            (Point::new(10, 12)..Point::new(10, 17), "sur"),
+        ],
+    )
+    .await;
+    assert_eq!(
+        highlighted_edits.text,
+        indoc! {r#"
+            struct Human {
+                pub first_name: String,
+                pub last_surname: String,
+                year_of_birth: u32,
+            }
 
-    let edit_preview = buffer
-        .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))
-        .await;
+            impl Human {
+                fn new(first_name: String, last_surname: String, year_of_birth: u32) -> Self {
+                    Self {
+                        first_name,
+                        last_surname,
+                        year_of_birth,
+                    }
+                }
+            }"#
+        }
+    );
 
-    let highlighted_edits = cx.read(|cx| edit_preview.highlight_edits(0..70, &edits, true, cx));
-
-    assert_eq!(highlighted_edits.text, "const A: usize = 20;".to_string());
+    async fn preview_edits(
+        buffer: &Model<Buffer>,
+        cx: &mut TestAppContext,
+        edits: impl IntoIterator<Item = (Range<Point>, &'static str)>,
+    ) -> HighlightedEdits {
+        let edits: Arc<[_]> = buffer.read_with(cx, |buffer, cx| {
+            edits
+                .into_iter()
+                .map(|(range, text)| {
+                    (
+                        buffer.anchor_before(range.start)..buffer.anchor_after(range.end),
+                        text.to_string(),
+                    )
+                })
+                .collect::<Vec<_>>()
+                .into()
+        });
+        let edit_preview = buffer
+            .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))
+            .await;
+        cx.read(|cx| edit_preview.highlight_edits(&edits, true, cx))
+    }
 }
 
 #[gpui::test(iterations = 100)]

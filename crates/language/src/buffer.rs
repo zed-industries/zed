@@ -619,6 +619,15 @@ pub struct HighlightedEdits {
 impl EditPreview {
     pub fn highlight_edits(
         &self,
+        edits: &[(Range<Anchor>, String)],
+        include_deletions: bool,
+        cx: &AppContext,
+    ) -> HighlightedEdits {
+        self.highlight_edits_in_range(0..self.old_snapshot.len(), edits, include_deletions, cx)
+    }
+
+    pub fn highlight_edits_in_range(
+        &self,
         range: Range<usize>,
         edits: &[(Range<Anchor>, String)],
         include_deletions: bool,
@@ -636,26 +645,31 @@ impl EditPreview {
             );
             offset = old_offset_range.end;
 
-            let start = text.len();
-            let color = if include_deletions && new_text.is_empty() {
-                text.extend(
-                    self.old_snapshot
-                        .text_for_range(offset..old_offset_range.start),
-                );
-                cx.theme().status().deleted_background
-            } else {
-                text.push_str(new_text);
-                cx.theme().status().created_background
-            };
-            let end = text.len();
+            if include_deletions && !old_offset_range.is_empty() {
+                let start = text.len();
+                text.extend(self.old_snapshot.text_for_range(old_offset_range.clone()));
+                let end = text.len();
+                highlights.push((
+                    start..end,
+                    HighlightStyle {
+                        background_color: Some(cx.theme().status().deleted_background),
+                        ..Default::default()
+                    },
+                ));
+            }
 
-            highlights.push((
-                start..end,
-                HighlightStyle {
-                    background_color: Some(color),
-                    ..Default::default()
-                },
-            ));
+            if !new_text.is_empty() {
+                let start = text.len();
+                text.push_str(new_text);
+                let end = text.len();
+                highlights.push((
+                    start..end,
+                    HighlightStyle {
+                        background_color: Some(cx.theme().status().created_background),
+                        ..Default::default()
+                    },
+                ));
+            }
         }
 
         text.extend(self.old_snapshot.text_for_range(offset..range.end));

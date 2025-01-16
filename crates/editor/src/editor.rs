@@ -14905,7 +14905,7 @@ fn inline_completion_edit_text(
         })
         .collect::<Vec<_>>();
 
-    edit_preview.highlight_edits(offset..end_of_line, &edits, include_deletions, cx)
+    edit_preview.highlight_edits_in_range(offset..end_of_line, &edits, include_deletions, cx)
 }
 
 pub fn highlight_diagnostic_message(
