@@ -270,7 +270,7 @@ impl RegisteredBuffer {
                             server
                                 .lsp
                                 .notify::<lsp::notification::DidChangeTextDocument>(
-                                    lsp::DidChangeTextDocumentParams {
+                                    &lsp::DidChangeTextDocumentParams {
                                         text_document: lsp::VersionedTextDocumentIdentifier::new(
                                             buffer.uri.clone(),
                                             buffer.snapshot_version,
@@ -460,7 +460,14 @@ impl Copilot {
             server
                 .on_notification::<StatusNotification, _>(|_, _| { /* Silence the notification */ })
                 .detach();
-            let server = cx.update(|cx| server.initialize(None, cx))?.await?;
+
+            let initialize_params = None;
+            let configuration = lsp::DidChangeConfigurationParams {
+                settings: Default::default(),
+            };
+            let server = cx
+                .update(|cx| server.initialize(initialize_params, configuration.into(), cx))?
+                .await?;
 
             let status = server
                 .request::<request::CheckStatus>(request::CheckStatusParams {
@@ -659,7 +666,7 @@ impl Copilot {
                     let snapshot = buffer.read(cx).snapshot();
                     server
                         .notify::<lsp::notification::DidOpenTextDocument>(
-                            lsp::DidOpenTextDocumentParams {
+                            &lsp::DidOpenTextDocumentParams {
                                 text_document: lsp::TextDocumentItem {
                                     uri: uri.clone(),
                                     language_id: language_id.clone(),
@@ -707,7 +714,7 @@ impl Copilot {
                         server
                             .lsp
                             .notify::<lsp::notification::DidSaveTextDocument>(
-                                lsp::DidSaveTextDocumentParams {
+                                &lsp::DidSaveTextDocumentParams {
                                     text_document: lsp::TextDocumentIdentifier::new(
                                         registered_buffer.uri.clone(),
                                     ),
@@ -727,14 +734,14 @@ impl Copilot {
                             server
                                 .lsp
                                 .notify::<lsp::notification::DidCloseTextDocument>(
-                                    lsp::DidCloseTextDocumentParams {
+                                    &lsp::DidCloseTextDocumentParams {
                                         text_document: lsp::TextDocumentIdentifier::new(old_uri),
                                     },
                                 )?;
                             server
                                 .lsp
                                 .notify::<lsp::notification::DidOpenTextDocument>(
-                                    lsp::DidOpenTextDocumentParams {
+                                    &lsp::DidOpenTextDocumentParams {
                                         text_document: lsp::TextDocumentItem::new(
                                             registered_buffer.uri.clone(),
                                             registered_buffer.language_id.clone(),
@@ -759,7 +766,7 @@ impl Copilot {
                 server
                     .lsp
                     .notify::<lsp::notification::DidCloseTextDocument>(
-                        lsp::DidCloseTextDocumentParams {
+                        &lsp::DidCloseTextDocumentParams {
                             text_document: lsp::TextDocumentIdentifier::new(buffer.uri),
                         },
                     )

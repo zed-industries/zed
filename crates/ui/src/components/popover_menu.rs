@@ -15,6 +15,28 @@ pub trait PopoverTrigger: IntoElement + Clickable + Toggleable + 'static {}
 
 impl<T: IntoElement + Clickable + Toggleable + 'static> PopoverTrigger for T {}
 
+impl<T: Clickable> Clickable for gpui::AnimationElement<T>
+where
+    T: Clickable + 'static,
+{
+    fn on_click(self, handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static) -> Self {
+        self.map_element(|e| e.on_click(handler))
+    }
+
+    fn cursor_style(self, cursor_style: gpui::CursorStyle) -> Self {
+        self.map_element(|e| e.cursor_style(cursor_style))
+    }
+}
+
+impl<T: Toggleable> Toggleable for gpui::AnimationElement<T>
+where
+    T: Toggleable + 'static,
+{
+    fn toggle_state(self, selected: bool) -> Self {
+        self.map_element(|e| e.toggle_state(selected))
+    }
+}
+
 pub struct PopoverMenuHandle<M>(Rc<RefCell<Option<PopoverMenuHandleState<M>>>>);
 
 impl<M> Clone for PopoverMenuHandle<M> {
@@ -254,13 +276,14 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                 let mut menu_layout_id = None;
 
                 let menu_element = element_state.menu.borrow_mut().as_mut().map(|menu| {
+                    let offset = self.resolved_offset(cx);
                     let mut anchored = anchored()
                         .snap_to_window_with_margin(px(8.))
-                        .anchor(self.anchor);
+                        .anchor(self.anchor)
+                        .offset(offset);
                     if let Some(child_bounds) = element_state.child_bounds {
-                        anchored = anchored.position(
-                            child_bounds.corner(self.resolved_attach()) + self.resolved_offset(cx),
-                        );
+                        anchored =
+                            anchored.position(child_bounds.corner(self.resolved_attach()) + offset);
                     }
                     let mut element = deferred(anchored.child(div().occlude().child(menu.clone())))
                         .with_priority(1)

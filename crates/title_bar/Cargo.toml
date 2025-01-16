@@ -36,6 +36,7 @@ notifications.workspace = true
 project.workspace = true
 remote.workspace = true
 rpc.workspace = true
+schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true

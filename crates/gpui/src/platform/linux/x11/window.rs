@@ -55,6 +55,7 @@ x11rb::atom_manager! {
         WM_PROTOCOLS,
         WM_DELETE_WINDOW,
         WM_CHANGE_STATE,
+        _NET_WM_PID,
         _NET_WM_NAME,
         _NET_WM_STATE,
         _NET_WM_STATE_MAXIMIZED_VERT,
@@ -436,6 +437,18 @@ impl X11WindowState {
 
         // Collect errors during setup, so that window can be destroyed on failure.
         let setup_result = maybe!({
+            let pid = std::process::id();
+            check_reply(
+                || "X11 ChangeProperty for _NET_WM_PID failed.",
+                xcb.change_property32(
+                    xproto::PropMode::REPLACE,
+                    x_window,
+                    atoms._NET_WM_PID,
+                    xproto::AtomEnum::CARDINAL,
+                    &[pid],
+                ),
+            )?;
+
             if let Some(size) = params.window_min_size {
                 let mut size_hints = WmSizeHints::new();
                 let min_size = (size.width.0 as i32, size.height.0 as i32);
@@ -1097,6 +1110,30 @@ impl PlatformWindow for X11Window {
             WindowBounds::Maximized(state.bounds)
         } else {
             WindowBounds::Windowed(state.bounds)
+        }
+    }
+
+    fn inner_window_bounds(&self) -> WindowBounds {
+        let state = self.0.state.borrow();
+        if self.is_maximized() {
+            WindowBounds::Maximized(state.bounds)
+        } else {
+            let mut bounds = state.bounds;
+            let [left, right, top, bottom] = state.last_insets;
+
+            let [left, right, top, bottom] = [
+                Pixels((left as f32) / state.scale_factor),
+                Pixels((right as f32) / state.scale_factor),
+                Pixels((top as f32) / state.scale_factor),
+                Pixels((bottom as f32) / state.scale_factor),
+            ];
+
+            bounds.origin.x += left;
+            bounds.origin.y += top;
+            bounds.size.width -= left + right;
+            bounds.size.height -= top + bottom;
+
+            WindowBounds::Windowed(bounds)
         }
     }
 

@@ -433,7 +433,13 @@ impl Project {
             "windows" => "\r",
             _ => "\n",
         };
-        Some(format!("{} {}{}", activate_keyword, quoted, line_ending))
+        if smol::block_on(self.fs.metadata(path.as_ref())).is_err() {
+            return None;
+        }
+        Some(format!(
+            "{} {} ; clear{}",
+            activate_keyword, quoted, line_ending
+        ))
     }
 
     fn activate_python_virtual_environment(
@@ -450,7 +456,7 @@ impl Project {
     }
 }
 
-pub fn wrap_for_ssh(
+fn wrap_for_ssh(
     ssh_command: &SshCommand,
     command: Option<(&String, &Vec<String>)>,
     path: Option<&Path>,

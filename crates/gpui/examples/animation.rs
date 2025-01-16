@@ -1,6 +1,11 @@
 use std::time::Duration;
 
-use gpui::*;
+use anyhow::Result;
+use gpui::{
+    black, bounce, div, ease_in_out, percentage, prelude::*, px, rgb, size, svg, Animation,
+    AnimationExt as _, App, AppContext, AssetSource, Bounds, SharedString, Transformation,
+    ViewContext, WindowBounds, WindowOptions,
+};
 
 struct Assets {}
 
@@ -37,7 +42,7 @@ impl Render for AnimationExample {
                 div()
                     .flex()
                     .bg(rgb(0x2e7d32))
-                    .size(Length::Definite(Pixels(300.0).into()))
+                    .size(px(300.0))
                     .justify_center()
                     .items_center()
                     .shadow_lg()

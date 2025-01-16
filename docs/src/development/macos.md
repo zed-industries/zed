@@ -124,3 +124,16 @@ Then clean and rebuild the project:
 cargo clean
 cargo run
 ```
+
+## Tips & Tricks
+
+If you are building Zed a lot, you may find that macOS continually verifies new
+builds which can add a few seconds to your iteration cycles.
+
+To fix this, you can:
+
+- Run `sudo spctl developer-mode enable-terminal` to enable the Developer Tools panel in System Settings.
+- In System Settings, search for "Developer Tools" and add your terminal (e.g. iTerm or Ghostty) to the list under "Allow applications to use developer tools"
+- Restart your terminal.
+
+Thanks to the nextest developers for publishing [this](https://nexte.st/docs/installation/macos/#gatekeeper).

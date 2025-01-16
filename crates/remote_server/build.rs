@@ -9,6 +9,10 @@ fn main() {
         "cargo:rustc-env=ZED_PKG_VERSION={}",
         zed_cargo_toml.package.unwrap().version.unwrap()
     );
+    println!(
+        "cargo:rustc-env=TARGET={}",
+        std::env::var("TARGET").unwrap()
+    );
 
     // If we're building this for nightly, we want to set the ZED_COMMIT_SHA
     if let Some(release_channel) = std::env::var("ZED_RELEASE_CHANNEL").ok() {

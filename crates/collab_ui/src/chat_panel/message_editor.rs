@@ -79,16 +79,6 @@ impl CompletionProvider for MessageEditorCompletionProvider {
         Task::ready(Ok(false))
     }
 
-    fn apply_additional_edits_for_completion(
-        &self,
-        _buffer: Model<Buffer>,
-        _completion: Completion,
-        _push_to_history: bool,
-        _cx: &mut ViewContext<Editor>,
-    ) -> Task<Result<Option<language::Transaction>>> {
-        Task::ready(Ok(None))
-    }
-
     fn is_completion_trigger(
         &self,
         _buffer: &Model<Buffer>,
@@ -319,6 +309,7 @@ impl MessageEditor {
                     server_id: LanguageServerId(0), // TODO: Make this optional or something?
                     lsp_completion: Default::default(), // TODO: Make this optional or something?
                     confirm: None,
+                    resolved: true,
                 }
             })
             .collect()

@@ -1258,7 +1258,12 @@ extern "C" fn handle_key_event(this: &Object, native_event: id, key_equivalent: 
     // We also do this for non-printing keys (like arrow keys and escape) as the IME menu
     // may need them even if there is no marked text;
     // however we skip keys with control or the input handler adds control-characters to the buffer.
-    if is_composing || (event.keystroke.key_char.is_none() && !event.keystroke.modifiers.control) {
+    // and keys with function, as the input handler swallows them.
+    if is_composing
+        || (event.keystroke.key_char.is_none()
+            && !event.keystroke.modifiers.control
+            && !event.keystroke.modifiers.function)
+    {
         {
             let mut lock = window_state.as_ref().lock();
             lock.keystroke_for_do_command = Some(event.keystroke.clone());

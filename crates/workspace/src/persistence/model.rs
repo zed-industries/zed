@@ -9,6 +9,7 @@ use db::sqlez::{
     statement::Statement,
 };
 use gpui::{AsyncWindowContext, Model, View, WeakView};
+use itertools::Itertools as _;
 use project::Project;
 use remote::ssh_session::SshProjectId;
 use serde::{Deserialize, Serialize};
@@ -227,6 +228,28 @@ impl SerializedWorkspaceLocation {
         let order: Vec<_> = indexed_paths.iter().map(|(index, _)| *index).collect();
 
         Self::Local(LocalPaths::new(sorted_paths), LocalPathsOrder::new(order))
+    }
+
+    /// Get sorted paths
+    pub fn sorted_paths(&self) -> Arc<Vec<PathBuf>> {
+        match self {
+            SerializedWorkspaceLocation::Local(paths, order) => {
+                if order.order().len() == 0 {
+                    paths.paths().clone()
+                } else {
+                    Arc::new(
+                        order
+                            .order()
+                            .iter()
+                            .zip(paths.paths().iter())
+                            .sorted_by_key(|(i, _)| **i)
+                            .map(|(_, p)| p.clone())
+                            .collect(),
+                    )
+                }
+            }
+            SerializedWorkspaceLocation::Ssh(ssh_project) => Arc::new(ssh_project.ssh_urls()),
+        }
     }
 }
 
@@ -561,6 +584,64 @@ mod tests {
             SerializedWorkspaceLocation::Local(
                 LocalPaths::new(vec!["a", "b", "c"]),
                 LocalPathsOrder::new(vec![1, 0, 2])
+            )
+        );
+    }
+
+    #[test]
+    fn test_sorted_paths() {
+        let paths = vec!["b", "a", "c"];
+        let serialized = SerializedWorkspaceLocation::from_local_paths(paths);
+        assert_eq!(
+            serialized.sorted_paths(),
+            Arc::new(vec![
+                PathBuf::from("b"),
+                PathBuf::from("a"),
+                PathBuf::from("c"),
+            ])
+        );
+
+        let paths = Arc::new(vec![
+            PathBuf::from("a"),
+            PathBuf::from("b"),
+            PathBuf::from("c"),
+        ]);
+        let order = vec![2, 0, 1];
+        let serialized =
+            SerializedWorkspaceLocation::Local(LocalPaths(paths.clone()), LocalPathsOrder(order));
+        assert_eq!(
+            serialized.sorted_paths(),
+            Arc::new(vec![
+                PathBuf::from("b"),
+                PathBuf::from("c"),
+                PathBuf::from("a"),
+            ])
+        );
+
+        let paths = Arc::new(vec![
+            PathBuf::from("a"),
+            PathBuf::from("b"),
+            PathBuf::from("c"),
+        ]);
+        let order = vec![];
+        let serialized =
+            SerializedWorkspaceLocation::Local(LocalPaths(paths.clone()), LocalPathsOrder(order));
+        assert_eq!(serialized.sorted_paths(), paths);
+
+        let urls = ["/a", "/b", "/c"];
+        let serialized = SerializedWorkspaceLocation::Ssh(SerializedSshProject {
+            id: SshProjectId(0),
+            host: "host".to_string(),
+            port: Some(22),
+            paths: urls.iter().map(|s| s.to_string()).collect(),
+            user: Some("user".to_string()),
+        });
+        assert_eq!(
+            serialized.sorted_paths(),
+            Arc::new(
+                urls.iter()
+                    .map(|p| PathBuf::from(format!("user@host:22{}", p)))
+                    .collect()
             )
         );
     }

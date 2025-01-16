@@ -65,7 +65,12 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         vim.record_current_action(cx);
         vim.visual_delete(true, cx);
     });
-    Vim::action(editor, cx, |vim, _: &VisualYank, cx| vim.visual_yank(cx));
+    Vim::action(editor, cx, |vim, _: &VisualYank, cx| {
+        vim.visual_yank(false, cx)
+    });
+    Vim::action(editor, cx, |vim, _: &VisualYankLine, cx| {
+        vim.visual_yank(true, cx)
+    });
 
     Vim::action(editor, cx, Vim::select_next);
     Vim::action(editor, cx, Vim::select_previous);
@@ -506,10 +511,11 @@ impl Vim {
         self.switch_mode(Mode::Normal, true, cx);
     }
 
-    pub fn visual_yank(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn visual_yank(&mut self, line_mode: bool, cx: &mut ViewContext<Self>) {
         self.store_visual_marks(cx);
         self.update_editor(cx, |vim, editor, cx| {
-            let line_mode = editor.selections.line_mode;
+            let line_mode = line_mode || editor.selections.line_mode;
+            editor.selections.line_mode = line_mode;
             vim.yank_selections_content(editor, line_mode, cx);
             editor.change_selections(None, cx, |s| {
                 s.move_with(|map, selection| {
@@ -670,7 +676,7 @@ impl Vim {
                 self.stop_recording(cx);
                 self.visual_delete(false, cx)
             }
-            Some(Operator::Yank) => self.visual_yank(cx),
+            Some(Operator::Yank) => self.visual_yank(false, cx),
             _ => {} // Ignoring other operators
         }
     }
@@ -1383,6 +1389,20 @@ mod test {
             fox•
             the lazy dog
             "
+        });
+    }
+
+    #[gpui::test]
+    async fn test_shift_y(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+
+        cx.set_shared_state(indoc! {
+            "The ˇquick brown\n"
+        })
+        .await;
+        cx.simulate_shared_keystrokes("v i w shift-y").await;
+        cx.shared_clipboard().await.assert_eq(indoc! {
+            "The quick brown\n"
         });
     }
 

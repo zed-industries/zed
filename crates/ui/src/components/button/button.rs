@@ -181,7 +181,7 @@ impl Button {
         self
     }
 
-    /// Binds a key combination to the button for keyboard shortcuts.
+    /// Display the keybinding that triggers the button action.
     pub fn key_binding(mut self, key_binding: impl Into<Option<KeyBinding>>) -> Self {
         self.key_binding = key_binding.into();
         self
@@ -474,9 +474,9 @@ impl ComponentPreview for Button {
                             .style(ButtonStyle::Tinted(TintColor::Accent)),
                     ),
                     single_example(
-                        "Negative",
-                        Button::new("tinted_negative", "Negative")
-                            .style(ButtonStyle::Tinted(TintColor::Negative)),
+                        "Error",
+                        Button::new("tinted_negative", "Error")
+                            .style(ButtonStyle::Tinted(TintColor::Error)),
                     ),
                     single_example(
                         "Warning",
@@ -484,9 +484,9 @@ impl ComponentPreview for Button {
                             .style(ButtonStyle::Tinted(TintColor::Warning)),
                     ),
                     single_example(
-                        "Positive",
-                        Button::new("tinted_positive", "Positive")
-                            .style(ButtonStyle::Tinted(TintColor::Positive)),
+                        "Success",
+                        Button::new("tinted_positive", "Success")
+                            .style(ButtonStyle::Tinted(TintColor::Success)),
                     ),
                 ],
             ),
@@ -527,8 +527,8 @@ impl ComponentPreview for Button {
                     ),
                     single_example(
                         "Tinted Icons",
-                        Button::new("icon_color", "Delete")
-                            .style(ButtonStyle::Tinted(TintColor::Negative))
+                        Button::new("icon_color", "Error")
+                            .style(ButtonStyle::Tinted(TintColor::Error))
                             .color(Color::Error)
                             .icon_color(Color::Error)
                             .icon(IconName::Trash)

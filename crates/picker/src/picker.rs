@@ -7,6 +7,7 @@ use gpui::{
     ViewContext, WindowContext,
 };
 use head::Head;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
 use ui::{prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing};
@@ -24,7 +25,7 @@ actions!(picker, [ConfirmCompletion]);
 
 /// ConfirmInput is an alternative editor action which - instead of selecting active picker entry - treats pickers editor input literally,
 /// performing some kind of action on it.
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Default)]
 pub struct ConfirmInput {
     pub secondary: bool,
 }
@@ -425,7 +426,7 @@ impl<D: PickerDelegate> Picker<D> {
         self.cancel(&menu::Cancel, cx);
     }
 
-    pub fn refresh_placeholder(&mut self, cx: &mut WindowContext<'_>) {
+    pub fn refresh_placeholder(&mut self, cx: &mut WindowContext) {
         match &self.head {
             Head::Editor(view) => {
                 let placeholder = self.delegate.placeholder_text(cx);
@@ -493,7 +494,7 @@ impl<D: PickerDelegate> Picker<D> {
         }
     }
 
-    pub fn set_query(&self, query: impl Into<Arc<str>>, cx: &mut WindowContext<'_>) {
+    pub fn set_query(&self, query: impl Into<Arc<str>>, cx: &mut WindowContext) {
         if let Head::Editor(ref editor) = &self.head {
             editor.update(cx, |editor, cx| {
                 editor.set_text(query, cx);

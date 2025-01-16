@@ -19,6 +19,7 @@ gpui.workspace = true
 menu.workspace = true
 picker.workspace = true
 project.workspace = true
+schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 ui.workspace = true

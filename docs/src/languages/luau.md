@@ -1,6 +1,6 @@
 # Luau
 
-[Luau](https://luau-lang.org/) is a fast, small, safe, gradually typed embeddable scripting language derived from Lua. Luau was developed by Roblox and available under the MIT license.
+[Luau](https://luau.org/) is a fast, small, safe, gradually typed, embeddable scripting language derived from Lua. Luau was developed by Roblox and is available under the MIT license.
 
 Luau language support in Zed is provided by the community-maintained [Luau extension](https://github.com/4teapo/zed-luau).
 Report issues to: [https://github.com/4teapo/zed-luau/issues](https://github.com/4teapo/zed-luau/issues)
@@ -33,7 +33,7 @@ Then add the following to your Zed `settings.json`:
       "formatter": {
         "external": {
           "command": "stylua",
-          "arguments": ["--stdin-filepath", "{buffer_path}", "-"]
+          "arguments": ["-"]
         }
       }
     }

@@ -27,7 +27,6 @@ futures.workspace = true
 gpui.workspace = true
 http_client.workspace = true
 log.workspace = true
-once_cell.workspace = true
 paths.workspace = true
 parking_lot.workspace = true
 postage.workspace = true

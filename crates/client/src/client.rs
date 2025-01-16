@@ -1958,8 +1958,8 @@ mod tests {
         });
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
-        let (done_tx1, mut done_rx1) = smol::channel::unbounded();
-        let (done_tx2, mut done_rx2) = smol::channel::unbounded();
+        let (done_tx1, done_rx1) = smol::channel::unbounded();
+        let (done_tx2, done_rx2) = smol::channel::unbounded();
         AnyProtoClient::from(client.clone()).add_model_message_handler(
             move |model: Model<TestModel>, _: TypedEnvelope<proto::JoinProject>, mut cx| {
                 match model.update(&mut cx, |model, _| model.id).unwrap() {
@@ -2001,8 +2001,8 @@ mod tests {
 
         server.send(proto::JoinProject { project_id: 1 });
         server.send(proto::JoinProject { project_id: 2 });
-        done_rx1.next().await.unwrap();
-        done_rx2.next().await.unwrap();
+        done_rx1.recv().await.unwrap();
+        done_rx2.recv().await.unwrap();
     }
 
     #[gpui::test]
@@ -2020,7 +2020,7 @@ mod tests {
 
         let model = cx.new_model(|_| TestModel::default());
         let (done_tx1, _done_rx1) = smol::channel::unbounded();
-        let (done_tx2, mut done_rx2) = smol::channel::unbounded();
+        let (done_tx2, done_rx2) = smol::channel::unbounded();
         let subscription1 = client.add_message_handler(
             model.downgrade(),
             move |_, _: TypedEnvelope<proto::Ping>, _| {
@@ -2037,7 +2037,7 @@ mod tests {
             },
         );
         server.send(proto::Ping {});
-        done_rx2.next().await.unwrap();
+        done_rx2.recv().await.unwrap();
     }
 
     #[gpui::test]
@@ -2054,7 +2054,7 @@ mod tests {
         let server = FakeServer::for_client(user_id, &client, cx).await;
 
         let model = cx.new_model(|_| TestModel::default());
-        let (done_tx, mut done_rx) = smol::channel::unbounded();
+        let (done_tx, done_rx) = smol::channel::unbounded();
         let subscription = client.add_message_handler(
             model.clone().downgrade(),
             move |model: Model<TestModel>, _: TypedEnvelope<proto::Ping>, mut cx| {
@@ -2069,7 +2069,7 @@ mod tests {
             model.subscription = Some(subscription);
         });
         server.send(proto::Ping {});
-        done_rx.next().await.unwrap();
+        done_rx.recv().await.unwrap();
     }
 
     #[derive(Default)]

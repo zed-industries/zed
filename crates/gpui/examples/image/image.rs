@@ -1,9 +1,14 @@
+use std::fs;
 use std::path::PathBuf;
 use std::str::FromStr;
 use std::sync::Arc;
 
-use gpui::*;
-use std::fs;
+use anyhow::Result;
+use gpui::{
+    actions, div, img, prelude::*, px, rgb, size, App, AppContext, AssetSource, Bounds,
+    ImageSource, KeyBinding, Menu, MenuItem, Point, SharedString, SharedUri, TitlebarOptions,
+    ViewContext, WindowBounds, WindowContext, WindowOptions,
+};
 
 struct Assets {
     base: PathBuf,
@@ -55,7 +60,7 @@ impl RenderOnce for ImageContainer {
                 .size_full()
                 .gap_4()
                 .child(self.text)
-                .child(img(self.src).w(px(256.0)).h(px(256.0))),
+                .child(img(self.src).size(px(256.0))),
         )
     }
 }
@@ -75,7 +80,7 @@ impl Render for ImageShowcase {
             .justify_center()
             .items_center()
             .gap_8()
-            .bg(rgb(0xFFFFFF))
+            .bg(rgb(0xffffff))
             .child(
                 div()
                     .flex()

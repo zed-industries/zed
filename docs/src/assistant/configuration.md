@@ -10,6 +10,7 @@ The following providers are supported:
 - [Google AI](#google-ai) [^1]
 - [Ollama](#ollama)
 - [OpenAI](#openai)
+- [LM Studio](#lmstudio)
 
 To configure different providers, run `assistant: show configuration` in the command palette, or click on the hamburger menu at the top-right of the assistant panel and select "Configure".
 
@@ -235,6 +236,25 @@ Example configuration for using X.ai Grok with Zed:
   }
 }
 ```
+
+### LM Studio {#lmstudio}
+
+1. Download and install the latest version of LM Studio from https://lmstudio.ai/download
+2. In the app press ⌘/Ctrl + Shift + M and download at least one model, e.g. qwen2.5-coder-7b
+
+   You can also get models via the LM Studio CLI:
+
+   ```sh
+   lms get qwen2.5-coder-7b
+   ```
+
+3. Make sure the LM Studio API server by running:
+
+   ```sh
+   lms server start
+   ```
+
+Tip: Set [LM Studio as a login item](https://lmstudio.ai/docs/advanced/headless#run-the-llm-service-on-machine-login) to automate running the LM Studio server.
 
 #### Custom endpoints {#custom-endpoint}
 

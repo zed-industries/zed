@@ -1,11 +1,3 @@
-use std::{
-    iter::Peekable,
-    ops::{Deref, Range},
-    str::Chars,
-    sync::OnceLock,
-    time::Instant,
-};
-
 use anyhow::{anyhow, Result};
 use command_palette_hooks::CommandInterceptResult;
 use editor::{
@@ -13,13 +5,22 @@ use editor::{
     display_map::ToDisplayPoint,
     Bias, Editor, ToPoint,
 };
-use gpui::{actions, impl_actions, Action, AppContext, Global, ViewContext};
+use gpui::{
+    actions, impl_internal_actions, Action, AppContext, Global, ViewContext, WindowContext,
+};
 use language::Point;
 use multi_buffer::MultiBufferRow;
 use regex::Regex;
+use schemars::JsonSchema;
 use search::{BufferSearchBar, SearchOptions};
 use serde::Deserialize;
-use ui::WindowContext;
+use std::{
+    iter::Peekable,
+    ops::{Deref, Range},
+    str::Chars,
+    sync::OnceLock,
+    time::Instant,
+};
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, SaveIntent};
 
@@ -34,24 +35,24 @@ use crate::{
     Vim,
 };
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct GoToLine {
     range: CommandRange,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct YankCommand {
     range: CommandRange,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct WithRange {
     restore_selection: bool,
     range: CommandRange,
     action: WrappedAction,
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct WithCount {
     count: u32,
     action: WrappedAction,
@@ -61,19 +62,10 @@ pub struct WithCount {
 struct WrappedAction(Box<dyn Action>);
 
 actions!(vim, [VisualCommand, CountCommand]);
-impl_actions!(
+impl_internal_actions!(
     vim,
     [GoToLine, YankCommand, WithRange, WithCount, OnMatchingLines]
 );
-
-impl<'de> Deserialize<'de> for WrappedAction {
-    fn deserialize<D>(_: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        Err(serde::de::Error::custom("Cannot deserialize WrappedAction"))
-    }
-}
 
 impl PartialEq for WrappedAction {
     fn eq(&self, other: &Self) -> bool {
@@ -186,9 +178,12 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
 
         let previous_selections = vim
             .update_editor(cx, |_, editor, cx| {
-                let selections = action
-                    .restore_selection
-                    .then(|| editor.selections.disjoint_anchor_ranges());
+                let selections = action.restore_selection.then(|| {
+                    editor
+                        .selections
+                        .disjoint_anchor_ranges()
+                        .collect::<Vec<_>>()
+                });
                 editor.change_selections(None, cx, |s| {
                     let end = Point::new(range.end.0, s.buffer().line_len(range.end));
                     s.select_ranges([end..Point::new(range.start.0, 0)]);
@@ -421,7 +416,7 @@ impl VimCommand {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq)]
 enum Position {
     Line { row: u32, offset: i32 },
     Mark { name: char, offset: i32 },
@@ -465,7 +460,7 @@ impl Position {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Deserialize)]
+#[derive(Clone, Debug, PartialEq)]
 pub(crate) struct CommandRange {
     start: Position,
     end: Option<Position>,
@@ -875,7 +870,7 @@ fn generate_positions(string: &str, query: &str) -> Vec<usize> {
     positions
 }
 
-#[derive(Debug, PartialEq, Deserialize, Clone)]
+#[derive(Debug, PartialEq, Clone)]
 pub(crate) struct OnMatchingLines {
     range: CommandRange,
     search: String,

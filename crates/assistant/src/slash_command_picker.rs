@@ -27,8 +27,8 @@ enum SlashCommandEntry {
     Info(SlashCommandInfo),
     Advert {
         name: SharedString,
-        renderer: fn(&mut WindowContext<'_>) -> AnyElement,
-        on_confirm: fn(&mut WindowContext<'_>),
+        renderer: fn(&mut WindowContext) -> AnyElement,
+        on_confirm: fn(&mut WindowContext),
     },
 }
 

@@ -42,6 +42,21 @@ pub trait Summary: Clone {
     fn add_summary(&mut self, summary: &Self, cx: &Self::Context);
 }
 
+/// This type exists because we can't implement Summary for () without causing
+/// type resolution errors
+#[derive(Copy, Clone, PartialEq, Eq, Debug)]
+pub struct Unit;
+
+impl Summary for Unit {
+    type Context = ();
+
+    fn zero(_: &()) -> Self {
+        Unit
+    }
+
+    fn add_summary(&mut self, _: &Self, _: &()) {}
+}
+
 /// Each [`Summary`] type can have more than one [`Dimension`] type that it measures.
 ///
 /// You can use dimensions to seek to a specific location in the [`SumTree`]
@@ -760,6 +775,55 @@ impl<T: KeyedItem> SumTree<T> {
         } else {
             None
         }
+    }
+
+    #[inline]
+    pub fn contains(&self, key: &T::Key, cx: &<T::Summary as Summary>::Context) -> bool {
+        self.get(key, cx).is_some()
+    }
+
+    pub fn update<F, R>(
+        &mut self,
+        key: &T::Key,
+        cx: &<T::Summary as Summary>::Context,
+        f: F,
+    ) -> Option<R>
+    where
+        F: FnOnce(&mut T) -> R,
+    {
+        let mut cursor = self.cursor::<T::Key>(cx);
+        let mut new_tree = cursor.slice(key, Bias::Left, cx);
+        let mut result = None;
+        if Ord::cmp(key, &cursor.end(cx)) == Ordering::Equal {
+            let mut updated = cursor.item().unwrap().clone();
+            result = Some(f(&mut updated));
+            new_tree.push(updated, cx);
+            cursor.next(cx);
+        }
+        new_tree.append(cursor.suffix(cx), cx);
+        drop(cursor);
+        *self = new_tree;
+        result
+    }
+
+    pub fn retain<F: FnMut(&T) -> bool>(
+        &mut self,
+        cx: &<T::Summary as Summary>::Context,
+        mut predicate: F,
+    ) {
+        let mut new_map = SumTree::new(cx);
+
+        let mut cursor = self.cursor::<T::Key>(cx);
+        cursor.next(cx);
+        while let Some(item) = cursor.item() {
+            if predicate(&item) {
+                new_map.push(item.clone(), cx);
+            }
+            cursor.next(cx);
+        }
+        drop(cursor);
+
+        *self = new_map;
     }
 }
 

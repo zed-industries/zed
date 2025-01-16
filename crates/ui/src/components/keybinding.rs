@@ -16,13 +16,14 @@ pub struct KeyBinding {
 }
 
 impl KeyBinding {
+    /// Returns the highest precedence keybinding for an action. This is the last binding added to
+    /// the keymap. User bindings are added after built-in bindings so that they take precedence.
     pub fn for_action(action: &dyn Action, cx: &mut WindowContext) -> Option<Self> {
         let key_binding = cx.bindings_for_action(action).last().cloned()?;
         Some(Self::new(key_binding))
     }
 
-    // like for_action(), but lets you specify the context from which keybindings
-    // are matched.
+    /// Like `for_action`, but lets you specify the context from which keybindings are matched.
     pub fn for_action_in(
         action: &dyn Action,
         focus: &FocusHandle,

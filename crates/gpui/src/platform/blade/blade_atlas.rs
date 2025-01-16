@@ -214,6 +214,7 @@ impl BladeAtlasState {
             },
             array_layer_count: 1,
             mip_level_count: 1,
+            sample_count: 1,
             dimension: gpu::TextureDimension::D2,
             usage,
         });

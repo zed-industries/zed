@@ -4,9 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use editor::{
-    actions::ToggleOutline, scroll::Autoscroll, Anchor, AnchorRangeExt, Editor, EditorMode,
-};
+use editor::{scroll::Autoscroll, Anchor, AnchorRangeExt, Editor, EditorMode};
 use fuzzy::StringMatch;
 use gpui::{
     div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, HighlightStyle,
@@ -24,9 +22,22 @@ use workspace::{DismissDecision, ModalView};
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(OutlineView::register).detach();
+    zed_actions::outline::TOGGLE_OUTLINE
+        .set(|view, cx| {
+            let Ok(view) = view.downcast::<Editor>() else {
+                return;
+            };
+
+            toggle(view, &Default::default(), cx);
+        })
+        .ok();
 }
 
-pub fn toggle(editor: View<Editor>, _: &ToggleOutline, cx: &mut WindowContext) {
+pub fn toggle(
+    editor: View<Editor>,
+    _: &zed_actions::outline::ToggleOutline,
+    cx: &mut WindowContext,
+) {
     let outline = editor
         .read(cx)
         .buffer()
@@ -459,7 +470,7 @@ mod tests {
         workspace: &View<Workspace>,
         cx: &mut VisualTestContext,
     ) -> View<Picker<OutlineViewDelegate>> {
-        cx.dispatch_action(ToggleOutline);
+        cx.dispatch_action(zed_actions::outline::ToggleOutline);
         workspace.update(cx, |workspace, cx| {
             workspace
                 .active_modal::<OutlineView>(cx)

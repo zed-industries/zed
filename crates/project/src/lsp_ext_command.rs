@@ -1,4 +1,4 @@
-use crate::{lsp_command::LspCommand, lsp_store::LspStore};
+use crate::{lsp_command::LspCommand, lsp_store::LspStore, make_text_document_identifier};
 use anyhow::{Context, Result};
 use async_trait::async_trait;
 use gpui::{AppContext, AsyncAppContext, Model};
@@ -47,19 +47,21 @@ impl LspCommand for ExpandMacro {
     type LspRequest = LspExpandMacro;
     type ProtoRequest = proto::LspExtExpandMacro;
 
+    fn display_name(&self) -> &str {
+        "Expand macro"
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
         _: &Buffer,
         _: &Arc<LanguageServer>,
         _: &AppContext,
-    ) -> ExpandMacroParams {
-        ExpandMacroParams {
-            text_document: lsp::TextDocumentIdentifier {
-                uri: lsp::Url::from_file_path(path).unwrap(),
-            },
+    ) -> Result<ExpandMacroParams> {
+        Ok(ExpandMacroParams {
+            text_document: make_text_document_identifier(path)?,
             position: point_to_lsp(self.position),
-        }
+        })
     }
 
     async fn response_from_lsp(
@@ -173,19 +175,23 @@ impl LspCommand for OpenDocs {
     type LspRequest = LspOpenDocs;
     type ProtoRequest = proto::LspExtOpenDocs;
 
+    fn display_name(&self) -> &str {
+        "Open docs"
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
         _: &Buffer,
         _: &Arc<LanguageServer>,
         _: &AppContext,
-    ) -> OpenDocsParams {
-        OpenDocsParams {
+    ) -> Result<OpenDocsParams> {
+        Ok(OpenDocsParams {
             text_document: lsp::TextDocumentIdentifier {
                 uri: lsp::Url::from_file_path(path).unwrap(),
             },
             position: point_to_lsp(self.position),
-        }
+        })
     }
 
     async fn response_from_lsp(
@@ -286,16 +292,20 @@ impl LspCommand for SwitchSourceHeader {
     type LspRequest = LspSwitchSourceHeader;
     type ProtoRequest = proto::LspExtSwitchSourceHeader;
 
+    fn display_name(&self) -> &str {
+        "Switch source header"
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
         _: &Buffer,
         _: &Arc<LanguageServer>,
         _: &AppContext,
-    ) -> SwitchSourceHeaderParams {
-        SwitchSourceHeaderParams(lsp::TextDocumentIdentifier {
-            uri: lsp::Url::from_file_path(path).unwrap(),
-        })
+    ) -> Result<SwitchSourceHeaderParams> {
+        Ok(SwitchSourceHeaderParams(make_text_document_identifier(
+            path,
+        )?))
     }
 
     async fn response_from_lsp(

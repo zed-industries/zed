@@ -33,7 +33,7 @@ enum Transform {
 }
 
 #[derive(Debug, Clone)]
-pub(crate) struct Inlay {
+pub struct Inlay {
     pub(crate) id: InlayId,
     pub position: Anchor,
     pub text: text::Rope,
@@ -569,6 +569,7 @@ impl InlayMap {
                 probe
                     .position
                     .cmp(&inlay_to_insert.position, &snapshot.buffer)
+                    .then(std::cmp::Ordering::Less)
             }) {
                 Ok(ix) | Err(ix) => {
                     self.inlays.insert(ix, inlay_to_insert);

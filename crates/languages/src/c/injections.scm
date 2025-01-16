@@ -1,7 +1,7 @@
 (preproc_def
-    value: (preproc_arg) @content
-    (#set! "language" "c"))
+    value: (preproc_arg) @injection.content
+    (#set! injection.language "c"))
 
 (preproc_function_def
-    value: (preproc_arg) @content
-    (#set! "language" "c"))
+    value: (preproc_arg) @injection.content
+    (#set! injection.language "c"))
