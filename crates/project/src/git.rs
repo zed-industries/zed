@@ -15,11 +15,6 @@ pub enum StatusAction {
 }
 
 pub struct GitState {
-    // optional composed string
-    // optional contextual string for current collaborators
-    // methods for adding or triming out collaborator string
-    // one or more optional suggested messages
-    // arrow up/down
     /// The current commit message being composed.
     pub commit_message: Option<SharedString>,
 
