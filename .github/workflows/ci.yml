@@ -20,7 +20,6 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
-  RUSTFLAGS: "-D warnings"
 
 jobs:
   migration_checks:
@@ -101,6 +100,11 @@ jobs:
         with:
           clean: false
 
+      - name: Configure CI
+        run: |
+          mkdir -p ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+
       - name: cargo clippy
         run: ./script/clippy
 
@@ -132,6 +136,11 @@ jobs:
           cargo build -p remote_server
           script/check-rust-livekit-macos
 
+      # Since the macOS runners are stateful, so we need to remove the config file to prevent potential bug.
+      - name: Clean CI config file
+        if: always()
+        run: rm -rf ./../.cargo
+
   linux_tests:
     timeout-minutes: 60
     name: (Linux) Run Clippy and tests
@@ -156,6 +165,11 @@ jobs:
       - name: Install Linux dependencies
         run: ./script/linux
 
+      - name: Configure CI
+        run: |
+          mkdir -p ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+
       - name: cargo clippy
         run: ./script/clippy
 
@@ -166,6 +180,14 @@ jobs:
         run: |
           cargo build -p zed
           cargo check -p workspace
+
+      # Even the Linux runner is not stateful, in theory there is no need to do this cleanup.
+      # But, to avoid potential issues in the future if we choose to use a stateful Linux runner and forget to add code
+      # to clean up the config file, I’ve included the cleanup code here as a precaution.
+      # While it’s not strictly necessary at this moment, I believe it’s better to err on the side of caution.
+      - name: Clean CI config file
+        if: always()
+        run: rm -rf ./../.cargo
 
   build_remote_server:
     timeout-minutes: 60
@@ -191,8 +213,17 @@ jobs:
       - name: Install Clang & Mold
         run: ./script/remote-server && ./script/install-mold 2.34.0
 
+      - name: Configure CI
+        run: |
+          mkdir -p ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+
       - name: Build Remote Server
         run: cargo build -p remote_server
+
+      - name: Clean CI config file
+        if: always()
+        run: rm -rf ./../.cargo
 
   # todo(windows): Actually run the tests
   windows_tests:
@@ -215,12 +246,22 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-provider: "github"
 
+      - name: Configure CI
+        run: |
+          mkdir -p ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+
       - name: cargo clippy
         # Windows can't run shell scripts, so we need to use `cargo xtask`.
         run: cargo xtask clippy
 
       - name: Build Zed
         run: cargo build
+
+      # Since the Windows runners are stateful, so we need to remove the config file to prevent potential bug.
+      - name: Clean CI config file
+        if: always()
+        run: Remove-Item -Path "./../.cargo" -Recurse -Force
 
   bundle-mac:
     timeout-minutes: 120
