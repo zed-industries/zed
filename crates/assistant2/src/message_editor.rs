@@ -11,7 +11,7 @@ use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::LanguageModelSelector;
 use rope::Point;
 use settings::Settings;
-use theme::{get_ui_font_size, ThemeSettings};
+use theme::ThemeSettings;
 use ui::{
     prelude::*, ButtonLike, ElevationIndex, KeyBinding, PopoverMenu, PopoverMenuHandle, Switch,
 };
@@ -313,7 +313,11 @@ impl Render for MessageEditor {
                             .anchor(gpui::Corner::BottomLeft)
                             .offset(gpui::Point {
                                 x: px(0.0),
-                                y: (-get_ui_font_size(cx) * 2) - px(4.0),
+                                y: px(-ThemeSettings::clamp_font_size(
+                                    ThemeSettings::get_global(cx).ui_font_size,
+                                )
+                                .0 * 2.0)
+                                    - px(4.0),
                             })
                             .with_handle(self.inline_context_picker_menu_handle.clone()),
                     )
