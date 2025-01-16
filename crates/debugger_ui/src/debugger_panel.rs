@@ -194,7 +194,7 @@ impl DebugPanel {
                             cx.notify();
                         }
                         project::Event::SetDebugClient(set_debug_client) => {
-                            let _res = this.handle_set_debug_panel_item(set_debug_client, cx);
+                            this.handle_set_debug_panel_item(set_debug_client, cx);
                         }
                         _ => {}
                     }

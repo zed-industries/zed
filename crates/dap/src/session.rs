@@ -97,4 +97,8 @@ impl DebugSession {
     pub fn clients(&self) -> impl Iterator<Item = Arc<DebugAdapterClient>> + '_ {
         self.clients.values().cloned()
     }
+
+    pub fn client_ids(&self) -> impl Iterator<Item = DebugAdapterClientId> + '_ {
+        self.clients.keys().cloned()
+    }
 }

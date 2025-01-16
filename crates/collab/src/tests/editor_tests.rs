@@ -2466,6 +2466,7 @@ async fn test_add_breakpoints(cx_a: &mut TestAppContext, cx_b: &mut TestAppConte
         .unwrap()
         .downcast::<Editor>()
         .unwrap();
+
     cx_a.run_until_parked();
     cx_b.run_until_parked();
 

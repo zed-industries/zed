@@ -75,7 +75,7 @@ pub enum DapStoreEvent {
         message: Message,
     },
     Notification(String),
-    BreakpointsChanged,
+    BreakpointsChanged(ProjectPath),
     ActiveDebugLineChanged,
     SetDebugPanelItem(SetDebuggerPanelItem),
     UpdateDebugAdapter(UpdateDebugAdapter),
@@ -278,7 +278,7 @@ impl DapStore {
     pub fn client_by_id(
         &self,
         client_id: &DebugAdapterClientId,
-        cx: &mut ModelContext<Self>,
+        cx: &ModelContext<Self>,
     ) -> Option<(Model<DebugSession>, Arc<DebugAdapterClient>)> {
         let session = self.session_by_client_id(client_id)?;
         let client = session.read(cx).client_by_id(client_id)?;
@@ -1687,10 +1687,10 @@ impl DapStore {
             if breakpoints.is_empty() {
                 store.breakpoints.remove(&project_path);
             } else {
-                store.breakpoints.insert(project_path, breakpoints);
+                store.breakpoints.insert(project_path.clone(), breakpoints);
             }
 
-            cx.emit(DapStoreEvent::BreakpointsChanged);
+            cx.emit(DapStoreEvent::BreakpointsChanged(project_path));
 
             cx.notify();
         })
@@ -1797,11 +1797,9 @@ impl DapStore {
         &mut self,
         project_path: &ProjectPath,
         mut breakpoint: Breakpoint,
-        buffer_path: PathBuf,
-        buffer_snapshot: BufferSnapshot,
         edit_action: BreakpointEditAction,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<()>> {
+    ) {
         let upstream_client = self.upstream_client();
 
         let breakpoint_set = self.breakpoints.entry(project_path.clone()).or_default();
@@ -1840,9 +1838,8 @@ impl DapStore {
             self.breakpoints.remove(project_path);
         }
 
+        cx.emit(DapStoreEvent::BreakpointsChanged(project_path.clone()));
         cx.notify();
-
-        self.send_changed_breakpoints(project_path, buffer_path, buffer_snapshot, cx)
     }
 
     pub fn send_breakpoints(
@@ -1851,7 +1848,7 @@ impl DapStore {
         absolute_file_path: Arc<Path>,
         mut breakpoints: Vec<SourceBreakpoint>,
         ignore: bool,
-        cx: &mut ModelContext<Self>,
+        cx: &ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some((_, client)) = self.client_by_id(client_id, cx) else {
             return Task::ready(Err(anyhow!("Could not find client: {:?}", client_id)));
@@ -1889,9 +1886,9 @@ impl DapStore {
     pub fn send_changed_breakpoints(
         &self,
         project_path: &ProjectPath,
-        buffer_path: PathBuf,
+        absolute_path: PathBuf,
         buffer_snapshot: BufferSnapshot,
-        cx: &mut ModelContext<Self>,
+        cx: &ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(local_store) = self.as_local() else {
             return Task::ready(Err(anyhow!("cannot start session on remote side")));
@@ -1913,7 +1910,7 @@ impl DapStore {
             for client in session.clients().collect::<Vec<_>>() {
                 tasks.push(self.send_breakpoints(
                     &client.id(),
-                    Arc::from(buffer_path.clone()),
+                    Arc::from(absolute_path.clone()),
                     source_breakpoints.clone(),
                     ignore_breakpoints,
                     cx,

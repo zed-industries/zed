@@ -1434,29 +1434,11 @@ impl Project {
             return;
         };
 
-        let Some((project_path, buffer_path)) = maybe!({
-            let project_path = buffer.read(cx).project_path(cx)?;
-            let worktree = self.worktree_for_id(project_path.clone().worktree_id, cx)?;
-            Some((
-                project_path.clone(),
-                worktree.read(cx).absolutize(&project_path.path).ok()?,
-            ))
-        }) else {
-            return;
-        };
-
-        self.dap_store.update(cx, |store, cx| {
-            store
-                .toggle_breakpoint_for_buffer(
-                    &project_path,
-                    breakpoint,
-                    buffer_path,
-                    buffer.read(cx).snapshot(),
-                    edit_action,
-                    cx,
-                )
-                .detach_and_log_err(cx);
-        });
+        if let Some(project_path) = buffer.read(cx).project_path(cx) {
+            self.dap_store.update(cx, |store, cx| {
+                store.toggle_breakpoint_for_buffer(&project_path, breakpoint, edit_action, cx)
+            });
+        }
     }
 
     #[cfg(any(test, feature = "test-support"))]
@@ -2536,8 +2518,36 @@ impl Project {
                     message: message.clone(),
                 });
             }
-            DapStoreEvent::BreakpointsChanged => {
-                cx.notify();
+            DapStoreEvent::BreakpointsChanged(project_path) => {
+                cx.notify(); // so the UI updates
+
+                let buffer_id = self
+                    .buffer_store
+                    .read(cx)
+                    .buffer_id_for_project_path(&project_path);
+
+                let Some(buffer_id) = buffer_id else {
+                    return;
+                };
+
+                let Some(buffer) = self.buffer_for_id(*buffer_id, cx) else {
+                    return;
+                };
+
+                let Some(absolute_path) = self.absolute_path(project_path, cx) else {
+                    return;
+                };
+
+                self.dap_store.update(cx, |store, cx| {
+                    store
+                        .send_changed_breakpoints(
+                            project_path,
+                            absolute_path,
+                            buffer.read(cx).snapshot(),
+                            cx,
+                        )
+                        .detach_and_log_err(cx);
+                });
             }
             DapStoreEvent::ActiveDebugLineChanged => {
                 cx.emit(Event::ActiveDebugLineChanged);
