@@ -373,7 +373,6 @@ name = "assistant"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assets",
  "assistant_settings",
  "assistant_slash_command",
  "assistant_tool",
@@ -395,8 +394,6 @@ dependencies = [
  "fuzzy",
  "globset",
  "gpui",
- "handlebars 4.5.0",
- "heed",
  "html_to_markdown",
  "http_client",
  "indexed_docs",
@@ -418,6 +415,7 @@ dependencies = [
  "picker",
  "pretty_assertions",
  "project",
+ "prompt_library",
  "proto",
  "rand 0.8.5",
  "regex",
@@ -456,7 +454,6 @@ name = "assistant2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "assets",
  "assistant_settings",
  "assistant_tool",
  "async-watch",
@@ -474,7 +471,6 @@ dependencies = [
  "futures 0.3.31",
  "fuzzy",
  "gpui",
- "handlebars 4.5.0",
  "html_to_markdown",
  "http_client",
  "indoc",
@@ -490,9 +486,9 @@ dependencies = [
  "multi_buffer",
  "ordered-float 2.10.1",
  "parking_lot",
- "paths",
  "picker",
  "project",
+ "prompt_library",
  "proto",
  "rand 0.8.5",
  "rope",
@@ -9818,6 +9814,31 @@ dependencies = [
  "parking_lot",
  "protobuf",
  "thiserror 1.0.69",
+]
+
+[[package]]
+name = "prompt_library"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assets",
+ "chrono",
+ "collections",
+ "fs",
+ "futures 0.3.31",
+ "fuzzy",
+ "gpui",
+ "handlebars 4.5.0",
+ "heed",
+ "language",
+ "log",
+ "parking_lot",
+ "paths",
+ "rope",
+ "serde",
+ "text",
+ "util",
+ "uuid",
 ]
 
 [[package]]

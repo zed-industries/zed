@@ -2,7 +2,6 @@
 mod context_tests;
 
 use crate::{
-    prompts::PromptBuilder,
     slash_command::{file_command::FileCommandMetadata, SlashCommandLine},
     AssistantEdit, AssistantPatch, AssistantPatchStatus, MessageId, MessageStatus,
 };
@@ -22,6 +21,7 @@ use gpui::{
     AppContext, Context as _, EventEmitter, Model, ModelContext, RenderImage, SharedString,
     Subscription, Task,
 };
+use prompt_library::PromptBuilder;
 
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{

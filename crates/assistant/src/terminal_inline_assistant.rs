@@ -1,6 +1,5 @@
 use crate::{
-    humanize_token_count, prompts::PromptBuilder, AssistantPanel, AssistantPanelEvent, RequestType,
-    DEFAULT_CONTEXT_LINES,
+    humanize_token_count, AssistantPanel, AssistantPanelEvent, RequestType, DEFAULT_CONTEXT_LINES,
 };
 use anyhow::{Context as _, Result};
 use assistant_settings::AssistantSettings;
@@ -22,6 +21,7 @@ use language_model::{
 };
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use language_models::report_assistant_event;
+use prompt_library::PromptBuilder;
 use settings::{update_settings_file, Settings};
 use std::{
     cmp,
