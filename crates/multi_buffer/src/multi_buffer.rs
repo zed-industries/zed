@@ -6264,7 +6264,7 @@ impl<'a> Iterator for MultiBufferRows<'a> {
 
     fn next(&mut self) -> Option<Self::Item> {
         if self.is_empty && self.point.row == 0 {
-            self.point.row += 1;
+            self.point += Point::new(1, 0);
             return Some(RowInfo {
                 buffer_row: Some(0),
                 diff_status: None,
@@ -6272,11 +6272,13 @@ impl<'a> Iterator for MultiBufferRows<'a> {
         }
 
         let mut region = self.cursor.region()?;
-        if self.point >= region.range.end {
+        while self.point >= region.range.end {
             self.cursor.next();
             let next_region = self.cursor.region();
             if next_region.is_some() || self.point > region.range.end {
                 region = next_region?;
+            } else {
+                break;
             }
         }
 
