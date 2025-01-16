@@ -15471,9 +15471,13 @@ impl Editor {
     fn refresh_diagnostics(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
         let project = self.project.as_ref().map(Model::downgrade);
         let buffer = self.buffer.read(cx);
-        let cursor_position = self.selections.newest_anchor().head();
-        let (cursor_buffer, cursor_buffer_position) =
-            buffer.text_anchor_for_position(cursor_position, cx)?;
+        let cursor_position = self.selections.newest_anchor().clone();
+        let (cursor_buffer, _) = buffer.text_anchor_for_position(cursor_position.start, cx)?;
+        let (end_buffer, _) = buffer.text_anchor_for_position(cursor_position.end, cx)?;
+
+        if cursor_buffer != end_buffer {
+            return None;
+        }
 
         if self.tasks_pull_diagnostics_task.is_some() {
             log::warn!(
@@ -15488,12 +15492,18 @@ impl Editor {
                 .await;
 
             let Some(project) = project.and_then(|p| p.upgrade()) else {
+                this.update(&mut cx, |editor, cx| {
+                    editor.tasks_pull_diagnostics_task = None;
+                    cx.notify();
+                })
+                .log_err();
                 return;
             };
 
             let diagnostics = if let Some(diagnostics) = cx
-                .update(|cx| project.pull_diagnostics(&cursor_buffer, cursor_buffer_position, cx))
+                .update(|cx| project.pull_diagnostics(&cursor_buffer, cx))
                 .ok()
+                .flatten()
             {
                 diagnostics.await.log_err()
             } else {
@@ -15507,15 +15517,15 @@ impl Editor {
                     } else {
                         editor.refresh_active_diagnostics(cx);
                     }
-                    cx.notify();
                 })
                 .log_err();
             }
 
-            this.update(&mut cx, |editor, _| {
+            this.update(&mut cx, |editor, cx| {
                 editor.tasks_pull_diagnostics_task = None;
+                cx.notify();
             })
-            .ok();
+            .log_err();
         }));
         None
     }
@@ -19909,9 +19919,8 @@ pub trait DiagnosticsProvider {
     fn pull_diagnostics(
         &self,
         buffer: &Model<Buffer>,
-        position: text::Anchor,
         cx: &mut AppContext,
-    ) -> Task<Result<Vec<Option<LspDiagnostics>>>>;
+    ) -> Option<Task<Result<Vec<Option<LspDiagnostics>>>>>;
 
     fn update_diagnostics(
         &self,
@@ -20364,12 +20373,11 @@ impl DiagnosticsProvider for Model<Project> {
     fn pull_diagnostics(
         &self,
         buffer: &Model<Buffer>,
-        position: text::Anchor,
         cx: &mut AppContext,
-    ) -> Task<Result<Vec<Option<LspDiagnostics>>>> {
-        self.update(cx, |project, cx| {
-            project.document_diagnostics(buffer, position, cx)
-        })
+    ) -> Option<Task<Result<Vec<Option<LspDiagnostics>>>>> {
+        Some(self.update(cx, |project, cx| {
+            project.document_diagnostics(buffer.clone(), cx)
+        }))
     }
 
     fn update_diagnostics(

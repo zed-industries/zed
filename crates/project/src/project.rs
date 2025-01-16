@@ -3662,12 +3662,11 @@ impl Project {
 
     pub fn document_diagnostics(
         &mut self,
-        buffer_handle: &Model<Buffer>,
-        position: Anchor,
+        buffer_handle: Model<Buffer>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Vec<Option<LspDiagnostics>>>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.document_diagnostic(buffer_handle, position, cx)
+            lsp_store.document_diagnostic(buffer_handle, cx)
         })
     }
     
