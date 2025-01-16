@@ -993,11 +993,11 @@ impl ZetaInlineCompletionProvider {
 
 impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvider {
     fn name() -> &'static str {
-        "zeta"
+        "zed-predict"
     }
 
     fn display_name() -> &'static str {
-        "Zeta"
+        "Zed Predict"
     }
 
     fn show_completions_in_menu() -> bool {
