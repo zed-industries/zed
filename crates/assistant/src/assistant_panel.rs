@@ -1969,6 +1969,8 @@ impl ContextEditor {
                                 );
                             });
 
+                            dbg!(&start, &end);
+
                             Crease::inline(
                                 start..end,
                                 placeholder,
@@ -2067,6 +2069,8 @@ impl ContextEditor {
                             let end = buffer
                                 .anchor_in_excerpt(excerpt_id, command.source_range.end)
                                 .unwrap();
+
+                            dbg!(&start, &end);
                             Crease::inline(start..end, placeholder, render_toggle, render_trailer)
                         }),
                         cx,

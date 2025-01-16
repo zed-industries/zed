@@ -1,16 +1,26 @@
+use std::collections::BTreeSet;
+use std::ffi::OsStr;
+use std::iter;
+use std::ops::Range;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use editor::Editor;
+use editor::actions::FoldAt;
+use editor::display_map::{Crease, FoldId};
+use editor::{Anchor, Editor, FoldPlaceholder, ToPoint};
 use file_icons::FileIcons;
 use fuzzy::PathMatch;
 use gpui::{
-    AppContext, DismissEvent, FocusHandle, FocusableView, Stateful, Task, View, WeakModel, WeakView,
+    AnyElement, AppContext, DismissEvent, Empty, FocusHandle, FocusableView, Stateful, Task, View,
+    WeakModel, WeakView,
 };
+use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
-use ui::{prelude::*, ListItem, Tooltip};
+use rope::Point;
+use text::Bias;
+use ui::{prelude::*, ButtonLike, Disclosure, ElevationIndex, ListItem, Tooltip};
 use util::ResultExt as _;
 use workspace::{notifications::NotifyResultExt, Workspace};
 
@@ -202,6 +212,16 @@ impl PickerDelegate for FileContextPickerDelegate {
             return;
         };
 
+        let Some(file_name) = mat
+            .path
+            .file_name()
+            .map(|os_str| os_str.to_string_lossy().into_owned())
+        else {
+            return;
+        };
+
+        let full_path = mat.path.display().to_string();
+
         let project_path = ProjectPath {
             worktree_id: WorktreeId::from_usize(mat.worktree_id),
             path: mat.path.clone(),
@@ -213,7 +233,76 @@ impl PickerDelegate for FileContextPickerDelegate {
 
         editor.update(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
-                editor.insert(&(*project_path.path).display().to_string(), cx);
+                let start_anchors = {
+                    let snapshot = editor.snapshot(cx);
+                    let (excerpt_id, _buffer_id, _) =
+                        snapshot.buffer_snapshot.as_singleton().unwrap();
+                    let excerpt_id = *excerpt_id;
+                    editor
+                        .selections
+                        .all::<Point>(cx)
+                        .into_iter()
+                        .map(|selection| {
+                            let anchor = snapshot
+                                .buffer_snapshot
+                                .anchor_in_excerpt(
+                                    excerpt_id,
+                                    snapshot
+                                        .buffer_snapshot
+                                        .anchor_at(selection.head(), Bias::Left)
+                                        .text_anchor,
+                                )
+                                .unwrap();
+                        })
+                        .collect::<Vec<_>>()
+                };
+
+                editor.insert(&full_path, cx);
+
+                let end_anchors = {
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    editor
+                        .selections
+                        .all::<Point>(cx)
+                        .into_iter()
+                        .map(|selection| snapshot.anchor_at(selection.head(), Bias::Left))
+                        .collect::<Vec<_>>()
+                };
+
+                let placeholder = FoldPlaceholder {
+                    render: render_fold_icon_button(
+                        cx.view().downgrade(),
+                        IconName::PocketKnife,
+                        file_name.into(),
+                    ),
+                    ..Default::default()
+                };
+
+                let render_trailer = move |_row, _unfold, _cx: &mut WindowContext| Empty.into_any();
+
+                let buffer = editor.buffer().read(cx).snapshot(cx);
+                let mut rows_to_fold = BTreeSet::new();
+                let crease_iter =
+                    start_anchors
+                        .into_iter()
+                        .zip(end_anchors.into_iter())
+                        .map(|(start, end)| {
+                            dbg!(&start, &end);
+                            rows_to_fold.insert(MultiBufferRow(start.to_point(&buffer).row));
+
+                            Crease::inline(
+                                start..end,
+                                placeholder.clone(),
+                                fold_toggle("tool-use"),
+                                render_trailer,
+                            )
+                        });
+
+                let crease_ids = editor.insert_creases(crease_iter, cx);
+
+                for buffer_row in rows_to_fold {
+                    editor.fold_at(&FoldAt { buffer_row }, cx);
+                }
             });
         });
 
@@ -349,4 +438,47 @@ pub fn render_file_context_entry(
                 .tooltip(move |cx| Tooltip::text(format!("in {dir_name}"), cx))
             }
         })
+}
+
+fn render_fold_icon_button(
+    editor: WeakView<Editor>,
+    icon: IconName,
+    label: SharedString,
+) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut WindowContext) -> AnyElement> {
+    Arc::new(move |fold_id, fold_range, _cx| {
+        let editor = editor.clone();
+        ButtonLike::new(fold_id)
+            .style(ButtonStyle::Filled)
+            .layer(ElevationIndex::ElevatedSurface)
+            .child(Icon::new(icon))
+            .child(Label::new(label.clone()).single_line())
+            // .on_click(move |_, cx| {
+            //     editor
+            //         .update(cx, |editor, cx| {
+            //             let buffer_start = fold_range
+            //                 .start
+            //                 .to_point(&editor.buffer().read(cx).read(cx));
+            //             let buffer_row = MultiBufferRow(buffer_start.row);
+            //             editor.unfold_at(&UnfoldAt { buffer_row }, cx);
+            //         })
+            //         .ok();
+            // })
+            .into_any_element()
+    })
+}
+
+fn fold_toggle(
+    name: &'static str,
+) -> impl Fn(
+    MultiBufferRow,
+    bool,
+    Arc<dyn Fn(bool, &mut WindowContext) + Send + Sync>,
+    &mut WindowContext,
+) -> AnyElement {
+    move |row, is_folded, fold, _cx| {
+        Disclosure::new((name, row.0 as u64), !is_folded)
+            .toggle_state(is_folded)
+            .on_click(move |_e, cx| fold(!is_folded, cx))
+            .into_any_element()
+    }
 }
