@@ -1468,6 +1468,13 @@ struct ReferenceExcerpt {
     expanded_diff_hunks: Vec<text::Anchor>,
 }
 
+#[derive(Debug)]
+struct ReferenceRegion {
+    range: Range<usize>,
+    buffer_start: Option<Point>,
+    status: Option<DiffHunkStatus>,
+}
+
 impl ReferenceMultibuffer {
     fn expand_excerpts(&mut self, excerpts: &HashSet<ExcerptId>, line_count: u32, cx: &AppContext) {
         if line_count == 0 {
@@ -1564,22 +1571,22 @@ impl ReferenceMultibuffer {
     }
 
     fn expected_content(&self, cx: &AppContext) -> (String, Vec<RowInfo>, HashSet<MultiBufferRow>) {
-        let mut expected_text = String::new();
-        let mut expected_buffer_rows = Vec::new();
-        let mut expected_excerpt_boundary_rows = HashSet::default();
+        let mut text = String::new();
+        let mut regions = Vec::<ReferenceRegion>::new();
+        let mut excerpt_boundary_rows = HashSet::default();
         for excerpt in &self.excerpts {
-            expected_excerpt_boundary_rows
-                .insert(MultiBufferRow(expected_buffer_rows.len() as u32));
+            excerpt_boundary_rows.insert(MultiBufferRow(text.matches('\n').count() as u32));
             let buffer = excerpt.buffer.read(cx);
             let buffer_range = excerpt.range.to_offset(buffer);
             let change_set = self.change_sets.get(&buffer.remote_id()).unwrap().read(cx);
             let diff = change_set.diff_to_buffer.clone();
             let base_buffer = change_set.base_text.as_ref().unwrap();
 
-            let mut start = buffer_range.start;
-            let mut insertion_end_point = Point::zero();
-
-            for hunk in diff.hunks_intersecting_range(excerpt.range.clone(), buffer) {
+            let mut offset = buffer_range.start;
+            let mut hunks = diff
+                .hunks_intersecting_range(excerpt.range.clone(), buffer)
+                .peekable();
+            while let Some(hunk) = hunks.next() {
                 if !excerpt
                     .expanded_diff_hunks
                     .contains(&hunk.buffer_range.start)
@@ -1587,33 +1594,32 @@ impl ReferenceMultibuffer {
                     continue;
                 }
 
-                let hunk_offset = hunk.buffer_range.start.to_offset(buffer);
-                let hunk_end = hunk.buffer_range.end.to_offset(buffer);
-                if hunk_offset >= buffer_range.end
-                    || hunk_end < buffer_range.start
+                // Ignore hunks that are outside the excerpt range.
+                let mut hunk_range = hunk.buffer_range.to_offset(buffer);
+                hunk_range.end = hunk_range.end.min(buffer_range.end);
+                if hunk_range.start >= buffer_range.end
+                    || hunk_range.end < buffer_range.start
                     || buffer_range.is_empty()
                 {
                     continue;
                 }
 
-                if hunk_offset >= start {
+                // If the diff has not been recalculated, hunks may overlap.
+                if let Some(next_hunk) = hunks.peek() {
+                    hunk_range.end = hunk_range
+                        .end
+                        .min(next_hunk.buffer_range.start.to_offset(buffer));
+                }
+
+                if hunk_range.start >= offset {
                     // Add the buffer text before the hunk
-                    expected_text.extend(buffer.text_for_range(start..hunk_offset));
-                    let mut start_point = buffer.offset_to_point(start);
-                    if start_point.column != 0 {
-                        start_point.row += 1;
-                    }
-                    let end_point = buffer.offset_to_point(hunk_offset);
-                    for row in start_point.row..end_point.row {
-                        expected_buffer_rows.push(RowInfo {
-                            buffer_row: Some(row),
-                            diff_status: if Point::new(row, 0) < insertion_end_point {
-                                Some(DiffHunkStatus::Added)
-                            } else {
-                                None
-                            },
-                        });
-                    }
+                    let len = text.len();
+                    text.extend(buffer.text_for_range(offset..hunk_range.start));
+                    regions.push(ReferenceRegion {
+                        range: len..text.len(),
+                        buffer_start: Some(buffer.offset_to_point(offset)),
+                        status: None,
+                    });
 
                     // Add the deleted text for the hunk.
                     if !hunk.diff_base_byte_range.is_empty() {
@@ -1623,70 +1629,77 @@ impl ReferenceMultibuffer {
                         if !base_text.ends_with('\n') {
                             base_text.push('\n');
                         }
-                        let partial_first_line = !expected_text.ends_with('\n');
-                        expected_text.push_str(&base_text);
-                        for (ix, _) in base_text.matches('\n').enumerate() {
-                            if partial_first_line && ix == 0 {
-                                expected_buffer_rows.push(dbg!(RowInfo {
-                                    buffer_row: Some(end_point.row),
-                                    diff_status: None,
-                                }));
-                                continue;
-                            }
-                            expected_buffer_rows.push(RowInfo {
-                                buffer_row: None,
-                                diff_status: Some(DiffHunkStatus::Removed),
-                            });
-                        }
+                        let len = text.len();
+                        text.push_str(&base_text);
+                        regions.push(ReferenceRegion {
+                            range: len..text.len(),
+                            buffer_start: None,
+                            status: Some(DiffHunkStatus::Removed),
+                        });
                     }
 
-                    start = hunk_offset;
+                    offset = hunk_range.start;
                 }
 
-                insertion_end_point = buffer.offset_to_point(
-                    hunk.buffer_range
-                        .end
-                        .to_offset(&buffer)
-                        .min(buffer_range.end),
-                );
+                // Add the inserted text for the hunk.
+                if hunk_range.end > offset {
+                    let len = text.len();
+                    text.extend(buffer.text_for_range(offset..hunk_range.end));
+                    regions.push(ReferenceRegion {
+                        range: len..text.len(),
+                        buffer_start: Some(buffer.offset_to_point(offset)),
+                        status: Some(DiffHunkStatus::Added),
+                    });
+                    offset = hunk_range.end;
+                }
             }
 
-            expected_text.extend(buffer.text_for_range(start..buffer_range.end));
-            expected_text.push('\n');
-            let mut start_point = buffer.offset_to_point(start);
-            if start_point.column != 0 {
-                start_point.row += 1;
-            }
-            let buffer_row_range = start_point.row..=buffer.offset_to_point(buffer_range.end).row;
-            for row in buffer_row_range {
-                expected_buffer_rows.push(RowInfo {
-                    buffer_row: Some(row),
-                    diff_status: if Point::new(row, 0) < insertion_end_point {
-                        Some(DiffHunkStatus::Added)
-                    } else {
-                        None
-                    },
+            // Add the buffer text for the rest of the excerpt.
+            if buffer_range.end > offset {
+                let len = text.len();
+                text.extend(buffer.text_for_range(offset..buffer_range.end));
+                text.push('\n');
+                regions.push(ReferenceRegion {
+                    range: len..text.len(),
+                    buffer_start: Some(buffer.offset_to_point(offset)),
+                    status: None,
                 });
             }
         }
+
         // Remove final trailing newline.
-        if !self.excerpts.is_empty() {
-            expected_text.pop();
-        }
-
-        // Always report one buffer row
-        if expected_buffer_rows.is_empty() {
-            expected_buffer_rows.push(RowInfo {
-                buffer_row: Some(0),
-                diff_status: None,
+        if self.excerpts.is_empty() {
+            regions.push(ReferenceRegion {
+                range: 0..1,
+                buffer_start: Some(Point::new(0, 0)),
+                status: None,
             });
+        } else {
+            text.pop();
         }
 
-        (
-            expected_text,
-            expected_buffer_rows,
-            expected_excerpt_boundary_rows,
-        )
+        // Retrieve the row info using the region that contains
+        // the start of each multi-buffer line.
+        let mut ix = 0;
+        let row_infos = text
+            .split('\n')
+            .map(|line| {
+                let row_info = regions
+                    .iter()
+                    .find(|region| region.range.contains(&ix))
+                    .map_or(RowInfo::default(), |region| RowInfo {
+                        diff_status: region.status,
+                        buffer_row: region.buffer_start.map(|start_point| {
+                            start_point.row
+                                + text[region.range.start..ix].matches('\n').count() as u32
+                        }),
+                    });
+                ix += line.len() + 1;
+                row_info
+            })
+            .collect();
+
+        (text, row_infos, excerpt_boundary_rows)
     }
 
     fn diffs_updated(&mut self, cx: &AppContext) {
