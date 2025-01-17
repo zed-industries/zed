@@ -168,7 +168,7 @@ impl GitState {
 
     pub fn commit(&mut self, err_sender: mpsc::Sender<anyhow::Error>) -> anyhow::Result<()> {
         if !self.can_commit(false) {
-            return Err(anyhow!("No staged changes to commit"));
+            return Err(anyhow!("Unable to commit"));
         }
         let Some((_, _, git_repo)) = self.active_repository() else {
             return Err(anyhow!("No active repository"));
@@ -183,7 +183,7 @@ impl GitState {
 
     pub fn commit_all(&mut self, err_sender: mpsc::Sender<anyhow::Error>) -> anyhow::Result<()> {
         if !self.can_commit(true) {
-            return Err(anyhow!("No changes to commit"));
+            return Err(anyhow!("Unable to commit"));
         }
         let Some((_, entry, git_repo)) = self.active_repository.as_ref() else {
             return Err(anyhow!("No active repository"));

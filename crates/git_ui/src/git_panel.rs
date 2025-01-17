@@ -1037,7 +1037,7 @@ impl GitPanel {
                     cx,
                 )
             })
-            .disabled(can_commit)
+            .disabled(!can_commit)
             .on_click(
                 cx.listener(|this, _: &ClickEvent, cx| this.commit_changes(&CommitChanges, cx)),
             );
