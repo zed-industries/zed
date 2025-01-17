@@ -280,12 +280,12 @@ impl ActiveThread {
                 .child(
                     v_flex()
                         .bg(colors.editor_background)
-                        .ml_16()
                         .rounded_t_lg()
                         .rounded_bl_lg()
                         .rounded_br_none()
                         .border_1()
                         .border_color(colors.border)
+                        .shadow_sm()
                         .child(
                             h_flex()
                                 .py_1()
