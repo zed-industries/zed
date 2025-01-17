@@ -13,6 +13,7 @@ use collections::{HashMap, HashSet, VecDeque};
 use gpui::{App, AppContext as _, Entity, Task};
 use itertools::Itertools;
 use language::{ContextProvider, File, Language, LanguageToolchainStore, Location};
+use nohash_hasher::BuildNoHashHasher;
 use settings::{parse_json_with_comments, SettingsLocation};
 use task::{
     ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates, TaskVariables, VariableName,
@@ -21,7 +22,7 @@ use text::{Point, ToPoint};
 use util::{post_inc, NumericPrefixWithSuffix, ResultExt as _};
 use worktree::WorktreeId;
 
-use crate::{graph::{Cycle, Graph}, worktree_store::WorktreeStore};
+use crate::{graph::Graph, worktree_store::WorktreeStore};
 
 /// Inventory tracks available tasks for a given project.
 #[derive(Debug, Default)]
@@ -121,8 +122,8 @@ impl Inventory {
             .collect()
     }
 
-    /// Verify that the current task dependency graph does not contain any cycles
-    pub fn check_task_dep_graph(&self) {
+    /// Topological sort of the dependency graph of `task`
+    pub fn build_pre_task_list(&self, task: &TaskTemplate) -> anyhow::Result<Vec<(TaskSourceKind, TaskTemplate)>> {
         // collect all tasks from all available worktrees
         let tasks = self
             .templates_from_settings
@@ -136,8 +137,15 @@ impl Inventory {
             .unique_by(|(_, task)| task.label.clone())
             .collect_vec();
 
+        if let None = tasks
+            .iter()
+            .find(|(_, TaskTemplate { label, .. })| task.label.as_str() == label.as_str())
+        {
+            return Err(anyhow::anyhow!("couldn't find with label {} in available tasks", &task.label));
+        }
+
         // map task labels to their dep graph node idx, source, and dependencies
-        let tasks = tasks
+        let nodes = tasks
             .iter()
             .enumerate()
             .map(|(idx, (source, task))| (
@@ -145,45 +153,49 @@ impl Inventory {
                 (
                     idx as u32,
                     source,
-                    task.pre.iter().map(|s| s.as_str()).unique().collect_vec()
+                    task.pre
+                        .iter()
+                        .map(|s| s.as_str())
+                        .unique()
+                        .collect_vec(),
+                    task
                 )
             ))
             .collect::<HashMap<_, _>>();
 
         // map node idxs to task labels for retreival if a cycle is found
-        let node_idx_map = tasks
+        let indexes = nodes
             .iter()
-            .map(|(label, (idx, _, _))| (*idx, *label))
-            .collect::<HashMap<_, _>>();
+            .map(|(label, (idx, _, _, _))| (*idx, *label))
+            .collect::<std::collections::HashMap<_, _, BuildNoHashHasher<u32>>>();
 
         let mut dep_graph = Graph::new();
 
-        for (_, (node_idx, _, pre)) in &tasks {
+        for (_, (node_idx, _, pre, _)) in &nodes {
             dep_graph.add_node(*node_idx);
 
             for pre_label in pre {
-                if let Some((pre_node_idx, _, _)) = tasks.get(pre_label) {
+                if let Some((pre_node_idx, _, _, _)) = nodes.get(pre_label) {
                     dep_graph.add_edge(*node_idx, *pre_node_idx);
                 }
             }
         }
 
-        for node in node_idx_map.keys() {
-            if let Some(Cycle { src_node, dst_node }) = dep_graph.has_cycle(*node) {
-                let src_label = node_idx_map.get(&src_node).unwrap();
-                let dst_label = node_idx_map.get(&dst_node).unwrap();
 
-                let src_info = tasks.get(src_label).unwrap();
-                let dst_info = tasks.get(dst_label).unwrap();
-
-                // error reporting in the UI is WIP, this is here so I can verify with the logs at runtime
-
-                let src_fmt = format!("(task source: {}, task label: {})", src_info.1.friendly_path(), src_label);
-                let dst_fmt = format!("(task source: {}, task label: {})", dst_info.1.friendly_path(), dst_label);
-
-                log::error!("found cycle: source task: {src_fmt}, dependent task: {dst_fmt}");
-            }
-        }
+        dep_graph
+            .subgraph(nodes.get(task.label.as_str()).unwrap().0)
+            .topo_sort()
+            .map(|tasks| {
+                tasks
+                    .iter()
+                    .rev()
+                    .filter_map(|idx| {
+                        let task = nodes.get(indexes.get(idx)?)?;
+                        Some((task.1.clone(), task.3.clone()))
+                    })
+                    .collect_vec()
+            })
+            .anyhow()
     }
 
     /// Pulls its task sources relevant to the worktree and the language given and resolves them with the [`TaskContext`] given.
@@ -404,8 +416,6 @@ impl Inventory {
             }
             None => parsed_templates.global = new_templates.collect(),
         }
-
-        self.check_task_dep_graph();
 
         Ok(())
     }
