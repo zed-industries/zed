@@ -739,13 +739,10 @@ impl GitPanel {
     fn fill_co_authors(&mut self, _: &FillCoAuthors, cx: &mut ViewContext<Self>) {
         const CO_AUTHOR_PREFIX: &str = "co-authored-by: ";
 
-        let Some(workspace) = self.workspace.upgrade() else {
-            return;
-        };
-        let Some(room) = workspace
-            .read(cx)
-            .active_call()
-            .and_then(|call| call.read(cx).room().cloned())
+        let Some(room) = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| workspace.read(cx).active_call()?.read(cx).room().cloned())
         else {
             return;
         };
@@ -798,6 +795,7 @@ impl GitPanel {
 
             editor.edit(Some((editor_end..editor_end, edit)), cx);
             editor.move_to_end(&MoveToEnd, cx);
+            editor.focus(cx);
         });
     }
 
@@ -1401,6 +1399,19 @@ impl GitPanel {
 impl Render for GitPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let project = self.project.read(cx);
+        let has_coauthors = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| workspace.read(cx).active_call()?.read(cx).room().cloned())
+            .map(|room| {
+                let room = room.read(cx);
+                room.local_participant().can_write()
+                    && room
+                        .remote_participants()
+                        .values()
+                        .any(|remote_participant| remote_participant.can_write())
+            })
+            .unwrap_or(false);
 
         v_flex()
             .id("git_panel")
@@ -1432,7 +1443,9 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::focus_changes_list))
             .on_action(cx.listener(Self::focus_editor))
             .on_action(cx.listener(Self::toggle_staged_for_selected))
-            .on_action(cx.listener(Self::fill_co_authors))
+            .when(has_coauthors, |git_panel| {
+                git_panel.on_action(cx.listener(Self::fill_co_authors))
+            })
             // .on_action(cx.listener(|this, &OpenSelected, cx| this.open_selected(&OpenSelected, cx)))
             .on_hover(cx.listener(|this, hovered, cx| {
                 if *hovered {
