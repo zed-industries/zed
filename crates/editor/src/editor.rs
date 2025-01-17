@@ -52,7 +52,6 @@ use ::git::diff::DiffHunkStatus;
 pub(crate) use actions::*;
 pub use actions::{OpenExcerpts, OpenExcerptsSplit};
 use aho_corasick::AhoCorasick;
-use zed_predict_tos::ZedPredictTos;
 use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
 use client::{Collaborator, ParticipantIndex};
@@ -71,6 +70,7 @@ pub use element::{
 };
 use futures::{future, FutureExt};
 use fuzzy::StringMatchCandidate;
+use zed_predict_tos::ZedPredictTos;
 
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
