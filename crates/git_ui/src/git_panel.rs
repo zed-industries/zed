@@ -771,7 +771,6 @@ impl GitPanel {
             .filter(|participant| participant.can_write())
             .map(|participant| participant.user.clone())
             .filter_map(|user| {
-                // TODO kb how to get `git config user.name` and `git config user.email` from remotes?
                 let email = user.email.as_deref()?;
                 let name = user.name.as_deref().unwrap_or(&user.github_login);
                 Some(format!("{CO_AUTHOR_PREFIX}{name} <{email}>"))

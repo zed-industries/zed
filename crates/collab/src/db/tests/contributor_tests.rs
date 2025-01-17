@@ -13,6 +13,7 @@ test_both_dbs!(
 async fn test_contributors(db: &Arc<Database>) {
     db.create_user(
         "user1@example.com",
+        None,
         false,
         NewUserParams {
             github_login: "user1".to_string(),

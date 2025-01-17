@@ -7,6 +7,7 @@ impl Database {
     pub async fn create_user(
         &self,
         email_address: &str,
+        name: Option<&str>,
         admin: bool,
         params: NewUserParams,
     ) -> Result<NewUserResult> {
@@ -14,6 +15,7 @@ impl Database {
             let tx = tx;
             let user = user::Entity::insert(user::ActiveModel {
                 email_address: ActiveValue::set(Some(email_address.into())),
+                name: ActiveValue::set(name.map(|s| s.into())),
                 github_login: ActiveValue::set(params.github_login.clone()),
                 github_user_id: ActiveValue::set(params.github_user_id),
                 admin: ActiveValue::set(admin),

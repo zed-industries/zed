@@ -16,6 +16,7 @@ struct GithubUser {
     id: i32,
     login: String,
     email: Option<String>,
+    name: Option<String>,
     created_at: DateTime<Utc>,
 }
 
@@ -75,6 +76,7 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
         let user = db
             .create_user(
                 &user.email.unwrap_or(format!("{admin_login}@example.com")),
+                user.name.as_deref(),
                 true,
                 NewUserParams {
                     github_login: user.login,
@@ -129,7 +131,7 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
                 &github_user.login,
                 github_user.id,
                 github_user.email.as_deref(),
-                None,
+                github_user.name.as_deref(),
                 github_user.created_at,
                 None,
             )
