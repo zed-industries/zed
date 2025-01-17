@@ -58,7 +58,6 @@ project.workspace = true
 prompt_library.workspace = true
 proto.workspace = true
 regex.workspace = true
-release_channel.workspace = true
 rope.workspace = true
 rpc.workspace = true
 schemars.workspace = true

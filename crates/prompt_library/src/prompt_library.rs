@@ -2,13 +2,12 @@ mod prompt_store;
 mod prompts;
 
 use anyhow::Result;
-use assistant_slash_command::SlashCommandWorkingSet;
 use collections::{HashMap, HashSet};
 use editor::CompletionProvider;
 use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
 use gpui::{
     actions, point, size, transparent_black, Action, AppContext, Bounds, EventEmitter, PromptLevel,
-    Subscription, Task, TextStyle, TitlebarOptions, UpdateGlobal, View, WindowBounds, WindowHandle,
+    Subscription, Task, TextStyle, TitlebarOptions, View, WindowBounds, WindowHandle,
     WindowOptions,
 };
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
@@ -19,7 +18,6 @@ use picker::{Picker, PickerDelegate};
 use release_channel::ReleaseChannel;
 use rope::Rope;
 use settings::Settings;
-use workspace::dock::Panel;
 use std::sync::Arc;
 use std::time::Duration;
 use theme::ThemeSettings;
@@ -53,6 +51,22 @@ const BUILT_IN_TOOLTIP_TEXT: &'static str = concat!(
     "It's read-only, but you can remove it from your default prompt."
 );
 
+pub trait InlineAssistDelegate {
+    fn assist(
+        &self,
+        prompt_editor: &View<Editor>,
+        initial_prompt: Option<String>,
+        cx: &mut ViewContext<PromptLibrary>,
+    );
+
+    /// Returns whether the Assistant panel was focused.
+    fn focus_assistant_panel(
+        &self,
+        workspace: &mut Workspace,
+        cx: &mut ViewContext<Workspace>,
+    ) -> bool;
+}
+
 /// This function opens a new prompt library window if one doesn't exist already.
 /// If one exists, it brings it to the foreground.
 ///
@@ -61,6 +75,7 @@ const BUILT_IN_TOOLTIP_TEXT: &'static str = concat!(
 /// to a prompt library.
 pub fn open_prompt_library(
     language_registry: Arc<LanguageRegistry>,
+    inline_assist_delegate: Box<dyn InlineAssistDelegate>,
     make_completion_provider: Arc<dyn Fn() -> Box<dyn CompletionProvider>>,
     cx: &mut AppContext,
 ) -> Task<Result<WindowHandle<PromptLibrary>>> {
@@ -96,6 +111,7 @@ pub fn open_prompt_library(
                             PromptLibrary::new(
                                 store,
                                 language_registry,
+                                inline_assist_delegate,
                                 make_completion_provider,
                                 cx,
                             )
@@ -114,6 +130,7 @@ pub struct PromptLibrary {
     active_prompt_id: Option<PromptId>,
     picker: View<Picker<PromptPickerDelegate>>,
     pending_load: Task<()>,
+    inline_assist_delegate: Box<dyn InlineAssistDelegate>,
     make_completion_provider: Arc<dyn Fn() -> Box<dyn CompletionProvider>>,
     _subscriptions: Vec<Subscription>,
 }
@@ -305,6 +322,7 @@ impl PromptLibrary {
     fn new(
         store: Arc<PromptStore>,
         language_registry: Arc<LanguageRegistry>,
+        inline_assist_delegate: Box<dyn InlineAssistDelegate>,
         make_completion_provider: Arc<dyn Fn() -> Box<dyn CompletionProvider>>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -327,6 +345,7 @@ impl PromptLibrary {
             prompt_editors: HashMap::default(),
             active_prompt_id: None,
             pending_load: Task::ready(()),
+            inline_assist_delegate,
             make_completion_provider,
             _subscriptions: vec![cx.subscribe(&picker, Self::handle_picker_event)],
             picker,
@@ -681,23 +700,22 @@ impl PromptLibrary {
 
         let initial_prompt = action.prompt.clone();
         if provider.is_authenticated(cx) {
-            // InlineAssistant::update_global(cx, |assistant, cx| {
-            //     assistant.assist(&prompt_editor, None, None, initial_prompt, cx)
-            // })
+            self.inline_assist_delegate
+                .assist(prompt_editor, initial_prompt, cx);
         } else {
             for window in cx.windows() {
-                // if let Some(workspace) = window.downcast::<Workspace>() {
-                //     let panel = workspace
-                //         .update(cx, |workspace, cx| {
-                //             cx.activate_window();
-                //             workspace.focus_panel::<AssistantPanel>(cx)
-                //         })
-                //         .ok()
-                //         .flatten();
-                //     if panel.is_some() {
-                //         return;
-                //     }
-                // }
+                if let Some(workspace) = window.downcast::<Workspace>() {
+                    let panel = workspace
+                        .update(cx, |workspace, cx| {
+                            cx.activate_window();
+                            self.inline_assist_delegate
+                                .focus_assistant_panel(workspace, cx)
+                        })
+                        .ok();
+                    if panel == Some(true) {
+                        return;
+                    }
+                }
             }
         }
     }

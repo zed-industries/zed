@@ -413,7 +413,6 @@ dependencies = [
  "proto",
  "rand 0.8.5",
  "regex",
- "release_channel",
  "rope",
  "rpc",
  "schemars",
@@ -9890,7 +9889,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "assets",
- "assistant_slash_command",
  "chrono",
  "collections",
  "editor",
