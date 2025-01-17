@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-use std::{cell::Cell, ops::Range, rc::Rc};
+use std::{cell::Cell, fmt::Debug, ops::Range, rc::Rc};
 
 use crate::{prelude::*, px, relative, IntoElement};
 use gpui::{
@@ -9,33 +9,27 @@ use gpui::{
     UniformListScrollHandle, View, WindowContext,
 };
 
-pub struct Scrollbar {
+pub struct Scrollbar<T: ScrollableHandle> {
     thumb: Range<f32>,
-    state: ScrollbarState,
+    state: ScrollbarState<T>,
     kind: ScrollbarAxis,
 }
 
 /// Wrapper around scroll handles.
 #[derive(Clone, Debug)]
-pub enum ScrollableHandle {
+pub enum ListScrollableHandle {
     Uniform(UniformListScrollHandle),
     NonUniform(ScrollHandle),
 }
 
-#[derive(Debug)]
-struct ContentSize {
-    size: Size<Pixels>,
-    scroll_adjustment: Option<Point<Pixels>>,
-}
-
-impl ScrollableHandle {
+impl ScrollableHandle for ListScrollableHandle {
     fn content_size(&self) -> Option<ContentSize> {
         match self {
-            ScrollableHandle::Uniform(handle) => Some(ContentSize {
+            ListScrollableHandle::Uniform(handle) => Some(ContentSize {
                 size: handle.0.borrow().last_item_size.map(|size| size.contents)?,
                 scroll_adjustment: None,
             }),
-            ScrollableHandle::NonUniform(handle) => {
+            ListScrollableHandle::NonUniform(handle) => {
                 let last_children_index = handle.children_count().checked_sub(1)?;
 
                 let mut last_item = handle.bounds_for_item(last_children_index)?;
@@ -59,49 +53,63 @@ impl ScrollableHandle {
     }
     fn set_offset(&self, point: Point<Pixels>) {
         let base_handle = match self {
-            ScrollableHandle::Uniform(handle) => &handle.0.borrow().base_handle,
-            ScrollableHandle::NonUniform(handle) => &handle,
+            ListScrollableHandle::Uniform(handle) => &handle.0.borrow().base_handle,
+            ListScrollableHandle::NonUniform(handle) => &handle,
         };
         base_handle.set_offset(point);
     }
     fn offset(&self) -> Point<Pixels> {
         let base_handle = match self {
-            ScrollableHandle::Uniform(handle) => &handle.0.borrow().base_handle,
-            ScrollableHandle::NonUniform(handle) => &handle,
+            ListScrollableHandle::Uniform(handle) => &handle.0.borrow().base_handle,
+            ListScrollableHandle::NonUniform(handle) => &handle,
         };
         base_handle.offset()
     }
     fn viewport(&self) -> Bounds<Pixels> {
         let base_handle = match self {
-            ScrollableHandle::Uniform(handle) => &handle.0.borrow().base_handle,
-            ScrollableHandle::NonUniform(handle) => &handle,
+            ListScrollableHandle::Uniform(handle) => &handle.0.borrow().base_handle,
+            ListScrollableHandle::NonUniform(handle) => &handle,
         };
         base_handle.bounds()
     }
 }
-impl From<UniformListScrollHandle> for ScrollableHandle {
+
+impl From<UniformListScrollHandle> for ListScrollableHandle {
     fn from(value: UniformListScrollHandle) -> Self {
         Self::Uniform(value)
     }
 }
 
-impl From<ScrollHandle> for ScrollableHandle {
+impl From<ScrollHandle> for ListScrollableHandle {
     fn from(value: ScrollHandle) -> Self {
         Self::NonUniform(value)
     }
 }
 
+#[derive(Debug)]
+pub struct ContentSize {
+    size: Size<Pixels>,
+    scroll_adjustment: Option<Point<Pixels>>,
+}
+
+pub trait ScrollableHandle: Debug + Clone + 'static {
+    fn content_size(&self) -> Option<ContentSize>;
+    fn set_offset(&self, point: Point<Pixels>);
+    fn offset(&self) -> Point<Pixels>;
+    fn viewport(&self) -> Bounds<Pixels>;
+}
+
 /// A scrollbar state that should be persisted across frames.
 #[derive(Clone, Debug)]
-pub struct ScrollbarState {
+pub struct ScrollbarState<T: ScrollableHandle> {
     // If Some(), there's an active drag, offset by percentage from the origin of a thumb.
     drag: Rc<Cell<Option<f32>>>,
     parent_id: Option<EntityId>,
-    scroll_handle: ScrollableHandle,
+    scroll_handle: T,
 }
 
-impl ScrollbarState {
-    pub fn new(scroll: impl Into<ScrollableHandle>) -> Self {
+impl<T: ScrollableHandle> ScrollbarState<T> {
+    pub fn new<S: Into<T>>(scroll: S) -> Self {
         Self {
             drag: Default::default(),
             parent_id: None,
@@ -115,8 +123,8 @@ impl ScrollbarState {
         self
     }
 
-    pub fn scroll_handle(&self) -> ScrollableHandle {
-        self.scroll_handle.clone()
+    pub fn scroll_handle(&self) -> &T {
+        &self.scroll_handle
     }
 
     pub fn is_dragging(&self) -> bool {
@@ -163,21 +171,22 @@ impl ScrollbarState {
     }
 }
 
-impl Scrollbar {
-    pub fn vertical(state: ScrollbarState) -> Option<Self> {
+impl<T: ScrollableHandle> Scrollbar<T> {
+    pub fn vertical(state: ScrollbarState<T>) -> Option<Self> {
         Self::new(state, ScrollbarAxis::Vertical)
     }
 
-    pub fn horizontal(state: ScrollbarState) -> Option<Self> {
+    pub fn horizontal(state: ScrollbarState<T>) -> Option<Self> {
         Self::new(state, ScrollbarAxis::Horizontal)
     }
-    fn new(state: ScrollbarState, kind: ScrollbarAxis) -> Option<Self> {
+
+    fn new(state: ScrollbarState<T>, kind: ScrollbarAxis) -> Option<Self> {
         let thumb = state.thumb_range(kind)?;
         Some(Self { thumb, state, kind })
     }
 }
 
-impl Element for Scrollbar {
+impl<T: ScrollableHandle> Element for Scrollbar<T> {
     type RequestLayoutState = ();
 
     type PrepaintState = Hitbox;
@@ -390,7 +399,7 @@ impl Element for Scrollbar {
     }
 }
 
-impl IntoElement for Scrollbar {
+impl<T: ScrollableHandle> IntoElement for Scrollbar<T> {
     type Element = Self;
 
     fn into_element(self) -> Self::Element {

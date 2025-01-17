@@ -22,6 +22,7 @@ use remote::SshConnectionOptions;
 use remote::SshRemoteClient;
 use settings::update_settings_file;
 use settings::Settings;
+use ui::ListScrollableHandle;
 use ui::Navigable;
 use ui::NavigableEntry;
 use ui::{
@@ -259,7 +260,7 @@ struct ProjectEntry {
 
 #[derive(Clone)]
 struct DefaultState {
-    scrollbar: ScrollbarState,
+    scrollbar: ScrollbarState<ListScrollableHandle>,
     add_new_server: NavigableEntry,
     servers: Vec<ProjectEntry>,
 }
@@ -1252,7 +1253,8 @@ impl RemoteServerProjects {
                 cx.notify();
             }));
 
-        let ui::ScrollableHandle::NonUniform(scroll_handle) = scroll_state.scroll_handle() else {
+        let ui::ListScrollableHandle::NonUniform(scroll_handle) = scroll_state.scroll_handle()
+        else {
             unreachable!()
         };
 
