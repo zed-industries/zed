@@ -532,12 +532,15 @@ impl LanguageServer {
 
         while let Some(msg) = input_handler.notifications_channel.next().await {
             {
-                let notification_handlers = notification_handlers.lock();
-                if let Some(handler) = notification_handlers.get(msg.method.as_str()).cloned() {
-                    drop(notification_handlers);
+                let handler = {
+                    notification_handlers
+                        .lock()
+                        .get(msg.method.as_str())
+                        .cloned()
+                };
+                if let Some(handler) = handler {
                     handler(msg.id, msg.params.unwrap_or(Value::Null), cx.clone()).await;
                 } else {
-                    drop(notification_handlers);
                     on_unhandled_notification(msg);
                 }
             }
