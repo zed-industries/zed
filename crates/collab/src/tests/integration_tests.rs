@@ -4197,7 +4197,6 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
                 }],
             },
         );
-        executor.run_until_parked();
     }
     fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-disk-based-token".to_string()),
