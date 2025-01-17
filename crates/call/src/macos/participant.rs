@@ -57,4 +57,11 @@ impl RemoteParticipant {
     pub fn has_video_tracks(&self) -> bool {
         !self.video_tracks.is_empty()
     }
+
+    pub fn can_write(&self) -> bool {
+        matches!(
+            self.role,
+            proto::ChannelRole::Admin | proto::ChannelRole::Member
+        )
+    }
 }
