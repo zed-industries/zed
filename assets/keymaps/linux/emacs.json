@@ -26,8 +26,6 @@
       "end": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": false }], // move-end-of-line
       "ctrl-a": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": false }], // move-beginning-of-line
       "ctrl-e": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": false }], // move-end-of-line
-      "cmd-left": ["editor::MoveToBeginningOfLine", { "stop_at_soft_wraps": false }], // move-beginning-of-line
-      "cmd-right": ["editor::MoveToEndOfLine", { "stop_at_soft_wraps": false }], // move-end-of-line
       "shift-home": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": false }], // move-beginning-of-line
       "shift-end": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": false }], // move-end-of-line
       "alt-f": "editor::MoveToNextSubwordEnd", // forward-word
