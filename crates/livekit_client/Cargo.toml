@@ -1,9 +1,9 @@
 [package]
 name = "livekit_client"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 description = "Logic for using LiveKit with GPUI"
-publish = false
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
