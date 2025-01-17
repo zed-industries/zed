@@ -741,7 +741,7 @@ impl PromptEditor {
     }
 
     fn placeholder_text(cx: &WindowContext) -> String {
-        let context_keybinding = text_for_action(&crate::ToggleFocus, cx)
+        let context_keybinding = text_for_action(&crate::ToggleFocus::default(), cx)
             .map(|keybinding| format!(" • {keybinding} for context"))
             .unwrap_or_default();
 

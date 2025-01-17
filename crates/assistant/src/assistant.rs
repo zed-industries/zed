@@ -22,11 +22,12 @@ use client::{proto, Client};
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
-use gpui::impl_internal_actions;
 use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
+use gpui::{impl_actions, impl_internal_actions};
 use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
 };
+use schemars::JsonSchema;
 use semantic_index::{CloudEmbeddingProvider, SemanticDb};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -49,7 +50,6 @@ actions!(
         CycleMessageRole,
         QuoteSelection,
         InsertIntoEditor,
-        ToggleFocus,
         InsertActivePrompt,
         DeployHistory,
         DeployPromptLibrary,
@@ -60,6 +60,23 @@ actions!(
         CyclePreviousInlineAssist
     ]
 );
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, JsonSchema)]
+pub struct ToggleFocus {
+    /// Only relevant for Zed staff - overrides staff-only default of opening assistant2.
+    #[serde(default)]
+    pub __use_assistant1: bool,
+}
+
+impl Default for ToggleFocus {
+    fn default() -> Self {
+        ToggleFocus {
+            __use_assistant1: true,
+        }
+    }
+}
+
+impl_actions!(assistant, [ToggleFocus]);
 
 #[derive(PartialEq, Clone)]
 pub enum InsertDraggedFiles {

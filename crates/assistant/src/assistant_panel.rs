@@ -31,6 +31,7 @@ use editor::{
     ToOffset as _, ToPoint,
 };
 use editor::{display_map::CreaseId, FoldPlaceholder};
+use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
 use futures::FutureExt;
 use gpui::{
@@ -96,7 +97,15 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace
-                .register_action(|workspace, _: &ToggleFocus, cx| {
+                .register_action(|workspace, ToggleFocus { __use_assistant1 }, cx| {
+                    if !__use_assistant1 && cx.is_staff() && cx.has_flag::<Assistant2FeatureFlag>()
+                    {
+                        let assistant2_toggle_focus =
+                            cx.build_action("assistant2::ToggleFocus", None).unwrap();
+                        cx.dispatch_action(assistant2_toggle_focus);
+                        return;
+                    }
+
                     let settings = AssistantSettings::get_global(cx);
                     if !settings.enabled {
                         return;
@@ -1452,7 +1461,7 @@ impl Panel for AssistantPanel {
     }
 
     fn toggle_action(&self) -> Box<dyn Action> {
-        Box::new(ToggleFocus)
+        Box::new(ToggleFocus::default())
     }
 
     fn activation_priority(&self) -> u32 {
