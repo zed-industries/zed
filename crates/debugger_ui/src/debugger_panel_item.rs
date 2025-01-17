@@ -356,8 +356,8 @@ impl DebugPanelItem {
             return;
         }
 
-        self.module_list.update(cx, |variable_list, cx| {
-            variable_list.on_module_event(event, cx);
+        self.module_list.update(cx, |module_list, cx| {
+            module_list.on_module_event(event, cx);
         });
     }
 
