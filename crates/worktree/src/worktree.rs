@@ -552,7 +552,6 @@ impl Worktree {
             true
         });
 
-        println!("--> oenning worktree at {:?}", abs_path);
         let root_file_handle = fs.open_handle(&abs_path).await.log_err();
 
         cx.new_model(move |cx: &mut ModelContext<Worktree>| {
