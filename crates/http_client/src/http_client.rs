@@ -7,11 +7,8 @@ use derive_more::Deref;
 pub use http::{self, Method, Request, Response, StatusCode, Uri};
 use std::fmt;
 
-use aws_smithy_runtime_api::http::StatusCode as AwsStatusCode;
-use aws_smithy_runtime_api::client::orchestrator::{HttpRequest as AwsRequest, HttpResponse as AwsResponse, HttpResponse};
-use aws_smithy_runtime_api::client::http::{HttpClient as AwsClient, HttpConnector, HttpConnectorFuture, HttpConnectorSettings, SharedHttpClient, SharedHttpConnector};
 use std::io::Read;
-use futures::future::BoxFuture;
+use futures::future::{err, BoxFuture};
 use http::request::Builder;
 
 #[cfg(feature = "test-support")]
@@ -332,57 +329,73 @@ impl HttpClient for BlockedHttpClient {
     }
 }
 
+use aws_smithy_runtime_api::client::http::{HttpConnector as AwsConnector, HttpConnectorFuture as AwsConnectorFuture, HttpClient as AwsClient, HttpConnectorSettings, SharedHttpConnector, HttpConnectorFuture};
+use aws_smithy_runtime_api::client::orchestrator::{HttpRequest as AwsHttpRequest, HttpResponse};
+use aws_smithy_runtime_api::client::result::ConnectorError;
+use aws_smithy_runtime_api::client::runtime_components::RuntimeComponents;
+use aws_smithy_types::body::SdkBody;
+
 pub struct AwsHttpClient {
-    client: HttpClientWithProxy,
+    client: Arc<dyn HttpClient>
 }
 
-#[derive(Debug)]
-struct ZedClientConnector{
-    client: &'static AwsHttpClient
-}
-
-impl HttpConnector for ZedClientConnector {
-    fn call(&self, request: AwsRequest) -> HttpConnectorFuture {
-        // Take the AwsRequest, convert it to a Zed HttpRequest,
-        // SEND
-        // Take Zed HttpResponse, convert it to an AwsResponse
-        // RETURN
-
-        let mut pure_req = match request.try_into_http02x() {
-            Ok(req) => req,
-            Err(e) => return HttpConnectorFuture::ready(Err(anyhow!(e.into()))),
-        };
-
-        let final_req: Request<AsyncBody> = Request::from_parts(pure_req.into_parts().0, pure_req.body().bytes().into());
-
-        let fut = self.client.client.send(final_req);
-
-        HttpConnectorFuture::new(async move {
-            let response = fut
-                .await
-                .map_err(|e|Err(anyhow!(e.into())))?;
-
-            match AwsResponse::try_from(response) {
-                Ok(resp) => Ok(resp),
-                Err(e) => Err(anyhow!(e.into())),
-            }
-        })
-    }
-}
-
-impl crate::fmt::Debug for AwsHttpClient {
+impl std::fmt::Debug for AwsHttpClient {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
         todo!()
     }
 }
 
-impl AwsClient for AwsHttpClient {
-    fn http_connector(&self, settings: &HttpConnectorSettings, components: &RuntimeComponents) -> SharedHttpConnector {
-        SharedHttpConnector::new(ZedClientConnector{
-            client: self
-        })
+impl AwsHttpClient {
+    pub fn new(client: Arc<dyn HttpClient>) -> Self {
+        Self { client }
     }
 }
+
+impl AwsClient for AwsHttpClient {
+    fn http_connector(&self, settings: &HttpConnectorSettings, components: &RuntimeComponents) -> SharedHttpConnector {
+        todo!()
+    }
+}
+
+struct AwsHttpConnector {
+    client: Arc<dyn HttpClient>
+}
+
+impl std::fmt::Debug for AwsHttpConnector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> fmt::Result {
+        todo!()
+    }
+}
+
+impl AwsConnector for AwsHttpConnector {
+    fn call(&self, request: AwsHttpRequest) -> AwsConnectorFuture {
+        // convert AwsHttpRequest to Request<T>
+        let mut aws_req = match request.try_into_http1x() {
+            Ok(req) => req,
+            Err(e) => return HttpConnectorFuture::ready(Err(ConnectorError::other(e.into(), None))),
+        };
+
+        let (mut parts, aws_body) = aws_req.into_parts();
+
+        let coerced_body = aws_body.into();
+
+        let fut_resp = self.client.send(Request::from_parts(parts.into(), coerced_body));
+
+        HttpConnectorFuture::new(async move {
+            let response = fut_resp
+                .await
+                .map_err(|e| ConnectorError::other(e.into(), None))?
+                .map(|b| b.into());
+            match HttpResponse::try_from(response) {
+                Ok(response) => Ok(response),
+                Err(err) => Err(ConnectorError::other(err.into(), None)),
+            }
+        })
+
+    }
+}
+
+
 
 #[cfg(feature = "test-support")]
 type FakeHttpHandler = Box<

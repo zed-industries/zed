@@ -4,7 +4,7 @@ use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
 use feature_flags::FeatureFlagAppExt;
 use gpui::{AppContext, Pixels};
-use language_model::{CloudModel, LanguageModel};
+use language_model::{BedrockModel, CloudModel, LanguageModel};
 use lmstudio::Model as LmStudioModel;
 use ollama::Model as OllamaModel;
 use schemars::{schema::Schema, JsonSchema};
@@ -45,11 +45,6 @@ pub enum AssistantProviderContentV1 {
     LmStudio {
         default_model: Option<LmStudioModel>,
         api_url: Option<String>,
-    },
-    #[serde(rename = "bedrock")]
-    Bedrock {
-        default_model: Option<CloudModel>,
-        region: Option<String>,
     },
 }
 

@@ -2,7 +2,6 @@ use crate::AllLanguageModelSettings;
 use anyhow::{anyhow, Context as _, Result};
 use aws_config::Region;
 use aws_credential_types::Credentials;
-use aws_smithy_runtime_api::client::http::{http_client_fn, SharedHttpClient, SharedHttpConnector};
 use aws_smithy_runtime_api::client::orchestrator::{HttpRequest, HttpResponse};
 use aws_smithy_runtime_api::http::StatusCode;
 use bedrock::bedrock_client::types::{
@@ -18,7 +17,7 @@ use gpui::{
     AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle,
     View, WhiteSpace,
 };
-use http_client::{http, AsyncBody, HttpClient};
+use http_client::{http, AsyncBody, AwsHttpClient, HttpClient};
 use language_model::{
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
@@ -87,7 +86,7 @@ impl State {
                 .bedrock
                 .credentials
                 .clone()
-                .unwrap()
+                .unwrap_or_default()
                 .access_key_id,
         );
         let delete_sk: Task<Result<()>> = cx.delete_credentials(
@@ -95,7 +94,7 @@ impl State {
                 .bedrock
                 .credentials
                 .clone()
-                .unwrap()
+                .unwrap_or_default()
                 .secret_access_key,
         );
         cx.spawn(|this, mut cx| async move {
@@ -221,20 +220,10 @@ impl BedrockLanguageModelProvider {
             .or_else(|| Some(AmazonBedrockCredentials::default()))
             .unwrap();
 
-        let aws_connector = http_client_fn(move |settings, components| {
-            let client = http_client.clone();
-            SharedHttpConnector::new(move |request| {
-                let client = client.clone();
-                Box::pin(async move {
-                    let request = convert_aws_request(request)?;
-                    let response = client.send(request).await?;
-                    Ok(convert_to_aws_response(response)?)
-                })
-            })
-        });
+        let coerced_client = AwsHttpClient::new(http_client);
 
         let client_config = Config::builder()
-            .http_client(SharedHttpClient::new(aws_connector))
+            .http_client(coerced_client)
             .region(Region::new(region_def))
             .credentials_provider(Credentials::from_keys(
                 &creds_clone.clone().access_key_id,
@@ -270,9 +259,7 @@ impl BedrockModel {
         Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>,
     > {
         async move {
-            let response = bedrock::stream_completion(&self.runtime_client, request);
-
-            let unwrappedResponse: ConverseStreamOutput = response.await;
+            todo!()
         }
         .boxed()
     }
@@ -342,11 +329,11 @@ impl LanguageModel for BedrockModel {
         schema: Value,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        unimplemented!();
+        Ok(BoxStream::new(Ok("unimplemented".to_string()).boxed())).boxed()
     }
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
-        unimplemented!()
+        None
     }
 }
 
@@ -356,7 +343,54 @@ pub fn get_bedrock_tokens(
     request: LanguageModelRequest,
     cx: &AppContext,
 ) -> BoxFuture<'static, Result<usize>> {
-    todo!()
+    cx.background_executor()
+        .spawn(async move {
+            let messages = request.messages;
+            let mut tokens_from_images = 0;
+            let mut string_messages = Vec::with_capacity(messages.len());
+
+            for message in messages {
+                use language_model::MessageContent;
+
+                let mut string_contents = String::new();
+
+                for content in message.content {
+                    match content {
+                        MessageContent::Text(text) => {
+                            string_contents.push_str(&text);
+                        }
+                        MessageContent::Image(image) => {
+                            tokens_from_images += image.estimate_tokens();
+                        }
+                        MessageContent::ToolUse(_tool_use) => {
+                            // TODO: Estimate token usage from tool uses.
+                        }
+                        MessageContent::ToolResult(tool_result) => {
+                            string_contents.push_str(&tool_result.content);
+                        }
+                    }
+                }
+
+                if !string_contents.is_empty() {
+                    string_messages.push(tiktoken_rs::ChatCompletionRequestMessage {
+                        role: match message.role {
+                            Role::User => "user".into(),
+                            Role::Assistant => "assistant".into(),
+                            Role::System => "system".into(),
+                        },
+                        content: Some(string_contents),
+                        name: None,
+                        function_call: None,
+                    });
+                }
+            }
+
+            // Tiktoken doesn't yet support these models, so we manually use the
+            // same tokenizer as GPT-4.
+            tiktoken_rs::num_tokens_from_messages("gpt-4", &string_messages)
+                .map(|tokens| tokens + tokens_from_images)
+        })
+        .boxed()
 }
 
 pub fn map_to_language_model_completion_events(

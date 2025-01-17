@@ -20,6 +20,7 @@ use crate::provider::ollama::OllamaLanguageModelProvider;
 use crate::provider::open_ai::OpenAiLanguageModelProvider;
 pub use crate::settings::*;
 pub use logging::report_assistant_event;
+use crate::provider::bedrock::BedrockLanguageModelProvider;
 
 pub fn init(
     user_store: Model<UserStore>,
@@ -62,6 +63,10 @@ fn register_language_model_providers(
     );
     registry.register_provider(
         GoogleLanguageModelProvider::new(client.http_client(), cx),
+        cx,
+    );
+    registry.register_provider(
+        BedrockLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
     registry.register_provider(CopilotChatLanguageModelProvider::new(cx), cx);
