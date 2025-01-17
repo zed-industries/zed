@@ -1,8 +1,10 @@
 mod extension_slash_command;
 mod slash_command_registry;
+mod slash_command_working_set;
 
 pub use crate::extension_slash_command::*;
 pub use crate::slash_command_registry::*;
+pub use crate::slash_command_working_set::*;
 use anyhow::Result;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;

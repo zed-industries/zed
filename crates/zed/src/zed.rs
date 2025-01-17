@@ -12,7 +12,6 @@ pub(crate) mod windows_only_instance;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
-use assistant::PromptBuilder;
 use breadcrumbs::Breadcrumbs;
 use client::{zed_urls, ZED_URL_SCHEME};
 use collections::VecDeque;
@@ -32,20 +31,21 @@ use outline_panel::OutlinePanel;
 use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
 use project::{DirectoryLister, ProjectItem};
 use project_panel::ProjectPanel;
+use prompt_library::PromptBuilder;
 use quick_action_bar::QuickActionBar;
 use recent_projects::open_ssh_project;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    initial_project_settings_content, initial_tasks_content, KeymapFile, Settings, SettingsStore,
-    DEFAULT_KEYMAP_PATH,
+    initial_project_settings_content, initial_tasks_content, update_settings_file, KeymapFile,
+    Settings, SettingsStore, DEFAULT_KEYMAP_PATH, VIM_KEYMAP_PATH,
 };
 use std::any::TypeId;
 use std::path::PathBuf;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
-use theme::ActiveTheme;
+use theme::{ActiveTheme, ThemeSettings};
 use util::{asset_str, ResultExt};
 use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
@@ -454,9 +454,6 @@ fn register_actions(
             OpenListener::global(cx).open_urls(vec![action.url.clone()])
         })
         .register_action(|_, action: &OpenBrowser, cx| cx.open_url(&action.url))
-        .register_action(move |_, _: &zed_actions::IncreaseBufferFontSize, cx| {
-            theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
-        })
         .register_action(|workspace, _: &workspace::Open, cx| {
             workspace
                 .client()
@@ -492,29 +489,68 @@ fn register_actions(
             })
             .detach()
         })
-        .register_action(move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
-            theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, _: &zed_actions::IncreaseUiFontSize, cx| {
+                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
+                    let buffer_font_size = ThemeSettings::clamp_font_size(
+                        ThemeSettings::get_global(cx).ui_font_size + px(1.),
+                    );
+
+                    let _ = settings.ui_font_size.insert(buffer_font_size.into());
+                });
+            }
         })
-        .register_action(move |_, _: &zed_actions::ResetBufferFontSize, cx| {
-            theme::reset_buffer_font_size(cx)
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, _: &zed_actions::DecreaseUiFontSize, cx| {
+                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
+                    let buffer_font_size = ThemeSettings::clamp_font_size(
+                        ThemeSettings::get_global(cx).ui_font_size - px(1.),
+                    );
+
+                    let _ = settings.ui_font_size.insert(buffer_font_size.into());
+                });
+            }
         })
-        .register_action(move |_, _: &zed_actions::IncreaseUiFontSize, cx| {
-            theme::adjust_ui_font_size(cx, |size| *size += px(1.0))
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, _: &zed_actions::ResetUiFontSize, cx| {
+                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, _| {
+                    let _ = settings.ui_font_size.take();
+                });
+            }
         })
-        .register_action(move |_, _: &zed_actions::DecreaseUiFontSize, cx| {
-            theme::adjust_ui_font_size(cx, |size| *size -= px(1.0))
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, _: &zed_actions::IncreaseBufferFontSize, cx| {
+                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
+                    let buffer_font_size = ThemeSettings::clamp_font_size(
+                        ThemeSettings::get_global(cx).buffer_font_size() + px(1.),
+                    );
+
+                    let _ = settings.buffer_font_size.insert(buffer_font_size.into());
+                });
+            }
         })
-        .register_action(move |_, _: &zed_actions::ResetUiFontSize, cx| {
-            theme::reset_ui_font_size(cx)
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
+                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
+                    let buffer_font_size = ThemeSettings::clamp_font_size(
+                        ThemeSettings::get_global(cx).buffer_font_size() - px(1.),
+                    );
+                    let _ = settings.buffer_font_size.insert(buffer_font_size.into());
+                });
+            }
         })
-        .register_action(move |_, _: &zed_actions::IncreaseBufferFontSize, cx| {
-            theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
-        })
-        .register_action(move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
-            theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
-        })
-        .register_action(move |_, _: &zed_actions::ResetBufferFontSize, cx| {
-            theme::reset_buffer_font_size(cx)
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, _: &zed_actions::ResetBufferFontSize, cx| {
+                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, _| {
+                    let _ = settings.buffer_font_size.take();
+                });
+            }
         })
         .register_action(install_cli)
         .register_action(|_, _: &install_cli::RegisterZedScheme, cx| {
@@ -1022,7 +1058,7 @@ pub fn load_default_keymap(cx: &mut AppContext) {
 
     KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap();
     if VimModeSetting::get_global(cx).0 {
-        KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
+        KeymapFile::load_asset(VIM_KEYMAP_PATH, cx).unwrap();
     }
 
     if let Some(asset_path) = base_keymap.asset_path() {

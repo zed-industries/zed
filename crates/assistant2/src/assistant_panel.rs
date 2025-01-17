@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_tool::ToolWorkingSet;
 use client::zed_urls;
 use fs::Fs;
@@ -17,7 +18,6 @@ use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
 
 use crate::active_thread::ActiveThread;
-use crate::assistant_settings::{AssistantDockPosition, AssistantSettings};
 use crate::message_editor::MessageEditor;
 use crate::thread::{Thread, ThreadError, ThreadId};
 use crate::thread_history::{PastThread, ThreadHistory};

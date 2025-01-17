@@ -156,10 +156,7 @@ use std::{
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
-use theme::{
-    observe_buffer_font_size_adjustment, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme,
-    ThemeColors, ThemeSettings,
-};
+use theme::{ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings};
 use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize,
     Tooltip,
@@ -1340,7 +1337,6 @@ impl Editor {
                 cx.observe(&display_map, Self::on_display_map_changed),
                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
                 cx.observe_global::<SettingsStore>(Self::settings_changed),
-                observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
                 cx.observe_window_activation(|editor, cx| {
                     let active = cx.is_window_active();
                     editor.blink_manager.update(cx, |blink_manager, cx| {
@@ -12493,6 +12489,7 @@ impl Editor {
                 cx.emit(EditorEvent::ExcerptsEdited { ids: ids.clone() })
             }
             multi_buffer::Event::ExcerptsExpanded { ids } => {
+                self.refresh_inlay_hints(InlayHintRefreshReason::NewLinesShown, cx);
                 cx.emit(EditorEvent::ExcerptsExpanded { ids: ids.clone() })
             }
             multi_buffer::Event::Reparsed(buffer_id) => {
@@ -14400,7 +14397,7 @@ impl Render for Editor {
                 font_family: settings.buffer_font.family.clone(),
                 font_features: settings.buffer_font.features.clone(),
                 font_fallbacks: settings.buffer_font.fallbacks.clone(),
-                font_size: settings.buffer_font_size(cx).into(),
+                font_size: settings.buffer_font_size().into(),
                 font_weight: settings.buffer_font.weight,
                 line_height: relative(settings.buffer_line_height.value()),
                 ..Default::default()

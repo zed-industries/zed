@@ -571,6 +571,7 @@ impl InlayMap {
                 probe
                     .position
                     .cmp(&inlay_to_insert.position, &snapshot.buffer)
+                    .then(std::cmp::Ordering::Less)
             }) {
                 Ok(ix) | Err(ix) => {
                     self.inlays.insert(ix, inlay_to_insert);
