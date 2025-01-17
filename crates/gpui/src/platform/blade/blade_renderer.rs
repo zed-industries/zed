@@ -7,16 +7,18 @@ use crate::{
     MonochromeSprite, Path, PathId, PathVertex, PolychromeSprite, PrimitiveBatch, Quad,
     ScaledPixels, Scene, Shadow, Size, Underline,
 };
+use blade_graphics as gpu;
+use blade_util::{BufferBelt, BufferBeltDescriptor};
 use bytemuck::{Pod, Zeroable};
 use collections::HashMap;
 #[cfg(target_os = "macos")]
 use media::core_video::CVMetalTextureCache;
-
-use blade_graphics as gpu;
-use blade_util::{BufferBelt, BufferBeltDescriptor};
 use std::{mem, sync::Arc};
 
 const MAX_FRAME_TIME_MS: u32 = 10000;
+// Use 4x MSAA, all devices support it.
+// https://developer.apple.com/documentation/metal/mtldevice/1433355-supportstexturesamplecount
+const PATH_SAMPLE_COUNT: u32 = 4;
 
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
@@ -208,7 +210,10 @@ impl BladePipelines {
                     blend: Some(gpu::BlendState::ADDITIVE),
                     write_mask: gpu::ColorWrites::default(),
                 }],
-                multisample_state: gpu::MultisampleState::default(),
+                multisample_state: gpu::MultisampleState {
+                    sample_count: PATH_SAMPLE_COUNT,
+                    ..Default::default()
+                },
             }),
             paths: gpu.create_render_pipeline(gpu::RenderPipelineDesc {
                 name: "paths",
@@ -348,7 +353,7 @@ impl BladeRenderer {
             min_chunk_size: 0x1000,
             alignment: 0x40, // Vulkan `minStorageBufferOffsetAlignment` on Intel Xe
         });
-        let atlas = Arc::new(BladeAtlas::new(&context.gpu));
+        let atlas = Arc::new(BladeAtlas::new(&context.gpu, PATH_SAMPLE_COUNT));
         let atlas_sampler = context.gpu.create_sampler(gpu::SamplerDesc {
             name: "atlas",
             mag_filter: gpu::FilterMode::Linear,
@@ -497,27 +502,38 @@ impl BladeRenderer {
             };
 
             let vertex_buf = unsafe { self.instance_belt.alloc_typed(&vertices, &self.gpu) };
-            let mut pass = self.command_encoder.render(
+            let frame_view = tex_info.raw_view;
+            let color_target = if let Some(msaa_view) = tex_info.msaa_view {
+                gpu::RenderTarget {
+                    view: msaa_view,
+                    init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
+                    finish_op: gpu::FinishOp::ResolveTo(frame_view),
+                }
+            } else {
+                gpu::RenderTarget {
+                    view: frame_view,
+                    init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
+                    finish_op: gpu::FinishOp::Store,
+                }
+            };
+
+            if let mut pass = self.command_encoder.render(
                 "paths",
                 gpu::RenderTargetSet {
-                    colors: &[gpu::RenderTarget {
-                        view: tex_info.raw_view,
-                        init_op: gpu::InitOp::Clear(gpu::TextureColor::OpaqueBlack),
-                        finish_op: gpu::FinishOp::Store,
-                    }],
+                    colors: &[color_target],
                     depth_stencil: None,
                 },
-            );
-
-            let mut encoder = pass.with(&self.pipelines.path_rasterization);
-            encoder.bind(
-                0,
-                &ShaderPathRasterizationData {
-                    globals,
-                    b_path_vertices: vertex_buf,
-                },
-            );
-            encoder.draw(0, vertices.len() as u32, 0, 1);
+            ) {
+                let mut encoder = pass.with(&self.pipelines.path_rasterization);
+                encoder.bind(
+                    0,
+                    &ShaderPathRasterizationData {
+                        globals,
+                        b_path_vertices: vertex_buf,
+                    },
+                );
+                encoder.draw(0, vertices.len() as u32, 0, 1);
+            }
         }
     }
 
