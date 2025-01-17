@@ -618,7 +618,7 @@ impl GitPanel {
             }
         });
         if let Err(e) = result {
-            self.show_err_toast("toggle staged error".to_string(), e, cx);
+            self.show_err_toast("toggle staged error", e, cx);
         }
         cx.notify();
     }
@@ -658,7 +658,7 @@ impl GitPanel {
         self.all_staged = Some(true);
 
         if let Err(e) = git_state.read(cx).stage_all() {
-            self.show_err_toast("stage all error".to_string(), e, cx);
+            self.show_err_toast("stage all error", e, cx);
         };
     }
 
@@ -671,7 +671,7 @@ impl GitPanel {
         }
         self.all_staged = Some(false);
         if let Err(e) = git_state.read(cx).unstage_all() {
-            self.show_err_toast("unstage all error".to_string(), e, cx);
+            self.show_err_toast("unstage all error", e, cx);
         };
     }
 
@@ -686,7 +686,7 @@ impl GitPanel {
             return;
         };
         if let Err(e) = git_state.update(cx, |git_state, _| git_state.commit()) {
-            self.show_err_toast("commit error".to_string(), e, cx);
+            self.show_err_toast("commit error", e, cx);
         };
         self.commit_editor
             .update(cx, |editor, cx| editor.set_text("", cx));
@@ -698,7 +698,7 @@ impl GitPanel {
             return;
         };
         if let Err(e) = git_state.update(cx, |git_state, _| git_state.commit_all()) {
-            self.show_err_toast("commit all error".to_string(), e, cx);
+            self.show_err_toast("commit all error", e, cx);
         };
         self.commit_editor
             .update(cx, |editor, cx| editor.set_text("", cx));
@@ -834,23 +834,18 @@ impl GitPanel {
         }
     }
 
-    fn show_err_toast(
-        &self,
-        id: impl Into<SharedString>,
-        e: anyhow::Error,
-        cx: &mut ViewContext<Self>,
-    ) {
-        if let Some(workspace) = self.weak_workspace.upgrade() {
-            let id_string = id.into();
-            let notif_id = NotificationId::Named(id_string.into());
-            let message = e.to_string();
-            workspace.update(cx, |workspace, cx| {
-                let toast = Toast::new(notif_id, message).on_click("Open Zed Log", |cx| {
-                    cx.dispatch_action(workspace::OpenLog.boxed_clone());
-                });
-                workspace.show_toast(toast, cx);
+    fn show_err_toast(&self, id: &'static str, e: anyhow::Error, cx: &mut ViewContext<Self>) {
+        let Some(workspace) = self.weak_workspace.upgrade() else {
+            return;
+        };
+        let notif_id = NotificationId::Named(id.into());
+        let message = e.to_string();
+        workspace.update(cx, |workspace, cx| {
+            let toast = Toast::new(notif_id, message).on_click("Open Zed Log", |cx| {
+                cx.dispatch_action(workspace::OpenLog.boxed_clone());
             });
-        }
+            workspace.show_toast(toast, cx);
+        });
     }
 }
 
@@ -1264,7 +1259,7 @@ impl GitPanel {
                                 }
                             });
                             if let Err(e) = result {
-                                this.show_err_toast("toggle staged error".to_string(), e, cx);
+                                this.show_err_toast("toggle staged error", e, cx);
                             }
                         });
                     }
