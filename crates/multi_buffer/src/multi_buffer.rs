@@ -5421,11 +5421,11 @@ where
             cmp::Ordering::Less => self.excerpts.prev(&()),
             cmp::Ordering::Greater => self.diff_transforms.prev(&()),
             cmp::Ordering::Equal => {
-                self.excerpts.prev(&());
-                if *self.excerpts.start() < self.diff_transforms.start().1
-                    || self.excerpts.item().is_none()
+                self.diff_transforms.prev(&());
+                if self.diff_transforms.start().1 < *self.excerpts.start()
+                    || self.diff_transforms.item().is_none()
                 {
-                    self.diff_transforms.prev(&());
+                    self.excerpts.prev(&());
                 }
             }
         }
