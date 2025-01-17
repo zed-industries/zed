@@ -3963,6 +3963,8 @@ impl EditorElement {
         let line_height = layout.position_map.line_height;
         cx.set_cursor_style(CursorStyle::Arrow, &layout.gutter_hitbox);
 
+        println!("controle, ignore");
+
         for LineNumberLayout {
             shaped_line,
             hitbox,
@@ -3978,6 +3980,7 @@ impl EditorElement {
             let color = if is_active {
                 cx.theme().colors().editor_active_line_number
             } else if !is_singleton && hitbox.is_hovered(cx) {
+                println!("HOVER DETECTADO");
                 cx.theme().colors().editor_hovered_line_number
             } else {
                 cx.theme().colors().editor_line_number
