@@ -94,26 +94,17 @@ impl<T> Copy for TypedRow<T> {}
 
 impl<T> Clone for TypedOffset<T> {
     fn clone(&self) -> Self {
-        Self {
-            value: self.value,
-            _marker: PhantomData,
-        }
+        *self
     }
 }
 impl<T> Clone for TypedPoint<T> {
     fn clone(&self) -> Self {
-        Self {
-            value: self.value,
-            _marker: PhantomData,
-        }
+        *self
     }
 }
 impl<T> Clone for TypedRow<T> {
     fn clone(&self) -> Self {
-        Self {
-            value: self.value,
-            _marker: PhantomData,
-        }
+        *self
     }
 }
 

@@ -2006,8 +2006,7 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
             snapshot.widest_line_number(),
             expected_row_infos
                 .into_iter()
-                .map(|info| info.buffer_row)
-                .flatten()
+                .filter_map(|info| info.buffer_row)
                 .max()
                 .unwrap()
                 + 1

@@ -847,8 +847,8 @@ fn push_isomorphic(transforms: &mut SumTree<Transform>, summary: TextSummary) {
     transforms.update_last(
         |last| {
             if !last.is_fold() {
-                last.summary.input += summary.clone();
-                last.summary.output += summary.clone();
+                last.summary.input += summary;
+                last.summary.output += summary;
                 did_merge = true;
             }
         },
@@ -858,7 +858,7 @@ fn push_isomorphic(transforms: &mut SumTree<Transform>, summary: TextSummary) {
         transforms.push(
             Transform {
                 summary: TransformSummary {
-                    input: summary.clone(),
+                    input: summary,
                     output: summary,
                 },
                 placeholder: None,

@@ -1047,14 +1047,14 @@ impl MultiBuffer {
                             let excerpt_buffer_start =
                                 excerpt.range.context.start.summary::<D>(buffer);
                             let excerpt_buffer_end = excerpt.range.context.end.summary::<D>(buffer);
-                            let excerpt_range = excerpt_buffer_start.clone()..excerpt_buffer_end;
+                            let excerpt_range = excerpt_buffer_start..excerpt_buffer_end;
                             if excerpt_range.contains(&range.start)
                                 && excerpt_range.contains(&range.end)
                             {
                                 let excerpt_start = D::from_text_summary(&cursor.start().text);
 
-                                let mut start = excerpt_start.clone();
-                                start.add_assign(&(range.start - excerpt_buffer_start.clone()));
+                                let mut start = excerpt_start;
+                                start.add_assign(&(range.start - excerpt_buffer_start));
                                 let mut end = excerpt_start;
                                 end.add_assign(&(range.end - excerpt_buffer_start));
 
@@ -1067,7 +1067,7 @@ impl MultiBuffer {
             }
         }
 
-        ranges.sort_by_key(|range| range.start.clone());
+        ranges.sort_by_key(|range| range.start);
         ranges
     }
 
@@ -2602,7 +2602,7 @@ impl MultiBuffer {
                         }
 
                         self.push_buffer_content_transform(
-                            &*snapshot,
+                            &snapshot,
                             &mut new_diff_transforms,
                             hunk_excerpt_start,
                             end_of_current_insert,
@@ -2619,7 +2619,7 @@ impl MultiBuffer {
                                     ..
                                 }) => {
                                     was_previously_expanded = true;
-                                    previous_expanded_summary = summary_including_newline.clone();
+                                    previous_expanded_summary = *summary_including_newline;
                                 }
                                 Some(DiffTransform::BufferContent {
                                     is_inserted_hunk, ..
@@ -2734,7 +2734,7 @@ impl MultiBuffer {
             }
 
             self.push_buffer_content_transform(
-                &*snapshot,
+                &snapshot,
                 &mut new_diff_transforms,
                 edit.new.end,
                 end_of_current_insert,
@@ -2765,7 +2765,7 @@ impl MultiBuffer {
                 let suffix = old_diff_transforms.end(&()).0 - edit.old.end;
                 let transform_end = new_diff_transforms.summary().excerpt_len() + suffix;
                 self.push_buffer_content_transform(
-                    &*snapshot,
+                    &snapshot,
                     &mut new_diff_transforms,
                     transform_end,
                     end_of_current_insert,
@@ -2807,7 +2807,7 @@ impl MultiBuffer {
             if self.extend_last_buffer_content_transform(
                 new_transforms,
                 *is_inserted_hunk,
-                summary.clone(),
+                *summary,
             ) {
                 let mut cursor = subtree.cursor::<()>(&());
                 cursor.next(&());
@@ -2840,7 +2840,7 @@ impl MultiBuffer {
             if !self.extend_last_buffer_content_transform(
                 new_transforms,
                 region_is_inserted_hunk,
-                summary_to_add.clone(),
+                summary_to_add,
             ) {
                 new_transforms.push(
                     DiffTransform::BufferContent {
@@ -2868,7 +2868,7 @@ impl MultiBuffer {
                 } = last_transform
                 {
                     if *is_inserted_hunk == region_is_inserted_hunk {
-                        *summary += summary_to_add.clone();
+                        *summary += summary_to_add;
                         did_extend = true;
                     }
                 }
@@ -3213,14 +3213,14 @@ impl MultiBufferSnapshot {
                 .eq(needle.bytes())
     }
 
-    pub fn diff_hunks<'a>(&'a self) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
+    pub fn diff_hunks(&self) -> impl Iterator<Item = MultiBufferDiffHunk> + '_ {
         self.diff_hunks_in_range(Anchor::min()..Anchor::max())
     }
 
-    pub fn diff_hunks_in_range<'a, T: ToOffset>(
-        &'a self,
+    pub fn diff_hunks_in_range<T: ToOffset>(
+        &self,
         range: Range<T>,
-    ) -> impl Iterator<Item = MultiBufferDiffHunk> + 'a {
+    ) -> impl Iterator<Item = MultiBufferDiffHunk> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         self.lift_buffer_metadata(range.clone(), |this, buffer, buffer_range| {
             let diff = this.diffs.get(&buffer.remote_id())?;
@@ -3253,10 +3253,10 @@ impl MultiBufferSnapshot {
         })
     }
 
-    pub fn excerpt_ids_for_range<'a, T: ToOffset>(
-        &'a self,
+    pub fn excerpt_ids_for_range<T: ToOffset>(
+        &self,
         range: Range<T>,
-    ) -> impl Iterator<Item = ExcerptId> + 'a {
+    ) -> impl Iterator<Item = ExcerptId> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut cursor = self.cursor::<usize>();
         cursor.seek(&range.start);
@@ -3270,10 +3270,10 @@ impl MultiBufferSnapshot {
         })
     }
 
-    pub fn buffer_ids_for_range<'a, T: ToOffset>(
-        &'a self,
+    pub fn buffer_ids_for_range<T: ToOffset>(
+        &self,
         range: Range<T>,
-    ) -> impl Iterator<Item = BufferId> + 'a {
+    ) -> impl Iterator<Item = BufferId> + '_ {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
         let mut cursor = self.cursor::<usize>();
         cursor.seek(&range.start);
@@ -3287,24 +3287,24 @@ impl MultiBufferSnapshot {
         })
     }
 
-    pub fn ranges_to_buffer_ranges<'a, T: ToOffset>(
-        &'a self,
+    pub fn ranges_to_buffer_ranges<T: ToOffset>(
+        &self,
         ranges: impl Iterator<Item = Range<T>>,
-    ) -> impl Iterator<Item = (&'a BufferSnapshot, Range<usize>, ExcerptId)> {
+    ) -> impl Iterator<Item = (&BufferSnapshot, Range<usize>, ExcerptId)> {
         ranges.flat_map(|range| self.range_to_buffer_ranges(range).into_iter())
     }
 
-    pub fn range_to_buffer_ranges<'a, T: ToOffset>(
-        &'a self,
+    pub fn range_to_buffer_ranges<T: ToOffset>(
+        &self,
         range: Range<T>,
-    ) -> Vec<(&'a BufferSnapshot, Range<usize>, ExcerptId)> {
+    ) -> Vec<(&BufferSnapshot, Range<usize>, ExcerptId)> {
         let start = range.start.to_offset(&self);
         let end = range.end.to_offset(&self);
 
         let mut cursor = self.cursor::<usize>();
         cursor.seek(&start);
 
-        let mut result: Vec<(&'a BufferSnapshot, Range<usize>, ExcerptId)> = Vec::new();
+        let mut result: Vec<(&BufferSnapshot, Range<usize>, ExcerptId)> = Vec::new();
         while let Some(region) = cursor.region() {
             if region.range.start > end {
                 break;
@@ -3960,7 +3960,7 @@ impl MultiBufferSnapshot {
     }
 
     pub fn text_summary(&self) -> TextSummary {
-        self.diff_transforms.summary().output.clone()
+        self.diff_transforms.summary().output
     }
 
     pub fn text_summary_for_range<D, O>(&self, range: Range<O>) -> D
@@ -4147,7 +4147,7 @@ impl MultiBufferSnapshot {
         let mut diff_transforms_cursor = self
             .diff_transforms
             .cursor::<(ExcerptDimension<D>, OutputDimension<D>)>(&());
-        diff_transforms_cursor.seek(&ExcerptDimension(excerpt_position.clone()), Bias::Left, &());
+        diff_transforms_cursor.seek(&ExcerptDimension(excerpt_position), Bias::Left, &());
 
         self.resolve_summary_for_anchor(anchor, excerpt_position, &mut diff_transforms_cursor)
     }
@@ -4288,16 +4288,15 @@ impl MultiBufferSnapshot {
                         excerpt_anchors.map(|a| (&a.text_anchor, a)),
                     )
                 {
-                    let summary = cmp::min(excerpt_buffer_end.clone(), buffer_summary);
-                    let mut position = excerpt_start_position.clone();
-                    let excerpt_buffer_start = excerpt_buffer_start.clone();
+                    let summary = cmp::min(excerpt_buffer_end, buffer_summary);
+                    let mut position = excerpt_start_position;
                     if summary > excerpt_buffer_start {
                         position.add_assign(&(summary - excerpt_buffer_start));
                     }
 
                     if position > diff_transforms_cursor.start().0 .0 {
                         diff_transforms_cursor.seek_forward(
-                            &ExcerptDimension(position.clone()),
+                            &ExcerptDimension(position),
                             Bias::Left,
                             &(),
                         );
@@ -4311,7 +4310,7 @@ impl MultiBufferSnapshot {
                 }
             } else {
                 diff_transforms_cursor.seek_forward(
-                    &ExcerptDimension(excerpt_start_position.clone()),
+                    &ExcerptDimension(excerpt_start_position),
                     Bias::Left,
                     &(),
                 );
@@ -4320,7 +4319,7 @@ impl MultiBufferSnapshot {
                     excerpt_start_position,
                     &mut diff_transforms_cursor,
                 );
-                summaries.extend(excerpt_anchors.map(|_| position.clone()));
+                summaries.extend(excerpt_anchors.map(|_| position));
             }
         }
 
@@ -5185,7 +5184,7 @@ impl MultiBufferSnapshot {
         Some(&self.excerpt(excerpt_id)?.buffer)
     }
 
-    pub fn range_for_excerpt<'a>(&'a self, excerpt_id: ExcerptId) -> Option<Range<Point>> {
+    pub fn range_for_excerpt(&self, excerpt_id: ExcerptId) -> Option<Range<Point>> {
         let mut cursor = self
             .excerpts
             .cursor::<(Option<&Locator>, ExcerptDimension<Point>)>(&());
@@ -5997,7 +5996,7 @@ impl sum_tree::Item for Excerpt {
     type Summary = ExcerptSummary;
 
     fn summary(&self, _cx: &()) -> Self::Summary {
-        let mut text = self.text_summary.clone();
+        let mut text = self.text_summary;
         if self.has_trailing_newline {
             text += TextSummary::from("\n");
         }
@@ -6032,12 +6031,12 @@ impl sum_tree::Item for DiffTransform {
     fn summary(&self, _: &<Self::Summary as sum_tree::Summary>::Context) -> Self::Summary {
         match self {
             DiffTransform::BufferContent { summary, .. } => DiffTransformSummary {
-                input: summary.clone(),
-                output: summary.clone(),
+                input: *summary,
+                output: *summary,
             },
             DiffTransform::DeletedHunk { summary, .. } => DiffTransformSummary {
                 input: TextSummary::default(),
-                output: summary.clone(),
+                output: *summary,
             },
         }
     }
@@ -6235,7 +6234,7 @@ impl<'a> sum_tree::Dimension<'a, DiffTransformSummary> for TextSummary {
     }
 
     fn add_summary(&mut self, summary: &'a DiffTransformSummary, _: &()) {
-        *self += summary.output.clone()
+        *self += summary.output
     }
 }
 

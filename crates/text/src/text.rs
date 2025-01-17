@@ -1507,9 +1507,9 @@ impl Buffer {
         let mut rope_cursor = self.visible_text.cursor(0);
         disjoint_ranges.map(move |range| {
             position.add_assign(&rope_cursor.summary(range.start));
-            let start = position.clone();
+            let start = position;
             position.add_assign(&rope_cursor.summary(range.end));
-            let end = position.clone();
+            let end = position;
             start..end
         })
     }
@@ -2168,7 +2168,7 @@ impl BufferSnapshot {
             }
 
             position.add_assign(&text_cursor.summary(fragment_offset));
-            (position.clone(), payload)
+            (position, payload)
         })
     }
 
@@ -2584,16 +2584,16 @@ impl<'a, D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator fo
                 }
 
                 let fragment_summary = self.visible_cursor.summary(visible_end);
-                let mut new_end = self.new_end.clone();
+                let mut new_end = self.new_end;
                 new_end.add_assign(&fragment_summary);
                 if let Some((edit, range)) = pending_edit.as_mut() {
-                    edit.new.end = new_end.clone();
+                    edit.new.end = new_end;
                     range.end = end_anchor;
                 } else {
                     pending_edit = Some((
                         Edit {
-                            old: self.old_end.clone()..self.old_end.clone(),
-                            new: self.new_end.clone()..new_end.clone(),
+                            old: self.old_end..self.old_end,
+                            new: self.new_end..new_end,
                         },
                         start_anchor..end_anchor,
                     ));
@@ -2613,16 +2613,16 @@ impl<'a, D: TextDimension + Ord, F: FnMut(&FragmentSummary) -> bool> Iterator fo
                     self.deleted_cursor.seek_forward(cursor.start().deleted);
                 }
                 let fragment_summary = self.deleted_cursor.summary(deleted_end);
-                let mut old_end = self.old_end.clone();
+                let mut old_end = self.old_end;
                 old_end.add_assign(&fragment_summary);
                 if let Some((edit, range)) = pending_edit.as_mut() {
-                    edit.old.end = old_end.clone();
+                    edit.old.end = old_end;
                     range.end = end_anchor;
                 } else {
                     pending_edit = Some((
                         Edit {
-                            old: self.old_end.clone()..old_end.clone(),
-                            new: self.new_end.clone()..self.new_end.clone(),
+                            old: self.old_end..old_end,
+                            new: self.new_end..self.new_end,
                         },
                         start_anchor..end_anchor,
                     ));

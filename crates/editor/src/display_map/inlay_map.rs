@@ -69,11 +69,11 @@ impl Inlay {
 impl sum_tree::Item for Transform {
     type Summary = TransformSummary;
 
-    fn summary(&self, _cx: &()) -> Self::Summary {
+    fn summary(&self, _: &()) -> Self::Summary {
         match self {
             Transform::Isomorphic(summary) => TransformSummary {
-                input: summary.clone(),
-                output: summary.clone(),
+                input: *summary,
+                output: *summary,
             },
             Transform::Inlay(inlay) => TransformSummary {
                 input: TextSummary::default(),
@@ -450,7 +450,7 @@ impl InlayMap {
                 new_transforms.append(cursor.slice(&buffer_edit.old.start, Bias::Left, &()), &());
                 if let Some(Transform::Isomorphic(transform)) = cursor.item() {
                     if cursor.end(&()).0 == buffer_edit.old.start {
-                        push_isomorphic(&mut new_transforms, transform.clone());
+                        push_isomorphic(&mut new_transforms, *transform);
                         cursor.next(&());
                     }
                 }
@@ -894,7 +894,7 @@ impl InlaySnapshot {
     }
 
     pub fn text_summary(&self) -> TextSummary {
-        self.transforms.summary().output.clone()
+        self.transforms.summary().output
     }
 
     pub fn text_summary_for_range(&self, range: Range<InlayOffset>) -> TextSummary {

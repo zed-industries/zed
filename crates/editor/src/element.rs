@@ -2145,7 +2145,6 @@ impl EditorElement {
         buffer_rows
             .into_iter()
             .map(|row_info| {
-                // FIXME: These are not really MultiBufferRow?!
                 if let Some(row) = row_info.buffer_row {
                     snapshot.render_crease_trailer(MultiBufferRow(row), cx)
                 } else {

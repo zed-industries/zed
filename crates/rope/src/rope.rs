@@ -222,7 +222,7 @@ impl Rope {
     }
 
     pub fn summary(&self) -> TextSummary {
-        self.chunks.summary().text.clone()
+        self.chunks.summary().text
     }
 
     pub fn len(&self) -> usize {
@@ -1153,7 +1153,7 @@ impl<'a> sum_tree::Dimension<'a, ChunkSummary> for TextSummary {
 
 impl TextDimension for TextSummary {
     fn from_text_summary(summary: &TextSummary) -> Self {
-        summary.clone()
+        *summary
     }
 
     fn from_chunk(chunk: ChunkSlice) -> Self {

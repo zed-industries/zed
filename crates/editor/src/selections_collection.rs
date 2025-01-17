@@ -331,9 +331,9 @@ impl SelectionsCollection {
             .iter()
             .map(|s| {
                 if s.reversed {
-                    s.end.clone()..s.start.clone()
+                    s.end..s.start
                 } else {
-                    s.start.clone()..s.end.clone()
+                    s.start..s.end
                 }
             })
             .collect()
