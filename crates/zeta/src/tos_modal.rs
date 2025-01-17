@@ -3,7 +3,7 @@ use gpui::{
     AppContext, ClickEvent, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
     MouseDownEvent, Render, View,
 };
-use ui::prelude::*;
+use ui::{prelude::*, TintColor};
 use workspace::{ModalView, Workspace};
 
 pub struct ZedPredictTos {
@@ -95,23 +95,40 @@ impl Render for ZedPredictTos {
                 h_flex()
                     .w_full()
                     .justify_between()
-                    .child(Headline::new("Zed AI").size(HeadlineSize::Large))
+                    .child(
+                        v_flex()
+                            .gap_0p5()
+                            .child(
+                                Label::new("Zed AI")
+                                    .size(LabelSize::Small)
+                                    .color(Color::Muted),
+                            )
+                            .child(Headline::new("Edit Prediction")),
+                    )
                     .child(Icon::new(IconName::ZedPredict).size(IconSize::XLarge)),
             )
-            .child("Please read and accept our Terms of Service to use Edit Predictions.")
+            .child(
+                Label::new(
+                    "To use Zed AI's Edit Prediction feature, please read and accept our Terms of Service.",
+                )
+                .color(Color::Muted),
+            )
             .child(
                 v_flex()
                     .mt_2()
-                    .gap_2()
+                    .gap_0p5()
                     .w_full()
                     .child(if self.viewed {
-                        Button::new("accept-tos", "Accept Terms of Service")
-                            .style(ButtonStyle::Filled)
+                        Button::new("accept-tos", "I've Read and Accept the Terms of Service")
+                            .style(ButtonStyle::Tinted(TintColor::Accent))
                             .full_width()
                             .on_click(cx.listener(Self::accept_terms))
                     } else {
-                        Button::new("view-tos", "View Terms of Service")
-                            .style(ButtonStyle::Filled)
+                        Button::new("view-tos", "Read Terms of Service")
+                            .style(ButtonStyle::Tinted(TintColor::Accent))
+                            .icon(IconName::ArrowUpRight)
+                            .icon_size(IconSize::XSmall)
+                            .icon_position(IconPosition::End)
                             .full_width()
                             .on_click(cx.listener(Self::view_terms))
                     })
