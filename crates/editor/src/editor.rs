@@ -2007,6 +2007,10 @@ impl Editor {
             if self.git_blame_inline_enabled {
                 self.start_inline_blame_timer(cx);
             }
+
+            if show_completions {
+                self.refresh_inline_completion(true, false, cx);
+            }
         }
 
         self.blink_manager.update(cx, BlinkManager::pause_blinking);
