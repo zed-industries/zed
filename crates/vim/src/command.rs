@@ -20,7 +20,6 @@ use std::{
     io::Write,
     iter::Peekable,
     ops::{Deref, Range},
-    os::unix::process::CommandExt,
     process::Stdio,
     str::Chars,
     sync::OnceLock,
@@ -1334,7 +1333,9 @@ impl ShellExec {
         //
         // safety: code in pre_exec should be signal safe.
         // https://man7.org/linux/man-pages/man7/signal-safety.7.html
+        #[cfg(not(target_os = "windows"))]
         unsafe {
+            use std::os::unix::process::CommandExt;
             process.pre_exec(|| {
                 libc::setsid();
                 Ok(())
