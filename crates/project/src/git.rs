@@ -2,14 +2,13 @@ use std::sync::Arc;
 
 use anyhow::anyhow;
 use futures::channel::mpsc;
-use futures::StreamExt as _;
+use futures::{SinkExt as _, StreamExt as _};
 use git::{
     repository::{GitRepository, RepoPath},
     status::{GitSummary, TrackedSummary},
 };
 use gpui::{AppContext, SharedString};
 use settings::WorktreeId;
-use util::ResultExt as _;
 use worktree::RepositoryEntry;
 
 pub struct GitState {
@@ -20,7 +19,7 @@ pub struct GitState {
     /// are currently being viewed or modified in the UI.
     pub active_repository: Option<(WorktreeId, RepositoryEntry, Arc<dyn GitRepository>)>,
 
-    update_sender: mpsc::UnboundedSender<Message>,
+    update_sender: mpsc::UnboundedSender<(Message, mpsc::Sender<anyhow::Error>)>,
 }
 
 enum Message {
@@ -32,10 +31,12 @@ enum Message {
 
 impl GitState {
     pub fn new(cx: &AppContext) -> Self {
-        let (tx, mut rx) = mpsc::unbounded();
+        let (update_sender, mut update_receiver) =
+            mpsc::unbounded::<(Message, mpsc::Sender<anyhow::Error>)>();
         cx.spawn(|cx| async move {
-            while let Some(msg) = rx.next().await {
-                cx.background_executor()
+            while let Some((msg, mut err_sender)) = update_receiver.next().await {
+                let result = cx
+                    .background_executor()
                     .spawn(async move {
                         match msg {
                             Message::StageAndCommit(repo, message, paths) => {
@@ -48,15 +49,17 @@ impl GitState {
                             Message::Commit(repo, message) => repo.commit(&message),
                         }
                     })
-                    .await
-                    .log_err();
+                    .await;
+                if let Err(e) = result {
+                    err_sender.send(e).await.ok();
+                }
             }
         })
         .detach();
         GitState {
             commit_message: SharedString::default(),
             active_repository: None,
-            update_sender: tx,
+            update_sender,
         }
     }
 
@@ -75,7 +78,11 @@ impl GitState {
         self.active_repository.as_ref()
     }
 
-    pub fn stage_entries(&self, entries: Vec<RepoPath>) -> anyhow::Result<()> {
+    pub fn stage_entries(
+        &self,
+        entries: Vec<RepoPath>,
+        err_sender: mpsc::Sender<anyhow::Error>,
+    ) -> anyhow::Result<()> {
         if entries.is_empty() {
             return Ok(());
         }
@@ -83,12 +90,16 @@ impl GitState {
             return Err(anyhow!("No active repository"));
         };
         self.update_sender
-            .unbounded_send(Message::Stage(git_repo.clone(), entries))
+            .unbounded_send((Message::Stage(git_repo.clone(), entries), err_sender))
             .map_err(|_| anyhow!("Failed to submit stage operation"))?;
         Ok(())
     }
 
-    pub fn unstage_entries(&self, entries: Vec<RepoPath>) -> anyhow::Result<()> {
+    pub fn unstage_entries(
+        &self,
+        entries: Vec<RepoPath>,
+        err_sender: mpsc::Sender<anyhow::Error>,
+    ) -> anyhow::Result<()> {
         if entries.is_empty() {
             return Ok(());
         }
@@ -96,12 +107,12 @@ impl GitState {
             return Err(anyhow!("No active repository"));
         };
         self.update_sender
-            .unbounded_send(Message::Unstage(git_repo.clone(), entries))
+            .unbounded_send((Message::Unstage(git_repo.clone(), entries), err_sender))
             .map_err(|_| anyhow!("Failed to submit unstage operation"))?;
         Ok(())
     }
 
-    pub fn stage_all(&self) -> anyhow::Result<()> {
+    pub fn stage_all(&self, err_sender: mpsc::Sender<anyhow::Error>) -> anyhow::Result<()> {
         let Some((_, entry, _)) = self.active_repository.as_ref() else {
             return Err(anyhow!("No active repository"));
         };
@@ -110,11 +121,11 @@ impl GitState {
             .filter(|entry| !entry.status.is_staged().unwrap_or(false))
             .map(|entry| entry.repo_path.clone())
             .collect();
-        self.stage_entries(to_stage)?;
+        self.stage_entries(to_stage, err_sender)?;
         Ok(())
     }
 
-    pub fn unstage_all(&self) -> anyhow::Result<()> {
+    pub fn unstage_all(&self, err_sender: mpsc::Sender<anyhow::Error>) -> anyhow::Result<()> {
         let Some((_, entry, _)) = self.active_repository.as_ref() else {
             return Err(anyhow!("No active repository"));
         };
@@ -123,7 +134,7 @@ impl GitState {
             .filter(|entry| entry.status.is_staged().unwrap_or(true))
             .map(|entry| entry.repo_path.clone())
             .collect();
-        self.unstage_entries(to_unstage)?;
+        self.unstage_entries(to_unstage, err_sender)?;
         Ok(())
     }
 
@@ -155,7 +166,7 @@ impl GitState {
             && (commit_all || self.have_staged_changes());
     }
 
-    pub fn commit(&mut self) -> anyhow::Result<()> {
+    pub fn commit(&mut self, err_sender: mpsc::Sender<anyhow::Error>) -> anyhow::Result<()> {
         if !self.can_commit(false) {
             return Err(anyhow!("No staged changes to commit"));
         }
@@ -165,12 +176,12 @@ impl GitState {
         let git_repo = git_repo.clone();
         let message = std::mem::take(&mut self.commit_message);
         self.update_sender
-            .unbounded_send(Message::Commit(git_repo, message))
+            .unbounded_send((Message::Commit(git_repo, message), err_sender))
             .map_err(|_| anyhow!("Failed to submit commit operation"))?;
         Ok(())
     }
 
-    pub fn commit_all(&mut self) -> anyhow::Result<()> {
+    pub fn commit_all(&mut self, err_sender: mpsc::Sender<anyhow::Error>) -> anyhow::Result<()> {
         if !self.can_commit(true) {
             return Err(anyhow!("No changes to commit"));
         }
@@ -184,7 +195,10 @@ impl GitState {
             .collect::<Vec<_>>();
         let message = std::mem::take(&mut self.commit_message);
         self.update_sender
-            .unbounded_send(Message::StageAndCommit(git_repo.clone(), message, to_stage))
+            .unbounded_send((
+                Message::StageAndCommit(git_repo.clone(), message, to_stage),
+                err_sender,
+            ))
             .map_err(|_| anyhow!("Failed to submit commit operation"))?;
         Ok(())
     }

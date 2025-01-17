@@ -4,6 +4,8 @@ use anyhow::{Context as _, Result};
 use db::kvp::KEY_VALUE_STORE;
 use editor::scroll::ScrollbarAutoHide;
 use editor::{Editor, EditorSettings, ShowScrollbar};
+use futures::channel::mpsc;
+use futures::StreamExt as _;
 use git::repository::{GitRepository, RepoPath};
 use git::status::FileStatus;
 use git::{CommitAllChanges, CommitChanges, RevertAll, StageAll, ToggleStaged, UnstageAll};
@@ -94,6 +96,7 @@ pub struct GitPanel {
     all_staged: Option<bool>,
     width: Option<Pixels>,
     reveal_in_editor: Task<()>,
+    err_sender: mpsc::Sender<anyhow::Error>,
 }
 
 fn first_worktree_repository(
@@ -151,6 +154,8 @@ impl GitPanel {
         let current_commit_message = git_state
             .as_ref()
             .map(|git_state| git_state.read(cx).commit_message.clone());
+
+        let (err_sender, mut err_receiver) = mpsc::channel(1);
 
         let git_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
             let focus_handle = cx.focus_handle();
@@ -337,13 +342,32 @@ impl GitPanel {
                 hide_scrollbar_task: None,
                 rebuild_requested,
                 commit_editor,
-                reveal_in_editor: Task::ready(()),
                 project,
+                reveal_in_editor: Task::ready(()),
+                err_sender,
             };
             git_panel.schedule_update();
             git_panel.show_scrollbar = git_panel.should_show_scrollbar(cx);
             git_panel
         });
+
+        let handle = git_panel.downgrade();
+        cx.spawn(|_, mut cx| async move {
+            while let Some(e) = err_receiver.next().await {
+                let Some(this) = handle.upgrade() else {
+                    break;
+                };
+                if this
+                    .update(&mut cx, |this, cx| {
+                        this.show_err_toast("git operation error", e, cx);
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }
+        })
+        .detach();
 
         cx.subscribe(
             &git_panel,
@@ -612,9 +636,9 @@ impl GitPanel {
         };
         let result = git_state.update(cx, |git_state, _| {
             if entry.status.is_staged().unwrap_or(false) {
-                git_state.unstage_entries(vec![entry.repo_path.clone()])
+                git_state.unstage_entries(vec![entry.repo_path.clone()], self.err_sender.clone())
             } else {
-                git_state.stage_entries(vec![entry.repo_path.clone()])
+                git_state.stage_entries(vec![entry.repo_path.clone()], self.err_sender.clone())
             }
         });
         if let Err(e) = result {
@@ -657,7 +681,7 @@ impl GitPanel {
         }
         self.all_staged = Some(true);
 
-        if let Err(e) = git_state.read(cx).stage_all() {
+        if let Err(e) = git_state.read(cx).stage_all(self.err_sender.clone()) {
             self.show_err_toast("stage all error", e, cx);
         };
     }
@@ -670,7 +694,7 @@ impl GitPanel {
             entry.is_staged = Some(false);
         }
         self.all_staged = Some(false);
-        if let Err(e) = git_state.read(cx).unstage_all() {
+        if let Err(e) = git_state.read(cx).unstage_all(self.err_sender.clone()) {
             self.show_err_toast("unstage all error", e, cx);
         };
     }
@@ -685,7 +709,9 @@ impl GitPanel {
         let Some(git_state) = self.git_state(cx) else {
             return;
         };
-        if let Err(e) = git_state.update(cx, |git_state, _| git_state.commit()) {
+        if let Err(e) =
+            git_state.update(cx, |git_state, _| git_state.commit(self.err_sender.clone()))
+        {
             self.show_err_toast("commit error", e, cx);
         };
         self.commit_editor
@@ -697,7 +723,9 @@ impl GitPanel {
         let Some(git_state) = self.git_state(cx) else {
             return;
         };
-        if let Err(e) = git_state.update(cx, |git_state, _| git_state.commit_all()) {
+        if let Err(e) = git_state.update(cx, |git_state, _| {
+            git_state.commit_all(self.err_sender.clone())
+        }) {
             self.show_err_toast("commit all error", e, cx);
         };
         self.commit_editor
@@ -1251,12 +1279,10 @@ impl GitPanel {
                                 return;
                             };
                             let result = git_state.update(cx, |git_state, _| match toggle {
-                                ToggleState::Selected | ToggleState::Indeterminate => {
-                                    git_state.stage_entries(vec![repo_path])
-                                }
-                                ToggleState::Unselected => {
-                                    git_state.unstage_entries(vec![repo_path])
-                                }
+                                ToggleState::Selected | ToggleState::Indeterminate => git_state
+                                    .stage_entries(vec![repo_path], this.err_sender.clone()),
+                                ToggleState::Unselected => git_state
+                                    .unstage_entries(vec![repo_path], this.err_sender.clone()),
                             });
                             if let Err(e) = result {
                                 this.show_err_toast("toggle staged error", e, cx);
