@@ -2516,6 +2516,7 @@ impl MultiBuffer {
         if changes.is_empty() {
             return;
         }
+        dbg!(&changes);
 
         let mut excerpts = snapshot.excerpts.cursor::<ExcerptOffset>(&());
         let mut old_diff_transforms = snapshot
@@ -2567,8 +2568,23 @@ impl MultiBuffer {
                     let edit_anchor_range = buffer.anchor_before(edit_buffer_start)
                         ..buffer.anchor_after(edit_buffer_end);
 
-                    for hunk in diff.hunks_intersecting_range(edit_anchor_range, buffer) {
+                    let mut hunks = diff
+                        .hunks_intersecting_range(edit_anchor_range, buffer)
+                        .peekable();
+
+                    while let Some(mut hunk) = hunks.next() {
                         let hunk_buffer_range = hunk.buffer_range.to_offset(buffer);
+                        if hunk_buffer_range.start == excerpt_buffer_start
+                            && excerpt_buffer_start == edit_buffer_start
+                        {
+                            if let Some(next_hunk) = hunks.peek() {
+                                let next_hunk_start =
+                                    next_hunk.buffer_range.start.to_offset(buffer);
+                                if next_hunk_start == hunk_buffer_range.start {
+                                    hunk = hunks.next().unwrap();
+                                }
+                            }
+                        }
                         let hunk_excerpt_start = excerpt_start
                             + ExcerptOffset::new(
                                 hunk_buffer_range.start.saturating_sub(excerpt_buffer_start),
@@ -2676,6 +2692,7 @@ impl MultiBuffer {
                                     let new_end = new_start + base_text_summary.len;
                                     output_delta += base_text_summary.len as isize
                                         - previous_expanded_summary.len as isize;
+
                                     let edit = Edit {
                                         old: old_start..old_end,
                                         new: new_start..new_end,
@@ -2787,6 +2804,7 @@ impl MultiBuffer {
         }
         self.subscriptions.publish(edits);
 
+        dbg!(&new_diff_transforms.items(&()));
         drop(old_diff_transforms);
         drop(excerpts);
         snapshot.diff_transforms = new_diff_transforms;

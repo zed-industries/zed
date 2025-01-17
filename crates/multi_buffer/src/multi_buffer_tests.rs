@@ -1603,11 +1603,11 @@ impl ReferenceMultibuffer {
             let mut hunks = diff
                 .hunks_intersecting_range(excerpt.range.clone(), buffer)
                 .peekable();
+
             while let Some(hunk) = hunks.next() {
-                if !excerpt
-                    .expanded_diff_hunks
-                    .contains(&hunk.buffer_range.start)
-                {
+                if !excerpt.expanded_diff_hunks.iter().any(|expanded_anchor| {
+                    expanded_anchor.to_offset(&buffer) == hunk.buffer_range.start.to_offset(&buffer)
+                }) {
                     continue;
                 }
 
@@ -1662,6 +1662,9 @@ impl ReferenceMultibuffer {
                 if hunk_range.end > offset {
                     let len = text.len();
                     text.extend(buffer.text_for_range(offset..hunk_range.end));
+                    dbg!(buffer
+                        .text_for_range(offset..hunk_range.end)
+                        .collect::<String>());
                     regions.push(ReferenceRegion {
                         range: len..text.len(),
                         buffer_start: Some(buffer.offset_to_point(offset)),
@@ -1986,9 +1989,9 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
             "line count: {}",
             actual_text.split('\n').count()
         );
+        pretty_assertions::assert_eq!(actual_diff, expected_diff);
         pretty_assertions::assert_eq!(actual_row_infos, expected_row_infos);
         pretty_assertions::assert_eq!(actual_text, expected_text);
-        pretty_assertions::assert_eq!(actual_diff, expected_diff);
 
         for _ in 0..5 {
             let start_row = rng.gen_range(0..=expected_row_infos.len());
