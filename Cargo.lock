@@ -5192,6 +5192,7 @@ dependencies = [
  "collections",
  "db",
  "editor",
+ "futures 0.3.31",
  "git",
  "gpui",
  "language",

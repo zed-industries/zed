@@ -1588,7 +1588,7 @@ impl ProjectPanel {
                         }
                     }))
                     && entry.is_file()
-                    && entry.git_summary.modified > 0
+                    && entry.git_summary.index.modified + entry.git_summary.worktree.modified > 0
             },
             cx,
         );
@@ -1666,7 +1666,7 @@ impl ProjectPanel {
                         }
                     }))
                     && entry.is_file()
-                    && entry.git_summary.modified > 0
+                    && entry.git_summary.index.modified + entry.git_summary.worktree.modified > 0
             },
             cx,
         );

@@ -231,6 +231,10 @@ impl RepositoryEntry {
         self.statuses_by_path.summary().item_summary.count
     }
 
+    pub fn status_summary(&self) -> GitSummary {
+        self.statuses_by_path.summary().item_summary
+    }
+
     pub fn status_for_path(&self, path: &RepoPath) -> Option<StatusEntry> {
         self.statuses_by_path
             .get(&PathKey(path.0.clone()), &())
