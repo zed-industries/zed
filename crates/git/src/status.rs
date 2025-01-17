@@ -215,6 +215,20 @@ impl StatusCode {
             }
         }
     }
+
+    pub fn index(self) -> FileStatus {
+        FileStatus::Tracked(TrackedStatus {
+            index_status: self,
+            worktree_status: StatusCode::Unmodified,
+        })
+    }
+
+    pub fn worktree(self) -> FileStatus {
+        FileStatus::Tracked(TrackedStatus {
+            index_status: StatusCode::Unmodified,
+            worktree_status: self,
+        })
+    }
 }
 
 impl UnmergedStatusCode {
