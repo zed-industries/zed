@@ -5,7 +5,6 @@ mod context;
 pub mod context_store;
 mod inline_assistant;
 mod patch;
-mod prompt_library;
 mod slash_command;
 pub(crate) mod slash_command_picker;
 pub mod slash_command_settings;
@@ -14,7 +13,6 @@ mod terminal_inline_assistant;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use ::prompt_library::{PromptBuilder, PromptLoadingParams};
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::SlashCommandRegistry;
 use assistant_slash_commands::{ProjectSlashCommandFeatureFlag, SearchSlashCommandFeatureFlag};
@@ -27,6 +25,7 @@ use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
 use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
 };
+use prompt_library::{PromptBuilder, PromptLoadingParams};
 use semantic_index::{CloudEmbeddingProvider, SemanticDb};
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
@@ -214,7 +213,7 @@ pub fn init(
     .detach();
 
     context_store::init(&client.clone().into());
-    ::prompt_library::init(cx);
+    prompt_library::init(cx);
     init_language_model_settings(cx);
     assistant_slash_command::init(cx);
     assistant_tool::init(cx);
