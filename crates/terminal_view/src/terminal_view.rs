@@ -29,7 +29,7 @@ use terminal::{
 };
 use terminal_element::{is_blank, TerminalElement};
 use terminal_panel::TerminalPanel;
-use terminal_scrollbar::{TerminalScrollbar, TerminalScrollbarState};
+use terminal_scrollbar::TerminalScrollbar;
 use terminal_tab_tooltip::TerminalTooltip;
 use ui::{h_flex, prelude::*, ContextMenu, Icon, IconName, Label, Tooltip};
 use util::{
@@ -122,6 +122,7 @@ pub struct TerminalView {
     show_breadcrumbs: bool,
     block_below_cursor: Option<Rc<BlockProperties>>,
     scroll_top: Pixels,
+    scrollbar: TerminalScrollbar,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
 }
@@ -170,7 +171,7 @@ impl TerminalView {
             .unwrap_or_default();
 
         Self {
-            terminal,
+            terminal: terminal.clone(),
             workspace: workspace_handle,
             project,
             has_bell: false,
@@ -186,6 +187,7 @@ impl TerminalView {
             show_breadcrumbs: TerminalSettings::get_global(cx).toolbar.breadcrumbs,
             block_below_cursor: None,
             scroll_top: Pixels::ZERO,
+            scrollbar: TerminalScrollbar::new(terminal, cx.view().downgrade()),
             _subscriptions: vec![
                 focus_in,
                 focus_out,
@@ -623,22 +625,9 @@ impl TerminalView {
     }
 
     fn render_scrollbar(&self, cx: &mut ViewContext<Self>) -> Option<Stateful<Div>> {
-        // if self.vertical_scrollbar_state.is_dragging()
-        // {
+        // if self.scrollbar.is_dragging() {
         //     return None;
         // }
-
-        let terminal = self.terminal.read(cx);
-        let scrollbar = TerminalScrollbar::new(TerminalScrollbarState::new(
-            terminal.total_lines(),
-            terminal.viewport_lines(),
-            terminal.last_content.display_offset,
-        ));
-
-        let Some(scrollbar) = scrollbar else {
-            return None;
-        };
-
         Some(
             div()
                 .occlude()
@@ -670,7 +659,7 @@ impl TerminalView {
                 .bottom_0()
                 .w(px(12.))
                 .cursor_default()
-                .child(scrollbar),
+                .child(self.scrollbar.clone()),
         )
     }
 }

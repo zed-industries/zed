@@ -2,58 +2,51 @@ use std::ops::Range;
 
 use gpui::{
     point, quad, Bounds, ContentMask, Corners, Edges, Element, ElementId, GlobalElementId, Hitbox,
-    Hsla, LayoutId, Pixels, Style, WindowContext,
+    Hsla, LayoutId, Model, Pixels, Style, WeakView, WindowContext,
 };
 use std::cell::Cell;
 use std::rc::Rc;
+use terminal::Terminal;
 use ui::ActiveTheme;
 
-use crate::{px, relative, IntoElement};
+use crate::{px, relative, IntoElement, TerminalView};
 
+const MINIMUM_THUMB_SIZE: f32 = 0.05; // 5%
+
+#[derive(Clone)]
 pub struct TerminalScrollbar {
-    thumb: Range<f32>,
-    state: TerminalScrollbarState,
-}
-
-pub struct TerminalScrollbarState {
+    terminal: Model<Terminal>,
+    terminal_view: WeakView<TerminalView>,
     drag: Rc<Cell<Option<f32>>>,
-    total_lines: usize,
-    viewport_lines: usize,
-    display_offset: usize,
 }
 
 impl TerminalScrollbar {
-    pub fn new(state: TerminalScrollbarState) -> Option<Self> {
-        let thumb = state.thumb_range()?;
-        Some(Self { thumb, state })
-    }
-}
-
-impl TerminalScrollbarState {
-    pub fn new(total_lines: usize, viewport_lines: usize, display_offset: usize) -> Self {
-        TerminalScrollbarState {
-            drag: Rc::new(Cell::new(None)),
-            total_lines,
-            viewport_lines,
-            display_offset,
+    pub fn new(terminal: Model<Terminal>, terminal_view: WeakView<TerminalView>) -> Self {
+        Self {
+            terminal,
+            terminal_view,
+            drag: Default::default(),
         }
     }
 
-    fn is_dragging(&self) -> bool {
-        self.drag.get().is_some()
-    }
+    fn thumb_range(&self, cx: &WindowContext) -> Range<f32> {
+        let terminal = self.terminal.read(cx);
+        let viewport_lines = terminal.viewport_lines();
+        let total_lines = terminal.total_lines();
 
-    fn thumb_range(&self) -> Option<Range<f32>> {
-        const MINIMUM_THUMB_SIZE: f32 = 0.05; // 5%
-        if self.total_lines <= self.viewport_lines {
-            return None;
+        if total_lines <= viewport_lines {
+            return 0.0..0.0;
         }
-        let thumb_size =
-            (self.viewport_lines as f32 / self.total_lines as f32).max(MINIMUM_THUMB_SIZE);
-        let max_scroll = self.total_lines.saturating_sub(self.viewport_lines);
-        let scroll_progress = self.display_offset as f32 / max_scroll as f32;
+
+        let thumb_size = (viewport_lines as f32 / total_lines as f32).max(MINIMUM_THUMB_SIZE);
+        let max_scroll = total_lines.saturating_sub(viewport_lines);
+        let scroll_progress = terminal.last_content.display_offset as f32 / max_scroll as f32;
         let thumb_position = (scroll_progress * (thumb_size - 1.0)) + 1.0;
-        Some((thumb_position - thumb_size)..thumb_position)
+        (thumb_position - thumb_size)..thumb_position
+    }
+
+    pub fn is_dragging(&self) -> bool {
+        self.drag.get().is_some()
     }
 }
 
@@ -112,8 +105,9 @@ impl Element for TerminalScrollbar {
             );
 
             let mut thumb_bounds = {
-                let thumb_offset = self.thumb.start * padded_bounds.size.height;
-                let thumb_end = self.thumb.end * padded_bounds.size.height;
+                let thumb = self.thumb_range(cx);
+                let thumb_offset = thumb.start * padded_bounds.size.height;
+                let thumb_end = thumb.end * padded_bounds.size.height;
                 Bounds::from_corners(
                     point(
                         padded_bounds.origin.x,
