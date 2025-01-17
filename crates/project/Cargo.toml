@@ -73,6 +73,7 @@ util.workspace = true
 url.workspace = true
 which.workspace = true
 fancy-regex.workspace = true
+nohash-hasher.workspace = true
 
 [dev-dependencies]
 client = { workspace = true, features = ["test-support"] }
