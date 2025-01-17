@@ -18,6 +18,7 @@ use language::{
 use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc, time::Duration};
 use supermaven::{AccountStatus, Supermaven};
+use ui::{ActiveTheme as _, ButtonLike, Color, Icon, IconWithIndicator, Indicator};
 use workspace::{
     create_and_open_local_file,
     item::ItemHandle,
@@ -218,9 +219,24 @@ impl Render for InlineCompletionButton {
                     let user_store = self.user_store.clone();
 
                     return div().child(
-                        IconButton::new("zeta", IconName::ZedPredict)
+                        ButtonLike::new("zeta-pending-tos-icon")
+                            .child(
+                                IconWithIndicator::new(
+                                    Icon::new(IconName::ZedPredict),
+                                    Some(Indicator::dot().color(Color::Warning)),
+                                )
+                                .indicator_border_color(Some(
+                                    cx.theme().colors().status_bar_background,
+                                ))
+                                .into_any_element(),
+                            )
                             .tooltip(|cx| {
-                                Tooltip::text("Edit Predictions (needs accepted terms)", cx)
+                                Tooltip::with_meta(
+                                    "Edit Predictions",
+                                    None,
+                                    "Read Terms of Service",
+                                    cx,
+                                )
                             })
                             .on_click(cx.listener(move |_, _, cx| {
                                 let user_store = user_store.clone();
