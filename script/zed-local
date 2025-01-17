@@ -112,9 +112,23 @@ if (platform === "darwin") {
     console.log(err);
     throw new Error("Could not get screen resolution");
   }
+} else if (platform === "win32") {
+  // windows
+  try {
+    const resolutionOutput = execSync(
+      `powershell -Command "& {Add-Type -AssemblyName System.Windows.Forms; [System.Windows.Forms.Screen]::PrimaryScreen.WorkingArea.Size}"`,
+      { encoding: "utf8" }
+    ).trim();
+    [screenWidth, screenHeight] = resolutionOutput.match(/\d+/g).map(Number);
+  } catch (err) {
+    console.log(err);
+    throw new Error("Could not get screen resolution on Windows");
+  }
 }
 
-screenHeight -= titleBarHeight;
+if (platform !== "win32") {
+  screenHeight -= titleBarHeight;
+}
 
 if (isTop) {
   screenHeight = Math.floor(screenHeight / 2);
@@ -168,10 +182,18 @@ setTimeout(() => {
   for (let i = 0; i < instanceCount; i++) {
     const row = Math.floor(i / columns);
     const column = i % columns;
-    const position = [
-      column * instanceWidth,
-      row * instanceHeight + titleBarHeight,
-    ].join(",");
+    let position;
+    if (platform == "win32") {
+      position = [
+        column * instanceWidth,
+        row * instanceHeight,
+      ].join(",");
+    } else {
+      position = [
+        column * instanceWidth,
+        row * instanceHeight + titleBarHeight,
+      ].join(",");
+    }
     const size = [instanceWidth, instanceHeight].join(",");
     let binaryPath = zedBinary;
     if (i != 0 && othersOnStable) {
@@ -186,8 +208,8 @@ setTimeout(() => {
         ZED_WINDOW_POSITION: position,
         ZED_STATELESS: isStateful && i == 0 ? "" : "1",
         ZED_ALWAYS_ACTIVE: "1",
-        ZED_SERVER_URL: "http://localhost:3000",
-        ZED_RPC_URL: "http://localhost:8080/rpc",
+        ZED_SERVER_URL: "http://127.0.0.1:3000", // On windows, the http_client could not parse localhost
+        ZED_RPC_URL: "http://127.0.0.1:8080/rpc",
         ZED_ADMIN_API_TOKEN: "secret",
         ZED_WINDOW_SIZE: size,
         ZED_CLIENT_CHECKSUM_SEED: "development-checksum-seed",
