@@ -633,13 +633,9 @@ impl TerminalView {
         //     return None;
         // }
 
-        let terminal = self.terminal.read(cx);
-        self.scrollbar_state.scroll_handle().update(
-            terminal.last_content().size.line_height,
-            terminal.total_lines(),
-            terminal.viewport_lines(),
-            terminal.last_content().display_offset,
-        );
+        self.scrollbar_state
+            .scroll_handle()
+            .update(self.terminal.read(cx));
 
         Some(
             div()

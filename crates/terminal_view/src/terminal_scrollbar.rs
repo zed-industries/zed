@@ -12,32 +12,34 @@ struct ScrollHandleState {
     scroll_offset: Pixels,
 }
 
+impl ScrollHandleState {
+    fn new(terminal: &Terminal) -> Self {
+        let line_height = terminal.last_content().size.line_height;
+        let viewport_lines = terminal.viewport_lines();
+        let total_lines = terminal.total_lines();
+        let display_offset = terminal.last_content().display_offset;
+
+        let scroll_offset = total_lines - viewport_lines - display_offset;
+
+        Self {
+            line_height,
+            total_height: px(total_lines as f32 * line_height.0),
+            viewport_height: px(viewport_lines as f32 * line_height.0),
+            scroll_offset: px(scroll_offset as f32 * line_height.0),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TerminalScrollHandle(Rc<RefCell<ScrollHandleState>>);
 
 impl TerminalScrollHandle {
     pub fn new(terminal: &Terminal) -> Self {
-        let line_height = terminal.last_content().size.line_height;
-        Self(Rc::new(RefCell::new(ScrollHandleState {
-            line_height,
-            total_height: px(line_height.0 * terminal.total_lines() as f32),
-            viewport_height: px(line_height.0 * terminal.viewport_lines() as f32),
-            scroll_offset: px(-(terminal.last_content().display_offset as f32 * line_height.0)),
-        })))
+        Self(Rc::new(RefCell::new(ScrollHandleState::new(terminal))))
     }
 
-    pub fn update(
-        &self,
-        line_height: Pixels,
-        total_lines: usize,
-        visible_lines: usize,
-        display_offset: usize,
-    ) {
-        let mut data = self.0.borrow_mut();
-        data.line_height = line_height;
-        data.total_height = px(line_height.0 * total_lines as f32);
-        data.viewport_height = px(line_height.0 * visible_lines as f32);
-        data.scroll_offset = px(-(display_offset as f32 * line_height.0));
+    pub fn update(&self, terminal: &Terminal) {
+        *self.0.borrow_mut() = ScrollHandleState::new(terminal);
     }
 }
 
@@ -46,13 +48,13 @@ impl ScrollableHandle for TerminalScrollHandle {
         let data = self.0.borrow();
         Some(ContentSize {
             size: size(px(0.), data.total_height),
-            scroll_adjustment: None,
+            scroll_adjustment: Some(Point::new(px(0.), px(0.))),
         })
     }
 
     fn offset(&self) -> Point<Pixels> {
         let data = self.0.borrow();
-        Point::new(px(0.), data.scroll_offset)
+        Point::new(px(0.), -data.scroll_offset)
     }
 
     fn set_offset(&self, point: Point<Pixels>) {
