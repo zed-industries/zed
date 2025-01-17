@@ -2378,11 +2378,12 @@ impl BufferChangeSet {
     #[cfg(any(test, feature = "test-support"))]
     pub fn recalculate_diff_sync(
         &mut self,
-        base_text: String,
+        mut base_text: String,
         buffer_snapshot: text::BufferSnapshot,
         base_text_changed: bool,
         cx: &mut ModelContext<Self>,
     ) {
+        LineEnding::normalize(&mut base_text);
         let diff = BufferDiff::build(&base_text, &buffer_snapshot);
         if base_text_changed {
             self.base_text = Some(
