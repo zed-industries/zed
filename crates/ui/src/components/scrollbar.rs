@@ -88,11 +88,11 @@ impl From<ScrollHandle> for ListScrollableHandle {
 
 #[derive(Debug)]
 pub struct ContentSize {
-    size: Size<Pixels>,
-    scroll_adjustment: Option<Point<Pixels>>,
+    pub size: Size<Pixels>,
+    pub scroll_adjustment: Option<Point<Pixels>>,
 }
 
-pub trait ScrollableHandle: Debug + Clone + 'static {
+pub trait ScrollableHandle: Clone + 'static {
     fn content_size(&self) -> Option<ContentSize>;
     fn set_offset(&self, point: Point<Pixels>);
     fn offset(&self) -> Point<Pixels>;
