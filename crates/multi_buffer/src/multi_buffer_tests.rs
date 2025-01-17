@@ -464,6 +464,78 @@ fn test_diff_hunks_in_range(cx: &mut AppContext) {
 }
 
 #[gpui::test]
+fn test_diff_hunks_edited_inserted(cx: &mut AppContext) {
+    let base_text = "one\ntwo\nfour\n";
+    let text = "one\ntwo\nTHREE\nfour\n";
+    let buffer = cx.new_model(|cx| Buffer::local(text, cx));
+    let change_set = cx.new_model(|cx| {
+        let mut change_set = BufferChangeSet::new(&buffer, cx);
+        let snapshot = buffer.read(cx).snapshot();
+        change_set.recalculate_diff_sync(base_text.into(), snapshot.text, true, cx);
+        change_set
+    });
+    let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.add_change_set(change_set, cx);
+    });
+    cx.background_executor().run_until_parked();
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+    });
+
+    let snapshot = multibuffer.read(cx).snapshot(cx);
+    let actual_text = snapshot.text();
+    let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
+    let actual_diff = format_diff(&actual_text, &actual_row_infos, &Default::default());
+    pretty_assertions::assert_eq!(
+        actual_diff,
+        indoc! {
+            "
+              one
+              two
+            + THREE
+              four
+            "
+        },
+    );
+    // [2025-01-17T19:47:03Z INFO  multi_buffer::multi_buffer_tests] Multibuffer content:
+    // ----------
+    // - s
+    // - mmpamsdte
+    // +
+    // + ZS
+    // [2025-01-17T19:47:03Z INFO  language::buffer] mutating buffer 0 with [(59..113, "\nIA\n\nB"), (114..121, "AC\nMFSM"), (122..122, "TN")]
+    //Diff < left / right > :
+    //    ----------
+    //  - s
+    //  - mmpamsdte
+    //  + SAC  [3]
+    // <  MFSM [8]
+    // >+ MFSM
+
+    buffer.update(cx, |buffer, cx| {
+        buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "__\n__")], None, cx);
+    });
+
+    let snapshot = multibuffer.read(cx).snapshot(cx);
+    let actual_text = snapshot.text();
+    let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
+    let actual_diff = format_diff(&actual_text, &actual_row_infos, &Default::default());
+    pretty_assertions::assert_eq!(
+        actual_diff,
+        indoc! {
+            "
+              one
+              two
+            + __
+            + __THREE
+              four
+            "
+        },
+    );
+}
+
+#[gpui::test]
 fn test_excerpt_events(cx: &mut AppContext) {
     let buffer_1 = cx.new_model(|cx| Buffer::local(sample_text(10, 3, 'a'), cx));
     let buffer_2 = cx.new_model(|cx| Buffer::local(sample_text(10, 3, 'm'), cx));

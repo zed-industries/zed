@@ -2591,6 +2591,13 @@ impl MultiBuffer {
                             );
                         let hunk_excerpt_end = excerpt_start
                             + ExcerptOffset::new(hunk_buffer_range.end - excerpt_buffer_start);
+                        dbg!(
+                            hunk_excerpt_start,
+                            hunk_excerpt_end,
+                            &hunk_buffer_range,
+                            &hunk.row_range,
+                            &edit
+                        );
                         let hunk_excerpt_old_start = ExcerptOffset::new(
                             (hunk_excerpt_start.value as isize - excerpt_delta) as usize,
                         );
@@ -2663,6 +2670,7 @@ impl MultiBuffer {
                             }
                             _ => was_previously_expanded || self.all_diff_hunks_expanded,
                         };
+                        dbg!(should_expand_hunk);
 
                         if should_expand_hunk {
                             if !hunk.diff_base_byte_range.is_empty()
@@ -2712,6 +2720,7 @@ impl MultiBuffer {
                             }
 
                             if !hunk_buffer_range.is_empty() {
+                                dbg!(hunk_excerpt_end, excerpt_end);
                                 end_of_current_insert = hunk_excerpt_end.min(excerpt_end);
                             }
 
@@ -2804,7 +2813,7 @@ impl MultiBuffer {
         }
         self.subscriptions.publish(edits);
 
-        dbg!(&new_diff_transforms.items(&()));
+        // dbg!(&new_diff_transforms.items(&()));
         drop(old_diff_transforms);
         drop(excerpts);
         snapshot.diff_transforms = new_diff_transforms;
