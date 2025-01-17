@@ -17,6 +17,12 @@ pub(crate) struct Cycle {
     pub dst_node: u32
 }
 
+impl Into<anyhow::Error> for Cycle {
+    fn into(self) -> anyhow::Error {
+        anyhow::anyhow!("cycle found: src: {}, dst: {}", self.src_node, self.dst_node)
+    }
+}
+
 impl Graph {
     /// Creates a new, empty [`Graph`]
     pub fn new() -> Self {
@@ -43,55 +49,99 @@ impl Graph {
         }
     }
 
-    /// If a cycle is present, returns the node as [`Cycle::src_node`] and it's pointee as [`Cycle::dst_node`]
-    pub fn has_cycle(&self, start_node: u32) -> Option<Cycle> {
-        match self.adjacencies.get(&start_node) {
-            Some(neighbors) if !neighbors.is_empty() => {
-                let mut visited = vec![];
-                let mut stack = vec![];
-                self.dfs(start_node, &mut visited, &mut stack)
-            }
-            _ => None
-        }
-    }
-
     fn dfs(
         &self,
         node: u32,
         visited: &mut Vec<u32>,
         stack: &mut Vec<u32>
     ) -> Option<Cycle> {
-        if !visited.contains(&node) {
-            visited.push(node);
-
-            let Some(neighbors) = self.adjacencies.get(&node) else {
-                return None;
-            };
-
-            stack.push(node);
-
-            for neighbor in neighbors {
-                if !visited.contains(&neighbor) {
-                    if let cycle @ Some(_) = self.dfs(*neighbor, visited, stack) {
-                        return cycle;
-                    }
-                } else if stack.contains(&neighbor) {
-                    return Some(Cycle { src_node: *neighbor, dst_node: node });
-                }
-            }
-
-            stack.pop();
+        if visited.contains(&node) {
+            return None;
         }
 
+        let Some(neighbors) = self.adjacencies.get(&node) else {
+            visited.push(node);
+            return None;
+        };
+
+        stack.push(node);
+
+        for neighbor in neighbors {
+            if stack.contains(&neighbor) {
+                return Some(Cycle { src_node: *neighbor, dst_node: node });
+            } else if let cycle @ Some(_) = self.dfs(*neighbor, visited, stack) {
+                return cycle;
+            }
+        }
+
+        stack.pop();
+        visited.push(node);
+
         None
+    }
+
+    /// Build a subgraph starting from `start_node` from the nodes of this grpah
+    pub fn subgraph(&self, start_node: u32) -> Graph {
+        let Some(_) = self.adjacencies.get(&start_node) else {
+            let mut graph = Graph::new();
+            graph.add_node(start_node);
+            return graph;
+        };
+
+        let mut nodes = vec![];
+        let mut graph = Self::new();
+
+        self.collect_subgraph_nodes(start_node, &mut nodes);
+
+        for node in nodes {
+            graph.add_node(node);
+            if let Some(neighbors) = self.adjacencies.get(&node) {
+                for neighbor in neighbors {
+                    graph.add_edge(node, *neighbor);
+                }
+            }
+        }
+
+        graph
+    }
+
+    fn collect_subgraph_nodes(&self, node: u32, nodes: &mut Vec<u32>) {
+        if !nodes.contains(&node) {
+            nodes.push(node);
+
+            let Some(neighbors) = self.adjacencies.get(&node) else {
+                return;
+            };
+
+            for neighbor in neighbors {
+                self.collect_subgraph_nodes(*neighbor, nodes);
+            }
+        }
+    }
+
+    /// Topologically sorts nodes, or return the nodes that form a cycle
+    pub fn topo_sort(&self) -> Result<Vec<u32>, Cycle> {
+        let mut visited = vec![];
+        let mut stack = vec![];
+
+        for node in self.adjacencies.keys() {
+            if let Some(cycle) = self.dfs(*node, &mut visited, &mut stack) {
+                return Err(cycle);
+            }
+        }
+
+        visited.reverse();
+
+        Ok(visited)
     }
 }
 
 #[cfg(test)]
 mod graph_test {
+    use itertools::Itertools;
     use pretty_assertions::assert_matches;
 
-    use super::{Graph, Cycle};
+    use super::Graph;
 
     #[test]
     fn finds_no_cycle() {
@@ -106,8 +156,33 @@ mod graph_test {
             graph.add_edge(edge[0], edge[1]);
         }
 
-        assert_matches!(graph.has_cycle(1), None);
-        assert_matches!(graph.has_cycle(2), None);
+        assert_matches!(graph.topo_sort(), Ok(_));
+    }
+
+    #[test]
+    fn subgraph_correct() {
+        const GRAPH: [[u32; 2]; 6] = [
+            [3, 1],
+            [2, 1],
+            [1, 4],
+            [4, 5],
+            [3, 4],
+            [2, 4]
+        ];
+
+        let mut graph = Graph::new();
+        for [src, dst] in &GRAPH {
+            graph.add_edge(*src, *dst);
+        }
+
+        let subgraph = graph.subgraph(2);
+        for i in &[1, 2, 4, 5] {
+            assert!(
+                subgraph.adjacencies.contains_key(i),
+                "subgraph didn't contain key {i}; subgraph keys: {:#?}",
+                subgraph.adjacencies.keys().collect_vec()
+            );
+        }
     }
 
     #[test]
@@ -123,7 +198,26 @@ mod graph_test {
             graph.add_edge(edge[0], edge[1]);
         }
 
-        assert_matches!(graph.has_cycle(1), Some(Cycle { src_node: 3, dst_node: 1 }));
-        assert_matches!(graph.has_cycle(2), Some(Cycle { src_node: 1, dst_node: 2 }));
+        assert_matches!(graph.topo_sort(), Err(_));
+    }
+
+    #[test]
+    fn sorts_correctly() {
+        const GRAPH: [[u32; 2]; 6] = [
+            [2, 3],
+            [2, 1],
+            [4, 1],
+            [3, 4],
+            [4, 5],
+            [2, 5]
+        ];
+
+        let mut graph = Graph::new();
+
+        for [src, dst] in &GRAPH {
+            graph.add_edge(*src, *dst);
+        }
+
+        assert_eq!(graph.topo_sort().unwrap(), vec![2, 3, 4, 5, 1]);
     }
 }
