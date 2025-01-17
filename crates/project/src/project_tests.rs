@@ -1720,6 +1720,13 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
             });
         })
     });
+    let _rs_buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp("/dir/a.rs", cx)
+        })
+        .await
+        .unwrap();
+
     let mut fake_rust_server_2 = fake_rust_servers.next().await.unwrap();
     assert_eq!(
         fake_rust_server_2

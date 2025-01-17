@@ -1811,6 +1811,7 @@ impl LocalLspStore {
             .collect::<Vec<_>>()
         });
 
+        dbg!(servers.len());
         let servers = servers
             .into_iter()
             .filter_map(|server_node| {
@@ -3807,6 +3808,7 @@ impl LspStore {
         else {
             return;
         };
+        let mut to_stop = Vec::new();
         self.as_local().map(|local| {
             local.lsp_tree.update(cx, |this, cx| {
                 let mut get_adapter =
@@ -3819,17 +3821,19 @@ impl LspStore {
                             local, &worktree, cx,
                         ))
                     };
+
                 this.on_settings_changed(
                     &mut get_adapter,
                     &mut |disposition| todo!(),
-                    &mut |id| {
-                        dbg!(id);
-                    }, //self.stop_local_language_server(id, cx).detach(),
+                    &mut |id| to_stop.push(id), //self.stop_local_language_server(id, cx).detach(),
                     cx,
                 );
-            })
+            });
         });
-
+        dbg!(&to_stop);
+        for id in to_stop {
+            self.stop_local_language_server(id, cx).detach();
+        }
         if let Some(prettier_store) = self.as_local().map(|s| s.prettier_store.clone()) {
             prettier_store.update(cx, |prettier_store, cx| {
                 prettier_store.on_settings_changed(language_formatters_to_check, cx)
@@ -7390,32 +7394,20 @@ impl LspStore {
                 })
                 .collect();
 
-            for (worktree, language) in language_server_lookup_info {
-                self.restart_local_language_servers(worktree, language, cx);
-            }
+            // for (worktree, language) in language_server_lookup_info {
+            //     self.restart_local_language_servers(worktree, language, cx);
+            // }
         }
     }
 
     fn restart_local_language_servers(
         &mut self,
         worktree: Model<Worktree>,
-        servers: Vec<LanguageServerId>,
+        ids: Vec<LanguageServerId>,
         cx: &mut ModelContext<Self>,
     ) {
         let worktree_id = worktree.read(cx).id();
 
-        let lsp_adapters = self.languages.clone().lsp_adapters(&language);
-        let ids = lsp_adapters
-            .iter()
-            .flat_map(|adapter| {
-                self.as_local()
-                    .unwrap()
-                    .language_server_ids
-                    .get(&(worktree_id, adapter.name.clone()))
-                    .cloned()
-                    .unwrap_or_default()
-            })
-            .collect::<BTreeSet<_>>();
         let stop_tasks = ids
             .into_iter()
             .map(|language_server_id| self.stop_local_language_server(language_server_id, cx))

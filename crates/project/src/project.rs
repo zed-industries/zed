@@ -1892,7 +1892,7 @@ impl Project {
     pub fn open_buffer(
         &mut self,
         path: impl Into<ProjectPath>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<Model<Buffer>>> {
         if self.is_disconnected(cx) {
             return Task::ready(Err(anyhow!(ErrorCode::Disconnected)));
@@ -1907,11 +1907,11 @@ impl Project {
     pub fn open_buffer_with_lsp(
         &mut self,
         path: impl Into<ProjectPath>,
-        cx: &mut ModelContext<Self>,
+        cx: &mut AppContext,
     ) -> Task<Result<(Model<Buffer>, lsp_store::OpenLspBufferHandle)>> {
         let buffer = self.open_buffer(path, cx);
         let lsp_store = self.lsp_store().clone();
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(|mut cx| async move {
             let buffer = buffer.await?;
             let handle = lsp_store.update(&mut cx, |lsp_store, cx| {
                 lsp_store.register_buffer_with_language_servers(&buffer, cx)
