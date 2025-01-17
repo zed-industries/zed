@@ -153,14 +153,20 @@ fn load_admins(path: impl AsRef<Path>) -> anyhow::Result<SeedConfig> {
 }
 
 async fn fetch_github<T: DeserializeOwned>(client: &reqwest::Client, url: &str) -> T {
-    let response = client
-        .get(url)
+    let mut request_builder = client.get(url);
+    if let Ok(github_token) = std::env::var("GITHUB_TOKEN") {
+        request_builder =
+            request_builder.header("Authorization", format!("Bearer {}", github_token));
+    }
+    let response = request_builder
         .header("user-agent", "zed")
         .send()
         .await
         .unwrap_or_else(|error| panic!("failed to fetch '{url}': {error}"));
-    response
-        .json()
-        .await
-        .unwrap_or_else(|error| panic!("failed to deserialize github user from '{url}': {error}"))
+    let response_text = response.text().await.unwrap_or_else(|error| {
+        panic!("failed to fetch '{url}': {error}");
+    });
+    serde_json::from_str(&response_text).unwrap_or_else(|error| {
+        panic!("failed to deserialize github user from '{url}'. Error: '{error}', text: '{response_text}'");
+    })
 }
