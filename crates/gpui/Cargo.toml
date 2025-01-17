@@ -1,10 +1,10 @@
 [package]
 name = "gpui"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 authors = ["Nathan Sobo <nathan@zed.dev>"]
 description = "Zed's GPU-accelerated UI framework"
-publish = false
+publish.workspace = true
 license = "Apache-2.0"
 
 [lints]

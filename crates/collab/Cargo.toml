@@ -1,10 +1,10 @@
 [package]
 authors = ["Nathan Sobo <nathan@zed.dev>"]
 default-run = "collab"
-edition = "2021"
+edition.workspace = true
 name = "collab"
 version = "0.44.0"
-publish = false
+publish.workspace = true
 license = "AGPL-3.0-or-later"
 
 [lints]

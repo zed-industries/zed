@@ -186,6 +186,10 @@ members = [
 ]
 default-members = ["crates/zed"]
 
+[workspace.package]
+publish = false
+edition = "2021"
+
 [workspace.dependencies]
 
 #
