@@ -153,7 +153,7 @@ pub struct ThemeColors {
     /// Text Color. Used for the text of the line number in the editor gutter when the line is highlighted.
     pub editor_active_line_number: Hsla,
     /// Text Color. Used for the text of the line number in the editor gutter when the line is hovered over.
-    pub editor_hovered_line_number: Hsla,
+    pub editor_hover_line_number: Hsla,
     /// Text Color. Used to mark invisible characters in the editor.
     ///
     /// Example: spaces, tabs, carriage returns, etc.
