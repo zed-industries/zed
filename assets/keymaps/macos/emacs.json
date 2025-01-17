@@ -15,7 +15,8 @@
       "ctrl-x b": "tab_switcher::Toggle", // switch-to-buffer
       "alt-g g": "go_to_line::Toggle", // goto-line
       "alt-g alt-g": "go_to_line::Toggle", // goto-line
-      //"ctrl-space": "editor::SetMark",
+      "ctrl-space": "editor::SetMark", // set-mark
+      "ctrl-x ctrl-x": "editor::ExchangeMark", // exchange-point-and-mark
       "ctrl-f": "editor::MoveRight", // forward-char
       "ctrl-b": "editor::MoveLeft", // backward-char
       "ctrl-n": "editor::MoveDown", // next-line
@@ -53,6 +54,32 @@
       "ctrl-l": "editor::ScrollCursorCenterTopBottom", // recenter-top-bottom
       "ctrl-s": "buffer_search::Deploy", // isearch-forward
       "alt-^": "editor::JoinLines" // join-line
+    }
+  },
+  {
+    "context": "selection_mode",
+    "bindings": {
+      "right": "editor::SelectRight",
+      "left": "editor::SelectLeft",
+      "down": "editor::SelectDown",
+      "up": "editor::SelectUp",
+      "home": "editor::SelectToBeginningOfLine",
+      "end": "editor::SelectToEndOfLine",
+      "alt-left": "editor::SelectToPreviousWordStart",
+      "alt-right": "editor::SelectToNextWordEnd",
+      "pagedown": "editor::SelectPageDown",
+      "pageup": "editor::SelectPageUp",
+      "ctrl-f": "editor::SelectRight",
+      "ctrl-b": "editor::SelectLeft",
+      "ctrl-n": "editor::SelectDown",
+      "ctrl-p": "editor::SelectUp",
+      "ctrl-a": "editor::SelectToBeginningOfLine",
+      "ctrl-e": "editor::SelectToEndOfLine",
+      "alt-f": "editor::SelectToNextWordEnd",
+      "alt-b": "editor::SelectToPreviousSubwordStart",
+      "alt-<": "editor::SelectToBeginning",
+      "alt->": "editor::SelectToEnd",
+      "ctrl-g": "editor::Cancel"
     }
   },
   {

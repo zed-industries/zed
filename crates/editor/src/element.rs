@@ -356,6 +356,8 @@ impl EditorElement {
         register_action(view, cx, Editor::unfold_all);
         register_action(view, cx, Editor::unfold_at);
         register_action(view, cx, Editor::fold_selected_ranges);
+        register_action(view, cx, Editor::set_mark);
+        register_action(view, cx, Editor::exchange_mark);
         register_action(view, cx, Editor::show_completions);
         register_action(view, cx, Editor::toggle_code_actions);
         register_action(view, cx, Editor::open_excerpts);
