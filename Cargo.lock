@@ -83,9 +83,8 @@ dependencies = [
 
 [[package]]
 name = "alacritty_terminal"
-version = "0.24.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52b9241459831fee2f22fcda52ddaf9e449b6627334a0f40f13a1b3344018060"
+version = "0.25.0-dev"
+source = "git+https://github.com/alacritty/alacritty.git?rev=5e78d20c709cb1ab8d44ca7a8702cc26d779227c#5e78d20c709cb1ab8d44ca7a8702cc26d779227c"
 dependencies = [
  "base64 0.22.1",
  "bitflags 2.8.0",
@@ -102,7 +101,7 @@ dependencies = [
  "signal-hook",
  "unicode-width",
  "vte",
- "windows-sys 0.52.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -14375,26 +14374,15 @@ dependencies = [
 
 [[package]]
 name = "vte"
-version = "0.13.0"
+version = "0.14.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "40eb22ae96f050e0c0d6f7ce43feeae26c348fc4dea56928ca81537cfaa6188b"
+checksum = "231fdcd7ef3037e8330d8e17e61011a2c244126acc0a982f4040ac3f9f0bc077"
 dependencies = [
  "bitflags 2.8.0",
  "cursor-icon",
  "log",
+ "memchr",
  "serde",
- "utf8parse",
- "vte_generate_state_changes",
-]
-
-[[package]]
-name = "vte_generate_state_changes"
-version = "0.1.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2e369bee1b05d510a7b4ed645f5faa90619e05437111783ea5848f28d97d3c2e"
-dependencies = [
- "proc-macro2",
- "quote",
 ]
 
 [[package]]

@@ -346,7 +346,8 @@ zeta = { path = "crates/zeta" }
 #
 
 aho-corasick = "1.1"
-alacritty_terminal = "0.24"
+# TODO(#18342): Update to version 0.25 from crates.io when it is released.
+alacritty_terminal = { git = "https://github.com/alacritty/alacritty.git", rev = "5e78d20c709cb1ab8d44ca7a8702cc26d779227c" }
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
