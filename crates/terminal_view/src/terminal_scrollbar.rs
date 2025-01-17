@@ -1,10 +1,12 @@
-use std::{cell::RefCell, rc::Rc};
+use std::{
+    cell::{Cell, RefCell},
+    rc::Rc,
+};
 
 use gpui::{size, Bounds, Point};
 use terminal::Terminal;
 use ui::{px, ContentSize, Pixels, ScrollableHandle};
 
-#[derive(Debug)]
 struct ScrollHandleState {
     line_height: Pixels,
     total_height: Pixels,
@@ -30,42 +32,55 @@ impl ScrollHandleState {
     }
 }
 
-#[derive(Debug, Clone)]
-pub struct TerminalScrollHandle(Rc<RefCell<ScrollHandleState>>);
+#[derive(Clone)]
+pub struct TerminalScrollHandle {
+    state: Rc<RefCell<ScrollHandleState>>,
+    pub future_display_offset: Rc<Cell<Option<usize>>>,
+}
 
 impl TerminalScrollHandle {
     pub fn new(terminal: &Terminal) -> Self {
-        Self(Rc::new(RefCell::new(ScrollHandleState::new(terminal))))
+        Self {
+            state: Rc::new(RefCell::new(ScrollHandleState::new(terminal))),
+            future_display_offset: Rc::new(Cell::new(None)),
+        }
     }
 
     pub fn update(&self, terminal: &Terminal) {
-        *self.0.borrow_mut() = ScrollHandleState::new(terminal);
+        *self.state.borrow_mut() = ScrollHandleState::new(terminal);
     }
 }
 
 impl ScrollableHandle for TerminalScrollHandle {
     fn content_size(&self) -> Option<ContentSize> {
-        let data = self.0.borrow();
         Some(ContentSize {
-            size: size(px(0.), data.total_height),
+            size: size(px(0.), self.state.borrow().total_height),
             scroll_adjustment: Some(Point::new(px(0.), px(0.))),
         })
     }
 
     fn offset(&self) -> Point<Pixels> {
-        let data = self.0.borrow();
-        Point::new(px(0.), -data.scroll_offset)
+        Point::new(px(0.), -self.state.borrow().scroll_offset)
     }
 
     fn set_offset(&self, point: Point<Pixels>) {
-        // todo
+        let total_lines =
+            (self.state.borrow().total_height.0 / self.state.borrow().line_height.0) as usize;
+        let visible_lines =
+            (self.state.borrow().viewport_height.0 / self.state.borrow().line_height.0) as usize;
+
+        let offset_delta = (point.y.0 / self.state.borrow().line_height.0).round() as i32;
+
+        let max_offset = total_lines - visible_lines;
+        let display_offset = ((max_offset as i32 + offset_delta) as usize).min(max_offset);
+
+        self.future_display_offset.set(Some(display_offset));
     }
 
     fn viewport(&self) -> Bounds<Pixels> {
-        let data = self.0.borrow();
         Bounds::new(
             Point::new(px(0.), px(0.)),
-            size(px(0.), data.viewport_height),
+            size(px(0.), self.state.borrow().viewport_height),
         )
     }
 }

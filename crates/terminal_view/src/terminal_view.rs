@@ -629,9 +629,17 @@ impl TerminalView {
     }
 
     fn render_scrollbar(&self, cx: &mut ViewContext<Self>) -> Option<Stateful<Div>> {
-        // if self.scrollbar.is_dragging() {
-        //     return None;
-        // }
+        if let Some(display_offset) = self
+            .scrollbar_state
+            .scroll_handle()
+            .future_display_offset
+            .take()
+        {
+            self.terminal.update(cx, |term, _| {
+                term.scroll_to_bottom();
+                term.scroll_up_by(display_offset);
+            });
+        }
 
         self.scrollbar_state
             .scroll_handle()
@@ -651,13 +659,6 @@ impl TerminalView {
                 .on_any_mouse_down(|_, cx| {
                     cx.stop_propagation();
                 })
-                .on_mouse_up(
-                    MouseButton::Left,
-                    cx.listener(|terminal_view, _, cx| {
-                        // todo
-                        cx.stop_propagation();
-                    }),
-                )
                 .on_scroll_wheel(cx.listener(|_, _, cx| {
                     cx.notify();
                 }))
