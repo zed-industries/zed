@@ -713,13 +713,11 @@ fn begin_vsync(vsync_event: HANDLE) {
 }
 
 fn load_icon() -> Result<HICON> {
-    pub const IDI_LOGO: PCWSTR = PCWSTR(1u32 as _);
-
     let module = unsafe { GetModuleHandleW(None).context("unable to get module handle")? };
     let handle = unsafe {
         LoadImageW(
             module,
-            IDI_LOGO,
+            windows_core::PCWSTR(1 as _),
             IMAGE_ICON,
             0,
             0,
