@@ -15,7 +15,7 @@ use std::{
 use ui::prelude::*;
 use workspace::Workspace;
 
-pub(crate) struct CargoWorkspaceSlashCommand;
+pub struct CargoWorkspaceSlashCommand;
 
 impl CargoWorkspaceSlashCommand {
     async fn build_message(fs: Arc<dyn Fs>, path_to_cargo_toml: &Path) -> Result<String> {

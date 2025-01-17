@@ -18,7 +18,7 @@ use ui::{prelude::*, BorrowAppContext};
 use util::ResultExt;
 use workspace::Workspace;
 
-use crate::slash_command::create_label_for_command;
+use crate::create_label_for_command;
 
 pub struct AutoSlashCommandFeatureFlag;
 
@@ -26,7 +26,7 @@ impl FeatureFlag for AutoSlashCommandFeatureFlag {
     const NAME: &'static str = "auto-slash-command";
 }
 
-pub(crate) struct AutoCommand;
+pub struct AutoCommand;
 
 impl SlashCommand for AutoCommand {
     fn name(&self) -> String {

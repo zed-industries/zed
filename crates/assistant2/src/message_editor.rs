@@ -11,10 +11,9 @@ use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::LanguageModelSelector;
 use rope::Point;
 use settings::Settings;
-use theme::{get_ui_font_size, ThemeSettings};
+use theme::ThemeSettings;
 use ui::{
-    prelude::*, ButtonLike, ElevationIndex, KeyBinding, PopoverMenu, PopoverMenuHandle,
-    SwitchWithLabel,
+    prelude::*, ButtonLike, ElevationIndex, KeyBinding, PopoverMenu, PopoverMenuHandle, Switch,
 };
 use workspace::Workspace;
 
@@ -24,7 +23,7 @@ use crate::context_store::{refresh_context_store_text, ContextStore};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
-use crate::{Chat, RemoveAllContext, ToggleContextPicker, ToggleModelSelector};
+use crate::{Chat, ChatMode, RemoveAllContext, ToggleContextPicker, ToggleModelSelector};
 
 pub struct MessageEditor {
     thread: Model<Thread>,
@@ -115,6 +114,11 @@ impl MessageEditor {
 
     fn toggle_model_selector(&mut self, _: &ToggleModelSelector, cx: &mut ViewContext<Self>) {
         self.model_selector_menu_handle.toggle(cx)
+    }
+
+    fn toggle_chat_mode(&mut self, _: &ChatMode, cx: &mut ViewContext<Self>) {
+        self.use_tools = !self.use_tools;
+        cx.notify();
     }
 
     fn toggle_context_picker(&mut self, _: &ToggleContextPicker, cx: &mut ViewContext<Self>) {
@@ -265,6 +269,7 @@ impl Render for MessageEditor {
             .on_action(cx.listener(Self::toggle_context_picker))
             .on_action(cx.listener(Self::remove_all_context))
             .on_action(cx.listener(Self::move_up))
+            .on_action(cx.listener(Self::toggle_chat_mode))
             .size_full()
             .gap_2()
             .p_2()
@@ -308,26 +313,33 @@ impl Render for MessageEditor {
                             .anchor(gpui::Corner::BottomLeft)
                             .offset(gpui::Point {
                                 x: px(0.0),
-                                y: (-get_ui_font_size(cx) * 2) - px(4.0),
+                                y: px(-ThemeSettings::clamp_font_size(
+                                    ThemeSettings::get_global(cx).ui_font_size,
+                                )
+                                .0 * 2.0)
+                                    - px(4.0),
                             })
                             .with_handle(self.inline_context_picker_menu_handle.clone()),
                     )
                     .child(
                         h_flex()
                             .justify_between()
-                            .child(SwitchWithLabel::new(
-                                "use-tools",
-                                Label::new("Tools").size(LabelSize::Small),
-                                self.use_tools.into(),
-                                cx.listener(|this, selection, _cx| {
-                                    this.use_tools = match selection {
-                                        ToggleState::Selected => true,
-                                        ToggleState::Unselected | ToggleState::Indeterminate => {
-                                            false
-                                        }
-                                    };
-                                }),
-                            ))
+                            .child(
+                                Switch::new("use-tools", self.use_tools.into())
+                                    .label("Tools")
+                                    .on_click(cx.listener(|this, selection, _cx| {
+                                        this.use_tools = match selection {
+                                            ToggleState::Selected => true,
+                                            ToggleState::Unselected
+                                            | ToggleState::Indeterminate => false,
+                                        };
+                                    }))
+                                    .key_binding(KeyBinding::for_action_in(
+                                        &ChatMode,
+                                        &focus_handle,
+                                        cx,
+                                    )),
+                            )
                             .child(
                                 h_flex().gap_1().child(self.model_selector.clone()).child(
                                     ButtonLike::new("chat")

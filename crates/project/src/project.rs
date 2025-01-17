@@ -2,6 +2,7 @@ pub mod buffer_store;
 mod color_extractor;
 pub mod connection_manager;
 pub mod debounced_delay;
+pub mod git;
 pub mod image_store;
 pub mod lsp_command;
 pub mod lsp_ext_command;
@@ -25,6 +26,7 @@ pub use environment::EnvironmentErrorMessage;
 pub mod search_history;
 mod yarn;
 
+use crate::git::GitState;
 use anyhow::{anyhow, Context as _, Result};
 use buffer_store::{BufferChangeSet, BufferStore, BufferStoreEvent};
 use client::{proto, Client, Collaborator, PendingEntitySubscription, TypedEnvelope, UserStore};
@@ -40,9 +42,10 @@ use futures::{
 pub use image_store::{ImageItem, ImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
 
-use git::{
+use ::git::{
     blame::Blame,
-    repository::{GitFileStatus, GitRepository},
+    repository::{Branch, GitRepository},
+    status::FileStatus,
 };
 use gpui::{
     AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context as _, EventEmitter, Hsla,
@@ -152,6 +155,7 @@ pub struct Project {
     fs: Arc<dyn Fs>,
     ssh_client: Option<Model<SshRemoteClient>>,
     client_state: ProjectClientState,
+    git_state: Option<Model<GitState>>,
     collaborators: HashMap<proto::PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
     worktree_store: Model<WorktreeStore>,
@@ -690,6 +694,9 @@ impl Project {
                     cx,
                 )
             });
+
+            let git_state = Some(cx.new_model(|cx| GitState::new(cx)));
+
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
             Self {
@@ -701,6 +708,7 @@ impl Project {
                 lsp_store,
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
+                git_state,
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![cx.on_release(Self::release)],
                 active_entry: None,
@@ -819,6 +827,7 @@ impl Project {
                 lsp_store,
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
+                git_state: None,
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![
                     cx.on_release(Self::release),
@@ -1050,6 +1059,7 @@ impl Project {
                     remote_id,
                     replica_id,
                 },
+                git_state: None,
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
@@ -1451,7 +1461,7 @@ impl Project {
         &self,
         project_path: &ProjectPath,
         cx: &AppContext,
-    ) -> Option<GitFileStatus> {
+    ) -> Option<FileStatus> {
         self.worktree_for_id(project_path.worktree_id, cx)
             .and_then(|worktree| worktree.read(cx).status_for_file(&project_path.path))
     }
@@ -3539,7 +3549,7 @@ impl Project {
         &self,
         project_path: ProjectPath,
         cx: &AppContext,
-    ) -> Task<Result<Vec<git::repository::Branch>>> {
+    ) -> Task<Result<Vec<Branch>>> {
         self.worktree_store().read(cx).branches(project_path, cx)
     }
 
@@ -4169,6 +4179,10 @@ impl Project {
 
     pub fn buffer_store(&self) -> &Model<BufferStore> {
         &self.buffer_store
+    }
+
+    pub fn git_state(&self) -> Option<&Model<GitState>> {
+        self.git_state.as_ref()
     }
 }
 

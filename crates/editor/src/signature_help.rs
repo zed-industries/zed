@@ -189,7 +189,7 @@ impl Editor {
                     if let Some(mut signature_help) = signature_help_task.await.into_iter().next() {
                         let mut parsed_content = parse_markdown(
                             signature_help.markdown.as_str(),
-                            &language_registry,
+                            Some(&language_registry),
                             language,
                         )
                         .await;

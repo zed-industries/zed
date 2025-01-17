@@ -160,10 +160,7 @@ use std::{
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
-use theme::{
-    observe_buffer_font_size_adjustment, ActiveTheme, PlayerColor, StatusColors, SyntaxTheme,
-    ThemeColors, ThemeSettings,
-};
+use theme::{ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings};
 use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize,
     PopoverMenuHandle, Tooltip,
@@ -1344,7 +1341,6 @@ impl Editor {
                 cx.observe(&display_map, Self::on_display_map_changed),
                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
                 cx.observe_global::<SettingsStore>(Self::settings_changed),
-                observe_buffer_font_size_adjustment(cx, |_, cx| cx.notify()),
                 cx.observe_window_activation(|editor, cx| {
                     let active = cx.is_window_active();
                     editor.blink_manager.update(cx, |blink_manager, cx| {
@@ -11475,6 +11471,24 @@ impl Editor {
             .and_then(|f| f.as_local())
     }
 
+    fn target_file_abs_path(&self, cx: &mut ViewContext<Self>) -> Option<PathBuf> {
+        self.active_excerpt(cx).and_then(|(_, buffer, _)| {
+            let project_path = buffer.read(cx).project_path(cx)?;
+            let project = self.project.as_ref()?.read(cx);
+            project.absolute_path(&project_path, cx)
+        })
+    }
+
+    fn target_file_path(&self, cx: &mut ViewContext<Self>) -> Option<PathBuf> {
+        self.active_excerpt(cx).and_then(|(_, buffer, _)| {
+            let project_path = buffer.read(cx).project_path(cx)?;
+            let project = self.project.as_ref()?.read(cx);
+            let entry = project.entry_for_path(&project_path, cx)?;
+            let path = entry.path.to_path_buf();
+            Some(path)
+        })
+    }
+
     pub fn reveal_in_finder(&mut self, _: &RevealInFileManager, cx: &mut ViewContext<Self>) {
         if let Some(target) = self.target_file(cx) {
             cx.reveal_path(&target.abs_path(cx));
@@ -11482,16 +11496,16 @@ impl Editor {
     }
 
     pub fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
-        if let Some(file) = self.target_file(cx) {
-            if let Some(path) = file.abs_path(cx).to_str() {
+        if let Some(path) = self.target_file_abs_path(cx) {
+            if let Some(path) = path.to_str() {
                 cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
             }
         }
     }
 
     pub fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
-        if let Some(file) = self.target_file(cx) {
-            if let Some(path) = file.path().to_str() {
+        if let Some(path) = self.target_file_path(cx) {
+            if let Some(path) = path.to_str() {
                 cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
             }
         }
@@ -14376,7 +14390,7 @@ impl Render for Editor {
                 font_family: settings.buffer_font.family.clone(),
                 font_features: settings.buffer_font.features.clone(),
                 font_fallbacks: settings.buffer_font.fallbacks.clone(),
-                font_size: settings.buffer_font_size(cx).into(),
+                font_size: settings.buffer_font_size().into(),
                 font_weight: settings.buffer_font.weight,
                 line_height: relative(settings.buffer_line_height.value()),
                 ..Default::default()

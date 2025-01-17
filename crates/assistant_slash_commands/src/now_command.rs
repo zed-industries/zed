@@ -12,7 +12,7 @@ use language::{BufferSnapshot, LspAdapterDelegate};
 use ui::prelude::*;
 use workspace::Workspace;
 
-pub(crate) struct NowSlashCommand;
+pub struct NowSlashCommand;
 
 impl SlashCommand for NowSlashCommand {
     fn name(&self) -> String {

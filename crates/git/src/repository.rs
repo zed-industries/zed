@@ -1,4 +1,4 @@
-use crate::status::GitStatusPair;
+use crate::status::FileStatus;
 use crate::GitHostingProviderRegistry;
 use crate::{blame::Blame, status::GitStatus};
 use anyhow::{anyhow, Context, Result};
@@ -7,7 +7,6 @@ use git2::BranchType;
 use gpui::SharedString;
 use parking_lot::Mutex;
 use rope::Rope;
-use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::sync::LazyLock;
 use std::{
@@ -294,7 +293,7 @@ pub struct FakeGitRepositoryState {
     pub event_emitter: smol::channel::Sender<PathBuf>,
     pub index_contents: HashMap<PathBuf, String>,
     pub blames: HashMap<PathBuf, Blame>,
-    pub worktree_statuses: HashMap<RepoPath, GitFileStatus>,
+    pub statuses: HashMap<RepoPath, FileStatus>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
 }
@@ -312,7 +311,7 @@ impl FakeGitRepositoryState {
             event_emitter,
             index_contents: Default::default(),
             blames: Default::default(),
-            worktree_statuses: Default::default(),
+            statuses: Default::default(),
             current_branch_name: Default::default(),
             branches: Default::default(),
         }
@@ -349,20 +348,14 @@ impl GitRepository for FakeGitRepository {
         let state = self.state.lock();
 
         let mut entries = state
-            .worktree_statuses
+            .statuses
             .iter()
-            .filter_map(|(repo_path, status_worktree)| {
+            .filter_map(|(repo_path, status)| {
                 if path_prefixes
                     .iter()
                     .any(|path_prefix| repo_path.0.starts_with(path_prefix))
                 {
-                    Some((
-                        repo_path.to_owned(),
-                        GitStatusPair {
-                            index_status: None,
-                            worktree_status: Some(*status_worktree),
-                        },
-                    ))
+                    Some((repo_path.to_owned(), *status))
                 } else {
                     None
                 }
@@ -458,51 +451,6 @@ fn check_path_to_repo_path_errors(relative_file_path: &Path) -> Result<()> {
             )
         }
         _ => Ok(()),
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum GitFileStatus {
-    Added,
-    Modified,
-    // TODO conflicts should be represented by the GitStatusPair
-    Conflict,
-    Deleted,
-    Untracked,
-}
-
-impl GitFileStatus {
-    pub fn merge(
-        this: Option<GitFileStatus>,
-        other: Option<GitFileStatus>,
-        prefer_other: bool,
-    ) -> Option<GitFileStatus> {
-        if prefer_other {
-            return other;
-        }
-
-        match (this, other) {
-            (Some(GitFileStatus::Conflict), _) | (_, Some(GitFileStatus::Conflict)) => {
-                Some(GitFileStatus::Conflict)
-            }
-            (Some(GitFileStatus::Modified), _) | (_, Some(GitFileStatus::Modified)) => {
-                Some(GitFileStatus::Modified)
-            }
-            (Some(GitFileStatus::Added), _) | (_, Some(GitFileStatus::Added)) => {
-                Some(GitFileStatus::Added)
-            }
-            _ => None,
-        }
-    }
-
-    pub fn from_byte(byte: u8) -> Option<Self> {
-        match byte {
-            b'M' => Some(GitFileStatus::Modified),
-            b'A' => Some(GitFileStatus::Added),
-            b'D' => Some(GitFileStatus::Deleted),
-            b'?' => Some(GitFileStatus::Untracked),
-            _ => None,
-        }
     }
 }
 

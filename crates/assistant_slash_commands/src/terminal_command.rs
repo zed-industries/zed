@@ -12,13 +12,13 @@ use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use ui::prelude::*;
 use workspace::{dock::Panel, Workspace};
 
-use crate::DEFAULT_CONTEXT_LINES;
-
 use super::create_label_for_command;
 
-pub(crate) struct TerminalSlashCommand;
+pub struct TerminalSlashCommand;
 
 const LINE_COUNT_ARG: &str = "--line-count";
+
+const DEFAULT_CONTEXT_LINES: usize = 50;
 
 impl SlashCommand for TerminalSlashCommand {
     fn name(&self) -> String {

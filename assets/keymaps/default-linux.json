@@ -366,7 +366,6 @@
       "alt-0": "pane::ActivateLastItem",
       "ctrl-alt--": "pane::GoBack",
       "ctrl-alt-_": "pane::GoForward",
-      "ctrl-shift-t": "pane::ReopenClosedItem",
       "f3": "search::SelectNextMatch",
       "shift-f3": "search::SelectPrevMatch",
       "ctrl-shift-f": "project_search::ToggleFocus"
@@ -402,6 +401,7 @@
       "ctrl-alt-y": "workspace::CloseAllDocks",
       "ctrl-shift-f": "pane::DeploySearch",
       "ctrl-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
+      "ctrl-shift-t": "pane::ReopenClosedItem",
       "ctrl-k ctrl-s": "zed::OpenKeymap",
       "ctrl-k ctrl-t": "theme_selector::Toggle",
       "ctrl-t": "project_symbols::Toggle",
@@ -574,6 +574,7 @@
       "ctrl-shift-h": "assistant2::OpenHistory",
       "ctrl-alt-/": "assistant2::ToggleModelSelector",
       "ctrl-shift-a": "assistant2::ToggleContextPicker",
+      "ctrl-e": "assistant2::ChatMode",
       "ctrl-alt-e": "assistant2::RemoveAllContext"
     }
   },

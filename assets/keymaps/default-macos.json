@@ -229,6 +229,7 @@
       "cmd-shift-h": "assistant2::OpenHistory",
       "cmd-alt-/": "assistant2::ToggleModelSelector",
       "cmd-shift-a": "assistant2::ToggleContextPicker",
+      "cmd-e": "assistant2::ChatMode",
       "cmd-alt-e": "assistant2::RemoveAllContext"
     }
   },
@@ -414,6 +415,8 @@
       "cmd-k cmd-9": ["editor::FoldAtLevel", { "level": 9 }],
       "cmd-k cmd-0": "editor::FoldAll",
       "cmd-k cmd-j": "editor::UnfoldAll",
+      // Using `ctrl-space` in Zed requires disabling the macOS global shortcut.
+      // System Preferences->Keyboard->Keyboard Shortcuts->Input Sources->Select the previous input source (uncheck)
       "ctrl-space": "editor::ShowCompletions",
       "cmd-.": "editor::ToggleCodeActions",
       "cmd-k r": "editor::RevealInFileManager",
@@ -448,7 +451,6 @@
       "ctrl-0": "pane::ActivateLastItem",
       "ctrl--": "pane::GoBack",
       "ctrl-shift--": "pane::GoForward",
-      "cmd-shift-t": "pane::ReopenClosedItem",
       "cmd-shift-f": "pane::DeploySearch"
     }
   },
@@ -482,6 +484,7 @@
       "alt-cmd-y": "workspace::CloseAllDocks",
       "cmd-shift-f": "pane::DeploySearch",
       "cmd-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
+      "cmd-shift-t": "pane::ReopenClosedItem",
       "cmd-k cmd-s": "zed::OpenKeymap",
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-t": "project_symbols::Toggle",

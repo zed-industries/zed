@@ -1,8 +1,10 @@
-use assistant_slash_command::{SlashCommand, SlashCommandRegistry};
+use std::sync::Arc;
+
 use collections::HashMap;
 use gpui::AppContext;
 use parking_lot::Mutex;
-use std::sync::Arc;
+
+use crate::{SlashCommand, SlashCommandRegistry};
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq, Hash, Default)]
 pub struct SlashCommandId(usize);
