@@ -2368,7 +2368,8 @@ impl ProjectPanel {
                     let depth = old_ancestors
                         .get(&entry.id)
                         .map(|ancestor| ancestor.current_ancestor_depth)
-                        .unwrap_or_default();
+                        .unwrap_or_default()
+                        .min(auto_folded_ancestors.len());
                     if let Some(edit_state) = &mut self.edit_state {
                         if edit_state.entry_id == entry.id {
                             edit_state.depth = depth;
