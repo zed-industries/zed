@@ -122,7 +122,6 @@ impl AssistantPanel {
                     workspace,
                     language_registry,
                     tools.clone(),
-                    message_editor.focus_handle(cx),
                     cx,
                 )
             }),
@@ -163,7 +162,6 @@ impl AssistantPanel {
                 self.workspace.clone(),
                 self.language_registry.clone(),
                 self.tools.clone(),
-                self.focus_handle(cx),
                 cx,
             )
         });
@@ -200,7 +198,6 @@ impl AssistantPanel {
                 self.workspace.clone(),
                 self.language_registry.clone(),
                 self.tools.clone(),
-                self.focus_handle(cx),
                 cx,
             )
         });
