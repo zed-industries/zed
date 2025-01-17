@@ -27,7 +27,7 @@ use editor::{
 };
 use gpui::{
     actions, impl_actions, Action, AppContext, Axis, Entity, EventEmitter, KeyContext,
-    KeystrokeEvent, Render, Subscription, View, ViewContext, WeakView,
+    KeystrokeEvent, Render, Subscription, Task, View, ViewContext, WeakView,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -76,7 +76,6 @@ actions!(
         ClearOperators,
         Tab,
         Enter,
-        Object,
         InnerObject,
         FindForward,
         FindBackward,
@@ -221,6 +220,8 @@ pub(crate) struct Vim {
 
     editor: WeakView<Editor>,
 
+    last_command: Option<String>,
+    running_command: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -263,6 +264,9 @@ impl Vim {
 
             selected_register: None,
             search: SearchState::default(),
+
+            last_command: None,
+            running_command: None,
 
             editor: editor.downgrade(),
             _subscriptions: vec![
@@ -519,6 +523,7 @@ impl Vim {
         self.mode = mode;
         self.operator_stack.clear();
         self.selected_register.take();
+        self.cancel_running_command(cx);
         if mode == Mode::Normal || mode != last_mode {
             self.current_tx.take();
             self.current_anchor.take();
