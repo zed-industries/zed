@@ -2743,7 +2743,7 @@ message SetDebuggerPanelItem {
     uint64 thread_id = 4;
     string session_name = 5;
     DebuggerConsole console = 6;
-    DebuggerModuleList module_list = 7;
+    optional DebuggerModuleList module_list = 7; // We only send this when it's supported and once per client
     DebuggerThreadItem active_thread_item = 8;
     DebuggerThreadState thread_state = 9;
     DebuggerVariableList variable_list = 10;

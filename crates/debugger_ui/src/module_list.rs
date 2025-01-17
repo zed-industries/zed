@@ -44,8 +44,9 @@ impl ModuleList {
             modules: Vec::default(),
         };
 
-        this.fetch_modules(cx).detach_and_log_err(cx);
-
+        if this.dap_store.read(cx).as_local().is_some() {
+            this.fetch_modules(cx).detach_and_log_err(cx);
+        }
         this
     }
 
@@ -90,6 +91,15 @@ impl ModuleList {
 
         self.list.reset(self.modules.len());
         cx.notify();
+
+        let task = cx.spawn(|this, mut cx| async move {
+            this.update(&mut cx, |this, cx| {
+                this.propagate_updates(cx);
+            })
+            .log_err();
+        });
+
+        cx.background_executor().spawn(task).detach();
     }
 
     fn fetch_modules(&self, cx: &mut ViewContext<Self>) -> Task<Result<()>> {
@@ -105,21 +115,25 @@ impl ModuleList {
                 this.list.reset(this.modules.len());
                 cx.notify();
 
-                if let Some((client, id)) = this.dap_store.read(cx).downstream_client() {
-                    let request = UpdateDebugAdapter {
-                        session_id: this.session_id.to_proto(),
-                        client_id: this.client_id.to_proto(),
-                        project_id: *id,
-                        thread_id: None,
-                        variant: Some(rpc::proto::update_debug_adapter::Variant::Modules(
-                            this.to_proto(),
-                        )),
-                    };
-
-                    client.send(request).log_err();
-                }
+                this.propagate_updates(cx);
             })
         })
+    }
+
+    fn propagate_updates(&self, cx: &ViewContext<Self>) {
+        if let Some((client, id)) = self.dap_store.read(cx).downstream_client() {
+            let request = UpdateDebugAdapter {
+                session_id: self.session_id.to_proto(),
+                client_id: self.client_id.to_proto(),
+                project_id: *id,
+                thread_id: None,
+                variant: Some(rpc::proto::update_debug_adapter::Variant::Modules(
+                    self.to_proto(),
+                )),
+            };
+
+            client.send(request).log_err();
+        }
     }
 
     fn render_entry(&mut self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
@@ -154,5 +168,12 @@ impl Render for ModuleList {
             .size_full()
             .p_1()
             .child(list(self.list.clone()).size_full())
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+impl ModuleList {
+    pub fn modules(&self) -> &Vec<Module> {
+        &self.modules
     }
 }
