@@ -17,6 +17,21 @@ fn init_logger() {
 }
 
 #[gpui::test]
+fn test_empty_singleton(cx: &mut AppContext) {
+    let buffer = cx.new_model(|cx| Buffer::local("", cx));
+    let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
+    let snapshot = multibuffer.read(cx).snapshot(cx);
+    assert_eq!(snapshot.text(), "");
+    assert_eq!(
+        snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>(),
+        [RowInfo {
+            buffer_row: Some(0),
+            diff_status: None
+        }]
+    );
+}
+
+#[gpui::test]
 fn test_singleton(cx: &mut AppContext) {
     let buffer = cx.new_model(|cx| Buffer::local(sample_text(6, 6, 'a'), cx));
     let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
@@ -33,6 +48,7 @@ fn test_singleton(cx: &mut AppContext) {
             .map(Some)
             .collect::<Vec<_>>()
     );
+    assert_consistent_line_numbers(&snapshot);
 
     buffer.update(cx, |buffer, cx| buffer.edit([(1..3, "XXX\n")], None, cx));
     let snapshot = multibuffer.read(cx).snapshot(cx);
@@ -47,6 +63,7 @@ fn test_singleton(cx: &mut AppContext) {
             .map(Some)
             .collect::<Vec<_>>()
     );
+    assert_consistent_line_numbers(&snapshot);
 }
 
 #[gpui::test]
@@ -1996,6 +2013,7 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
                 + 1
         );
 
+        assert_consistent_line_numbers(&snapshot);
         assert_position_translation(&snapshot);
 
         for (row, line) in expected_text.split('\n').enumerate() {

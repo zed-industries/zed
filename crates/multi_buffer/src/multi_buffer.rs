@@ -2776,6 +2776,15 @@ impl MultiBuffer {
         }
 
         self.append_transforms(&mut new_diff_transforms, old_diff_transforms.suffix(&()));
+        if new_diff_transforms.is_empty() {
+            new_diff_transforms.push(
+                DiffTransform::BufferContent {
+                    summary: Default::default(),
+                    is_inserted_hunk: false,
+                },
+                &(),
+            );
+        }
         self.subscriptions.publish(edits);
 
         drop(old_diff_transforms);
@@ -4191,7 +4200,6 @@ impl MultiBufferSnapshot {
                     }
                     if !in_deleted_hunk {
                         position = diff_transforms.end(&()).1 .0;
-                        dbg!(position);
                     }
                 }
                 _ => {
@@ -5384,9 +5392,9 @@ where
         self.cached_region.take();
         self.diff_transforms
             .seek(self.excerpts.start(), Bias::Left, &());
-        if self.diff_transforms.end(&()).1 < *self.excerpts.start()
-            || self.diff_transforms.end(&()).1 == *self.excerpts.start()
-                && self.diff_transforms.start().1 < *self.excerpts.start()
+        if self.diff_transforms.end(&()).1 == *self.excerpts.start()
+            && self.diff_transforms.start().1 < *self.excerpts.start()
+            && self.diff_transforms.next_item().is_some()
         {
             self.diff_transforms.next(&());
         }
@@ -5398,11 +5406,11 @@ where
             cmp::Ordering::Less => self.diff_transforms.next(&()),
             cmp::Ordering::Greater => self.excerpts.next(&()),
             cmp::Ordering::Equal => {
-                self.diff_transforms.next(&());
-                if self.diff_transforms.end(&()).1 > self.excerpts.end(&())
-                    || self.diff_transforms.item().is_none()
+                self.excerpts.next(&());
+                if self.excerpts.end(&()) > self.diff_transforms.end(&()).1
+                    || self.excerpts.item().is_none()
                 {
-                    self.excerpts.next(&());
+                    self.diff_transforms.next(&());
                 }
             }
         }
@@ -5414,11 +5422,11 @@ where
             cmp::Ordering::Less => self.excerpts.prev(&()),
             cmp::Ordering::Greater => self.diff_transforms.prev(&()),
             cmp::Ordering::Equal => {
-                self.diff_transforms.prev(&());
-                if self.diff_transforms.start().1 < *self.excerpts.start()
-                    || self.diff_transforms.item().is_none()
+                self.excerpts.prev(&());
+                if *self.excerpts.start() < self.diff_transforms.start().1
+                    || self.excerpts.item().is_none()
                 {
-                    self.excerpts.prev(&());
+                    self.diff_transforms.prev(&());
                 }
             }
         }
@@ -5447,13 +5455,13 @@ where
 
     fn build_region(&self) -> Option<MultiBufferRegion<'a, D>> {
         let excerpt = self.excerpts.item()?;
-        let is_inserted_hunk = match self.diff_transforms.item() {
-            Some(DiffTransform::DeletedHunk {
+        match self.diff_transforms.item()? {
+            DiffTransform::DeletedHunk {
                 buffer_id,
                 base_text_byte_range,
                 has_trailing_newline,
                 ..
-            }) => {
+            } => {
                 let diff = self.diffs.get(&buffer_id)?;
                 let buffer = &diff.base_text;
                 let mut rope_cursor = buffer.as_rope().cursor(0);
@@ -5473,51 +5481,50 @@ where
                     range: start..end,
                 });
             }
-            Some(DiffTransform::BufferContent {
+            DiffTransform::BufferContent {
                 is_inserted_hunk, ..
-            }) => *is_inserted_hunk,
-            None => false,
-        };
+            } => {
+                let buffer = &excerpt.buffer;
+                let buffer_context_start = excerpt.range.context.start.summary::<D>(buffer);
 
-        let buffer = &excerpt.buffer;
-        let buffer_context_start = excerpt.range.context.start.summary::<D>(buffer);
+                let mut start = self.diff_transforms.start().0 .0;
+                let mut buffer_start = buffer_context_start;
+                if self.diff_transforms.start().1 < *self.excerpts.start() {
+                    let overshoot = self.excerpts.start().0 - self.diff_transforms.start().1 .0;
+                    start.add_assign(&overshoot);
+                } else {
+                    let overshoot = self.diff_transforms.start().1 .0 - self.excerpts.start().0;
+                    buffer_start.add_assign(&overshoot);
+                }
 
-        let mut start = self.diff_transforms.start().0 .0;
-        let mut buffer_start = buffer_context_start;
-        if self.diff_transforms.start().1 < *self.excerpts.start() {
-            let overshoot = self.excerpts.start().0 - self.diff_transforms.start().1 .0;
-            start.add_assign(&overshoot);
-        } else {
-            let overshoot = self.diff_transforms.start().1 .0 - self.excerpts.start().0;
-            buffer_start.add_assign(&overshoot);
+                let mut end;
+                let mut buffer_end;
+                let has_trailing_newline;
+                if self.diff_transforms.end(&()).1 .0 < self.excerpts.end(&()).0 {
+                    let overshoot = self.diff_transforms.end(&()).1 .0 - self.excerpts.start().0;
+                    end = self.diff_transforms.end(&()).0 .0;
+                    buffer_end = buffer_context_start;
+                    buffer_end.add_assign(&overshoot);
+                    has_trailing_newline = false;
+                } else {
+                    let overshoot = self.excerpts.end(&()).0 - self.diff_transforms.start().1 .0;
+                    end = self.diff_transforms.start().0 .0;
+                    end.add_assign(&overshoot);
+                    buffer_end = excerpt.range.context.end.summary::<D>(buffer);
+                    has_trailing_newline = excerpt.has_trailing_newline;
+                };
+
+                Some(MultiBufferRegion {
+                    buffer,
+                    excerpt,
+                    has_trailing_newline,
+                    is_main_buffer: true,
+                    is_inserted_hunk: *is_inserted_hunk,
+                    buffer_range: buffer_start..buffer_end,
+                    range: start..end,
+                })
+            }
         }
-
-        let mut end;
-        let mut buffer_end;
-        let has_trailing_newline;
-        if self.diff_transforms.end(&()).1 .0 < self.excerpts.end(&()).0 {
-            let overshoot = self.diff_transforms.end(&()).1 .0 - self.excerpts.start().0;
-            end = self.diff_transforms.end(&()).0 .0;
-            buffer_end = buffer_context_start;
-            buffer_end.add_assign(&overshoot);
-            has_trailing_newline = false;
-        } else {
-            let overshoot = self.excerpts.end(&()).0 - self.diff_transforms.start().1 .0;
-            end = self.diff_transforms.start().0 .0;
-            end.add_assign(&overshoot);
-            buffer_end = excerpt.range.context.end.summary::<D>(buffer);
-            has_trailing_newline = excerpt.has_trailing_newline;
-        };
-
-        Some(MultiBufferRegion {
-            buffer,
-            excerpt,
-            has_trailing_newline,
-            is_main_buffer: true,
-            is_inserted_hunk,
-            buffer_range: buffer_start..buffer_end,
-            range: start..end,
-        })
     }
 
     fn excerpt(&self) -> Option<&'a Excerpt> {
