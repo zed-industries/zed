@@ -10,7 +10,7 @@ use language::language_settings::{all_language_settings, InlineCompletionProvide
 use settings::SettingsStore;
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 use workspace::Workspace;
-use zeta::ZedPredictTos;
+use zed_predict_tos::ZedPredictTos;
 
 pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
     let editors: Rc<RefCell<HashMap<WeakView<Editor>, AnyWindowHandle>>> = Rc::default();

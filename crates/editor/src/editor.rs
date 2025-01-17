@@ -52,6 +52,7 @@ use ::git::diff::DiffHunkStatus;
 pub(crate) use actions::*;
 pub use actions::{OpenExcerpts, OpenExcerptsSplit};
 use aho_corasick::AhoCorasick;
+use zed_predict_tos::ZedPredictTos;
 use anyhow::{anyhow, Context as _, Result};
 use blink_manager::BlinkManager;
 use client::{Collaborator, ParticipantIndex};
@@ -462,6 +463,7 @@ type CompletionId = usize;
 enum InlineCompletionMenuHint {
     Loading,
     Loaded { text: InlineCompletionText },
+    PendingTermsAcceptance,
     None,
 }
 
@@ -471,6 +473,7 @@ impl InlineCompletionMenuHint {
             InlineCompletionMenuHint::Loading | InlineCompletionMenuHint::Loaded { .. } => {
                 "Edit Prediction"
             }
+            InlineCompletionMenuHint::PendingTermsAcceptance => "Accept Terms of Service",
             InlineCompletionMenuHint::None => "No Prediction",
         }
     }
@@ -3832,6 +3835,14 @@ impl Editor {
         self.do_completion(action.item_ix, CompletionIntent::Compose, cx)
     }
 
+    fn toggle_zed_predict_tos(&mut self, cx: &mut ViewContext<Self>) {
+        let (Some(workspace), Some(project)) = (self.workspace(), self.project.as_ref()) else {
+            return;
+        };
+
+        ZedPredictTos::toggle(workspace, project.read(cx).user_store().clone(), cx);
+    }
+
     fn do_completion(
         &mut self,
         item_ix: Option<usize>,
@@ -3853,6 +3864,14 @@ impl Editor {
                         drop(entries);
                         drop(context_menu);
                         self.context_menu_next(&Default::default(), cx);
+                        return Some(Task::ready(Ok(())));
+                    }
+                    Some(CompletionEntry::InlineCompletionHint(
+                        InlineCompletionMenuHint::PendingTermsAcceptance,
+                    )) => {
+                        drop(entries);
+                        drop(context_menu);
+                        self.toggle_zed_predict_tos(cx);
                         return Some(Task::ready(Ok(())));
                     }
                     _ => {}
@@ -4965,6 +4984,8 @@ impl Editor {
             Some(InlineCompletionMenuHint::Loaded { text })
         } else if provider.is_refreshing(cx) {
             Some(InlineCompletionMenuHint::Loading)
+        } else if provider.needs_terms_acceptance(cx) {
+            Some(InlineCompletionMenuHint::PendingTermsAcceptance)
         } else {
             Some(InlineCompletionMenuHint::None)
         }

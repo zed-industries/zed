@@ -1,3 +1,4 @@
+use zed_predict_tos::ZedPredictTos;
 use anyhow::Result;
 use client::UserStore;
 use copilot::{Copilot, Status};
@@ -29,7 +30,7 @@ use workspace::{
     StatusItemView, Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
-use zeta::{RateCompletionModal, ZedPredictTos};
+use zeta::RateCompletionModal;
 
 actions!(zeta, [RateCompletions]);
 

@@ -42,6 +42,7 @@ ui.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
+zed_predict_tos.workspace = true
 
 [dev-dependencies]
 collections = { workspace = true, features = ["test-support"] }

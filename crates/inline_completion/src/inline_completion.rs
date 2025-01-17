@@ -36,6 +36,9 @@ pub trait InlineCompletionProvider: 'static + Sized {
         debounce: bool,
         cx: &mut ModelContext<Self>,
     );
+    fn needs_terms_acceptance(&self, _cx: &AppContext) -> bool {
+        false
+    }
     fn cycle(
         &mut self,
         buffer: Model<Buffer>,
@@ -64,6 +67,7 @@ pub trait InlineCompletionProviderHandle {
     ) -> bool;
     fn show_completions_in_menu(&self) -> bool;
     fn show_completions_in_normal_mode(&self) -> bool;
+    fn needs_terms_acceptance(&self, cx: &AppContext) -> bool;
     fn is_refreshing(&self, cx: &AppContext) -> bool;
     fn refresh(
         &self,
@@ -116,6 +120,10 @@ where
         cx: &AppContext,
     ) -> bool {
         self.read(cx).is_enabled(buffer, cursor_position, cx)
+    }
+
+    fn needs_terms_acceptance(&self, cx: &AppContext) -> bool {
+        self.read(cx).needs_terms_acceptance(cx)
     }
 
     fn is_refreshing(&self, cx: &AppContext) -> bool {

@@ -1,3 +1,5 @@
+//! AI service Terms of Service acceptance modal.
+
 use client::UserStore;
 use gpui::{
     AppContext, ClickEvent, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
@@ -6,6 +8,7 @@ use gpui::{
 use ui::{prelude::*, TintColor};
 use workspace::{ModalView, Workspace};
 
+/// Terms of acceptance for AI inline prediction.
 pub struct ZedPredictTos {
     focus_handle: FocusHandle,
     user_store: Model<UserStore>,
@@ -26,7 +29,6 @@ impl ZedPredictTos {
             workspace,
         }
     }
-
     pub fn toggle(
         workspace: View<Workspace>,
         user_store: Model<UserStore>,
@@ -63,6 +65,10 @@ impl ZedPredictTos {
         })
         .detach_and_log_err(cx);
     }
+
+    fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {
+        cx.emit(DismissEvent);
+    }
 }
 
 impl EventEmitter<DismissEvent> for ZedPredictTos {}
@@ -78,8 +84,10 @@ impl ModalView for ZedPredictTos {}
 impl Render for ZedPredictTos {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
-            .id("zed predict accept tos")
+            .id("zed predict tos")
             .track_focus(&self.focus_handle(cx))
+            .on_action(cx.listener(Self::cancel))
+            .key_context("ZedPredictTos")
             .elevation_3(cx)
             .w_96()
             .items_center()

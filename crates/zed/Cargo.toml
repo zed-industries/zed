@@ -16,6 +16,7 @@ path = "src/main.rs"
 
 [dependencies]
 activity_indicator.workspace = true
+zed_predict_tos.workspace = true
 anyhow.workspace = true
 assets.workspace = true
 assistant.workspace = true

@@ -1,10 +1,8 @@
 mod completion_diff_element;
 mod rate_completion_modal;
-mod tos_modal;
 
 pub(crate) use completion_diff_element::*;
 pub use rate_completion_modal::*;
-pub use tos_modal::*;
 
 use anyhow::{anyhow, Context as _, Result};
 use arrayvec::ArrayVec;
@@ -164,7 +162,7 @@ pub struct Zeta {
     rated_completions: HashSet<InlineCompletionId>,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
-    tos_accepted: bool,
+    tos_accepted: bool, // Terms of service accepted
     _user_store_subscription: Subscription,
 }
 
@@ -1037,6 +1035,10 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         let language = buffer.language_at(cursor_position);
         let settings = all_language_settings(file, cx);
         settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()), cx)
+    }
+
+    fn needs_terms_acceptance(&self, cx: &AppContext) -> bool {
+        !self.zeta.read(cx).tos_accepted
     }
 
     fn is_refreshing(&self) -> bool {
