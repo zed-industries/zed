@@ -1677,6 +1677,9 @@ impl ReferenceMultibuffer {
                 .peekable();
 
             while let Some(hunk) = hunks.next() {
+                if !hunk.buffer_range.start.is_valid(&buffer) {
+                    continue;
+                }
                 if !excerpt.expanded_diff_hunks.iter().any(|expanded_anchor| {
                     expanded_anchor.to_offset(&buffer) == hunk.buffer_range.start.to_offset(&buffer)
                 }) {
@@ -1734,9 +1737,6 @@ impl ReferenceMultibuffer {
                 if hunk_range.end > offset {
                     let len = text.len();
                     text.extend(buffer.text_for_range(offset..hunk_range.end));
-                    dbg!(buffer
-                        .text_for_range(offset..hunk_range.end)
-                        .collect::<String>());
                     regions.push(ReferenceRegion {
                         range: len..text.len(),
                         buffer_start: Some(buffer.offset_to_point(offset)),

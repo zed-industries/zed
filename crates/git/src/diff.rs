@@ -119,32 +119,38 @@ impl BufferDiff {
                 !before_start && !after_end
             });
 
-        let anchor_iter = std::iter::from_fn(move || {
+        let anchor_iter = iter::from_fn(move || {
             cursor.next(buffer);
             cursor.item()
         })
         .flat_map(move |hunk| {
             [
-                (&hunk.buffer_range.start, hunk.diff_base_byte_range.start),
-                (&hunk.buffer_range.end, hunk.diff_base_byte_range.end),
+                (
+                    &hunk.buffer_range.start,
+                    (hunk.buffer_range.start, hunk.diff_base_byte_range.start),
+                ),
+                (
+                    &hunk.buffer_range.end,
+                    (hunk.buffer_range.end, hunk.diff_base_byte_range.end),
+                ),
             ]
-            .into_iter()
         });
 
         let mut summaries = buffer.summaries_for_anchors_with_payload::<Point, _, _>(anchor_iter);
         iter::from_fn(move || {
-            let (start_point, start_base) = summaries.next()?;
-            let (mut end_point, end_base) = summaries.next()?;
+            let (start_point, (start_anchor, start_base)) = summaries.next()?;
+            let (mut end_point, (mut end_anchor, end_base)) = summaries.next()?;
 
             if end_point.column > 0 {
                 end_point.row += 1;
                 end_point.column = 0;
+                end_anchor = buffer.anchor_before(end_point);
             }
 
             Some(DiffHunk {
                 row_range: start_point.row..end_point.row,
                 diff_base_byte_range: start_base..end_base,
-                buffer_range: buffer.anchor_before(start_point)..buffer.anchor_before(end_point),
+                buffer_range: start_anchor..end_anchor,
             })
         })
     }
@@ -162,7 +168,7 @@ impl BufferDiff {
                 !before_start && !after_end
             });
 
-        std::iter::from_fn(move || {
+        iter::from_fn(move || {
             cursor.prev(buffer);
 
             let hunk = cursor.item()?;

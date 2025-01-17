@@ -2516,7 +2516,6 @@ impl MultiBuffer {
         if changes.is_empty() {
             return;
         }
-        dbg!(&changes);
 
         let mut excerpts = snapshot.excerpts.cursor::<ExcerptOffset>(&());
         let mut old_diff_transforms = snapshot
@@ -2573,6 +2572,9 @@ impl MultiBuffer {
                         .peekable();
 
                     while let Some(mut hunk) = hunks.next() {
+                        if !hunk.buffer_range.start.is_valid(buffer) {
+                            continue;
+                        }
                         let hunk_buffer_range = hunk.buffer_range.to_offset(buffer);
                         if hunk_buffer_range.start == excerpt_buffer_start
                             && excerpt_buffer_start == edit_buffer_start
@@ -2591,13 +2593,6 @@ impl MultiBuffer {
                             );
                         let hunk_excerpt_end = excerpt_start
                             + ExcerptOffset::new(hunk_buffer_range.end - excerpt_buffer_start);
-                        dbg!(
-                            hunk_excerpt_start,
-                            hunk_excerpt_end,
-                            &hunk_buffer_range,
-                            &hunk.row_range,
-                            &edit
-                        );
                         let hunk_excerpt_old_start = ExcerptOffset::new(
                             (hunk_excerpt_start.value as isize - excerpt_delta) as usize,
                         );
@@ -2670,7 +2665,6 @@ impl MultiBuffer {
                             }
                             _ => was_previously_expanded || self.all_diff_hunks_expanded,
                         };
-                        dbg!(should_expand_hunk);
 
                         if should_expand_hunk {
                             if !hunk.diff_base_byte_range.is_empty()
@@ -2720,7 +2714,6 @@ impl MultiBuffer {
                             }
 
                             if !hunk_buffer_range.is_empty() {
-                                dbg!(hunk_excerpt_end, excerpt_end);
                                 end_of_current_insert = hunk_excerpt_end.min(excerpt_end);
                             }
 
@@ -2813,7 +2806,6 @@ impl MultiBuffer {
         }
         self.subscriptions.publish(edits);
 
-        // dbg!(&new_diff_transforms.items(&()));
         drop(old_diff_transforms);
         drop(excerpts);
         snapshot.diff_transforms = new_diff_transforms;
@@ -3955,41 +3947,10 @@ impl MultiBufferSnapshot {
     }
 
     pub fn line_len(&self, row: MultiBufferRow) -> u32 {
-        let mut cursor = self.cursor::<Point>();
-        let point = Point::new(row.0, 0);
-        cursor.seek(&point);
-        let Some(region) = cursor.region() else {
-            return 0;
-        };
-
-        let overshoot = point - region.range.start;
-        let buffer_point = region.buffer_range.start + overshoot;
-        let line_start = Point::new(buffer_point.row, 0).max(region.buffer_range.start);
-        let line_end = Point::new(buffer_point.row, region.buffer.line_len(buffer_point.row));
-
-        if line_end <= region.buffer_range.end {
-            return line_end.column - line_start.column;
-        }
-        let mut line_len = region.buffer_range.end.column - line_start.column;
-        if region.has_trailing_newline {
-            return line_len;
-        }
-
-        loop {
-            cursor.next();
-            let Some(region) = cursor.region() else {
-                return line_len;
-            };
-
-            let line_start = region.buffer_range.start;
-            let line_end = Point::new(line_start.row, region.buffer.line_len(line_start.row));
-            if line_end <= region.buffer_range.end {
-                return line_len + line_end.column - line_start.column;
-            }
-            line_len += region.buffer_range.end.column - line_start.column;
-            if region.has_trailing_newline {
-                return line_len;
-            }
+        if let Some((_, range)) = self.buffer_line_for_row(row) {
+            range.end.column - range.start.column
+        } else {
+            0
         }
     }
 
@@ -4004,11 +3965,8 @@ impl MultiBufferSnapshot {
         let overshoot = point - region.range.start;
         let buffer_point = region.buffer_range.start + overshoot;
         let line_start = Point::new(buffer_point.row, 0).max(region.buffer_range.start);
-        let mut line_end = Point::new(buffer_point.row, region.buffer.line_len(buffer_point.row));
-        if line_end > region.buffer_range.end {
-            let excerpt_end = region.excerpt.range.context.end.to_point(&region.buffer);
-            line_end = line_end.min(excerpt_end);
-        }
+        let line_end = Point::new(buffer_point.row, region.buffer.line_len(buffer_point.row))
+            .min(region.buffer_range.end);
         Some((region.buffer, line_start..line_end))
     }
 
