@@ -3,6 +3,7 @@ CREATE TABLE "users" (
     "github_login" VARCHAR,
     "admin" BOOLEAN,
     "email_address" VARCHAR(255) DEFAULT NULL,
+    "name" VARCHAR(255),
     "invite_code" VARCHAR(64),
     "invite_count" INTEGER NOT NULL DEFAULT 0,
     "inviter_id" INTEGER REFERENCES users (id),

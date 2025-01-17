@@ -129,6 +129,7 @@ pub async fn seed(config: &Config, db: &Database, force: bool) -> anyhow::Result
                 &github_user.login,
                 github_user.id,
                 github_user.email.as_deref(),
+                None,
                 github_user.created_at,
                 None,
             )

@@ -101,6 +101,7 @@ impl Database {
         github_login: &str,
         github_user_id: i32,
         github_email: Option<&str>,
+        github_name: Option<&str>,
         github_user_created_at: DateTimeUtc,
         initial_channel_id: Option<ChannelId>,
     ) -> Result<User> {
@@ -109,6 +110,7 @@ impl Database {
                 github_login,
                 github_user_id,
                 github_email,
+                github_name,
                 github_user_created_at.naive_utc(),
                 initial_channel_id,
                 &tx,
@@ -118,11 +120,13 @@ impl Database {
         .await
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub async fn get_or_create_user_by_github_account_tx(
         &self,
         github_login: &str,
         github_user_id: i32,
         github_email: Option<&str>,
+        github_name: Option<&str>,
         github_user_created_at: NaiveDateTime,
         initial_channel_id: Option<ChannelId>,
         tx: &DatabaseTransaction,
@@ -150,6 +154,7 @@ impl Database {
         } else {
             let user = user::Entity::insert(user::ActiveModel {
                 email_address: ActiveValue::set(github_email.map(|email| email.into())),
+                name: ActiveValue::set(github_name.map(|name| name.into())),
                 github_login: ActiveValue::set(github_login.into()),
                 github_user_id: ActiveValue::set(github_user_id),
                 github_user_created_at: ActiveValue::set(Some(github_user_created_at)),
