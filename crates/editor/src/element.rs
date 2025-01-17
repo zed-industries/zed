@@ -3977,6 +3977,8 @@ impl EditorElement {
 
             let color = if is_active {
                 cx.theme().colors().editor_active_line_number
+            } else if !is_singleton && hitbox.is_hovered(cx) {
+                cx.theme().colors().editor_hovered_line_number
             } else {
                 cx.theme().colors().editor_line_number
             };
