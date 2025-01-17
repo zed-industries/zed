@@ -16360,7 +16360,6 @@ dependencies = [
  "client",
  "gpui",
  "menu",
- "theme",
  "ui",
  "workspace",
 ]
@@ -16587,7 +16586,6 @@ dependencies = [
  "uuid",
  "workspace",
  "worktree",
- "zed_predict_tos",
 ]
 
 [[package]]
