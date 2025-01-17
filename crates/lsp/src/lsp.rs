@@ -5,7 +5,10 @@ pub use lsp_types::*;
 
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
-use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
+use futures::{
+    channel::oneshot, future::BoxFuture, io::BufWriter, select, AsyncRead, AsyncWrite, Future,
+    FutureExt,
+};
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, SharedString, Task};
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, prelude::Stream};
@@ -45,7 +48,8 @@ const CONTENT_LEN_HEADER: &str = "Content-Length: ";
 const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
-type NotificationHandler = Arc<dyn Send + Sync + Fn(Option<RequestId>, Value, AsyncAppContext)>;
+type NotificationHandler =
+    Arc<dyn Send + Sync + Fn(Option<RequestId>, Value, AsyncAppContext) -> BoxFuture<'static, ()>>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
 type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
 
@@ -530,7 +534,7 @@ impl LanguageServer {
             {
                 let mut notification_handlers = notification_handlers.lock();
                 if let Some(handler) = notification_handlers.get_mut(msg.method.as_str()) {
-                    handler(msg.id, msg.params.unwrap_or(Value::Null), cx.clone());
+                    handler(msg.id, msg.params.unwrap_or(Value::Null), cx.clone()).await;
                 } else {
                     drop(notification_handlers);
                     on_unhandled_notification(msg);
@@ -959,7 +963,7 @@ impl LanguageServer {
                         callback(params, cx);
                     }
                 })
-                .detach();
+                .boxed()
             }),
         );
         assert!(
@@ -1040,7 +1044,9 @@ impl LanguageServer {
                             }
                         }
                     })
-                    .detach();
+                    .boxed()
+                } else {
+                    async {}.boxed()
                 }
             }),
         );
