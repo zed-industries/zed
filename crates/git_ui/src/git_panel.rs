@@ -776,7 +776,9 @@ impl GitPanel {
                 let name = user.name.as_deref().unwrap_or(&user.github_login);
                 Some(format!("{CO_AUTHOR_PREFIX}{name} <{email}>"))
             })
-            .filter(|co_author| !existing_co_authors.contains(co_author.as_str()))
+            .filter(|co_author| {
+                !existing_co_authors.contains(co_author.to_ascii_lowercase().as_str())
+            })
             .collect::<Vec<_>>();
         if new_co_authors.is_empty() {
             return;
@@ -1399,7 +1401,7 @@ impl GitPanel {
 impl Render for GitPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let project = self.project.read(cx);
-        let has_coauthors = self
+        let has_co_authors = self
             .workspace
             .upgrade()
             .and_then(|workspace| workspace.read(cx).active_call()?.read(cx).room().cloned())
@@ -1443,7 +1445,7 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::focus_changes_list))
             .on_action(cx.listener(Self::focus_editor))
             .on_action(cx.listener(Self::toggle_staged_for_selected))
-            .when(has_coauthors, |git_panel| {
+            .when(has_co_authors, |git_panel| {
                 git_panel.on_action(cx.listener(Self::fill_co_authors))
             })
             // .on_action(cx.listener(|this, &OpenSelected, cx| this.open_selected(&OpenSelected, cx)))
