@@ -1235,7 +1235,7 @@ mod tests {
             indoc::indoc! {
             "
                 - This is file_a
-                + ˇan edit after git addThis is file_a",
+                + an edit after git addThis is file_aˇ",
             },
         );
     }
