@@ -391,7 +391,7 @@ pub struct ThemeColorsContent {
     pub editor_active_line_number: Option<String>,
 
     /// Text Color. Used for the text of the line number in the editor gutter when the line is hovered over.
-    #[serde(rename = "editor.hovered_line_number")]
+    #[serde(rename = "editor.hover_line_number")]
     pub editor_hovered_line_number: Option<String>,
 
     /// Text Color. Used to mark invisible characters in the editor.
