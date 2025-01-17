@@ -21,7 +21,8 @@ use ui::{
     prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
-use workspace::notifications::DetachAndPromptErr;
+use workspace::notifications::{DetachAndPromptErr, NotificationId};
+use workspace::Toast;
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     Workspace,
@@ -76,6 +77,7 @@ pub struct GitListEntry {
 }
 
 pub struct GitPanel {
+    weak_workspace: WeakView<Workspace>,
     current_modifiers: Modifiers,
     focus_handle: FocusHandle,
     fs: Arc<dyn Fs>,
@@ -143,6 +145,7 @@ impl GitPanel {
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let fs = workspace.app_state().fs.clone();
         let project = workspace.project().clone();
+        let weak_workspace = cx.view().downgrade();
         let git_state = project.read(cx).git_state().cloned();
         let language_registry = workspace.app_state().languages.clone();
         let current_commit_message = git_state
@@ -319,6 +322,7 @@ impl GitPanel {
             .detach();
 
             let mut git_panel = Self {
+                weak_workspace,
                 focus_handle: cx.focus_handle(),
                 fs,
                 pending_serialization: Task::ready(None),
@@ -606,13 +610,16 @@ impl GitPanel {
         let Some(git_state) = self.git_state(cx) else {
             return;
         };
-        git_state.update(cx, |git_state, _| {
+        let result = git_state.update(cx, |git_state, _| {
             if entry.status.is_staged().unwrap_or(false) {
-                git_state.stage_entries(vec![entry.repo_path.clone()]);
+                git_state.unstage_entries(vec![entry.repo_path.clone()])
             } else {
-                git_state.stage_entries(vec![entry.repo_path.clone()]);
+                git_state.stage_entries(vec![entry.repo_path.clone()])
             }
         });
+        if let Err(e) = result {
+            self.show_err_toast("toggle staged error".to_string(), e, cx);
+        }
         cx.notify();
     }
 
@@ -649,7 +656,10 @@ impl GitPanel {
             entry.is_staged = Some(true);
         }
         self.all_staged = Some(true);
-        git_state.read(cx).stage_all();
+
+        if let Err(e) = git_state.read(cx).stage_all() {
+            self.show_err_toast("stage all error".to_string(), e, cx);
+        };
     }
 
     fn unstage_all(&mut self, _: &git::UnstageAll, cx: &mut ViewContext<Self>) {
@@ -660,7 +670,9 @@ impl GitPanel {
             entry.is_staged = Some(false);
         }
         self.all_staged = Some(false);
-        git_state.read(cx).unstage_all();
+        if let Err(e) = git_state.read(cx).unstage_all() {
+            self.show_err_toast("unstage all error".to_string(), e, cx);
+        };
     }
 
     fn discard_all(&mut self, _: &git::RevertAll, _cx: &mut ViewContext<Self>) {
@@ -673,15 +685,23 @@ impl GitPanel {
         let Some(git_state) = self.git_state(cx) else {
             return;
         };
-        git_state.update(cx, |git_state, _| git_state.commit());
+        if let Err(e) = git_state.update(cx, |git_state, _| git_state.commit()) {
+            self.show_err_toast("commit error".to_string(), e, cx);
+        };
         self.commit_editor
             .update(cx, |editor, cx| editor.set_text("", cx));
     }
 
     /// Commit all changes, regardless of whether they are staged or not
     fn commit_all_changes(&mut self, _: &git::CommitAllChanges, cx: &mut ViewContext<Self>) {
-        self.stage_all(&StageAll, cx);
-        self.commit_changes(&CommitChanges, cx);
+        let Some(git_state) = self.git_state(cx) else {
+            return;
+        };
+        if let Err(e) = git_state.update(cx, |git_state, _| git_state.commit_all()) {
+            self.show_err_toast("commit all error".to_string(), e, cx);
+        };
+        self.commit_editor
+            .update(cx, |editor, cx| editor.set_text("", cx));
     }
 
     fn no_entries(&self, cx: &mut ViewContext<Self>) -> bool {
@@ -811,6 +831,25 @@ impl GitPanel {
             });
 
             cx.notify();
+        }
+    }
+
+    fn show_err_toast(
+        &self,
+        id: impl Into<SharedString>,
+        e: anyhow::Error,
+        cx: &mut ViewContext<Self>,
+    ) {
+        if let Some(workspace) = self.weak_workspace.upgrade() {
+            let id_string = id.into();
+            let notif_id = NotificationId::Named(id_string.into());
+            let message = e.to_string();
+            workspace.update(cx, |workspace, cx| {
+                let toast = Toast::new(notif_id, message).on_click("Open Zed Log", |cx| {
+                    cx.dispatch_action(workspace::OpenLog.boxed_clone());
+                });
+                workspace.show_toast(toast, cx);
+            });
         }
     }
 }
@@ -975,7 +1014,7 @@ impl GitPanel {
                     cx,
                 )
             })
-            .disabled(!can_commit)
+            .disabled(can_commit)
             .on_click(
                 cx.listener(|this, _: &ClickEvent, cx| this.commit_changes(&CommitChanges, cx)),
             );
@@ -1216,14 +1255,17 @@ impl GitPanel {
                             let Some(git_state) = this.git_state(cx) else {
                                 return;
                             };
-                            git_state.update(cx, |git_state, _| match toggle {
+                            let result = git_state.update(cx, |git_state, _| match toggle {
                                 ToggleState::Selected | ToggleState::Indeterminate => {
-                                    git_state.stage_entries(vec![repo_path]);
+                                    git_state.stage_entries(vec![repo_path])
                                 }
                                 ToggleState::Unselected => {
                                     git_state.unstage_entries(vec![repo_path])
                                 }
-                            })
+                            });
+                            if let Err(e) = result {
+                                this.show_err_toast("toggle staged error".to_string(), e, cx);
+                            }
                         });
                     }
                 }),
