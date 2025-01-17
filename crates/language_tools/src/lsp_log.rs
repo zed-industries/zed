@@ -1,13 +1,13 @@
 use collections::{HashMap, VecDeque};
 use copilot::Copilot;
-use editor::{actions::MoveToEnd, Editor, EditorEvent};
+use editor::{actions::MoveToEnd, scroll::Autoscroll, Editor, EditorEvent};
 use futures::{channel::mpsc, StreamExt};
 use gpui::{
     actions, div, AppContext, Context, Corner, EventEmitter, FocusHandle, FocusableView,
     IntoElement, Model, ModelContext, ParentElement, Render, Styled, Subscription, View,
     ViewContext, VisualContext, WeakModel, WindowContext,
 };
-use language::LanguageServerId;
+use language::{language_settings::SoftWrap, LanguageServerId};
 use lsp::{
     notification::SetTrace, IoKind, LanguageServer, LanguageServerName, MessageType,
     SetTraceParams, TraceValue,
@@ -642,6 +642,8 @@ impl LspLogView {
                     log_view.editor.update(cx, |editor, cx| {
                         editor.set_read_only(false);
                         let last_point = editor.buffer().read(cx).len(cx);
+                        let newest_cursor_is_at_end =
+                            editor.selections.newest::<usize>(cx).start >= last_point;
                         editor.edit(
                             vec![
                                 (last_point..last_point, entry.trim()),
@@ -649,6 +651,18 @@ impl LspLogView {
                             ],
                             cx,
                         );
+                        let entry_length = entry.len();
+                        if entry_length > 1024 {
+                            editor.fold_ranges(
+                                vec![last_point + 1024..last_point + entry_length],
+                                false,
+                                cx,
+                            );
+                        }
+
+                        if newest_cursor_is_at_end {
+                            editor.request_autoscroll(Autoscroll::bottom(), cx);
+                        }
                         editor.set_read_only(true);
                     });
                 }
@@ -691,6 +705,7 @@ impl LspLogView {
             editor.move_to_end(&MoveToEnd, cx);
             editor.set_read_only(true);
             editor.set_show_inline_completions(Some(false), cx);
+            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor
         });
         let editor_subscription = cx.subscribe(
@@ -717,17 +732,22 @@ impl LspLogView {
 
 * Running in project: {PATH:?}
 
-* Capabilities: {CAPABILITIES}",
+* Capabilities: {CAPABILITIES}
+
+* Configuration: {CONFIGURATION}",
                 NAME = server.name(),
                 ID = server.server_id(),
                 BINARY = server.binary(),
                 PATH = server.root_path(),
                 CAPABILITIES = serde_json::to_string_pretty(&server.capabilities())
                     .unwrap_or_else(|e| format!("Failed to serialize capabilities: {e}")),
+                CONFIGURATION = serde_json::to_string_pretty(server.configuration())
+                    .unwrap_or_else(|e| format!("Failed to serialize configuration: {e}")),
             );
             editor.set_text(server_info, cx);
             editor.set_read_only(true);
             editor.set_show_inline_completions(Some(false), cx);
+            editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor
         });
         let editor_subscription = cx.subscribe(
@@ -947,7 +967,7 @@ impl LspLogView {
             });
 
             server
-                .notify::<SetTrace>(SetTraceParams { value: level })
+                .notify::<SetTrace>(&SetTraceParams { value: level })
                 .ok();
         }
     }

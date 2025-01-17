@@ -10,6 +10,8 @@ First, make sure you've installed Zed's backend dependencies for your platform:
 
 Before you can run the `collab` server locally, you'll need to set up a `zed` Postgres database.
 
+### On macOS and Linux
+
 ```sh
 script/bootstrap
 ```
@@ -31,21 +33,59 @@ To use a different set of admin users, you can create your own version of that j
 }
 ```
 
+### On Windows
+
+```powershell
+.\script\bootstrap.ps1
+```
+
 ## Testing collaborative features locally
 
-In one terminal, run Zed's collaboration server and the `livekit` dev server:
+### On macOS and Linux
+
+Ensure that Postgres is configured and running, then run Zed's collaboration server and the `livekit` dev server:
 
 ```sh
 foreman start
+# OR
+cargo run -p collab -- serve all
 ```
 
-In a second terminal, run two or more instances of Zed.
+In a new terminal, run two or more instances of Zed.
 
 ```sh
 script/zed-local -2
 ```
 
 This script starts one to four instances of Zed, depending on the `-2`, `-3` or `-4` flags. Each instance will be connected to the local `collab` server, signed in as a different user from `.admins.json` or `.admins.default.json`.
+
+### On Windows
+
+Since `foreman` is not available on Windows, you can run the following commands in separate terminals:
+
+```powershell
+cargo run --package=collab -- serve all
+```
+
+If you have added the `livekit-server` binary to your `PATH`, you can run:
+
+```powershell
+livekit-server --dev
+```
+
+Otherwise,
+
+```powershell
+.\path\to\livekit-serve.exe --dev
+```
+
+In a new terminal, run two or more instances of Zed.
+
+```powershell
+node .\script\zed-local -2
+```
+
+Note that this requires `node.exe` to be in your `PATH`.
 
 ## Running a local collab server
 

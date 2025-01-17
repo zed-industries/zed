@@ -70,6 +70,8 @@ pub struct ExtensionManifest {
     #[serde(default)]
     pub themes: Vec<PathBuf>,
     #[serde(default)]
+    pub icon_themes: Vec<PathBuf>,
+    #[serde(default)]
     pub languages: Vec<PathBuf>,
     #[serde(default)]
     pub grammars: BTreeMap<Arc<str>, GrammarManifestEntry>,
@@ -199,6 +201,7 @@ fn manifest_from_old_manifest(
             themes.dedup();
             themes
         },
+        icon_themes: Vec::new(),
         languages: {
             let mut languages = manifest_json.languages.into_values().collect::<Vec<_>>();
             languages.sort();

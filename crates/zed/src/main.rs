@@ -1217,7 +1217,7 @@ fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     use gpui::UpdateGlobal;
 
     let path = {
-        let p = Path::new("assets/icons/file_icons/file_types.json");
+        let p = Path::new("assets").join(file_icons::FILE_TYPES_ASSET);
         let Ok(full_path) = p.canonicalize() else {
             return;
         };

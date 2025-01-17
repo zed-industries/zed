@@ -2,7 +2,7 @@ use crate::{
     ActiveTooltip, AnyTooltip, AnyView, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
     HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, Point, SharedString, Size, TextRun, TextStyle, Truncate, WhiteSpace, WindowContext,
-    WrappedLine, TOOLTIP_DELAY,
+    WrappedLine, WrappedLineLayout, TOOLTIP_DELAY,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
@@ -437,6 +437,36 @@ impl TextLayout {
             } else {
                 let ix_within_line = index - line_start_ix;
                 return Some(line_origin + line.position_for_index(ix_within_line, line_height)?);
+            }
+        }
+
+        None
+    }
+
+    /// Retrieve the layout for the line containing the given byte index.
+    pub fn line_layout_for_index(&self, index: usize) -> Option<Arc<WrappedLineLayout>> {
+        let element_state = self.lock();
+        let element_state = element_state
+            .as_ref()
+            .expect("measurement has not been performed");
+        let bounds = element_state
+            .bounds
+            .expect("prepaint has not been performed");
+        let line_height = element_state.line_height;
+
+        let mut line_origin = bounds.origin;
+        let mut line_start_ix = 0;
+
+        for line in &element_state.lines {
+            let line_end_ix = line_start_ix + line.len();
+            if index < line_start_ix {
+                break;
+            } else if index > line_end_ix {
+                line_origin.y += line.size(line_height).height;
+                line_start_ix = line_end_ix + 1;
+                continue;
+            } else {
+                return Some(line.layout.clone());
             }
         }
 

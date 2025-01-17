@@ -181,7 +181,7 @@ impl Button {
         self
     }
 
-    /// Binds a key combination to the button for keyboard shortcuts.
+    /// Display the keybinding that triggers the button action.
     pub fn key_binding(mut self, key_binding: impl Into<Option<KeyBinding>>) -> Self {
         self.key_binding = key_binding.into();
         self

@@ -487,6 +487,7 @@ impl RenderOnce for ButtonLike {
         self.base
             .h_flex()
             .id(self.id.clone())
+            .font_ui(cx)
             .group("")
             .flex_none()
             .h(self.height.unwrap_or(self.size.rems().into()))

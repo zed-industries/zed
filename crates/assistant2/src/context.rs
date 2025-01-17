@@ -98,9 +98,7 @@ pub struct FileContext {
 
 #[derive(Debug)]
 pub struct DirectoryContext {
-    #[allow(unused)]
     pub path: Rc<Path>,
-    #[allow(unused)]
     pub context_buffers: Vec<ContextBuffer>,
     pub snapshot: ContextSnapshot,
 }
@@ -127,10 +125,8 @@ pub struct ThreadContext {
 
 #[derive(Debug, Clone)]
 pub struct ContextBuffer {
-    #[allow(unused)]
     pub id: BufferId,
     pub buffer: Model<Buffer>,
-    #[allow(unused)]
     pub version: clock::Global,
     pub text: SharedString,
 }

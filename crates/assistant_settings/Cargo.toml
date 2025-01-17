@@ -1,0 +1,33 @@
+[package]
+name = "assistant_settings"
+version = "0.1.0"
+edition.workspace = true
+publish.workspace = true
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/assistant_settings.rs"
+
+[dependencies]
+anthropic = { workspace = true, features = ["schemars"] }
+anyhow.workspace = true
+feature_flags.workspace = true
+gpui.workspace = true
+language_model.workspace = true
+lmstudio = { workspace = true, features = ["schemars"] }
+log.workspace = true
+ollama = { workspace = true, features = ["schemars"] }
+open_ai = { workspace = true, features = ["schemars"] }
+schemars.workspace = true
+serde.workspace = true
+settings.workspace = true
+
+[dev-dependencies]
+fs.workspace = true
+gpui = { workspace = true, features = ["test-support"] }
+paths.workspace = true
+serde_json_lenient.workspace = true
+settings = { workspace = true, features = ["test-support"] }

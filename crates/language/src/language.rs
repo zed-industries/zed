@@ -662,8 +662,7 @@ pub struct LanguageConfigOverride {
     pub line_comments: Override<Vec<Arc<str>>>,
     #[serde(default)]
     pub block_comment: Override<(Arc<str>, Arc<str>)>,
-    #[serde(skip_deserializing)]
-    #[schemars(skip)]
+    #[serde(skip)]
     pub disabled_bracket_ixs: Vec<u16>,
     #[serde(default)]
     pub word_characters: Override<HashSet<char>>,
@@ -776,7 +775,7 @@ pub struct BracketPairConfig {
     pub pairs: Vec<BracketPair>,
     /// A list of tree-sitter scopes for which a given bracket should not be active.
     /// N-th entry in `[Self::disabled_scopes_by_bracket_ix]` contains a list of disabled scopes for an n-th entry in `[Self::pairs]`
-    #[schemars(skip)]
+    #[serde(skip)]
     pub disabled_scopes_by_bracket_ix: Vec<Vec<String>>,
 }
 

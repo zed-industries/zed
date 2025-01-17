@@ -29,6 +29,7 @@
       "alt-u": "editor::ConvertToUpperCase", // upcase-word
       "alt-l": "editor::ConvertToLowerCase", // downcase-word
       "alt-c": "editor::ConvertToUpperCamelCase", // capitalize-word
+      "ctrl-t": "editor::Transpose", // transpose-chars
       "alt-;": ["editor::ToggleComments", { "advance_downwards": false }],
       "ctrl-x ctrl-;": "editor::ToggleComments",
       "alt-.": "editor::GoToDefinition", // xref-find-definitions

@@ -1,8 +1,8 @@
 mod markdown_preview;
 mod repl_menu;
 
-use assistant::assistant_settings::AssistantSettings;
 use assistant::AssistantPanel;
+use assistant_settings::AssistantSettings;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, DuplicateLineDown, GoToDiagnostic, GoToHunk,
     GoToPrevDiagnostic, GoToPrevHunk, MoveLineDown, MoveLineUp, SelectAll, SelectLargerSyntaxNode,

@@ -1104,6 +1104,7 @@ pub fn div() -> Div {
     Div {
         interactivity,
         children: SmallVec::default(),
+        prepaint_listener: None,
     }
 }
 
@@ -1111,6 +1112,19 @@ pub fn div() -> Div {
 pub struct Div {
     interactivity: Interactivity,
     children: SmallVec<[AnyElement; 2]>,
+    prepaint_listener: Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut WindowContext) + 'static>>,
+}
+
+impl Div {
+    /// Add a listener to be called when the children of this `Div` are prepainted.
+    /// This allows you to store the [`Bounds`] of the children for later use.
+    pub fn on_children_prepainted(
+        mut self,
+        listener: impl Fn(Vec<Bounds<Pixels>>, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.prepaint_listener = Some(Box::new(listener));
+        self
+    }
 }
 
 /// A frame state for a `Div` element, which contains layout IDs for its children.
@@ -1177,6 +1191,13 @@ impl Element for Div {
         request_layout: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
     ) -> Option<Hitbox> {
+        let has_prepaint_listener = self.prepaint_listener.is_some();
+        let mut children_bounds = Vec::with_capacity(if has_prepaint_listener {
+            request_layout.child_layout_ids.len()
+        } else {
+            0
+        });
+
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
         if let Some(handle) = self.interactivity.scroll_anchor.as_ref() {
@@ -1189,6 +1210,7 @@ impl Element for Div {
             state.child_bounds = Vec::with_capacity(request_layout.child_layout_ids.len());
             state.bounds = bounds;
             let requested = state.requested_scroll_top.take();
+            // TODO az
 
             for (ix, child_layout_id) in request_layout.child_layout_ids.iter().enumerate() {
                 let child_bounds = cx.layout_bounds(*child_layout_id);
@@ -1209,6 +1231,10 @@ impl Element for Div {
                 let child_bounds = cx.layout_bounds(*child_layout_id);
                 child_min = child_min.min(&child_bounds.origin);
                 child_max = child_max.max(&child_bounds.bottom_right());
+
+                if has_prepaint_listener {
+                    children_bounds.push(child_bounds);
+                }
             }
             (child_max - child_min).into()
         };
@@ -1224,6 +1250,11 @@ impl Element for Div {
                         child.prepaint(cx);
                     }
                 });
+
+                if let Some(listener) = self.prepaint_listener.as_ref() {
+                    listener(children_bounds, cx);
+                }
+
                 hitbox
             },
         )
@@ -2327,6 +2358,18 @@ where
 {
     fn style(&mut self) -> &mut StyleRefinement {
         self.element.style()
+    }
+}
+
+impl Focusable<Div> {
+    /// Add a listener to be called when the children of this `Div` are prepainted.
+    /// This allows you to store the [`Bounds`] of the children for later use.
+    pub fn on_children_prepainted(
+        mut self,
+        listener: impl Fn(Vec<Bounds<Pixels>>, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.element = self.element.on_children_prepainted(listener);
+        self
     }
 }
 

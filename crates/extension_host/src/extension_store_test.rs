@@ -149,6 +149,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                         authors: Vec::new(),
                         repository: None,
                         themes: Default::default(),
+                        icon_themes: Vec::new(),
                         lib: Default::default(),
                         languages: vec!["languages/erb".into(), "languages/ruby".into()],
                         grammars: [
@@ -181,6 +182,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                             "themes/monokai-pro.json".into(),
                             "themes/monokai.json".into(),
                         ],
+                        icon_themes: Vec::new(),
                         lib: Default::default(),
                         languages: Default::default(),
                         grammars: BTreeMap::default(),
@@ -258,6 +260,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
         ]
         .into_iter()
         .collect(),
+        icon_themes: BTreeMap::default(),
     };
 
     let proxy = Arc::new(ExtensionHostProxy::new());
@@ -344,6 +347,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
                 authors: vec![],
                 repository: None,
                 themes: vec!["themes/gruvbox.json".into()],
+                icon_themes: Vec::new(),
                 lib: Default::default(),
                 languages: Default::default(),
                 grammars: BTreeMap::default(),

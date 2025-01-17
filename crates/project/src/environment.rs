@@ -13,6 +13,7 @@ use crate::{
 };
 
 pub struct ProjectEnvironment {
+    worktree_store: Model<WorktreeStore>,
     cli_environment: Option<HashMap<String, String>>,
     environments: HashMap<WorktreeId, Shared<Task<Option<HashMap<String, String>>>>>,
     environment_error_messages: HashMap<WorktreeId, EnvironmentErrorMessage>,
@@ -33,6 +34,7 @@ impl ProjectEnvironment {
             .detach();
 
             Self {
+                worktree_store: worktree_store.clone(),
                 cli_environment,
                 environments: Default::default(),
                 environment_error_messages: Default::default(),
@@ -101,6 +103,16 @@ impl ProjectEnvironment {
         let Some((worktree_id, worktree_abs_path)) = worktree_id.zip(worktree_abs_path) else {
             return Task::ready(None).shared();
         };
+
+        if self
+            .worktree_store
+            .read(cx)
+            .worktree_for_id(worktree_id, cx)
+            .map(|w| !w.read(cx).is_local())
+            .unwrap_or(true)
+        {
+            return Task::ready(None).shared();
+        }
 
         if let Some(task) = self.environments.get(&worktree_id) {
             task.clone()

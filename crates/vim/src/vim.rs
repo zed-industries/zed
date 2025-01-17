@@ -27,7 +27,7 @@ use editor::{
 };
 use gpui::{
     actions, impl_actions, Action, AppContext, Axis, Entity, EventEmitter, KeyContext,
-    KeystrokeEvent, Render, Subscription, View, ViewContext, WeakView,
+    KeystrokeEvent, Render, Subscription, Task, View, ViewContext, WeakView,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -49,25 +49,25 @@ use workspace::{self, Pane, ResizeIntent, Workspace};
 use crate::state::ReplayableAction;
 
 /// Used to resize the current pane
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 pub struct ResizePane(pub ResizeIntent);
 
 /// An Action to Switch between modes
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 pub struct SwitchMode(pub Mode);
 
 /// PushOperator is used to put vim into a "minor" mode,
 /// where it's waiting for a specific next set of keystrokes.
 /// For example 'd' needs a motion to complete.
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 pub struct PushOperator(pub Operator);
 
 /// Number is used to manage vim's count. Pushing a digit
-/// multiplis the current value by 10 and adds the digit.
-#[derive(Clone, Deserialize, PartialEq)]
+/// multiplies the current value by 10 and adds the digit.
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 struct Number(usize);
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 struct SelectRegister(String);
 
 actions!(
@@ -76,7 +76,6 @@ actions!(
         ClearOperators,
         Tab,
         Enter,
-        Object,
         InnerObject,
         FindForward,
         FindBackward,
@@ -133,7 +132,7 @@ pub fn init(cx: &mut AppContext) {
             };
 
             let theme = ThemeSettings::get_global(cx);
-            let height = theme.buffer_font_size(cx) * theme.buffer_line_height.value();
+            let height = theme.buffer_font_size() * theme.buffer_line_height.value();
 
             let desired_size = if let Some(count) = Vim::take_count(cx) {
                 height * count
@@ -151,11 +150,11 @@ pub fn init(cx: &mut AppContext) {
             };
             let Ok(width) = cx
                 .text_system()
-                .advance(font_id, theme.buffer_font_size(cx), 'm')
+                .advance(font_id, theme.buffer_font_size(), 'm')
             else {
                 return;
             };
-            let height = theme.buffer_font_size(cx) * theme.buffer_line_height.value();
+            let height = theme.buffer_font_size() * theme.buffer_line_height.value();
 
             let (axis, amount) = match action.0 {
                 ResizeIntent::Lengthen => (Axis::Vertical, height),
@@ -221,6 +220,8 @@ pub(crate) struct Vim {
 
     editor: WeakView<Editor>,
 
+    last_command: Option<String>,
+    running_command: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -263,6 +264,9 @@ impl Vim {
 
             selected_register: None,
             search: SearchState::default(),
+
+            last_command: None,
+            running_command: None,
 
             editor: editor.downgrade(),
             _subscriptions: vec![
@@ -519,6 +523,7 @@ impl Vim {
         self.mode = mode;
         self.operator_stack.clear();
         self.selected_register.take();
+        self.cancel_running_command(cx);
         if mode == Mode::Normal || mode != last_mode {
             self.current_tx.take();
             self.current_anchor.take();
@@ -1240,7 +1245,7 @@ impl Vim {
                     .map_or(false, |provider| provider.show_completions_in_normal_mode()),
                 _ => false,
             };
-            editor.set_inline_completions_enabled(enable_inline_completions);
+            editor.set_inline_completions_enabled(enable_inline_completions, cx);
         });
         cx.notify()
     }

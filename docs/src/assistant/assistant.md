@@ -8,7 +8,7 @@ This section covers various aspects of the Assistant:
 
 - [Inline Assistant](./inline-assistant.md): Discover how to use the Assistant to power inline transformations directly within your code editor and terminal.
 
-- [Providers & Configuration](./configuration.md): Configure the Assistant, and set up different language model providers like Anthropic, OpenAI, Ollama, Google Gemini, and GitHub Copilot Chat.
+- [Providers & Configuration](./configuration.md): Configure the Assistant, and set up different language model providers like Anthropic, OpenAI, Ollama, LM Studio, Google Gemini, and GitHub Copilot Chat.
 
 - [Introducing Contexts](./contexts.md): Learn about contexts (similar to conversations), and learn how they power your interactions between you, your project, and the assistant/model.
 

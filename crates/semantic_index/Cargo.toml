@@ -2,8 +2,8 @@
 name = "semantic_index"
 description = "Process, chunk, and embed text as vectors for semantic search."
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]

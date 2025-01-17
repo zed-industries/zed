@@ -61,6 +61,7 @@ use serde_json::Value;
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::{div, prelude::*, v_flex, IntoElement, Styled};
+use util::markdown::MarkdownString;
 
 use crate::outputs::OutputContent;
 
@@ -139,17 +140,6 @@ impl TableView {
         }
     }
 
-    fn escape_markdown(s: &str) -> String {
-        s.replace('|', "\\|")
-            .replace('*', "\\*")
-            .replace('_', "\\_")
-            .replace('`', "\\`")
-            .replace('[', "\\[")
-            .replace(']', "\\]")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-    }
-
     fn create_clipboard_content(table: &TabularDataResource) -> String {
         let data = match table.data.as_ref() {
             Some(data) => data,
@@ -180,7 +170,7 @@ impl TableView {
                 let row_content = schema
                     .fields
                     .iter()
-                    .map(|field| Self::escape_markdown(&cell_content(record, &field.name)))
+                    .map(|field| MarkdownString::escape(&cell_content(record, &field.name)).0)
                     .collect::<Vec<_>>();
 
                 row_content.join(" | ")

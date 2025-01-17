@@ -1,27 +1,21 @@
-use crate::slash_command::file_command::codeblock_fence_for_path;
-use crate::slash_command_working_set::SlashCommandWorkingSet;
 use crate::{
-    assistant_settings::{AssistantDockPosition, AssistantSettings},
-    humanize_token_count,
-    prompt_library::open_prompt_library,
-    prompts::PromptBuilder,
-    slash_command::{
-        default_command::DefaultSlashCommand,
-        docs_command::{DocsSlashCommand, DocsSlashCommandArgs},
-        file_command, SlashCommandCompletionProvider,
-    },
-    slash_command_picker,
-    terminal_inline_assistant::TerminalInlineAssistant,
-    Assist, AssistantPatch, AssistantPatchStatus, CacheStatus, ConfirmCommand, Content, Context,
-    ContextEvent, ContextId, ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole,
-    DeployHistory, DeployPromptLibrary, Edit, InlineAssistant, InsertDraggedFiles,
-    InsertIntoEditor, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
-    MessageMetadata, MessageStatus, NewContext, ParsedSlashCommand, PendingSlashCommandStatus,
-    QuoteSelection, RemoteContextMetadata, RequestType, SavedContextMetadata, Split, ToggleFocus,
+    humanize_token_count, slash_command::SlashCommandCompletionProvider, slash_command_picker,
+    terminal_inline_assistant::TerminalInlineAssistant, Assist, AssistantPatch,
+    AssistantPatchStatus, CacheStatus, ConfirmCommand, Content, Context, ContextEvent, ContextId,
+    ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole, DeployHistory,
+    DeployPromptLibrary, Edit, InlineAssistant, InsertDraggedFiles, InsertIntoEditor,
+    InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId, MessageMetadata,
+    MessageStatus, NewContext, ParsedSlashCommand, PendingSlashCommandStatus, QuoteSelection,
+    RemoteContextMetadata, RequestType, SavedContextMetadata, Split, ToggleFocus,
     ToggleModelSelector,
 };
 use anyhow::Result;
-use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
+use assistant_settings::{AssistantDockPosition, AssistantSettings};
+use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
+use assistant_slash_commands::{
+    selections_creases, DefaultSlashCommand, DocsSlashCommand, DocsSlashCommandArgs,
+    FileSlashCommand,
+};
 use assistant_tool::ToolWorkingSet;
 use client::{proto, zed_urls, Client, Status};
 use collections::{hash_map, BTreeSet, HashMap, HashSet};
@@ -60,6 +54,7 @@ use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::lsp_store::LocalLspAdapterDelegate;
 use project::{Project, Worktree};
+use prompt_library::{open_prompt_library, PromptBuilder, PromptLibrary};
 use rope::Point;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
@@ -1190,7 +1185,19 @@ impl AssistantPanel {
     }
 
     fn deploy_prompt_library(&mut self, _: &DeployPromptLibrary, cx: &mut ViewContext<Self>) {
-        open_prompt_library(self.languages.clone(), cx).detach_and_log_err(cx);
+        open_prompt_library(
+            self.languages.clone(),
+            Box::new(PromptLibraryInlineAssist),
+            Arc::new(|| {
+                Box::new(SlashCommandCompletionProvider::new(
+                    Arc::new(SlashCommandWorkingSet::default()),
+                    None,
+                    None,
+                ))
+            }),
+            cx,
+        )
+        .detach_and_log_err(cx);
     }
 
     fn toggle_model_selector(&mut self, _: &ToggleModelSelector, cx: &mut ViewContext<Self>) {
@@ -1470,6 +1477,29 @@ impl EventEmitter<AssistantPanelEvent> for AssistantPanel {}
 impl FocusableView for AssistantPanel {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.pane.focus_handle(cx)
+    }
+}
+
+struct PromptLibraryInlineAssist;
+
+impl prompt_library::InlineAssistDelegate for PromptLibraryInlineAssist {
+    fn assist(
+        &self,
+        prompt_editor: &View<Editor>,
+        initial_prompt: Option<String>,
+        cx: &mut ViewContext<PromptLibrary>,
+    ) {
+        InlineAssistant::update_global(cx, |assistant, cx| {
+            assistant.assist(&prompt_editor, None, None, initial_prompt, cx)
+        })
+    }
+
+    fn focus_assistant_panel(
+        &self,
+        workspace: &mut Workspace,
+        cx: &mut ViewContext<Workspace>,
+    ) -> bool {
+        workspace.focus_panel::<AssistantPanel>(cx).is_some()
     }
 }
 
@@ -3033,7 +3063,7 @@ impl ContextEditor {
 
         cx.spawn(|_, mut cx| async move {
             let (paths, dragged_file_worktrees) = paths.await;
-            let cmd_name = file_command::FileSlashCommand.name();
+            let cmd_name = FileSlashCommand.name();
 
             context_editor_view
                 .update(&mut cx, |context_editor, cx| {
@@ -3993,99 +4023,6 @@ fn find_surrounding_code_block(snapshot: &BufferSnapshot, offset: usize) -> Opti
     }
 
     None
-}
-
-pub fn selections_creases(
-    workspace: &mut workspace::Workspace,
-    cx: &mut ViewContext<Workspace>,
-) -> Option<Vec<(String, String)>> {
-    let editor = workspace
-        .active_item(cx)
-        .and_then(|item| item.act_as::<Editor>(cx))?;
-
-    let mut creases = vec![];
-    editor.update(cx, |editor, cx| {
-        let selections = editor.selections.all_adjusted(cx);
-        let buffer = editor.buffer().read(cx).snapshot(cx);
-        for selection in selections {
-            let range = editor::ToOffset::to_offset(&selection.start, &buffer)
-                ..editor::ToOffset::to_offset(&selection.end, &buffer);
-            let selected_text = buffer.text_for_range(range.clone()).collect::<String>();
-            if selected_text.is_empty() {
-                continue;
-            }
-            let start_language = buffer.language_at(range.start);
-            let end_language = buffer.language_at(range.end);
-            let language_name = if start_language == end_language {
-                start_language.map(|language| language.code_fence_block_name())
-            } else {
-                None
-            };
-            let language_name = language_name.as_deref().unwrap_or("");
-            let filename = buffer
-                .file_at(selection.start)
-                .map(|file| file.full_path(cx));
-            let text = if language_name == "markdown" {
-                selected_text
-                    .lines()
-                    .map(|line| format!("> {}", line))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            } else {
-                let start_symbols = buffer
-                    .symbols_containing(selection.start, None)
-                    .map(|(_, symbols)| symbols);
-                let end_symbols = buffer
-                    .symbols_containing(selection.end, None)
-                    .map(|(_, symbols)| symbols);
-
-                let outline_text =
-                    if let Some((start_symbols, end_symbols)) = start_symbols.zip(end_symbols) {
-                        Some(
-                            start_symbols
-                                .into_iter()
-                                .zip(end_symbols)
-                                .take_while(|(a, b)| a == b)
-                                .map(|(a, _)| a.text)
-                                .collect::<Vec<_>>()
-                                .join(" > "),
-                        )
-                    } else {
-                        None
-                    };
-
-                let line_comment_prefix = start_language
-                    .and_then(|l| l.default_scope().line_comment_prefixes().first().cloned());
-
-                let fence = codeblock_fence_for_path(
-                    filename.as_deref(),
-                    Some(selection.start.row..=selection.end.row),
-                );
-
-                if let Some((line_comment_prefix, outline_text)) =
-                    line_comment_prefix.zip(outline_text)
-                {
-                    let breadcrumb = format!("{line_comment_prefix}Excerpt from: {outline_text}\n");
-                    format!("{fence}{breadcrumb}{selected_text}\n```")
-                } else {
-                    format!("{fence}{selected_text}\n```")
-                }
-            };
-            let crease_title = if let Some(path) = filename {
-                let start_line = selection.start.row + 1;
-                let end_line = selection.end.row + 1;
-                if start_line == end_line {
-                    format!("{}, Line {}", path.display(), start_line)
-                } else {
-                    format!("{}, Lines {} to {}", path.display(), start_line, end_line)
-                }
-            } else {
-                "Quoted selection".to_string()
-            };
-            creases.push((text, crease_title));
-        }
-    });
-    Some(creases)
 }
 
 fn render_fold_icon_button(

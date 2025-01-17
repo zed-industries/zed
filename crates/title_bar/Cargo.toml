@@ -1,8 +1,8 @@
 [package]
 name = "title_bar"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -36,6 +36,7 @@ notifications.workspace = true
 project.workspace = true
 remote.workspace = true
 rpc.workspace = true
+schemars.workspace = true
 serde.workspace = true
 settings.workspace = true
 smallvec.workspace = true
