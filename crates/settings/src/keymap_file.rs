@@ -161,8 +161,6 @@ impl KeymapFile {
         // Accumulate errors in order to support partial load of user keymap in the presence of
         // errors in context and binding parsing.
         let mut errors = Vec::new();
-        let mut error_count = 0;
-        let mut missing_bindings_field = false;
         let mut key_bindings = Vec::new();
 
         for KeymapSection {
@@ -178,7 +176,6 @@ impl KeymapFile {
                 match KeyBindingContextPredicate::parse(context) {
                     Ok(context_predicate) => Some(context_predicate.into()),
                     Err(err) => {
-                        error_count += bindings.as_ref().map_or(0, |bindings| bindings.len());
                         // Leading space is to separate from the message indicating which section
                         // the error occurred in.
                         errors.push((
@@ -222,7 +219,6 @@ impl KeymapFile {
                             key_bindings.push(key_binding);
                         }
                         Err(err) => {
-                            error_count += 1;
                             write!(
                                 section_errors,
                                 "\n\n - In binding {}, {err}",
@@ -232,8 +228,6 @@ impl KeymapFile {
                         }
                     }
                 }
-            } else {
-                missing_bindings_field = true;
             }
 
             if !section_errors.is_empty() {
