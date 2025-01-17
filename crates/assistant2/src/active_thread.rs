@@ -1,20 +1,18 @@
 use std::sync::Arc;
-use std::time::Duration;
 
 use assistant_tool::ToolWorkingSet;
 use collections::HashMap;
 use gpui::{
-    linear_color_stop, linear_gradient, list, percentage, AbsoluteLength, Animation, AnimationExt,
-    AnyElement, AppContext, DefiniteLength, EdgesRefinement, Empty, FocusHandle, Length,
+    list, AbsoluteLength, AnyElement, AppContext, DefiniteLength, EdgesRefinement, Empty, Length,
     ListAlignment, ListOffset, ListState, Model, StyleRefinement, Subscription,
-    TextStyleRefinement, Transformation, UnderlineStyle, View, WeakView,
+    TextStyleRefinement, UnderlineStyle, View, WeakView,
 };
 use language::LanguageRegistry;
 use language_model::Role;
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings as _;
 use theme::ThemeSettings;
-use ui::{prelude::*, Divider, KeyBinding};
+use ui::prelude::*;
 use workspace::Workspace;
 
 use crate::thread::{MessageId, Thread, ThreadError, ThreadEvent};
@@ -29,7 +27,6 @@ pub struct ActiveThread {
     list_state: ListState,
     rendered_messages_by_id: HashMap<MessageId, View<Markdown>>,
     last_error: Option<ThreadError>,
-    focus_handle: FocusHandle,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -39,7 +36,6 @@ impl ActiveThread {
         workspace: WeakView<Workspace>,
         language_registry: Arc<LanguageRegistry>,
         tools: Arc<ToolWorkingSet>,
-        focus_handle: FocusHandle,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let subscriptions = vec![
@@ -62,7 +58,6 @@ impl ActiveThread {
                 }
             }),
             last_error: None,
-            focus_handle,
             _subscriptions: subscriptions,
         };
 
@@ -280,9 +275,7 @@ impl ActiveThread {
                 .child(
                     v_flex()
                         .bg(colors.editor_background)
-                        .rounded_t_lg()
-                        .rounded_bl_lg()
-                        .rounded_br_none()
+                        .rounded_lg()
                         .border_1()
                         .border_color(colors.border)
                         .shadow_sm()
@@ -326,74 +319,10 @@ impl ActiveThread {
 }
 
 impl Render for ActiveThread {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let is_streaming_completion = self.thread.read(cx).is_streaming();
-        let panel_bg = cx.theme().colors().panel_background;
-        let focus_handle = self.focus_handle.clone();
-
+    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .pt_1p5()
             .child(list(self.list_state.clone()).flex_grow())
-            .when(is_streaming_completion, |parent| {
-                parent.child(
-                    h_flex()
-                        .w_full()
-                        .pb_2p5()
-                        .absolute()
-                        .bottom_0()
-                        .flex_shrink()
-                        .justify_center()
-                        .bg(linear_gradient(
-                            180.,
-                            linear_color_stop(panel_bg.opacity(0.0), 0.),
-                            linear_color_stop(panel_bg, 1.),
-                        ))
-                        .child(
-                            h_flex()
-                                .flex_none()
-                                .p_1p5()
-                                .bg(cx.theme().colors().editor_background)
-                                .border_1()
-                                .border_color(cx.theme().colors().border)
-                                .rounded_md()
-                                .shadow_lg()
-                                .gap_1()
-                                .child(
-                                    Icon::new(IconName::ArrowCircle)
-                                        .size(IconSize::Small)
-                                        .color(Color::Muted)
-                                        .with_animation(
-                                            "arrow-circle",
-                                            Animation::new(Duration::from_secs(2)).repeat(),
-                                            |icon, delta| {
-                                                icon.transform(Transformation::rotate(percentage(
-                                                    delta,
-                                                )))
-                                            },
-                                        ),
-                                )
-                                .child(
-                                    Label::new("Generating…")
-                                        .size(LabelSize::Small)
-                                        .color(Color::Muted),
-                                )
-                                .child(Divider::vertical())
-                                .child(
-                                    Button::new("cancel-generation", "Cancel")
-                                        .label_size(LabelSize::Small)
-                                        .key_binding(KeyBinding::for_action_in(
-                                            &editor::actions::Cancel,
-                                            &self.focus_handle,
-                                            cx,
-                                        ))
-                                        .on_click(move |_event, cx| {
-                                            focus_handle
-                                                .dispatch_action(&editor::actions::Cancel, cx);
-                                        }),
-                                ),
-                        ),
-                )
-            })
     }
 }
