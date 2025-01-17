@@ -69,6 +69,7 @@ pub(crate) struct WindowsWindowStatePtr {
     pub(crate) windows_version: WindowsVersion,
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: flume::Receiver<Runnable>,
+    pub(crate) platform_window: HWND,
 }
 
 impl WindowsWindowState {
@@ -242,6 +243,7 @@ impl WindowsWindowStatePtr {
             windows_version: context.windows_version,
             validation_number: context.validation_number,
             main_receiver: context.main_receiver.clone(),
+            platform_window: context.platform_window,
         }))
     }
 
@@ -355,6 +357,7 @@ struct WindowCreateContext<'a> {
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
     gpu_context: &'a BladeContext,
+    platform_window: HWND,
 }
 
 impl WindowsWindow {
@@ -371,6 +374,7 @@ impl WindowsWindow {
             windows_version,
             validation_number,
             main_receiver,
+            platform_window,
         } = creation_info;
         let classname = register_wnd_class(icon);
         let hide_title_bar = params
@@ -415,6 +419,7 @@ impl WindowsWindow {
             validation_number,
             main_receiver,
             gpu_context,
+            platform_window,
         };
         let lpparam = Some(&context as *const _ as *const _);
         let creation_result = unsafe {
@@ -1103,20 +1108,6 @@ pub(crate) fn try_get_window_inner(hwnd: HWND) -> Option<Rc<WindowsWindowStatePt
         inner.upgrade()
     } else {
         None
-    }
-}
-
-fn get_module_handle() -> HMODULE {
-    unsafe {
-        let mut h_module = std::mem::zeroed();
-        GetModuleHandleExW(
-            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            windows::core::w!("ZedModule"),
-            &mut h_module,
-        )
-        .expect("Unable to get module handle"); // this should never fail
-
-        h_module
     }
 }
 

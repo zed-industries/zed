@@ -15,27 +15,37 @@ use windows::{
         ThreadPool, ThreadPoolTimer, TimerElapsedHandler, WorkItemHandler, WorkItemOptions,
         WorkItemPriority,
     },
-    Win32::{Foundation::HANDLE, System::Threading::SetEvent},
+    Win32::{
+        Foundation::{HANDLE, HWND, LPARAM, WPARAM},
+        System::Threading::SetEvent,
+        UI::WindowsAndMessaging::PostMessageW,
+    },
 };
 
 use crate::{PlatformDispatcher, SafeHandle, TaskLabel};
 
+use super::EVENT_DISPATCHED;
+
 pub(crate) struct WindowsDispatcher {
     main_sender: Sender<Runnable>,
-    dispatch_event: SafeHandle,
+    platform_window_hwnd: SafeHwnd,
     parker: Mutex<Parker>,
     main_thread_id: ThreadId,
 }
 
+struct SafeHwnd(HWND);
+
+unsafe impl Send for SafeHwnd {}
+unsafe impl Sync for SafeHwnd {}
+
 impl WindowsDispatcher {
-    pub(crate) fn new(main_sender: Sender<Runnable>, dispatch_event: HANDLE) -> Self {
-        let dispatch_event = dispatch_event.into();
+    pub(crate) fn new(main_sender: Sender<Runnable>, platform_window_hwnd: HWND) -> Self {
         let parker = Mutex::new(Parker::new());
         let main_thread_id = current().id();
 
         WindowsDispatcher {
             main_sender,
-            dispatch_event,
+            platform_window_hwnd: SafeHwnd(platform_window_hwnd),
             parker,
             main_thread_id,
         }
@@ -91,7 +101,15 @@ impl PlatformDispatcher for WindowsDispatcher {
             .send(runnable)
             .context("Dispatch on main thread failed")
             .log_err();
-        unsafe { SetEvent(*self.dispatch_event).log_err() };
+        unsafe {
+            PostMessageW(
+                self.platform_window_hwnd.0,
+                EVENT_DISPATCHED,
+                WPARAM(0),
+                LPARAM(0),
+            )
+            .log_err()
+        };
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: Runnable) {
