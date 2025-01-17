@@ -1,4 +1,6 @@
-use ::collections::HashMap;
+use nohash_hasher::BuildNoHashHasher;
+
+type HashMap = std::collections::hash_map::HashMap<u32, Vec<u32>, BuildNoHashHasher<u32>>;
 
 /// A minimal graph implementation
 /// Only useful for detecting cycles and reported the identities of the nodes that form the cycle
@@ -6,7 +8,7 @@ use ::collections::HashMap;
 pub(crate) struct Graph {
     // This might end up being more cache efficient if implemented with Vec<Vec<NodeIndex>> instead
     // and we assuming continuous indexing but this enables arbitrary node identities
-    adjacencies: HashMap<u32, Vec<u32>>
+    adjacencies: HashMap
 }
 
 #[derive(Debug)]
@@ -16,7 +18,7 @@ pub(crate) struct Cycle {
 }
 
 impl Graph {
-    /// Creates a new, empty `[Graph]`
+    /// Creates a new, empty [`Graph`]
     pub fn new() -> Self {
         Self { adjacencies: HashMap::default() }
     }
@@ -41,7 +43,7 @@ impl Graph {
         }
     }
 
-    /// If a cycle is present, returns the node as `Cycle::src_node` and it's pointee as `[Cycle::dst_node]`
+    /// If a cycle is present, returns the node as [`Cycle::src_node`] and it's pointee as [`Cycle::dst_node`]
     pub fn has_cycle(&self, start_node: u32) -> Option<Cycle> {
         match self.adjacencies.get(&start_node) {
             Some(neighbors) if !neighbors.is_empty() => {
