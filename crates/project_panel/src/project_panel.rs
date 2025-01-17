@@ -81,6 +81,7 @@ pub struct ProjectPanel {
     /// project entries (and all non-leaf nodes are guaranteed to be directories).
     ancestors: HashMap<ProjectEntryId, FoldedAncestors>,
     last_worktree_root_id: Option<ProjectEntryId>,
+    last_selection_drag_over_entry: Option<ProjectEntryId>,
     last_external_paths_drag_over_entry: Option<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     unfolded_dir_ids: HashSet<ProjectEntryId>,
@@ -104,6 +105,7 @@ pub struct ProjectPanel {
     // We keep track of the mouse down state on entries so we don't flash the UI
     // in case a user clicks to open a file.
     mouse_down: bool,
+    hover_expand_task: Option<Task<()>>,
 }
 
 #[derive(Clone, Debug)]
@@ -380,6 +382,7 @@ impl ProjectPanel {
                 ancestors: Default::default(),
                 last_worktree_root_id: Default::default(),
                 last_external_paths_drag_over_entry: None,
+                last_selection_drag_over_entry: None,
                 expanded_dir_ids: Default::default(),
                 unfolded_dir_ids: Default::default(),
                 selection: None,
@@ -402,6 +405,7 @@ impl ProjectPanel {
                 diagnostics: Default::default(),
                 scroll_handle,
                 mouse_down: false,
+                hover_expand_task: None,
             };
             this.update_visible_entries(None, cx);
 
@@ -3356,6 +3360,44 @@ impl ProjectPanel {
                     },
                 ))
             })
+            .on_drag_move::<DraggedSelection>(cx.listener(
+                move |this, event: &DragMoveEvent<DraggedSelection>, cx| {
+                    if event.bounds.contains(&event.event.position) {
+                        if this.last_selection_drag_over_entry == Some(entry_id) {
+                            return;
+                        }
+                        this.last_selection_drag_over_entry = Some(entry_id);
+                        this.hover_expand_task.take();
+
+                        if !kind.is_dir()
+                            || this
+                                .expanded_dir_ids
+                                .get(&details.worktree_id)
+                                .map_or(false, |ids| ids.binary_search(&entry_id).is_ok())
+                        {
+                            return;
+                        }
+
+                        let bounds = event.bounds;
+                        this.hover_expand_task = Some(cx.spawn(|this, mut cx| async move {
+                            cx.background_executor()
+                                .timer(Duration::from_millis(500))
+                                .await;
+                            this.update(&mut cx, |this, cx| {
+                                this.hover_expand_task.take();
+                                if this.last_selection_drag_over_entry == Some(entry_id)
+                                    && bounds.contains(&cx.mouse_position())
+                                {
+                                    this.expand_entry(worktree_id, entry_id, cx);
+                                    this.update_visible_entries(Some((worktree_id, entry_id)), cx);
+                                    cx.notify();
+                                }
+                            })
+                            .ok();
+                        }));
+                    }
+                },
+            ))
             .on_drag(dragged_selection, move |selection, click_offset, cx| {
                 cx.new_view(|_| DraggedProjectEntryView {
                     details: details.clone(),
@@ -3368,6 +3410,7 @@ impl ProjectPanel {
             .drag_over::<DraggedSelection>(move |style, _, _| style.bg(item_colors.drag_over))
             .on_drop(cx.listener(move |this, selections: &DraggedSelection, cx| {
                 this.hover_scroll_task.take();
+                this.hover_expand_task.take();
                 this.drag_onto(selections, entry_id, kind.is_file(), cx);
             }))
             .on_mouse_down(
