@@ -532,8 +532,9 @@ impl LanguageServer {
 
         while let Some(msg) = input_handler.notifications_channel.next().await {
             {
-                let mut notification_handlers = notification_handlers.lock();
-                if let Some(handler) = notification_handlers.get_mut(msg.method.as_str()) {
+                let notification_handlers = notification_handlers.lock();
+                if let Some(handler) = notification_handlers.get(msg.method.as_str()).cloned() {
+                    drop(notification_handlers);
                     handler(msg.id, msg.params.unwrap_or(Value::Null), cx.clone()).await;
                 } else {
                     drop(notification_handlers);
