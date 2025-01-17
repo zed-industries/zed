@@ -224,7 +224,7 @@ impl Render for InlineCompletionButton {
                             .child(
                                 IconWithIndicator::new(
                                     Icon::new(IconName::ZedPredict),
-                                    Some(Indicator::dot().color(Color::Warning)),
+                                    Some(Indicator::dot().color(Color::Error)),
                                 )
                                 .indicator_border_color(Some(
                                     cx.theme().colors().status_bar_background,
