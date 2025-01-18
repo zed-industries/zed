@@ -83,7 +83,12 @@ impl WindowsPlatform {
         }
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
         let main_thread_id_win32 = unsafe { GetCurrentThreadId() };
-        let dispatcher = Arc::new(WindowsDispatcher::new(main_sender, main_thread_id_win32));
+        let validation_number = rand::random::<usize>();
+        let dispatcher = Arc::new(WindowsDispatcher::new(
+            main_sender,
+            main_thread_id_win32,
+            validation_number,
+        ));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let bitmap_factory = ManuallyDrop::new(unsafe {
@@ -99,7 +104,6 @@ impl WindowsPlatform {
         let raw_window_handles = RwLock::new(SmallVec::new());
         let gpu_context = BladeContext::new().expect("Unable to init GPU context");
         let windows_version = WindowsVersion::new().expect("Error retrieve windows version");
-        let validation_number = rand::random::<usize>();
 
         Self {
             state,
@@ -150,16 +154,7 @@ impl WindowsPlatform {
             });
     }
 
-    fn close_one_window(
-        &self,
-        target_window: HWND,
-        validation_number: usize,
-        msg: *const MSG,
-    ) -> bool {
-        if validation_number != self.validation_number {
-            unsafe { DispatchMessageW(msg) };
-            return false;
-        }
+    fn close_one_window(&self, target_window: HWND) -> bool {
         let mut lock = self.raw_window_handles.write();
         let index = lock
             .iter()
@@ -187,6 +182,52 @@ impl WindowsPlatform {
             main_receiver: self.main_receiver.clone(),
             main_thread_id_win32: self.main_thread_id_win32,
         }
+    }
+
+    fn handle_events(&self) -> bool {
+        let mut msg = MSG::default();
+        unsafe {
+            while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
+                match msg.message {
+                    WM_QUIT => return true,
+                    CLOSE_ONE_WINDOW | EVENT_DISPATCH_ON_MAIN_THREAD => {
+                        if self.handle_zed_evnets(msg.message, msg.wParam, msg.lParam, &msg) {
+                            return true;
+                        }
+                    }
+                    _ => {
+                        // todo(windows)
+                        // crate `windows 0.56` reports true as Err
+                        TranslateMessage(&msg).as_bool();
+                        DispatchMessageW(&msg);
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn handle_zed_evnets(
+        &self,
+        message: u32,
+        wparam: WPARAM,
+        lparam: LPARAM,
+        msg: *const MSG,
+    ) -> bool {
+        if wparam.0 != self.validation_number {
+            unsafe { DispatchMessageW(msg) };
+            return false;
+        }
+        match message {
+            CLOSE_ONE_WINDOW => {
+                if self.close_one_window(HWND(lparam.0 as _)) {
+                    return true;
+                }
+            }
+            EVENT_DISPATCH_ON_MAIN_THREAD => self.run_foreground_task(),
+            _ => unreachable!(),
+        }
+        false
     }
 }
 
@@ -225,29 +266,8 @@ impl Platform for WindowsPlatform {
                 WAIT_EVENT(0) => self.redraw_all(),
                 // Windows thread messages are posted
                 WAIT_EVENT(1) => {
-                    let mut msg = MSG::default();
-                    unsafe {
-                        while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
-                            match msg.message {
-                                WM_QUIT => break 'a,
-                                CLOSE_ONE_WINDOW => {
-                                    if self.close_one_window(
-                                        HWND(msg.lParam.0 as _),
-                                        msg.wParam.0,
-                                        &msg,
-                                    ) {
-                                        break 'a;
-                                    }
-                                }
-                                EVENT_DISPATCH_ON_MAIN_THREAD => self.run_foreground_task(),
-                                _ => {
-                                    // todo(windows)
-                                    // crate `windows 0.56` reports true as Err
-                                    TranslateMessage(&msg).as_bool();
-                                    DispatchMessageW(&msg);
-                                }
-                            }
-                        }
+                    if self.handle_events() {
+                        break 'a;
                     }
                 }
                 _ => {

@@ -1,5 +1,4 @@
 use std::{
-    sync::atomic::AtomicUsize,
     thread::{current, ThreadId},
     time::Duration,
 };
@@ -29,10 +28,15 @@ pub(crate) struct WindowsDispatcher {
     parker: Mutex<Parker>,
     main_thread_id: ThreadId,
     main_thread_id_win32: u32,
+    validation_number: usize,
 }
 
 impl WindowsDispatcher {
-    pub(crate) fn new(main_sender: Sender<Runnable>, main_thread_id_win32: u32) -> Self {
+    pub(crate) fn new(
+        main_sender: Sender<Runnable>,
+        main_thread_id_win32: u32,
+        validation_number: usize,
+    ) -> Self {
         let parker = Mutex::new(Parker::new());
         let main_thread_id = current().id();
 
@@ -41,6 +45,7 @@ impl WindowsDispatcher {
             parker,
             main_thread_id,
             main_thread_id_win32,
+            validation_number,
         }
     }
 
@@ -101,7 +106,7 @@ impl PlatformDispatcher for WindowsDispatcher {
                 PostThreadMessageW(
                     self.main_thread_id_win32,
                     EVENT_DISPATCH_ON_MAIN_THREAD,
-                    WPARAM(0),
+                    WPARAM(self.validation_number),
                     LPARAM(0),
                 )
                 .log_err();
