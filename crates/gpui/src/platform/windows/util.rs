@@ -3,14 +3,7 @@ use std::sync::OnceLock;
 use ::util::ResultExt;
 use windows::{
     Wdk::System::SystemServices::RtlGetVersion,
-    Win32::{
-        Foundation::*,
-        System::LibraryLoader::{
-            GetModuleHandleExW, GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS,
-            GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-        },
-        UI::WindowsAndMessaging::*,
-    },
+    Win32::{Foundation::*, UI::WindowsAndMessaging::*},
     UI::{
         Color,
         ViewManagement::{UIColorType, UISettings},
@@ -171,18 +164,4 @@ pub(crate) fn system_appearance() -> Result<WindowAppearance> {
 #[inline(always)]
 fn is_color_light(color: &Color) -> bool {
     ((5 * color.G as u32) + (2 * color.R as u32) + color.B as u32) > (8 * 128)
-}
-
-pub(crate) fn get_module_handle() -> HMODULE {
-    unsafe {
-        let mut h_module = std::mem::zeroed();
-        GetModuleHandleExW(
-            GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
-            windows::core::w!("ZedModule"),
-            &mut h_module,
-        )
-        .expect("Unable to get module handle"); // this should never fail
-
-        h_module
-    }
 }

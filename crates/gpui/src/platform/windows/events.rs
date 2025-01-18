@@ -244,7 +244,7 @@ fn handle_destroy_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Opt
     }
     unsafe {
         PostMessageW(
-            state_ptr.platform_window,
+            None,
             CLOSE_ONE_WINDOW,
             WPARAM(state_ptr.validation_number),
             LPARAM(handle.0 as isize),
