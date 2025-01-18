@@ -235,7 +235,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                 Ok(()) => {
                     this.update(&mut cx, |this, cx| match confirm_behavior {
                         ConfirmBehavior::KeepOpen => {}
-                        ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                        ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
                     })?;
                 }
                 Err(err) => {
@@ -279,6 +279,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                     &path_match.path,
                     &path_match.path_prefix,
                     self.context_store.clone(),
+                    window,
                     cx,
                 )),
         )
@@ -290,7 +291,8 @@ pub fn render_file_context_entry(
     path: &Path,
     path_prefix: &Arc<str>,
     context_store: WeakModel<ContextStore>,
-    window: &Window, cx: &AppContext,
+    window: &Window,
+    cx: &AppContext,
 ) -> Stateful<Div> {
     let (file_name, directory) = if path == Path::new("") {
         (SharedString::from(path_prefix.clone()), None)
@@ -360,7 +362,7 @@ pub fn render_file_context_entry(
                         )
                         .child(Label::new("Included").size(LabelSize::Small)),
                 )
-                .tooltip(move |cx| Tooltip::text(format!("in {dir_name}"), cx))
+                .tooltip(move |cx| Tooltip::text(format!("in {dir_name}")))
             }
         })
 }

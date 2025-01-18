@@ -117,7 +117,7 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_models(
         |terminal_panel: &mut TerminalPanel, _, cx: &mut ModelContext<TerminalPanel>| {
             let settings = AssistantSettings::get_global(cx);
-            terminal_panel.set_assistant_enabled(settings.enabled, cx);
+            terminal_panel.set_assistant_enabled(settings.enabled, window, cx);
         },
     )
     .detach();
@@ -1255,7 +1255,12 @@ impl AssistantPanel {
         }
     }
 
-    fn deploy_prompt_library(&mut self, _: &DeployPromptLibrary, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn deploy_prompt_library(
+        &mut self,
+        _: &DeployPromptLibrary,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         open_prompt_library(
             self.languages.clone(),
             Box::new(PromptLibraryInlineAssist),
@@ -1575,19 +1580,23 @@ impl prompt_library::InlineAssistDelegate for PromptLibraryInlineAssist {
         &self,
         prompt_editor: &Model<Editor>,
         initial_prompt: Option<String>,
-        window: &mut Window, cx: &mut ModelContext<PromptLibrary>,
+        window: &mut Window,
+        cx: &mut ModelContext<PromptLibrary>,
     ) {
         InlineAssistant::update_global(cx, |assistant, cx| {
-            assistant.assist(&prompt_editor, None, None, initial_prompt, cx)
+            assistant.assist(&prompt_editor, None, None, initial_prompt, window, cx)
         })
     }
 
     fn focus_assistant_panel(
         &self,
         workspace: &mut Workspace,
-        window: &mut Window, cx: &mut ModelContext<Workspace>,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
     ) -> bool {
-        workspace.focus_panel::<AssistantPanel>(cx).is_some()
+        workspace
+            .focus_panel::<AssistantPanel>(window, cx)
+            .is_some()
     }
 }
 
@@ -1769,7 +1778,7 @@ impl ContextEditor {
                 .as_ref()
                 .and_then(|state| state.editor.upgrade())
             {
-                window.focus(&editor.focus_handle(cx));
+                window.focus(&editor.focus_handle(window, cx));
 
                 return true;
             }
@@ -3249,7 +3258,7 @@ impl ContextEditor {
             return;
         };
 
-        let Some(creases) = selections_creases(workspace, cx) else {
+        let Some(creases) = selections_creases(workspace, window, cx) else {
             return;
         };
 
@@ -3849,7 +3858,7 @@ impl ContextEditor {
         let (style, tooltip) = match token_state(&self.context, cx) {
             Some(TokenState::NoTokensLeft { .. }) => (
                 ButtonStyle::Tinted(TintColor::Error),
-                Some(Tooltip::text("Token limit reached", cx)),
+                Some(Tooltip::text("Token limit reached")),
             ),
             Some(TokenState::HasMoreTokens {
                 over_warn_threshold,
@@ -3910,7 +3919,7 @@ impl ContextEditor {
         let (style, tooltip) = match token_state(&self.context, cx) {
             Some(TokenState::NoTokensLeft { .. }) => (
                 ButtonStyle::Tinted(TintColor::Error),
-                Some(Tooltip::text("Token limit reached", cx)),
+                Some(Tooltip::text("Token limit reached")),
             ),
             Some(TokenState::HasMoreTokens {
                 over_warn_threshold,

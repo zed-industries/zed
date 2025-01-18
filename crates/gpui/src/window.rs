@@ -1631,7 +1631,9 @@ impl Window {
             return None;
         }
 
-        self.with_absolute_element_offset(tooltip_bounds.origin, |cx| element.prepaint(cx));
+        self.with_absolute_element_offset(tooltip_bounds.origin, |window| {
+            element.prepaint(window, cx)
+        });
 
         self.tooltip_bounds = Some(TooltipBounds {
             id: tooltip_request.id,

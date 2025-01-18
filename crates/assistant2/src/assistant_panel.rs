@@ -106,6 +106,7 @@ impl AssistantPanel {
                 workspace.clone(),
                 thread_store.downgrade(),
                 thread.clone(),
+                window,
                 cx,
             )
         });
@@ -146,7 +147,12 @@ impl AssistantPanel {
         &self.thread_store
     }
 
-    fn cancel(&mut self, _: &editor::actions::Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn cancel(
+        &mut self,
+        _: &editor::actions::Cancel,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.thread
             .update(cx, |thread, cx| thread.cancel_last_completion(cx));
     }
@@ -227,7 +233,12 @@ impl AssistantPanel {
         self.thread.read(cx).thread.clone()
     }
 
-    pub(crate) fn delete_thread(&mut self, thread_id: &ThreadId, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub(crate) fn delete_thread(
+        &mut self,
+        thread_id: &ThreadId,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.thread_store
             .update(cx, |this, cx| this.delete_thread(thread_id, cx));
     }

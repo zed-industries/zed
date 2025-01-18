@@ -177,7 +177,7 @@ impl<T: 'static> Render for PromptEditor<T> {
                         h_flex()
                             .w_full()
                             .justify_between()
-                            .child(div().flex_1().child(self.render_editor(cx)))
+                            .child(div().flex_1().child(self.render_editor(window, cx)))
                             .child(
                                 WithRemSize::new(ui_font_size)
                                     .flex()
@@ -362,12 +362,22 @@ impl<T: 'static> PromptEditor<T> {
         self.model_selector_menu_handle.toggle(window, cx);
     }
 
-    pub fn remove_all_context(&mut self, _: &RemoveAllContext, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn remove_all_context(
+        &mut self,
+        _: &RemoveAllContext,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.context_store.update(cx, |store, _cx| store.clear());
         cx.notify();
     }
 
-    fn cancel(&mut self, _: &editor::actions::Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn cancel(
+        &mut self,
+        _: &editor::actions::Cancel,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         match self.codegen_status(cx) {
             CodegenStatus::Idle | CodegenStatus::Done | CodegenStatus::Error(_) => {
                 cx.emit(PromptEditorEvent::CancelRequested);
@@ -437,7 +447,7 @@ impl<T: 'static> PromptEditor<T> {
                 });
             }
         } else {
-            cx.focus_view(&self.context_strip);
+            cx.focus_view(&self.context_strip, window);
         }
     }
 
@@ -780,7 +790,8 @@ impl<T: 'static> PromptEditor<T> {
         &mut self,
         _context_strip: Model<ContextStrip>,
         event: &ContextStripEvent,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         match event {
             ContextStripEvent::PickerDismissed
@@ -878,6 +889,7 @@ impl PromptEditor<BufferCodegen> {
                 thread_store.clone(),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
+                window,
                 cx,
             )
         });

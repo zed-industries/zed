@@ -1804,7 +1804,12 @@ impl Editor {
         self.input_enabled = input_enabled;
     }
 
-    pub fn set_inline_completions_enabled(&mut self, enabled: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn set_inline_completions_enabled(
+        &mut self,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.enable_inline_completions = enabled;
         if !self.enable_inline_completions {
             self.take_active_inline_completion(cx);
@@ -2062,7 +2067,7 @@ impl Editor {
             {
                 self.available_code_actions.take();
             }
-            self.refresh_code_actions(window, cx);
+            self.refresh_code_actions(cx);
             self.refresh_document_highlights(cx);
             refresh_matching_bracket_highlights(self, window, cx);
             self.update_visible_inline_completion(window, cx);
@@ -3966,7 +3971,7 @@ impl Editor {
                     Some(CompletionEntry::InlineCompletionHint(InlineCompletionMenuHint::None)) => {
                         drop(entries);
                         drop(context_menu);
-                        self.context_menu_next(&Default::default(), cx);
+                        self.context_menu_next(&Default::default(), window, cx);
                         return Some(Task::ready(Ok(())));
                     }
                     _ => {}
@@ -3985,7 +3990,7 @@ impl Editor {
         let mat = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
         let mat = match mat {
             CompletionEntry::InlineCompletionHint(_) => {
-                self.accept_inline_completion(&AcceptInlineCompletion, cx);
+                self.accept_inline_completion(&AcceptInlineCompletion, window, cx);
                 cx.stop_propagation();
                 return Some(Task::ready(Ok(())));
             }
@@ -4474,16 +4479,25 @@ impl Editor {
         }
 
         self.code_action_providers.push(provider);
-        self.refresh_code_actions(window, cx);
+        self.refresh_code_actions(cx);
     }
 
-    pub fn remove_code_action_provider(&mut self, id: Arc<str>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn remove_code_action_provider(
+        &mut self,
+        id: Arc<str>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.code_action_providers
             .retain(|provider| provider.id() != id);
         self.refresh_code_actions(cx);
     }
 
-    fn refresh_code_actions(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<()> {
+    fn refresh_code_actions(
+        &mut self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<()> {
         let buffer = self.buffer.read(cx);
         let newest_selection = self.selections.newest_anchor().clone();
         let (start_buffer, start) = buffer.text_anchor_for_position(newest_selection.start, cx)?;
@@ -4799,7 +4813,7 @@ impl Editor {
                 && cursor.column <= current_indent.len
                 && current_indent.len <= suggested_indent.len
             {
-                self.tab(&Default::default(), cx);
+                self.tab(&Default::default(), window, cx);
                 return;
             }
         }
@@ -5101,7 +5115,7 @@ impl Editor {
     ) -> Option<InlineCompletionMenuHint> {
         let provider = self.inline_completion_provider()?;
         if self.has_active_inline_completion() {
-            let editor_snapshot = self.snapshot(cx);
+            let editor_snapshot = self.snapshot(window, cx);
 
             let text = match &self.active_inline_completion.as_ref()?.completion {
                 InlineCompletion::Edit(edits) => {
@@ -6137,7 +6151,12 @@ impl Editor {
         });
     }
 
-    pub fn join_lines_impl(&mut self, insert_whitespace: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn join_lines_impl(
+        &mut self,
+        insert_whitespace: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         if self.read_only(cx) {
             return;
         }
@@ -6509,8 +6528,13 @@ impl Editor {
         self.manipulate_text(window, cx, |text| text.to_lowercase())
     }
 
-    pub fn convert_to_title_case(&mut self, _: &ConvertToTitleCase, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.manipulate_text(cx, |text| {
+    pub fn convert_to_title_case(
+        &mut self,
+        _: &ConvertToTitleCase,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.manipulate_text(cx, window, |text| {
             text.split('\n')
                 .map(|line| line.to_case(Case::Title))
                 .join("\n")
@@ -6541,7 +6565,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.manipulate_text(cx, |text| {
+        self.manipulate_text(cx, window, |text| {
             text.split('\n')
                 .map(|line| line.to_case(Case::UpperCamel))
                 .join("\n")
@@ -10160,7 +10184,12 @@ impl Editor {
         url_finder.detach();
     }
 
-    pub fn open_selected_filename(&mut self, _: &OpenSelectedFilename, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn open_selected_filename(
+        &mut self,
+        _: &OpenSelectedFilename,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let Some(workspace) = self.workspace() else {
             return;
         };
@@ -11050,7 +11079,12 @@ impl Editor {
         }
     }
 
-    fn activate_diagnostics(&mut self, group_id: usize, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn activate_diagnostics(
+        &mut self,
+        group_id: usize,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.dismiss_diagnostics(cx);
         let snapshot = self.snapshot(window, cx);
         self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
@@ -11619,7 +11653,8 @@ impl Editor {
         &mut self,
         ranges: Vec<Range<T>>,
         auto_scroll: bool,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         let display_map = self.display_map.update(cx, |map, cx| map.snapshot(cx));
         let ranges = ranges
@@ -12186,7 +12221,11 @@ impl Editor {
             .and_then(|f| f.as_local())
     }
 
-    fn target_file_abs_path(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<PathBuf> {
+    fn target_file_abs_path(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<PathBuf> {
         self.active_excerpt(cx).and_then(|(_, buffer, _)| {
             let project_path = buffer.read(cx).project_path(cx)?;
             let project = self.project.as_ref()?.read(cx);
@@ -12194,7 +12233,11 @@ impl Editor {
         })
     }
 
-    fn target_file_path(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<PathBuf> {
+    fn target_file_path(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<PathBuf> {
         self.active_excerpt(cx).and_then(|(_, buffer, _)| {
             let project_path = buffer.read(cx).project_path(cx)?;
             let project = self.project.as_ref()?.read(cx);
@@ -12204,7 +12247,12 @@ impl Editor {
         })
     }
 
-    pub fn reveal_in_finder(&mut self, _: &RevealInFileManager, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn reveal_in_finder(
+        &mut self,
+        _: &RevealInFileManager,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         if let Some(target) = self.target_file(cx) {
             cx.reveal_path(&target.abs_path(cx));
         }
@@ -12218,7 +12266,12 @@ impl Editor {
         }
     }
 
-    pub fn copy_relative_path(&mut self, _: &CopyRelativePath, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn copy_relative_path(
+        &mut self,
+        _: &CopyRelativePath,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         if let Some(path) = self.target_file_path(cx) {
             if let Some(path) = path.to_str() {
                 cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));

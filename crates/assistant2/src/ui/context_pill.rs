@@ -54,7 +54,10 @@ impl ContextPill {
         }
     }
 
-    pub fn on_click(mut self, listener: Rc<dyn Fn(&ClickEvent, &mut Window, &mut AppContext)>) -> Self {
+    pub fn on_click(
+        mut self,
+        listener: Rc<dyn Fn(&ClickEvent, &mut Window, &mut AppContext)>,
+    ) -> Self {
         match &mut self {
             ContextPill::Added { on_click, .. } => {
                 *on_click = Some(listener);
@@ -139,7 +142,7 @@ impl RenderOnce for ContextPill {
                             }
                         })
                         .when_some(context.tooltip.clone(), |element, tooltip| {
-                            element.tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
+                            element.tooltip(move |cx| Tooltip::text(tooltip.clone()))
                         }),
                 )
                 .when_some(on_remove.as_ref(), |element, on_remove| {
@@ -147,7 +150,7 @@ impl RenderOnce for ContextPill {
                         IconButton::new(("remove", context.id.0), IconName::Close)
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::XSmall)
-                            .tooltip(|cx| Tooltip::text("Remove Context", cx))
+                            .tooltip(|cx| Tooltip::text("Remove Context"))
                             .on_click({
                                 let on_remove = on_remove.clone();
                                 move |event, cx| on_remove(event, cx)
@@ -195,7 +198,7 @@ impl RenderOnce for ContextPill {
                         .size(IconSize::XSmall)
                         .into_any_element(),
                 )
-                .tooltip(|cx| Tooltip::with_meta("Suggested Context", None, "Click to add it", cx))
+                .tooltip(|cx| Tooltip::with_meta("Suggested Context", None, "Click to add it"))
                 .when_some(on_click.as_ref(), |element, on_click| {
                     let on_click = on_click.clone();
                     element.on_click(move |event, cx| on_click(event, cx))

@@ -17,8 +17,8 @@
 
 use crate::{
     point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, Bounds,
-    ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, Global, GlobalElementId, Hitbox,
-    HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, Model,
+    ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, Focusable, Global, GlobalElementId,
+    Hitbox, HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, Model,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
     StyleRefinement, Styled, Task, TooltipId, Visibility, Window,
@@ -1159,7 +1159,8 @@ pub fn div() -> Div {
 pub struct Div {
     interactivity: Interactivity,
     children: SmallVec<[AnyElement; 2]>,
-    prepaint_listener: Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut Window, &mut AppContext) + 'static>>,
+    prepaint_listener:
+        Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut Window, &mut AppContext) + 'static>>,
 }
 
 impl Div {
@@ -1302,7 +1303,7 @@ impl Element for Div {
                 });
 
                 if let Some(listener) = self.prepaint_listener.as_ref() {
-                    listener(children_bounds, cx);
+                    listener(children_bounds, window, cx);
                 }
 
                 hitbox
@@ -1509,10 +1510,12 @@ impl Interactivity {
                                 None
                             };
 
-                        let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);
-                        let result = f(&style, scroll_offset, hitbox, cx);
-                        (result, element_state)
-                    })
+                            let scroll_offset =
+                                self.clamp_scroll_position(bounds, &style, window, cx);
+                            let result = f(&style, scroll_offset, hitbox, window, cx);
+                            (result, element_state)
+                        },
+                    )
                 })
             },
         )
@@ -2059,8 +2062,8 @@ impl Interactivity {
                                     cx.update(|window, cx| {
                                         active_tooltip.borrow_mut().replace(ActiveTooltip {
                                             tooltip: Some(AnyTooltip {
-                                                view: build_tooltip(cx),
-                                                mouse_position: cx.mouse_position(),
+                                                view: build_tooltip(window, cx),
+                                                mouse_position: window.mouse_position(),
                                                 hoverable: tooltip_is_hoverable,
                                                 origin_bounds: source_bounds,
                                             }),

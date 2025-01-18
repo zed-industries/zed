@@ -3513,7 +3513,7 @@ impl ProjectPanel {
                             this.update(&mut cx, |this, cx| {
                                 this.hover_expand_task.take();
                                 if this.last_selection_drag_over_entry == Some(entry_id)
-                                    && bounds.contains(&cx.mouse_position())
+                                    && bounds.contains(&window.mouse_position())
                                 {
                                     this.expand_entry(worktree_id, entry_id, cx);
                                     this.update_visible_entries(Some((worktree_id, entry_id)), cx);
