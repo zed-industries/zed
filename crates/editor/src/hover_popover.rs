@@ -756,7 +756,7 @@ impl InfoPopover {
         self.scroll_handle.set_offset(current);
     }
 
-    fn render_vertical_scrollbar(&self, cx: &mut ViewContext<Editor>) -> Stateful<Div> {
+    fn render_vertical_scrollbar(&self, window: &mut Window, cx: &mut ModelContext<Editor>) -> Stateful<Div> {
         div()
             .occlude()
             .id("info-popover-vertical-scroll")
@@ -793,7 +793,7 @@ impl InfoPopover {
 #[derive(Debug, Clone)]
 pub struct DiagnosticPopover {
     local_diagnostic: DiagnosticEntry<Anchor>,
-    parsed_content: Option<View<Markdown>>,
+    parsed_content: Option<Model<Markdown>>,
     border_color: Option<Hsla>,
     background_color: Option<Hsla>,
     pub keyboard_grace: Rc<RefCell<bool>>,

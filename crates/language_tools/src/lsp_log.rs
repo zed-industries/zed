@@ -715,9 +715,9 @@ impl LspLogView {
 
     fn editor_for_server_info(
         server: &LanguageServer,
-        cx: &mut ViewContext<Self>,
-    ) -> (View<Editor>, Vec<Subscription>) {
-        let editor = cx.new_view(|cx| {
+        window: &mut Window, cx: &mut ModelContext<Self>,
+    ) -> (Model<Editor>, Vec<Subscription>) {
+        let editor = cx.new_model(|cx| {
             let mut editor = Editor::multi_line(cx);
             let server_info = format!(
                 "* Server: {NAME} (id {ID})
@@ -979,7 +979,7 @@ impl LspLogView {
         }
     }
 
-    fn show_server_info(&mut self, server_id: LanguageServerId, cx: &mut ViewContext<Self>) {
+    fn show_server_info(&mut self, server_id: LanguageServerId, window: &mut Window, cx: &mut ModelContext<Self>) {
         let lsp_store = self.project.read(cx).lsp_store();
         let Some(server) = lsp_store.read(cx).language_server_for_id(server_id) else {
             return;

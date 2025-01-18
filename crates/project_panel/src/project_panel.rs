@@ -1205,7 +1205,7 @@ impl ProjectPanel {
         }
     }
 
-    fn rename_impl(&mut self, selection: Option<Range<usize>>, cx: &mut ViewContext<Self>) {
+    fn rename_impl(&mut self, selection: Option<Range<usize>>, window: &mut Window, cx: &mut ModelContext<Self>) {
         if let Some(SelectedEntry {
             worktree_id,
             entry_id,
@@ -1250,11 +1250,11 @@ impl ProjectPanel {
         }
     }
 
-    fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) {
+    fn rename(&mut self, _: &Rename, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.rename_impl(None, cx);
     }
 
-    fn trash(&mut self, action: &Trash, cx: &mut ViewContext<Self>) {
+    fn trash(&mut self, action: &Trash, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.remove(true, action.skip_prompt, cx);
     }
 
@@ -2092,7 +2092,7 @@ impl ProjectPanel {
         }
     }
 
-    fn remove_from_project(&mut self, _: &RemoveFromProject, cx: &mut ViewContext<Self>) {
+    fn remove_from_project(&mut self, _: &RemoveFromProject, window: &mut Window, cx: &mut ModelContext<Self>) {
         for entry in self.effective_entries().iter() {
             let worktree_id = entry.worktree_id;
             self.project
@@ -3093,7 +3093,7 @@ impl ProjectPanel {
         reverse_search: bool,
         only_visible_entries: bool,
         predicate: impl Fn(GitEntryRef, WorktreeId) -> bool,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Option<GitEntry> {
         if only_visible_entries {
             let entries = self
@@ -3129,7 +3129,7 @@ impl ProjectPanel {
         start: Option<&SelectedEntry>,
         reverse_search: bool,
         predicate: impl Fn(GitEntryRef, WorktreeId) -> bool,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Option<SelectedEntry> {
         let mut worktree_ids: Vec<_> = self
             .visible_entries
@@ -3236,7 +3236,7 @@ impl ProjectPanel {
         start: Option<&SelectedEntry>,
         reverse_search: bool,
         predicate: impl Fn(GitEntryRef, WorktreeId) -> bool,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Option<SelectedEntry> {
         let mut worktree_ids: Vec<_> = self
             .visible_entries
@@ -3526,7 +3526,7 @@ impl ProjectPanel {
                 },
             ))
             .on_drag(dragged_selection, move |selection, click_offset, cx| {
-                cx.new_view(|_| DraggedProjectEntryView {
+                cx.new_model(|_| DraggedProjectEntryView {
                     details: details.clone(),
                     width,
                     click_offset,

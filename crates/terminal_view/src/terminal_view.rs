@@ -1076,7 +1076,7 @@ impl Item for TerminalView {
 
         Some(TabTooltipContent::Custom(Box::new(
             move |cx: &mut WindowContext| {
-                cx.new_view(|_| TerminalTooltip::new(title.clone(), pid))
+                cx.new_model(|_| TerminalTooltip::new(title.clone(), pid))
                     .into()
             },
         )))

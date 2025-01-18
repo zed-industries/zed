@@ -75,7 +75,7 @@ impl ApplicationMenu {
         cleaned
     }
 
-    fn build_menu_from_items(entry: MenuEntry, cx: &mut WindowContext) -> View<ContextMenu> {
+    fn build_menu_from_items(entry: MenuEntry, window: &mut Window, cx: &mut AppContext) -> Model<ContextMenu> {
         ContextMenu::build(cx, |menu, cx| {
             // Grab current focus handle so menu can shown items in context with the focused element
             let menu = menu.when_some(cx.focused(), |menu, focused| menu.context(focused));
@@ -174,7 +174,7 @@ impl ApplicationMenu {
     }
 
     #[cfg(not(target_os = "macos"))]
-    pub fn open_menu(&mut self, action: &OpenApplicationMenu, _cx: &mut ViewContext<Self>) {
+    pub fn open_menu(&mut self, action: &OpenApplicationMenu, _window: &mut Window, _cx: &mut ModelContext<Self>) {
         self.pending_menu_open = Some(action.0.clone());
     }
 
@@ -182,7 +182,7 @@ impl ApplicationMenu {
     pub fn navigate_menus_in_direction(
         &mut self,
         action: &NavigateApplicationMenuInDirection,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
         let current_index = self
             .entries
@@ -224,7 +224,7 @@ impl ApplicationMenu {
 }
 
 impl Render for ApplicationMenu {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let all_menus_shown = self.all_menus_shown();
 
         if let Some(pending_menu_open) = self.pending_menu_open.take() {

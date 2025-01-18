@@ -17,7 +17,7 @@ impl DecoratedIcon {
 }
 
 impl RenderOnce for DecoratedIcon {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
         div()
             .relative()
             .size(self.icon.size)
@@ -27,7 +27,7 @@ impl RenderOnce for DecoratedIcon {
 }
 
 impl ComponentPreview for DecoratedIcon {
-    fn examples(cx: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(window: &mut Window, cx: &mut AppContext) -> Vec<ComponentExampleGroup<Self>> {
         let icon_1 = Icon::new(IconName::FileDoc);
         let icon_2 = Icon::new(IconName::FileDoc);
         let icon_3 = Icon::new(IconName::FileDoc);

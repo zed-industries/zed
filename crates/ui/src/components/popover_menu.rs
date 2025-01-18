@@ -19,7 +19,7 @@ impl<T: Clickable> Clickable for gpui::AnimationElement<T>
 where
     T: Clickable + 'static,
 {
-    fn on_click(self, handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static) -> Self {
+    fn on_click(self, handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut AppContext) + 'static) -> Self {
         self.map_element(|e| e.on_click(handler))
     }
 

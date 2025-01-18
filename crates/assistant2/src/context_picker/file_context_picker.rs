@@ -290,7 +290,7 @@ pub fn render_file_context_entry(
     path: &Path,
     path_prefix: &Arc<str>,
     context_store: WeakModel<ContextStore>,
-    cx: &WindowContext,
+    window: &Window, cx: &AppContext,
 ) -> Stateful<Div> {
     let (file_name, directory) = if path == Path::new("") {
         (SharedString::from(path_prefix.clone()), None)

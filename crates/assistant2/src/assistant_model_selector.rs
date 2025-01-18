@@ -20,7 +20,7 @@ impl AssistantModelSelector {
         fs: Arc<dyn Fs>,
         menu_handle: PopoverMenuHandle<LanguageModelSelector>,
         focus_handle: FocusHandle,
-        cx: &mut WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) -> Self {
         Self {
             selector: cx.new_model(|cx| {

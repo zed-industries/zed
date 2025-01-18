@@ -33,16 +33,16 @@ pub enum ConfirmBehavior {
 
 #[derive(Debug, Clone)]
 enum ContextPickerMode {
-    Default(View<ContextMenu>),
-    File(View<FileContextPicker>),
-    Directory(View<DirectoryContextPicker>),
-    Fetch(View<FetchContextPicker>),
-    Thread(View<ThreadContextPicker>),
+    Default(Model<ContextMenu>),
+    File(Model<FileContextPicker>),
+    Directory(Model<DirectoryContextPicker>),
+    Fetch(Model<FetchContextPicker>),
+    Thread(Model<ThreadContextPicker>),
 }
 
 pub(super) struct ContextPicker {
     mode: ContextPickerMode,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     context_store: WeakModel<ContextStore>,
     thread_store: Option<WeakModel<ThreadStore>>,
     confirm_behavior: ConfirmBehavior,
@@ -66,12 +66,12 @@ impl ContextPicker {
         }
     }
 
-    pub fn init(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn init(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.mode = ContextPickerMode::Default(self.build_menu(cx));
         cx.notify();
     }
 
-    fn build_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
+    fn build_menu(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> Model<ContextMenu> {
         let context_picker = cx.view().clone();
 
         let menu = ContextMenu::build(cx, move |menu, cx| {
@@ -112,12 +112,12 @@ impl ContextPicker {
         menu
     }
 
-    fn select_kind(&mut self, kind: ContextKind, cx: &mut ViewContext<Self>) {
+    fn select_kind(&mut self, kind: ContextKind, window: &mut Window, cx: &mut ModelContext<Self>) {
         let context_picker = cx.view().downgrade();
 
         match kind {
             ContextKind::File => {
-                self.mode = ContextPickerMode::File(cx.new_view(|cx| {
+                self.mode = ContextPickerMode::File(cx.new_model(|cx| {
                     FileContextPicker::new(
                         context_picker.clone(),
                         self.workspace.clone(),
@@ -128,7 +128,7 @@ impl ContextPicker {
                 }));
             }
             ContextKind::Directory => {
-                self.mode = ContextPickerMode::Directory(cx.new_view(|cx| {
+                self.mode = ContextPickerMode::Directory(cx.new_model(|cx| {
                     DirectoryContextPicker::new(
                         context_picker.clone(),
                         self.workspace.clone(),
@@ -139,7 +139,7 @@ impl ContextPicker {
                 }));
             }
             ContextKind::FetchedUrl => {
-                self.mode = ContextPickerMode::Fetch(cx.new_view(|cx| {
+                self.mode = ContextPickerMode::Fetch(cx.new_model(|cx| {
                     FetchContextPicker::new(
                         context_picker.clone(),
                         self.workspace.clone(),
@@ -151,7 +151,7 @@ impl ContextPicker {
             }
             ContextKind::Thread => {
                 if let Some(thread_store) = self.thread_store.as_ref() {
-                    self.mode = ContextPickerMode::Thread(cx.new_view(|cx| {
+                    self.mode = ContextPickerMode::Thread(cx.new_model(|cx| {
                         ThreadContextPicker::new(
                             thread_store.clone(),
                             context_picker.clone(),
@@ -170,7 +170,7 @@ impl ContextPicker {
 
     fn recent_menu_item(
         &self,
-        context_picker: View<ContextPicker>,
+        context_picker: Model<ContextPicker>,
         ix: usize,
         entry: RecentEntry,
     ) -> ContextMenuItem {
@@ -219,7 +219,7 @@ impl ContextPicker {
         }
     }
 
-    fn add_recent_file(&self, project_path: ProjectPath, cx: &mut ViewContext<Self>) {
+    fn add_recent_file(&self, project_path: ProjectPath, window: &mut Window, cx: &mut ModelContext<Self>) {
         let Some(context_store) = self.context_store.upgrade() else {
             return;
         };
@@ -251,7 +251,7 @@ impl ContextPicker {
         cx.notify();
     }
 
-    fn add_recent_thread(&self, thread: ThreadContextEntry, cx: &mut ViewContext<Self>) {
+    fn add_recent_thread(&self, thread: ThreadContextEntry, window: &mut Window, cx: &mut ModelContext<Self>) {
         let Some(context_store) = self.context_store.upgrade() else {
             return;
         };
@@ -272,7 +272,7 @@ impl ContextPicker {
         cx.notify();
     }
 
-    fn recent_entries(&self, cx: &mut WindowContext) -> Vec<RecentEntry> {
+    fn recent_entries(&self, window: &mut Window, cx: &mut AppContext) -> Vec<RecentEntry> {
         let Some(workspace) = self.workspace.upgrade().map(|w| w.read(cx)) else {
             return vec![];
         };

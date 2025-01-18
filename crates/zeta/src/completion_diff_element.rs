@@ -108,7 +108,7 @@ impl Element for CompletionDiffElement {
     fn request_layout(
         &mut self,
         _id: Option<&gpui::GlobalElementId>,
-        cx: &mut WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) -> (gpui::LayoutId, Self::RequestLayoutState) {
         (self.element.request_layout(cx), ())
     }
@@ -118,7 +118,7 @@ impl Element for CompletionDiffElement {
         _id: Option<&gpui::GlobalElementId>,
         _bounds: gpui::Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
-        cx: &mut WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) -> Self::PrepaintState {
         self.element.prepaint(cx);
     }
@@ -129,7 +129,7 @@ impl Element for CompletionDiffElement {
         _bounds: gpui::Bounds<Pixels>,
         _request_layout: &mut Self::RequestLayoutState,
         _prepaint: &mut Self::PrepaintState,
-        cx: &mut WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) {
         if let Some(position) = self.text_layout.position_for_index(self.cursor_offset) {
             let bounds = self.text_layout.bounds();

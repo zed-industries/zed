@@ -56,7 +56,7 @@ actions!(
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, cx| {
-        let item = cx.new_view(|cx| TitleBar::new("title-bar", workspace, cx));
+        let item = cx.new_model(|cx| TitleBar::new("title-bar", workspace, cx));
         workspace.set_titlebar_item(item.into(), cx);
 
         #[cfg(not(target_os = "macos"))]

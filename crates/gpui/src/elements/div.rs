@@ -1159,7 +1159,7 @@ pub fn div() -> Div {
 pub struct Div {
     interactivity: Interactivity,
     children: SmallVec<[AnyElement; 2]>,
-    prepaint_listener: Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut WindowContext) + 'static>>,
+    prepaint_listener: Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut Window, &mut AppContext) + 'static>>,
 }
 
 impl Div {
@@ -1167,7 +1167,7 @@ impl Div {
     /// This allows you to store the [`Bounds`] of the children for later use.
     pub fn on_children_prepainted(
         mut self,
-        listener: impl Fn(Vec<Bounds<Pixels>>, &mut WindowContext) + 'static,
+        listener: impl Fn(Vec<Bounds<Pixels>>, &mut Window, &mut AppContext) + 'static,
     ) -> Self {
         self.prepaint_listener = Some(Box::new(listener));
         self
@@ -2450,7 +2450,7 @@ impl Focusable<Div> {
     /// This allows you to store the [`Bounds`] of the children for later use.
     pub fn on_children_prepainted(
         mut self,
-        listener: impl Fn(Vec<Bounds<Pixels>>, &mut WindowContext) + 'static,
+        listener: impl Fn(Vec<Bounds<Pixels>>, &mut Window, &mut AppContext) + 'static,
     ) -> Self {
         self.element = self.element.on_children_prepainted(listener);
         self

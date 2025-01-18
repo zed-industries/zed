@@ -328,7 +328,7 @@ impl ActiveThread {
 }
 
 impl Render for ActiveThread {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .pt_1p5()

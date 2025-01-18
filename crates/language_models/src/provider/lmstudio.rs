@@ -205,9 +205,9 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
+    fn configuration_view(&self, window: &mut Window, cx: &mut AppContext) -> AnyView {
         let state = self.state.clone();
-        cx.new_view(|cx| ConfigurationView::new(state, cx)).into()
+        cx.new_model(|cx| ConfigurationView::new(state, cx)).into()
     }
 
     fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
@@ -374,7 +374,7 @@ struct ConfigurationView {
 }
 
 impl ConfigurationView {
-    pub fn new(state: gpui::Model<State>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(state: gpui::Model<State>, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
         let loading_models_task = Some(cx.spawn({
             let state = state.clone();
             |this, mut cx| async move {
@@ -398,7 +398,7 @@ impl ConfigurationView {
         }
     }
 
-    fn retry_connection(&self, cx: &mut WindowContext) {
+    fn retry_connection(&self, window: &mut Window, cx: &mut AppContext) {
         self.state
             .update(cx, |state, cx| state.fetch_models(cx))
             .detach_and_log_err(cx);
@@ -406,7 +406,7 @@ impl ConfigurationView {
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
         let lmstudio_intro = "Run local LLMs like Llama, Phi, and Qwen.";

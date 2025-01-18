@@ -175,7 +175,7 @@ impl From<&dyn PanelHandle> for AnyView {
 pub struct Dock {
     position: DockPosition,
     panel_entries: Vec<PanelEntry>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     is_open: bool,
     active_panel_index: Option<usize>,
     focus_handle: FocusHandle,

@@ -172,7 +172,7 @@ pub(crate) fn suggest(
         );
 
         workspace.show_notification(notification_id, cx, |cx| {
-            cx.new_view(move |_cx| {
+            cx.new_model(move |_cx| {
                 simple_message_notification::MessageNotification::new(format!(
                     "Do you want to install the recommended '{}' extension for '{}' files?",
                     extension_id, file_name_or_extension

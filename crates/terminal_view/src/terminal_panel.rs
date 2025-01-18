@@ -101,7 +101,7 @@ impl TerminalPanel {
         terminal_panel
     }
 
-    pub fn set_assistant_enabled(&mut self, enabled: bool, cx: &mut ViewContext<Self>) {
+    pub fn set_assistant_enabled(&mut self, enabled: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.assistant_enabled = enabled;
         if enabled {
             let focus_handle = self
@@ -457,7 +457,7 @@ impl TerminalPanel {
             .detach_and_log_err(cx);
     }
 
-    fn spawn_task(&mut self, task: &SpawnInTerminal, cx: &mut ViewContext<Self>) {
+    fn spawn_task(&mut self, task: &SpawnInTerminal, window: &mut Window, cx: &mut ModelContext<Self>) {
         let Ok(is_local) = self
             .workspace
             .update(cx, |workspace, cx| workspace.project().read(cx).is_local())
@@ -1313,7 +1313,7 @@ impl Panel for TerminalPanel {
         cx.notify();
     }
 
-    fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
+    fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
         let old_active = self.active;
         self.active = active;
         if !active || old_active == active || !self.has_no_terminals(cx) {

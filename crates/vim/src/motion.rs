@@ -572,7 +572,7 @@ impl Vim {
         self.motion(m, window, cx)
     }
 
-    pub(crate) fn motion(&mut self, motion: Motion, cx: &mut ViewContext<Self>) {
+    pub(crate) fn motion(&mut self, motion: Motion, window: &mut Window, cx: &mut ModelContext<Self>) {
         if let Some(Operator::FindForward { .. })
         | Some(Operator::Sneak { .. })
         | Some(Operator::SneakBackward { .. })

@@ -870,7 +870,7 @@ impl OutlinePanel {
         dispatch_context
     }
 
-    fn unfold_directory(&mut self, _: &UnfoldDirectory, cx: &mut ViewContext<Self>) {
+    fn unfold_directory(&mut self, _: &UnfoldDirectory, window: &mut Window, cx: &mut ModelContext<Self>) {
         if let Some(PanelEntry::FoldedDirs(FoldedDirsEntry {
             worktree_id,
             entries,
@@ -1892,7 +1892,7 @@ impl OutlinePanel {
         }
     }
 
-    fn reveal_entry_for_selection(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
+    fn reveal_entry_for_selection(&mut self, editor: Model<Editor>, window: &mut Window, cx: &mut ModelContext<Self>) {
         if !self.active
             || !OutlinePanelSettings::get_global(cx).auto_reveal_entries
             || self.focus_handle.contains_focused(cx)

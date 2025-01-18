@@ -19,7 +19,7 @@ pub struct SharedScreen {
     pub peer_id: PeerId,
     user: Arc<User>,
     nav_history: Option<ItemNavHistory>,
-    view: View<RemoteVideoTrackView>,
+    view: Model<RemoteVideoTrackView>,
     focus: FocusHandle,
 }
 
@@ -28,9 +28,9 @@ impl SharedScreen {
         track: RemoteVideoTrack,
         peer_id: PeerId,
         user: Arc<User>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Self {
-        let view = cx.new_view(|cx| RemoteVideoTrackView::new(track.clone(), cx));
+        let view = cx.new_model(|cx| RemoteVideoTrackView::new(track.clone(), cx));
         cx.subscribe(&view, |_, _, ev, cx| match ev {
             call::RemoteVideoTrackViewEvent::Close => cx.emit(Event::Close),
         })
@@ -53,7 +53,7 @@ impl FocusableView for SharedScreen {
     }
 }
 impl Render for SharedScreen {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         div()
             .bg(cx.theme().colors().editor_background)
             .track_focus(&self.focus)
@@ -70,17 +70,17 @@ impl Item for SharedScreen {
         Some(format!("{}'s screen", self.user.github_login).into())
     }
 
-    fn deactivated(&mut self, cx: &mut ViewContext<Self>) {
+    fn deactivated(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         if let Some(nav_history) = self.nav_history.as_mut() {
             nav_history.push::<()>(None, cx);
         }
     }
 
-    fn tab_icon(&self, _cx: &WindowContext) -> Option<Icon> {
+    fn tab_icon(&self, _window: &Window, _cx: &AppContext) -> Option<Icon> {
         Some(Icon::new(IconName::Screen))
     }
 
-    fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
+    fn tab_content_text(&self, _window: &Window, _cx: &AppContext) -> Option<SharedString> {
         Some(format!("{}'s screen", self.user.github_login).into())
     }
 
@@ -95,9 +95,9 @@ impl Item for SharedScreen {
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        cx: &mut ViewContext<Self>,
-    ) -> Option<View<Self>> {
-        Some(cx.new_view(|cx| Self {
+        window: &mut Window, cx: &mut ModelContext<Self>,
+    ) -> Option<Model<Self>> {
+        Some(cx.new_model(|cx| Self {
             view: self.view.update(cx, |view, cx| view.clone(cx)),
             peer_id: self.peer_id,
             user: self.user.clone(),

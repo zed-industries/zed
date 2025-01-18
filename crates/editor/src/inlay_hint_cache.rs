@@ -3476,7 +3476,7 @@ pub mod tests {
         labels
     }
 
-    pub fn visible_hint_labels(editor: &Editor, cx: &ViewContext<Editor>) -> Vec<String> {
+    pub fn visible_hint_labels(editor: &Editor, window: &Window, cx: &ModelContext<Editor>) -> Vec<String> {
         editor
             .visible_inlay_hints(cx)
             .into_iter()

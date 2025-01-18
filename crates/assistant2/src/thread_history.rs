@@ -33,7 +33,7 @@ impl ThreadHistory {
         }
     }
 
-    pub fn select_prev(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
+    pub fn select_prev(&mut self, _: &menu::SelectPrev, window: &mut Window, cx: &mut ModelContext<Self>) {
         let count = self.thread_store.read(cx).non_empty_len(cx);
 
         if count > 0 {
@@ -45,7 +45,7 @@ impl ThreadHistory {
         }
     }
 
-    pub fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
+    pub fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut ModelContext<Self>) {
         let count = self.thread_store.read(cx).non_empty_len(cx);
 
         if count > 0 {
@@ -57,28 +57,28 @@ impl ThreadHistory {
         }
     }
 
-    fn select_first(&mut self, _: &menu::SelectFirst, cx: &mut ViewContext<Self>) {
+    fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut ModelContext<Self>) {
         let count = self.thread_store.read(cx).non_empty_len(cx);
         if count > 0 {
             self.set_selected_index(0, cx);
         }
     }
 
-    fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
+    fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut ModelContext<Self>) {
         let count = self.thread_store.read(cx).non_empty_len(cx);
         if count > 0 {
             self.set_selected_index(count - 1, cx);
         }
     }
 
-    fn set_selected_index(&mut self, index: usize, cx: &mut ViewContext<Self>) {
+    fn set_selected_index(&mut self, index: usize, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.selected_index = index;
         self.scroll_handle
             .scroll_to_item(index, ScrollStrategy::Top);
         cx.notify();
     }
 
-    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut ModelContext<Self>) {
         let threads = self.thread_store.update(cx, |this, cx| this.threads(cx));
 
         if let Some(thread) = threads.get(self.selected_index) {
@@ -93,7 +93,7 @@ impl ThreadHistory {
         }
     }
 
-    fn remove_selected_thread(&mut self, _: &RemoveSelectedThread, cx: &mut ViewContext<Self>) {
+    fn remove_selected_thread(&mut self, _: &RemoveSelectedThread, window: &mut Window, cx: &mut ModelContext<Self>) {
         let threads = self.thread_store.update(cx, |this, cx| this.threads(cx));
 
         if let Some(thread) = threads.get(self.selected_index) {
@@ -174,14 +174,14 @@ impl Render for ThreadHistory {
 #[derive(IntoElement)]
 pub struct PastThread {
     thread: Model<Thread>,
-    assistant_panel: WeakView<AssistantPanel>,
+    assistant_panel: WeakModel<AssistantPanel>,
     selected: bool,
 }
 
 impl PastThread {
     pub fn new(
         thread: Model<Thread>,
-        assistant_panel: WeakView<AssistantPanel>,
+        assistant_panel: WeakModel<AssistantPanel>,
         selected: bool,
     ) -> Self {
         Self {

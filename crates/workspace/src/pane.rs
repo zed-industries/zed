@@ -3308,7 +3308,7 @@ impl Render for Pane {
 }
 
 impl ItemNavHistory {
-    pub fn push<D: 'static + Send + Any>(&mut self, data: Option<D>, cx: &mut WindowContext) {
+    pub fn push<D: 'static + Send + Any>(&mut self, data: Option<D>, window: &mut Window, cx: &mut AppContext) {
         if self
             .item
             .upgrade()

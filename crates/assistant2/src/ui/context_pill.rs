@@ -11,15 +11,15 @@ pub enum ContextPill {
         context: ContextSnapshot,
         dupe_name: bool,
         focused: bool,
-        on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
-        on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
+        on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut AppContext)>>,
+        on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut AppContext)>>,
     },
     Suggested {
         name: SharedString,
         icon_path: Option<SharedString>,
         kind: ContextKind,
         focused: bool,
-        on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
+        on_click: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut AppContext)>>,
     },
 }
 
@@ -28,7 +28,7 @@ impl ContextPill {
         context: ContextSnapshot,
         dupe_name: bool,
         focused: bool,
-        on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
+        on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut AppContext)>>,
     ) -> Self {
         Self::Added {
             context,
@@ -54,7 +54,7 @@ impl ContextPill {
         }
     }
 
-    pub fn on_click(mut self, listener: Rc<dyn Fn(&ClickEvent, &mut WindowContext)>) -> Self {
+    pub fn on_click(mut self, listener: Rc<dyn Fn(&ClickEvent, &mut Window, &mut AppContext)>) -> Self {
         match &mut self {
             ContextPill::Added { on_click, .. } => {
                 *on_click = Some(listener);
@@ -95,7 +95,7 @@ impl ContextPill {
 }
 
 impl RenderOnce for ContextPill {
-    fn render(self, cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let color = cx.theme().colors();
 
         let base_pill = h_flex()

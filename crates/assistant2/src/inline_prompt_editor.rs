@@ -38,7 +38,7 @@ pub struct PromptEditor<T> {
     pub editor: Model<Editor>,
     mode: PromptEditorMode,
     context_store: Model<ContextStore>,
-    context_strip: View<ContextStrip>,
+    context_strip: Model<ContextStrip>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Model<AssistantModelSelector>,
     model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
@@ -56,7 +56,7 @@ pub struct PromptEditor<T> {
 impl<T: 'static> EventEmitter<PromptEditorEvent> for PromptEditor<T> {}
 
 impl<T: 'static> Render for PromptEditor<T> {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
         let mut buttons = Vec::new();
 
@@ -362,12 +362,12 @@ impl<T: 'static> PromptEditor<T> {
         self.model_selector_menu_handle.toggle(window, cx);
     }
 
-    pub fn remove_all_context(&mut self, _: &RemoveAllContext, cx: &mut ViewContext<Self>) {
+    pub fn remove_all_context(&mut self, _: &RemoveAllContext, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.context_store.update(cx, |store, _cx| store.clear());
         cx.notify();
     }
 
-    fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
+    fn cancel(&mut self, _: &editor::actions::Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
         match self.codegen_status(cx) {
             CodegenStatus::Idle | CodegenStatus::Done | CodegenStatus::Error(_) => {
                 cx.emit(PromptEditorEvent::CancelRequested);
@@ -778,9 +778,9 @@ impl<T: 'static> PromptEditor<T> {
 
     fn handle_context_strip_event(
         &mut self,
-        _context_strip: View<ContextStrip>,
+        _context_strip: Model<ContextStrip>,
         event: &ContextStripEvent,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
         match event {
             ContextStripEvent::PickerDismissed
@@ -871,7 +871,7 @@ impl PromptEditor<BufferCodegen> {
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
-        let context_strip = cx.new_view(|cx| {
+        let context_strip = cx.new_model(|cx| {
             ContextStrip::new(
                 context_store.clone(),
                 workspace.clone(),
@@ -890,7 +890,7 @@ impl PromptEditor<BufferCodegen> {
             context_store,
             context_strip,
             context_picker_menu_handle,
-            model_selector: cx.new_view(|cx| {
+            model_selector: cx.new_model(|cx| {
                 AssistantModelSelector::new(
                     fs,
                     model_selector_menu_handle.clone(),
@@ -1024,7 +1024,7 @@ impl PromptEditor<TerminalCodegen> {
         let context_picker_menu_handle = PopoverMenuHandle::default();
         let model_selector_menu_handle = PopoverMenuHandle::default();
 
-        let context_strip = cx.new_view(|cx| {
+        let context_strip = cx.new_model(|cx| {
             ContextStrip::new(
                 context_store.clone(),
                 workspace.clone(),
@@ -1043,7 +1043,7 @@ impl PromptEditor<TerminalCodegen> {
             context_store,
             context_strip,
             context_picker_menu_handle,
-            model_selector: cx.new_view(|cx| {
+            model_selector: cx.new_model(|cx| {
                 AssistantModelSelector::new(
                     fs,
                     model_selector_menu_handle.clone(),

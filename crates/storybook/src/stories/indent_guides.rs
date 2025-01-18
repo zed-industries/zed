@@ -17,7 +17,7 @@ pub struct IndentGuidesStory {
 }
 
 impl IndentGuidesStory {
-    pub fn view(cx: &mut WindowContext) -> View<Self> {
+    pub fn view(window: &mut Window, cx: &mut AppContext) -> Model<Self> {
         let mut depths = Vec::new();
         depths.push(0);
         depths.push(1);
@@ -29,12 +29,12 @@ impl IndentGuidesStory {
         depths.push(1);
         depths.push(0);
 
-        cx.new_view(|_cx| Self { depths })
+        cx.new_model(|_cx| Self { depths })
     }
 }
 
 impl Render for IndentGuidesStory {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         Story::container()
             .child(Story::title("Indent guides"))
             .child(

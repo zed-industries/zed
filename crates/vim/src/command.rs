@@ -1104,7 +1104,7 @@ pub struct ShellExec {
 }
 
 impl Vim {
-    pub fn cancel_running_command(&mut self, cx: &mut ViewContext<Self>) {
+    pub fn cancel_running_command(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         if self.running_command.take().is_some() {
             self.update_editor(cx, |_, editor, cx| {
                 editor.transact(cx, |editor, _| {
@@ -1114,7 +1114,7 @@ impl Vim {
         }
     }
 
-    fn prepare_shell_command(&mut self, command: &str, cx: &mut ViewContext<Self>) -> String {
+    fn prepare_shell_command(&mut self, command: &str, window: &mut Window, cx: &mut ModelContext<Self>) -> String {
         let mut ret = String::new();
         // N.B. non-standard escaping rules:
         // * !echo % => "echo README.md"
@@ -1160,7 +1160,7 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
-        cx: &mut ViewContext<Vim>,
+        window: &mut Window, cx: &mut ModelContext<Vim>,
     ) {
         self.stop_recording(cx);
         let Some(workspace) = self.workspace(cx) else {
@@ -1200,7 +1200,7 @@ impl Vim {
         &mut self,
         object: Object,
         around: bool,
-        cx: &mut ViewContext<Vim>,
+        window: &mut Window, cx: &mut ModelContext<Vim>,
     ) {
         self.stop_recording(cx);
         let Some(workspace) = self.workspace(cx) else {
@@ -1252,7 +1252,7 @@ impl ShellExec {
         )
     }
 
-    pub fn run(&self, vim: &mut Vim, cx: &mut ViewContext<Vim>) {
+    pub fn run(&self, vim: &mut Vim, window: &mut Window, cx: &mut ModelContext<Vim>) {
         let Some(workspace) = vim.workspace(cx) else {
             return;
         };

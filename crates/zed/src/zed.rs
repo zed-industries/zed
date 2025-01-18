@@ -243,7 +243,7 @@ fn feature_gate_zed_pro_actions(cx: &mut AppContext) {
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-fn initialize_file_watcher(cx: &mut ViewContext<Workspace>) {
+fn initialize_file_watcher(window: &mut Window, cx: &mut ModelContext<Workspace>) {
     if let Err(e) = fs::fs_watcher::global(|_| {}) {
         let message = format!(
             db::indoc! {r#"
@@ -273,7 +273,7 @@ fn initialize_file_watcher(cx: &mut ViewContext<Workspace>) {
 }
 
 #[cfg(target_os = "windows")]
-fn initialize_file_watcher(cx: &mut ViewContext<Workspace>) {
+fn initialize_file_watcher(window: &mut Window, cx: &mut ModelContext<Workspace>) {
     if let Err(e) = fs::fs_watcher::global(|_| {}) {
         let message = format!(
             db::indoc! {r#"

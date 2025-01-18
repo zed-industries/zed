@@ -60,7 +60,7 @@ impl MessageEditor {
             editor
         });
 
-        let inline_context_picker = cx.new_view(|cx| {
+        let inline_context_picker = cx.new_model(|cx| {
             ContextPicker::new(
                 workspace.clone(),
                 Some(thread_store.clone()),
@@ -71,7 +71,7 @@ impl MessageEditor {
             )
         });
 
-        let context_strip = cx.new_view(|cx| {
+        let context_strip = cx.new_model(|cx| {
             ContextStrip::new(
                 context_store.clone(),
                 workspace.clone(),
@@ -100,7 +100,7 @@ impl MessageEditor {
             context_picker_menu_handle,
             inline_context_picker,
             inline_context_picker_menu_handle,
-            model_selector: cx.new_view(|cx| {
+            model_selector: cx.new_model(|cx| {
                 AssistantModelSelector::new(
                     fs,
                     model_selector_menu_handle.clone(),
@@ -123,25 +123,25 @@ impl MessageEditor {
         self.model_selector_menu_handle.toggle(window, cx)
     }
 
-    fn toggle_chat_mode(&mut self, _: &ChatMode, cx: &mut ViewContext<Self>) {
+    fn toggle_chat_mode(&mut self, _: &ChatMode, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.use_tools = !self.use_tools;
         cx.notify();
     }
 
-    fn toggle_context_picker(&mut self, _: &ToggleContextPicker, cx: &mut ViewContext<Self>) {
+    fn toggle_context_picker(&mut self, _: &ToggleContextPicker, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.context_picker_menu_handle.toggle(cx);
     }
 
-    pub fn remove_all_context(&mut self, _: &RemoveAllContext, cx: &mut ViewContext<Self>) {
+    pub fn remove_all_context(&mut self, _: &RemoveAllContext, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.context_store.update(cx, |store, _cx| store.clear());
         cx.notify();
     }
 
-    fn chat(&mut self, _: &Chat, cx: &mut ViewContext<Self>) {
+    fn chat(&mut self, _: &Chat, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.send_to_model(RequestKind::Chat, cx);
     }
 
-    fn send_to_model(&mut self, request_kind: RequestKind, cx: &mut ViewContext<Self>) {
+    fn send_to_model(&mut self, request_kind: RequestKind, window: &mut Window, cx: &mut ModelContext<Self>) {
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
         if provider
             .as_ref()
@@ -233,9 +233,9 @@ impl MessageEditor {
 
     fn handle_context_strip_event(
         &mut self,
-        _context_strip: View<ContextStrip>,
+        _context_strip: Model<ContextStrip>,
         event: &ContextStripEvent,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
         match event {
             ContextStripEvent::PickerDismissed
@@ -248,7 +248,7 @@ impl MessageEditor {
         }
     }
 
-    fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
+    fn move_up(&mut self, _: &MoveUp, window: &mut Window, cx: &mut ModelContext<Self>) {
         if self.context_picker_menu_handle.is_deployed() {
             cx.propagate();
         } else {

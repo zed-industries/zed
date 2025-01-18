@@ -16,7 +16,7 @@ const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
 type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &AppContext) + 'static>;
 
 pub struct LanguageModelSelector {
-    picker: View<Picker<LanguageModelPickerDelegate>>,
+    picker: Model<Picker<LanguageModelPickerDelegate>>,
     /// The task used to update the picker's matches when there is a change to
     /// the language model registry.
     update_matches_task: Option<Task<()>>,
@@ -41,7 +41,7 @@ impl LanguageModelSelector {
         };
 
         let picker =
-            cx.new_view(|cx| Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into())));
+            cx.new_model(|cx| Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into())));
 
         LanguageModelSelector {
             picker,
@@ -57,7 +57,7 @@ impl LanguageModelSelector {
         &mut self,
         _registry: Model<LanguageModelRegistry>,
         event: &language_model::Event,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) {
         match event {
             language_model::Event::ProviderStateChanged

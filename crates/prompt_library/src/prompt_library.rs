@@ -54,16 +54,16 @@ const BUILT_IN_TOOLTIP_TEXT: &'static str = concat!(
 pub trait InlineAssistDelegate {
     fn assist(
         &self,
-        prompt_editor: &View<Editor>,
+        prompt_editor: &Model<Editor>,
         initial_prompt: Option<String>,
-        cx: &mut ViewContext<PromptLibrary>,
+        window: &mut Window, cx: &mut ModelContext<PromptLibrary>,
     );
 
     /// Returns whether the Assistant panel was focused.
     fn focus_assistant_panel(
         &self,
         workspace: &mut Workspace,
-        cx: &mut ViewContext<Workspace>,
+        window: &mut Window, cx: &mut ModelContext<Workspace>,
     ) -> bool;
 }
 
@@ -107,7 +107,7 @@ pub fn open_prompt_library(
                         ..Default::default()
                     },
                     |cx| {
-                        cx.new_view(|cx| {
+                        cx.new_model(|cx| {
                             PromptLibrary::new(
                                 store,
                                 language_registry,
@@ -336,7 +336,7 @@ impl PromptLibrary {
         language_registry: Arc<LanguageRegistry>,
         inline_assist_delegate: Box<dyn InlineAssistDelegate>,
         make_completion_provider: Arc<dyn Fn() -> Box<dyn CompletionProvider>>,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> Self {
         let delegate = PromptPickerDelegate {
             store: store.clone(),

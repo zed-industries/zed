@@ -392,7 +392,7 @@ impl InlineCompletionButton {
         })
     }
 
-    fn build_zeta_context_menu(&self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
+    fn build_zeta_context_menu(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Model<ContextMenu> {
         let workspace = self.workspace.clone();
         ContextMenu::build(cx, |menu, cx| {
             self.build_language_settings_menu(menu, cx)
@@ -411,7 +411,7 @@ impl InlineCompletionButton {
         })
     }
 
-    pub fn update_enabled(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
+    pub fn update_enabled(&mut self, editor: Model<Editor>, window: &mut Window, cx: &mut ModelContext<Self>) {
         let editor = editor.read(cx);
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         let suggestion_anchor = editor.selections.newest_anchor().start;

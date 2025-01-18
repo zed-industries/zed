@@ -41,10 +41,10 @@ pub struct Checkbox {
     id: ElementId,
     toggle_state: ToggleState,
     disabled: bool,
-    on_click: Option<Box<dyn Fn(&ToggleState, &mut WindowContext) + 'static>>,
+    on_click: Option<Box<dyn Fn(&ToggleState, &mut Window, &mut AppContext) + 'static>>,
     filled: bool,
     style: ToggleStyle,
-    tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
+    tooltip: Option<Box<dyn Fn(&mut Window, &mut AppContext) -> AnyView>>,
 }
 
 impl Checkbox {
@@ -95,14 +95,14 @@ impl Checkbox {
     }
 
     /// Sets the tooltip for the checkbox.
-    pub fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
+    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut AppContext) -> AnyView + 'static) -> Self {
         self.tooltip = Some(Box::new(tooltip));
         self
     }
 }
 
 impl Checkbox {
-    fn bg_color(&self, cx: &WindowContext) -> Hsla {
+    fn bg_color(&self, window: &Window, cx: &AppContext) -> Hsla {
         let style = self.style.clone();
         match (style, self.filled) {
             (ToggleStyle::Ghost, false) => cx.theme().colors().ghost_element_background,
@@ -114,7 +114,7 @@ impl Checkbox {
         }
     }
 
-    fn border_color(&self, cx: &WindowContext) -> Hsla {
+    fn border_color(&self, window: &Window, cx: &AppContext) -> Hsla {
         if self.disabled {
             return cx.theme().colors().border_disabled;
         }
@@ -198,7 +198,7 @@ pub struct CheckboxWithLabel {
     id: ElementId,
     label: Label,
     checked: ToggleState,
-    on_click: Arc<dyn Fn(&ToggleState, &mut WindowContext) + 'static>,
+    on_click: Arc<dyn Fn(&ToggleState, &mut Window, &mut AppContext) + 'static>,
     filled: bool,
     style: ToggleStyle,
 }
@@ -274,7 +274,7 @@ pub struct Switch {
     id: ElementId,
     toggle_state: ToggleState,
     disabled: bool,
-    on_click: Option<Box<dyn Fn(&ToggleState, &mut WindowContext) + 'static>>,
+    on_click: Option<Box<dyn Fn(&ToggleState, &mut Window, &mut AppContext) + 'static>>,
     label: Option<SharedString>,
     key_binding: Option<KeyBinding>,
 }

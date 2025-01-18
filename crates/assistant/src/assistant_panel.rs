@@ -1255,7 +1255,7 @@ impl AssistantPanel {
         }
     }
 
-    fn deploy_prompt_library(&mut self, _: &DeployPromptLibrary, cx: &mut ViewContext<Self>) {
+    fn deploy_prompt_library(&mut self, _: &DeployPromptLibrary, window: &mut Window, cx: &mut ModelContext<Self>) {
         open_prompt_library(
             self.languages.clone(),
             Box::new(PromptLibraryInlineAssist),
@@ -1573,9 +1573,9 @@ struct PromptLibraryInlineAssist;
 impl prompt_library::InlineAssistDelegate for PromptLibraryInlineAssist {
     fn assist(
         &self,
-        prompt_editor: &View<Editor>,
+        prompt_editor: &Model<Editor>,
         initial_prompt: Option<String>,
-        cx: &mut ViewContext<PromptLibrary>,
+        window: &mut Window, cx: &mut ModelContext<PromptLibrary>,
     ) {
         InlineAssistant::update_global(cx, |assistant, cx| {
             assistant.assist(&prompt_editor, None, None, initial_prompt, cx)
@@ -1585,7 +1585,7 @@ impl prompt_library::InlineAssistDelegate for PromptLibraryInlineAssist {
     fn focus_assistant_panel(
         &self,
         workspace: &mut Workspace,
-        cx: &mut ViewContext<Workspace>,
+        window: &mut Window, cx: &mut ModelContext<Workspace>,
     ) -> bool {
         workspace.focus_panel::<AssistantPanel>(cx).is_some()
     }

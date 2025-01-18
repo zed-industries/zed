@@ -16,7 +16,7 @@ impl TerminalTooltip {
 }
 
 impl Render for TerminalTooltip {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         tooltip_container(cx, move |this, _cx| {
             this.occlude()
                 .on_mouse_move(|_, cx| cx.stop_propagation())

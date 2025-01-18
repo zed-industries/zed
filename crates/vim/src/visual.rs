@@ -536,7 +536,7 @@ impl Vim {
         self.switch_mode(Mode::Normal, true, window, cx);
     }
 
-    pub fn visual_yank(&mut self, line_mode: bool, cx: &mut ViewContext<Self>) {
+    pub fn visual_yank(&mut self, line_mode: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.store_visual_marks(cx);
         self.update_editor(cx, |vim, editor, cx| {
             let line_mode = line_mode || editor.selections.line_mode;

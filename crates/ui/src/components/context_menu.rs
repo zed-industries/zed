@@ -26,8 +26,8 @@ pub enum ContextMenuItem {
 
 impl ContextMenuItem {
     pub fn custom_entry(
-        entry_render: impl Fn(&mut WindowContext) -> AnyElement + 'static,
-        handler: impl Fn(&mut WindowContext) + 'static,
+        entry_render: impl Fn(&mut Window, &mut AppContext) -> AnyElement + 'static,
+        handler: impl Fn(&mut Window, &mut AppContext) + 'static,
     ) -> Self {
         Self::CustomEntry {
             entry_render: Box::new(entry_render),
@@ -43,7 +43,7 @@ pub struct ContextMenuEntry {
     icon: Option<IconName>,
     icon_size: IconSize,
     icon_position: IconPosition,
-    handler: Rc<dyn Fn(Option<&FocusHandle>, &mut WindowContext)>,
+    handler: Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut AppContext)>,
     action: Option<Box<dyn Action>>,
     disabled: bool,
 }
@@ -87,7 +87,7 @@ impl ContextMenuEntry {
         self
     }
 
-    pub fn handler(mut self, handler: impl Fn(&mut WindowContext) + 'static) -> Self {
+    pub fn handler(mut self, handler: impl Fn(&mut Window, &mut AppContext) + 'static) -> Self {
         self.handler = Rc::new(move |_, cx| handler(cx));
         self
     }

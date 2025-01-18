@@ -175,7 +175,7 @@ impl LabelCommon for Label {
 }
 
 impl RenderOnce for Label {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
         self.base.child(self.label)
     }
 }

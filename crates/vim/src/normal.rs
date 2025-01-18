@@ -435,7 +435,7 @@ impl Vim {
         });
     }
 
-    fn join_lines_impl(&mut self, insert_whitespace: bool, cx: &mut ViewContext<Self>) {
+    fn join_lines_impl(&mut self, insert_whitespace: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.record_current_action(cx);
         let mut times = Vim::take_count(cx).unwrap_or(1);
         if self.mode.is_visual() {
@@ -457,7 +457,7 @@ impl Vim {
         }
     }
 
-    fn yank_line(&mut self, _: &YankLine, cx: &mut ViewContext<Self>) {
+    fn yank_line(&mut self, _: &YankLine, window: &mut Window, cx: &mut ModelContext<Self>) {
         let count = Vim::take_count(cx);
         self.yank_motion(motion::Motion::CurrentLine, count, window, cx)
     }

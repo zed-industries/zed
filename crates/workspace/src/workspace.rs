@@ -2401,7 +2401,7 @@ impl Workspace {
     pub fn is_dock_at_position_open(
         &self,
         position: DockPosition,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window, cx: &mut ModelContext<Self>,
     ) -> bool {
         let dock = match position {
             DockPosition::Left => &self.left_dock,
@@ -2411,7 +2411,7 @@ impl Workspace {
         dock.read(cx).is_open()
     }
 
-    pub fn toggle_dock(&mut self, dock_side: DockPosition, cx: &mut ViewContext<Self>) {
+    pub fn toggle_dock(&mut self, dock_side: DockPosition, window: &mut Window, cx: &mut ModelContext<Self>) {
         let dock = match dock_side {
             DockPosition::Left => &self.left_dock,
             DockPosition::Bottom => &self.bottom_dock,

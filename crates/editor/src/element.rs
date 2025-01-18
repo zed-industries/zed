@@ -504,7 +504,7 @@ impl EditorElement {
         text_hitbox: &Hitbox,
         gutter_hitbox: &Hitbox,
         line_numbers: &HashMap<MultiBufferRow, LineNumberLayout>,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window, cx: &mut ModelContext<Editor>,
     ) {
         if window.default_prevented() {
             return;
@@ -2063,7 +2063,7 @@ impl EditorElement {
         buffer_rows: impl Iterator<Item = Option<MultiBufferRow>>,
         newest_selection_head: Option<DisplayPoint>,
         snapshot: &EditorSnapshot,
-        cx: &mut WindowContext,
+        window: &mut Window, cx: &mut AppContext,
     ) -> Arc<HashMap<MultiBufferRow, LineNumberLayout>> {
         let include_line_numbers = snapshot.show_line_numbers.unwrap_or_else(|| {
             EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode == EditorMode::Full
@@ -4086,9 +4086,9 @@ impl EditorElement {
             // In singleton buffers, we select corresponding lines on the line number click, so use | -like cursor.
             // In multi buffers, we open file at the line number clicked, so use a pointing hand cursor.
             if is_singleton {
-                cx.set_cursor_style(CursorStyle::IBeam, hitbox);
+                window.set_cursor_style(CursorStyle::IBeam, hitbox);
             } else {
-                cx.set_cursor_style(CursorStyle::PointingHand, hitbox);
+                window.set_cursor_style(CursorStyle::PointingHand, hitbox);
             }
         }
     }

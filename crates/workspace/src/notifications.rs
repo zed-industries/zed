@@ -152,7 +152,7 @@ impl Workspace {
         E: std::fmt::Debug + std::fmt::Display,
     {
         self.show_notification(workspace_error_notification_id(), cx, |cx| {
-            cx.new_view(|_cx| ErrorMessagePrompt::new(format!("Error: {err}")))
+            cx.new_model(|_cx| ErrorMessagePrompt::new(format!("Error: {err}")))
         });
     }
 
@@ -432,8 +432,8 @@ pub mod simple_message_notification {
     use super::NotificationId;
 
     pub struct MessageNotification {
-        content: Box<dyn Fn(&mut ViewContext<Self>) -> AnyElement>,
-        on_click: Option<Arc<dyn Fn(&mut ViewContext<Self>)>>,
+        content: Box<dyn Fn(&mut Window, &mut ModelContext<Self>) -> AnyElement>,
+        on_click: Option<Arc<dyn Fn(&mut Window, &mut ModelContext<Self>)>>,
         click_message: Option<SharedString>,
         secondary_click_message: Option<SharedString>,
         secondary_on_click: Option<Arc<dyn Fn(&mut Window, &mut ModelContext<Self>)>>,
@@ -452,7 +452,7 @@ pub mod simple_message_notification {
 
         pub fn new_from_builder<F>(content: F) -> MessageNotification
         where
-            F: 'static + Fn(&mut ViewContext<Self>) -> AnyElement,
+            F: 'static + Fn(&mut Window, &mut ModelContext<Self>) -> AnyElement,
         {
             Self {
                 content: Box::new(content),
@@ -566,7 +566,7 @@ pub mod simple_message_notification {
 pub fn show_app_notification<V: Notification>(
     id: NotificationId,
     cx: &mut AppContext,
-    build_notification: impl Fn(&mut ViewContext<Workspace>) -> View<V>,
+    build_notification: impl Fn(&mut Window, &mut ModelContext<Workspace>) -> Model<V>,
 ) -> Result<()> {
     let workspaces_to_notify = if let Some(active_workspace_window) = cx
         .active_window()
@@ -680,7 +680,7 @@ where
             Err(err) => {
                 let message: SharedString = format!("Error: {err}").into();
                 show_app_notification(workspace_error_notification_id(), cx, |cx| {
-                    cx.new_view(|_cx| ErrorMessagePrompt::new(message.clone()))
+                    cx.new_model(|_cx| ErrorMessagePrompt::new(message.clone()))
                 })
                 .with_context(|| format!("Showing error notification: {message}"))
                 .log_err();

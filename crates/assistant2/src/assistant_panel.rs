@@ -100,7 +100,7 @@ impl AssistantPanel {
         let workspace = workspace.weak_handle();
         let weak_self = cx.model().downgrade();
 
-        let message_editor = cx.new_view(|cx| {
+        let message_editor = cx.new_model(|cx| {
             MessageEditor::new(
                 fs.clone(),
                 workspace.clone(),
@@ -146,12 +146,12 @@ impl AssistantPanel {
         &self.thread_store
     }
 
-    fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
+    fn cancel(&mut self, _: &editor::actions::Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.thread
             .update(cx, |thread, cx| thread.cancel_last_completion(cx));
     }
 
-    fn new_thread(&mut self, cx: &mut ViewContext<Self>) {
+    fn new_thread(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         let thread = self
             .thread_store
             .update(cx, |this, cx| this.create_thread(cx));
@@ -227,7 +227,7 @@ impl AssistantPanel {
         self.thread.read(cx).thread.clone()
     }
 
-    pub(crate) fn delete_thread(&mut self, thread_id: &ThreadId, cx: &mut ViewContext<Self>) {
+    pub(crate) fn delete_thread(&mut self, thread_id: &ThreadId, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.thread_store
             .update(cx, |this, cx| this.delete_thread(thread_id, cx));
     }
@@ -301,7 +301,7 @@ impl Panel for AssistantPanel {
         Some(proto::PanelId::AssistantPanel)
     }
 
-    fn icon(&self, cx: &WindowContext) -> Option<IconName> {
+    fn icon(&self, window: &Window, cx: &AppContext) -> Option<IconName> {
         let settings = AssistantSettings::get_global(cx);
         if !settings.enabled || !settings.button {
             return None;
