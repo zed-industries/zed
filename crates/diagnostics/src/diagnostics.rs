@@ -903,7 +903,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
         h_flex()
             .id(DIAGNOSTIC_HEADER)
             .block_mouse_down()
-            .h(2. * cx.line_height())
+            .h(2. * window.line_height())
             .w_full()
             .px_9()
             .justify_between()

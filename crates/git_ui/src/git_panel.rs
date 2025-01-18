@@ -162,7 +162,7 @@ impl GitPanel {
             .as_ref()
             .map(|git_state| git_state.read(cx).commit_message.clone());
         let (err_sender, mut err_receiver) = mpsc::channel(1);
-        let workspace = cx.view().downgrade();
+        let workspace = cx.model().downgrade();
 
         let git_panel = cx.new_model(|cx| {
             let focus_handle = cx.focus_handle();
@@ -842,8 +842,8 @@ impl GitPanel {
             }
 
             editor.edit(Some((editor_end..editor_end, edit)), cx);
-            editor.move_to_end(&MoveToEnd, cx);
-            editor.focus(cx);
+            editor.move_to_end(&MoveToEnd, window, cx);
+            editor.focus_handle(cx).focus(window);
         });
     }
 

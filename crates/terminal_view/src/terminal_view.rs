@@ -747,7 +747,7 @@ impl TerminalView {
         }
     }
 
-    fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn hide_scrollbar(&mut self, cx: &mut ModelContext<Self>) {
         const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
         if !Self::should_autohide_scrollbar(cx) {
             return;
@@ -1154,7 +1154,7 @@ impl TerminalView {
             terminal.focus_out();
             terminal.set_cursor_shape(CursorShape::Hollow);
         });
-        self.hide_scrollbar(window, cx);
+        self.hide_scrollbar(cx);
         cx.notify();
     }
 }

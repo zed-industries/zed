@@ -2,7 +2,6 @@ use crate::{CompletionDiffElement, InlineCompletion, InlineCompletionRating, Zet
 use editor::Editor;
 use gpui::{
     actions, prelude::*, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model,
-   
 };
 use language::language_settings;
 use std::time::Duration;
@@ -73,7 +72,7 @@ impl RateCompletionModal {
         }
     }
 
-    pub fn new(zeta: Model<Zeta>, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(zeta: Model<Zeta>, cx: &mut ModelContext<Self>) -> Self {
         let subscription = cx.observe(&zeta, |_, _, cx| cx.notify());
 
         Self {
@@ -148,12 +147,22 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_last(
+        &mut self,
+        _: &menu::SelectLast,
+        _window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.selected_index = self.zeta.read(cx).shown_completions_len() - 1;
         cx.notify();
     }
 
-    pub fn thumbs_up_active(&mut self, _: &ThumbsUpActiveCompletion, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn thumbs_up_active(
+        &mut self,
+        _: &ThumbsUpActiveCompletion,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.zeta.update(cx, |zeta, cx| {
             if let Some(active) = &self.active_completion {
                 zeta.rate_completion(
@@ -179,7 +188,8 @@ impl RateCompletionModal {
     pub fn thumbs_down_active(
         &mut self,
         _: &ThumbsDownActiveCompletion,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         if let Some(active) = &self.active_completion {
             if active.feedback_editor.read(cx).text(cx).is_empty() {
@@ -300,7 +310,7 @@ impl RateCompletionModal {
         cx.notify();
     }
 
-    fn render_view_nav(&self, window: &Window, cx: &ModelContext<Self>) -> impl IntoElement {
+    fn render_view_nav(&self, cx: &ModelContext<Self>) -> impl IntoElement {
         h_flex()
             .h_8()
             .px_1()
@@ -334,7 +344,7 @@ impl RateCompletionModal {
             )
     }
 
-    fn render_suggested_edits(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<gpui::Stateful<Div>> {
+    fn render_suggested_edits(&self, cx: &mut ModelContext<Self>) -> Option<gpui::Stateful<Div>> {
         let active_completion = self.active_completion.as_ref()?;
         let bg_color = cx.theme().colors().editor_background;
 
@@ -353,7 +363,7 @@ impl RateCompletionModal {
         )
     }
 
-    fn render_raw_input(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<gpui::Stateful<Div>> {
+    fn render_raw_input(&self, cx: &mut ModelContext<Self>) -> Option<gpui::Stateful<Div>> {
         Some(
             v_flex()
                 .size_full()
@@ -381,7 +391,11 @@ impl RateCompletionModal {
         )
     }
 
-    fn render_active_completion(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<impl IntoElement> {
+    fn render_active_completion(
+        &mut self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<impl IntoElement> {
         let active_completion = self.active_completion.as_ref()?;
         let completion_id = active_completion.completion.id;
         let focus_handle = &self.focus_handle(cx);
@@ -516,7 +530,7 @@ impl RateCompletionModal {
                                             cx,
                                         ))
                                         .on_click(cx.listener(move |this, _, window, cx| {
-                                            this.thumbs_up_active(&ThumbsUpActiveCompletion, cx);
+                                            this.thumbs_up_active(&ThumbsUpActiveCompletion, window, cx);
                                         })),
                                 ),
                         ),
@@ -638,11 +652,9 @@ impl Render for RateCompletionModal {
                                                                 )
                                                         )
                                                 )
-                                                .tooltip(move |cx| {
-                                                    Tooltip::text(tooltip_text, cx)
-                                                })
+                                                .tooltip(Tooltip::text(tooltip_text))
                                                 .on_click(cx.listener(move |this, _, window, cx| {
-                                                    this.select_completion(Some(completion.clone()), true, cx);
+                                                    this.select_completion(Some(completion.clone()), true, window, cx);
                                                 }))
                                         },
                                     )),

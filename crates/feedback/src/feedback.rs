@@ -63,14 +63,16 @@ pub fn init(cx: &mut AppContext) {
                     })
                     .log_err();
 
-                    window.prompt(cx, 
-                        PromptLevel::Info,
-                        "Copied into clipboard",
-                        Some(&specs),
-                        &["OK"],
-                    )
-                    .await
-                    .ok();
+                    window
+                        .prompt(
+                            PromptLevel::Info,
+                            "Copied into clipboard",
+                            Some(&specs),
+                            &["OK"],
+                            cx,
+                        )
+                        .await
+                        .ok();
                 })
                 .detach();
             })
