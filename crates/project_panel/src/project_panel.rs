@@ -7,7 +7,10 @@ use collections::{hash_map, BTreeSet, HashMap};
 use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
-    items::entry_git_aware_label_color,
+    items::{
+        entry_diagnostic_aware_icon_decoration_and_color,
+        entry_diagnostic_aware_icon_name_and_color, entry_git_aware_label_color,
+    },
     scroll::{Autoscroll, ScrollbarAutoHide},
     Editor, EditorEvent, EditorSettings, ShowScrollbar,
 };
@@ -15,7 +18,7 @@ use file_icons::FileIcons;
 use git::status::GitSummary;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
-    AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
+    AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
     Div, DragMoveEvent, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
     InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model,
     ModelContext, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
@@ -49,9 +52,9 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, v_flex, ContextMenu, Icon,
-    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, ListItem, Scrollbar,
-    ScrollbarState,
+    prelude::*, v_flex, ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind,
+    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, ListItem, ListItemSpacing, Scrollbar,
+    ScrollbarState, Tooltip,
 };
 use util::{maybe, paths::compare_paths, ResultExt, TakeUntilExt, TryFutureExt};
 use workspace::{
@@ -1202,7 +1205,12 @@ impl ProjectPanel {
         }
     }
 
-    fn rename_impl(&mut self, selection: Option<Range<usize>>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn rename_impl(
+        &mut self,
+        selection: Option<Range<usize>>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         if let Some(SelectedEntry {
             worktree_id,
             entry_id,
@@ -2089,7 +2097,12 @@ impl ProjectPanel {
         }
     }
 
-    fn remove_from_project(&mut self, _: &RemoveFromProject, _window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn remove_from_project(
+        &mut self,
+        _: &RemoveFromProject,
+        _window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         for entry in self.effective_entries().iter() {
             let worktree_id = entry.worktree_id;
             self.project
@@ -3111,7 +3124,7 @@ impl ProjectPanel {
         }
 
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
-        worktree.update_in(&mut cx, |tree, _window, _| {
+        worktree.update(cx, |tree, _| {
             utils::ReversibleIterable::new(
                 tree.entries(true, 0usize).with_git_statuses(),
                 reverse_search,
@@ -3485,7 +3498,7 @@ impl ProjectPanel {
                 ))
             })
             .on_drag_move::<DraggedSelection>(cx.listener(
-                move |this, event: &DragMoveEvent<DraggedSelection>, cx| {
+                move |this, event: &DragMoveEvent<DraggedSelection>, window, cx| {
                     if event.bounds.contains(&event.event.position) {
                         if this.last_selection_drag_over_entry == Some(entry_id) {
                             return;
@@ -3503,40 +3516,49 @@ impl ProjectPanel {
                         }
 
                         let bounds = event.bounds;
-                        this.hover_expand_task = Some(cx.spawn(|this, mut cx| async move {
-                            cx.background_executor()
-                                .timer(Duration::from_millis(500))
-                                .await;
-                            this.update(&mut cx, |this, cx| {
-                                this.hover_expand_task.take();
-                                if this.last_selection_drag_over_entry == Some(entry_id)
-                                    && bounds.contains(&window.mouse_position())
-                                {
-                                    this.expand_entry(worktree_id, entry_id, cx);
-                                    this.update_visible_entries(Some((worktree_id, entry_id)), cx);
-                                    cx.notify();
-                                }
-                            })
-                            .ok();
-                        }));
+                        this.hover_expand_task =
+                            Some(cx.spawn_in(window, |this, mut cx| async move {
+                                cx.background_executor()
+                                    .timer(Duration::from_millis(500))
+                                    .await;
+                                this.update_in(&mut cx, |this, window, cx| {
+                                    this.hover_expand_task.take();
+                                    if this.last_selection_drag_over_entry == Some(entry_id)
+                                        && bounds.contains(&window.mouse_position())
+                                    {
+                                        this.expand_entry(worktree_id, entry_id, cx);
+                                        this.update_visible_entries(
+                                            Some((worktree_id, entry_id)),
+                                            cx,
+                                        );
+                                        cx.notify();
+                                    }
+                                })
+                                .ok();
+                            }));
                     }
                 },
             ))
-            .on_drag(dragged_selection, move |selection, click_offset, cx| {
-                cx.new_model(|_| DraggedProjectEntryView {
-                    details: details.clone(),
-                    width,
-                    click_offset,
-                    selection: selection.active_selection,
-                    selections: selection.marked_selections.clone(),
-                })
-            })
-            .drag_over::<DraggedSelection>(move |style, _, _| style.bg(item_colors.drag_over))
-            .on_drop(cx.listener(move |this, selections: &DraggedSelection, cx| {
-                this.hover_scroll_task.take();
-                this.hover_expand_task.take();
-                this.drag_onto(selections, entry_id, kind.is_file(), cx);
-            }))
+            .on_drag(
+                dragged_selection,
+                move |selection, click_offset, _window, cx| {
+                    cx.new_model(|_| DraggedProjectEntryView {
+                        details: details.clone(),
+                        width,
+                        click_offset,
+                        selection: selection.active_selection,
+                        selections: selection.marked_selections.clone(),
+                    })
+                },
+            )
+            .drag_over::<DraggedSelection>(move |style, _, _, _| style.bg(item_colors.drag_over))
+            .on_drop(
+                cx.listener(move |this, selections: &DraggedSelection, window, cx| {
+                    this.hover_scroll_task.take();
+                    this.hover_expand_task.take();
+                    this.drag_onto(selections, entry_id, kind.is_file(), window, cx);
+                }),
+            )
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, _, cx| {
@@ -3544,69 +3566,74 @@ impl ProjectPanel {
                     cx.propagate();
                 }),
             )
-            .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
-                if event.down.button == MouseButton::Right || event.down.first_mouse || show_editor
-                {
-                    return;
-                }
-                if event.down.button == MouseButton::Left {
-                    this.mouse_down = false;
-                }
-                cx.stop_propagation();
-
-                if let Some(selection) = this.selection.filter(|_| event.down.modifiers.shift) {
-                    let current_selection = this.index_for_selection(selection);
-                    let clicked_entry = SelectedEntry {
-                        entry_id,
-                        worktree_id,
-                    };
-                    let target_selection = this.index_for_selection(clicked_entry);
-                    if let Some(((_, _, source_index), (_, _, target_index))) =
-                        current_selection.zip(target_selection)
+            .on_click(
+                cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
+                    if event.down.button == MouseButton::Right
+                        || event.down.first_mouse
+                        || show_editor
                     {
-                        let range_start = source_index.min(target_index);
-                        let range_end = source_index.max(target_index) + 1; // Make the range inclusive.
-                        let mut new_selections = BTreeSet::new();
-                        this.for_each_visible_entry(
-                            range_start..range_end,
-                            cx,
-                            |entry_id, details, _| {
-                                new_selections.insert(SelectedEntry {
-                                    entry_id,
-                                    worktree_id: details.worktree_id,
-                                });
-                            },
-                        );
-
-                        this.marked_entries = this
-                            .marked_entries
-                            .union(&new_selections)
-                            .cloned()
-                            .collect();
-
-                        this.selection = Some(clicked_entry);
-                        this.marked_entries.insert(clicked_entry);
+                        return;
                     }
-                } else if event.down.modifiers.secondary() {
-                    if event.down.click_count > 1 {
-                        this.split_entry(entry_id, cx);
-                    } else {
-                        this.selection = Some(selection);
-                        if !this.marked_entries.insert(selection) {
-                            this.marked_entries.remove(&selection);
+                    if event.down.button == MouseButton::Left {
+                        this.mouse_down = false;
+                    }
+                    cx.stop_propagation();
+
+                    if let Some(selection) = this.selection.filter(|_| event.down.modifiers.shift) {
+                        let current_selection = this.index_for_selection(selection);
+                        let clicked_entry = SelectedEntry {
+                            entry_id,
+                            worktree_id,
+                        };
+                        let target_selection = this.index_for_selection(clicked_entry);
+                        if let Some(((_, _, source_index), (_, _, target_index))) =
+                            current_selection.zip(target_selection)
+                        {
+                            let range_start = source_index.min(target_index);
+                            let range_end = source_index.max(target_index) + 1; // Make the range inclusive.
+                            let mut new_selections = BTreeSet::new();
+                            this.for_each_visible_entry(
+                                range_start..range_end,
+                                window,
+                                cx,
+                                |entry_id, details, _, _| {
+                                    new_selections.insert(SelectedEntry {
+                                        entry_id,
+                                        worktree_id: details.worktree_id,
+                                    });
+                                },
+                            );
+
+                            this.marked_entries = this
+                                .marked_entries
+                                .union(&new_selections)
+                                .cloned()
+                                .collect();
+
+                            this.selection = Some(clicked_entry);
+                            this.marked_entries.insert(clicked_entry);
                         }
+                    } else if event.down.modifiers.secondary() {
+                        if event.down.click_count > 1 {
+                            this.split_entry(entry_id, cx);
+                        } else {
+                            this.selection = Some(selection);
+                            if !this.marked_entries.insert(selection) {
+                                this.marked_entries.remove(&selection);
+                            }
+                        }
+                    } else if kind.is_dir() {
+                        this.marked_entries.clear();
+                        this.toggle_expanded(entry_id, window, cx);
+                    } else {
+                        let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
+                        let click_count = event.up.click_count;
+                        let focus_opened_item = !preview_tabs_enabled || click_count > 1;
+                        let allow_preview = preview_tabs_enabled && click_count == 1;
+                        this.open_entry(entry_id, focus_opened_item, allow_preview, cx);
                     }
-                } else if kind.is_dir() {
-                    this.marked_entries.clear();
-                    this.toggle_expanded(entry_id, cx);
-                } else {
-                    let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
-                    let click_count = event.up.click_count;
-                    let focus_opened_item = !preview_tabs_enabled || click_count > 1;
-                    let allow_preview = preview_tabs_enabled && click_count == 1;
-                    this.open_entry(entry_id, focus_opened_item, allow_preview, cx);
-                }
-            }))
+                }),
+            )
             .child(
                 ListItem::new(entry_id.to_proto() as usize)
                     .indent_level(depth)
@@ -5608,7 +5635,9 @@ mod tests {
             ]
         );
 
-        panel.update_in(cx, |panel, window, cx| assert!(panel.confirm_edit(window, cx).is_none()));
+        panel.update_in(cx, |panel, window, cx| {
+            assert!(panel.confirm_edit(window, cx).is_none())
+        });
     }
 
     #[gpui::test]
@@ -5807,7 +5836,9 @@ mod tests {
             ]
         );
 
-        panel.update_in(cx, |panel, window, cx| panel.cancel(&menu::Cancel {}, window, cx));
+        panel.update_in(cx, |panel, window, cx| {
+            panel.cancel(&menu::Cancel {}, window, cx)
+        });
         cx.executor().run_until_parked();
 
         select_path(&panel, "root1/a", cx);
@@ -5958,7 +5989,9 @@ mod tests {
 
         confirm.await.unwrap();
 
-        panel.update_in(cx, |panel, window, cx| panel.paste(&Default::default(), window, cx));
+        panel.update_in(cx, |panel, window, cx| {
+            panel.paste(&Default::default(), window, cx)
+        });
         cx.executor().run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..50, cx),
@@ -8131,7 +8164,8 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-        let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
+        let workspace =
+            cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 
