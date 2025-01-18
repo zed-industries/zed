@@ -309,7 +309,8 @@ message Envelope {
         RegisterBufferWithLanguageServers register_buffer_with_language_servers = 290;
 
         GetDocumentDiagnostics get_document_diagnostics = 291;
-        GetDocumentDiagnosticsResponse get_document_diagnostics_response = 292; // current max
+        GetDocumentDiagnosticsResponse get_document_diagnostics_response = 293;
+        RefreshDocumentsDiagnostics refresh_documents_diagnostics = 294; // current max
     }
 
     reserved 87 to 88;
@@ -2670,4 +2671,8 @@ message GetDocumentDiagnosticsResponse {
     uint64 server_id = 1;
     string uri = 2;
     repeated LspDiagnostic diagnostics = 3;
+}
+
+message RefreshDocumentsDiagnostics {
+    uint64 project_id = 1;
 }

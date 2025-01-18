@@ -376,6 +376,7 @@ messages!(
     (RegisterBufferWithLanguageServers, Background),
     (GetDocumentDiagnostics, Background),
     (GetDocumentDiagnosticsResponse, Background),
+    (RefreshDocumentsDiagnostics, Background)
 );
 
 request_messages!(
@@ -504,6 +505,7 @@ request_messages!(
     (InstallExtension, Ack),
     (RegisterBufferWithLanguageServers, Ack),
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
+    (RefreshDocumentsDiagnostics, Ack)
 );
 
 entity_messages!(
@@ -591,6 +593,7 @@ entity_messages!(
     CancelLanguageServerWork,
     RegisterBufferWithLanguageServers,
     GetDocumentDiagnostics,
+    RefreshDocumentsDiagnostics
 );
 
 entity_messages!(
