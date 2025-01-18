@@ -248,6 +248,8 @@ impl Platform for WindowsPlatform {
         on_finish_launching();
         let vsync_event = unsafe { Owned::new(CreateEventW(None, false, false, None).unwrap()) };
         begin_vsync(*vsync_event);
+        let mut start = std::time::Instant::now();
+        let mut fps = 0;
         'a: loop {
             let wait_result = unsafe {
                 MsgWaitForMultipleObjects(Some(&[*vsync_event]), false, INFINITE, QS_ALLINPUT)
@@ -255,7 +257,15 @@ impl Platform for WindowsPlatform {
 
             match wait_result {
                 // compositor clock ticked so we should draw a frame
-                WAIT_EVENT(0) => self.0.redraw_all(),
+                WAIT_EVENT(0) => {
+                    fps += 1;
+                    self.0.redraw_all();
+                    if start.elapsed().as_secs() >= 1 {
+                        println!("FPS: {}, tasks: {}", fps, self.0.main_receiver.len());
+                        fps = 0;
+                        start = std::time::Instant::now();
+                    }
+                }
                 // Windows thread messages are posted
                 WAIT_EVENT(1) => {
                     let mut msg = MSG::default();
