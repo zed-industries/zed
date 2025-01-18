@@ -227,25 +227,6 @@ impl PickerDelegate for FileContextPickerDelegate {
         };
 
         let confirm_behavior = self.confirm_behavior;
-<<<<<<< HEAD
-        cx.spawn_in(window, |this, mut cx| async move {
-            match task.await {
-                Ok(()) => {
-                    this.update_in(&mut cx, |this, window, cx| match confirm_behavior {
-                        ConfirmBehavior::KeepOpen => {}
-                        ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
-                    })?;
-                }
-                Err(err) => {
-                    let Some(workspace) = workspace.upgrade() else {
-                        return anyhow::Ok(());
-                    };
-
-                    workspace.update(&mut cx, |workspace, cx| {
-                        workspace.show_error(&err, cx);
-                    })?;
-                }
-=======
         cx.spawn(|this, mut cx| async move {
             match task.await.notify_async_err(&mut cx) {
                 None => anyhow::Ok(()),
@@ -253,7 +234,6 @@ impl PickerDelegate for FileContextPickerDelegate {
                     ConfirmBehavior::KeepOpen => {}
                     ConfirmBehavior::Close => this.delegate.dismissed(cx),
                 }),
->>>>>>> main
             }
         })
         .detach_and_log_err(cx);

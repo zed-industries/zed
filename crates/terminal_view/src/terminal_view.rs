@@ -13,14 +13,9 @@ use editor::{
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     anchored, deferred, div, impl_actions, AnyElement, AppContext, DismissEvent, EventEmitter,
-<<<<<<< HEAD
-    FocusHandle, Focusable, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
-    MouseDownEvent, Pixels, Render, ScrollWheelEvent, Styled, Subscription, Task, WeakModel,
-=======
     FocusHandle, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
     MouseDownEvent, Pixels, Render, ScrollWheelEvent, Stateful, Styled, Subscription, Task, View,
     VisualContext, WeakModel, WeakView,
->>>>>>> main
 };
 use language::Bias;
 use persistence::TERMINAL_DB;

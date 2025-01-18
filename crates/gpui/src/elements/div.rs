@@ -1492,18 +1492,11 @@ impl Interactivity {
                         self.active = Some(clicked_state.element);
                     }
                     if let Some(active_tooltip) = element_state.active_tooltip.as_ref() {
-<<<<<<< HEAD
-                        if let Some(active_tooltip) = active_tooltip.borrow().as_ref() {
-                            if let Some(tooltip) = active_tooltip.tooltip.clone() {
-                                self.tooltip_id = Some(window.set_tooltip(tooltip));
-                            }
-=======
                         if self.tooltip_builder.is_some() {
                             self.tooltip_id = set_tooltip_on_window(active_tooltip, cx);
                         } else {
                             // If there is no longer a tooltip builder, remove the active tooltip.
                             element_state.active_tooltip.take();
->>>>>>> main
                         }
                     }
                 }
@@ -2033,87 +2026,6 @@ impl Interactivity {
                     .get_or_insert_with(Default::default)
                     .clone();
 
-<<<<<<< HEAD
-                window.on_mouse_event({
-                    let active_tooltip = active_tooltip.clone();
-                    let hitbox = hitbox.clone();
-                    let source_bounds = hitbox.bounds;
-                    let tooltip_id = self.tooltip_id;
-                    move |_: &MouseMoveEvent, phase, window, cx| {
-                        let is_hovered =
-                            pending_mouse_down.borrow().is_none() && hitbox.is_hovered(window);
-                        let tooltip_is_hovered =
-                            tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(window));
-                        if !is_hovered && (!tooltip_is_hoverable || !tooltip_is_hovered) {
-                            if active_tooltip.borrow_mut().take().is_some() {
-                                window.refresh();
-                            }
-
-                            return;
-                        }
-
-                        if phase != DispatchPhase::Bubble {
-                            return;
-                        }
-
-                        if active_tooltip.borrow().is_none() {
-                            let task = window.spawn(cx, {
-                                let active_tooltip = active_tooltip.clone();
-                                let build_tooltip = tooltip_builder.build.clone();
-                                move |mut cx| async move {
-                                    cx.background_executor().timer(TOOLTIP_DELAY).await;
-                                    cx.update(|window, cx| {
-                                        active_tooltip.borrow_mut().replace(ActiveTooltip {
-                                            tooltip: Some(AnyTooltip {
-                                                view: build_tooltip(window, cx),
-                                                mouse_position: window.mouse_position(),
-                                                hoverable: tooltip_is_hoverable,
-                                                origin_bounds: source_bounds,
-                                            }),
-                                            _task: None,
-                                        });
-                                        window.refresh();
-                                    })
-                                    .ok();
-                                }
-                            });
-                            active_tooltip.borrow_mut().replace(ActiveTooltip {
-                                tooltip: None,
-                                _task: Some(task),
-                            });
-                        }
-                    }
-                });
-
-                window.on_mouse_event({
-                    let active_tooltip = active_tooltip.clone();
-                    let tooltip_id = self.tooltip_id;
-                    move |_: &MouseDownEvent, _, window, _cx| {
-                        let tooltip_is_hovered =
-                            tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(window));
-
-                        if (!tooltip_is_hoverable || !tooltip_is_hovered)
-                            && active_tooltip.borrow_mut().take().is_some()
-                        {
-                            window.refresh();
-                        }
-                    }
-                });
-
-                window.on_mouse_event({
-                    let active_tooltip = active_tooltip.clone();
-                    let tooltip_id = self.tooltip_id;
-                    move |_: &ScrollWheelEvent, _, window, _cx| {
-                        let tooltip_is_hovered =
-                            tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(window));
-                        if (!tooltip_is_hoverable || !tooltip_is_hovered)
-                            && active_tooltip.borrow_mut().take().is_some()
-                        {
-                            window.refresh();
-                        }
-                    }
-                })
-=======
                 let tooltip_is_hoverable = tooltip_builder.hoverable;
                 let build_tooltip = Rc::new(move |cx: &mut WindowContext| {
                     Some(((tooltip_builder.build)(cx), tooltip_is_hoverable))
@@ -2132,7 +2044,6 @@ impl Interactivity {
                     check_is_hovered,
                     cx,
                 );
->>>>>>> main
             }
 
             let active_state = element_state

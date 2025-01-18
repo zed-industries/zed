@@ -112,19 +112,10 @@ impl RenderContext {
 
 pub fn render_parsed_markdown(
     parsed: &ParsedMarkdown,
-<<<<<<< HEAD
-    workspace: Option<WeakModel<Workspace>>,
-    window: &mut Window,
-    cx: &mut AppContext,
-) -> Vec<AnyElement> {
-    let mut cx = RenderContext::new(workspace, window, cx);
-    let mut elements = Vec::new();
-=======
     workspace: Option<WeakView<Workspace>>,
     cx: &WindowContext,
 ) -> Div {
     let mut cx = RenderContext::new(workspace, cx);
->>>>>>> main
 
     v_flex().gap_3().children(
         parsed

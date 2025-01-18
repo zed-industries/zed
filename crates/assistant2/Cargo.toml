@@ -14,15 +14,8 @@ doctest = false
 
 [features]
 test-support = [
-<<<<<<< HEAD
-    "editor/test-support",
-    "language/test-support",
-    "project/test-support",
-    "text/test-support",
-=======
     "gpui/test-support",
     "language/test-support",
->>>>>>> main
 ]
 
 [dependencies]

@@ -778,9 +778,6 @@ impl GitPanel {
             .update(cx, |editor, cx| editor.set_text("", window, cx));
     }
 
-<<<<<<< HEAD
-    fn no_entries(&self, cx: &mut ModelContext<Self>) -> bool {
-=======
     fn fill_co_authors(&mut self, _: &FillCoAuthors, cx: &mut ViewContext<Self>) {
         const CO_AUTHOR_PREFIX: &str = "co-authored-by: ";
 
@@ -846,7 +843,6 @@ impl GitPanel {
     }
 
     fn no_entries(&self, cx: &mut ViewContext<Self>) -> bool {
->>>>>>> main
         self.git_state(cx)
             .map_or(true, |git_state| git_state.read(cx).entry_count() == 0)
     }

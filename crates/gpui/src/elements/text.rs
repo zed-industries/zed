@@ -1,16 +1,9 @@
 use crate::{
-<<<<<<< HEAD
-    ActiveTooltip, AnyTooltip, AnyView, AppContext, Bounds, DispatchPhase, Element, ElementId,
-    GlobalElementId, HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, SharedString, Size, TextRun, TextStyle, Truncate, WhiteSpace,
-    Window, WrappedLine, WrappedLineLayout, TOOLTIP_DELAY,
-=======
     register_tooltip_mouse_handlers, set_tooltip_on_window, ActiveTooltip, AnyView, Bounds,
     DispatchPhase, Element, ElementId, GlobalElementId, HighlightStyle, Hitbox, IntoElement,
     LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size,
     TextRun, TextStyle, TooltipId, Truncate, WhiteSpace, WindowContext, WrappedLine,
     WrappedLineLayout,
->>>>>>> main
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
@@ -521,20 +514,11 @@ impl TextLayout {
 pub struct InteractiveText {
     element_id: ElementId,
     text: StyledText,
-<<<<<<< HEAD
-    click_listener: Option<
-        Box<dyn Fn(&[Range<usize>], InteractiveTextClickEvent, &mut Window, &mut AppContext)>,
-    >,
-    hover_listener:
-        Option<Box<dyn Fn(Option<usize>, MouseMoveEvent, &mut Window, &mut AppContext)>>,
-    tooltip_builder: Option<Rc<dyn Fn(usize, &mut Window, &mut AppContext) -> Option<AnyView>>>,
-=======
     click_listener:
         Option<Box<dyn Fn(&[Range<usize>], InteractiveTextClickEvent, &mut WindowContext)>>,
     hover_listener: Option<Box<dyn Fn(Option<usize>, MouseMoveEvent, &mut WindowContext)>>,
     tooltip_builder: Option<Rc<dyn Fn(usize, &mut WindowContext) -> Option<AnyView>>>,
     tooltip_id: Option<TooltipId>,
->>>>>>> main
     clickable_ranges: Vec<Range<usize>>,
 }
 
@@ -632,18 +616,6 @@ impl Element for InteractiveText {
     ) -> Hitbox {
         window.with_optional_element_state::<InteractiveTextState, _>(
             global_id,
-<<<<<<< HEAD
-            |interactive_state, window| {
-                let interactive_state = interactive_state
-                    .map(|interactive_state| interactive_state.unwrap_or_default());
-
-                if let Some(interactive_state) = interactive_state.as_ref() {
-                    if let Some(active_tooltip) = interactive_state.active_tooltip.borrow().as_ref()
-                    {
-                        if let Some(tooltip) = active_tooltip.tooltip.clone() {
-                            window.set_tooltip(tooltip);
-                        }
-=======
             |interactive_state, cx| {
                 let mut interactive_state = interactive_state
                     .map(|interactive_state| interactive_state.unwrap_or_default());
@@ -655,7 +627,6 @@ impl Element for InteractiveText {
                     } else {
                         // If there is no longer a tooltip builder, remove the active tooltip.
                         interactive_state.active_tooltip.take();
->>>>>>> main
                     }
                 }
 
@@ -755,59 +726,6 @@ impl Element for InteractiveText {
                 if let Some(tooltip_builder) = self.tooltip_builder.clone() {
                     let active_tooltip = interactive_state.active_tooltip.clone();
                     let pending_mouse_down = interactive_state.mouse_down_index.clone();
-<<<<<<< HEAD
-                    let text_layout = text_layout.clone();
-
-                    window.on_mouse_event(move |event: &MouseMoveEvent, phase, window, cx| {
-                        let position = text_layout.index_for_position(event.position).ok();
-                        let is_hovered = position.is_some()
-                            && hitbox.is_hovered(window)
-                            && pending_mouse_down.get().is_none();
-                        if !is_hovered {
-                            active_tooltip.take();
-                            return;
-                        }
-                        let position = position.unwrap();
-
-                        if phase != DispatchPhase::Bubble {
-                            return;
-                        }
-
-                        if active_tooltip.borrow().is_none() {
-                            let task = window.spawn(cx, {
-                                let active_tooltip = active_tooltip.clone();
-                                let tooltip_builder = tooltip_builder.clone();
-
-                                move |mut cx| async move {
-                                    cx.background_executor().timer(TOOLTIP_DELAY).await;
-                                    cx.update(|window, cx| {
-                                        let new_tooltip = tooltip_builder(position, window, cx)
-                                            .map(|tooltip| ActiveTooltip {
-                                                tooltip: Some(AnyTooltip {
-                                                    view: tooltip,
-                                                    mouse_position: window.mouse_position(),
-                                                    hoverable: true,
-                                                    origin_bounds: source_bounds,
-                                                }),
-                                                _task: None,
-                                            });
-                                        *active_tooltip.borrow_mut() = new_tooltip;
-                                        window.refresh();
-                                    })
-                                    .ok();
-                                }
-                            });
-                            *active_tooltip.borrow_mut() = Some(ActiveTooltip {
-                                tooltip: None,
-                                _task: Some(task),
-                            });
-                        }
-                    });
-
-                    let active_tooltip = interactive_state.active_tooltip.clone();
-                    window.on_mouse_event(move |_: &MouseDownEvent, _, _, _| {
-                        active_tooltip.take();
-=======
                     let build_tooltip = Rc::new({
                         let tooltip_is_hoverable = false;
                         let text_layout = text_layout.clone();
@@ -829,7 +747,6 @@ impl Element for InteractiveText {
                                 && source_bounds.contains(&cx.mouse_position())
                                 && pending_mouse_down.get().is_none()
                         }
->>>>>>> main
                     });
                     register_tooltip_mouse_handlers(
                         &active_tooltip,

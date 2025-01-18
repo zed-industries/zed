@@ -22,16 +22,10 @@ use feature_flags::FeatureFlagAppExt;
 use futures::FutureExt;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
-<<<<<<< HEAD
-    actions, point, px, AppContext, AsyncAppContext, Context, Focusable, MenuItem, Model,
-    ModelContext, PathPromptOptions, PromptLevel, ReadGlobal, Task, TitlebarOptions, Window,
-    WindowKind, WindowOptions,
-=======
     actions, point, px, Action, AppContext, AsyncAppContext, Context, DismissEvent, Element,
     FocusableView, KeyBinding, MenuItem, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal,
     SharedString, Styled, Task, TitlebarOptions, View, ViewContext, VisualContext, WindowKind,
     WindowOptions,
->>>>>>> main
 };
 pub use open_listener::*;
 use outline_panel::OutlinePanel;

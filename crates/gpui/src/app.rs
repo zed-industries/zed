@@ -29,19 +29,11 @@ pub use test_context::*;
 use util::ResultExt;
 
 use crate::{
-<<<<<<< HEAD
-    current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
-    Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, Context, DispatchPhase,
-    DisplayId, Entity, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding,
-    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
-=======
     current_platform, hash, init_app_menus, Action, ActionBuildError, ActionRegistry, Any, AnyView,
     AnyWindowHandle, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, Context,
     DispatchPhase, DisplayId, Entity, EventEmitter, FocusHandle, FocusId, ForegroundExecutor,
     Global, KeyBinding, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions,
     Pixels, Platform, PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
->>>>>>> main
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
     Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,
 };

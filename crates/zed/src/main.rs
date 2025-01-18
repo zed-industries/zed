@@ -607,35 +607,6 @@ fn main() {
     });
 }
 
-<<<<<<< HEAD
-fn handle_keymap_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
-    struct KeymapParseErrorNotification;
-    let id = NotificationId::unique::<KeymapParseErrorNotification>();
-
-    for workspace in workspace::local_workspace_windows(cx) {
-        workspace
-            .update(cx, |workspace, _, cx| match &error {
-                Some(error) => {
-                    workspace.show_notification(id.clone(), cx, |cx| {
-                        cx.new_model(|_| {
-                            MessageNotification::new(format!("Invalid keymap file\n{error}"))
-                                .with_click_message("Open keymap file")
-                                .on_click(|window, cx| {
-                                    window
-                                        .dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
-                                    cx.emit(DismissEvent);
-                                })
-                        })
-                    });
-                }
-                None => workspace.dismiss_notification(&id, cx),
-            })
-            .log_err();
-    }
-}
-
-=======
->>>>>>> main
 fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
     struct SettingsParseErrorNotification;
     let id = NotificationId::unique::<SettingsParseErrorNotification>();
