@@ -3,14 +3,18 @@ use ui::{prelude::*, tooltip_container, Divider};
 
 pub struct TerminalTooltip {
     title: SharedString,
-    pid: u32,
+    pid: String,
+    cmd: String,
+    tty: String,
 }
 
 impl TerminalTooltip {
-    pub fn new(title: impl Into<SharedString>, pid: u32) -> Self {
+    pub fn new(title: impl Into<SharedString>, pid: String, cmd: String, tty: String) -> Self {
         Self {
             title: title.into(),
             pid,
+            cmd,
+            tty,
         }
     }
 }
@@ -26,7 +30,17 @@ impl Render for TerminalTooltip {
                         .child(Label::new(self.title.clone()))
                         .child(Divider::horizontal())
                         .child(
-                            Label::new(format!("Process ID (PID): {}", self.pid))
+                            Label::new(format!("{}", self.pid))
+                                .color(Color::Muted)
+                                .size(LabelSize::Small),
+                        )
+                        .child(
+                            Label::new(format!("{}", self.cmd))
+                                .color(Color::Muted)
+                                .size(LabelSize::Small),
+                        )
+                        .child(
+                            Label::new(format!("{}", self.tty))
                                 .color(Color::Muted)
                                 .size(LabelSize::Small),
                         ),
