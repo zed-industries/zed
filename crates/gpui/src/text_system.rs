@@ -374,12 +374,15 @@ impl WindowTextSystem {
         font_size: Pixels,
         runs: &[TextRun],
         wrap_width: Option<Pixels>,
+        line_clamp: Option<usize>,
     ) -> Result<SmallVec<[WrappedLine; 1]>> {
         let mut runs = runs.iter().filter(|run| run.len > 0).cloned().peekable();
         let mut font_runs = self.font_runs_pool.lock().pop().unwrap_or_default();
 
         let mut lines = SmallVec::new();
         let mut line_start = 0;
+        let mut max_wrap_lines = line_clamp.unwrap_or(usize::MAX);
+        let mut wrapped_lines = 0;
 
         let mut process_line = |line_text: SharedString| {
             let line_end = line_start + line_text.len();
@@ -430,9 +433,14 @@ impl WindowTextSystem {
                 run_start += run_len_within_line;
             }
 
-            let layout = self
-                .line_layout_cache
-                .layout_wrapped_line(&line_text, font_size, &font_runs, wrap_width);
+            let layout = self.line_layout_cache.layout_wrapped_line(
+                &line_text,
+                font_size,
+                &font_runs,
+                wrap_width,
+                Some(max_wrap_lines - wrapped_lines),
+            );
+            wrapped_lines += layout.wrap_boundaries.len();
 
             lines.push(WrappedLine {
                 layout,

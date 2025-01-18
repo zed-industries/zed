@@ -1,15 +1,17 @@
+use crate::TextStyleRefinement;
 use crate::{
     self as gpui, px, relative, rems, AbsoluteLength, AlignItems, CursorStyle, DefiniteLength,
     Fill, FlexDirection, FlexWrap, Font, FontStyle, FontWeight, Hsla, JustifyContent, Length,
-    SharedString, StrikethroughStyle, StyleRefinement, WhiteSpace,
+    SharedString, StrikethroughStyle, StyleRefinement, TextOverflow, WhiteSpace,
 };
-use crate::{TextStyleRefinement, Truncate};
 pub use gpui_macros::{
     border_style_methods, box_shadow_style_methods, cursor_style_methods, margin_style_methods,
     overflow_style_methods, padding_style_methods, position_style_methods,
     visibility_style_methods,
 };
 use taffy::style::{AlignContent, Display};
+
+const ELLIPSIS: &str = "…";
 
 /// A trait for elements that can be styled.
 /// Use this to opt-in to a utility CSS-like styling API.
@@ -64,17 +66,30 @@ pub trait Styled: Sized {
     fn text_ellipsis(mut self) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
-            .truncate = Some(Truncate::Ellipsis);
+            .text_overflow = Some(TextOverflow::Ellipsis(ELLIPSIS));
         self
     }
 
-    /// Sets the truncate overflowing text.
-    /// [Docs](https://tailwindcss.com/docs/text-overflow#truncate)
-    fn truncate(mut self) -> Self {
+    /// Sets the text overflow behavior of the element.
+    fn text_overflow(mut self, overflow: TextOverflow) -> Self {
         self.text_style()
             .get_or_insert_with(Default::default)
-            .truncate = Some(Truncate::Truncate);
+            .text_overflow = Some(overflow);
         self
+    }
+
+    /// Sets the truncate to prevent text from wrapping and truncate overflowing text with an ellipsis (…) if needed.
+    /// [Docs](https://tailwindcss.com/docs/text-overflow#truncate)
+    fn truncate(mut self) -> Self {
+        self.overflow_hidden().whitespace_nowrap().text_ellipsis()
+    }
+
+    /// Sets number of lines to show before truncating the text.
+    /// [Docs](https://tailwindcss.com/docs/line-clamp)
+    fn line_clamp(mut self, lines: usize) -> Self {
+        let mut text_style = self.text_style().get_or_insert_with(Default::default);
+        text_style.line_clamp = Some(lines);
+        self.overflow_hidden()
     }
 
     /// Sets the flex direction of the element to `column`.
