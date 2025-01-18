@@ -486,7 +486,7 @@ async fn test_basic_following(
 
         // Client B activates a multibuffer that was created by following client A. Client A returns to that multibuffer.
         workspace_b.update(cx_b, |workspace, cx| {
-            workspace.activate_item(&multibuffer_editor_b, true, true, cx)
+            workspace.activate_item(&multibuffer_editor_b, true, true, window, cx)
         });
         executor.run_until_parked();
         workspace_a.update(cx_a, |workspace, cx| {
@@ -497,10 +497,10 @@ async fn test_basic_following(
         });
 
         // Client B activates a panel, and the previously-opened screen-sharing item gets activated.
-        let panel = cx_b.new_view(|cx| TestPanel::new(DockPosition::Left, cx));
+        let panel = cx_b.new_view(|cx| TestPanel::new(DockPosition::Left, window, cx));
         workspace_b.update(cx_b, |workspace, cx| {
-            workspace.add_panel(panel, cx);
-            workspace.toggle_panel_focus::<TestPanel>(cx);
+            workspace.add_panel(panel, window, cx);
+            workspace.toggle_panel_focus::<TestPanel>(window, cx);
         });
         executor.run_until_parked();
         assert_eq!(

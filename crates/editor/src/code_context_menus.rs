@@ -2,7 +2,7 @@ use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     div, pulsating_between, px, uniform_list, Animation, AnimationExt, AnyElement,
     BackgroundExecutor, Div, FontWeight, ListSizingBehavior, Model, ScrollStrategy, SharedString,
-    Size, StrikethroughStyle, StyledText, UniformListScrollHandle, ViewContext, WeakView,
+    Size, StrikethroughStyle, StyledText, UniformListScrollHandle, WeakModel,
 };
 use language::Buffer;
 use language::{CodeLabel, Documentation};
@@ -306,7 +306,7 @@ impl CompletionsMenu {
         cx: &mut ModelContext<Editor>,
     ) {
         let index = self.entries.borrow().len() - 1;
-        self.update_selection_index(index, provider, cx);
+        self.update_selection_index(index, provider, window, cx);
     }
 
     fn update_selection_index(
@@ -495,7 +495,7 @@ impl CompletionsMenu {
             cx.model().clone(),
             "completions",
             self.entries.borrow().len(),
-            move |_editor, range, cx| {
+            move |_editor, range, _window, cx| {
                 last_rendered_range.borrow_mut().replace(range.clone());
                 let start_ix = range.start;
                 let completions_guard = completions.borrow_mut();

@@ -327,93 +327,93 @@ impl EditorElement {
                 .go_to_definition_split(a, window, cx)
                 .detach_and_log_err(cx);
         });
-        register_action(view, cx, Editor::open_url);
-        register_action(view, cx, Editor::open_selected_filename);
-        register_action(view, cx, Editor::fold);
-        register_action(view, cx, Editor::fold_at_level);
-        register_action(view, cx, Editor::fold_all);
-        register_action(view, cx, Editor::fold_function_bodies);
-        register_action(view, cx, Editor::fold_at);
-        register_action(view, cx, Editor::fold_recursive);
-        register_action(view, cx, Editor::toggle_fold);
-        register_action(view, cx, Editor::toggle_fold_recursive);
-        register_action(view, cx, Editor::unfold_lines);
-        register_action(view, cx, Editor::unfold_recursive);
-        register_action(view, cx, Editor::unfold_all);
-        register_action(view, cx, Editor::unfold_at);
-        register_action(view, cx, Editor::fold_selected_ranges);
-        register_action(view, cx, Editor::show_completions);
-        register_action(view, cx, Editor::toggle_code_actions);
-        register_action(view, cx, Editor::open_excerpts);
-        register_action(view, cx, Editor::open_excerpts_in_split);
-        register_action(view, cx, Editor::open_proposed_changes_editor);
-        register_action(view, cx, Editor::toggle_soft_wrap);
-        register_action(view, cx, Editor::toggle_tab_bar);
-        register_action(view, cx, Editor::toggle_line_numbers);
-        register_action(view, cx, Editor::toggle_relative_line_numbers);
-        register_action(view, cx, Editor::toggle_indent_guides);
-        register_action(view, cx, Editor::toggle_inlay_hints);
-        register_action(view, cx, Editor::toggle_inline_completions);
-        register_action(view, cx, hover_popover::hover);
-        register_action(view, cx, Editor::reveal_in_finder);
-        register_action(view, cx, Editor::copy_path);
-        register_action(view, cx, Editor::copy_relative_path);
-        register_action(view, cx, Editor::copy_highlight_json);
-        register_action(view, cx, Editor::copy_permalink_to_line);
-        register_action(view, cx, Editor::open_permalink_to_line);
-        register_action(view, cx, Editor::copy_file_location);
-        register_action(view, cx, Editor::toggle_git_blame);
-        register_action(view, cx, Editor::toggle_git_blame_inline);
-        register_action(view, cx, Editor::toggle_hunk_diff);
-        register_action(view, cx, Editor::expand_all_hunk_diffs);
-        register_action(view, cx, |editor, action, cx| {
-            if let Some(task) = editor.format(action, cx) {
-                task.detach_and_notify_err(cx);
+        register_action(view, window, Editor::open_url);
+        register_action(view, window, Editor::open_selected_filename);
+        register_action(view, window, Editor::fold);
+        register_action(view, window, Editor::fold_at_level);
+        register_action(view, window, Editor::fold_all);
+        register_action(view, window, Editor::fold_function_bodies);
+        register_action(view, window, Editor::fold_at);
+        register_action(view, window, Editor::fold_recursive);
+        register_action(view, window, Editor::toggle_fold);
+        register_action(view, window, Editor::toggle_fold_recursive);
+        register_action(view, window, Editor::unfold_lines);
+        register_action(view, window, Editor::unfold_recursive);
+        register_action(view, window, Editor::unfold_all);
+        register_action(view, window, Editor::unfold_at);
+        register_action(view, window, Editor::fold_selected_ranges);
+        register_action(view, window, Editor::show_completions);
+        register_action(view, window, Editor::toggle_code_actions);
+        register_action(view, window, Editor::open_excerpts);
+        register_action(view, window, Editor::open_excerpts_in_split);
+        register_action(view, window, Editor::open_proposed_changes_editor);
+        register_action(view, window, Editor::toggle_soft_wrap);
+        register_action(view, window, Editor::toggle_tab_bar);
+        register_action(view, window, Editor::toggle_line_numbers);
+        register_action(view, window, Editor::toggle_relative_line_numbers);
+        register_action(view, window, Editor::toggle_indent_guides);
+        register_action(view, window, Editor::toggle_inlay_hints);
+        register_action(view, window, Editor::toggle_inline_completions);
+        register_action(view, window, hover_popover::hover);
+        register_action(view, window, Editor::reveal_in_finder);
+        register_action(view, window, Editor::copy_path);
+        register_action(view, window, Editor::copy_relative_path);
+        register_action(view, window, Editor::copy_highlight_json);
+        register_action(view, window, Editor::copy_permalink_to_line);
+        register_action(view, window, Editor::open_permalink_to_line);
+        register_action(view, window, Editor::copy_file_location);
+        register_action(view, window, Editor::toggle_git_blame);
+        register_action(view, window, Editor::toggle_git_blame_inline);
+        register_action(view, window, Editor::toggle_hunk_diff);
+        register_action(view, window, Editor::expand_all_hunk_diffs);
+        register_action(view, window, |editor, action, window, cx| {
+            if let Some(task) = editor.format(action, window, cx) {
+                task.detach_and_notify_err(window, cx);
             } else {
                 cx.propagate();
             }
         });
-        register_action(view, cx, |editor, action, cx| {
-            if let Some(task) = editor.format_selections(action, cx) {
-                task.detach_and_notify_err(cx);
+        register_action(view, window, |editor, action, window, cx| {
+            if let Some(task) = editor.format_selections(action, window, cx) {
+                task.detach_and_notify_err(window, cx);
             } else {
                 cx.propagate();
             }
         });
-        register_action(view, cx, Editor::restart_language_server);
-        register_action(view, cx, Editor::cancel_language_server_work);
-        register_action(view, cx, Editor::show_character_palette);
-        register_action(view, cx, |editor, action, cx| {
-            if let Some(task) = editor.confirm_completion(action, cx) {
-                task.detach_and_notify_err(cx);
+        register_action(view, window, Editor::restart_language_server);
+        register_action(view, window, Editor::cancel_language_server_work);
+        register_action(view, window, Editor::show_character_palette);
+        register_action(view, window, |editor, action, window, cx| {
+            if let Some(task) = editor.confirm_completion(action, window, cx) {
+                task.detach_and_notify_err(window, cx);
             } else {
                 cx.propagate();
             }
         });
-        register_action(view, cx, |editor, action, cx| {
-            if let Some(task) = editor.compose_completion(action, cx) {
-                task.detach_and_notify_err(cx);
+        register_action(view, window, |editor, action, window, cx| {
+            if let Some(task) = editor.compose_completion(action, window, cx) {
+                task.detach_and_notify_err(window, cx);
             } else {
                 cx.propagate();
             }
         });
-        register_action(view, cx, |editor, action, cx| {
-            if let Some(task) = editor.confirm_code_action(action, cx) {
-                task.detach_and_notify_err(cx);
+        register_action(view, window, |editor, action, window, cx| {
+            if let Some(task) = editor.confirm_code_action(action, window, cx) {
+                task.detach_and_notify_err(window, cx);
             } else {
                 cx.propagate();
             }
         });
-        register_action(view, cx, |editor, action, cx| {
-            if let Some(task) = editor.rename(action, cx) {
-                task.detach_and_notify_err(cx);
+        register_action(view, window, |editor, action, window, cx| {
+            if let Some(task) = editor.rename(action, window, cx) {
+                task.detach_and_notify_err(window, cx);
             } else {
                 cx.propagate();
             }
         });
-        register_action(view, cx, |editor, action, cx| {
-            if let Some(task) = editor.confirm_rename(action, cx) {
-                task.detach_and_notify_err(cx);
+        register_action(view, window, |editor, action, window, cx| {
+            if let Some(task) = editor.confirm_rename(action, window, cx) {
+                task.detach_and_notify_err(window, cx);
             } else {
                 cx.propagate();
             }
@@ -504,7 +504,8 @@ impl EditorElement {
         text_hitbox: &Hitbox,
         gutter_hitbox: &Hitbox,
         line_numbers: &HashMap<MultiBufferRow, LineNumberLayout>,
-        window: &mut Window, cx: &mut ModelContext<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) {
         if window.default_prevented() {
             return;
@@ -557,6 +558,7 @@ impl EditorElement {
                                 line_offset_from_top,
                             }),
                             false,
+                            window,
                             cx,
                         );
                         return;
@@ -629,6 +631,7 @@ impl EditorElement {
                         line_offset_from_top,
                     }),
                     modifiers.alt,
+                    window,
                     cx,
                 );
                 cx.stop_propagation();
@@ -734,9 +737,10 @@ impl EditorElement {
                             add: false,
                             click_count: 1,
                         },
+                        window,
                         cx,
                     );
-                    editor.insert(&text, cx);
+                    editor.insert(&text, window, cx);
                 }
                 cx.stop_propagation()
             }
@@ -2063,7 +2067,8 @@ impl EditorElement {
         buffer_rows: impl Iterator<Item = Option<MultiBufferRow>>,
         newest_selection_head: Option<DisplayPoint>,
         snapshot: &EditorSnapshot,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Arc<HashMap<MultiBufferRow, LineNumberLayout>> {
         let include_line_numbers = snapshot.show_line_numbers.unwrap_or_else(|| {
             EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode == EditorMode::Full
@@ -4068,14 +4073,14 @@ impl EditorElement {
 
             let color = if is_active {
                 cx.theme().colors().editor_active_line_number
-            } else if !is_singleton && hitbox.is_hovered(cx) {
+            } else if !is_singleton && hitbox.is_hovered(window) {
                 cx.theme().colors().editor_hover_line_number
             } else {
                 cx.theme().colors().editor_line_number
             };
 
             let Some(line) = self
-                .shape_line_number(shaped_line.text.clone(), color, cx)
+                .shape_line_number(shaped_line.text.clone(), color, window)
                 .log_err()
             else {
                 continue;

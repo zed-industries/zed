@@ -2174,7 +2174,7 @@ impl Pane {
             Some(DecoratedIcon::new(
                 icon.size(IconSize::Small).color(Color::Muted),
                 Some(
-                    IconDecoration::new(icon_decoration, knockout_item_color, window, cx)
+                    IconDecoration::new(icon_decoration, knockout_item_color, cx)
                         .color(icon_color.color(cx))
                         .position(Point {
                             x: px(-2.),
@@ -2277,8 +2277,10 @@ impl Pane {
                 this.handle_external_paths_drop(paths, window, cx)
             }))
             .when_some(item.tab_tooltip_content(cx), |tab, content| match content {
-                TabTooltipContent::Text(text) => tab.tooltip(move |cx| Tooltip::text(text.clone())),
-                TabTooltipContent::Custom(element_fn) => tab.tooltip(move |cx| element_fn(cx)),
+                TabTooltipContent::Text(text) => tab.tooltip(Tooltip::text(text.clone())),
+                TabTooltipContent::Custom(element_fn) => {
+                    tab.tooltip(move |window, cx| element_fn(window, cx))
+                }
             })
             .start_slot::<Indicator>(indicator)
             .map(|this| {
@@ -3306,12 +3308,7 @@ impl Render for Pane {
 }
 
 impl ItemNavHistory {
-    pub fn push<D: 'static + Send + Any>(
-        &mut self,
-        data: Option<D>,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) {
+    pub fn push<D: 'static + Send + Any>(&mut self, data: Option<D>, cx: &mut AppContext) {
         if self
             .item
             .upgrade()

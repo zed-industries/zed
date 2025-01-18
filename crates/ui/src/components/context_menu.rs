@@ -31,7 +31,7 @@ impl ContextMenuItem {
     ) -> Self {
         Self::CustomEntry {
             entry_render: Box::new(entry_render),
-            handler: Rc::new(move |_, cx| handler(cx)),
+            handler: Rc::new(move |_, window, cx| handler(window, cx)),
             selectable: true,
         }
     }
@@ -56,7 +56,7 @@ impl ContextMenuEntry {
             icon: None,
             icon_size: IconSize::Small,
             icon_position: IconPosition::Start,
-            handler: Rc::new(|_, _| {}),
+            handler: Rc::new(|_, _, _| {}),
             action: None,
             disabled: false,
         }
@@ -88,7 +88,7 @@ impl ContextMenuEntry {
     }
 
     pub fn handler(mut self, handler: impl Fn(&mut Window, &mut AppContext) + 'static) -> Self {
-        self.handler = Rc::new(move |_, cx| handler(cx));
+        self.handler = Rc::new(move |_, window, cx| handler(window, cx));
         self
     }
 
@@ -476,7 +476,7 @@ impl Render for ContextMenu {
                 v_flex()
                     .id("context-menu")
                     .min_w(px(200.))
-                    .max_h(vh(0.75, cx))
+                    .max_h(vh(0.75, window))
                     .flex_1()
                     .overflow_y_scroll()
                     .track_focus(&self.focus_handle(cx))
@@ -596,7 +596,9 @@ impl Render for ContextMenu {
                                                             )
                                                         })
                                                         .unwrap_or_else(|| {
-                                                            KeyBinding::for_action(&**action, cx)
+                                                            KeyBinding::for_action(
+                                                                &**action, window,
+                                                            )
                                                         })
                                                         .map(|binding| div().ml_4().child(binding))
                                                 })),

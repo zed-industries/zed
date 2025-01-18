@@ -4,8 +4,8 @@ use collections::HashSet;
 use editor::Editor;
 use file_icons::FileIcons;
 use gpui::{
-    AppContext, Bounds, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
-    Subscription, View, WeakModel, WeakView,
+    AppContext, Bounds, DismissEvent, EventEmitter, FocusHandle, Focusable, Model, Subscription,
+    WeakModel,
 };
 use itertools::Itertools;
 use language::Buffer;
@@ -83,8 +83,8 @@ impl ContextStrip {
         cx: &ModelContext<Self>,
     ) -> Option<SuggestedContext> {
         match self.suggest_context_kind {
-            SuggestContextKind::File => self.suggested_file(cx),
-            SuggestContextKind::Thread => self.suggested_thread(cx),
+            SuggestContextKind::File => self.suggested_file(window, cx),
+            SuggestContextKind::Thread => self.suggested_thread(window, cx),
         }
     }
 
@@ -322,7 +322,7 @@ impl ContextStrip {
             let context_store = self.context_store.read(cx);
 
             if self.is_suggested_focused(context_store.context()) {
-                self.add_suggested_context(&suggested, cx);
+                self.add_suggested_context(&suggested, window, cx);
             }
         }
     }
@@ -364,7 +364,7 @@ impl ContextStrip {
     }
 }
 
-impl FocusableView for ContextStrip {
+impl Focusable for ContextStrip {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
@@ -381,7 +381,7 @@ impl Render for ContextStrip {
         let context_picker = self.context_picker.clone();
         let focus_handle = self.focus_handle.clone();
 
-        let suggested_context = self.suggested_context(cx);
+        let suggested_context = self.suggested_context(window, cx);
 
         let dupe_names = context
             .iter()
@@ -404,7 +404,7 @@ impl Render for ContextStrip {
             .on_action(cx.listener(Self::remove_focused_context))
             .on_action(cx.listener(Self::accept_suggested_context))
             .on_children_prepainted({
-                let view = cx.view().downgrade();
+                let view = cx.model().downgrade();
                 move |children_bounds, cx| {
                     view.update(cx, |this, _| {
                         this.children_bounds = Some(children_bounds);
@@ -416,7 +416,7 @@ impl Render for ContextStrip {
                 PopoverMenu::new("context-picker")
                     .menu(move |cx| {
                         context_picker.update(cx, |this, cx| {
-                            this.init(cx);
+                            this.init(window, cx);
                         });
 
                         Some(context_picker.clone())
@@ -433,6 +433,7 @@ impl Render for ContextStrip {
                                         "Add Context",
                                         &ToggleContextPicker,
                                         &focus_handle,
+                                        window,
                                         cx,
                                     )
                                 }
@@ -511,6 +512,7 @@ impl Render for ContextStrip {
                                         "Remove All Context",
                                         &RemoveAllContext,
                                         &focus_handle,
+                                        window,
                                         cx,
                                     )
                                 }
@@ -518,7 +520,7 @@ impl Render for ContextStrip {
                             .on_click(cx.listener({
                                 let focus_handle = focus_handle.clone();
                                 move |_this, _event, cx| {
-                                    focus_handle.dispatch_action(&RemoveAllContext, cx);
+                                    focus_handle.dispatch_action(&RemoveAllContext, window, cx);
                                 }
                             })),
                     )

@@ -152,7 +152,7 @@ impl GitPanel {
     ) -> Model<Self> {
         let fs = workspace.app_state().fs.clone();
         let project = workspace.project().clone();
-        let weak_workspace = cx.view().downgrade();
+        let weak_workspace = cx.model().downgrade();
         let git_state = project.read(cx).git_state().cloned();
         let language_registry = workspace.app_state().languages.clone();
         let current_commit_message = git_state
@@ -249,7 +249,7 @@ impl GitPanel {
             let commit_editor = cx.new_model(|cx| {
                 let theme = ThemeSettings::get_global(cx);
 
-                let mut text_style = cx.text_style();
+                let mut text_style = window.text_style();
                 let refinement = TextStyleRefinement {
                     font_family: Some(theme.buffer_font.family.clone()),
                     font_features: Some(FontFeatures::disable_ligatures()),
@@ -313,14 +313,14 @@ impl GitPanel {
 
             let rebuild_requested = Arc::new(AtomicBool::new(false));
             let flag = rebuild_requested.clone();
-            let handle = cx.view().downgrade();
+            let handle = cx.model().downgrade();
             cx.spawn(|_, mut cx| async move {
                 loop {
                     cx.background_executor().timer(UPDATE_DEBOUNCE).await;
                     if flag.load(Ordering::Relaxed) {
                         if let Some(this) = handle.upgrade() {
                             this.update(&mut cx, |this, cx| {
-                                this.update_visible_entries(cx);
+                                this.update_visible_entries(window, cx);
                             })
                             .ok();
                         }
@@ -380,7 +380,7 @@ impl GitPanel {
                 Event::OpenedEntry { path } => {
                     workspace
                         .open_path_preview(path, None, false, false, window, cx)
-                        .detach_and_prompt_err("Failed to open file", window, cx, |e, _| {
+                        .detach_and_prompt_err("Failed to open file", window, cx, |e, _, _| {
                             Some(format!("{e}"))
                         });
                 }
@@ -405,7 +405,7 @@ impl GitPanel {
         Some(active_repository)
     }
 
-    fn serialize(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn serialize(&mut self, cx: &mut ModelContext<Self>) {
         // TODO: we can store stage status here
         let width = self.width;
         self.pending_serialization = cx.background_executor().spawn(
@@ -422,7 +422,7 @@ impl GitPanel {
         );
     }
 
-    fn dispatch_context(&self, window: &Window, cx: &ModelContext<Self>) -> KeyContext {
+    fn dispatch_context(&self, window: &mut Window, cx: &ModelContext<Self>) -> KeyContext {
         let mut dispatch_context = KeyContext::new_with_defaults();
         dispatch_context.add("GitPanel");
 
@@ -431,7 +431,7 @@ impl GitPanel {
             dispatch_context.add("ChangesList");
         }
 
-        if self.commit_editor.read(cx).is_focused(cx) {
+        if self.commit_editor.read(cx).is_focused(window) {
             dispatch_context.add("CommitEditor");
         }
 
@@ -893,7 +893,6 @@ impl GitPanel {
         &mut self,
         _buffer: Model<Buffer>,
         event: &language::BufferEvent,
-        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if let language::BufferEvent::Reparsed | language::BufferEvent::Edited = event {
@@ -1186,7 +1185,7 @@ impl GitPanel {
                 .when(!show_container, |this| {
                     this.absolute().right_1().top_1().bottom_1().w(px(12.))
                 })
-                .on_mouse_move(cx.listener(|_, _, cx| {
+                .on_mouse_move(cx.listener(|_, _, _, cx| {
                     cx.notify();
                     cx.stop_propagation()
                 }))
@@ -1226,7 +1225,7 @@ impl GitPanel {
             .size_full()
             .overflow_hidden()
             .child(
-                uniform_list(cx.view().clone(), "entries", entry_count, {
+                uniform_list(cx.model().clone(), "entries", entry_count, {
                     move |git_panel, range, cx| {
                         let mut items = Vec::with_capacity(range.end - range.start);
                         git_panel.for_each_visible_entry(range, cx, |ix, details, cx| {
@@ -1278,7 +1277,7 @@ impl GitPanel {
         let checkbox_id =
             ElementId::Name(format!("checkbox_{}", entry_details.display_name).into());
         let is_tree_view = false;
-        let handle = cx.view().downgrade();
+        let handle = cx.model().downgrade();
 
         let end_slot = h_flex()
             .invisible()
@@ -1352,7 +1351,7 @@ impl GitPanel {
                                     .unstage_entries(vec![repo_path], this.err_sender.clone()),
                             });
                             if let Err(e) = result {
-                                this.show_err_toast("toggle staged error", e, cx);
+                                this.show_err_toast("toggle staged error", e, window, cx);
                             }
                         });
                     }
@@ -1500,7 +1499,7 @@ impl Panel for GitPanel {
 
     fn set_size(&mut self, size: Option<Pixels>, _: &mut Window, cx: &mut ModelContext<Self>) {
         self.width = size;
-        self.serialize(window, cx);
+        self.serialize(cx);
         cx.notify();
     }
 

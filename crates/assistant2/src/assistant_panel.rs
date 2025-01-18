@@ -466,7 +466,7 @@ impl AssistantPanel {
                     .child(v_flex().mx_auto().w_4_5().gap_2().children(
                         recent_threads.into_iter().map(|thread| {
                             // TODO: keyboard navigation
-                            PastThread::new(thread, cx.view().downgrade(), false)
+                            PastThread::new(thread, cx.model().downgrade(), false)
                         }),
                     ))
                     .child(

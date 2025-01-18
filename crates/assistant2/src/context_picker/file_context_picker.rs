@@ -5,7 +5,7 @@ use std::sync::Arc;
 use file_icons::FileIcons;
 use fuzzy::PathMatch;
 use gpui::{
-    AppContext, DismissEvent, FocusHandle, FocusableView, Stateful, Task, View, WeakModel, WeakView,
+    AppContext, DismissEvent, FocusHandle, Focusable, Stateful, Task, WeakModel,
 };
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};

@@ -8,7 +8,7 @@ use db::sqlez::{
     bindable::{Bind, Column, StaticColumnCount},
     statement::Statement,
 };
-use gpui::{AsyncWindowContext, Model, View, WeakView};
+use gpui::{AsyncWindowContext, Model, WeakModel};
 use itertools::Itertools as _;
 use project::Project;
 use remote::ssh_session::SshProjectId;

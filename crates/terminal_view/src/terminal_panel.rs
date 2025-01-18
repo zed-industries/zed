@@ -101,7 +101,12 @@ impl TerminalPanel {
         terminal_panel
     }
 
-    pub fn set_assistant_enabled(&mut self, enabled: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn set_assistant_enabled(
+        &mut self,
+        enabled: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.assistant_enabled = enabled;
         if enabled {
             let focus_handle = self
@@ -290,7 +295,8 @@ impl TerminalPanel {
             let should_focus = workspace
                 .update(&mut cx, |workspace, cx| {
                     workspace.active_item(cx).is_none()
-                        && workspace.is_dock_at_position_open(terminal_panel.position(cx), cx)
+                        && workspace
+                            .is_dock_at_position_open(terminal_panel.position(window, cx), cx)
                 })
                 .unwrap_or(false);
 
@@ -298,7 +304,7 @@ impl TerminalPanel {
                 terminal_panel
                     .update(&mut cx, |panel, cx| {
                         panel.active_pane.update(cx, |pane, cx| {
-                            pane.focus_active_item(cx);
+                            pane.focus_active_item(window, cx);
                         });
                     })
                     .ok();
@@ -457,7 +463,12 @@ impl TerminalPanel {
             .detach_and_log_err(cx);
     }
 
-    fn spawn_task(&mut self, task: &SpawnInTerminal, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn spawn_task(
+        &mut self,
+        task: &SpawnInTerminal,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let Ok(is_local) = self
             .workspace
             .update(cx, |workspace, cx| workspace.project().read(cx).is_local())
@@ -477,20 +488,29 @@ impl TerminalPanel {
         };
 
         if task.allow_concurrent_runs && task.use_new_terminal {
-            self.spawn_in_new_terminal(task, cx).detach_and_log_err(cx);
+            self.spawn_in_new_terminal(task, window, cx)
+                .detach_and_log_err(cx);
             return;
         }
 
         let mut terminals_for_task = self.terminals_for_task(&task.full_label, cx);
         let Some(existing) = terminals_for_task.pop() else {
-            self.spawn_in_new_terminal(task, cx).detach_and_log_err(cx);
+            self.spawn_in_new_terminal(task, window, cx)
+                .detach_and_log_err(cx);
             return;
         };
 
         let (existing_item_index, task_pane, existing_terminal) = existing;
         if task.allow_concurrent_runs {
-            self.replace_terminal(task, task_pane, existing_item_index, existing_terminal, cx)
-                .detach();
+            self.replace_terminal(
+                task,
+                task_pane,
+                existing_item_index,
+                existing_terminal,
+                window,
+                cx,
+            )
+            .detach();
             return;
         }
 
@@ -501,7 +521,7 @@ impl TerminalPanel {
                 let task = terminal_panel.update(&mut cx, |terminal_panel, cx| {
                     if task.use_new_terminal {
                         terminal_panel
-                            .spawn_in_new_terminal(task, cx)
+                            .spawn_in_new_terminal(task, window, cx)
                             .detach_and_log_err(cx);
                         None
                     } else {
@@ -510,6 +530,7 @@ impl TerminalPanel {
                             task_pane,
                             existing_item_index,
                             existing_terminal,
+                            window,
                             cx,
                         ))
                     }

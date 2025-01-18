@@ -158,7 +158,7 @@ pub fn initialize_workspace(
         .detach();
 
         #[cfg(not(target_os = "macos"))]
-        initialize_file_watcher(cx);
+        initialize_file_watcher(window, cx);
 
         if let Some(specs) = window.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);

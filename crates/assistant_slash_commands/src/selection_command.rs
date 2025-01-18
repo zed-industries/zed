@@ -5,8 +5,8 @@ use assistant_slash_command::{
 };
 use editor::Editor;
 use futures::StreamExt;
-use gpui::{AppContext, Task, WeakView};
-use gpui::{SharedString, ViewContext, WindowContext};
+use gpui::{AppContext, Task};
+use gpui::{SharedString};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;

@@ -7,7 +7,7 @@ use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
     px, AppContext, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
-    WindowContext,
+    Window,
 };
 use refineable::Refineable;
 use schemars::{

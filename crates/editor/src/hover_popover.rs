@@ -756,7 +756,7 @@ impl InfoPopover {
         self.scroll_handle.set_offset(current);
     }
 
-    fn render_vertical_scrollbar(&self, window: &mut Window, cx: &mut ModelContext<Editor>) -> Stateful<Div> {
+    fn render_vertical_scrollbar(&self, cx: &mut ModelContext<Editor>) -> Stateful<Div> {
         div()
             .occlude()
             .id("info-popover-vertical-scroll")

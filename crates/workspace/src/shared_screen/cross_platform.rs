@@ -5,8 +5,8 @@ use crate::{
 use call::{RemoteVideoTrack, RemoteVideoTrackView};
 use client::{proto::PeerId, User};
 use gpui::{
-    div, AppContext, EventEmitter, FocusHandle, FocusableView, InteractiveElement, ParentElement,
-    Render, SharedString, Styled, View, ViewContext, VisualContext, WindowContext,
+    div, AppContext, EventEmitter, FocusHandle, Focusable, InteractiveElement, Model,
+    ParentElement, Render, SharedString, Styled,
 };
 use std::sync::Arc;
 use ui::{prelude::*, Icon, IconName};
@@ -28,9 +28,10 @@ impl SharedScreen {
         track: RemoteVideoTrack,
         peer_id: PeerId,
         user: Arc<User>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
-        let view = cx.new_model(|cx| RemoteVideoTrackView::new(track.clone(), cx));
+        let view = cx.new_model(|cx| RemoteVideoTrackView::new(track.clone(), window, cx));
         cx.subscribe(&view, |_, _, ev, cx| match ev {
             call::RemoteVideoTrackViewEvent::Close => cx.emit(Event::Close),
         })
@@ -47,13 +48,13 @@ impl SharedScreen {
 
 impl EventEmitter<Event> for SharedScreen {}
 
-impl FocusableView for SharedScreen {
+impl Focusable for SharedScreen {
     fn focus_handle(&self, _: &AppContext) -> FocusHandle {
         self.focus.clone()
     }
 }
 impl Render for SharedScreen {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         div()
             .bg(cx.theme().colors().editor_background)
             .track_focus(&self.focus)
@@ -70,7 +71,7 @@ impl Item for SharedScreen {
         Some(format!("{}'s screen", self.user.github_login).into())
     }
 
-    fn deactivated(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn deactivated(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) {
         if let Some(nav_history) = self.nav_history.as_mut() {
             nav_history.push::<()>(None, cx);
         }
@@ -88,17 +89,23 @@ impl Item for SharedScreen {
         None
     }
 
-    fn set_nav_history(&mut self, history: ItemNavHistory, _: &mut ViewContext<Self>) {
+    fn set_nav_history(
+        &mut self,
+        history: ItemNavHistory,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Self>,
+    ) {
         self.nav_history = Some(history);
     }
 
     fn clone_on_split(
         &self,
         _workspace_id: Option<WorkspaceId>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Option<Model<Self>> {
         Some(cx.new_model(|cx| Self {
-            view: self.view.update(cx, |view, cx| view.clone(cx)),
+            view: self.view.update(cx, |view, cx| view.clone(window, cx)),
             peer_id: self.peer_id,
             user: self.user.clone(),
             nav_history: Default::default(),

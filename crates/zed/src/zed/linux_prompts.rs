@@ -1,8 +1,8 @@
 use gpui::{
-    div, AppContext, EventEmitter, FocusHandle, FocusableView, FontWeight, InteractiveElement,
+    div, AppContext, EventEmitter, FocusHandle, Focusable, FontWeight, InteractiveElement,
     IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse, Refineable, Render,
-    RenderablePromptHandle, Styled, TextStyleRefinement, View, ViewContext, VisualContext,
-    WindowContext,
+    RenderablePromptHandle, Styled, TextStyleRefinement, VisualContext,
+   
 };
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings;
@@ -173,7 +173,7 @@ impl Render for FallbackPromptRenderer {
 
 impl EventEmitter<PromptResponse> for FallbackPromptRenderer {}
 
-impl FocusableView for FallbackPromptRenderer {
+impl Focusable for FallbackPromptRenderer {
     fn focus_handle(&self, _: &crate::AppContext) -> FocusHandle {
         self.focus.clone()
     }

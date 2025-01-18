@@ -379,7 +379,7 @@ impl Dock {
 
         self.workspace
             .update(cx, |workspace, cx| {
-                workspace.serialize_workspace(cx);
+                workspace.serialize_workspace(window, cx);
             })
             .ok();
         cx.notify();
@@ -520,10 +520,10 @@ impl Dock {
             },
         );
 
-        self.restore_state(cx);
-        if panel.read(cx).starts_open(cx) {
-            self.activate_panel(index, cx);
-            self.set_open(true, cx);
+        self.restore_state(window, cx);
+        if panel.read(cx).starts_open(window, cx) {
+            self.activate_panel(index, window, cx);
+            self.set_open(true, window, cx);
         }
 
         cx.notify();
@@ -710,12 +710,12 @@ impl Render for Dock {
                     )
                     .on_mouse_up(
                         MouseButton::Left,
-                        cx.listener(|dock, e: &MouseUpEvent, cx| {
+                        cx.listener(|dock, e: &MouseUpEvent, window, cx| {
                             if e.click_count == 2 {
-                                dock.resize_active_panel(None, cx);
+                                dock.resize_active_panel(None, window, cx);
                                 dock.workspace
                                     .update(cx, |workspace, cx| {
-                                        workspace.serialize_workspace(cx);
+                                        workspace.serialize_workspace(window, cx);
                                     })
                                     .ok();
                                 cx.stop_propagation();

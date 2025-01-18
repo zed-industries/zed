@@ -4,10 +4,10 @@ use crate::parser::CodeBlockKind;
 use futures::FutureExt;
 use gpui::{
     actions, point, quad, AnyElement, AppContext, Bounds, ClipboardItem, CursorStyle,
-    DispatchPhase, Edges, FocusHandle, FocusableView, FontStyle, FontWeight, GlobalElementId,
-    Hitbox, Hsla, KeyContext, Length, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent,
+    DispatchPhase, Edges, FocusHandle, Focusable, FontStyle, FontWeight, GlobalElementId, Hitbox,
+    Hsla, KeyContext, Length, Model, MouseDownEvent, MouseEvent, MouseMoveEvent, MouseUpEvent,
     Point, Render, Stateful, StrikethroughStyle, StyleRefinement, StyledText, Task, TextLayout,
-    TextRun, TextStyle, TextStyleRefinement, View,
+    TextRun, TextStyle, TextStyleRefinement,
 };
 use language::{Language, LanguageRegistry, Rope};
 use parser::{parse_links_only, parse_markdown, MarkdownEvent, MarkdownTag, MarkdownTagEnd};
@@ -712,14 +712,14 @@ impl Element for MarkdownElement {
                                     IconButton::new(id, IconName::Copy)
                                         .icon_color(Color::Muted)
                                         .shape(ui::IconButtonShape::Square)
-                                        .tooltip(|cx| Tooltip::text("Copy Code Block", cx))
+                                        .tooltip(Tooltip::text("Copy Code Block"))
                                         .on_click({
                                             let code = without_fences(
                                                 parsed_markdown.source()[range.clone()].trim(),
                                             )
                                             .to_string();
 
-                                            move |_, cx| {
+                                            move |_, _, cx| {
                                                 cx.write_to_clipboard(ClipboardItem::new_string(
                                                     code.clone(),
                                                 ))

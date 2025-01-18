@@ -10,7 +10,7 @@ use editor::{
     movement::{self, FindRange},
     Bias, DisplayPoint, Editor,
 };
-use gpui::{actions, impl_actions, ViewContext};
+use gpui::{actions, impl_actions};
 use itertools::Itertools;
 use language::{BufferSnapshot, CharKind, Point, Selection, TextObject, TreeSitterOptions};
 use multi_buffer::MultiBufferRow;

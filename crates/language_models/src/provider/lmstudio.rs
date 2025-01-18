@@ -374,7 +374,7 @@ struct ConfigurationView {
 }
 
 impl ConfigurationView {
-    pub fn new(state: gpui::Model<State>, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+    pub fn new(state: gpui::Model<State>, cx: &mut ModelContext<Self>) -> Self {
         let loading_models_task = Some(cx.spawn({
             let state = state.clone();
             |this, mut cx| async move {
@@ -398,7 +398,7 @@ impl ConfigurationView {
         }
     }
 
-    fn retry_connection(&self, window: &mut Window, cx: &mut AppContext) {
+    fn retry_connection(&self, cx: &mut AppContext) {
         self.state
             .update(cx, |state, cx| state.fetch_models(cx))
             .detach_and_log_err(cx);

@@ -8,7 +8,7 @@ use editor::{
     Bias, Editor, ToPoint,
 };
 use gpui::{
-    actions, impl_internal_actions, Action, AppContext, Global, ViewContext, WindowContext,
+    actions, impl_internal_actions, Action, AppContext, Global,
 };
 use language::Point;
 use multi_buffer::MultiBufferRow;

@@ -2,8 +2,8 @@ use std::sync::Arc;
 
 use feature_flags::ZedPro;
 use gpui::{
-    Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
-    Subscription, Task, View, WeakView,
+    Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model,
+    Subscription, Task,
 };
 use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
 use picker::{Picker, PickerDelegate};
@@ -33,7 +33,7 @@ impl LanguageModelSelector {
 
         let all_models = Self::all_models(cx);
         let delegate = LanguageModelPickerDelegate {
-            language_model_selector: cx.view().downgrade(),
+            language_model_selector: cx.model().downgrade(),
             on_model_changed: on_model_changed.clone(),
             all_models: all_models.clone(),
             filtered_models: all_models,

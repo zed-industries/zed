@@ -254,7 +254,7 @@ pub trait VisualContext: Context {
     where
         V: 'static + Render;
 
-    /// Focus a model in the window, if it implements the [`FocusableView`] trait.
+    /// Focus a model in the window, if it implements the [`Focusable`] trait.
     fn focus<V>(&mut self, model: &Model<V>) -> Self::Result<()>
     where
         V: Focusable;

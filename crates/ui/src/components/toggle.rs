@@ -1,4 +1,4 @@
-use gpui::{div, hsla, prelude::*, AnyView, ElementId, Hsla, IntoElement, Styled, WindowContext};
+use gpui::{div, hsla, prelude::*, AnyView, ElementId, Hsla, IntoElement, Styled, Window};
 use std::sync::Arc;
 
 use crate::utils::is_light;
@@ -95,14 +95,17 @@ impl Checkbox {
     }
 
     /// Sets the tooltip for the checkbox.
-    pub fn tooltip(mut self, tooltip: impl Fn(&mut Window, &mut AppContext) -> AnyView + 'static) -> Self {
+    pub fn tooltip(
+        mut self,
+        tooltip: impl Fn(&mut Window, &mut AppContext) -> AnyView + 'static,
+    ) -> Self {
         self.tooltip = Some(Box::new(tooltip));
         self
     }
 }
 
 impl Checkbox {
-    fn bg_color(&self, window: &Window, cx: &AppContext) -> Hsla {
+    fn bg_color(&self, cx: &AppContext) -> Hsla {
         let style = self.style.clone();
         match (style, self.filled) {
             (ToggleStyle::Ghost, false) => cx.theme().colors().ghost_element_background,
@@ -114,7 +117,7 @@ impl Checkbox {
         }
     }
 
-    fn border_color(&self, window: &Window, cx: &AppContext) -> Hsla {
+    fn border_color(&self, cx: &AppContext) -> Hsla {
         if self.disabled {
             return cx.theme().colors().border_disabled;
         }
@@ -128,7 +131,7 @@ impl Checkbox {
 }
 
 impl RenderOnce for Checkbox {
-    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         let group_id = format!("checkbox_group_{:?}", self.id);
         let icon = match self.toggle_state {
             ToggleState::Selected => Some(Icon::new(IconName::Check).size(IconSize::Small).color(
@@ -187,7 +190,7 @@ impl RenderOnce for Checkbox {
                 },
             )
             .when_some(self.tooltip, |this, tooltip| {
-                this.tooltip(move |cx| tooltip(cx))
+                this.tooltip(move |window, cx| tooltip(window, cx))
             })
     }
 }
@@ -250,8 +253,8 @@ impl RenderOnce for CheckboxWithLabel {
                     .when(self.filled, Checkbox::fill)
                     .on_click({
                         let on_click = self.on_click.clone();
-                        move |checked, cx| {
-                            (on_click)(checked, cx);
+                        move |checked, window, cx| {
+                            (on_click)(checked, window, cx);
                         }
                     }),
             )

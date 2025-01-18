@@ -1,5 +1,5 @@
 use editor::Editor;
-use gpui::{actions, impl_actions, impl_internal_actions, ViewContext};
+use gpui::{actions, impl_actions, impl_internal_actions};
 use language::Point;
 use schemars::JsonSchema;
 use search::{buffer_search, BufferSearchBar, SearchOptions};

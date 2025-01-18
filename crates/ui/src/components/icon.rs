@@ -404,7 +404,7 @@ impl Icon {
 }
 
 impl RenderOnce for Icon {
-    fn render(self, window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
+    fn render(self, _: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         match self.source {
             IconSource::Svg(path) => svg()
                 .with_transformation(self.transformation)

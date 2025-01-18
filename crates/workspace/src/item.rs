@@ -183,7 +183,7 @@ pub enum TabTooltipContent {
     Custom(Box<dyn Fn(&mut Window, &mut AppContext) -> AnyView>),
 }
 
-pub trait Item: FocusableView + EventEmitter<Self::Event> {
+pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
     type Event;
 
     /// Returns the tab contents.
@@ -447,20 +447,26 @@ where
 }
 
 pub trait ItemHandle: 'static + Send {
+    fn item_focus_handle(&self, cx: &AppContext) -> FocusHandle;
     fn subscribe_to_item_events(
         &self,
         window: &mut Window,
         cx: &mut AppContext,
         handler: Box<dyn Fn(ItemEvent, &mut Window, &mut AppContext)>,
     ) -> gpui::Subscription;
-    fn focus_handle(&self, window: &Window, cx: &AppContext) -> FocusHandle;
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
-    fn tab_content(&self, params: TabContentParams, window: &Window, cx: &AppContext) -> AnyElement;
+    fn tab_content(&self, params: TabContentParams, window: &Window, cx: &AppContext)
+        -> AnyElement;
     fn tab_icon(&self, window: &Window, cx: &AppContext) -> Option<Icon>;
     fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
     fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent>;
-    fn telemetry_event_text(&self, window: &Window, cx: &AppContext) -> Option<&'static str>;
-    fn dragged_tab_content(&self, params: TabContentParams, window: &Window, cx: &AppContext) -> AnyElement;
+    fn telemetry_event_text(&self, cx: &AppContext) -> Option<&'static str>;
+    fn dragged_tab_content(
+        &self,
+        params: TabContentParams,
+        window: &Window,
+        cx: &AppContext,
+    ) -> AnyElement;
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
     fn project_paths(&self, cx: &AppContext) -> SmallVec<[ProjectPath; 3]>;
@@ -570,7 +576,7 @@ impl<T: Item> ItemHandle for Model<T> {
         self.read(cx).focus_handle(cx)
     }
 
-    fn telemetry_event_text(&self, window: &Window, cx: &AppContext) -> Option<&'static str> {
+    fn telemetry_event_text(&self, cx: &AppContext) -> Option<&'static str> {
         self.read(cx).telemetry_event_text()
     }
 
@@ -581,13 +587,13 @@ impl<T: Item> ItemHandle for Model<T> {
     fn tab_content(
         &self,
         params: TabContentParams,
-        window: &mut Window,
-        cx: &mut AppContext,
+        window: &Window,
+        cx: &AppContext,
     ) -> AnyElement {
         self.read(cx).tab_content(params, window, cx)
     }
 
-    fn tab_icon(&self, window: &mut Window, cx: &mut AppContext) -> Option<Icon> {
+    fn tab_icon(&self, window: &Window, cx: &AppContext) -> Option<Icon> {
         self.read(cx).tab_icon(window, cx)
     }
 
@@ -599,7 +605,12 @@ impl<T: Item> ItemHandle for Model<T> {
         self.read(cx).tab_tooltip_text(cx)
     }
 
-    fn dragged_tab_content(&self, params: TabContentParams, window: &Window, cx: &AppContext) -> AnyElement {
+    fn dragged_tab_content(
+        &self,
+        params: TabContentParams,
+        window: &Window,
+        cx: &AppContext,
+    ) -> AnyElement {
         self.read(cx).tab_content(
             TabContentParams {
                 selected: true,
@@ -1372,17 +1383,12 @@ pub mod test {
             self
         }
 
-        pub fn set_state(
-            &mut self,
-            state: String,
-            window: &mut Window,
-            cx: &mut ModelContext<Self>,
-        ) {
-            self.push_to_nav_history(window, cx);
+        pub fn set_state(&mut self, state: String, cx: &mut ModelContext<Self>) {
+            self.push_to_nav_history(cx);
             self.state = state;
         }
 
-        fn push_to_nav_history(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) {
+        fn push_to_nav_history(&mut self, cx: &mut ModelContext<Self>) {
             if let Some(history) = &mut self.nav_history {
                 history.push(Some(Box::new(self.state.clone())), cx);
             }
@@ -1473,8 +1479,8 @@ pub mod test {
             }
         }
 
-        fn deactivated(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-            self.push_to_nav_history(window, cx);
+        fn deactivated(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) {
+            self.push_to_nav_history(cx);
         }
 
         fn clone_on_split(

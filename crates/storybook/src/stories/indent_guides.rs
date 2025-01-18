@@ -2,7 +2,7 @@ use std::fmt::format;
 
 use gpui::{
     colors, div, prelude::*, uniform_list, DefaultColor, DefaultThemeAppearance, Hsla, Render,
-    View, ViewContext, WindowContext,
+   
 };
 use story::Story;
 use strum::IntoEnumIterator;
@@ -40,7 +40,7 @@ impl Render for IndentGuidesStory {
             .child(
                 v_flex().size_full().child(
                     uniform_list(
-                        cx.view().clone(),
+                        cx.model().clone(),
                         "some-list",
                         self.depths.len(),
                         |this, range, cx| {
@@ -61,7 +61,7 @@ impl Render for IndentGuidesStory {
                     )
                     .with_sizing_behavior(gpui::ListSizingBehavior::Infer)
                     .with_decoration(ui::indent_guides(
-                        cx.view().clone(),
+                        cx.model().clone(),
                         px(16.),
                         ui::IndentGuideColors {
                             default: Color::Info.color(cx),

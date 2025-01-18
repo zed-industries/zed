@@ -61,7 +61,7 @@ pub struct IconDecoration {
 
 impl IconDecoration {
     /// Creates a new [`IconDecoration`].
-    pub fn new(kind: IconDecorationKind, knockout_color: Hsla, window: &Window, cx: &AppContext) -> Self {
+    pub fn new(kind: IconDecorationKind, knockout_color: Hsla, cx: &AppContext) -> Self {
         let color = cx.theme().colors().icon;
         let position = Point::default();
 
@@ -151,7 +151,7 @@ impl RenderOnce for IconDecoration {
 }
 
 impl ComponentPreview for IconDecoration {
-    fn examples(window: &mut Window, cx: &mut AppContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_: &mut Window, cx: &mut AppContext) -> Vec<ComponentExampleGroup<Self>> {
         let all_kinds = IconDecorationKind::iter().collect::<Vec<_>>();
 
         let examples = all_kinds

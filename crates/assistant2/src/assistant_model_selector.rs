@@ -1,6 +1,6 @@
 use assistant_settings::AssistantSettings;
 use fs::Fs;
-use gpui::{FocusHandle, View};
+use gpui::{FocusHandle};
 use language_model::LanguageModelRegistry;
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use settings::update_settings_file;

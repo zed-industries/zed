@@ -5,8 +5,7 @@ use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
 use fs::Fs;
 use gpui::{
     actions, div, pulsating_between, Action, Animation, AnimationExt, AppContext,
-    AsyncWindowContext, Corner, Entity, IntoElement, ParentElement, Render, Subscription, View,
-    ViewContext, WeakView, WindowContext,
+    AsyncWindowContext, Corner, Entity, IntoElement, ParentElement, Render, Subscription,
 };
 use language::{
     language_settings::{
@@ -209,9 +208,9 @@ impl Render for InlineCompletionButton {
                     return div();
                 }
 
-                let this = cx.view().clone();
+                let this = cx.model().clone();
                 let button = IconButton::new("zeta", IconName::ZedPredict)
-                    .tooltip(|cx| Tooltip::text("Edit Prediction", cx));
+                    .tooltip(|cx| Tooltip::text("Edit Prediction"));
 
                 let is_refreshing = self
                     .inline_completion_provider
@@ -392,9 +391,13 @@ impl InlineCompletionButton {
         })
     }
 
-    fn build_zeta_context_menu(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Model<ContextMenu> {
+    fn build_zeta_context_menu(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Model<ContextMenu> {
         let workspace = self.workspace.clone();
-        ContextMenu::build(cx, |menu, cx| {
+        ContextMenu::build(window, cx, |menu, cx| {
             self.build_language_settings_menu(menu, cx)
                 .separator()
                 .entry(
@@ -403,7 +406,7 @@ impl InlineCompletionButton {
                     move |cx| {
                         workspace
                             .update(cx, |workspace, cx| {
-                                RateCompletionModal::toggle(workspace, cx)
+                                RateCompletionModal::toggle(workspace, window, cx)
                             })
                             .ok();
                     },
@@ -411,7 +414,12 @@ impl InlineCompletionButton {
         })
     }
 
-    pub fn update_enabled(&mut self, editor: Model<Editor>, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn update_enabled(
+        &mut self,
+        editor: Model<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let editor = editor.read(cx);
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         let suggestion_anchor = editor.selections.newest_anchor().start;
@@ -432,7 +440,7 @@ impl InlineCompletionButton {
         self.language = language.cloned();
         self.file = file;
 
-        cx.notify()
+        cx.notify(window)
     }
 }
 
@@ -454,7 +462,7 @@ impl StatusItemView for InlineCompletionButton {
             self.editor_subscription = None;
             self.editor_enabled = None;
         }
-        cx.notify();
+        cx.notify(window);
     }
 }
 

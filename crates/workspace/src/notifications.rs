@@ -272,7 +272,7 @@ impl Render for LanguageServerPrompt {
             .group("language_server_prompt_notification")
             .occlude()
             .w_full()
-            .max_h(vh(0.8, cx))
+            .max_h(vh(0.8, window))
             .elevation_3(cx)
             .overflow_y_scroll()
             .track_scroll(&self.scroll_handle)
@@ -296,22 +296,22 @@ impl Render for LanguageServerPrompt {
                                         IconButton::new("copy", IconName::Copy)
                                             .on_click({
                                                 let message = request.message.clone();
-                                                move |_, cx| {
+                                                move |_, _, cx| {
                                                     cx.write_to_clipboard(
                                                         ClipboardItem::new_string(message.clone()),
                                                     )
                                                 }
                                             })
-                                            .tooltip(|cx| Tooltip::text("Copy Description", cx)),
+                                            .tooltip(Tooltip::text("Copy Description")),
                                     )
                                     .child(IconButton::new("close", IconName::Close).on_click(
-                                        cx.listener(|_, _, cx| cx.emit(gpui::DismissEvent)),
+                                        cx.listener(|_, _, _, cx| cx.emit(gpui::DismissEvent)),
                                     )),
                             ),
                     )
                     .child(Label::new(request.message.to_string()).size(LabelSize::Small))
                     .children(request.actions.iter().enumerate().map(|(ix, action)| {
-                        let this_handle = cx.view().clone();
+                        let this_handle = cx.model().clone();
                         Button::new(ix, action.title.clone())
                             .size(ButtonSize::Large)
                             .on_click(move |_, window, cx| {
@@ -423,7 +423,6 @@ pub mod simple_message_notification {
 
     use gpui::{
         div, AnyElement, DismissEvent, EventEmitter, ParentElement, Render, SharedString, Styled,
-        ViewContext,
     };
     use ui::prelude::*;
 
@@ -432,7 +431,7 @@ pub mod simple_message_notification {
     use super::NotificationId;
 
     pub struct MessageNotification {
-        content: Box<dyn Fn(&mut Window, &mut ModelContext<Self>) -> AnyElement>,
+        content: Box<dyn Fn(&mut ModelContext<Self>) -> AnyElement>,
         on_click: Option<Arc<dyn Fn(&mut Window, &mut ModelContext<Self>)>>,
         click_message: Option<SharedString>,
         secondary_click_message: Option<SharedString>,
@@ -452,7 +451,7 @@ pub mod simple_message_notification {
 
         pub fn new_from_builder<F>(content: F) -> MessageNotification
         where
-            F: 'static + Fn(&mut Window, &mut ModelContext<Self>) -> AnyElement,
+            F: 'static + Fn(&mut ModelContext<Self>) -> AnyElement,
         {
             Self {
                 content: Box::new(content),
@@ -523,7 +522,7 @@ pub mod simple_message_notification {
                         .child(div().max_w_96().child((self.content)(cx)))
                         .child(
                             IconButton::new("close", IconName::Close)
-                                .on_click(cx.listener(|this, _, cx| this.dismiss(cx))),
+                                .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
                         ),
                 )
                 .child(
@@ -536,7 +535,7 @@ pub mod simple_message_notification {
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::Small)
                                 .icon_color(Color::Success)
-                                .on_click(cx.listener(|this, _, cx| {
+                                .on_click(cx.listener(|this, _, window, cx| {
                                     if let Some(on_click) = this.on_click.as_ref() {
                                         (on_click)(window, cx)
                                     };
@@ -550,7 +549,7 @@ pub mod simple_message_notification {
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::Small)
                                 .icon_color(Color::Error)
-                                .on_click(cx.listener(|this, _, cx| {
+                                .on_click(cx.listener(|this, _, window, cx| {
                                     if let Some(on_click) = this.secondary_on_click.as_ref() {
                                         (on_click)(window, cx)
                                     };
@@ -566,7 +565,7 @@ pub mod simple_message_notification {
 pub fn show_app_notification<V: Notification>(
     id: NotificationId,
     cx: &mut AppContext,
-    build_notification: impl Fn(&mut Window, &mut ModelContext<Workspace>) -> Model<V>,
+    build_notification: impl Fn(&mut ModelContext<Workspace>) -> Model<V>,
 ) -> Result<()> {
     let workspaces_to_notify = if let Some(active_workspace_window) = cx
         .active_window()
@@ -587,7 +586,7 @@ pub fn show_app_notification<V: Notification>(
     let mut notify_errors = Vec::new();
 
     for workspace_window in workspaces_to_notify {
-        let notify_result = workspace_window.update(cx, |workspace, cx| {
+        let notify_result = workspace_window.update(cx, |workspace, _, cx| {
             workspace.show_notification(id.clone(), cx, &build_notification);
         });
         match notify_result {
@@ -618,7 +617,7 @@ pub fn dismiss_app_notification(id: &NotificationId, cx: &mut AppContext) {
     for window in cx.windows() {
         if let Some(workspace_window) = window.downcast::<Workspace>() {
             workspace_window
-                .update(cx, |workspace, cx| {
+                .update(cx, |workspace, _, cx| {
                     workspace.dismiss_notification(&id, cx);
                 })
                 .ok();

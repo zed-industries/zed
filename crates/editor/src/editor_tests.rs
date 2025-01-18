@@ -7505,6 +7505,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
                 project.clone(),
                 FormatTrigger::Manual,
                 FormatTarget::Buffers,
+                window,
                 cx,
             )
         })
@@ -7544,7 +7545,13 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     });
     let format = editor
         .update(cx, |editor, cx| {
-            editor.perform_format(project, FormatTrigger::Manual, FormatTarget::Buffers, cx)
+            editor.perform_format(
+                project,
+                FormatTrigger::Manual,
+                FormatTarget::Buffers,
+                window,
+                cx,
+            )
         })
         .unwrap();
     cx.executor().advance_clock(super::FORMAT_TIMEOUT);
@@ -11504,6 +11511,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
                 project.clone(),
                 FormatTrigger::Manual,
                 FormatTarget::Buffers,
+                window,
                 cx,
             )
         })
@@ -11523,6 +11531,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
             project.clone(),
             FormatTrigger::Manual,
             FormatTarget::Buffers,
+            window,
             cx,
         )
     });
@@ -15012,7 +15021,7 @@ async fn test_rename_with_duplicate_edits(cx: &mut gpui::TestAppContext) {
             })))
         });
     let prepare_rename_task = cx
-        .update_editor(|e, cx| e.rename(&Rename, cx))
+        .update_editor(|e, window, cx| e.rename(&Rename, window, cx))
         .expect("Prepare rename was not started");
     prepare_rename_handler.next().await.unwrap();
     prepare_rename_task.await.expect("Prepare rename failed");

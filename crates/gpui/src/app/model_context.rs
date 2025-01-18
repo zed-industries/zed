@@ -215,7 +215,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         }
     }
 
-    /// Focus the given view in the given window. View type is required to implement FocusableView.
+    /// Focus the given view in the given window. View type is required to implement Focusable.
     pub fn focus_view<W: Focusable>(&mut self, view: &Model<W>, window: &mut Window) {
         window.focus(&view.focus_handle(self));
     }
@@ -656,7 +656,7 @@ impl<'a, T: 'static> ModelContext<'a, T> {
         });
     }
 
-    /// Move focus to the current view, assuming it implements [`FocusableView`].
+    /// Move focus to the current view, assuming it implements [`Focusable`].
     pub fn focus_self(&mut self, window: &mut Window)
     where
         T: Focusable,

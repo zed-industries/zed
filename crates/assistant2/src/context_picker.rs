@@ -9,7 +9,7 @@ use std::sync::Arc;
 use editor::Editor;
 use file_context_picker::render_file_context_entry;
 use gpui::{
-    AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, View, WeakModel, WeakView,
+    AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, WeakModel,
 };
 use project::ProjectPath;
 use thread_context_picker::{render_thread_context_entry, ThreadContextEntry};
@@ -72,7 +72,7 @@ impl ContextPicker {
     }
 
     fn build_menu(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> Model<ContextMenu> {
-        let context_picker = cx.view().clone();
+        let context_picker = cx.model().clone();
 
         let menu = ContextMenu::build(cx, move |menu, cx| {
             let kind_entry = |kind: &'static ContextKind| {
@@ -113,7 +113,7 @@ impl ContextPicker {
     }
 
     fn select_kind(&mut self, kind: ContextKind, window: &mut Window, cx: &mut ModelContext<Self>) {
-        let context_picker = cx.view().downgrade();
+        let context_picker = cx.model().downgrade();
 
         match kind {
             ContextKind::File => {

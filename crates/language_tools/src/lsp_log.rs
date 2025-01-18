@@ -604,63 +604,73 @@ impl LspLogView {
             .map(|(id, _)| *id);
 
         let weak_project = project.downgrade();
-        let model_changes_subscription = cx.observe(&log_store, move |this, store, cx| {
-            let first_server_id_for_project =
-                store.read(cx).server_ids_for_project(&weak_project).next();
-            if let Some(current_lsp) = this.current_server_id {
-                if !store.read(cx).language_servers.contains_key(&current_lsp) {
-                    if let Some(server_id) = first_server_id_for_project {
-                        match this.active_entry_kind {
-                            LogKind::Rpc => this.show_rpc_trace_for_server(server_id, cx),
-                            LogKind::Trace => this.show_trace_for_server(server_id, cx),
-                            LogKind::Logs => this.show_logs_for_server(server_id, cx),
-                            LogKind::ServerInfo => this.show_server_info(server_id, cx),
+        let model_changes_subscription =
+            cx.observe_in(&log_store, window, move |this, store, window, cx| {
+                let first_server_id_for_project =
+                    store.read(cx).server_ids_for_project(&weak_project).next();
+                if let Some(current_lsp) = this.current_server_id {
+                    if !store.read(cx).language_servers.contains_key(&current_lsp) {
+                        if let Some(server_id) = first_server_id_for_project {
+                            match this.active_entry_kind {
+                                LogKind::Rpc => {
+                                    this.show_rpc_trace_for_server(server_id, window, cx)
+                                }
+                                LogKind::Trace => this.show_trace_for_server(server_id, window, cx),
+                                LogKind::Logs => this.show_logs_for_server(server_id, window, cx),
+                                LogKind::ServerInfo => this.show_server_info(server_id, window, cx),
+                            }
                         }
                     }
+                } else if let Some(server_id) = first_server_id_for_project {
+                    match this.active_entry_kind {
+                        LogKind::Rpc => this.show_rpc_trace_for_server(server_id, window, cx),
+                        LogKind::Trace => this.show_trace_for_server(server_id, window, cx),
+                        LogKind::Logs => this.show_logs_for_server(server_id, window, cx),
+                        LogKind::ServerInfo => this.show_server_info(server_id, window, cx),
+                    }
                 }
-            } else if let Some(server_id) = first_server_id_for_project {
-                match this.active_entry_kind {
-                    LogKind::Rpc => this.show_rpc_trace_for_server(server_id, cx),
-                    LogKind::Trace => this.show_trace_for_server(server_id, cx),
-                    LogKind::Logs => this.show_logs_for_server(server_id, cx),
-                    LogKind::ServerInfo => this.show_server_info(server_id, cx),
-                }
-            }
 
                 cx.notify();
             });
-        let events_subscriptions = cx.subscribe(&log_store, |log_view, _, e, cx| match e {
-            Event::NewServerLogEntry { id, entry, kind } => {
-                if log_view.current_server_id == Some(*id) && *kind == log_view.active_entry_kind {
-                    log_view.editor.update(cx, |editor, cx| {
-                        editor.set_read_only(false);
-                        let last_point = editor.buffer().read(cx).len(cx);
-                        let newest_cursor_is_at_end =
-                            editor.selections.newest::<usize>(cx).start >= last_point;
-                        editor.edit(
-                            vec![
-                                (last_point..last_point, entry.trim()),
-                                (last_point..last_point, "\n"),
-                            ],
-                            cx,
-                        );
-                        let entry_length = entry.len();
-                        if entry_length > 1024 {
-                            editor.fold_ranges(
-                                vec![last_point + 1024..last_point + entry_length],
-                                false,
+        let events_subscriptions = cx.subscribe_in(
+            &log_store,
+            window,
+            move |log_view, _, e, window, cx| match e {
+                Event::NewServerLogEntry { id, entry, kind } => {
+                    if log_view.current_server_id == Some(*id)
+                        && *kind == log_view.active_entry_kind
+                    {
+                        log_view.editor.update(cx, |editor, cx| {
+                            editor.set_read_only(false);
+                            let last_point = editor.buffer().read(cx).len(cx);
+                            let newest_cursor_is_at_end =
+                                editor.selections.newest::<usize>(cx).start >= last_point;
+                            editor.edit(
+                                vec![
+                                    (last_point..last_point, entry.trim()),
+                                    (last_point..last_point, "\n"),
+                                ],
                                 cx,
                             );
-                        }
+                            let entry_length = entry.len();
+                            if entry_length > 1024 {
+                                editor.fold_ranges(
+                                    vec![last_point + 1024..last_point + entry_length],
+                                    false,
+                                    window,
+                                    cx,
+                                );
+                            }
 
-                        if newest_cursor_is_at_end {
-                            editor.request_autoscroll(Autoscroll::bottom(), cx);
-                        }
-                        editor.set_read_only(true);
-                    });
+                            if newest_cursor_is_at_end {
+                                editor.request_autoscroll(Autoscroll::bottom(), cx);
+                            }
+                            editor.set_read_only(true);
+                        });
+                    }
                 }
-            }
-        });
+            },
+        );
         let (editor, editor_subscriptions) = Self::editor_for_logs(String::new(), window, cx);
 
         let focus_handle = cx.focus_handle();
@@ -698,7 +708,7 @@ impl LspLogView {
             editor.set_text(log_contents, window, cx);
             editor.move_to_end(&MoveToEnd, window, cx);
             editor.set_read_only(true);
-            editor.set_show_inline_completions(Some(false), cx);
+            editor.set_show_inline_completions(Some(false), window, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor
         });
@@ -715,10 +725,11 @@ impl LspLogView {
 
     fn editor_for_server_info(
         server: &LanguageServer,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> (Model<Editor>, Vec<Subscription>) {
         let editor = cx.new_model(|cx| {
-            let mut editor = Editor::multi_line(cx);
+            let mut editor = Editor::multi_line(window, cx);
             let server_info = format!(
                 "* Server: {NAME} (id {ID})
 
@@ -738,9 +749,9 @@ impl LspLogView {
                 CONFIGURATION = serde_json::to_string_pretty(server.configuration())
                     .unwrap_or_else(|e| format!("Failed to serialize configuration: {e}")),
             );
-            editor.set_text(server_info, cx);
+            editor.set_text(server_info, window, cx);
             editor.set_read_only(true);
-            editor.set_show_inline_completions(Some(false), cx);
+            editor.set_show_inline_completions(Some(false), window, cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
             editor
         });
@@ -979,18 +990,23 @@ impl LspLogView {
         }
     }
 
-    fn show_server_info(&mut self, server_id: LanguageServerId, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn show_server_info(
+        &mut self,
+        server_id: LanguageServerId,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let lsp_store = self.project.read(cx).lsp_store();
         let Some(server) = lsp_store.read(cx).language_server_for_id(server_id) else {
             return;
         };
         self.current_server_id = Some(server_id);
         self.active_entry_kind = LogKind::ServerInfo;
-        let (editor, editor_subscriptions) = Self::editor_for_server_info(&server, cx);
+        let (editor, editor_subscriptions) = Self::editor_for_server_info(&server, window, cx);
         self.editor = editor;
         self.editor_subscriptions = editor_subscriptions;
         cx.notify();
-        cx.focus(&self.focus_handle);
+        window.focus(&self.focus_handle);
     }
 }
 
@@ -1059,10 +1075,10 @@ impl Item for LspLogView {
             let mut new_view = Self::new(self.project.clone(), self.log_store.clone(), window, cx);
             if let Some(server_id) = self.current_server_id {
                 match self.active_entry_kind {
-                    LogKind::Rpc => new_view.show_rpc_trace_for_server(server_id, cx),
-                    LogKind::Trace => new_view.show_trace_for_server(server_id, cx),
-                    LogKind::Logs => new_view.show_logs_for_server(server_id, cx),
-                    LogKind::ServerInfo => new_view.show_server_info(server_id, cx),
+                    LogKind::Rpc => new_view.show_rpc_trace_for_server(server_id, window, cx),
+                    LogKind::Trace => new_view.show_trace_for_server(server_id, window, cx),
+                    LogKind::Logs => new_view.show_logs_for_server(server_id, window, cx),
+                    LogKind::ServerInfo => new_view.show_server_info(server_id, window, cx),
                 }
             }
             new_view
@@ -1251,9 +1267,9 @@ impl Render for LspLogToolbarItemView {
                                         LogKind::Logs => {
                                             view.show_logs_for_server(server_id, window, cx)
                                         }
-                                        LogKind::Trace => view.show_trace_for_server(server_id, cx),
-                                        LogKind::Logs => view.show_logs_for_server(server_id, cx),
-                                        LogKind::ServerInfo => view.show_server_info(server_id, cx),
+                                        LogKind::ServerInfo => {
+                                            view.show_server_info(server_id, window, cx)
+                                        }
                                     }
                                     cx.notify();
                                 }),
@@ -1338,8 +1354,8 @@ impl Render for LspLogToolbarItemView {
                         .entry(
                             SERVER_INFO,
                             None,
-                            cx.handler_for(&log_view, move |view, cx| {
-                                view.show_server_info(server_id, cx);
+                            window.handler_for(&log_view, move |view, window, cx| {
+                                view.show_server_info(server_id, window, cx);
                             }),
                         )
                     }))

@@ -1,8 +1,8 @@
 use crate::{CompletionDiffElement, InlineCompletion, InlineCompletionRating, Zeta};
 use editor::Editor;
 use gpui::{
-    actions, prelude::*, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
-    View, ViewContext,
+    actions, prelude::*, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model,
+   
 };
 use language::language_settings;
 use std::time::Duration;

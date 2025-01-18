@@ -1,6 +1,6 @@
 use gpui::{
-    uniform_list, AppContext, FocusHandle, FocusableView, Model, ScrollStrategy,
-    UniformListScrollHandle, WeakView,
+    uniform_list, AppContext, FocusHandle, Focusable, Model, ScrollStrategy,
+    UniformListScrollHandle,
 };
 use time::{OffsetDateTime, UtcOffset};
 use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing, Tooltip};

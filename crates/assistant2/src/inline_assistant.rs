@@ -196,7 +196,7 @@ impl InlineAssistant {
 
                     editor.add_code_action_provider(
                         Rc::new(AssistantCodeActionProvider {
-                            editor: cx.view().downgrade(),
+                            editor: cx.model().downgrade(),
                             workspace: workspace.downgrade(),
                             thread_store,
                         }),

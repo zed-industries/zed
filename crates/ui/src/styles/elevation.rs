@@ -89,7 +89,7 @@ impl ElevationIndex {
     }
 
     /// Returns a color that is appropriate a filled element on this elevation
-    pub fn on_elevation_bg(&self, window: &Window, cx: &AppContext) -> Hsla {
+    pub fn on_elevation_bg(&self, cx: &AppContext) -> Hsla {
         match self {
             ElevationIndex::Background => cx.theme().colors().surface_background,
             ElevationIndex::Surface => cx.theme().colors().background,
@@ -102,7 +102,7 @@ impl ElevationIndex {
     /// Attempts to return a darker background color than the current elevation index's background.
     ///
     /// If the current background color is already dark, it will return a lighter color instead.
-    pub fn darker_bg(&self, window: &Window, cx: &AppContext) -> Hsla {
+    pub fn darker_bg(&self, cx: &AppContext) -> Hsla {
         match self {
             ElevationIndex::Background => cx.theme().colors().surface_background,
             ElevationIndex::Surface => cx.theme().colors().editor_background,

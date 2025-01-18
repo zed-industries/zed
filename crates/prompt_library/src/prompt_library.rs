@@ -7,7 +7,7 @@ use editor::CompletionProvider;
 use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
 use gpui::{
     actions, point, size, transparent_black, Action, AppContext, Bounds, EventEmitter, PromptLevel,
-    Subscription, Task, TextStyle, TitlebarOptions, View, WindowBounds, WindowHandle,
+    Subscription, Task, TextStyle, TitlebarOptions, WindowBounds, WindowHandle,
     WindowOptions,
 };
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
@@ -781,7 +781,7 @@ impl PromptLibrary {
                 if let Some(workspace) = window.downcast::<Workspace>() {
                     let panel = workspace
                         .update(cx, |workspace, cx| {
-                            cx.activate_window();
+                            window.activate_window();
                             self.inline_assist_delegate
                                 .focus_assistant_panel(workspace, cx)
                         })

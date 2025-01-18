@@ -4,8 +4,8 @@ use editor::actions::MoveUp;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
 use gpui::{
-    pulsating_between, Animation, AnimationExt, AppContext, DismissEvent, FocusableView, Model,
-    Subscription, TextStyle, View, WeakModel, WeakView,
+    pulsating_between, Animation, AnimationExt, AppContext, DismissEvent, Focusable, Model,
+    Subscription, TextStyle, WeakModel,
 };
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::LanguageModelSelector;
@@ -78,6 +78,7 @@ impl MessageEditor {
                 Some(thread_store.clone()),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::File,
+                window,
                 cx,
             )
         });
@@ -105,6 +106,7 @@ impl MessageEditor {
                     fs,
                     model_selector_menu_handle.clone(),
                     editor.focus_handle(cx),
+                    window,
                     cx,
                 )
             }),
@@ -128,20 +130,35 @@ impl MessageEditor {
         cx.notify();
     }
 
-    fn toggle_context_picker(&mut self, _: &ToggleContextPicker, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.context_picker_menu_handle.toggle(cx);
+    fn toggle_context_picker(
+        &mut self,
+        _: &ToggleContextPicker,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.context_picker_menu_handle.toggle(window, cx);
     }
 
-    pub fn remove_all_context(&mut self, _: &RemoveAllContext, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn remove_all_context(
+        &mut self,
+        _: &RemoveAllContext,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.context_store.update(cx, |store, _cx| store.clear());
         cx.notify();
     }
 
     fn chat(&mut self, _: &Chat, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.send_to_model(RequestKind::Chat, cx);
+        self.send_to_model(RequestKind::Chat, window, cx);
     }
 
-    fn send_to_model(&mut self, request_kind: RequestKind, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn send_to_model(
+        &mut self,
+        request_kind: RequestKind,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
         if provider
             .as_ref()
@@ -235,7 +252,8 @@ impl MessageEditor {
         &mut self,
         _context_strip: Model<ContextStrip>,
         event: &ContextStripEvent,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         match event {
             ContextStripEvent::PickerDismissed
@@ -252,7 +270,7 @@ impl MessageEditor {
         if self.context_picker_menu_handle.is_deployed() {
             cx.propagate();
         } else {
-            cx.focus_view(&self.context_strip);
+            cx.focus_view(window, &self.context_strip);
         }
     }
 }

@@ -27,7 +27,7 @@ impl RenderOnce for DecoratedIcon {
 }
 
 impl ComponentPreview for DecoratedIcon {
-    fn examples(window: &mut Window, cx: &mut AppContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_: &mut Window, cx: &mut AppContext) -> Vec<ComponentExampleGroup<Self>> {
         let icon_1 = Icon::new(IconName::FileDoc);
         let icon_2 = Icon::new(IconName::FileDoc);
         let icon_3 = Icon::new(IconName::FileDoc);

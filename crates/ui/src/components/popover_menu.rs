@@ -19,7 +19,10 @@ impl<T: Clickable> Clickable for gpui::AnimationElement<T>
 where
     T: Clickable + 'static,
 {
-    fn on_click(self, handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut AppContext) + 'static) -> Self {
+    fn on_click(
+        self,
+        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut AppContext) + 'static,
+    ) -> Self {
         self.map_element(|e| e.on_click(handler))
     }
 
@@ -282,7 +285,7 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                 let mut menu_layout_id = None;
 
                 let menu_element = element_state.menu.borrow_mut().as_mut().map(|menu| {
-                    let offset = self.resolved_offset(cx);
+                    let offset = self.resolved_offset(window);
                     let mut anchored = anchored()
                         .snap_to_window_with_margin(px(8.))
                         .anchor(self.anchor)

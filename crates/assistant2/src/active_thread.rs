@@ -5,7 +5,7 @@ use collections::HashMap;
 use gpui::{
     list, AbsoluteLength, AnyElement, AppContext, DefiniteLength, EdgesRefinement, Empty, Length,
     ListAlignment, ListOffset, ListState, Model, StyleRefinement, Subscription,
-    TextStyleRefinement, UnderlineStyle, View, WeakView,
+    TextStyleRefinement, UnderlineStyle,
 };
 use language::LanguageRegistry;
 use language_model::Role;

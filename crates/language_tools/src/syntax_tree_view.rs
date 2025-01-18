@@ -23,7 +23,7 @@ pub fn init(cx: &mut AppContext) {
             let active_item = workspace.active_item(cx);
             let workspace_handle = workspace.weak_handle();
             let syntax_tree_view =
-                cx.new_model(|cx| SyntaxTreeView::new(workspace_handle, active_item, cx));
+                cx.new_model(|cx| SyntaxTreeView::new(workspace_handle, active_item, window, cx));
             workspace.split_item(
                 SplitDirection::Right,
                 Box::new(syntax_tree_view),
@@ -66,6 +66,7 @@ impl SyntaxTreeView {
     pub fn new(
         workspace_handle: WeakModel<Workspace>,
         active_item: Option<Box<dyn ItemHandle>>,
+        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         let mut this = Self {
@@ -77,11 +78,12 @@ impl SyntaxTreeView {
             focus_handle: cx.focus_handle(),
         };
 
-        this.workspace_updated(active_item, cx);
-        cx.observe(
+        this.workspace_updated(active_item, window, cx);
+        cx.observe_in(
             &workspace_handle.upgrade().unwrap(),
-            |this, workspace, cx| {
-                this.workspace_updated(workspace.read(cx).active_item(cx), cx);
+            window,
+            |this, workspace, window, cx| {
+                this.workspace_updated(workspace.read(cx).active_item(cx), window, cx);
             },
         )
         .detach();
@@ -92,18 +94,24 @@ impl SyntaxTreeView {
     fn workspace_updated(
         &mut self,
         active_item: Option<Box<dyn ItemHandle>>,
+        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(item) = active_item {
             if item.item_id() != cx.entity_id() {
                 if let Some(editor) = item.act_as::<Editor>(cx) {
-                    self.set_editor(editor, cx);
+                    self.set_editor(editor, window, cx);
                 }
             }
         }
     }
 
-    fn set_editor(&mut self, editor: Model<Editor>, cx: &mut ModelContext<Self>) {
+    fn set_editor(
+        &mut self,
+        editor: Model<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         if let Some(state) = &self.editor {
             if state.editor == editor {
                 return;
@@ -113,13 +121,13 @@ impl SyntaxTreeView {
             });
         }
 
-        let subscription = cx.subscribe(&editor, |this, _, event, cx| {
+        let subscription = cx.subscribe_in(&editor, window, |this, _, event, window, cx| {
             let did_reparse = match event {
                 editor::EditorEvent::Reparsed(_) => true,
                 editor::EditorEvent::SelectionsChanged { .. } => false,
                 _ => return,
             };
-            this.editor_updated(did_reparse, cx);
+            this.editor_updated(did_reparse, window, cx);
         });
 
         self.editor = Some(EditorState {
@@ -127,15 +135,20 @@ impl SyntaxTreeView {
             _subscription: subscription,
             active_buffer: None,
         });
-        self.editor_updated(true, cx);
+        self.editor_updated(true, window, cx);
     }
 
-    fn editor_updated(&mut self, did_reparse: bool, cx: &mut ModelContext<Self>) -> Option<()> {
+    fn editor_updated(
+        &mut self,
+        did_reparse: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<()> {
         // Find which excerpt the cursor is in, and the position within that excerpted buffer.
         let editor_state = self.editor.as_mut()?;
         let snapshot = editor_state
             .editor
-            .update(cx, |editor, cx| editor.snapshot(cx));
+            .update(cx, |editor, cx| editor.snapshot(window, cx));
         let (excerpt, buffer, range) = editor_state.editor.update(cx, |editor, cx| {
             let selection_range = editor.selections.last::<usize>(cx).range();
             let multi_buffer = editor.buffer().read(cx);
@@ -404,16 +417,16 @@ impl Item for SyntaxTreeView {
     fn clone_on_split(
         &self,
         _: Option<workspace::WorkspaceId>,
-        _: &mut Window,
+        window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Option<Model<Self>>
     where
         Self: Sized,
     {
         Some(cx.new_model(|cx| {
-            let mut clone = Self::new(self.workspace_handle.clone(), None, cx);
+            let mut clone = Self::new(self.workspace_handle.clone(), None, window, cx);
             if let Some(editor) = &self.editor {
-                clone.set_editor(editor.editor.clone(), cx)
+                clone.set_editor(editor.editor.clone(), window, cx)
             }
             clone
         }))

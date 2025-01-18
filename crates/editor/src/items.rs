@@ -781,6 +781,7 @@ impl Item for Editor {
                         project.clone(),
                         FormatTrigger::Save,
                         FormatTarget::Buffers,
+                        window,
                         cx,
                     )
                 })?

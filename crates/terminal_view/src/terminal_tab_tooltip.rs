@@ -1,4 +1,4 @@
-use gpui::{IntoElement, Render, ViewContext};
+use gpui::{IntoElement, Render};
 use ui::{prelude::*, tooltip_container, Divider};
 
 pub struct TerminalTooltip {

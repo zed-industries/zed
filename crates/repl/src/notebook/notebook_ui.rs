@@ -700,7 +700,7 @@ impl EventEmitter<()> for NotebookEditor {}
 //         ToolbarItemLocation::PrimaryLeft
 //     }
 
-//     fn pane_focus_update(&mut self, pane_focused: bool, _: &mut ViewContext<Self>) {
+//     fn pane_focus_update(&mut self, pane_focused: bool, _window: &mut Window, _cx: &mut ModelContext<Self>) {
 //         self.pane_focused = pane_focused;
 //     }
 // }

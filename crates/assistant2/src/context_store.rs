@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use futures::{self, future, Future, FutureExt};
-use gpui::{AppContext, AsyncAppContext, Model, ModelContext, SharedString, Task, WeakView};
+use gpui::{AppContext, AsyncAppContext, Model, ModelContext, SharedString, Task};
 use language::Buffer;
 use project::{ProjectPath, Worktree};
 use rope::Rope;

@@ -236,7 +236,7 @@ impl Render for BufferSearchBar {
                                     self.render_search_option_button(
                                         SearchOptions::CASE_SENSITIVE,
                                         focus_handle.clone(),
-                                        cx.listener(|this, _, cx| {
+                                        cx.listener(|this, _, _, cx| {
                                             this.toggle_case_sensitive(&ToggleCaseSensitive, cx)
                                         }),
                                     )
@@ -245,7 +245,7 @@ impl Render for BufferSearchBar {
                                     self.render_search_option_button(
                                         SearchOptions::WHOLE_WORD,
                                         focus_handle.clone(),
-                                        cx.listener(|this, _, cx| {
+                                        cx.listener(|this, _, _, cx| {
                                             this.toggle_whole_word(&ToggleWholeWord, cx)
                                         }),
                                     )
@@ -254,7 +254,7 @@ impl Render for BufferSearchBar {
                                     self.render_search_option_button(
                                         SearchOptions::REGEX,
                                         focus_handle.clone(),
-                                        cx.listener(|this, _, cx| {
+                                        cx.listener(|this, _, _, cx| {
                                             this.toggle_regex(&ToggleRegex, cx)
                                         }),
                                     )

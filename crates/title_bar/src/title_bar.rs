@@ -56,18 +56,18 @@ actions!(
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, cx| {
-        let item = cx.new_model(|cx| TitleBar::new("title-bar", workspace, cx));
-        workspace.set_titlebar_item(item.into(), cx);
+        let item = cx.new_model(|cx| TitleBar::new("title-bar", workspace, window, cx));
+        workspace.set_titlebar_item(item.into(), window, cx);
 
         #[cfg(not(target_os = "macos"))]
-        workspace.register_action(|workspace, action: &OpenApplicationMenu, cx| {
+        workspace.register_action(|workspace, action: &OpenApplicationMenu, window, cx| {
             if let Some(titlebar) = workspace
                 .titlebar_item()
                 .and_then(|item| item.downcast::<TitleBar>().ok())
             {
                 titlebar.update(cx, |titlebar, cx| {
                     if let Some(ref menu) = titlebar.application_menu {
-                        menu.update(cx, |menu, cx| menu.open_menu(action, cx));
+                        menu.update(cx, |menu, cx| menu.open_menu(action, window, cx));
                     }
                 });
             }
@@ -75,7 +75,7 @@ pub fn init(cx: &mut AppContext) {
 
         #[cfg(not(target_os = "macos"))]
         workspace.register_action(
-            |workspace, action: &NavigateApplicationMenuInDirection, cx| {
+            |workspace, action: &NavigateApplicationMenuInDirection, window, cx| {
                 if let Some(titlebar) = workspace
                     .titlebar_item()
                     .and_then(|item| item.downcast::<TitleBar>().ok())
@@ -83,7 +83,7 @@ pub fn init(cx: &mut AppContext) {
                     titlebar.update(cx, |titlebar, cx| {
                         if let Some(ref menu) = titlebar.application_menu {
                             menu.update(cx, |menu, cx| {
-                                menu.navigate_menus_in_direction(action, cx)
+                                menu.navigate_menus_in_direction(action, window, cx)
                             });
                         }
                     });
