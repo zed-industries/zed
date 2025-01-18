@@ -88,33 +88,24 @@ impl Graph {
             return graph;
         };
 
-        let mut nodes = vec![];
         let mut graph = Self::new();
 
-        self.collect_subgraph_nodes(start_node, &mut nodes);
-
-        for node in nodes {
-            graph.add_node(node);
-            if let Some(neighbors) = self.adjacencies.get(&node) {
-                for neighbor in neighbors {
-                    graph.add_edge(node, *neighbor);
-                }
-            }
-        }
+        self.collect_subgraph_nodes(&mut graph, start_node);
 
         graph
     }
 
-    fn collect_subgraph_nodes(&self, node: u32, nodes: &mut Vec<u32>) {
-        if !nodes.contains(&node) {
-            nodes.push(node);
+    fn collect_subgraph_nodes(&self, other: &mut Self, node: u32) {
+        if !other.adjacencies.contains_key(&node) {
+            other.add_node(node);
 
             let Some(neighbors) = self.adjacencies.get(&node) else {
                 return;
             };
 
             for neighbor in neighbors {
-                self.collect_subgraph_nodes(*neighbor, nodes);
+                self.collect_subgraph_nodes(other, *neighbor);
+                other.add_edge(node, *neighbor);
             }
         }
     }
@@ -207,9 +198,9 @@ mod graph_test {
             [2, 3],
             [2, 1],
             [4, 1],
-            [3, 4],
-            [4, 5],
-            [2, 5]
+            [2, 4],
+            [5, 4],
+            [5, 1]
         ];
 
         let mut graph = Graph::new();
@@ -218,6 +209,6 @@ mod graph_test {
             graph.add_edge(*src, *dst);
         }
 
-        assert_eq!(graph.topo_sort().unwrap(), vec![2, 3, 4, 5, 1]);
+        assert_eq!(graph.topo_sort().unwrap(), vec![2, 3, 5, 4, 1]);
     }
 }
