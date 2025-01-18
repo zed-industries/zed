@@ -27,7 +27,7 @@ re() {
 }
 
 re '\.new_view\('                    '.new_model('
-re '\cx.view\('                      'cx.model('
+re 'cx.view\('                       'cx.model('
 re '\.observe_new_views\('           '.observe_new_models('
 re 'View<'                           'Model<'
 re 'FocusableView'                   'Focusable'
@@ -86,6 +86,8 @@ re 'cx.use_asset\(' 'window.use_asset(cx, '
 re 'cx\.set_cursor_style\('           'window.set_cursor_style('
 re 'cx\.modifiers\('                  'window.modifiers('
 re 'cx\.mouse_position\('             'window.mouse_position('
+re 'cx\.text_style\('                 'window.text_style('
+re 'cx\.line_height\('                'window.line_height('
 
 # common closure patterns
 re 'cx.listener\(move \|this, _, cx\|' 'cx.listener(move |this, _, window, cx|'
