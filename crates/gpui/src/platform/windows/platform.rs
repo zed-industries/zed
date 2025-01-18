@@ -199,7 +199,7 @@ impl WindowsPlatformStatePtr {
 
     #[inline]
     fn run_foreground_tasks(&self) {
-        if let Ok(runnable) = self.main_receiver.try_recv() {
+        for runnable in self.main_receiver.drain() {
             runnable.run();
         }
     }
@@ -266,6 +266,8 @@ impl Platform for WindowsPlatform {
                         start = std::time::Instant::now();
                     }
                 }
+                // foreground tasks are dispatched
+                // WAIT_EVENT(1) => self.run_foreground_tasks(),
                 // Windows thread messages are posted
                 WAIT_EVENT(1) => {
                     let mut msg = MSG::default();
@@ -282,6 +284,8 @@ impl Platform for WindowsPlatform {
                             }
                         }
                     }
+                    // foreground tasks may have been queued in the message handlers
+                    self.0.run_foreground_tasks();
                 }
                 _ => {
                     log::error!("Something went wrong while waiting {:?}", wait_result);
