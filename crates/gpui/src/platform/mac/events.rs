@@ -178,7 +178,7 @@ impl PlatformInput {
                                 window_height - px(native_event.locationInWindow().y as f32),
                             ),
                             modifiers: read_modifiers(native_event),
-                            click_count: 1 as usize,
+                            click_count: 1,
                             first_mouse: false,
                         })
                     }),
