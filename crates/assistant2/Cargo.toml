@@ -14,10 +14,8 @@ doctest = false
 
 [features]
 test-support = [
-    "editor/test-support",
+    "gpui/test-support",
     "language/test-support",
-    "project/test-support",
-    "text/test-support",
 ]
 
 [dependencies]
