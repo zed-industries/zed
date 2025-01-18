@@ -1520,7 +1520,7 @@ impl Window {
         let mut entities_ref = cx.entities.accessed_entities.borrow_mut();
         let mut entities = mem::take(entities_ref.deref_mut());
         drop(entities_ref);
-        let handle = self.handle.clone();
+        let handle = self.handle;
         cx.observe_for_refreshes(handle, &entities);
         let mut entities_ref = cx.entities.accessed_entities.borrow_mut();
         mem::swap(&mut entities, entities_ref.deref_mut());

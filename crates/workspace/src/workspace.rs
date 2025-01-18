@@ -2693,6 +2693,7 @@ impl Workspace {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn add_item(
         &mut self,
         pane: Model<Pane>,

@@ -29,7 +29,7 @@ impl Tooltip {
         let title = title.into();
         move |_, cx| {
             cx.new_model(|_| Self {
-                title: title.clone().into(),
+                title: title.clone(),
                 meta: None,
                 key_binding: None,
             })

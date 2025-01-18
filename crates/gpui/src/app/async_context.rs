@@ -379,7 +379,7 @@ impl Context for AsyncWindowContext {
 
 impl VisualContext for AsyncWindowContext {
     fn window_handle(&self) -> AnyWindowHandle {
-        self.window.clone()
+        self.window
     }
 
     fn new_window_model<T: 'static>(
