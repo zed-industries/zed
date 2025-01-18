@@ -1630,7 +1630,7 @@ impl Editor {
                             editor
                                 .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
                         }
-                        project::Event::LanguageServerAdded | project::Event::LanguageServerRemoved( => {
+                        project::Event::LanguageServerAdded | project::Event::LanguageServerRemoved | project::Event::RefreshDocumentsDiagnostics => {
                             editor.tasks_pull_diagnostics_task = Some(editor.refresh_diagnostics(cx));
                         }
                         project::Event::SnippetEdit(id, snippet_edits) => {

@@ -315,6 +315,7 @@ pub enum Event {
     SnippetEdit(BufferId, Vec<(lsp::Range, Snippet)>),
     ExpandedAllForEntry(WorktreeId, ProjectEntryId),
     AgentLocationChanged,
+    RefreshDocumentsDiagnostics,
 }
 
 pub struct AgentLocationChanged;
@@ -2756,6 +2757,9 @@ impl Project {
             }
             LspStoreEvent::RefreshInlayHints => cx.emit(Event::RefreshInlayHints),
             LspStoreEvent::RefreshCodeLens => cx.emit(Event::RefreshCodeLens),
+            LspStoreEvent::RefreshDocumentsDiagnostics => {
+                cx.emit(Event::RefreshDocumentsDiagnostics)
+            }
             LspStoreEvent::LanguageServerPrompt(prompt) => {
                 cx.emit(Event::LanguageServerPrompt(prompt.clone()))
             }

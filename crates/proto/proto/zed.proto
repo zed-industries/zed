@@ -389,7 +389,9 @@ message Envelope {
         LogToDebugConsole log_to_debug_console = 348;
 
         GetDocumentDiagnostics get_document_diagnostics = 349;
-        GetDocumentDiagnosticsResponse get_document_diagnostics_response = 350; // current max
+        GetDocumentDiagnosticsResponse get_document_diagnostics_response = 350;
+        RefreshDocumentsDiagnostics refresh_documents_diagnostics = 351; // current max
+    
     }
 
     reserved 87 to 88;
@@ -830,4 +832,8 @@ message GetDocumentDiagnosticsResponse {
     uint64 server_id = 1;
     string uri = 2;
     repeated LspDiagnostic diagnostics = 3;
+}
+
+message RefreshDocumentsDiagnostics {
+    uint64 project_id = 1;
 }
