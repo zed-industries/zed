@@ -466,6 +466,7 @@ messages!(
     (GitInit, Background),
     (GetDocumentDiagnostics, Background),
     (GetDocumentDiagnosticsResponse, Background),
+    (RefreshDocumentsDiagnostics, Background)
 );
 
 request_messages!(
@@ -617,6 +618,7 @@ request_messages!(
     (GitDiff, GitDiffResponse),
     (GitInit, Ack),
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
+    (RefreshDocumentsDiagnostics, Ack)
 );
 
 entity_messages!(
@@ -727,6 +729,7 @@ entity_messages!(
     GitDiff,
     GitInit,
     GetDocumentDiagnostics,
+    RefreshDocumentsDiagnostics
 );
 
 entity_messages!(

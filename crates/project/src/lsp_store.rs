@@ -829,6 +829,27 @@ impl LocalLspStore {
             .detach();
 
         language_server
+            .on_request::<lsp::request::WorkspaceDiagnosticRefresh, _, _>({
+                let this = this.clone();
+                move |(), mut cx| {
+                    let this = this.clone();
+                    async move {
+                        this.update(&mut cx, |this, cx| {
+                            cx.emit(LspStoreEvent::RefreshDocumentsDiagnostics);
+                            this.downstream_client.as_ref().map(|(client, project_id)| {
+                                client.send(proto::RefreshDocumentsDiagnostics {
+                                    project_id: *project_id,
+                                })
+                            })
+                        })?
+                        .transpose()?;
+                        Ok(())
+                    }
+                }
+            })
+            .detach();
+
+        language_server
             .on_request::<lsp::request::ShowMessageRequest, _, _>({
                 let this = this.clone();
                 let name = name.to_string();
@@ -2934,6 +2955,7 @@ pub enum LspStoreEvent {
         edits: Vec<(lsp::Range, Snippet)>,
         most_recent_edit: clock::Lamport,
     },
+    RefreshDocumentsDiagnostics,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -2979,6 +3001,7 @@ impl LspStore {
         client.add_entity_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_entity_request_handler(Self::handle_register_buffer_with_language_servers);
         client.add_entity_request_handler(Self::handle_rename_project_entry);
+        client.add_entity_request_handler(Self::handle_refresh_documents_diagnostics);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetCodeActions>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetCompletions>);
         client.add_entity_request_handler(Self::handle_lsp_command::<GetHover>);
@@ -7421,6 +7444,17 @@ fn pull_diagnostic(
     ) -> Result<proto::Ack> {
         this.update(&mut cx, |_, cx| {
             cx.emit(LspStoreEvent::RefreshInlayHints);
+        })?;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_refresh_documents_diagnostics(
+        this: Model<Self>,
+        _: TypedEnvelope<proto::RefreshDocumentsDiagnostics>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::Ack> {
+        this.update(&mut cx, |_, cx| {
+            cx.emit(LspStoreEvent::RefreshDocumentsDiagnostics);
         })?;
         Ok(proto::Ack {})
     }
