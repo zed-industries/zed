@@ -629,6 +629,10 @@ impl TerminalView {
     }
 
     fn render_scrollbar(&self, cx: &mut ViewContext<Self>) -> Option<Stateful<Div>> {
+        if self.terminal.read(cx).total_lines() == self.terminal.read(cx).viewport_lines() {
+            return None;
+        }
+
         let Some(scroll_handle) = self
             .scrollbar_state
             .scroll_handle()
@@ -638,10 +642,14 @@ impl TerminalView {
             unreachable!()
         };
 
-        if let Some(display_offset) = scroll_handle.future_display_offset.take() {
+        if let Some(new_display_offset) = scroll_handle.future_display_offset.take() {
             self.terminal.update(cx, |term, _| {
-                term.scroll_to_bottom();
-                term.scroll_up_by(display_offset);
+                let delta = new_display_offset as i32 - term.last_content.display_offset as i32;
+                match delta.cmp(&0) {
+                    std::cmp::Ordering::Greater => term.scroll_up_by(delta as usize),
+                    std::cmp::Ordering::Less => term.scroll_down_by(delta.abs() as usize),
+                    std::cmp::Ordering::Equal => {}
+                }
             });
         }
 
