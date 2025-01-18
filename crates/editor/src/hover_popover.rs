@@ -265,12 +265,9 @@ fn show_hover(
 
             let local_diagnostic = snapshot
                 .buffer_snapshot
-                .diagnostics_in_range(anchor..anchor, false)
+                .diagnostics_in_range::<_, usize>(anchor..anchor)
                 // Find the entry with the most specific range
-                .min_by_key(|entry| {
-                    let range = entry.range.to_offset(&snapshot.buffer_snapshot);
-                    range.end - range.start
-                });
+                .min_by_key(|entry| entry.range.len());
 
             let diagnostic_popover = if let Some(local_diagnostic) = local_diagnostic {
                 let text = match local_diagnostic.diagnostic.source {
@@ -278,6 +275,15 @@ fn show_hover(
                         format!("{source}: {}", local_diagnostic.diagnostic.message)
                     }
                     None => local_diagnostic.diagnostic.message.clone(),
+                };
+                let local_diagnostic = DiagnosticEntry {
+                    diagnostic: local_diagnostic.diagnostic,
+                    range: snapshot
+                        .buffer_snapshot
+                        .anchor_before(local_diagnostic.range.start)
+                        ..snapshot
+                            .buffer_snapshot
+                            .anchor_after(local_diagnostic.range.end),
                 };
 
                 let mut border_color: Option<Hsla> = None;
@@ -770,7 +776,7 @@ impl InfoPopover {
 
 #[derive(Debug, Clone)]
 pub struct DiagnosticPopover {
-    local_diagnostic: DiagnosticEntry<Anchor>,
+    pub(crate) local_diagnostic: DiagnosticEntry<Anchor>,
     parsed_content: Option<View<Markdown>>,
     border_color: Option<Hsla>,
     background_color: Option<Hsla>,
@@ -822,10 +828,6 @@ impl DiagnosticPopover {
             .child(markdown_div);
 
         diagnostic_div.into_any_element()
-    }
-
-    pub fn group_id(&self) -> usize {
-        self.local_diagnostic.diagnostic.group_id
     }
 }
 

@@ -12,14 +12,38 @@ pub struct Anchor {
     pub buffer_id: Option<BufferId>,
     pub excerpt_id: ExcerptId,
     pub text_anchor: text::Anchor,
+    pub diff_base_anchor: Option<text::Anchor>,
 }
 
 impl Anchor {
+    pub fn in_buffer(
+        excerpt_id: ExcerptId,
+        buffer_id: BufferId,
+        text_anchor: text::Anchor,
+    ) -> Self {
+        Self {
+            buffer_id: Some(buffer_id),
+            excerpt_id,
+            text_anchor,
+            diff_base_anchor: None,
+        }
+    }
+
+    pub fn range_in_buffer(
+        excerpt_id: ExcerptId,
+        buffer_id: BufferId,
+        range: Range<text::Anchor>,
+    ) -> Range<Self> {
+        Self::in_buffer(excerpt_id, buffer_id, range.start)
+            ..Self::in_buffer(excerpt_id, buffer_id, range.end)
+    }
+
     pub fn min() -> Self {
         Self {
             buffer_id: None,
             excerpt_id: ExcerptId::min(),
             text_anchor: text::Anchor::MIN,
+            diff_base_anchor: None,
         }
     }
 
@@ -28,22 +52,47 @@ impl Anchor {
             buffer_id: None,
             excerpt_id: ExcerptId::max(),
             text_anchor: text::Anchor::MAX,
+            diff_base_anchor: None,
         }
     }
 
     pub fn cmp(&self, other: &Anchor, snapshot: &MultiBufferSnapshot) -> Ordering {
         let excerpt_id_cmp = self.excerpt_id.cmp(&other.excerpt_id, snapshot);
-        if excerpt_id_cmp.is_eq() {
-            if self.excerpt_id == ExcerptId::min() || self.excerpt_id == ExcerptId::max() {
-                Ordering::Equal
-            } else if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
-                self.text_anchor.cmp(&other.text_anchor, &excerpt.buffer)
-            } else {
-                Ordering::Equal
-            }
-        } else {
-            excerpt_id_cmp
+        if excerpt_id_cmp.is_ne() {
+            return excerpt_id_cmp;
         }
+        if self.excerpt_id == ExcerptId::min() || self.excerpt_id == ExcerptId::max() {
+            return Ordering::Equal;
+        }
+        if let Some(excerpt) = snapshot.excerpt(self.excerpt_id) {
+            let text_cmp = self.text_anchor.cmp(&other.text_anchor, &excerpt.buffer);
+            if text_cmp.is_ne() {
+                return text_cmp;
+            }
+            if self.diff_base_anchor.is_some() || other.diff_base_anchor.is_some() {
+                if let Some(diff_base) = snapshot.diffs.get(&excerpt.buffer_id) {
+                    let self_anchor = self
+                        .diff_base_anchor
+                        .filter(|a| diff_base.base_text.can_resolve(a));
+                    let other_anchor = other
+                        .diff_base_anchor
+                        .filter(|a| diff_base.base_text.can_resolve(a));
+                    return match (self_anchor, other_anchor) {
+                        (Some(a), Some(b)) => a.cmp(&b, &diff_base.base_text),
+                        (Some(_), None) => match other.text_anchor.bias {
+                            Bias::Left => Ordering::Greater,
+                            Bias::Right => Ordering::Less,
+                        },
+                        (None, Some(_)) => match self.text_anchor.bias {
+                            Bias::Left => Ordering::Less,
+                            Bias::Right => Ordering::Greater,
+                        },
+                        (None, None) => Ordering::Equal,
+                    };
+                }
+            }
+        }
+        Ordering::Equal
     }
 
     pub fn bias(&self) -> Bias {
@@ -57,6 +106,14 @@ impl Anchor {
                     buffer_id: self.buffer_id,
                     excerpt_id: self.excerpt_id,
                     text_anchor: self.text_anchor.bias_left(&excerpt.buffer),
+                    diff_base_anchor: self.diff_base_anchor.map(|a| {
+                        if let Some(base) = snapshot.diffs.get(&excerpt.buffer_id) {
+                            if a.buffer_id == Some(base.base_text.remote_id()) {
+                                return a.bias_left(&base.base_text);
+                            }
+                        }
+                        a
+                    }),
                 };
             }
         }
@@ -70,6 +127,14 @@ impl Anchor {
                     buffer_id: self.buffer_id,
                     excerpt_id: self.excerpt_id,
                     text_anchor: self.text_anchor.bias_right(&excerpt.buffer),
+                    diff_base_anchor: self.diff_base_anchor.map(|a| {
+                        if let Some(base) = snapshot.diffs.get(&excerpt.buffer_id) {
+                            if a.buffer_id == Some(base.base_text.remote_id()) {
+                                return a.bias_right(&base.base_text);
+                            }
+                        }
+                        a
+                    }),
                 };
             }
         }

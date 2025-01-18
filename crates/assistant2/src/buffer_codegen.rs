@@ -255,17 +255,17 @@ impl CodegenAlternative {
     ) -> Self {
         let snapshot = buffer.read(cx).snapshot(cx);
 
-        let (old_excerpt, _) = snapshot
+        let (old_buffer, _, _) = snapshot
             .range_to_buffer_ranges(range.clone())
             .pop()
             .unwrap();
         let old_buffer = cx.new_model(|cx| {
-            let text = old_excerpt.buffer().as_rope().clone();
-            let line_ending = old_excerpt.buffer().line_ending();
-            let language = old_excerpt.buffer().language().cloned();
+            let text = old_buffer.as_rope().clone();
+            let line_ending = old_buffer.line_ending();
+            let language = old_buffer.language().cloned();
             let language_registry = buffer
                 .read(cx)
-                .buffer(old_excerpt.buffer_id())
+                .buffer(old_buffer.remote_id())
                 .unwrap()
                 .read(cx)
                 .language_registry();
@@ -475,7 +475,7 @@ impl CodegenAlternative {
             let ranges = snapshot.range_to_buffer_ranges(self.range.clone());
             ranges
                 .first()
-                .and_then(|(excerpt, _)| excerpt.buffer().language())
+                .and_then(|(buffer, _, _)| buffer.language())
                 .map(|language| language.name())
         };
 

@@ -144,7 +144,7 @@ struct BufferBranchState {
 /// An immutable, cheaply cloneable representation of a fixed
 /// state of a buffer.
 pub struct BufferSnapshot {
-    text: text::BufferSnapshot,
+    pub text: text::BufferSnapshot,
     pub(crate) syntax: SyntaxSnapshot,
     file: Option<Arc<dyn File>>,
     diagnostics: SmallVec<[(LanguageServerId, DiagnosticSet); 2]>,
@@ -778,6 +778,36 @@ impl Buffer {
             deferred_ops: OperationQueue::new(),
             has_conflict: false,
             _subscriptions: Vec::new(),
+        }
+    }
+
+    pub fn build_snapshot(
+        text: Rope,
+        language: Option<Arc<Language>>,
+        language_registry: Option<Arc<LanguageRegistry>>,
+        cx: &mut AppContext,
+    ) -> impl Future<Output = BufferSnapshot> {
+        let entity_id = cx.reserve_model::<Self>().entity_id();
+        let buffer_id = entity_id.as_non_zero_u64().into();
+        async move {
+            let text =
+                TextBuffer::new_normalized(0, buffer_id, Default::default(), text).snapshot();
+            let mut syntax = SyntaxMap::new(&text).snapshot();
+            if let Some(language) = language.clone() {
+                let text = text.clone();
+                let language = language.clone();
+                let language_registry = language_registry.clone();
+                syntax.reparse(&text, language_registry, language);
+            }
+            BufferSnapshot {
+                text,
+                syntax,
+                file: None,
+                diagnostics: Default::default(),
+                remote_selections: Default::default(),
+                language,
+                non_text_state_update_count: 0,
+            }
         }
     }
 
@@ -2450,7 +2480,8 @@ impl Buffer {
             last_end = Some(range.end);
 
             let new_text_len = rng.gen_range(0..10);
-            let new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
+            let mut new_text: String = RandomCharIter::new(&mut *rng).take(new_text_len).collect();
+            new_text = new_text.to_uppercase();
 
             edits.push((range, new_text));
         }
@@ -3547,10 +3578,8 @@ impl BufferSnapshot {
 
     pub fn runnable_ranges(
         &self,
-        range: Range<Anchor>,
+        offset_range: Range<usize>,
     ) -> impl Iterator<Item = RunnableRange> + '_ {
-        let offset_range = range.start.to_offset(self)..range.end.to_offset(self);
-
         let mut syntax_matches = self.syntax.matches(offset_range, self, |grammar| {
             grammar.runnable_config.as_ref().map(|config| &config.query)
         });
@@ -3650,9 +3679,20 @@ impl BufferSnapshot {
         })
     }
 
-    pub fn indent_guides_in_range(
+    pub fn indent_guides_in_range<T: ToPoint>(
         &self,
-        range: Range<Anchor>,
+        range: Range<T>,
+        ignore_disabled_for_language: bool,
+        cx: &AppContext,
+    ) -> Vec<IndentGuide> {
+        let start = range.start.to_point(self);
+        let end = range.end.to_point(self);
+        self.indent_guides_in_range_impl(start..end, ignore_disabled_for_language, cx)
+    }
+
+    pub fn indent_guides_in_range_impl(
+        &self,
+        range: Range<Point>,
         ignore_disabled_for_language: bool,
         cx: &AppContext,
     ) -> Vec<IndentGuide> {
@@ -3664,8 +3704,8 @@ impl BufferSnapshot {
         }
         let tab_size = language_settings.tab_size.get() as u32;
 
-        let start_row = range.start.to_point(self).row;
-        let end_row = range.end.to_point(self).row;
+        let start_row = range.start.row;
+        let end_row = range.end.row;
         let row_range = start_row..end_row + 1;
 
         let mut row_indents = self.line_indents_in_row_range(row_range.clone());
@@ -4210,6 +4250,10 @@ impl<'a> BufferChunks<'a> {
     /// The current byte offset in the buffer.
     pub fn offset(&self) -> usize {
         self.range.start
+    }
+
+    pub fn range(&self) -> Range<usize> {
+        self.range.clone()
     }
 
     fn update_diagnostic_depths(&mut self, endpoint: DiagnosticEndpoint) {
