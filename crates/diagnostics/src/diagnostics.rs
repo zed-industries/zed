@@ -917,7 +917,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                     .map(|stack| {
                         stack.child(
                             svg()
-                                .size(cx.text_style().font_size)
+                                .size(window.text_style().font_size)
                                 .flex_none()
                                 .map(|icon| {
                                     if diagnostic.severity == DiagnosticSeverity::ERROR {
@@ -935,7 +935,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                             .gap_1()
                             .child(
                                 StyledText::new(message.clone()).with_highlights(
-                                    &cx.text_style(),
+                                    &window.text_style(),
                                     code_ranges
                                         .iter()
                                         .map(|range| (range.clone(), highlight_style)),

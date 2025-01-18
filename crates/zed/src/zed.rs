@@ -1179,7 +1179,7 @@ fn show_keymap_file_load_error(
         let parsed_markdown = Rc::new(parsed_markdown.await);
         cx.update(|cx| {
             show_app_notification(notification_id, cx, move |cx| {
-                let workspace_handle = cx.view().downgrade();
+                let workspace_handle = cx.model().downgrade();
                 let parsed_markdown = parsed_markdown.clone();
                 cx.new_model(move |_cx| {
                     MessageNotification::new_from_builder(move |cx| {
