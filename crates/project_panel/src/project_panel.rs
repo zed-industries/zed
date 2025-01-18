@@ -3544,13 +3544,48 @@ impl ProjectPanel {
                     cx.propagate();
                 }),
             )
-            .on_click(
-                cx.listener(move |this, event: &gpui::ClickEvent, window, cx| {
-                    if event.down.button == MouseButton::Right
-                        || event.down.first_mouse
-                        || show_editor
+            .on_click(cx.listener(move |this, event: &gpui::ClickEvent, cx| {
+                if event.down.button == MouseButton::Right || event.down.first_mouse || show_editor
+                {
+                    return;
+                }
+                if event.down.button == MouseButton::Left {
+                    this.mouse_down = false;
+                }
+                cx.stop_propagation();
+
+                if let Some(selection) = this.selection.filter(|_| event.down.modifiers.shift) {
+                    let current_selection = this.index_for_selection(selection);
+                    let clicked_entry = SelectedEntry {
+                        entry_id,
+                        worktree_id,
+                    };
+                    let target_selection = this.index_for_selection(clicked_entry);
+                    if let Some(((_, _, source_index), (_, _, target_index))) =
+                        current_selection.zip(target_selection)
                     {
-                        return;
+                        let range_start = source_index.min(target_index);
+                        let range_end = source_index.max(target_index) + 1; // Make the range inclusive.
+                        let mut new_selections = BTreeSet::new();
+                        this.for_each_visible_entry(
+                            range_start..range_end,
+                            cx,
+                            |entry_id, details, _| {
+                                new_selections.insert(SelectedEntry {
+                                    entry_id,
+                                    worktree_id: details.worktree_id,
+                                });
+                            },
+                        );
+
+                        this.marked_entries = this
+                            .marked_entries
+                            .union(&new_selections)
+                            .cloned()
+                            .collect();
+
+                        this.selection = Some(clicked_entry);
+                        this.marked_entries.insert(clicked_entry);
                     }
                 } else if event.down.modifiers.secondary() {
                     if event.down.click_count > 1 {
@@ -3561,60 +3596,17 @@ impl ProjectPanel {
                             this.marked_entries.remove(&selection);
                         }
                     }
-                    cx.stop_propagation();
-
-                    if let Some(selection) = this.selection.filter(|_| event.down.modifiers.shift) {
-                        let current_selection = this.index_for_selection(selection);
-                        let clicked_entry = SelectedEntry {
-                            entry_id,
-                            worktree_id,
-                        };
-                        let target_selection = this.index_for_selection(clicked_entry);
-                        if let Some(((_, _, source_index), (_, _, target_index))) =
-                            current_selection.zip(target_selection)
-                        {
-                            let range_start = source_index.min(target_index);
-                            let range_end = source_index.max(target_index) + 1; // Make the range inclusive.
-                            let mut new_selections = BTreeSet::new();
-                            this.for_each_visible_entry(
-                                range_start..range_end,
-                                window,
-                                cx,
-                                |entry_id, details, _, _| {
-                                    new_selections.insert(SelectedEntry {
-                                        entry_id,
-                                        worktree_id: details.worktree_id,
-                                    });
-                                },
-                            );
-
-                            this.marked_entries = this
-                                .marked_entries
-                                .union(&new_selections)
-                                .cloned()
-                                .collect();
-
-                            this.selection = Some(clicked_entry);
-                            this.marked_entries.insert(clicked_entry);
-                        }
-                    } else if event.down.modifiers.secondary() {
-                        if event.down.click_count > 1 {
-                            this.split_entry(entry_id, cx);
-                        } else if !this.marked_entries.insert(selection) {
-                            this.marked_entries.remove(&selection);
-                        }
-                    } else if kind.is_dir() {
-                        this.marked_entries.clear();
-                        this.toggle_expanded(entry_id, window, cx);
-                    } else {
-                        let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
-                        let click_count = event.up.click_count;
-                        let focus_opened_item = !preview_tabs_enabled || click_count > 1;
-                        let allow_preview = preview_tabs_enabled && click_count == 1;
-                        this.open_entry(entry_id, focus_opened_item, allow_preview, cx);
-                    }
-                }),
-            )
+                } else if kind.is_dir() {
+                    this.marked_entries.clear();
+                    this.toggle_expanded(entry_id, cx);
+                } else {
+                    let preview_tabs_enabled = PreviewTabsSettings::get_global(cx).enabled;
+                    let click_count = event.up.click_count;
+                    let focus_opened_item = !preview_tabs_enabled || click_count > 1;
+                    let allow_preview = preview_tabs_enabled && click_count == 1;
+                    this.open_entry(entry_id, focus_opened_item, allow_preview, cx);
+                }
+            }))
             .child(
                 ListItem::new(entry_id.to_proto() as usize)
                     .indent_level(depth)
