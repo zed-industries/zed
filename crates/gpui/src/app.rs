@@ -1635,11 +1635,10 @@ pub struct AnyTooltip {
     /// The absolute position of the mouse when the tooltip was deployed.
     pub mouse_position: Point<Pixels>,
 
-    /// Whether the tooltitp can be hovered or not.
-    pub hoverable: bool,
-
-    /// Bounds of the element that triggered the tooltip appearance.
-    pub origin_bounds: Bounds<Pixels>,
+    /// Given the bounds of the tooltip, checks whether the tooltip should still be visible and
+    /// updates its state accordingly. This is needed atop the hovered element's mouse move handler
+    /// to handle the case where the element is not painted (e.g. via use of `visible_on_hover`).
+    pub check_visible_and_update: Rc<dyn Fn(Bounds<Pixels>, &mut WindowContext) -> bool>,
 }
 
 /// A keystroke event, and potentially the associated action
