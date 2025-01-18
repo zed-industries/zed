@@ -124,7 +124,7 @@ pub struct TerminalView {
     show_breadcrumbs: bool,
     block_below_cursor: Option<Rc<BlockProperties>>,
     scroll_top: Pixels,
-    scrollbar_state: ScrollbarState<TerminalScrollHandle>,
+    scrollbar_state: ScrollbarState,
     _subscriptions: Vec<Subscription>,
     _terminal_subscriptions: Vec<Subscription>,
 }
@@ -629,21 +629,23 @@ impl TerminalView {
     }
 
     fn render_scrollbar(&self, cx: &mut ViewContext<Self>) -> Option<Stateful<Div>> {
-        if let Some(display_offset) = self
+        let Some(scroll_handle) = self
             .scrollbar_state
             .scroll_handle()
-            .future_display_offset
-            .take()
-        {
+            .as_any()
+            .downcast_ref::<TerminalScrollHandle>()
+        else {
+            unreachable!()
+        };
+
+        if let Some(display_offset) = scroll_handle.future_display_offset.take() {
             self.terminal.update(cx, |term, _| {
                 term.scroll_to_bottom();
                 term.scroll_up_by(display_offset);
             });
         }
 
-        self.scrollbar_state
-            .scroll_handle()
-            .update(self.terminal.read(cx));
+        scroll_handle.update(self.terminal.read(cx));
 
         Some(
             div()

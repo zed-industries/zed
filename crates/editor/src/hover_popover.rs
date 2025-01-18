@@ -21,7 +21,7 @@ use std::rc::Rc;
 use std::{borrow::Cow, cell::RefCell};
 use std::{ops::Range, sync::Arc, time::Duration};
 use theme::ThemeSettings;
-use ui::{prelude::*, window_is_transparent, ListScrollableHandle, Scrollbar, ScrollbarState};
+use ui::{prelude::*, window_is_transparent, Scrollbar, ScrollbarState};
 use util::TryFutureExt;
 pub const HOVER_REQUEST_DELAY_MILLIS: u64 = 200;
 
@@ -683,7 +683,7 @@ pub(crate) struct InfoPopover {
     pub(crate) symbol_range: RangeInEditor,
     pub(crate) parsed_content: Option<View<Markdown>>,
     pub(crate) scroll_handle: ScrollHandle,
-    pub(crate) scrollbar_state: ScrollbarState<ListScrollableHandle>,
+    pub(crate) scrollbar_state: ScrollbarState,
     pub(crate) keyboard_grace: Rc<RefCell<bool>>,
     pub(crate) anchor: Option<Anchor>,
 }

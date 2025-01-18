@@ -42,7 +42,7 @@ use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
 use smol::channel;
 use theme::{SyntaxTheme, ThemeSettings};
-use ui::{DynamicSpacing, IndentGuideColors, IndentGuideLayout, ListScrollableHandle};
+use ui::{DynamicSpacing, IndentGuideColors, IndentGuideLayout};
 use util::{debug_panic, RangeExt, ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
@@ -113,8 +113,8 @@ pub struct OutlinePanel {
     filter_editor: View<Editor>,
     mode: ItemsDisplayMode,
     show_scrollbar: bool,
-    vertical_scrollbar_state: ScrollbarState<ListScrollableHandle>,
-    horizontal_scrollbar_state: ScrollbarState<ListScrollableHandle>,
+    vertical_scrollbar_state: ScrollbarState,
+    horizontal_scrollbar_state: ScrollbarState,
     hide_scrollbar_task: Option<Task<()>>,
     max_width_item_index: Option<usize>,
     preserve_selection_on_buffer_fold_toggles: HashSet<BufferId>,

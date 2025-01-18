@@ -18,8 +18,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::HashSet, ops::Range, path::PathBuf, sync::Arc, time::Duration, usize};
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, ListScrollableHandle, Scrollbar,
-    ScrollbarState, Tooltip,
+    prelude::*, Checkbox, Divider, DividerColor, ElevationIndex, Scrollbar, ScrollbarState, Tooltip,
 };
 use util::{maybe, ResultExt, TryFutureExt};
 use workspace::notifications::DetachAndPromptErr;
@@ -84,7 +83,7 @@ pub struct GitPanel {
     pending_serialization: Task<Option<()>>,
     project: Model<Project>,
     scroll_handle: UniformListScrollHandle,
-    scrollbar_state: ScrollbarState<ListScrollableHandle>,
+    scrollbar_state: ScrollbarState,
     selected_entry: Option<usize>,
     show_scrollbar: bool,
     rebuild_requested: Arc<AtomicBool>,

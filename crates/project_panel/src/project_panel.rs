@@ -53,8 +53,8 @@ use std::{
 use theme::ThemeSettings;
 use ui::{
     prelude::*, v_flex, ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind,
-    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, ListItem, ListItemSpacing,
-    ListScrollableHandle, Scrollbar, ScrollbarState, Tooltip,
+    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, ListItem, ListItemSpacing, Scrollbar,
+    ScrollbarState, Tooltip,
 };
 use util::{maybe, paths::compare_paths, ResultExt, TakeUntilExt, TryFutureExt};
 use workspace::{
@@ -96,8 +96,8 @@ pub struct ProjectPanel {
     width: Option<Pixels>,
     pending_serialization: Task<Option<()>>,
     show_scrollbar: bool,
-    vertical_scrollbar_state: ScrollbarState<ListScrollableHandle>,
-    horizontal_scrollbar_state: ScrollbarState<ListScrollableHandle>,
+    vertical_scrollbar_state: ScrollbarState,
+    horizontal_scrollbar_state: ScrollbarState,
     hide_scrollbar_task: Option<Task<()>>,
     diagnostics: HashMap<(WorktreeId, PathBuf), DiagnosticSeverity>,
     max_width_item_index: Option<usize>,

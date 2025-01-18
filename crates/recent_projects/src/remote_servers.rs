@@ -10,6 +10,7 @@ use futures::FutureExt;
 use gpui::canvas;
 use gpui::ClipboardItem;
 use gpui::Task;
+use gpui::UniformListScrollHandle;
 use gpui::WeakView;
 use gpui::{
     AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
@@ -22,7 +23,6 @@ use remote::SshConnectionOptions;
 use remote::SshRemoteClient;
 use settings::update_settings_file;
 use settings::Settings;
-use ui::ListScrollableHandle;
 use ui::Navigable;
 use ui::NavigableEntry;
 use ui::{
@@ -260,7 +260,7 @@ struct ProjectEntry {
 
 #[derive(Clone)]
 struct DefaultState {
-    scrollbar: ScrollbarState<ListScrollableHandle>,
+    scrollbar: ScrollbarState,
     add_new_server: NavigableEntry,
     servers: Vec<ProjectEntry>,
 }
@@ -1253,7 +1253,10 @@ impl RemoteServerProjects {
                 cx.notify();
             }));
 
-        let ui::ListScrollableHandle::NonUniform(scroll_handle) = scroll_state.scroll_handle()
+        let Some(scroll_handle) = scroll_state
+            .scroll_handle()
+            .as_any()
+            .downcast_ref::<ScrollHandle>()
         else {
             unreachable!()
         };
