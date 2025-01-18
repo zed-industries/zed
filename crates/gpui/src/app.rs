@@ -1329,6 +1329,13 @@ impl AppContext {
         self.actions.all_action_names()
     }
 
+    /// Returns key bindings that invoke the given action on the currently focused element, without
+    /// checking context. Bindings are returned returned in precedence order (reverse of the order
+    /// they were added to the keymap).
+    pub fn all_bindings_for_input(&self, input: &[Keystroke]) -> Vec<KeyBinding> {
+        RefCell::borrow(&self.keymap).all_bindings_for_input(input)
+    }
+
     /// Get all non-internal actions that have been registered, along with their schemas.
     pub fn action_schemas(
         &self,
