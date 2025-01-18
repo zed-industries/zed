@@ -447,6 +447,7 @@ messages!(
     (SetIndexText, Background),
     (GetDocumentDiagnostics, Background),
     (GetDocumentDiagnosticsResponse, Background),
+    (RefreshDocumentsDiagnostics, Background)
 );
 
 request_messages!(
@@ -585,6 +586,7 @@ request_messages!(
     (GitCheckoutFiles, Ack),
     (SetIndexText, Ack),
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
+    (RefreshDocumentsDiagnostics, Ack)
 );
 
 entity_messages!(
@@ -682,6 +684,7 @@ entity_messages!(
     GitCheckoutFiles,
     SetIndexText,
     GetDocumentDiagnostics,
+    RefreshDocumentsDiagnostics
 );
 
 entity_messages!(

@@ -324,7 +324,9 @@ message Envelope {
         GitCheckoutFiles git_checkout_files = 303;
         
         GetDocumentDiagnostics get_document_diagnostics = 304;
-        GetDocumentDiagnosticsResponse get_document_diagnostics_response = 305; // current max
+        GetDocumentDiagnosticsResponse get_document_diagnostics_response = 305;
+        RefreshDocumentsDiagnostics refresh_documents_diagnostics = 306; // current max
+    
     }
 
     reserved 87 to 88;
@@ -2822,4 +2824,8 @@ message GetDocumentDiagnosticsResponse {
     uint64 server_id = 1;
     string uri = 2;
     repeated LspDiagnostic diagnostics = 3;
+}
+
+message RefreshDocumentsDiagnostics {
+    uint64 project_id = 1;
 }

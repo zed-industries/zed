@@ -1231,6 +1231,7 @@ impl Editor {
                                 .refresh_inlay_hints(InlayHintRefreshReason::RefreshRequested, cx);
                         } else if let project::Event::LanguageServerAdded(_, _, _)
                         | project::Event::LanguageServerRemoved(_) = event
+                        | project::Event::RefreshDocumentsDiagnostics = event
                         {
                             editor.refresh_diagnostics(cx);
                         } else if let project::Event::SnippetEdit(id, snippet_edits) = event {
