@@ -4716,8 +4716,19 @@ impl Editor {
                 });
             }
             InlineCompletion::Edit(edits) => {
-                if edits.len() == 1 && edits[0].0.start == edits[0].0.end {
-                    let text = edits[0].1.as_str();
+                // Find an insertion that starts at the cursor position.
+                let snapshot = self.buffer.read(cx).snapshot(cx);
+                let cursor_offset = self.selections.newest::<usize>(cx).head();
+                let insertion = edits.iter().find_map(|(range, text)| {
+                    let range = range.to_offset(&snapshot);
+                    if range.is_empty() && range.start == cursor_offset {
+                        Some(text)
+                    } else {
+                        None
+                    }
+                });
+
+                if let Some(text) = insertion {
                     let mut partial_completion = text
                         .chars()
                         .by_ref()
@@ -4740,6 +4751,8 @@ impl Editor {
 
                     self.refresh_inline_completion(true, true, cx);
                     cx.notify();
+                } else {
+                    self.accept_inline_completion(&Default::default(), cx);
                 }
             }
         }
