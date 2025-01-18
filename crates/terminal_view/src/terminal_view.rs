@@ -711,6 +711,12 @@ impl TerminalView {
             return None;
         }
 
+        if self.terminal.read(cx).total_lines() == self.terminal.read(cx).viewport_lines() {
+            return None;
+        }
+
+        self.scroll_handle.update(self.terminal.read(cx));
+
         if let Some(new_display_offset) = self.scroll_handle.future_display_offset.take() {
             self.terminal.update(cx, |term, _| {
                 let delta = new_display_offset as i32 - term.last_content.display_offset as i32;
@@ -721,8 +727,6 @@ impl TerminalView {
                 }
             });
         }
-
-        self.scroll_handle.update(self.terminal.read(cx));
 
         Some(
             div()
