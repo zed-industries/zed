@@ -10,7 +10,7 @@ use gpui::{
 use itertools::Itertools;
 use language::Buffer;
 use ui::{prelude::*, KeyBinding, PopoverMenu, PopoverMenuHandle, Tooltip};
-use workspace::Workspace;
+use workspace::{notifications::NotifyResultExt, Workspace};
 
 use crate::context::ContextKind;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
@@ -311,23 +311,13 @@ impl ContextStrip {
             context_store.accept_suggested_context(&suggested, cx)
         });
 
-        let workspace = self.workspace.clone();
-
         cx.spawn(|this, mut cx| async move {
-            match task.await {
-                Ok(()) => {
+            match task.await.notify_async_err(&mut cx) {
+                None => {}
+                Some(()) => {
                     if let Some(this) = this.upgrade() {
                         this.update(&mut cx, |_, cx| cx.notify())?;
                     }
-                }
-                Err(err) => {
-                    let Some(workspace) = workspace.upgrade() else {
-                        return anyhow::Ok(());
-                    };
-
-                    workspace.update(&mut cx, |workspace, cx| {
-                        workspace.show_error(&err, cx);
-                    })?;
                 }
             }
             anyhow::Ok(())
