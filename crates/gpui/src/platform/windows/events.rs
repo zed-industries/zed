@@ -18,6 +18,7 @@ use crate::*;
 
 pub(crate) const CURSOR_STYLE_CHANGED: u32 = WM_USER + 1;
 pub(crate) const CLOSE_ONE_WINDOW: u32 = WM_USER + 2;
+pub(crate) const EVENT_DISPATCH_ON_MAIN_THREAD: u32 = WM_USER + 101;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 const AUTO_HIDE_TASKBAR_THICKNESS_PX: i32 = 1;
@@ -243,8 +244,8 @@ fn handle_destroy_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Opt
         callback();
     }
     unsafe {
-        PostMessageW(
-            None,
+        PostThreadMessageW(
+            state_ptr.main_thread_id_win32,
             CLOSE_ONE_WINDOW,
             WPARAM(state_ptr.validation_number),
             LPARAM(handle.0 as isize),

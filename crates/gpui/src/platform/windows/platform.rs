@@ -37,13 +37,13 @@ pub(crate) struct WindowsPlatform {
     // The below members will never change throughout the entire lifecycle of the app.
     icon: HICON,
     main_receiver: flume::Receiver<Runnable>,
-    dispatch_event: HANDLE,
     background_executor: BackgroundExecutor,
     foreground_executor: ForegroundExecutor,
     text_system: Arc<DirectWriteTextSystem>,
     windows_version: WindowsVersion,
     bitmap_factory: ManuallyDrop<IWICImagingFactory>,
     validation_number: usize,
+    main_thread_id_win32: u32,
 }
 
 pub(crate) struct WindowsPlatformState {
@@ -82,8 +82,8 @@ impl WindowsPlatform {
             OleInitialize(None).expect("unable to initialize Windows OLE");
         }
         let (main_sender, main_receiver) = flume::unbounded::<Runnable>();
-        let dispatch_event = unsafe { CreateEventW(None, false, false, None) }.unwrap();
-        let dispatcher = Arc::new(WindowsDispatcher::new(main_sender, dispatch_event));
+        let main_thread_id_win32 = unsafe { GetCurrentThreadId() };
+        let dispatcher = Arc::new(WindowsDispatcher::new(main_sender, main_thread_id_win32));
         let background_executor = BackgroundExecutor::new(dispatcher.clone());
         let foreground_executor = ForegroundExecutor::new(dispatcher);
         let bitmap_factory = ManuallyDrop::new(unsafe {
@@ -107,13 +107,13 @@ impl WindowsPlatform {
             gpu_context,
             icon,
             main_receiver,
-            dispatch_event,
             background_executor,
             foreground_executor,
             text_system,
             windows_version,
             bitmap_factory,
             validation_number,
+            main_thread_id_win32,
         }
     }
 
@@ -171,8 +171,8 @@ impl WindowsPlatform {
     }
 
     #[inline]
-    fn run_foreground_tasks(&self) {
-        for runnable in self.main_receiver.drain() {
+    fn run_foreground_task(&self) {
+        if let Ok(runnable) = self.main_receiver.try_recv() {
             runnable.run();
         }
     }
@@ -185,6 +185,7 @@ impl WindowsPlatform {
             windows_version: self.windows_version,
             validation_number: self.validation_number,
             main_receiver: self.main_receiver.clone(),
+            main_thread_id_win32: self.main_thread_id_win32,
         }
     }
 }
@@ -214,32 +215,16 @@ impl Platform for WindowsPlatform {
         on_finish_launching();
         let vsync_event = unsafe { Owned::new(CreateEventW(None, false, false, None).unwrap()) };
         begin_vsync(*vsync_event);
-        let mut start = std::time::Instant::now();
-        let mut fps = 0;
         'a: loop {
             let wait_result = unsafe {
-                MsgWaitForMultipleObjects(
-                    Some(&[*vsync_event, self.dispatch_event]),
-                    false,
-                    INFINITE,
-                    QS_ALLINPUT,
-                )
+                MsgWaitForMultipleObjects(Some(&[*vsync_event]), false, INFINITE, QS_ALLINPUT)
             };
 
             match wait_result {
                 // compositor clock ticked so we should draw a frame
-                WAIT_EVENT(0) => {
-                    fps += 1;
-                    self.0.redraw_all();
-                    if start.elapsed().as_secs() >= 1 {
-                        println!("FPS: {}, tasks: {}", fps, self.0.main_receiver.len());
-                        fps = 0;
-                        start = std::time::Instant::now();
-                    }
-                // foreground tasks are dispatched
-                WAIT_EVENT(1) => self.run_foreground_tasks(),
+                WAIT_EVENT(0) => self.redraw_all(),
                 // Windows thread messages are posted
-                WAIT_EVENT(2) => {
+                WAIT_EVENT(1) => {
                     let mut msg = MSG::default();
                     unsafe {
                         while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
@@ -254,6 +239,7 @@ impl Platform for WindowsPlatform {
                                         break 'a;
                                     }
                                 }
+                                EVENT_DISPATCH_ON_MAIN_THREAD => self.run_foreground_task(),
                                 _ => {
                                     // todo(windows)
                                     // crate `windows 0.56` reports true as Err
@@ -263,8 +249,6 @@ impl Platform for WindowsPlatform {
                             }
                         }
                     }
-                    // foreground tasks may have been queued in the message handlers
-                    self.run_foreground_tasks();
                 }
                 _ => {
                     log::error!("Something went wrong while waiting {:?}", wait_result);
@@ -607,6 +591,7 @@ pub(crate) struct WindowCreationInfo {
     pub(crate) windows_version: WindowsVersion,
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: flume::Receiver<Runnable>,
+    pub(crate) main_thread_id_win32: u32,
 }
 
 fn open_target(target: &str) {
