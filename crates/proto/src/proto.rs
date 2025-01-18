@@ -453,6 +453,7 @@ messages!(
     (Pull, Background),
     (GetDocumentDiagnostics, Background),
     (GetDocumentDiagnosticsResponse, Background),
+    (RefreshDocumentsDiagnostics, Background)
 );
 
 request_messages!(
@@ -596,6 +597,7 @@ request_messages!(
     (GetRemotes, GetRemotesResponse),
     (Pull, Ack),
     (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
+    (RefreshDocumentsDiagnostics, Ack)
 );
 
 entity_messages!(
@@ -698,6 +700,7 @@ entity_messages!(
     GetRemotes,
     Pull,
     GetDocumentDiagnostics,
+    RefreshDocumentsDiagnostics
 );
 
 entity_messages!(

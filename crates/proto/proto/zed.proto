@@ -333,7 +333,9 @@ message Envelope {
         ApplyCodeActionKindResponse apply_code_action_kind_response = 310;
         
         GetDocumentDiagnostics get_document_diagnostics = 311;
-        GetDocumentDiagnosticsResponse get_document_diagnostics_response = 312; // current max
+        GetDocumentDiagnosticsResponse get_document_diagnostics_response = 312;
+        RefreshDocumentsDiagnostics refresh_documents_diagnostics = 313; // current max
+    
     }
 
     reserved 87 to 88;
@@ -2884,4 +2886,8 @@ message GetDocumentDiagnosticsResponse {
     uint64 server_id = 1;
     string uri = 2;
     repeated LspDiagnostic diagnostics = 3;
+}
+
+message RefreshDocumentsDiagnostics {
+    uint64 project_id = 1;
 }
