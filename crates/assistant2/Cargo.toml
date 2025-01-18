@@ -12,6 +12,14 @@ workspace = true
 path = "src/assistant.rs"
 doctest = false
 
+[features]
+test-support = [
+    "editor/test-support",
+    "language/test-support",
+    "project/test-support",
+    "text/test-support",
+]
+
 [dependencies]
 anyhow.workspace = true
 assistant_settings.workspace = true
