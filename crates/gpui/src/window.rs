@@ -293,7 +293,7 @@ impl PartialEq<WeakFocusHandle> for FocusHandle {
 }
 
 /// Focusable allows users of your view to easily
-/// focus it (using cx.focus_view(view))
+/// focus it (using window.focus_view(cx, view))
 pub trait Focusable: 'static {
     /// Returns the focus handle associated with this view.
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle;

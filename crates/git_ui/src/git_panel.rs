@@ -439,7 +439,7 @@ impl GitPanel {
     }
 
     fn is_focused(&self, window: &Window, cx: &ModelContext<Self>) -> bool {
-        cx.focused()
+        window.focused(cx)
             .map_or(false, |focused| self.focus_handle == focused)
     }
 

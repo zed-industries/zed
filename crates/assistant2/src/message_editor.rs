@@ -270,7 +270,7 @@ impl MessageEditor {
         if self.context_picker_menu_handle.is_deployed() {
             cx.propagate();
         } else {
-            cx.focus_view(window, &self.context_strip);
+            window.focus_view(cx, window, &self.context_strip);
         }
     }
 }

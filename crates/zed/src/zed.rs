@@ -253,7 +253,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut ModelContext<Workspace>
             "#},
             e
         );
-        let prompt = cx.prompt(
+        let prompt = window.prompt(cx, 
             PromptLevel::Critical,
             "Could not start inotify",
             Some(&message),
@@ -283,7 +283,7 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut ModelContext<Workspace>
             "#},
             e
         );
-        let prompt = cx.prompt(
+        let prompt = window.prompt(cx, 
             PromptLevel::Critical,
             "Could not start ReadDirectoryChangesW",
             Some(&message),
@@ -876,7 +876,7 @@ fn install_cli(
 
     cx.spawn_in(window, |workspace, mut cx| async move {
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            let prompt = cx.prompt(
+            let prompt = window.prompt(cx, 
                 PromptLevel::Warning,
                 "CLI should already be installed",
                 Some(LINUX_PROMPT_DETAIL),

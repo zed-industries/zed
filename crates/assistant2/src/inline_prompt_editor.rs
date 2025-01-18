@@ -447,7 +447,7 @@ impl<T: 'static> PromptEditor<T> {
                 });
             }
         } else {
-            cx.focus_view(&self.context_strip, window);
+            window.focus_view(cx, &self.context_strip, window);
         }
     }
 

@@ -82,7 +82,7 @@ impl ApplicationMenu {
     ) -> Model<ContextMenu> {
         ContextMenu::build(cx, |menu, cx| {
             // Grab current focus handle so menu can shown items in context with the focused element
-            let menu = menu.when_some(cx.focused(), |menu, focused| menu.context(focused));
+            let menu = menu.when_some(window.focused(cx), |menu, focused| menu.context(focused));
             let sanitized_items = Self::sanitize_menu_items(entry.menu.items);
 
             sanitized_items
