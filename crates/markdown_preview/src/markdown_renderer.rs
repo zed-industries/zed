@@ -110,15 +110,15 @@ pub fn render_parsed_markdown(
     parsed: &ParsedMarkdown,
     workspace: Option<WeakView<Workspace>>,
     cx: &WindowContext,
-) -> Vec<AnyElement> {
+) -> Div {
     let mut cx = RenderContext::new(workspace, cx);
-    let mut elements = Vec::new();
 
-    for child in &parsed.children {
-        elements.push(render_markdown_block(child, &mut cx));
-    }
-
-    elements
+    v_flex().gap_3().children(
+        parsed
+            .children
+            .iter()
+            .map(|block| render_markdown_block(block, &mut cx)),
+    )
 }
 
 pub fn render_markdown_block(block: &ParsedMarkdownElement, cx: &mut RenderContext) -> AnyElement {

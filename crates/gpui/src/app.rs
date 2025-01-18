@@ -32,11 +32,11 @@ pub use test_context::*;
 use util::ResultExt;
 
 use crate::{
-    current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
-    Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, Context, DispatchPhase,
-    DisplayId, Entity, EventEmitter, FocusHandle, FocusId, ForegroundExecutor, Global, KeyBinding,
-    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
+    current_platform, hash, init_app_menus, Action, ActionBuildError, ActionRegistry, Any, AnyView,
+    AnyWindowHandle, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, Context,
+    DispatchPhase, DisplayId, Entity, EventEmitter, FocusHandle, FocusId, ForegroundExecutor,
+    Global, KeyBinding, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions,
+    Pixels, Platform, PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
     Subscription, SvgRenderer, Task, TextSystem, View, ViewContext, Window, WindowAppearance,
     WindowContext, WindowHandle, WindowId,
@@ -1220,7 +1220,7 @@ impl AppContext {
         &self,
         name: &str,
         data: Option<serde_json::Value>,
-    ) -> Result<Box<dyn Action>> {
+    ) -> std::result::Result<Box<dyn Action>, ActionBuildError> {
         self.actions.build_action(name, data)
     }
 
