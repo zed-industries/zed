@@ -34,7 +34,7 @@ impl ScrollHandleState {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct TerminalScrollHandle {
     state: Rc<RefCell<ScrollHandleState>>,
     pub future_display_offset: Rc<Cell<Option<usize>>>,
