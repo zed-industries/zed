@@ -313,14 +313,13 @@ impl GitPanel {
 
             let rebuild_requested = Arc::new(AtomicBool::new(false));
             let flag = rebuild_requested.clone();
-            let handle = cx.model().downgrade();
-            cx.spawn(|_, mut cx| async move {
+            cx.spawn_in(window, |handle, mut cx| async move {
                 loop {
                     cx.background_executor().timer(UPDATE_DEBOUNCE).await;
                     if flag.load(Ordering::Relaxed) {
                         if let Some(this) = handle.upgrade() {
                             this.update(&mut cx, |this, cx| {
-                                this.update_visible_entries(window, cx);
+                                this.update_visible_entries(cx);
                             })
                             .ok();
                         }
@@ -364,7 +363,7 @@ impl GitPanel {
                 };
                 if this
                     .update(&mut cx, |this, cx| {
-                        this.show_err_toast("git operation error", e, window, cx);
+                        this.show_err_toast("git operation error", e, cx);
                     })
                     .is_err()
                 {
@@ -374,9 +373,10 @@ impl GitPanel {
         })
         .detach();
 
-        cx.subscribe(
+        cx.subscribe_in(
             &git_panel,
-            move |workspace, _, event: &Event, cx| match event.clone() {
+            window,
+            move |workspace, _, event: &Event, window, cx| match event.clone() {
                 Event::OpenedEntry { path } => {
                     workspace
                         .open_path_preview(path, None, false, false, window, cx)
@@ -439,11 +439,12 @@ impl GitPanel {
     }
 
     fn is_focused(&self, window: &Window, cx: &ModelContext<Self>) -> bool {
-        window.focused(cx)
+        window
+            .focused(cx)
             .map_or(false, |focused| self.focus_handle == focused)
     }
 
-    fn close_panel(&mut self, _: &Close, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn close_panel(&mut self, _: &Close, _window: &mut Window, cx: &mut ModelContext<Self>) {
         cx.emit(PanelEvent::Close);
     }
 
@@ -453,7 +454,7 @@ impl GitPanel {
         }
     }
 
-    fn show_scrollbar(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> ShowScrollbar {
+    fn show_scrollbar(&self, _window: &mut Window, cx: &mut ModelContext<Self>) -> ShowScrollbar {
         GitPanelSettings::get_global(cx)
             .scrollbar
             .show
@@ -535,7 +536,7 @@ impl GitPanel {
         (0, 0)
     }
 
-    fn scroll_to_selected_entry(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn scroll_to_selected_entry(&mut self, cx: &mut ModelContext<Self>) {
         if let Some(selected_entry) = self.selected_entry {
             self.scroll_handle
                 .scroll_to_item(selected_entry, ScrollStrategy::Center);
@@ -544,14 +545,14 @@ impl GitPanel {
         cx.notify();
     }
 
-    fn select_first(&mut self, _: &SelectFirst, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_first(&mut self, _: &SelectFirst, _window: &mut Window, cx: &mut ModelContext<Self>) {
         if self.visible_entries.first().is_some() {
             self.selected_entry = Some(0);
-            self.scroll_to_selected_entry(window, cx);
+            self.scroll_to_selected_entry(cx);
         }
     }
 
-    fn select_prev(&mut self, _: &SelectPrev, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_prev(&mut self, _: &SelectPrev, _window: &mut Window, cx: &mut ModelContext<Self>) {
         let item_count = self.visible_entries.len();
         if item_count == 0 {
             return;
@@ -566,13 +567,13 @@ impl GitPanel {
 
             self.selected_entry = Some(new_selected_entry);
 
-            self.scroll_to_selected_entry(window, cx);
+            self.scroll_to_selected_entry(cx);
         }
 
         cx.notify();
     }
 
-    fn select_next(&mut self, _: &SelectNext, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_next(&mut self, _: &SelectNext, _window: &mut Window, cx: &mut ModelContext<Self>) {
         let item_count = self.visible_entries.len();
         if item_count == 0 {
             return;
@@ -587,30 +588,30 @@ impl GitPanel {
 
             self.selected_entry = Some(new_selected_entry);
 
-            self.scroll_to_selected_entry(window, cx);
+            self.scroll_to_selected_entry(cx);
         }
 
         cx.notify();
     }
 
-    fn select_last(&mut self, _: &SelectLast, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_last(&mut self, _: &SelectLast, _window: &mut Window, cx: &mut ModelContext<Self>) {
         if self.visible_entries.last().is_some() {
             self.selected_entry = Some(self.visible_entries.len() - 1);
-            self.scroll_to_selected_entry(window, cx);
+            self.scroll_to_selected_entry(cx);
         }
     }
 
     fn focus_editor(&mut self, _: &FocusEditor, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.commit_editor.update(cx, |editor, cx| {
-            editor.focus(cx);
+            window.focus(&editor.focus_handle(cx));
         });
         cx.notify();
     }
 
-    fn select_first_entry_if_none(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        if !self.no_entries(window, cx) && self.selected_entry.is_none() {
+    fn select_first_entry_if_none(&mut self, cx: &mut ModelContext<Self>) {
+        if !self.no_entries(cx) && self.selected_entry.is_none() {
             self.selected_entry = Some(0);
-            self.scroll_to_selected_entry(window, cx);
+            self.scroll_to_selected_entry(cx);
             cx.notify();
         }
     }
@@ -621,7 +622,7 @@ impl GitPanel {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        self.select_first_entry_if_none(window, cx);
+        self.select_first_entry_if_none(cx);
 
         cx.focus_self(window);
         cx.notify();
@@ -635,23 +636,18 @@ impl GitPanel {
     fn open_selected(
         &mut self,
         _: &menu::Confirm,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(entry) = self
             .selected_entry
             .and_then(|i| self.visible_entries.get(i))
         {
-            self.open_entry(entry, window, cx);
+            self.open_entry(entry, cx);
         }
     }
 
-    fn toggle_staged_for_entry(
-        &mut self,
-        entry: &GitListEntry,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn toggle_staged_for_entry(&mut self, entry: &GitListEntry, cx: &mut ModelContext<Self>) {
         let Some(git_state) = self.git_state(cx) else {
             return;
         };
@@ -663,7 +659,7 @@ impl GitPanel {
             }
         });
         if let Err(e) = result {
-            self.show_err_toast("toggle staged error", e, window, cx);
+            self.show_err_toast("toggle staged error", e, cx);
         }
         cx.notify();
     }
@@ -671,15 +667,15 @@ impl GitPanel {
     fn toggle_staged_for_selected(
         &mut self,
         _: &git::ToggleStaged,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(selected_entry) = self.get_selected_entry().cloned() {
-            self.toggle_staged_for_entry(&selected_entry, window, cx);
+            self.toggle_staged_for_entry(&selected_entry, cx);
         }
     }
 
-    fn open_entry(&self, entry: &GitListEntry, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn open_entry(&self, entry: &GitListEntry, cx: &mut ModelContext<Self>) {
         let Some((worktree_id, path)) = maybe!({
             let git_state = self.git_state(cx)?;
             let (id, repo, _) = git_state.read(cx).active_repository.as_ref()?;
@@ -698,7 +694,7 @@ impl GitPanel {
         cx.emit(Event::OpenedEntry { path });
     }
 
-    fn stage_all(&mut self, _: &git::StageAll, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn stage_all(&mut self, _: &git::StageAll, _window: &mut Window, cx: &mut ModelContext<Self>) {
         let Some(git_state) = self.git_state(cx) else {
             return;
         };
@@ -708,14 +704,14 @@ impl GitPanel {
         self.all_staged = Some(true);
 
         if let Err(e) = git_state.read(cx).stage_all(self.err_sender.clone()) {
-            self.show_err_toast("stage all error", e, window, cx);
+            self.show_err_toast("stage all error", e, cx);
         };
     }
 
     fn unstage_all(
         &mut self,
         _: &git::UnstageAll,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         let Some(git_state) = self.git_state(cx) else {
@@ -726,7 +722,7 @@ impl GitPanel {
         }
         self.all_staged = Some(false);
         if let Err(e) = git_state.read(cx).unstage_all(self.err_sender.clone()) {
-            self.show_err_toast("unstage all error", e, window, cx);
+            self.show_err_toast("unstage all error", e, cx);
         };
     }
 
@@ -753,7 +749,7 @@ impl GitPanel {
         if let Err(e) =
             git_state.update(cx, |git_state, _| git_state.commit(self.err_sender.clone()))
         {
-            self.show_err_toast("commit error", e, window, cx);
+            self.show_err_toast("commit error", e, cx);
         };
         self.commit_editor
             .update(cx, |editor, cx| editor.set_text("", window, cx));
@@ -772,13 +768,13 @@ impl GitPanel {
         if let Err(e) = git_state.update(cx, |git_state, _| {
             git_state.commit_all(self.err_sender.clone())
         }) {
-            self.show_err_toast("commit all error", e, window, cx);
+            self.show_err_toast("commit all error", e, cx);
         };
         self.commit_editor
             .update(cx, |editor, cx| editor.set_text("", window, cx));
     }
 
-    fn no_entries(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> bool {
+    fn no_entries(&self, cx: &mut ModelContext<Self>) -> bool {
         self.git_state(cx)
             .map_or(true, |git_state| git_state.read(cx).entry_count() == 0)
     }
@@ -813,7 +809,7 @@ impl GitPanel {
                 is_staged: entry.is_staged,
             };
 
-            callback(ix, details, cx);
+            callback(ix, details, window, cx);
         }
     }
 
@@ -822,7 +818,7 @@ impl GitPanel {
     }
 
     #[track_caller]
-    fn update_visible_entries(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn update_visible_entries(&mut self, cx: &mut ModelContext<Self>) {
         self.visible_entries.clear();
 
         let Some((_, repo, _)) = self.active_repository(cx) else {
@@ -884,7 +880,7 @@ impl GitPanel {
         self.visible_entries
             .sort_by(|a, b| a.repo_path.cmp(&b.repo_path));
 
-        self.select_first_entry_if_none(window, cx);
+        self.select_first_entry_if_none(cx);
 
         cx.notify();
     }
@@ -909,21 +905,15 @@ impl GitPanel {
         }
     }
 
-    fn show_err_toast(
-        &self,
-        id: &'static str,
-        e: anyhow::Error,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn show_err_toast(&self, id: &'static str, e: anyhow::Error, cx: &mut ModelContext<Self>) {
         let Some(workspace) = self.weak_workspace.upgrade() else {
             return;
         };
         let notif_id = NotificationId::Named(id.into());
         let message = e.to_string();
         workspace.update(cx, |workspace, cx| {
-            let toast = Toast::new(notif_id, message).on_click("Open Zed Log", |cx| {
-                cx.dispatch_action(workspace::OpenLog.boxed_clone());
+            let toast = Toast::new(notif_id, message).on_click("Open Zed Log", |window, cx| {
+                window.dispatch_action(workspace::OpenLog.boxed_clone(), cx);
             });
             workspace.show_toast(toast, cx);
         });
@@ -954,7 +944,11 @@ impl GitPanel {
             .child(Divider::horizontal_dashed().color(DividerColor::Border))
     }
 
-    pub fn render_panel_header(&self, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    pub fn render_panel_header(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> impl IntoElement {
         let focus_handle = self.focus_handle(cx).clone();
         let entry_count = self
             .git_state(cx)
@@ -980,7 +974,7 @@ impl GitPanel {
                     .child(
                         Checkbox::new(
                             "all-changes",
-                            if self.no_entries(window, cx) {
+                            if self.no_entries(cx) {
                                 ToggleState::Selected
                             } else {
                                 self.all_staged
@@ -989,17 +983,17 @@ impl GitPanel {
                         )
                         .fill()
                         .elevation(ElevationIndex::Surface)
-                        .tooltip(move |cx| {
-                            if all_staged {
-                                Tooltip::text("Unstage all changes")
-                            } else {
-                                Tooltip::text("Stage all changes")
-                            }
+                        .tooltip(if all_staged {
+                            Tooltip::text("Unstage all changes")
+                        } else {
+                            Tooltip::text("Stage all changes")
                         })
-                        .on_click(cx.listener(move |git_panel, _, cx| match all_staged {
-                            true => git_panel.unstage_all(&UnstageAll, cx),
-                            false => git_panel.stage_all(&StageAll, cx),
-                        })),
+                        .on_click(cx.listener(
+                            move |git_panel, _, window, cx| match all_staged {
+                                true => git_panel.unstage_all(&UnstageAll, window, cx),
+                                false => git_panel.stage_all(&StageAll, window, cx),
+                            },
+                        )),
                     )
                     .child(div().text_buffer(cx).text_ui_sm(cx).child(changes_string)),
             )
@@ -1028,7 +1022,7 @@ impl GitPanel {
                         self.panel_button("unstage-all", "Unstage All")
                             .tooltip({
                                 let focus_handle = focus_handle.clone();
-                                move |cx| {
+                                move |window, cx| {
                                     Tooltip::for_action_in(
                                         "Unstage all changes",
                                         &UnstageAll,
@@ -1041,16 +1035,16 @@ impl GitPanel {
                             .key_binding(ui::KeyBinding::for_action_in(
                                 &UnstageAll,
                                 &focus_handle,
-                                cx,
+                                window,
                             ))
-                            .on_click(
-                                cx.listener(move |this, _, cx| this.unstage_all(&UnstageAll, cx)),
-                            )
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.unstage_all(&UnstageAll, window, cx)
+                            }))
                     } else {
                         self.panel_button("stage-all", "Stage All")
                             .tooltip({
                                 let focus_handle = focus_handle.clone();
-                                move |cx| {
+                                move |window, cx| {
                                     Tooltip::for_action_in(
                                         "Stage all changes",
                                         &StageAll,
@@ -1063,18 +1057,16 @@ impl GitPanel {
                             .key_binding(ui::KeyBinding::for_action_in(
                                 &StageAll,
                                 &focus_handle,
-                                cx,
+                                window,
                             ))
-                            .on_click(cx.listener(move |this, _, cx| this.stage_all(&StageAll, cx)))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                this.stage_all(&StageAll, window, cx)
+                            }))
                     }),
             )
     }
 
-    pub fn render_commit_editor(
-        &self,
-        window: &Window,
-        cx: &ModelContext<Self>,
-    ) -> impl IntoElement {
+    pub fn render_commit_editor(&self, cx: &ModelContext<Self>) -> impl IntoElement {
         let editor = self.commit_editor.clone();
         let editor_focus_handle = editor.read(cx).focus_handle(cx).clone();
         let (can_commit, can_commit_all) = self.git_state(cx).map_or((false, false), |git_state| {
@@ -1098,9 +1090,9 @@ impl GitPanel {
                 )
             })
             .disabled(!can_commit)
-            .on_click(
-                cx.listener(|this, _: &ClickEvent, cx| this.commit_changes(&CommitChanges, cx)),
-            );
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                this.commit_changes(&CommitChanges, window, cx)
+            }));
 
         let commit_all_button = self
             .panel_button("commit-all-changes", "Commit All")
@@ -1115,8 +1107,8 @@ impl GitPanel {
                 )
             })
             .disabled(!can_commit_all)
-            .on_click(cx.listener(|this, _: &ClickEvent, cx| {
-                this.commit_all_changes(&CommitAllChanges, cx)
+            .on_click(cx.listener(|this, _: &ClickEvent, window, cx| {
+                this.commit_all_changes(&CommitAllChanges, window, cx)
             }));
 
         div().w_full().h(px(140.)).px_2().pt_1().pb_2().child(
@@ -1127,7 +1119,9 @@ impl GitPanel {
                 .py_2p5()
                 .px_3()
                 .bg(cx.theme().colors().editor_background)
-                .on_click(cx.listener(move |_, _: &ClickEvent, cx| cx.focus(&editor_focus_handle)))
+                .on_click(cx.listener(move |_, _: &ClickEvent, window, _cx| {
+                    window.focus(&editor_focus_handle);
+                }))
                 .child(self.commit_editor.clone())
                 .child(
                     h_flex()
@@ -1226,11 +1220,16 @@ impl GitPanel {
             .overflow_hidden()
             .child(
                 uniform_list(cx.model().clone(), "entries", entry_count, {
-                    move |git_panel, range, cx| {
+                    move |git_panel, range, window, cx| {
                         let mut items = Vec::with_capacity(range.end - range.start);
-                        git_panel.for_each_visible_entry(range, cx, |ix, details, cx| {
-                            items.push(git_panel.render_entry(ix, details, cx));
-                        });
+                        git_panel.for_each_visible_entry(
+                            range,
+                            window,
+                            cx,
+                            |ix, details, _window, cx| {
+                                items.push(git_panel.render_entry(ix, details, cx));
+                            },
+                        );
                         items
                     }
                 })
@@ -1247,7 +1246,6 @@ impl GitPanel {
         &self,
         ix: usize,
         entry_details: GitListEntry,
-        window: &Window,
         cx: &ModelContext<Self>,
     ) -> impl IntoElement {
         let repo_path = entry_details.repo_path.clone();
@@ -1330,7 +1328,7 @@ impl GitPanel {
                 .on_click({
                     let handle = handle.clone();
                     let repo_path = repo_path.clone();
-                    move |toggle, cx| {
+                    move |toggle, _window, cx| {
                         let Some(this) = handle.upgrade() else {
                             return;
                         };
@@ -1351,7 +1349,7 @@ impl GitPanel {
                                     .unstage_entries(vec![repo_path], this.err_sender.clone()),
                             });
                             if let Err(e) = result {
-                                this.show_err_toast("toggle staged error", e, window, cx);
+                                this.show_err_toast("toggle staged error", e, cx);
                             }
                         });
                     }
@@ -1380,9 +1378,9 @@ impl GitPanel {
             )
             .child(div().flex_1())
             .child(end_slot)
-            .on_click(move |_, cx| {
+            .on_click(move |_, window, cx| {
                 // TODO: add `select_entry` method then do after that
-                cx.dispatch_action(Box::new(OpenSelected));
+                window.dispatch_action(Box::new(OpenSelected), cx);
 
                 handle
                     .update(cx, |git_panel, _| {
@@ -1396,7 +1394,7 @@ impl GitPanel {
 }
 
 impl Render for GitPanel {
-    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let project = self.project.read(cx);
 
         v_flex()
@@ -1405,17 +1403,25 @@ impl Render for GitPanel {
             .track_focus(&self.focus_handle)
             .on_modifiers_changed(cx.listener(Self::handle_modifiers_changed))
             .when(!project.is_read_only(cx), |this| {
-                this.on_action(cx.listener(|this, &ToggleStaged, cx| {
-                    this.toggle_staged_for_selected(&ToggleStaged, cx)
+                this.on_action(cx.listener(|this, &ToggleStaged, window, cx| {
+                    this.toggle_staged_for_selected(&ToggleStaged, window, cx)
                 }))
-                .on_action(cx.listener(|this, &StageAll, cx| this.stage_all(&StageAll, cx)))
-                .on_action(cx.listener(|this, &UnstageAll, cx| this.unstage_all(&UnstageAll, cx)))
-                .on_action(cx.listener(|this, &RevertAll, cx| this.discard_all(&RevertAll, cx)))
                 .on_action(
-                    cx.listener(|this, &CommitChanges, cx| this.commit_changes(&CommitChanges, cx)),
+                    cx.listener(|this, &StageAll, window, cx| {
+                        this.stage_all(&StageAll, window, cx)
+                    }),
                 )
-                .on_action(cx.listener(|this, &CommitAllChanges, cx| {
-                    this.commit_all_changes(&CommitAllChanges, cx)
+                .on_action(cx.listener(|this, &UnstageAll, window, cx| {
+                    this.unstage_all(&UnstageAll, window, cx)
+                }))
+                .on_action(cx.listener(|this, &RevertAll, window, cx| {
+                    this.discard_all(&RevertAll, window, cx)
+                }))
+                .on_action(cx.listener(|this, &CommitChanges, window, cx| {
+                    this.commit_changes(&CommitChanges, window, cx)
+                }))
+                .on_action(cx.listener(|this, &CommitAllChanges, window, cx| {
+                    this.commit_all_changes(&CommitAllChanges, window, cx)
                 }))
             })
             .when(self.is_focused(window, cx), |this| {
@@ -1430,7 +1436,7 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::focus_editor))
             .on_action(cx.listener(Self::toggle_staged_for_selected))
             // .on_action(cx.listener(|this, &OpenSelected, cx| this.open_selected(&OpenSelected, cx)))
-            .on_hover(cx.listener(|this, hovered, cx| {
+            .on_hover(cx.listener(|this, hovered, window, cx| {
                 if *hovered {
                     this.show_scrollbar = true;
                     this.hide_scrollbar_task.take();
@@ -1444,15 +1450,15 @@ impl Render for GitPanel {
             .font_buffer(cx)
             .py_1()
             .bg(ElevationIndex::Surface.bg(cx))
-            .child(self.render_panel_header(cx))
+            .child(self.render_panel_header(window, cx))
             .child(self.render_divider(cx))
-            .child(if !self.no_entries(window, cx) {
+            .child(if !self.no_entries(cx) {
                 self.render_entries(window, cx).into_any_element()
             } else {
                 self.render_empty_state(cx).into_any_element()
             })
             .child(self.render_divider(cx))
-            .child(self.render_commit_editor(window, cx))
+            .child(self.render_commit_editor(cx))
     }
 }
 

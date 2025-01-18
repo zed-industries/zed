@@ -150,7 +150,7 @@ impl AssistantPanel {
     fn cancel(
         &mut self,
         _: &editor::actions::Cancel,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.thread
@@ -233,12 +233,7 @@ impl AssistantPanel {
         self.thread.read(cx).thread.clone()
     }
 
-    pub(crate) fn delete_thread(
-        &mut self,
-        thread_id: &ThreadId,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub(crate) fn delete_thread(&mut self, thread_id: &ThreadId, cx: &mut ModelContext<Self>) {
         self.thread_store
             .update(cx, |this, cx| this.delete_thread(thread_id, cx));
     }
@@ -312,7 +307,7 @@ impl Panel for AssistantPanel {
         Some(proto::PanelId::AssistantPanel)
     }
 
-    fn icon(&self, window: &Window, cx: &AppContext) -> Option<IconName> {
+    fn icon(&self, _window: &Window, cx: &AppContext) -> Option<IconName> {
         let settings = AssistantSettings::get_global(cx);
         if !settings.enabled || !settings.button {
             return None;
@@ -656,8 +651,8 @@ impl Render for AssistantPanel {
             .justify_between()
             .size_full()
             .on_action(cx.listener(Self::cancel))
-            .on_action(cx.listener(|this, _: &NewThread, cx| {
-                this.new_thread(cx);
+            .on_action(cx.listener(|this, _: &NewThread, window, cx| {
+                this.new_thread(window, cx);
             }))
             .on_action(cx.listener(|this, _: &OpenHistory, window, cx| {
                 this.open_history(window, cx);

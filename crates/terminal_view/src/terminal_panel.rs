@@ -12,9 +12,9 @@ use collections::HashMap;
 use db::kvp::KEY_VALUE_STORE;
 use futures::future::join_all;
 use gpui::{
-    actions, Action, AnyView, AppContext, AsyncWindowContext, Corner, Entity, EventEmitter,
-    ExternalPaths, FocusHandle, Focusable, IntoElement, Model, ModelContext, ParentElement, Pixels,
-    Render, Styled, Task, WeakModel, Window,
+    actions, Action, AnyView, AppContext, AsyncAppContext, AsyncWindowContext, Corner, Entity,
+    EventEmitter, ExternalPaths, FocusHandle, Focusable, IntoElement, Model, ModelContext,
+    ParentElement, Pixels, Render, Styled, Task, WeakModel, Window,
 };
 use itertools::Itertools;
 use project::{terminals::TerminalKind, Fs, Project, ProjectEntryId};
@@ -101,12 +101,7 @@ impl TerminalPanel {
         terminal_panel
     }
 
-    pub fn set_assistant_enabled(
-        &mut self,
-        enabled: bool,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    pub fn set_assistant_enabled(&mut self, enabled: bool, cx: &mut ModelContext<Self>) {
         self.assistant_enabled = enabled;
         if enabled {
             let focus_handle = self
@@ -293,7 +288,7 @@ impl TerminalPanel {
 
         if let Some(workspace) = workspace.upgrade() {
             let should_focus = workspace
-                .update(&mut cx, |workspace, cx| {
+                .update_in(&mut cx, |workspace, window, cx| {
                     workspace.active_item(cx).is_none()
                         && workspace
                             .is_dock_at_position_open(terminal_panel.position(window, cx), cx)
@@ -302,7 +297,7 @@ impl TerminalPanel {
 
             if should_focus {
                 terminal_panel
-                    .update(&mut cx, |panel, cx| {
+                    .update_in(&mut cx, |panel, window, cx| {
                         panel.active_pane.update(cx, |pane, cx| {
                             pane.focus_active_item(window, cx);
                         });
@@ -516,9 +511,9 @@ impl TerminalPanel {
 
         self.deferred_tasks.insert(
             task.id.clone(),
-            cx.spawn(|terminal_panel, mut cx| async move {
+            cx.spawn_in(window, |terminal_panel, mut cx| async move {
                 wait_for_terminals_tasks(terminals_for_task, &mut cx).await;
-                let task = terminal_panel.update(&mut cx, |terminal_panel, cx| {
+                let task = terminal_panel.update_in(&mut cx, |terminal_panel, window, cx| {
                     if task.use_new_terminal {
                         terminal_panel
                             .spawn_in_new_terminal(task, window, cx)
@@ -1078,7 +1073,7 @@ pub fn new_terminal_pane(
 
 async fn wait_for_terminals_tasks(
     terminals_for_task: Vec<(usize, Model<Pane>, Model<TerminalView>)>,
-    cx: &mut AsyncWindowContext,
+    cx: &mut AsyncAppContext,
 ) {
     let pending_tasks = terminals_for_task.iter().filter_map(|(_, _, terminal)| {
         terminal

@@ -1,6 +1,6 @@
 use assistant_settings::AssistantSettings;
 use fs::Fs;
-use gpui::{FocusHandle};
+use gpui::{FocusHandle, Model};
 use language_model::LanguageModelRegistry;
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use settings::update_settings_file;
@@ -20,7 +20,8 @@ impl AssistantModelSelector {
         fs: Arc<dyn Fs>,
         menu_handle: PopoverMenuHandle<LanguageModelSelector>,
         focus_handle: FocusHandle,
-        window: &mut Window, cx: &mut AppContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Self {
         Self {
             selector: cx.new_model(|cx| {

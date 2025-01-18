@@ -18,6 +18,7 @@ if [ "$1" = "apply" ]; then
 fi
 
 re() {
+    echo "$1" "    -->    " "$2"
     if [ "$dry" = true ]; then
         ruplacer "$1" "$2" crates/ --type *.rs
     else
@@ -25,8 +26,9 @@ re() {
     fi
 }
 
-re 'cx\.new_view\('                  'cx.new_model('
-re 'cx\.view\('                      'cx.model('
+re '\.new_view\('                    '.new_model('
+re '\cx.view\('                      'cx.model('
+re '\.observe_new_views\('           '.observe_new_models('
 re 'View<'                           'Model<'
 re 'FocusableView'                   'Focusable'
 
@@ -78,7 +80,6 @@ re 'cx.display\(\)' 'window.display(cx)'
 re 'cx.focused\(\)' 'window.focused(cx)'
 re 'cx.handle_input\(' 'window.handle_input(cx, '
 re 'cx.paint_svg\(' 'window.paint_svg(cx, '
-re 'cx.prompt\(' 'window.prompt(cx, '
 re 'cx.request_layout\(' 'window.request_layout(cx, '
 re 'cx.use_asset\(' 'window.use_asset(cx, '
 
@@ -88,8 +89,12 @@ re 'cx\.modifiers\('                  'window.modifiers('
 re 'cx\.mouse_position\('             'window.mouse_position('
 
 # common closure patterns
-re 'cx.listener\(\|this, _, cx\|'     'cx.listener(|this, _, _, cx|'
-re 'cx.listener\(\|_, _, cx\|'        'cx.listener(|_, _, _, cx|'
+re 'cx.listener\(move \|this, _, cx\|' 'cx.listener(move |this, _, window, cx|'
+re 'cx.listener\(\|this, _, cx\|'     'cx.listener(|this, _, window, cx|'
+re 'cx.listener\(move \|_, _, cx\|'   'cx.listener(move |_, _, window, cx|'
+re 'cx.listener\(\|_, _, cx\|'        'cx.listener(|_, _, window, cx|'
+re '\.on_click\(move \|_, cx\|'       '.on_click(move |_, window, cx|'
+re '\.on_mouse_move\(\|_, cx\|'       '.on_mouse_move(|_, window, cx|'
 
 # cleanup imports
 re ' ViewContext,'                     ''

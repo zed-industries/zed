@@ -4,9 +4,7 @@ use std::sync::Arc;
 
 use file_icons::FileIcons;
 use fuzzy::PathMatch;
-use gpui::{
-    AppContext, DismissEvent, FocusHandle, Focusable, Stateful, Task, WeakModel,
-};
+use gpui::{AppContext, DismissEvent, FocusHandle, Focusable, Model, Stateful, Task, WeakModel};
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use ui::{prelude::*, ListItem, Tooltip};
@@ -35,7 +33,7 @@ impl FileContextPicker {
             context_store,
             confirm_behavior,
         );
-        let picker = cx.new_model(|cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new_model(|window, cx| Picker::uniform_list(delegate, window, cx));
 
         Self { picker }
     }
@@ -266,7 +264,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let path_match = &self.matches[ix];
 

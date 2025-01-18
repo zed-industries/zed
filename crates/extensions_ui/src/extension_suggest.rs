@@ -5,9 +5,8 @@ use std::sync::{Arc, OnceLock};
 use db::kvp::KEY_VALUE_STORE;
 use editor::Editor;
 use extension_host::ExtensionStore;
-use gpui::Model;
+use gpui::{Context, Model, ModelContext, SharedString, Window};
 use language::Buffer;
-use ui::{ModelContext, SharedString, Window};
 use workspace::notifications::simple_message_notification::MessageNotification;
 use workspace::{notifications::NotificationId, Workspace};
 
@@ -173,14 +172,14 @@ pub(crate) fn suggest(
 
         workspace.show_notification(notification_id, cx, |cx| {
             cx.new_model(move |_cx| {
-                simple_message_notification::MessageNotification::new(format!(
+                MessageNotification::new(format!(
                     "Do you want to install the recommended '{}' extension for '{}' files?",
                     extension_id, file_name_or_extension
                 ))
                 .with_click_message("Yes, install extension")
                 .on_click({
                     let extension_id = extension_id.clone();
-                    move |cx| {
+                    move |_window, cx| {
                         let extension_id = extension_id.clone();
                         let extension_store = ExtensionStore::global(cx);
                         extension_store.update(cx, move |store, cx| {
@@ -189,7 +188,7 @@ pub(crate) fn suggest(
                     }
                 })
                 .with_secondary_click_message("No, don't install it")
-                .on_secondary_click(move |cx| {
+                .on_secondary_click(move |_window, cx| {
                     let key = language_extension_key(&extension_id);
                     db::write_and_log(cx, move || {
                         KEY_VALUE_STORE.write_kvp(key, "dismissed".to_string())

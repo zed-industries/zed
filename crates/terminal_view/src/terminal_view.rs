@@ -1074,12 +1074,10 @@ impl Item for TerminalView {
         let title = terminal.title(false);
         let pid = terminal.pty_info.pid_getter().fallback_pid();
 
-        Some(TabTooltipContent::Custom(Box::new(
-            move |cx: &mut WindowContext| {
-                cx.new_model(|_| TerminalTooltip::new(title.clone(), pid))
-                    .into()
-            },
-        )))
+        Some(TabTooltipContent::Custom(Box::new(move |_window, cx| {
+            cx.new_model(|_| TerminalTooltip::new(title.clone(), pid))
+                .into()
+        })))
     }
 
     fn tab_content(

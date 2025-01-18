@@ -57,10 +57,10 @@ pub fn init(
     cx.observe_new_models(|_workspace: &mut Workspace, window, cx| {
         let workspace = cx.model().clone();
         InlineAssistant::update_global(cx, |inline_assistant, cx| {
-            inline_assistant.register_workspace(&workspace, cx)
+            inline_assistant.register_workspace(&workspace, window, cx)
         });
 
-        cx.observe_flag::<Assistant2FeatureFlag, _>({
+        cx.observe_flag::<Assistant2FeatureFlag, _>(window, {
             |is_assistant2_enabled, _view, cx| {
                 InlineAssistant::update_global(cx, |inline_assistant, _cx| {
                     inline_assistant.is_assistant2_enabled = is_assistant2_enabled;
@@ -200,14 +200,18 @@ impl InlineAssistant {
                             workspace: workspace.downgrade(),
                             thread_store,
                         }),
+                        window,
                         cx,
                     );
 
                     // Remove the Assistant1 code action provider, as it still might be registered.
-                    editor.remove_code_action_provider("assistant".into(), cx);
+                    editor.remove_code_action_provider("assistant".into(), window, cx);
                 } else {
-                    editor
-                        .remove_code_action_provider(ASSISTANT_CODE_ACTION_PROVIDER_ID.into(), cx);
+                    editor.remove_code_action_provider(
+                        ASSISTANT_CODE_ACTION_PROVIDER_ID.into(),
+                        window,
+                        cx,
+                    );
                 }
             });
         }

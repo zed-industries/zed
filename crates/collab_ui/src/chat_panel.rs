@@ -1160,7 +1160,7 @@ impl Panel for ChatPanel {
         "ChatPanel"
     }
 
-    fn icon(&self, window: &Window, cx: &AppContext) -> Option<ui::IconName> {
+    fn icon(&self, _window: &Window, cx: &AppContext) -> Option<ui::IconName> {
         let show_icon = match ChatPanelSettings::get_global(cx).button {
             ChatPanelButton::Never => false,
             ChatPanelButton::Always => true,

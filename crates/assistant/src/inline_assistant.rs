@@ -74,13 +74,16 @@ pub fn init(
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
     cx.observe_new_models(|_, window, cx| {
+        let Some(window) = window else {
+            return;
+        };
         let workspace = cx.model().clone();
         InlineAssistant::update_global(cx, |inline_assistant, cx| {
-            inline_assistant.register_workspace(&workspace, cx)
+            inline_assistant.register_workspace(&workspace, window, cx)
         });
 
-        cx.observe_flag::<Assistant2FeatureFlag, _>({
-            |is_assistant2_enabled, _view, cx| {
+        cx.observe_flag::<Assistant2FeatureFlag, _>(window, {
+            |is_assistant2_enabled, _view, _window, cx| {
                 InlineAssistant::update_global(cx, |inline_assistant, _cx| {
                     inline_assistant.is_assistant2_enabled = is_assistant2_enabled;
                 });
@@ -133,12 +136,9 @@ impl InlineAssistant {
     pub fn register_workspace(
         &mut self,
         workspace: &Model<Workspace>,
-        window: Option<&mut Window>,
+        window: &mut Window,
         cx: &mut AppContext,
     ) {
-        let Some(window) = window else {
-            return;
-        };
         window
             .subscribe(workspace, cx, |workspace, event, window, cx| {
                 Self::update_global(cx, |this, cx| {
@@ -203,14 +203,18 @@ impl InlineAssistant {
         if let Some(editor) = item.act_as::<Editor>(cx) {
             editor.update(cx, |editor, cx| {
                 if is_assistant2_enabled {
-                    editor
-                        .remove_code_action_provider(ASSISTANT_CODE_ACTION_PROVIDER_ID.into(), cx);
+                    editor.remove_code_action_provider(
+                        ASSISTANT_CODE_ACTION_PROVIDER_ID.into(),
+                        window,
+                        cx,
+                    );
                 } else {
                     editor.add_code_action_provider(
                         Rc::new(AssistantCodeActionProvider {
                             editor: cx.model().downgrade(),
                             workspace: workspace.downgrade(),
                         }),
+                        window,
                         cx,
                     );
                 }

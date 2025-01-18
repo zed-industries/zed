@@ -3,7 +3,7 @@ use std::sync::Arc;
 use feature_flags::ZedPro;
 use gpui::{
     Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model,
-    Subscription, Task,
+    Subscription, Task, WeakModel,
 };
 use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
 use picker::{Picker, PickerDelegate};
@@ -40,14 +40,16 @@ impl LanguageModelSelector {
             selected_index: 0,
         };
 
-        let picker =
-            cx.new_model(|cx| Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into())));
+        let picker = cx.new_model(|cx| {
+            Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()))
+        });
 
         LanguageModelSelector {
             picker,
             update_matches_task: None,
-            _subscriptions: vec![cx.subscribe(
+            _subscriptions: vec![cx.subscribe_in(
                 &LanguageModelRegistry::global(cx),
+                window,
                 Self::handle_language_model_registry_event,
             )],
         }
@@ -55,9 +57,10 @@ impl LanguageModelSelector {
 
     fn handle_language_model_registry_event(
         &mut self,
-        _registry: Model<LanguageModelRegistry>,
+        _registry: &Model<LanguageModelRegistry>,
         event: &language_model::Event,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) {
         match event {
             language_model::Event::ProviderStateChanged
@@ -66,7 +69,7 @@ impl LanguageModelSelector {
                 let task = self.picker.update(cx, |this, cx| {
                     let query = this.query(cx);
                     this.delegate.all_models = Self::all_models(cx);
-                    this.delegate.update_matches(query, cx)
+                    this.delegate.update_matches(query, window, cx)
                 });
                 self.update_matches_task = Some(task);
             }

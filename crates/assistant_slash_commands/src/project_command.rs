@@ -10,7 +10,7 @@ use assistant_slash_command::{
     SlashCommandResult,
 };
 use feature_flags::FeatureFlag;
-use gpui::{AppContext, Task};
+use gpui::{AppContext, Task, WeakModel};
 use language::{Anchor, CodeLabel, LspAdapterDelegate};
 use language_model::{LanguageModelRegistry, LanguageModelTool};
 use prompt_library::PromptBuilder;

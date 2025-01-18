@@ -205,7 +205,7 @@ impl LanguageModelProvider for LmStudioLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, window: &mut Window, cx: &mut AppContext) -> AnyView {
+    fn configuration_view(&self, _window: &mut Window, cx: &mut AppContext) -> AnyView {
         let state = self.state.clone();
         cx.new_model(|cx| ConfigurationView::new(state, cx)).into()
     }
@@ -406,7 +406,7 @@ impl ConfigurationView {
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
         let lmstudio_intro = "Run local LLMs like Llama, Phi, and Qwen.";
@@ -460,7 +460,9 @@ impl Render for ConfigurationView {
                                                 .icon(IconName::ExternalLink)
                                                 .icon_size(IconSize::XSmall)
                                                 .icon_color(Color::Muted)
-                                                .on_click(move |_, cx| cx.open_url(LMSTUDIO_SITE))
+                                                .on_click(move |_, _window, cx| {
+                                                    cx.open_url(LMSTUDIO_SITE)
+                                                })
                                                 .into_any_element(),
                                         )
                                     } else {
@@ -473,7 +475,7 @@ impl Render for ConfigurationView {
                                             .icon(IconName::ExternalLink)
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
-                                            .on_click(move |_, cx| {
+                                            .on_click(move |_, _window, cx| {
                                                 cx.open_url(LMSTUDIO_DOWNLOAD_URL)
                                             })
                                             .into_any_element(),
@@ -486,7 +488,9 @@ impl Render for ConfigurationView {
                                         .icon(IconName::ExternalLink)
                                         .icon_size(IconSize::XSmall)
                                         .icon_color(Color::Muted)
-                                        .on_click(move |_, cx| cx.open_url(LMSTUDIO_CATALOG_URL)),
+                                        .on_click(move |_, _window, cx| {
+                                            cx.open_url(LMSTUDIO_CATALOG_URL)
+                                        }),
                                 ),
                         )
                         .child(if is_authenticated {
@@ -508,7 +512,9 @@ impl Render for ConfigurationView {
                             Button::new("retry_lmstudio_models", "Connect")
                                 .icon_position(IconPosition::Start)
                                 .icon(IconName::ArrowCircle)
-                                .on_click(cx.listener(move |this, _, cx| this.retry_connection(cx)))
+                                .on_click(cx.listener(move |this, _, _window, cx| {
+                                    this.retry_connection(cx)
+                                }))
                                 .into_any_element()
                         }),
                 )

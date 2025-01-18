@@ -7,10 +7,7 @@ use collections::{hash_map, BTreeSet, HashMap};
 use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
-    items::{
-        entry_diagnostic_aware_icon_decoration_and_color,
-        entry_diagnostic_aware_icon_name_and_color, entry_git_aware_label_color,
-    },
+    items::entry_git_aware_label_color,
     scroll::{Autoscroll, ScrollbarAutoHide},
     Editor, EditorEvent, EditorSettings, ShowScrollbar,
 };
@@ -18,7 +15,7 @@ use file_icons::FileIcons;
 use git::status::GitSummary;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
-    AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
+    AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
     Div, DragMoveEvent, EventEmitter, ExternalPaths, FocusHandle, Focusable, Hsla,
     InteractiveElement, KeyContext, ListHorizontalSizingBehavior, ListSizingBehavior, Model,
     ModelContext, MouseButton, MouseDownEvent, ParentElement, Pixels, Point, PromptLevel, Render,
@@ -52,9 +49,9 @@ use std::{
 };
 use theme::ThemeSettings;
 use ui::{
-    prelude::*, v_flex, ContextMenu, DecoratedIcon, Icon, IconDecoration, IconDecorationKind,
-    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, ListItem, ListItemSpacing, Scrollbar,
-    ScrollbarState, Tooltip,
+    prelude::*, v_flex, ContextMenu, Icon,
+    IndentGuideColors, IndentGuideLayout, KeyBinding, Label, ListItem, Scrollbar,
+    ScrollbarState,
 };
 use util::{maybe, paths::compare_paths, ResultExt, TakeUntilExt, TryFutureExt};
 use workspace::{
@@ -1236,8 +1233,8 @@ impl ProjectPanel {
                         0..selection_end
                     });
                     self.filename_editor.update(cx, |editor, cx| {
-                        editor.set_text(file_name, cx);
-                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                        editor.set_text(file_name, window, cx);
+                        editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                             s.select_ranges([selection])
                         });
                         window.focus(&editor.focus_handle(cx));
@@ -1251,11 +1248,11 @@ impl ProjectPanel {
     }
 
     fn rename(&mut self, _: &Rename, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.rename_impl(None, cx);
+        self.rename_impl(None, window, cx);
     }
 
     fn trash(&mut self, action: &Trash, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.remove(true, action.skip_prompt, cx);
+        self.remove(true, action.skip_prompt, window, cx);
     }
 
     fn delete(&mut self, action: &Delete, window: &mut Window, cx: &mut ModelContext<Self>) {
@@ -1909,7 +1906,7 @@ impl ProjectPanel {
         Some((new_path, disambiguation_range))
     }
 
-    fn paste(&mut self, _: &Paste, _: &mut Window, cx: &mut ModelContext<Self>) {
+    fn paste(&mut self, _: &Paste, window: &mut Window, cx: &mut ModelContext<Self>) {
         maybe!({
             let (worktree, entry) = self.selected_entry_handle(cx)?;
             let entry = entry.clone();
@@ -1969,7 +1966,7 @@ impl ProjectPanel {
 
             let item_count = paste_entry_tasks.len();
 
-            cx.spawn(|project_panel, mut cx| async move {
+            cx.spawn_in(window, |project_panel, mut cx| async move {
                 let mut last_succeed = None;
                 let mut need_delete_ids = Vec::new();
                 for ((entry_id, need_delete), task) in paste_entry_tasks.into_iter() {
@@ -2003,7 +2000,7 @@ impl ProjectPanel {
                 // update selection
                 if let Some(entry_id) = last_succeed {
                     project_panel
-                        .update(&mut cx, |project_panel, cx| {
+                        .update_in(&mut cx, |project_panel, window, cx| {
                             project_panel.selection = Some(SelectedEntry {
                                 worktree_id,
                                 entry_id,
@@ -2011,7 +2008,7 @@ impl ProjectPanel {
 
                             // if only one entry was pasted and it was disambiguated, open the rename editor
                             if item_count == 1 && disambiguation_range.is_some() {
-                                project_panel.rename_impl(disambiguation_range, cx);
+                                project_panel.rename_impl(disambiguation_range, window, cx);
                             }
                         })
                         .ok();
@@ -2092,7 +2089,7 @@ impl ProjectPanel {
         }
     }
 
-    fn remove_from_project(&mut self, _: &RemoveFromProject, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn remove_from_project(&mut self, _: &RemoveFromProject, _window: &mut Window, cx: &mut ModelContext<Self>) {
         for entry in self.effective_entries().iter() {
             let worktree_id = entry.worktree_id;
             self.project
@@ -2784,7 +2781,7 @@ impl ProjectPanel {
 
                 let item_count = copy_tasks.len();
 
-                cx.spawn(|project_panel, mut cx| async move {
+                cx.spawn_in(window, |project_panel, mut cx| async move {
                     let mut last_succeed = None;
                     for task in copy_tasks.into_iter() {
                         if let Some(Some(entry)) = task.await.log_err() {
@@ -2794,7 +2791,7 @@ impl ProjectPanel {
                     // update selection
                     if let Some(entry_id) = last_succeed {
                         project_panel
-                            .update(&mut cx, |project_panel, cx| {
+                            .update_in(&mut cx, |project_panel, window, cx| {
                                 project_panel.selection = Some(SelectedEntry {
                                     worktree_id,
                                     entry_id,
@@ -2802,7 +2799,7 @@ impl ProjectPanel {
 
                                 // if only one entry was dragged and it was disambiguated, open the rename editor
                                 if item_count == 1 && disambiguation_range.is_some() {
-                                    project_panel.rename_impl(disambiguation_range, cx);
+                                    project_panel.rename_impl(disambiguation_range, window, cx);
                                 }
                             })
                             .ok();
@@ -2886,7 +2883,7 @@ impl ProjectPanel {
                     .collect()
             });
             for entry in visible_worktree_entries[entry_range].iter() {
-                callback(&entry, entries, cx);
+                callback(&entry, entries, window, cx);
             }
             ix = end_ix;
         }
@@ -3093,7 +3090,7 @@ impl ProjectPanel {
         reverse_search: bool,
         only_visible_entries: bool,
         predicate: impl Fn(GitEntryRef, WorktreeId) -> bool,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Self>,
     ) -> Option<GitEntry> {
         if only_visible_entries {
             let entries = self
@@ -3114,7 +3111,7 @@ impl ProjectPanel {
         }
 
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
-        worktree.update(cx, |tree, _| {
+        worktree.update_in(&mut cx, |tree, _window, _| {
             utils::ReversibleIterable::new(
                 tree.entries(true, 0usize).with_git_statuses(),
                 reverse_search,
@@ -3129,7 +3126,7 @@ impl ProjectPanel {
         start: Option<&SelectedEntry>,
         reverse_search: bool,
         predicate: impl Fn(GitEntryRef, WorktreeId) -> bool,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Self>,
     ) -> Option<SelectedEntry> {
         let mut worktree_ids: Vec<_> = self
             .visible_entries
@@ -3236,7 +3233,7 @@ impl ProjectPanel {
         start: Option<&SelectedEntry>,
         reverse_search: bool,
         predicate: impl Fn(GitEntryRef, WorktreeId) -> bool,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        cx: &mut ModelContext<Self>,
     ) -> Option<SelectedEntry> {
         let mut worktree_ids: Vec<_> = self
             .visible_entries
@@ -5591,7 +5588,7 @@ mod tests {
             ]
         );
 
-        panel.update(cx, |panel, cx| {
+        panel.update_in(cx, |panel, window, cx| {
             panel.filename_editor.update(cx, |editor, cx| {
                 let file_name_selections = editor.selections.all::<usize>(cx);
                 assert_eq!(file_name_selections.len(), 1, "File editing should have a single selection, but got: {file_name_selections:?}");
@@ -5599,11 +5596,11 @@ mod tests {
                 assert_eq!(file_name_selection.start, "one".len(), "Should select the file name disambiguation after the original file name");
                 assert_eq!(file_name_selection.end, "one copy".len(), "Should select the file name disambiguation until the extension");
             });
-            assert!(panel.confirm_edit(cx).is_none());
+            assert!(panel.confirm_edit(window, cx).is_none());
         });
 
-        panel.update(cx, |panel, cx| {
-            panel.paste(&Default::default(), cx);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.paste(&Default::default(), window, cx);
         });
         cx.executor().run_until_parked();
 
@@ -5619,7 +5616,7 @@ mod tests {
             ]
         );
 
-        panel.update(cx, |panel, cx| assert!(panel.confirm_edit(cx).is_none()));
+        panel.update_in(cx, |panel, window, cx| assert!(panel.confirm_edit(window, cx).is_none()));
     }
 
     #[gpui::test]
@@ -5818,7 +5815,7 @@ mod tests {
             ]
         );
 
-        panel.update(cx, |panel, cx| panel.cancel(&menu::Cancel {}, cx));
+        panel.update_in(cx, |panel, window, cx| panel.cancel(&menu::Cancel {}, window, cx));
         cx.executor().run_until_parked();
 
         select_path(&panel, "root1/a", cx);
@@ -5944,11 +5941,11 @@ mod tests {
             ]
         );
 
-        let confirm = panel.update(cx, |panel, cx| {
+        let confirm = panel.update_in(cx, |panel, window, cx| {
             panel
                 .filename_editor
-                .update(cx, |editor, cx| editor.set_text("c", cx));
-            panel.confirm_edit(cx).unwrap()
+                .update(cx, |editor, cx| editor.set_text("c", window, cx));
+            panel.confirm_edit(window, cx).unwrap()
         });
         assert_eq!(
             visible_entries_as_strings(&panel, 0..50, cx),
@@ -5969,7 +5966,7 @@ mod tests {
 
         confirm.await.unwrap();
 
-        panel.update(cx, |panel, cx| panel.paste(&Default::default(), cx));
+        panel.update_in(cx, |panel, window, cx| panel.paste(&Default::default(), window, cx));
         cx.executor().run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..50, cx),
@@ -6073,8 +6070,8 @@ mod tests {
 
         // Disambiguating multiple files should not open the rename editor.
         select_path(&panel, "test/dir2", cx);
-        panel.update(cx, |panel, cx| {
-            panel.paste(&Default::default(), cx);
+        panel.update_in(cx, |panel, window, cx| {
+            panel.paste(&Default::default(), window, cx);
         });
         cx.executor().run_until_parked();
 
@@ -8142,7 +8139,7 @@ mod tests {
         .await;
 
         let project = Project::test(fs.clone(), ["/root".as_ref()], cx).await;
-        let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+        let workspace = cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
         let panel = workspace.update(cx, ProjectPanel::new).unwrap();
 

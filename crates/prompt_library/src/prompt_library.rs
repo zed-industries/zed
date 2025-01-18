@@ -6,8 +6,8 @@ use collections::{HashMap, HashSet};
 use editor::CompletionProvider;
 use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
 use gpui::{
-    actions, point, size, transparent_black, Action, AppContext, Bounds, EventEmitter, PromptLevel,
-    Subscription, Task, TextStyle, TitlebarOptions, WindowBounds, WindowHandle,
+    actions, point, size, transparent_black, Action, AppContext, Bounds, EventEmitter, Focusable,
+    Model, PromptLevel, Subscription, Task, TextStyle, TitlebarOptions, WindowBounds, WindowHandle,
     WindowOptions,
 };
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
@@ -56,14 +56,16 @@ pub trait InlineAssistDelegate {
         &self,
         prompt_editor: &Model<Editor>,
         initial_prompt: Option<String>,
-        window: &mut Window, cx: &mut ModelContext<PromptLibrary>,
+        window: &mut Window,
+        cx: &mut ModelContext<PromptLibrary>,
     );
 
     /// Returns whether the Assistant panel was focused.
     fn focus_assistant_panel(
         &self,
         workspace: &mut Workspace,
-        window: &mut Window, cx: &mut ModelContext<Workspace>,
+        window: &mut Window,
+        cx: &mut ModelContext<Workspace>,
     ) -> bool;
 }
 
@@ -106,13 +108,14 @@ pub fn open_prompt_library(
                         window_bounds: Some(WindowBounds::Windowed(bounds)),
                         ..Default::default()
                     },
-                    |cx| {
+                    |window, cx| {
                         cx.new_model(|cx| {
                             PromptLibrary::new(
                                 store,
                                 language_registry,
                                 inline_assist_delegate,
                                 make_completion_provider,
+                                window,
                                 cx,
                             )
                         })
@@ -336,7 +339,8 @@ impl PromptLibrary {
         language_registry: Arc<LanguageRegistry>,
         inline_assist_delegate: Box<dyn InlineAssistDelegate>,
         make_completion_provider: Arc<dyn Fn() -> Box<dyn CompletionProvider>>,
-        window: &mut Window, cx: &mut ModelContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let delegate = PromptPickerDelegate {
             store: store.clone(),
@@ -359,7 +363,7 @@ impl PromptLibrary {
             pending_load: Task::ready(()),
             inline_assist_delegate,
             make_completion_provider,
-            _subscriptions: vec![cx.subscribe(&picker, Self::handle_picker_event)],
+            _subscriptions: vec![cx.subscribe_in(&picker, window, Self::handle_picker_event)],
             picker,
         }
     }
@@ -540,7 +544,7 @@ impl PromptLibrary {
             let language_registry = self.language_registry.clone();
             let prompt = self.store.load(prompt_id);
             let make_completion_provider = self.make_completion_provider.clone();
-            self.pending_load = cx.spawn(|this, mut cx| async move {
+            self.pending_load = cx.spawn_in(window, |this, mut cx| async move {
                 let prompt = prompt.await;
                 let markdown = language_registry.language_for_name("Markdown").await;
                 this.update_in(&mut cx, |this, window, cx| match prompt {
@@ -775,15 +779,15 @@ impl PromptLibrary {
         let initial_prompt = action.prompt.clone();
         if provider.is_authenticated(cx) {
             self.inline_assist_delegate
-                .assist(prompt_editor, initial_prompt, cx);
+                .assist(prompt_editor, initial_prompt, window, cx);
         } else {
             for window in cx.windows() {
                 if let Some(workspace) = window.downcast::<Workspace>() {
                     let panel = workspace
-                        .update(cx, |workspace, cx| {
+                        .update(cx, |workspace, window, cx| {
                             window.activate_window();
                             self.inline_assist_delegate
-                                .focus_assistant_panel(workspace, cx)
+                                .focus_assistant_panel(workspace, window, cx)
                         })
                         .ok();
                     if panel == Some(true) {

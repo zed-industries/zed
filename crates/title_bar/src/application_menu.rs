@@ -80,7 +80,7 @@ impl ApplicationMenu {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Model<ContextMenu> {
-        ContextMenu::build(cx, |menu, cx| {
+        ContextMenu::build(window, cx, |menu, window, cx| {
             // Grab current focus handle so menu can shown items in context with the focused element
             let menu = menu.when_some(window.focused(cx), |menu, focused| menu.context(focused));
             let sanitized_items = Self::sanitize_menu_items(entry.menu.items);
@@ -166,7 +166,7 @@ impl ApplicationMenu {
                     )
                     .with_handle(current_handle.clone()),
             )
-            .on_hover(move |hover_enter, cx| {
+            .on_hover(move |hover_enter, window, cx| {
                 if *hover_enter && !current_handle.is_deployed() {
                     all_handles.iter().for_each(|h| h.hide(cx));
 
@@ -224,7 +224,7 @@ impl ApplicationMenu {
 
         // We need to defer this so that this menu handle can take focus from the previous menu
         let next_handle = self.entries[next_index].handle.clone();
-        cx.defer(move |_, cx| next_handle.show(cx));
+        cx.defer_in(window, move |_, window, cx| next_handle.show(window, cx));
     }
 
     pub fn all_menus_shown(&self) -> bool {
@@ -254,14 +254,14 @@ impl Render for ApplicationMenu {
                 if handles_to_hide.is_empty() {
                     // We need to wait for the next frame to show all menus first,
                     // before we can handle show/hide operations
-                    cx.window_context().on_next_frame(move |cx| {
+                    window.on_next_frame(move |window, cx| {
                         handles_to_hide.iter().for_each(|handle| handle.hide(cx));
-                        cx.defer(move |cx| handle_to_show.show(cx));
+                        window.defer(cx, move |window, cx| handle_to_show.show(window, cx));
                     });
                 } else {
                     // Since menus are already shown, we can directly handle show/hide operations
                     handles_to_hide.iter().for_each(|handle| handle.hide(cx));
-                    cx.defer(move |_, cx| handle_to_show.show(cx));
+                    cx.defer_in(window, move |_, window, cx| handle_to_show.show(window, cx));
                 }
             }
         }

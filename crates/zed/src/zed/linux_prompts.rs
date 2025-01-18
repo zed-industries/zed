@@ -144,7 +144,7 @@ impl Render for FallbackPromptRenderer {
                             el.style(ButtonStyle::Tinted(TintColor::Accent))
                         })
                         .layer(ElevationIndex::ModalSurface)
-                        .on_click(cx.listener(move |_, _, cx| {
+                        .on_click(cx.listener(move |_, _, window, cx| {
                             cx.emit(PromptResponse(ix));
                         }))
                 }),

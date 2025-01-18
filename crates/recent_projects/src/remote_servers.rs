@@ -786,7 +786,7 @@ impl RemoteServerProjects {
                     .await;
                     if let Err(e) = result {
                         log::error!("Failed to connect: {:?}", e);
-                        window.prompt(cx, 
+                        cx.prompt(
                             gpui::PromptLevel::Critical,
                             "Failed to connect",
                             Some(&e.to_string()),

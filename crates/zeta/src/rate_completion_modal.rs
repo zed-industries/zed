@@ -314,7 +314,7 @@ impl RateCompletionModal {
                     RateCompletionView::SuggestedEdits.name(),
                 )
                 .label_size(LabelSize::Small)
-                .on_click(cx.listener(move |this, _, cx| {
+                .on_click(cx.listener(move |this, _, window, cx| {
                     this.current_view = RateCompletionView::SuggestedEdits;
                     cx.notify();
                 }))
@@ -326,7 +326,7 @@ impl RateCompletionModal {
                     RateCompletionView::RawInput.name(),
                 )
                 .label_size(LabelSize::Small)
-                .on_click(cx.listener(move |this, _, cx| {
+                .on_click(cx.listener(move |this, _, window, cx| {
                     this.current_view = RateCompletionView::RawInput;
                     cx.notify();
                 }))
@@ -497,7 +497,7 @@ impl RateCompletionModal {
                                             focus_handle,
                                             cx,
                                         ))
-                                        .on_click(cx.listener(move |this, _, cx| {
+                                        .on_click(cx.listener(move |this, _, window, cx| {
                                             this.thumbs_down_active(
                                                 &ThumbsDownActiveCompletion,
                                                 window, cx,
@@ -515,7 +515,7 @@ impl RateCompletionModal {
                                             focus_handle,
                                             cx,
                                         ))
-                                        .on_click(cx.listener(move |this, _, cx| {
+                                        .on_click(cx.listener(move |this, _, window, cx| {
                                             this.thumbs_up_active(&ThumbsUpActiveCompletion, cx);
                                         })),
                                 ),
@@ -641,7 +641,7 @@ impl Render for RateCompletionModal {
                                                 .tooltip(move |cx| {
                                                     Tooltip::text(tooltip_text, cx)
                                                 })
-                                                .on_click(cx.listener(move |this, _, cx| {
+                                                .on_click(cx.listener(move |this, _, window, cx| {
                                                     this.select_completion(Some(completion.clone()), true, cx);
                                                 }))
                                         },

@@ -482,7 +482,7 @@ impl Render for ContextStrip {
                         }))
                     }),
                 )
-                .on_click(Rc::new(cx.listener(move |this, _, cx| {
+                .on_click(Rc::new(cx.listener(move |this, _, window, cx| {
                     this.focused_index = Some(i);
                     cx.notify();
                 })))

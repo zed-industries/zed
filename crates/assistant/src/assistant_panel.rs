@@ -117,7 +117,7 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_models(
         |terminal_panel: &mut TerminalPanel, _, cx: &mut ModelContext<TerminalPanel>| {
             let settings = AssistantSettings::get_global(cx);
-            terminal_panel.set_assistant_enabled(settings.enabled, window, cx);
+            terminal_panel.set_assistant_enabled(settings.enabled, cx);
         },
     )
     .detach();
@@ -1258,7 +1258,7 @@ impl AssistantPanel {
     fn deploy_prompt_library(
         &mut self,
         _: &DeployPromptLibrary,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         open_prompt_library(
@@ -1778,7 +1778,7 @@ impl ContextEditor {
                 .as_ref()
                 .and_then(|state| state.editor.upgrade())
             {
-                window.focus(&editor.focus_handle(window, cx));
+                window.focus(&editor.focus_handle(cx));
 
                 return true;
             }
@@ -3258,7 +3258,7 @@ impl ContextEditor {
             return;
         };
 
-        let Some(creases) = selections_creases(workspace, window, cx) else {
+        let Some(creases) = selections_creases(workspace, cx) else {
             return;
         };
 
@@ -3858,7 +3858,7 @@ impl ContextEditor {
         let (style, tooltip) = match token_state(&self.context, cx) {
             Some(TokenState::NoTokensLeft { .. }) => (
                 ButtonStyle::Tinted(TintColor::Error),
-                Some(Tooltip::text("Token limit reached")),
+                Some(Tooltip::text("Token limit reached")(window, cx)),
             ),
             Some(TokenState::HasMoreTokens {
                 over_warn_threshold,
@@ -3919,7 +3919,7 @@ impl ContextEditor {
         let (style, tooltip) = match token_state(&self.context, cx) {
             Some(TokenState::NoTokensLeft { .. }) => (
                 ButtonStyle::Tinted(TintColor::Error),
-                Some(Tooltip::text("Token limit reached")),
+                Some(Tooltip::text("Token limit reached")(window, cx)),
             ),
             Some(TokenState::HasMoreTokens {
                 over_warn_threshold,

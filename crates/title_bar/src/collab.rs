@@ -381,7 +381,7 @@ impl TitleBar {
                 .icon_size(IconSize::Small)
                 .toggle_state(is_muted)
                 .selected_style(ButtonStyle::Tinted(TintColor::Error))
-                .on_click(move |_, cx| {
+                .on_click(move |_, _window, cx| {
                     toggle_mute(&Default::default(), cx);
                 })
                 .into_any_element(),
