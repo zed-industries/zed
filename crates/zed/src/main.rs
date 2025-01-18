@@ -289,7 +289,7 @@ fn main() {
         }
         settings::init(cx);
         handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
-        handle_keymap_file_changes(user_keymap_file_rx, cx, handle_keymap_changed);
+        handle_keymap_file_changes(user_keymap_file_rx, cx);
         client::init_settings(cx);
         let user_agent = format!(
             "Zed/{} ({}; {})",
@@ -607,6 +607,7 @@ fn main() {
     });
 }
 
+<<<<<<< HEAD
 fn handle_keymap_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
     struct KeymapParseErrorNotification;
     let id = NotificationId::unique::<KeymapParseErrorNotification>();
@@ -633,6 +634,8 @@ fn handle_keymap_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
     }
 }
 
+=======
+>>>>>>> main
 fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
     struct SettingsParseErrorNotification;
     let id = NotificationId::unique::<SettingsParseErrorNotification>();

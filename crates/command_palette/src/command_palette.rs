@@ -15,7 +15,6 @@ use gpui::{
     ModelContext, ParentElement, Render, Styled, Task, UpdateGlobal, WeakModel, Window,
 };
 use picker::{Picker, PickerDelegate};
-
 use postage::{sink::Sink, stream::Stream};
 use settings::Settings;
 use ui::{h_flex, prelude::*, v_flex, HighlightedLabel, KeyBinding, ListItem, ListItemSpacing};
@@ -663,7 +662,7 @@ mod tests {
             workspace::init(app_state.clone(), cx);
             init(cx);
             Project::init_settings(cx);
-            KeymapFile::parse(
+            cx.bind_keys(KeymapFile::load_panic_on_failure(
                 r#"[
                     {
                         "bindings": {
@@ -673,10 +672,8 @@ mod tests {
                         }
                     }
                 ]"#,
-            )
-            .unwrap()
-            .add_to_cx(cx)
-            .unwrap();
+                cx,
+            ));
             app_state
         })
     }

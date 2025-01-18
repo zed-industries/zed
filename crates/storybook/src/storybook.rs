@@ -145,7 +145,7 @@ fn load_embedded_fonts(cx: &AppContext) -> gpui::Result<()> {
 }
 
 fn load_storybook_keymap(cx: &mut AppContext) {
-    KeymapFile::load_asset("keymaps/storybook.json", cx).unwrap();
+    cx.bind_keys(KeymapFile::load_asset("keymaps/storybook.json", cx).unwrap());
 }
 
 pub fn init(cx: &mut AppContext) {

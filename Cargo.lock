@@ -14333,6 +14333,7 @@ name = "vim"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assets",
  "async-compat",
  "async-trait",
  "collections",
@@ -14350,6 +14351,7 @@ dependencies = [
  "multi_buffer",
  "nvim-rs",
  "parking_lot",
+ "project_panel",
  "regex",
  "release_channel",
  "schemars",

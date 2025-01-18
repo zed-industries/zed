@@ -9,7 +9,7 @@ use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use ui::{prelude::*, ListItem, Tooltip};
 use util::ResultExt as _;
-use workspace::Workspace;
+use workspace::{notifications::NotifyResultExt, Workspace};
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::{ContextStore, FileInclusion};
@@ -226,8 +226,8 @@ impl PickerDelegate for FileContextPickerDelegate {
             return;
         };
 
-        let workspace = self.workspace.clone();
         let confirm_behavior = self.confirm_behavior;
+<<<<<<< HEAD
         cx.spawn_in(window, |this, mut cx| async move {
             match task.await {
                 Ok(()) => {
@@ -245,9 +245,16 @@ impl PickerDelegate for FileContextPickerDelegate {
                         workspace.show_error(&err, cx);
                     })?;
                 }
+=======
+        cx.spawn(|this, mut cx| async move {
+            match task.await.notify_async_err(&mut cx) {
+                None => anyhow::Ok(()),
+                Some(()) => this.update(&mut cx, |this, cx| match confirm_behavior {
+                    ConfirmBehavior::KeepOpen => {}
+                    ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                }),
+>>>>>>> main
             }
-
-            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
     }

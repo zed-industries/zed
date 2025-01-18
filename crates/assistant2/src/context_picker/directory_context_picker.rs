@@ -8,7 +8,7 @@ use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use ui::{prelude::*, ListItem};
 use util::ResultExt as _;
-use workspace::Workspace;
+use workspace::{notifications::NotifyResultExt, Workspace};
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
@@ -209,9 +209,9 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
             return;
         };
 
-        let workspace = self.workspace.clone();
         let confirm_behavior = self.confirm_behavior;
         cx.spawn(|this, mut cx| async move {
+<<<<<<< HEAD
             match task.await {
                 Ok(()) => {
                     this.update(&mut cx, |this, cx| match confirm_behavior {
@@ -228,9 +228,15 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
                         workspace.show_error(&err, cx);
                     })?;
                 }
+=======
+            match task.await.notify_async_err(&mut cx) {
+                None => anyhow::Ok(()),
+                Some(()) => this.update(&mut cx, |this, cx| match confirm_behavior {
+                    ConfirmBehavior::KeepOpen => {}
+                    ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                }),
+>>>>>>> main
             }
-
-            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
     }
