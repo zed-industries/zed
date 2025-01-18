@@ -314,7 +314,8 @@ message Envelope {
         Commit commit = 295;
         
         GetDocumentDiagnostics get_document_diagnostics = 296;
-        GetDocumentDiagnosticsResponse get_document_diagnostics_response = 297; // current max
+        GetDocumentDiagnosticsResponse get_document_diagnostics_response = 297;
+        RefreshDocumentsDiagnostics refresh_documents_diagnostics = 298; // current max
     }
 
     reserved 87 to 88;
@@ -2709,4 +2710,8 @@ message GetDocumentDiagnosticsResponse {
     uint64 server_id = 1;
     string uri = 2;
     repeated LspDiagnostic diagnostics = 3;
+}
+
+message RefreshDocumentsDiagnostics {
+    uint64 project_id = 1;
 }
