@@ -3,6 +3,7 @@ from Cloudflare.
 
 - `open-source-website-assets` is used for `install.sh`
 - `docs-proxy` is used for `https://zed.dev/docs`
+- `flathub-verified` is used to verified to [Flathub Zed app](https://flathub.org/apps/dev.zed.Zed)
 
 On push to `main`, both of these (and the files they depend on) are uploaded to Cloudflare.
 

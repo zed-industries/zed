@@ -1,0 +1,11 @@
+name = "flathub-verified"
+main = "src/worker.js"
+compatibility_date = "2024-05-03"
+workers_dev = true
+
+[[routes]]
+pattern = "zed.dev/.well-known/org.flathub.VerifiedApps.txt"
+zone_name = "zed.dev"
+
+[vars]
+FLATHUB_VERIFICATION = "UUID_TO_BE_ADDED" # Please follow instruction in https://docs.flathub.org/docs/for-app-authors/verification/#im-publishing-an-app-on-flathub-how-do-i-get-it-verified to obtain your verification UUID
