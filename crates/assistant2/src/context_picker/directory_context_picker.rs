@@ -215,7 +215,7 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
                 None => anyhow::Ok(()),
                 Some(()) => this.update(&mut cx, |this, cx| match confirm_behavior {
                     ConfirmBehavior::KeepOpen => {}
-                    ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                    ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
                 }),
             }
         })

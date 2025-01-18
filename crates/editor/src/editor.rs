@@ -4915,7 +4915,7 @@ impl Editor {
                     self.refresh_inline_completion(true, true, window, cx);
                     cx.notify();
                 } else {
-                    self.accept_inline_completion(&Default::default(), cx);
+                    self.accept_inline_completion(&Default::default(), window, cx);
                 }
             }
         }

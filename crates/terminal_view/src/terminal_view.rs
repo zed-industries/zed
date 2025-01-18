@@ -765,7 +765,11 @@ impl TerminalView {
         }))
     }
 
-    fn render_scrollbar(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<Stateful<Div>> {
+    fn render_scrollbar(
+        &self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Option<Stateful<Div>> {
         if !Self::should_show_scrollbar(cx)
             || !(self.show_scrollbar || self.scrollbar_state.is_dragging())
         {
@@ -1150,7 +1154,7 @@ impl TerminalView {
             terminal.focus_out();
             terminal.set_cursor_shape(CursorShape::Hollow);
         });
-        self.hide_scrollbar(cx);
+        self.hide_scrollbar(window, cx);
         cx.notify();
     }
 }
@@ -1216,7 +1220,7 @@ impl Render for TerminalView {
                         self.can_navigate_to_selected_word,
                         self.block_below_cursor.clone(),
                     ))
-                    .when_some(self.render_scrollbar(cx), |div, scrollbar| {
+                    .when_some(self.render_scrollbar(window, cx), |div, scrollbar| {
                         div.child(scrollbar)
                     }),
             )

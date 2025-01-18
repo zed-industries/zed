@@ -1,8 +1,8 @@
 use crate::{
-    register_tooltip_mouse_handlers, set_tooltip_on_window, ActiveTooltip, AnyView, Bounds,
-    DispatchPhase, Element, ElementId, GlobalElementId, HighlightStyle, Hitbox, IntoElement,
-    LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size,
-    TextRun, TextStyle, TooltipId, Truncate, WhiteSpace, WrappedLine,
+    register_tooltip_mouse_handlers, set_tooltip_on_window, ActiveTooltip, AnyView, AppContext,
+    Bounds, DispatchPhase, Element, ElementId, GlobalElementId, HighlightStyle, Hitbox,
+    IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point,
+    SharedString, Size, TextRun, TextStyle, TooltipId, Truncate, WhiteSpace, Window, WrappedLine,
     WrappedLineLayout,
 };
 use anyhow::anyhow;
@@ -514,9 +514,11 @@ impl TextLayout {
 pub struct InteractiveText {
     element_id: ElementId,
     text: StyledText,
-    click_listener:
-        Option<Box<dyn Fn(&[Range<usize>], InteractiveTextClickEvent, &mut Window, &mut AppContext)>>,
-    hover_listener: Option<Box<dyn Fn(Option<usize>, MouseMoveEvent, &mut Window, &mut AppContext)>>,
+    click_listener: Option<
+        Box<dyn Fn(&[Range<usize>], InteractiveTextClickEvent, &mut Window, &mut AppContext)>,
+    >,
+    hover_listener:
+        Option<Box<dyn Fn(Option<usize>, MouseMoveEvent, &mut Window, &mut AppContext)>>,
     tooltip_builder: Option<Rc<dyn Fn(usize, &mut Window, &mut AppContext) -> Option<AnyView>>>,
     tooltip_id: Option<TooltipId>,
     clickable_ranges: Vec<Range<usize>>,
@@ -616,14 +618,14 @@ impl Element for InteractiveText {
     ) -> Hitbox {
         window.with_optional_element_state::<InteractiveTextState, _>(
             global_id,
-            |interactive_state, cx| {
+            |interactive_state, window| {
                 let mut interactive_state = interactive_state
                     .map(|interactive_state| interactive_state.unwrap_or_default());
 
                 if let Some(interactive_state) = interactive_state.as_mut() {
                     if self.tooltip_builder.is_some() {
                         self.tooltip_id =
-                            set_tooltip_on_window(&interactive_state.active_tooltip, cx);
+                            set_tooltip_on_window(&interactive_state.active_tooltip, window);
                     } else {
                         // If there is no longer a tooltip builder, remove the active tooltip.
                         interactive_state.active_tooltip.take();
@@ -668,26 +670,28 @@ impl Element for InteractiveText {
                     if let Some(mouse_down_index) = mouse_down.get() {
                         let hitbox = hitbox.clone();
                         let clickable_ranges = mem::take(&mut self.clickable_ranges);
-                        window.on_mouse_event(move |event: &MouseUpEvent, phase, window, cx| {
-                            if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
-                                if let Ok(mouse_up_index) =
-                                    text_layout.index_for_position(event.position)
-                                {
-                                    click_listener(
-                                        &clickable_ranges,
-                                        InteractiveTextClickEvent {
-                                            mouse_down_index,
-                                            mouse_up_index,
-                                        },
-                                        window,
-                                        cx,
-                                    )
-                                }
+                        window.on_mouse_event(
+                            move |event: &MouseUpEvent, phase, window: &mut Window, cx| {
+                                if phase == DispatchPhase::Bubble && hitbox.is_hovered(window) {
+                                    if let Ok(mouse_up_index) =
+                                        text_layout.index_for_position(event.position)
+                                    {
+                                        click_listener(
+                                            &clickable_ranges,
+                                            InteractiveTextClickEvent {
+                                                mouse_down_index,
+                                                mouse_up_index,
+                                            },
+                                            window,
+                                            cx,
+                                        )
+                                    }
 
-                                mouse_down.take();
-                                window.refresh();
-                            }
-                        });
+                                    mouse_down.take();
+                                    window.refresh();
+                                }
+                            },
+                        );
                     } else {
                         let hitbox = hitbox.clone();
                         window.on_mouse_event(move |event: &MouseDownEvent, phase, window, _| {
@@ -729,11 +733,11 @@ impl Element for InteractiveText {
                     let build_tooltip = Rc::new({
                         let tooltip_is_hoverable = false;
                         let text_layout = text_layout.clone();
-                        move |cx: &mut WindowContext| {
+                        move |window: &mut Window, cx: &mut AppContext| {
                             text_layout
                                 .index_for_position(window.mouse_position())
                                 .ok()
-                                .and_then(|position| tooltip_builder(position, cx))
+                                .and_then(|position| tooltip_builder(position, window, cx))
                                 .map(|view| (view, tooltip_is_hoverable))
                         }
                     });
@@ -742,8 +746,10 @@ impl Element for InteractiveText {
                     let source_bounds = hitbox.bounds;
                     let check_is_hovered = Rc::new({
                         let text_layout = text_layout.clone();
-                        move |cx: &WindowContext| {
-                            text_layout.index_for_position(window.mouse_position()).is_ok()
+                        move |window: &Window| {
+                            text_layout
+                                .index_for_position(window.mouse_position())
+                                .is_ok()
                                 && source_bounds.contains(&window.mouse_position())
                                 && pending_mouse_down.get().is_none()
                         }
@@ -753,7 +759,7 @@ impl Element for InteractiveText {
                         self.tooltip_id,
                         build_tooltip,
                         check_is_hovered,
-                        cx,
+                        window,
                     );
                 }
 

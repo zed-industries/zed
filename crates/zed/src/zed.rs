@@ -24,8 +24,7 @@ use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
     actions, point, px, Action, AppContext, AsyncAppContext, Context, DismissEvent, Element,
     Focusable, KeyBinding, MenuItem, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal,
-    SharedString, Styled, Task, TitlebarOptions, VisualContext, WindowKind,
-    WindowOptions,
+    SharedString, Styled, Task, TitlebarOptions, VisualContext, WindowKind, WindowOptions,
 };
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
@@ -256,7 +255,8 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut ModelContext<Workspace>
             "#},
             e
         );
-        let prompt = window.prompt(cx, 
+        let prompt = window.prompt(
+            cx,
             PromptLevel::Critical,
             "Could not start inotify",
             Some(&message),
@@ -286,7 +286,8 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut ModelContext<Workspace>
             "#},
             e
         );
-        let prompt = window.prompt(cx, 
+        let prompt = window.prompt(
+            cx,
             PromptLevel::Critical,
             "Could not start ReadDirectoryChangesW",
             Some(&message),
@@ -879,7 +880,8 @@ fn install_cli(
 
     cx.spawn_in(window, |workspace, mut cx| async move {
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            let prompt = window.prompt(cx, 
+            let prompt = window.prompt(
+                cx,
                 PromptLevel::Warning,
                 "CLI should already be installed",
                 Some(LINUX_PROMPT_DETAIL),
@@ -1186,6 +1188,7 @@ fn show_keymap_file_load_error(
                             .child(markdown_preview::markdown_renderer::render_parsed_markdown(
                                 &parsed_markdown.clone(),
                                 Some(workspace_handle.clone()),
+                                window,
                                 cx,
                             ))
                             .into_any()

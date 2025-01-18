@@ -1581,11 +1581,10 @@ impl Window {
         }
     }
 
-    fn prepaint_tooltip(&mut self) -> Option<AnyElement> {
+    fn prepaint_tooltip(&mut self, cx: &mut AppContext) -> Option<AnyElement> {
         // Use indexing instead of iteration to avoid borrowing self for the duration of the loop.
-        for tooltip_request_index in (0..self.window.next_frame.tooltip_requests.len()).rev() {
+        for tooltip_request_index in (0..self.next_frame.tooltip_requests.len()).rev() {
             let Some(Some(tooltip_request)) = self
-                .window
                 .next_frame
                 .tooltip_requests
                 .get(tooltip_request_index)
@@ -1596,7 +1595,7 @@ impl Window {
             };
             let mut element = tooltip_request.tooltip.view.clone().into_any();
             let mouse_position = tooltip_request.tooltip.mouse_position;
-            let tooltip_size = element.layout_as_root(AvailableSpace::min_size(), self);
+            let tooltip_size = element.layout_as_root(AvailableSpace::min_size(), self, cx);
 
             let mut tooltip_bounds =
                 Bounds::new(mouse_position + point(px(1.), px(1.)), tooltip_size);
@@ -1633,14 +1632,16 @@ impl Window {
             // via the `visible_on_hover` method). Since mouse listeners are not active in this
             // case, instead update the tooltip's visibility here.
             let is_visible =
-                (tooltip_request.tooltip.check_visible_and_update)(tooltip_bounds, self);
+                (tooltip_request.tooltip.check_visible_and_update)(tooltip_bounds, self, cx);
             if !is_visible {
                 continue;
             }
 
-            self.with_absolute_element_offset(tooltip_bounds.origin, |cx| element.prepaint(cx));
+            self.with_absolute_element_offset(tooltip_bounds.origin, |window| {
+                element.prepaint(window, cx)
+            });
 
-            self.window.tooltip_bounds = Some(TooltipBounds {
+            self.tooltip_bounds = Some(TooltipBounds {
                 id: tooltip_request.id,
                 bounds: tooltip_bounds,
             });
