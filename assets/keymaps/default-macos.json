@@ -253,6 +253,12 @@
     }
   },
   {
+    "context": "ThreadHistory",
+    "bindings": {
+      "backspace": "assistant2::RemoveSelectedThread"
+    }
+  },
+  {
     "context": "PromptLibrary",
     "use_key_equivalents": true,
     "bindings": {

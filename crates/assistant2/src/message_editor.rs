@@ -4,17 +4,16 @@ use editor::actions::MoveUp;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
 use gpui::{
-    AppContext, DismissEvent, FocusableView, Model, Subscription, TextStyle, View, WeakModel,
-    WeakView,
+    pulsating_between, Animation, AnimationExt, AppContext, DismissEvent, FocusableView, Model,
+    Subscription, TextStyle, View, WeakModel, WeakView,
 };
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::LanguageModelSelector;
 use rope::Point;
 use settings::Settings;
+use std::time::Duration;
 use theme::ThemeSettings;
-use ui::{
-    prelude::*, ButtonLike, ElevationIndex, KeyBinding, PopoverMenu, PopoverMenuHandle, Switch,
-};
+use ui::{prelude::*, ButtonLike, KeyBinding, PopoverMenu, PopoverMenuHandle, Switch, TintColor};
 use workspace::Workspace;
 
 use crate::assistant_model_selector::AssistantModelSelector;
@@ -261,6 +260,8 @@ impl Render for MessageEditor {
         let focus_handle = self.editor.focus_handle(cx);
         let inline_context_picker = self.inline_context_picker.clone();
         let bg_color = cx.theme().colors().editor_background;
+        let is_streaming_completion = self.thread.read(cx).is_streaming();
+        let button_width = px(64.);
 
         v_flex()
             .key_context("MessageEditor")
@@ -340,21 +341,64 @@ impl Render for MessageEditor {
                                         cx,
                                     )),
                             )
-                            .child(
-                                h_flex().gap_1().child(self.model_selector.clone()).child(
-                                    ButtonLike::new("chat")
+                            .child(h_flex().gap_1().child(self.model_selector.clone()).child(
+                                if is_streaming_completion {
+                                    ButtonLike::new("cancel-generation")
+                                        .width(button_width.into())
+                                        .style(ButtonStyle::Tinted(TintColor::Accent))
+                                        .child(
+                                            h_flex()
+                                                .w_full()
+                                                .justify_between()
+                                                .child(
+                                                    Label::new("Cancel")
+                                                        .size(LabelSize::Small)
+                                                        .with_animation(
+                                                            "pulsating-label",
+                                                            Animation::new(Duration::from_secs(2))
+                                                                .repeat()
+                                                                .with_easing(pulsating_between(
+                                                                    0.4, 0.8,
+                                                                )),
+                                                            |label, delta| label.alpha(delta),
+                                                        ),
+                                                )
+                                                .children(
+                                                    KeyBinding::for_action_in(
+                                                        &editor::actions::Cancel,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                    .map(|binding| binding.into_any_element()),
+                                                ),
+                                        )
+                                        .on_click(move |_event, cx| {
+                                            focus_handle
+                                                .dispatch_action(&editor::actions::Cancel, cx);
+                                        })
+                                } else {
+                                    ButtonLike::new("submit-message")
+                                        .width(button_width.into())
                                         .style(ButtonStyle::Filled)
-                                        .layer(ElevationIndex::ModalSurface)
-                                        .child(Label::new("Submit").size(LabelSize::Small))
-                                        .children(
-                                            KeyBinding::for_action_in(&Chat, &focus_handle, cx)
-                                                .map(|binding| binding.into_any_element()),
+                                        .child(
+                                            h_flex()
+                                                .w_full()
+                                                .justify_between()
+                                                .child(Label::new("Submit").size(LabelSize::Small))
+                                                .children(
+                                                    KeyBinding::for_action_in(
+                                                        &Chat,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                    .map(|binding| binding.into_any_element()),
+                                                ),
                                         )
                                         .on_click(move |_event, cx| {
                                             focus_handle.dispatch_action(&Chat, cx);
-                                        }),
-                                ),
-                            ),
+                                        })
+                                },
+                            )),
                     ),
             )
     }

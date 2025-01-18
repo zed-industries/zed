@@ -1,8 +1,8 @@
 [package]
 name = "zed_elixir"
 version = "0.1.2"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "Apache-2.0"
 
 [lints]

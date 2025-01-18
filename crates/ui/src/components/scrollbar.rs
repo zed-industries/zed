@@ -1,5 +1,5 @@
 #![allow(missing_docs)]
-use std::{cell::Cell, ops::Range, rc::Rc};
+use std::{any::Any, cell::Cell, fmt::Debug, ops::Range, rc::Rc, sync::Arc};
 
 use crate::{prelude::*, px, relative, IntoElement};
 use gpui::{
@@ -15,80 +15,84 @@ pub struct Scrollbar {
     kind: ScrollbarAxis,
 }
 
-/// Wrapper around scroll handles.
-#[derive(Clone, Debug)]
-pub enum ScrollableHandle {
-    Uniform(UniformListScrollHandle),
-    NonUniform(ScrollHandle),
+impl ScrollableHandle for UniformListScrollHandle {
+    fn content_size(&self) -> Option<ContentSize> {
+        Some(ContentSize {
+            size: self.0.borrow().last_item_size.map(|size| size.contents)?,
+            scroll_adjustment: None,
+        })
+    }
+
+    fn set_offset(&self, point: Point<Pixels>) {
+        self.0.borrow().base_handle.set_offset(point);
+    }
+
+    fn offset(&self) -> Point<Pixels> {
+        self.0.borrow().base_handle.offset()
+    }
+
+    fn viewport(&self) -> Bounds<Pixels> {
+        self.0.borrow().base_handle.bounds()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+}
+
+impl ScrollableHandle for ScrollHandle {
+    fn content_size(&self) -> Option<ContentSize> {
+        let last_children_index = self.children_count().checked_sub(1)?;
+
+        let mut last_item = self.bounds_for_item(last_children_index)?;
+        let mut scroll_adjustment = None;
+
+        if last_children_index != 0 {
+            // todo: PO: this is slightly wrong for horizontal scrollbar, as the last item is not necessarily the longest one.
+            let first_item = self.bounds_for_item(0)?;
+            last_item.size.height += last_item.origin.y;
+            last_item.size.width += last_item.origin.x;
+
+            scroll_adjustment = Some(first_item.origin);
+            last_item.size.height -= first_item.origin.y;
+            last_item.size.width -= first_item.origin.x;
+        }
+
+        Some(ContentSize {
+            size: last_item.size,
+            scroll_adjustment,
+        })
+    }
+
+    fn set_offset(&self, point: Point<Pixels>) {
+        self.set_offset(point);
+    }
+
+    fn offset(&self) -> Point<Pixels> {
+        self.offset()
+    }
+
+    fn viewport(&self) -> Bounds<Pixels> {
+        self.bounds()
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 #[derive(Debug)]
-struct ContentSize {
-    size: Size<Pixels>,
-    scroll_adjustment: Option<Point<Pixels>>,
+pub struct ContentSize {
+    pub size: Size<Pixels>,
+    pub scroll_adjustment: Option<Point<Pixels>>,
 }
 
-impl ScrollableHandle {
-    fn content_size(&self) -> Option<ContentSize> {
-        match self {
-            ScrollableHandle::Uniform(handle) => Some(ContentSize {
-                size: handle.0.borrow().last_item_size.map(|size| size.contents)?,
-                scroll_adjustment: None,
-            }),
-            ScrollableHandle::NonUniform(handle) => {
-                let last_children_index = handle.children_count().checked_sub(1)?;
-
-                let mut last_item = handle.bounds_for_item(last_children_index)?;
-                let mut scroll_adjustment = None;
-                if last_children_index != 0 {
-                    // todo: PO: this is slightly wrong for horizontal scrollbar, as the last item is not necessarily the longest one.
-                    let first_item = handle.bounds_for_item(0)?;
-                    last_item.size.height += last_item.origin.y;
-                    last_item.size.width += last_item.origin.x;
-
-                    scroll_adjustment = Some(first_item.origin);
-                    last_item.size.height -= first_item.origin.y;
-                    last_item.size.width -= first_item.origin.x;
-                }
-                Some(ContentSize {
-                    size: last_item.size,
-                    scroll_adjustment,
-                })
-            }
-        }
-    }
-    fn set_offset(&self, point: Point<Pixels>) {
-        let base_handle = match self {
-            ScrollableHandle::Uniform(handle) => &handle.0.borrow().base_handle,
-            ScrollableHandle::NonUniform(handle) => &handle,
-        };
-        base_handle.set_offset(point);
-    }
-    fn offset(&self) -> Point<Pixels> {
-        let base_handle = match self {
-            ScrollableHandle::Uniform(handle) => &handle.0.borrow().base_handle,
-            ScrollableHandle::NonUniform(handle) => &handle,
-        };
-        base_handle.offset()
-    }
-    fn viewport(&self) -> Bounds<Pixels> {
-        let base_handle = match self {
-            ScrollableHandle::Uniform(handle) => &handle.0.borrow().base_handle,
-            ScrollableHandle::NonUniform(handle) => &handle,
-        };
-        base_handle.bounds()
-    }
-}
-impl From<UniformListScrollHandle> for ScrollableHandle {
-    fn from(value: UniformListScrollHandle) -> Self {
-        Self::Uniform(value)
-    }
-}
-
-impl From<ScrollHandle> for ScrollableHandle {
-    fn from(value: ScrollHandle) -> Self {
-        Self::NonUniform(value)
-    }
+pub trait ScrollableHandle: Debug + 'static {
+    fn content_size(&self) -> Option<ContentSize>;
+    fn set_offset(&self, point: Point<Pixels>);
+    fn offset(&self) -> Point<Pixels>;
+    fn viewport(&self) -> Bounds<Pixels>;
+    fn as_any(&self) -> &dyn Any;
 }
 
 /// A scrollbar state that should be persisted across frames.
@@ -97,15 +101,15 @@ pub struct ScrollbarState {
     // If Some(), there's an active drag, offset by percentage from the origin of a thumb.
     drag: Rc<Cell<Option<f32>>>,
     parent_id: Option<EntityId>,
-    scroll_handle: ScrollableHandle,
+    scroll_handle: Arc<dyn ScrollableHandle>,
 }
 
 impl ScrollbarState {
-    pub fn new(scroll: impl Into<ScrollableHandle>) -> Self {
+    pub fn new(scroll: impl ScrollableHandle) -> Self {
         Self {
             drag: Default::default(),
             parent_id: None,
-            scroll_handle: scroll.into(),
+            scroll_handle: Arc::new(scroll),
         }
     }
 
@@ -115,8 +119,8 @@ impl ScrollbarState {
         self
     }
 
-    pub fn scroll_handle(&self) -> ScrollableHandle {
-        self.scroll_handle.clone()
+    pub fn scroll_handle(&self) -> &Arc<dyn ScrollableHandle> {
+        &self.scroll_handle
     }
 
     pub fn is_dragging(&self) -> bool {
@@ -171,6 +175,7 @@ impl Scrollbar {
     pub fn horizontal(state: ScrollbarState) -> Option<Self> {
         Self::new(state, ScrollbarAxis::Horizontal)
     }
+
     fn new(state: ScrollbarState, kind: ScrollbarAxis) -> Option<Self> {
         let thumb = state.thumb_range(kind)?;
         Some(Self { thumb, state, kind })
