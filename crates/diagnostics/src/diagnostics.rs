@@ -15,7 +15,7 @@ use editor::{
     Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
 use gpui::{
-    actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
+    actions, div, svg, AnyElement, AnyView, AppContext, Context, Entity, EventEmitter, FocusHandle,
     FocusableView, Global, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement,
     Render, SharedString, Styled, StyledText, Subscription, Task, View, ViewContext, VisualContext,
     WeakView, WindowContext,
@@ -30,8 +30,7 @@ use project_diagnostics_settings::ProjectDiagnosticsSettings;
 use settings::Settings;
 use std::{
     any::{Any, TypeId},
-    cmp,
-    cmp::Ordering,
+    cmp::{self, Ordering},
     mem,
     ops::{Range, RangeInclusive},
     sync::Arc,
@@ -259,6 +258,10 @@ impl ProjectDiagnosticsEditor {
     fn deploy(workspace: &mut Workspace, _: &Deploy, cx: &mut ViewContext<Workspace>) {
         if let Some(existing) = workspace.item_of_type::<ProjectDiagnosticsEditor>(cx) {
             workspace.activate_item(&existing, true, true, cx);
+            workspace.active_pane().update(cx, |p, cx| {
+                p.close_item_by_id(existing.entity_id(), workspace::SaveIntent::Skip, cx)
+                    .detach_and_log_err(cx);
+            });
         } else {
             let workspace_handle = cx.view().downgrade();
 
