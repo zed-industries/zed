@@ -7544,7 +7544,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
         unreachable!()
     });
     let format = editor
-        .update(cx, |editor, cx| {
+        .update_in(cx, |editor, window, cx| {
             editor.perform_format(
                 project,
                 FormatTrigger::Manual,

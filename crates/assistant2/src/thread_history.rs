@@ -1,6 +1,6 @@
 use gpui::{
     uniform_list, AppContext, FocusHandle, Focusable, Model, ScrollStrategy,
-    UniformListScrollHandle,
+    UniformListScrollHandle, WeakModel,
 };
 use time::{OffsetDateTime, UtcOffset};
 use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing, Tooltip};
@@ -33,45 +33,70 @@ impl ThreadHistory {
         }
     }
 
-    pub fn select_prev(&mut self, _: &menu::SelectPrev, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn select_prev(
+        &mut self,
+        _: &menu::SelectPrev,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let count = self.thread_store.read(cx).non_empty_len(cx);
 
         if count > 0 {
             if self.selected_index == 0 {
-                self.set_selected_index(count - 1, cx);
+                self.set_selected_index(count - 1, window, cx);
             } else {
-                self.set_selected_index(self.selected_index - 1, cx);
+                self.set_selected_index(self.selected_index - 1, window, cx);
             }
         }
     }
 
-    pub fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub fn select_next(
+        &mut self,
+        _: &menu::SelectNext,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let count = self.thread_store.read(cx).non_empty_len(cx);
 
         if count > 0 {
             if self.selected_index == count - 1 {
-                self.set_selected_index(0, cx);
+                self.set_selected_index(0, window, cx);
             } else {
-                self.set_selected_index(self.selected_index + 1, cx);
+                self.set_selected_index(self.selected_index + 1, window, cx);
             }
         }
     }
 
-    fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_first(
+        &mut self,
+        _: &menu::SelectFirst,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let count = self.thread_store.read(cx).non_empty_len(cx);
         if count > 0 {
-            self.set_selected_index(0, cx);
+            self.set_selected_index(0, window, cx);
         }
     }
 
-    fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_last(
+        &mut self,
+        _: &menu::SelectLast,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let count = self.thread_store.read(cx).non_empty_len(cx);
         if count > 0 {
-            self.set_selected_index(count - 1, cx);
+            self.set_selected_index(count - 1, window, cx);
         }
     }
 
-    fn set_selected_index(&mut self, index: usize, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn set_selected_index(
+        &mut self,
+        index: usize,
+        _window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.selected_index = index;
         self.scroll_handle
             .scroll_to_item(index, ScrollStrategy::Top);
@@ -85,7 +110,7 @@ impl ThreadHistory {
             self.assistant_panel
                 .update(cx, move |this, cx| {
                     let thread_id = thread.read(cx).id().clone();
-                    this.open_thread(&thread_id, cx)
+                    this.open_thread(&thread_id, window, cx)
                 })
                 .ok();
 
@@ -93,7 +118,12 @@ impl ThreadHistory {
         }
     }
 
-    fn remove_selected_thread(&mut self, _: &RemoveSelectedThread, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn remove_selected_thread(
+        &mut self,
+        _: &RemoveSelectedThread,
+        _window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let threads = self.thread_store.update(cx, |this, cx| this.threads(cx));
 
         if let Some(thread) = threads.get(self.selected_index) {

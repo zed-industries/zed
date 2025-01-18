@@ -1,5 +1,5 @@
 use editor::Editor;
-use gpui::{actions, impl_actions, impl_internal_actions};
+use gpui::{actions, impl_actions, impl_internal_actions, ModelContext, Window};
 use language::Point;
 use schemars::JsonSchema;
 use search::{buffer_search, BufferSearchBar, SearchOptions};
@@ -69,7 +69,7 @@ actions!(vim, [SearchSubmit, MoveToNextMatch, MoveToPrevMatch]);
 impl_actions!(vim, [FindCommand, Search, MoveToPrev, MoveToNext]);
 impl_internal_actions!(vim, [ReplaceCommand]);
 
-pub(crate) fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+pub(crate) fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
     Vim::action(editor, cx, Vim::move_to_next);
     Vim::action(editor, cx, Vim::move_to_prev);
     Vim::action(editor, cx, Vim::move_to_next_match);
@@ -689,7 +689,7 @@ mod test {
                 .expect("Buffer search bar should be deployed")
         });
 
-        window.update_view(cx, search_bar, |bar, _, cx| {
+        cx.update_view(search_bar, |bar, _window, cx| {
             assert_eq!(bar.query(cx), "cc");
         });
 

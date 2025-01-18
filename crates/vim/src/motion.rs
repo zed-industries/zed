@@ -304,7 +304,7 @@ actions!(
     ]
 );
 
-pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+pub fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
     Vim::action(editor, cx, |vim, _: &Left, window, cx| {
         vim.motion(Motion::Left, window, cx)
     });
@@ -572,7 +572,12 @@ impl Vim {
         self.motion(m, window, cx)
     }
 
-    pub(crate) fn motion(&mut self, motion: Motion, window: &mut Window, cx: &mut ModelContext<Self>) {
+    pub(crate) fn motion(
+        &mut self,
+        motion: Motion,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         if let Some(Operator::FindForward { .. })
         | Some(Operator::Sneak { .. })
         | Some(Operator::SneakBackward { .. })
@@ -3360,7 +3365,7 @@ mod test {
             Mode::Normal,
         );
 
-        cx.update_editor(|editor, cx| {
+        cx.update_editor(|editor, _window, cx| {
             let range = editor.selections.newest_anchor().range();
             let inlay_text = "  field: int,\n  field2: string\n  field3: float";
             let inlay = Inlay::inline_completion(1, range.start, inlay_text);

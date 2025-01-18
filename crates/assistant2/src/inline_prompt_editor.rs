@@ -365,7 +365,7 @@ impl<T: 'static> PromptEditor<T> {
     pub fn remove_all_context(
         &mut self,
         _: &RemoveAllContext,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.context_store.update(cx, |store, _cx| store.clear());
@@ -375,7 +375,7 @@ impl<T: 'static> PromptEditor<T> {
     fn cancel(
         &mut self,
         _: &editor::actions::Cancel,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         match self.codegen_status(cx) {

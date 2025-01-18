@@ -59,7 +59,7 @@ impl ContextStrip {
         let focus_handle = cx.focus_handle();
 
         let subscriptions = vec![
-            cx.subscribe(&context_picker, Self::handle_context_picker_event),
+            cx.subscribe_in(&context_picker, window, Self::handle_context_picker_event),
             cx.on_focus(&focus_handle, window, Self::handle_focus),
             cx.on_blur(&focus_handle, window, Self::handle_blur),
         ];
@@ -77,18 +77,14 @@ impl ContextStrip {
         }
     }
 
-    fn suggested_context(
-        &self,
-        window: &Window,
-        cx: &ModelContext<Self>,
-    ) -> Option<SuggestedContext> {
+    fn suggested_context(&self, cx: &ModelContext<Self>) -> Option<SuggestedContext> {
         match self.suggest_context_kind {
-            SuggestContextKind::File => self.suggested_file(window, cx),
-            SuggestContextKind::Thread => self.suggested_thread(window, cx),
+            SuggestContextKind::File => self.suggested_file(cx),
+            SuggestContextKind::Thread => self.suggested_thread(cx),
         }
     }
 
-    fn suggested_file(&self, window: &Window, cx: &ModelContext<Self>) -> Option<SuggestedContext> {
+    fn suggested_file(&self, cx: &ModelContext<Self>) -> Option<SuggestedContext> {
         let workspace = self.workspace.upgrade()?;
         let active_item = workspace.read(cx).active_item(cx)?;
 
@@ -121,11 +117,7 @@ impl ContextStrip {
         })
     }
 
-    fn suggested_thread(
-        &self,
-        window: &Window,
-        cx: &ModelContext<Self>,
-    ) -> Option<SuggestedContext> {
+    fn suggested_thread(&self, cx: &ModelContext<Self>) -> Option<SuggestedContext> {
         let workspace = self.workspace.upgrade()?;
         let active_thread = workspace
             .read(cx)
@@ -153,25 +145,25 @@ impl ContextStrip {
 
     fn handle_context_picker_event(
         &mut self,
-        _picker: Model<ContextPicker>,
+        _picker: &Model<ContextPicker>,
         _event: &DismissEvent,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         cx.emit(ContextStripEvent::PickerDismissed);
     }
 
-    fn handle_focus(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn handle_focus(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) {
         self.focused_index = self.last_pill_index();
         cx.notify();
     }
 
-    fn handle_blur(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn handle_blur(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) {
         self.focused_index = None;
         cx.notify();
     }
 
-    fn focus_left(&mut self, _: &FocusLeft, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn focus_left(&mut self, _: &FocusLeft, _window: &mut Window, cx: &mut ModelContext<Self>) {
         self.focused_index = match self.focused_index {
             Some(index) if index > 0 => Some(index - 1),
             _ => self.last_pill_index(),
@@ -180,7 +172,7 @@ impl ContextStrip {
         cx.notify();
     }
 
-    fn focus_right(&mut self, _: &FocusRight, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn focus_right(&mut self, _: &FocusRight, _window: &mut Window, cx: &mut ModelContext<Self>) {
         let Some(last_index) = self.last_pill_index() else {
             return;
         };
@@ -193,7 +185,7 @@ impl ContextStrip {
         cx.notify();
     }
 
-    fn focus_up(&mut self, _: &FocusUp, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn focus_up(&mut self, _: &FocusUp, _window: &mut Window, cx: &mut ModelContext<Self>) {
         let Some(focused_index) = self.focused_index else {
             return;
         };
@@ -211,7 +203,7 @@ impl ContextStrip {
         cx.notify();
     }
 
-    fn focus_down(&mut self, _: &FocusDown, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn focus_down(&mut self, _: &FocusDown, _window: &mut Window, cx: &mut ModelContext<Self>) {
         let Some(focused_index) = self.focused_index else {
             return;
         };
@@ -284,7 +276,7 @@ impl ContextStrip {
     fn remove_focused_context(
         &mut self,
         _: &RemoveFocusedContext,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         if let Some(index) = self.focused_index {
@@ -322,17 +314,12 @@ impl ContextStrip {
             let context_store = self.context_store.read(cx);
 
             if self.is_suggested_focused(context_store.context()) {
-                self.add_suggested_context(&suggested, window, cx);
+                self.add_suggested_context(&suggested, cx);
             }
         }
     }
 
-    fn add_suggested_context(
-        &mut self,
-        suggested: &SuggestedContext,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
+    fn add_suggested_context(&mut self, suggested: &SuggestedContext, cx: &mut ModelContext<Self>) {
         let task = self.context_store.update(cx, |context_store, cx| {
             context_store.accept_suggested_context(&suggested, cx)
         });
@@ -381,7 +368,7 @@ impl Render for ContextStrip {
         let context_picker = self.context_picker.clone();
         let focus_handle = self.focus_handle.clone();
 
-        let suggested_context = self.suggested_context(window, cx);
+        let suggested_context = self.suggested_context(cx);
 
         let dupe_names = context
             .iter()

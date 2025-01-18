@@ -10,12 +10,13 @@ use editor::{
     movement::{self, FindRange},
     Bias, DisplayPoint, Editor,
 };
-use gpui::{actions, impl_actions};
+use gpui::{actions, impl_actions, Window};
 use itertools::Itertools;
 use language::{BufferSnapshot, CharKind, Point, Selection, TextObject, TreeSitterOptions};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
 use serde::Deserialize;
+use ui::ModelContext;
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
 pub enum Object {
@@ -84,7 +85,7 @@ actions!(
     ]
 );
 
-pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+pub fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
     Vim::action(
         editor,
         cx,
@@ -95,13 +96,12 @@ pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>)
     Vim::action(
         editor,
         cx,
-        |vim, &Subword { ignore_punctuation }: &Subword, cx| {
-            vim.object(Object::Subword { ignore_punctuation }, cx)
+        |vim, &Subword { ignore_punctuation }: &Subword, window, cx| {
+            vim.object(Object::Subword { ignore_punctuation }, window, cx)
         },
     );
-    Vim::action(editor, cx, |vim, _: &Tag, cx| vim.object(Object::Tag, cx));
-    Vim::action(editor, cx, |vim, _: &Sentence, cx| {
-        vim.object(Object::Sentence, cx)
+    Vim::action(editor, cx, |vim, _: &Tag, window, cx| {
+        vim.object(Object::Tag, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &Sentence, window, cx| {
         vim.object(Object::Sentence, window, cx)
@@ -112,11 +112,11 @@ pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>)
     Vim::action(editor, cx, |vim, _: &Quotes, window, cx| {
         vim.object(Object::Quotes, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &AnyQuotes, cx| {
-        vim.object(Object::AnyQuotes, cx)
+    Vim::action(editor, cx, |vim, _: &AnyQuotes, window, cx| {
+        vim.object(Object::AnyQuotes, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &DoubleQuotes, cx| {
-        vim.object(Object::DoubleQuotes, cx)
+    Vim::action(editor, cx, |vim, _: &DoubleQuotes, window, cx| {
+        vim.object(Object::DoubleQuotes, window, cx)
     });
     Vim::action(editor, cx, |vim, _: &DoubleQuotes, window, cx| {
         vim.object(Object::DoubleQuotes, window, cx)

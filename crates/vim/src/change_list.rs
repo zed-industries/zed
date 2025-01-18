@@ -5,7 +5,7 @@ use crate::{state::Mode, Vim};
 
 actions!(vim, [ChangeListOlder, ChangeListNewer]);
 
-pub(crate) fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+pub(crate) fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
     Vim::action(editor, cx, |vim, _: &ChangeListOlder, window, cx| {
         vim.move_to_change(Direction::Prev, window, cx);
     });

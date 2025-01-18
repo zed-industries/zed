@@ -45,7 +45,7 @@ fn repeatable_insert(action: &ReplayableAction) -> Option<Box<dyn Action>> {
     }
 }
 
-pub(crate) fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+pub(crate) fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
     Vim::action(editor, cx, |vim, _: &EndRepeat, window, cx| {
         Vim::globals(cx).dot_replaying = false;
         vim.switch_mode(Mode::Normal, false, window, cx)

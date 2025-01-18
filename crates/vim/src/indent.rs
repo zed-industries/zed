@@ -14,7 +14,7 @@ pub(crate) enum IndentDirection {
 
 actions!(vim, [Indent, Outdent, AutoIndent]);
 
-pub(crate) fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+pub(crate) fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
     Vim::action(editor, cx, |vim, _: &Indent, window, cx| {
         vim.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);

@@ -211,7 +211,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
         let http_client = workspace.read(cx).client().http_client().clone();
         let url = self.url.clone();
         let confirm_behavior = self.confirm_behavior;
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             let text = cx
                 .background_executor()
                 .spawn(Self::build_message(http_client, url.clone()))
@@ -237,7 +237,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
         .detach_and_log_err(cx);
     }
 
-    fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         self.context_picker
             .update(cx, |_, cx| {
                 cx.emit(DismissEvent);
@@ -249,6 +249,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
+        window: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let added = self.context_store.upgrade().map_or(false, |context_store| {

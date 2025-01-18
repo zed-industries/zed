@@ -13,7 +13,7 @@ actions!(
     [LineUp, LineDown, ScrollUp, ScrollDown, PageUp, PageDown]
 );
 
-pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+pub fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
     Vim::action(editor, cx, |vim, _: &LineDown, window, cx| {
         vim.scroll(false, window, cx, |c| ScrollAmount::Line(c.unwrap_or(1.)))
     });

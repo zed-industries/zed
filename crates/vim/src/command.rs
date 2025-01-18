@@ -7,9 +7,7 @@ use editor::{
     scroll::Autoscroll,
     Bias, Editor, ToPoint,
 };
-use gpui::{
-    actions, impl_internal_actions, Action, AppContext, Global,
-};
+use gpui::{actions, impl_internal_actions, Action, AppContext, Global, ModelContext, Window};
 use language::Point;
 use multi_buffer::MultiBufferRow;
 use regex::Regex;
@@ -101,7 +99,7 @@ impl Deref for WrappedAction {
     }
 }
 
-pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+pub fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
     Vim::action(editor, cx, |vim, _: &VisualCommand, window, cx| {
         let Some(workspace) = vim.workspace(window) else {
             return;
@@ -111,17 +109,17 @@ pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>)
         })
     });
 
-    Vim::action(editor, cx, |vim, _: &ShellCommand, cx| {
-        let Some(workspace) = vim.workspace(cx) else {
+    Vim::action(editor, cx, |vim, _: &ShellCommand, window, cx| {
+        let Some(workspace) = vim.workspace(window) else {
             return;
         };
         workspace.update(cx, |workspace, cx| {
-            command_palette::CommandPalette::toggle(workspace, "'<,'>!", cx);
+            command_palette::CommandPalette::toggle(workspace, "'<,'>!", window, cx);
         })
     });
 
-    Vim::action(editor, cx, |vim, _: &CountCommand, cx| {
-        let Some(workspace) = vim.workspace(cx) else {
+    Vim::action(editor, cx, |vim, _: &CountCommand, window, cx| {
+        let Some(workspace) = vim.workspace(window) else {
             return;
         };
         let count = Vim::take_count(cx).unwrap_or(1);
@@ -131,7 +129,7 @@ pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>)
             ".".to_string()
         };
         workspace.update(cx, |workspace, cx| {
-            command_palette::CommandPalette::toggle(workspace, &n, cx);
+            command_palette::CommandPalette::toggle(workspace, &n, window, cx);
         })
     });
 
@@ -207,14 +205,14 @@ pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>)
         };
 
         let previous_selections = vim
-            .update_editor(cx, |_, editor, cx| {
+            .update_editor(window, cx, |_, editor, window, cx| {
                 let selections = action.restore_selection.then(|| {
                     editor
                         .selections
                         .disjoint_anchor_ranges()
                         .collect::<Vec<_>>()
                 });
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, window, cx, |s| {
                     let end = Point::new(range.end.0, s.buffer().line_len(range.end));
                     s.select_ranges([end..Point::new(range.start.0, 0)]);
                 });
@@ -237,12 +235,12 @@ pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>)
         });
     });
 
-    Vim::action(editor, cx, |vim, action: &OnMatchingLines, cx| {
-        action.run(vim, cx)
+    Vim::action(editor, cx, |vim, action: &OnMatchingLines, window, cx| {
+        action.run(vim, window, cx)
     });
 
-    Vim::action(editor, cx, |vim, action: &ShellExec, cx| {
-        action.run(vim, cx)
+    Vim::action(editor, cx, |vim, action: &ShellExec, window, cx| {
+        action.run(vim, window, cx)
     })
 }
 
@@ -1106,15 +1104,20 @@ pub struct ShellExec {
 impl Vim {
     pub fn cancel_running_command(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         if self.running_command.take().is_some() {
-            self.update_editor(cx, |_, editor, cx| {
-                editor.transact(cx, |editor, _| {
+            self.update_editor(window, cx, |_, editor, window, cx| {
+                editor.transact(window, cx, |editor, _window, _cx| {
                     editor.clear_row_highlights::<ShellExec>();
                 })
             });
         }
     }
 
-    fn prepare_shell_command(&mut self, command: &str, window: &mut Window, cx: &mut ModelContext<Self>) -> String {
+    fn prepare_shell_command(
+        &mut self,
+        command: &str,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> String {
         let mut ret = String::new();
         // N.B. non-standard escaping rules:
         // * !echo % => "echo README.md"
@@ -1132,7 +1135,7 @@ impl Vim {
             }
             match c {
                 '%' => {
-                    self.update_editor(cx, |_, editor, cx| {
+                    self.update_editor(window, cx, |_, editor, _window, cx| {
                         if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
                             if let Some(file) = buffer.read(cx).file() {
                                 if let Some(local) = file.as_local() {
@@ -1160,21 +1163,22 @@ impl Vim {
         &mut self,
         motion: Motion,
         times: Option<usize>,
-        window: &mut Window, cx: &mut ModelContext<Vim>,
+        window: &mut Window,
+        cx: &mut ModelContext<Vim>,
     ) {
         self.stop_recording(cx);
-        let Some(workspace) = self.workspace(cx) else {
+        let Some(workspace) = self.workspace(window) else {
             return;
         };
-        let command = self.update_editor(cx, |_, editor, cx| {
-            let snapshot = editor.snapshot(cx);
+        let command = self.update_editor(window, cx, |_, editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
             let start = editor.selections.newest_display(cx);
-            let text_layout_details = editor.text_layout_details(cx);
+            let text_layout_details = editor.text_layout_details(window, cx);
             let mut range = motion
                 .range(&snapshot, start.clone(), times, false, &text_layout_details)
                 .unwrap_or(start.range());
             if range.start != start.start {
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, window, cx, |s| {
                     s.select_ranges([
                         range.start.to_point(&snapshot)..range.start.to_point(&snapshot)
                     ]);
@@ -1191,7 +1195,7 @@ impl Vim {
         });
         if let Some(command) = command {
             workspace.update(cx, |workspace, cx| {
-                command_palette::CommandPalette::toggle(workspace, &command, cx);
+                command_palette::CommandPalette::toggle(workspace, &command, window, cx);
             });
         }
     }
@@ -1200,20 +1204,21 @@ impl Vim {
         &mut self,
         object: Object,
         around: bool,
-        window: &mut Window, cx: &mut ModelContext<Vim>,
+        window: &mut Window,
+        cx: &mut ModelContext<Vim>,
     ) {
         self.stop_recording(cx);
-        let Some(workspace) = self.workspace(cx) else {
+        let Some(workspace) = self.workspace(window) else {
             return;
         };
-        let command = self.update_editor(cx, |_, editor, cx| {
-            let snapshot = editor.snapshot(cx);
+        let command = self.update_editor(window, cx, |_, editor, window, cx| {
+            let snapshot = editor.snapshot(window, cx);
             let start = editor.selections.newest_display(cx);
             let range = object
                 .range(&snapshot, start.clone(), around)
                 .unwrap_or(start.range());
             if range.start != start.start {
-                editor.change_selections(None, cx, |s| {
+                editor.change_selections(None, window, cx, |s| {
                     s.select_ranges([
                         range.start.to_point(&snapshot)..range.start.to_point(&snapshot)
                     ]);
@@ -1227,7 +1232,7 @@ impl Vim {
         });
         if let Some(command) = command {
             workspace.update(cx, |workspace, cx| {
-                command_palette::CommandPalette::toggle(workspace, &command, cx);
+                command_palette::CommandPalette::toggle(workspace, &command, window, cx);
             });
         }
     }
@@ -1253,12 +1258,12 @@ impl ShellExec {
     }
 
     pub fn run(&self, vim: &mut Vim, window: &mut Window, cx: &mut ModelContext<Vim>) {
-        let Some(workspace) = vim.workspace(cx) else {
+        let Some(workspace) = vim.workspace(window) else {
             return;
         };
 
         let project = workspace.read(cx).project().clone();
-        let command = vim.prepare_shell_command(&self.command, cx);
+        let command = vim.prepare_shell_command(&self.command, window, cx);
 
         if self.range.is_none() && !self.is_read {
             workspace.update(cx, |workspace, cx| {
@@ -1292,10 +1297,10 @@ impl ShellExec {
         let mut input_snapshot = None;
         let mut input_range = None;
         let mut needs_newline_prefix = false;
-        vim.update_editor(cx, |vim, editor, cx| {
+        vim.update_editor(window, cx, |vim, editor, window, cx| {
             let snapshot = editor.buffer().read(cx).snapshot(cx);
             let range = if let Some(range) = self.range.clone() {
-                let Some(range) = range.buffer_range(vim, editor, cx).log_err() else {
+                let Some(range) = range.buffer_range(vim, editor, window, cx).log_err() else {
                     return;
                 };
                 Point::new(range.start.0, 0)
@@ -1351,10 +1356,10 @@ impl ShellExec {
         };
         let is_read = self.is_read;
 
-        let task = cx.spawn(|vim, mut cx| async move {
+        let task = cx.spawn_in(window, |vim, mut cx| async move {
             let Some(mut running) = process.spawn().log_err() else {
-                vim.update(&mut cx, |vim, cx| {
-                    vim.cancel_running_command(cx);
+                vim.update_in(&mut cx, |vim, window, cx| {
+                    vim.cancel_running_command(window, cx);
                 })
                 .log_err();
                 return;
@@ -1382,8 +1387,8 @@ impl ShellExec {
                 .await;
 
             let Some(output) = output.log_err() else {
-                vim.update(&mut cx, |vim, cx| {
-                    vim.cancel_running_command(cx);
+                vim.update_in(&mut cx, |vim, window, cx| {
+                    vim.cancel_running_command(window, cx);
                 })
                 .log_err();
                 return;
@@ -1398,12 +1403,12 @@ impl ShellExec {
                 text.push('\n');
             }
 
-            vim.update(&mut cx, |vim, cx| {
-                vim.update_editor(cx, |_, editor, cx| {
-                    editor.transact(cx, |editor, cx| {
+            vim.update_in(&mut cx, |vim, window, cx| {
+                vim.update_editor(window, cx, |_, editor, window, cx| {
+                    editor.transact(window, cx, |editor, window, cx| {
                         editor.edit([(range.clone(), text)], cx);
                         let snapshot = editor.buffer().read(cx).snapshot(cx);
-                        editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
+                        editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                             let point = if is_read {
                                 let point = range.end.to_point(&snapshot);
                                 Point::new(point.row.saturating_sub(1), 0)
@@ -1415,7 +1420,7 @@ impl ShellExec {
                         })
                     })
                 });
-                vim.cancel_running_command(cx);
+                vim.cancel_running_command(window, cx);
             })
             .log_err();
         });

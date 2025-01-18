@@ -284,7 +284,7 @@ impl Render for WelcomePage {
                                             } else {
                                                 ui::ToggleState::Unselected
                                             },
-                                            cx.listener(move |this, selection, cx| {
+                                            cx.listener(move |this, selection, _window, cx| {
                                                 this.telemetry
                                                     .report_app_event("welcome page: toggle vim".to_string());
                                                 this.update_settings::<VimModeSetting>(
@@ -301,12 +301,10 @@ impl Render for WelcomePage {
                                         IconButton::new("vim-mode", IconName::Info)
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
-                                            .tooltip(|cx| {
+                                            .tooltip(
                                                 Tooltip::text(
-                                                    "You can also toggle Vim Mode via the command palette or Editor Controls menu.",
-                                                    cx,
-                                                )
-                                            }),
+                                                    "You can also toggle Vim Mode via the command palette or Editor Controls menu.")
+                                            ),
                                     ),
                             )
                             .child(
@@ -318,7 +316,7 @@ impl Render for WelcomePage {
                                     } else {
                                         ui::ToggleState::Unselected
                                     },
-                                    cx.listener(move |this, selection, cx| {
+                                    cx.listener(move |this, selection, _window, cx| {
                                         this.telemetry.report_app_event(
                                             "welcome page: toggle diagnostic telemetry".to_string(),
                                         );
@@ -346,7 +344,7 @@ impl Render for WelcomePage {
                                     } else {
                                         ui::ToggleState::Unselected
                                     },
-                                    cx.listener(move |this, selection, cx| {
+                                    cx.listener(move |this, selection, _window, cx| {
                                         this.telemetry.report_app_event(
                                             "welcome page: toggle metric telemetry".to_string(),
                                         );

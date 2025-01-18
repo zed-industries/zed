@@ -7,7 +7,7 @@ use crate::{motion::Motion, state::Mode, Vim};
 
 actions!(vim, [HelixNormalAfter, HelixDelete]);
 
-pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+pub fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
     Vim::action(editor, cx, Vim::helix_normal_after);
     Vim::action(editor, cx, Vim::helix_delete);
 }

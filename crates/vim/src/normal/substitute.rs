@@ -6,7 +6,7 @@ use crate::{motion::Motion, Mode, Vim};
 
 actions!(vim, [Substitute, SubstituteLine]);
 
-pub(crate) fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+pub(crate) fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
     Vim::action(editor, cx, |vim, _: &Substitute, window, cx| {
         vim.start_recording(cx);
         let count = Vim::take_count(cx);

@@ -26,8 +26,8 @@ use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
 };
 use gpui::{
-    actions, impl_actions, Action, AppContext, Axis, Entity, EventEmitter, KeyContext,
-    KeystrokeEvent, Render, Subscription, Task,
+    actions, impl_actions, Action, AppContext, Axis, Context, Entity, EventEmitter, KeyContext,
+    KeystrokeEvent, Model, ModelContext, Render, Subscription, Task, WeakModel, Window,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -346,18 +346,18 @@ impl Vim {
                 vim.input_ignored("\n".into(), window, cx)
             });
 
-            normal::register(editor, window, cx);
-            insert::register(editor, window, cx);
-            helix::register(editor, window, cx);
-            motion::register(editor, window, cx);
-            command::register(editor, window, cx);
-            replace::register(editor, window, cx);
-            indent::register(editor, window, cx);
-            rewrap::register(editor, window, cx);
-            object::register(editor, window, cx);
-            visual::register(editor, window, cx);
-            change_list::register(editor, window, cx);
-            digraph::register(editor, window, cx);
+            normal::register(editor, cx);
+            insert::register(editor, cx);
+            helix::register(editor, cx);
+            motion::register(editor, cx);
+            command::register(editor, cx);
+            replace::register(editor, cx);
+            indent::register(editor, cx);
+            rewrap::register(editor, cx);
+            object::register(editor, cx);
+            visual::register(editor, cx);
+            change_list::register(editor, cx);
+            digraph::register(editor, cx);
 
             cx.defer_in(window, |vim, window, cx| {
                 vim.focused(false, window, cx);
@@ -552,7 +552,7 @@ impl Vim {
         self.mode = mode;
         self.operator_stack.clear();
         self.selected_register.take();
-        self.cancel_running_command(cx);
+        self.cancel_running_command(window, cx);
         if mode == Mode::Normal || mode != last_mode {
             self.current_tx.take();
             self.current_anchor.take();
@@ -1171,12 +1171,12 @@ impl Vim {
                             smartcase: VimSettings::get_global(cx).use_smartcase_find,
                         };
                         Vim::globals(cx).last_find = Some((&sneak).clone());
-                        self.motion(sneak, cx)
+                        self.motion(sneak, window, cx)
                     }
                 } else {
                     let first_char = text.chars().next();
-                    self.pop_operator(cx);
-                    self.push_operator(Operator::Sneak { first_char }, cx);
+                    self.pop_operator(window, cx);
+                    self.push_operator(Operator::Sneak { first_char }, window, cx);
                 }
             }
             Some(Operator::SneakBackward { first_char }) => {
@@ -1188,12 +1188,12 @@ impl Vim {
                             smartcase: VimSettings::get_global(cx).use_smartcase_find,
                         };
                         Vim::globals(cx).last_find = Some((&sneak).clone());
-                        self.motion(sneak, cx)
+                        self.motion(sneak, window, cx)
                     }
                 } else {
                     let first_char = text.chars().next();
-                    self.pop_operator(cx);
-                    self.push_operator(Operator::SneakBackward { first_char }, cx);
+                    self.pop_operator(window, cx);
+                    self.push_operator(Operator::SneakBackward { first_char }, window, cx);
                 }
             }
             Some(Operator::Replace) => match self.mode {

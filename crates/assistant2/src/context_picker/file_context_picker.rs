@@ -228,10 +228,10 @@ impl PickerDelegate for FileContextPickerDelegate {
 
         let workspace = self.workspace.clone();
         let confirm_behavior = self.confirm_behavior;
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             match task.await {
                 Ok(()) => {
-                    this.update(&mut cx, |this, cx| match confirm_behavior {
+                    this.update_in(&mut cx, |this, window, cx| match confirm_behavior {
                         ConfirmBehavior::KeepOpen => {}
                         ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
                     })?;

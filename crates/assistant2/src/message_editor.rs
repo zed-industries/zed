@@ -90,7 +90,7 @@ impl MessageEditor {
                 window,
                 Self::handle_inline_context_picker_event,
             ),
-            cx.subscribe(&context_strip, Self::handle_context_strip_event),
+            cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event),
         ];
 
         Self {
@@ -125,7 +125,12 @@ impl MessageEditor {
         self.model_selector_menu_handle.toggle(window, cx)
     }
 
-    fn toggle_chat_mode(&mut self, _: &ChatMode, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn toggle_chat_mode(
+        &mut self,
+        _: &ChatMode,
+        _window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.use_tools = !self.use_tools;
         cx.notify();
     }
@@ -142,7 +147,7 @@ impl MessageEditor {
     pub fn remove_all_context(
         &mut self,
         _: &RemoveAllContext,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
         self.context_store.update(cx, |store, _cx| store.clear());
@@ -260,7 +265,7 @@ impl MessageEditor {
             | ContextStripEvent::BlurredEmpty
             | ContextStripEvent::BlurredDown => {
                 let editor_focus_handle = self.editor.focus_handle(cx);
-                cx.focus(&editor_focus_handle);
+                window.focus(&editor_focus_handle);
             }
             ContextStripEvent::BlurredUp => {}
         }
@@ -270,7 +275,7 @@ impl MessageEditor {
         if self.context_picker_menu_handle.is_deployed() {
             cx.propagate();
         } else {
-            window.focus_view(cx, window, &self.context_strip);
+            self.context_strip.focus_handle(cx).focus(window);
         }
     }
 }
@@ -331,9 +336,9 @@ impl Render for MessageEditor {
                     })
                     .child(
                         PopoverMenu::new("inline-context-picker")
-                            .menu(move |cx| {
+                            .menu(move |window, cx| {
                                 inline_context_picker.update(cx, |this, cx| {
-                                    this.init(cx);
+                                    this.init(window, cx);
                                 });
 
                                 Some(inline_context_picker.clone())
@@ -356,7 +361,7 @@ impl Render for MessageEditor {
                             .child(
                                 Switch::new("use-tools", self.use_tools.into())
                                     .label("Tools")
-                                    .on_click(cx.listener(|this, selection, _cx| {
+                                    .on_click(cx.listener(|this, selection, _window, _cx| {
                                         this.use_tools = match selection {
                                             ToggleState::Selected => true,
                                             ToggleState::Unselected
@@ -366,7 +371,7 @@ impl Render for MessageEditor {
                                     .key_binding(KeyBinding::for_action_in(
                                         &ChatMode,
                                         &focus_handle,
-                                        cx,
+                                        window,
                                     )),
                             )
                             .child(h_flex().gap_1().child(self.model_selector.clone()).child(
@@ -395,14 +400,17 @@ impl Render for MessageEditor {
                                                     KeyBinding::for_action_in(
                                                         &editor::actions::Cancel,
                                                         &focus_handle,
-                                                        cx,
+                                                        window,
                                                     )
                                                     .map(|binding| binding.into_any_element()),
                                                 ),
                                         )
-                                        .on_click(move |_event, cx| {
-                                            focus_handle
-                                                .dispatch_action(&editor::actions::Cancel, cx);
+                                        .on_click(move |_event, window, cx| {
+                                            focus_handle.dispatch_action(
+                                                &editor::actions::Cancel,
+                                                window,
+                                                cx,
+                                            );
                                         })
                                 } else {
                                     ButtonLike::new("submit-message")
@@ -417,13 +425,13 @@ impl Render for MessageEditor {
                                                     KeyBinding::for_action_in(
                                                         &Chat,
                                                         &focus_handle,
-                                                        cx,
+                                                        window,
                                                     )
                                                     .map(|binding| binding.into_any_element()),
                                                 ),
                                         )
-                                        .on_click(move |_event, cx| {
-                                            focus_handle.dispatch_action(&Chat, cx);
+                                        .on_click(move |_event, window, cx| {
+                                            focus_handle.dispatch_action(&Chat, window, cx);
                                         })
                                 },
                             )),

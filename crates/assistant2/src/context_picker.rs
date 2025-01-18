@@ -8,9 +8,7 @@ use std::sync::Arc;
 
 use editor::Editor;
 use file_context_picker::render_file_context_entry;
-use gpui::{
-    AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, WeakModel,
-};
+use gpui::{AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, WeakModel};
 use project::ProjectPath;
 use thread_context_picker::{render_thread_context_entry, ThreadContextEntry};
 use ui::{prelude::*, ContextMenu, ContextMenuEntry, ContextMenuItem};
@@ -58,7 +56,7 @@ impl ContextPicker {
         cx: &mut ModelContext<Self>,
     ) -> Self {
         ContextPicker {
-            mode: ContextPickerMode::Default(ContextMenu::build(cx, |menu, _cx| menu)),
+            mode: ContextPickerMode::Default(ContextMenu::build(window, cx, |menu, _cx| menu)),
             workspace,
             context_store,
             thread_store,
@@ -67,25 +65,29 @@ impl ContextPicker {
     }
 
     pub fn init(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.mode = ContextPickerMode::Default(self.build_menu(cx));
+        self.mode = ContextPickerMode::Default(self.build_menu(window, cx));
         cx.notify();
     }
 
-    fn build_menu(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> Model<ContextMenu> {
+    fn build_menu(
+        &mut self,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Model<ContextMenu> {
         let context_picker = cx.model().clone();
 
-        let menu = ContextMenu::build(cx, move |menu, cx| {
+        let menu = ContextMenu::build(window, cx, move |menu, cx| {
             let kind_entry = |kind: &'static ContextKind| {
                 let context_picker = context_picker.clone();
 
                 ContextMenuEntry::new(kind.label())
                     .icon(kind.icon())
                     .handler(move |cx| {
-                        context_picker.update(cx, |this, cx| this.select_kind(*kind, cx))
+                        context_picker.update(cx, |this, cx| this.select_kind(*kind, window, cx))
                     })
             };
 
-            let recent = self.recent_entries(cx);
+            let recent = self.recent_entries(window, cx);
             let has_recent = !recent.is_empty();
             let recent_entries = recent
                 .into_iter()
@@ -123,6 +125,7 @@ impl ContextPicker {
                         self.workspace.clone(),
                         self.context_store.clone(),
                         self.confirm_behavior,
+                        window,
                         cx,
                     )
                 }));
@@ -134,6 +137,7 @@ impl ContextPicker {
                         self.workspace.clone(),
                         self.context_store.clone(),
                         self.confirm_behavior,
+                        window,
                         cx,
                     )
                 }));
@@ -145,6 +149,7 @@ impl ContextPicker {
                         self.workspace.clone(),
                         self.context_store.clone(),
                         self.confirm_behavior,
+                        window,
                         cx,
                     )
                 }));
@@ -157,6 +162,7 @@ impl ContextPicker {
                             context_picker.clone(),
                             self.context_store.clone(),
                             self.confirm_behavior,
+                            window,
                             cx,
                         )
                     }));
@@ -165,7 +171,7 @@ impl ContextPicker {
         }
 
         cx.notify();
-        cx.focus_self();
+        cx.focus_self(window);
     }
 
     fn recent_menu_item(
@@ -189,6 +195,7 @@ impl ContextPicker {
                             &path,
                             &path_prefix,
                             context_store.clone(),
+                            window,
                             cx,
                         )
                         .into_any()
@@ -219,7 +226,12 @@ impl ContextPicker {
         }
     }
 
-    fn add_recent_file(&self, project_path: ProjectPath, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn add_recent_file(
+        &self,
+        project_path: ProjectPath,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let Some(context_store) = self.context_store.upgrade() else {
             return;
         };
@@ -251,7 +263,12 @@ impl ContextPicker {
         cx.notify();
     }
 
-    fn add_recent_thread(&self, thread: ThreadContextEntry, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn add_recent_thread(
+        &self,
+        thread: ThreadContextEntry,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let Some(context_store) = self.context_store.upgrade() else {
             return;
         };

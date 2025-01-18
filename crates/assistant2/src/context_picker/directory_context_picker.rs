@@ -81,7 +81,6 @@ impl DirectoryContextPickerDelegate {
         query: String,
         cancellation_flag: Arc<AtomicBool>,
         workspace: &Model<Workspace>,
-        window: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Task<Vec<PathMatch>> {
         if query.is_empty() {
@@ -164,16 +163,16 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
     fn update_matches(
         &mut self,
         query: String,
-        window: &mut Window,
+        _window: &Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Task<()> {
         let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(());
         };
 
-        let search_task = self.search(query, Arc::<AtomicBool>::default(), &workspace, window, cx);
+        let search_task = self.search(query, Arc::<AtomicBool>::default(), &workspace, cx);
 
-        cx.spawn_in(window, |this, mut cx| async move {
+        cx.spawn(|this, mut cx| async move {
             let mut paths = search_task.await;
             let empty_path = Path::new("");
             paths.retain(|path_match| path_match.path.as_ref() != empty_path);
@@ -217,7 +216,7 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
                 Ok(()) => {
                     this.update(&mut cx, |this, cx| match confirm_behavior {
                         ConfirmBehavior::KeepOpen => {}
-                        ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                        ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
                     })?;
                 }
                 Err(err) => {
@@ -248,6 +247,7 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
+        _window: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let path_match = &self.matches[ix];

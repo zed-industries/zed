@@ -61,7 +61,7 @@ actions!(
     ]
 );
 
-pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelContext<Vim>) {
+pub(crate) fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
     Vim::action(editor, cx, Vim::insert_after);
     Vim::action(editor, cx, Vim::insert_before);
     Vim::action(editor, cx, Vim::insert_first_non_whitespace);
@@ -110,12 +110,12 @@ pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelC
             cx,
         );
     });
-    Vim::action(editor, cx, |vim, _: &JoinLines, cx| {
-        vim.join_lines_impl(true, cx);
+    Vim::action(editor, cx, |vim, _: &JoinLines, window, cx| {
+        vim.join_lines_impl(true, window, cx);
     });
 
-    Vim::action(editor, cx, |vim, _: &JoinLinesNoWhitespace, cx| {
-        vim.join_lines_impl(false, cx);
+    Vim::action(editor, cx, |vim, _: &JoinLinesNoWhitespace, window, cx| {
+        vim.join_lines_impl(false, window, cx);
     });
 
     Vim::action(editor, cx, |vim, _: &Undo, window, cx| {
@@ -135,11 +135,11 @@ pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelC
         });
     });
 
-    repeat::register(editor, window, cx);
-    scroll::register(editor, window, cx);
-    search::register(editor, window, cx);
-    substitute::register(editor, window, cx);
-    increment::register(editor, window, cx);
+    repeat::register(editor, cx);
+    scroll::register(editor, cx);
+    search::register(editor, cx);
+    substitute::register(editor, cx);
+    increment::register(editor, cx);
 }
 
 impl Vim {
@@ -167,7 +167,7 @@ impl Vim {
             Some(Operator::AutoIndent) => {
                 self.indent_motion(motion, times, IndentDirection::Auto, window, cx)
             }
-            Some(Operator::ShellCommand) => self.shell_command_motion(motion, times, cx),
+            Some(Operator::ShellCommand) => self.shell_command_motion(motion, times, window, cx),
             Some(Operator::Lowercase) => {
                 self.change_case_motion(motion, times, CaseTarget::Lowercase, window, cx)
             }
@@ -211,9 +211,9 @@ impl Vim {
                     self.indent_object(object, around, IndentDirection::Auto, window, cx)
                 }
                 Some(Operator::ShellCommand) => {
-                    self.shell_command_object(object, around, cx);
+                    self.shell_command_object(object, around, window, cx);
                 }
-                Some(Operator::Rewrap) => self.rewrap_object(object, around, cx),
+                Some(Operator::Rewrap) => self.rewrap_object(object, around, window, cx),
                 Some(Operator::Lowercase) => {
                     self.change_case_object(object, around, CaseTarget::Lowercase, window, cx)
                 }
@@ -435,7 +435,12 @@ impl Vim {
         });
     }
 
-    fn join_lines_impl(&mut self, insert_whitespace: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn join_lines_impl(
+        &mut self,
+        insert_whitespace: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.record_current_action(cx);
         let mut times = Vim::take_count(cx).unwrap_or(1);
         if self.mode.is_visual() {
@@ -445,15 +450,15 @@ impl Vim {
             times -= 1;
         }
 
-        self.update_editor(cx, |_, editor, cx| {
-            editor.transact(cx, |editor, cx| {
+        self.update_editor(window, cx, |_, editor, window, cx| {
+            editor.transact(window, cx, |editor, window, cx| {
                 for _ in 0..times {
-                    editor.join_lines_impl(insert_whitespace, cx)
+                    editor.join_lines_impl(insert_whitespace, window, cx)
                 }
             })
         });
         if self.mode.is_visual() {
-            self.switch_mode(Mode::Normal, true, cx)
+            self.switch_mode(Mode::Normal, true, window, cx)
         }
     }
 

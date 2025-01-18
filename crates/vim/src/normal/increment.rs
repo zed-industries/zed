@@ -23,7 +23,7 @@ struct Decrement {
 
 impl_actions!(vim, [Increment, Decrement]);
 
-pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+pub fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
     Vim::action(editor, cx, |vim, action: &Increment, window, cx| {
         vim.record_current_action(cx);
         let count = Vim::take_count(cx).unwrap_or(1);

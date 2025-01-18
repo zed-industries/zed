@@ -44,7 +44,7 @@ actions!(
     ]
 );
 
-pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+pub fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
     Vim::action(editor, cx, |vim, _: &ToggleVisual, window, cx| {
         vim.toggle_mode(Mode::Visual, window, cx)
     });
@@ -66,13 +66,10 @@ pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>)
         vim.visual_delete(true, window, cx);
     });
     Vim::action(editor, cx, |vim, _: &VisualYank, window, cx| {
-        vim.visual_yank(window, cx)
+        vim.visual_yank(false, window, cx)
     });
-    Vim::action(editor, cx, |vim, _: &VisualYank, cx| {
-        vim.visual_yank(false, cx)
-    });
-    Vim::action(editor, cx, |vim, _: &VisualYankLine, cx| {
-        vim.visual_yank(true, cx)
+    Vim::action(editor, cx, |vim, _: &VisualYankLine, window, cx| {
+        vim.visual_yank(true, window, cx)
     });
 
     Vim::action(editor, cx, Vim::select_next);
@@ -536,9 +533,14 @@ impl Vim {
         self.switch_mode(Mode::Normal, true, window, cx);
     }
 
-    pub fn visual_yank(&mut self, line_mode: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.store_visual_marks(cx);
-        self.update_editor(cx, |vim, editor, cx| {
+    pub fn visual_yank(
+        &mut self,
+        line_mode: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
+        self.store_visual_marks(window, cx);
+        self.update_editor(window, cx, |vim, editor, window, cx| {
             let line_mode = line_mode || editor.selections.line_mode;
             editor.selections.line_mode = line_mode;
             vim.yank_selections_content(editor, line_mode, cx);
@@ -721,7 +723,7 @@ impl Vim {
                 self.stop_recording(cx);
                 self.visual_delete(false, window, cx)
             }
-            Some(Operator::Yank) => self.visual_yank(false, cx),
+            Some(Operator::Yank) => self.visual_yank(false, window, cx),
             _ => {} // Ignoring other operators
         }
     }

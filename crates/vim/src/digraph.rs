@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use editor::Editor;
-use gpui::{impl_actions, AppContext, Keystroke, KeystrokeEvent};
+use gpui::{impl_actions, AppContext, Keystroke, KeystrokeEvent, ModelContext, Window};
 use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
@@ -16,7 +16,7 @@ mod default;
 struct Literal(String, char);
 impl_actions!(vim, [Literal]);
 
-pub(crate) fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>) {
+pub(crate) fn register(editor: &mut Editor, cx: &mut ModelContext<Vim>) {
     Vim::action(editor, cx, Vim::literal)
 }
 

@@ -126,7 +126,7 @@ async fn test_buffer_search(cx: &mut gpui::TestAppContext) {
             .expect("Buffer search bar should be deployed")
     });
 
-    window.update_view(cx, search_bar, |bar, _, cx| {
+    cx.update_view(search_bar, |bar, _, cx| {
         assert_eq!(bar.query(cx), "");
     })
 }
@@ -265,7 +265,7 @@ async fn test_selection_on_search(cx: &mut gpui::TestAppContext) {
             .expect("Buffer search bar should be deployed")
     });
 
-    window.update_view(cx, search_bar, |bar, _, cx| {
+    cx.update_view(search_bar, |bar, _, cx| {
         assert_eq!(bar.query(cx), "cc");
     });
 
@@ -1343,7 +1343,7 @@ async fn test_find_multibyte(cx: &mut gpui::TestAppContext) {
 async fn test_sneak(cx: &mut gpui::TestAppContext) {
     let mut cx = VimTestContext::new(cx, true).await;
 
-    cx.update(|cx| {
+    cx.update(|_window, cx| {
         cx.bind_keys([
             KeyBinding::new(
                 "s",
