@@ -17,8 +17,8 @@
 
 use crate::{
     point, px, size, Action, AnyDrag, AnyElement, AnyTooltip, AnyView, AppContext, Bounds,
-    ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, Focusable, Global, GlobalElementId,
-    Hitbox, HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, Model,
+    ClickEvent, DispatchPhase, Element, ElementId, FocusHandle, Global, GlobalElementId, Hitbox,
+    HitboxId, IntoElement, IsZero, KeyContext, KeyDownEvent, KeyUpEvent, LayoutId, Model,
     ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     ParentElement, Pixels, Point, Render, ScrollWheelEvent, SharedString, Size, Style,
     StyleRefinement, Styled, Task, TooltipId, Visibility, Window,
@@ -2448,7 +2448,7 @@ where
     }
 }
 
-impl Focusable<Div> {
+impl FocusableWrapper<Div> {
     /// Add a listener to be called when the children of this `Div` are prepainted.
     /// This allows you to store the [`Bounds`] of the children for later use.
     pub fn on_children_prepainted(
@@ -2460,7 +2460,7 @@ impl Focusable<Div> {
     }
 }
 
-impl<E> Element for Focusable<E>
+impl<E> Element for FocusableWrapper<E>
 where
     E: Element,
 {
