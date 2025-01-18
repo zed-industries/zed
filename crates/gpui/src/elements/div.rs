@@ -2035,7 +2035,7 @@ impl Interactivity {
                 let source_bounds = hitbox.bounds;
                 let check_is_hovered = Rc::new(move |cx: &WindowContext| {
                     pending_mouse_down.borrow().is_none()
-                        && source_bounds.contains(&cx.mouse_position())
+                        && source_bounds.contains(&window.mouse_position())
                 });
                 register_tooltip_mouse_handlers(
                     &active_tooltip,
@@ -2339,7 +2339,7 @@ pub(crate) enum ActiveTooltip {
 
 pub(crate) fn clear_active_tooltip(
     active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
-    cx: &mut WindowContext,
+    window: &mut Window, cx: &mut AppContext,
 ) {
     match active_tooltip.borrow_mut().take() {
         None => {}
@@ -2351,7 +2351,7 @@ pub(crate) fn clear_active_tooltip(
 
 pub(crate) fn clear_active_tooltip_if_not_hoverable(
     active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
-    cx: &mut WindowContext,
+    window: &mut Window, cx: &mut AppContext,
 ) {
     let should_clear = match active_tooltip.borrow().as_ref() {
         None => false,
@@ -2367,7 +2367,7 @@ pub(crate) fn clear_active_tooltip_if_not_hoverable(
 
 pub(crate) fn set_tooltip_on_window(
     active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
-    cx: &mut WindowContext,
+    window: &mut Window, cx: &mut AppContext,
 ) -> Option<TooltipId> {
     let tooltip = match active_tooltip.borrow().as_ref() {
         None => return None,
@@ -2381,9 +2381,9 @@ pub(crate) fn set_tooltip_on_window(
 pub(crate) fn register_tooltip_mouse_handlers(
     active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
     tooltip_id: Option<TooltipId>,
-    build_tooltip: Rc<dyn Fn(&mut WindowContext) -> Option<(AnyView, bool)>>,
+    build_tooltip: Rc<dyn Fn(&mut Window, &mut AppContext) -> Option<(AnyView, bool)>>,
     check_is_hovered: Rc<dyn Fn(&WindowContext) -> bool>,
-    cx: &mut WindowContext,
+    window: &mut Window, cx: &mut AppContext,
 ) {
     cx.on_mouse_event({
         let active_tooltip = active_tooltip.clone();
@@ -2421,10 +2421,10 @@ pub(crate) fn register_tooltip_mouse_handlers(
 
 fn handle_tooltip_mouse_move(
     active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
-    build_tooltip: &Rc<dyn Fn(&mut WindowContext) -> Option<(AnyView, bool)>>,
+    build_tooltip: &Rc<dyn Fn(&mut Window, &mut AppContext) -> Option<(AnyView, bool)>>,
     check_is_hovered: &Rc<dyn Fn(&WindowContext) -> bool>,
     phase: DispatchPhase,
-    cx: &mut WindowContext,
+    window: &mut Window, cx: &mut AppContext,
 ) {
     // Separates logic for what mutation should occur from applying it, to avoid overlapping
     // RefCell borrows.
@@ -2476,7 +2476,7 @@ fn handle_tooltip_mouse_move(
                             ActiveTooltip::Visible {
                                 tooltip: AnyTooltip {
                                     view,
-                                    mouse_position: cx.mouse_position(),
+                                    mouse_position: window.mouse_position(),
                                     check_visible_and_update: Rc::new(move |tooltip_bounds, cx| {
                                         handle_tooltip_check_visible_and_update(
                                             &active_tooltip,
@@ -2513,7 +2513,7 @@ fn handle_tooltip_check_visible_and_update(
     tooltip_is_hoverable: bool,
     check_is_hovered: &Rc<dyn Fn(&WindowContext) -> bool>,
     tooltip_bounds: Bounds<Pixels>,
-    cx: &mut WindowContext,
+    window: &mut Window, cx: &mut AppContext,
 ) -> bool {
     // Separates logic for what mutation should occur from applying it, to avoid overlapping RefCell
     // borrows.
@@ -2525,7 +2525,7 @@ fn handle_tooltip_check_visible_and_update(
     }
 
     let is_hovered = check_is_hovered(cx)
-        || (tooltip_is_hoverable && tooltip_bounds.contains(&cx.mouse_position()));
+        || (tooltip_is_hoverable && tooltip_bounds.contains(&window.mouse_position()));
     let action = match active_tooltip.borrow().as_ref() {
         Some(ActiveTooltip::Visible { tooltip, .. }) => {
             if is_hovered {

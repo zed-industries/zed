@@ -112,8 +112,8 @@ impl RenderContext {
 
 pub fn render_parsed_markdown(
     parsed: &ParsedMarkdown,
-    workspace: Option<WeakView<Workspace>>,
-    cx: &WindowContext,
+    workspace: Option<WeakModel<Workspace>>,
+    window: &Window, cx: &AppContext,
 ) -> Div {
     let mut cx = RenderContext::new(workspace, cx);
 

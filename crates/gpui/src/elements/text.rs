@@ -2,7 +2,7 @@ use crate::{
     register_tooltip_mouse_handlers, set_tooltip_on_window, ActiveTooltip, AnyView, Bounds,
     DispatchPhase, Element, ElementId, GlobalElementId, HighlightStyle, Hitbox, IntoElement,
     LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size,
-    TextRun, TextStyle, TooltipId, Truncate, WhiteSpace, WindowContext, WrappedLine,
+    TextRun, TextStyle, TooltipId, Truncate, WhiteSpace, WrappedLine,
     WrappedLineLayout,
 };
 use anyhow::anyhow;
@@ -515,9 +515,9 @@ pub struct InteractiveText {
     element_id: ElementId,
     text: StyledText,
     click_listener:
-        Option<Box<dyn Fn(&[Range<usize>], InteractiveTextClickEvent, &mut WindowContext)>>,
-    hover_listener: Option<Box<dyn Fn(Option<usize>, MouseMoveEvent, &mut WindowContext)>>,
-    tooltip_builder: Option<Rc<dyn Fn(usize, &mut WindowContext) -> Option<AnyView>>>,
+        Option<Box<dyn Fn(&[Range<usize>], InteractiveTextClickEvent, &mut Window, &mut AppContext)>>,
+    hover_listener: Option<Box<dyn Fn(Option<usize>, MouseMoveEvent, &mut Window, &mut AppContext)>>,
+    tooltip_builder: Option<Rc<dyn Fn(usize, &mut Window, &mut AppContext) -> Option<AnyView>>>,
     tooltip_id: Option<TooltipId>,
     clickable_ranges: Vec<Range<usize>>,
 }
@@ -731,7 +731,7 @@ impl Element for InteractiveText {
                         let text_layout = text_layout.clone();
                         move |cx: &mut WindowContext| {
                             text_layout
-                                .index_for_position(cx.mouse_position())
+                                .index_for_position(window.mouse_position())
                                 .ok()
                                 .and_then(|position| tooltip_builder(position, cx))
                                 .map(|view| (view, tooltip_is_hoverable))
@@ -743,8 +743,8 @@ impl Element for InteractiveText {
                     let check_is_hovered = Rc::new({
                         let text_layout = text_layout.clone();
                         move |cx: &WindowContext| {
-                            text_layout.index_for_position(cx.mouse_position()).is_ok()
-                                && source_bounds.contains(&cx.mouse_position())
+                            text_layout.index_for_position(window.mouse_position()).is_ok()
+                                && source_bounds.contains(&window.mouse_position())
                                 && pending_mouse_down.get().is_none()
                         }
                     });

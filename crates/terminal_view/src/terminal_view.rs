@@ -13,9 +13,9 @@ use editor::{
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     anchored, deferred, div, impl_actions, AnyElement, AppContext, DismissEvent, EventEmitter,
-    FocusHandle, FocusableView, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
-    MouseDownEvent, Pixels, Render, ScrollWheelEvent, Stateful, Styled, Subscription, Task, View,
-    VisualContext, WeakModel, WeakView,
+    FocusHandle, Focusable, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
+    MouseDownEvent, Pixels, Render, ScrollWheelEvent, Stateful, Styled, Subscription, Task,
+    VisualContext, WeakModel,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -747,7 +747,7 @@ impl TerminalView {
         }
     }
 
-    fn hide_scrollbar(&mut self, cx: &mut ViewContext<Self>) {
+    fn hide_scrollbar(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) {
         const SCROLLBAR_SHOW_INTERVAL: Duration = Duration::from_secs(1);
         if !Self::should_autohide_scrollbar(cx) {
             return;
@@ -765,7 +765,7 @@ impl TerminalView {
         }))
     }
 
-    fn render_scrollbar(&self, cx: &mut ViewContext<Self>) -> Option<Stateful<Div>> {
+    fn render_scrollbar(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> Option<Stateful<Div>> {
         if !Self::should_show_scrollbar(cx)
             || !(self.show_scrollbar || self.scrollbar_state.is_dragging())
         {
@@ -793,7 +793,7 @@ impl TerminalView {
             div()
                 .occlude()
                 .id("terminal-view-scroll")
-                .on_mouse_move(cx.listener(|_, _, cx| {
+                .on_mouse_move(cx.listener(|_, _, window, cx| {
                     cx.notify();
                     cx.stop_propagation()
                 }))
@@ -815,7 +815,7 @@ impl TerminalView {
                         cx.stop_propagation();
                     }),
                 )
-                .on_scroll_wheel(cx.listener(|_, _, cx| {
+                .on_scroll_wheel(cx.listener(|_, _, window, cx| {
                     cx.notify();
                 }))
                 .h_full()

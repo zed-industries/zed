@@ -87,7 +87,7 @@ pub struct GitPanel {
     fs: Arc<dyn Fs>,
     hide_scrollbar_task: Option<Task<()>>,
     pending_serialization: Task<Option<()>>,
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     project: Model<Project>,
     scroll_handle: UniformListScrollHandle,
     scrollbar_state: ScrollbarState,
@@ -778,7 +778,7 @@ impl GitPanel {
             .update(cx, |editor, cx| editor.set_text("", window, cx));
     }
 
-    fn fill_co_authors(&mut self, _: &FillCoAuthors, cx: &mut ViewContext<Self>) {
+    fn fill_co_authors(&mut self, _: &FillCoAuthors, window: &mut Window, cx: &mut ModelContext<Self>) {
         const CO_AUTHOR_PREFIX: &str = "co-authored-by: ";
 
         let Some(room) = self
@@ -842,7 +842,7 @@ impl GitPanel {
         });
     }
 
-    fn no_entries(&self, cx: &mut ViewContext<Self>) -> bool {
+    fn no_entries(&self, window: &mut Window, cx: &mut ModelContext<Self>) -> bool {
         self.git_state(cx)
             .map_or(true, |git_state| git_state.read(cx).entry_count() == 0)
     }

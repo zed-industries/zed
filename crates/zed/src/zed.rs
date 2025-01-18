@@ -23,8 +23,8 @@ use futures::FutureExt;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
     actions, point, px, Action, AppContext, AsyncAppContext, Context, DismissEvent, Element,
-    FocusableView, KeyBinding, MenuItem, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal,
-    SharedString, Styled, Task, TitlebarOptions, View, ViewContext, VisualContext, WindowKind,
+    Focusable, KeyBinding, MenuItem, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal,
+    SharedString, Styled, Task, TitlebarOptions, VisualContext, WindowKind,
     WindowOptions,
 };
 pub use open_listener::*;
@@ -1145,7 +1145,7 @@ fn show_keymap_file_json_error(
     let message: SharedString =
         format!("JSON parse error in keymap file. Bindings not reloaded.\n\n{error}").into();
     show_app_notification(notification_id, cx, move |cx| {
-        cx.new_view(|_cx| {
+        cx.new_model(|_cx| {
             MessageNotification::new(message.clone())
                 .with_click_message("Open keymap file")
                 .on_click(|cx| {
@@ -1179,7 +1179,7 @@ fn show_keymap_file_load_error(
             show_app_notification(notification_id, cx, move |cx| {
                 let workspace_handle = cx.view().downgrade();
                 let parsed_markdown = parsed_markdown.clone();
-                cx.new_view(move |_cx| {
+                cx.new_model(move |_cx| {
                     MessageNotification::new_from_builder(move |cx| {
                         gpui::div()
                             .text_xs()
