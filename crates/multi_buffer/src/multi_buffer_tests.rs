@@ -403,8 +403,8 @@ fn test_diff_boundary_anchors(cx: &mut AppContext) {
 
 #[gpui::test]
 fn test_diff_hunks_in_range(cx: &mut AppContext) {
-    let base_text = "one\ntwo\nthree\nfour\nfive\n";
-    let text = "one\nthree\nfive\n";
+    let base_text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
+    let text = "one\nfour\nseven\n";
     let buffer = cx.new_model(|cx| Buffer::local(text, cx));
     let change_set = cx.new_model(|cx| {
         let mut change_set = BufferChangeSet::new(&buffer, cx);
@@ -428,10 +428,13 @@ fn test_diff_hunks_in_range(cx: &mut AppContext) {
         indoc! {
             "  one
              - two
-               three
-             - four
-               five
-             "
+             - three
+               four
+             - five
+             - six
+               seven
+             - eight
+            "
         },
     );
 
@@ -440,7 +443,7 @@ fn test_diff_hunks_in_range(cx: &mut AppContext) {
             .diff_hunks_in_range(Point::new(1, 0)..Point::MAX)
             .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0)
             .collect::<Vec<_>>(),
-        vec![1..2, 3..4]
+        vec![1..3, 4..6, 7..8]
     );
 
     assert_eq!(
@@ -451,15 +454,15 @@ fn test_diff_hunks_in_range(cx: &mut AppContext) {
     );
     assert_eq!(
         snapshot
-            .diff_hunk_before(Point::new(2, 1))
+            .diff_hunk_before(Point::new(7, 0))
             .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0),
-        Some(1..2)
+        Some(4..6)
     );
     assert_eq!(
         snapshot
             .diff_hunk_before(Point::new(4, 0))
             .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0),
-        Some(3..4)
+        Some(1..3)
     );
 }
 
@@ -498,20 +501,6 @@ fn test_diff_hunks_edited_inserted(cx: &mut AppContext) {
             "
         },
     );
-    // [2025-01-17T19:47:03Z INFO  multi_buffer::multi_buffer_tests] Multibuffer content:
-    // ----------
-    // - s
-    // - mmpamsdte
-    // +
-    // + ZS
-    // [2025-01-17T19:47:03Z INFO  language::buffer] mutating buffer 0 with [(59..113, "\nIA\n\nB"), (114..121, "AC\nMFSM"), (122..122, "TN")]
-    //Diff < left / right > :
-    //    ----------
-    //  - s
-    //  - mmpamsdte
-    //  + SAC  [3]
-    // <  MFSM [8]
-    // >+ MFSM
 
     buffer.update(cx, |buffer, cx| {
         buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "__\n__")], None, cx);
@@ -1644,6 +1633,20 @@ impl ReferenceMultibuffer {
         };
         let diff = change_set.read(cx).diff_to_buffer.clone();
         for hunk in diff.hunks_intersecting_range(range, &buffer) {
+            let hunk_precedes_excerpt = hunk
+                .buffer_range
+                .end
+                .cmp(&excerpt.range.start, &buffer)
+                .is_le();
+            let hunk_follows_excerpt = hunk
+                .buffer_range
+                .start
+                .cmp(&excerpt.range.end, &buffer)
+                .is_ge();
+            if hunk_precedes_excerpt || hunk_follows_excerpt {
+                continue;
+            }
+
             if let Err(ix) = excerpt
                 .expanded_diff_hunks
                 .binary_search_by(|anchor| anchor.cmp(&hunk.buffer_range.start, &buffer))
@@ -1680,27 +1683,22 @@ impl ReferenceMultibuffer {
                 if !hunk.buffer_range.start.is_valid(&buffer) {
                     continue;
                 }
-                if !excerpt.expanded_diff_hunks.iter().any(|expanded_anchor| {
-                    expanded_anchor.to_offset(&buffer) == hunk.buffer_range.start.to_offset(&buffer)
-                }) {
-                    continue;
-                }
 
                 // Ignore hunks that are outside the excerpt range.
                 let mut hunk_range = hunk.buffer_range.to_offset(buffer);
                 hunk_range.end = hunk_range.end.min(buffer_range.end);
-                if hunk_range.start >= buffer_range.end
+                if hunk_range.start > buffer_range.end
                     || hunk_range.end < buffer_range.start
                     || buffer_range.is_empty()
                 {
                     continue;
                 }
 
-                // If the diff has not been recalculated, hunks may overlap.
-                if let Some(next_hunk) = hunks.peek() {
-                    hunk_range.end = hunk_range
-                        .end
-                        .min(next_hunk.buffer_range.start.to_offset(buffer));
+                if !excerpt.expanded_diff_hunks.iter().any(|expanded_anchor| {
+                    expanded_anchor.to_offset(&buffer).max(buffer_range.start)
+                        == hunk_range.start.max(buffer_range.start)
+                }) {
+                    continue;
                 }
 
                 if hunk_range.start >= offset {
