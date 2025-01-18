@@ -2,18 +2,17 @@ use std::path::PathBuf;
 
 use anyhow::Context as _;
 use editor::items::entry_git_aware_label_color;
+use file_icons::FileIcons;
 use gpui::{
     canvas, div, fill, img, opaque_grey, point, size, AnyElement, AppContext, Bounds, EventEmitter,
     FocusHandle, Focusable, InteractiveElement, IntoElement, Model, ModelContext, ObjectFit,
     ParentElement, Render, Styled, Task, WeakModel, Window,
 };
 use persistence::IMAGE_VIEWER;
-use theme::Theme;
-use ui::prelude::*;
-
-use file_icons::FileIcons;
 use project::{image_store::ImageItemEvent, ImageItem, Project, ProjectPath};
 use settings::Settings;
+use theme::Theme;
+use ui::prelude::*;
 use util::paths::PathExt;
 use workspace::{
     item::{BreadcrumbText, Item, ProjectItem, SerializableItem, TabContentParams},
@@ -97,12 +96,20 @@ impl Item for ImageView {
 
     fn tab_content(&self, params: TabContentParams, _: &Window, cx: &AppContext) -> AnyElement {
         let project_path = self.image_item.read(cx).project_path(cx);
+
         let label_color = if ItemSettings::get_global(cx).git_status {
+            let git_status = self
+                .project
+                .read(cx)
+                .project_path_git_status(&project_path, cx)
+                .map(|status| status.summary())
+                .unwrap_or_default();
+
             self.project
                 .read(cx)
                 .entry_for_path(&project_path, cx)
                 .map(|entry| {
-                    entry_git_aware_label_color(entry.git_status, entry.is_ignored, params.selected)
+                    entry_git_aware_label_color(git_status, entry.is_ignored, params.selected)
                 })
                 .unwrap_or_else(|| params.text_color())
         } else {

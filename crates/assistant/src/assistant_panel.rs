@@ -1,27 +1,21 @@
-use crate::slash_command::file_command::codeblock_fence_for_path;
-use crate::slash_command_working_set::SlashCommandWorkingSet;
 use crate::{
-    assistant_settings::{AssistantDockPosition, AssistantSettings},
-    humanize_token_count,
-    prompt_library::open_prompt_library,
-    prompts::PromptBuilder,
-    slash_command::{
-        default_command::DefaultSlashCommand,
-        docs_command::{DocsSlashCommand, DocsSlashCommandArgs},
-        file_command, SlashCommandCompletionProvider,
-    },
-    slash_command_picker,
-    terminal_inline_assistant::TerminalInlineAssistant,
-    Assist, AssistantPatch, AssistantPatchStatus, CacheStatus, ConfirmCommand, Content, Context,
-    ContextEvent, ContextId, ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole,
-    DeployHistory, DeployPromptLibrary, Edit, InlineAssistant, InsertDraggedFiles,
-    InsertIntoEditor, InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId,
-    MessageMetadata, MessageStatus, NewContext, ParsedSlashCommand, PendingSlashCommandStatus,
-    QuoteSelection, RemoteContextMetadata, RequestType, SavedContextMetadata, Split, ToggleFocus,
+    humanize_token_count, slash_command::SlashCommandCompletionProvider, slash_command_picker,
+    terminal_inline_assistant::TerminalInlineAssistant, Assist, AssistantPatch,
+    AssistantPatchStatus, CacheStatus, ConfirmCommand, Content, Context, ContextEvent, ContextId,
+    ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole, DeployHistory,
+    DeployPromptLibrary, Edit, InlineAssistant, InsertDraggedFiles, InsertIntoEditor,
+    InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId, MessageMetadata,
+    MessageStatus, NewContext, ParsedSlashCommand, PendingSlashCommandStatus, QuoteSelection,
+    RemoteContextMetadata, RequestType, SavedContextMetadata, Split, ToggleFocus,
     ToggleModelSelector,
 };
 use anyhow::Result;
-use assistant_slash_command::{SlashCommand, SlashCommandOutputSection};
+use assistant_settings::{AssistantDockPosition, AssistantSettings};
+use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
+use assistant_slash_commands::{
+    selections_creases, DefaultSlashCommand, DocsSlashCommand, DocsSlashCommandArgs,
+    FileSlashCommand,
+};
 use assistant_tool::ToolWorkingSet;
 use client::{proto, zed_urls, Client, Status};
 use collections::{hash_map, BTreeSet, HashMap, HashSet};
@@ -60,6 +54,7 @@ use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::lsp_store::LocalLspAdapterDelegate;
 use project::{Project, Worktree};
+use prompt_library::{open_prompt_library, PromptBuilder, PromptLibrary};
 use rope::Point;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
@@ -122,7 +117,7 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_models(
         |terminal_panel: &mut TerminalPanel, _, cx: &mut ModelContext<TerminalPanel>| {
             let settings = AssistantSettings::get_global(cx);
-            terminal_panel.asssistant_enabled(settings.enabled, cx);
+            terminal_panel.set_assistant_enabled(settings.enabled, cx);
         },
     )
     .detach();
@@ -624,7 +619,7 @@ impl AssistantPanel {
                 true
             }
 
-            pane::Event::ActivateItem { local } => {
+            pane::Event::ActivateItem { local, .. } => {
                 if *local {
                     self.workspace
                         .update(cx, |workspace, cx| {
@@ -1260,6 +1255,7 @@ impl AssistantPanel {
         }
     }
 
+<<<<<<< HEAD
     fn deploy_prompt_library(
         &mut self,
         _: &DeployPromptLibrary,
@@ -1267,6 +1263,22 @@ impl AssistantPanel {
         cx: &mut ModelContext<Self>,
     ) {
         open_prompt_library(self.languages.clone(), cx).detach_and_log_err(cx);
+=======
+    fn deploy_prompt_library(&mut self, _: &DeployPromptLibrary, cx: &mut ViewContext<Self>) {
+        open_prompt_library(
+            self.languages.clone(),
+            Box::new(PromptLibraryInlineAssist),
+            Arc::new(|| {
+                Box::new(SlashCommandCompletionProvider::new(
+                    Arc::new(SlashCommandWorkingSet::default()),
+                    None,
+                    None,
+                ))
+            }),
+            cx,
+        )
+        .detach_and_log_err(cx);
+>>>>>>> main
     }
 
     fn toggle_model_selector(
@@ -1563,6 +1575,29 @@ impl EventEmitter<AssistantPanelEvent> for AssistantPanel {}
 impl Focusable for AssistantPanel {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.pane.focus_handle(cx)
+    }
+}
+
+struct PromptLibraryInlineAssist;
+
+impl prompt_library::InlineAssistDelegate for PromptLibraryInlineAssist {
+    fn assist(
+        &self,
+        prompt_editor: &View<Editor>,
+        initial_prompt: Option<String>,
+        cx: &mut ViewContext<PromptLibrary>,
+    ) {
+        InlineAssistant::update_global(cx, |assistant, cx| {
+            assistant.assist(&prompt_editor, None, None, initial_prompt, cx)
+        })
+    }
+
+    fn focus_assistant_panel(
+        &self,
+        workspace: &mut Workspace,
+        cx: &mut ViewContext<Workspace>,
+    ) -> bool {
+        workspace.focus_panel::<AssistantPanel>(cx).is_some()
     }
 }
 
@@ -3188,7 +3223,7 @@ impl ContextEditor {
 
         cx.spawn_in(window, |_, mut cx| async move {
             let (paths, dragged_file_worktrees) = paths.await;
-            let cmd_name = file_command::FileSlashCommand.name();
+            let cmd_name = FileSlashCommand.name();
 
             context_editor_view
                 .update_in(&mut cx, |context_editor, window, cx| {
@@ -3823,8 +3858,13 @@ impl ContextEditor {
 
         let (style, tooltip) = match token_state(&self.context, cx) {
             Some(TokenState::NoTokensLeft { .. }) => (
+<<<<<<< HEAD
                 ButtonStyle::Tinted(TintColor::Negative),
                 Some(Tooltip::simple("Token limit reached", cx)),
+=======
+                ButtonStyle::Tinted(TintColor::Error),
+                Some(Tooltip::text("Token limit reached", cx)),
+>>>>>>> main
             ),
             Some(TokenState::HasMoreTokens {
                 over_warn_threshold,
@@ -3884,8 +3924,13 @@ impl ContextEditor {
 
         let (style, tooltip) = match token_state(&self.context, cx) {
             Some(TokenState::NoTokensLeft { .. }) => (
+<<<<<<< HEAD
                 ButtonStyle::Tinted(TintColor::Negative),
                 Some(Tooltip::simple("Token limit reached", cx)),
+=======
+                ButtonStyle::Tinted(TintColor::Error),
+                Some(Tooltip::text("Token limit reached", cx)),
+>>>>>>> main
             ),
             Some(TokenState::HasMoreTokens {
                 over_warn_threshold,
@@ -4168,6 +4213,7 @@ fn find_surrounding_code_block(snapshot: &BufferSnapshot, offset: usize) -> Opti
     None
 }
 
+<<<<<<< HEAD
 pub fn selections_creases(
     workspace: &mut workspace::Workspace,
     cx: &mut ModelContext<Workspace>,
@@ -4261,6 +4307,8 @@ pub fn selections_creases(
     Some(creases)
 }
 
+=======
+>>>>>>> main
 fn render_fold_icon_button(
     editor: WeakModel<Editor>,
     icon: IconName,
@@ -4455,6 +4503,10 @@ impl Item for ContextEditor {
         } else {
             None
         }
+    }
+
+    fn include_in_nav_history() -> bool {
+        false
     }
 }
 

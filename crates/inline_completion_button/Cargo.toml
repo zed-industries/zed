@@ -1,8 +1,8 @@
 [package]
 name = "inline_completion_button"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -19,6 +19,7 @@ editor.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
 gpui.workspace = true
+inline_completion.workspace = true
 language.workspace = true
 paths.workspace = true
 settings.workspace = true

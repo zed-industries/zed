@@ -1,6 +1,10 @@
 use gpui::{
     div, rems, AppContext, IntoElement, ParentElement, Rems, RenderOnce, SharedString, Styled,
+<<<<<<< HEAD
     Window,
+=======
+    WindowContext,
+>>>>>>> main
 };
 use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
@@ -82,7 +86,7 @@ pub trait StyledTypography: Styled + Sized {
     /// or other places that text needs to match the user's buffer font size.
     fn text_buffer(self, cx: &AppContext) -> Self {
         let settings = ThemeSettings::get_global(cx);
-        self.text_size(settings.buffer_font_size(cx))
+        self.text_size(settings.buffer_font_size())
     }
 }
 

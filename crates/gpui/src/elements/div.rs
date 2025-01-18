@@ -1151,6 +1151,7 @@ pub fn div() -> Div {
     Div {
         interactivity,
         children: SmallVec::default(),
+        prepaint_listener: None,
     }
 }
 
@@ -1158,6 +1159,19 @@ pub fn div() -> Div {
 pub struct Div {
     interactivity: Interactivity,
     children: SmallVec<[AnyElement; 2]>,
+    prepaint_listener: Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut WindowContext) + 'static>>,
+}
+
+impl Div {
+    /// Add a listener to be called when the children of this `Div` are prepainted.
+    /// This allows you to store the [`Bounds`] of the children for later use.
+    pub fn on_children_prepainted(
+        mut self,
+        listener: impl Fn(Vec<Bounds<Pixels>>, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.prepaint_listener = Some(Box::new(listener));
+        self
+    }
 }
 
 /// A frame state for a `Div` element, which contains layout IDs for its children.
@@ -1226,6 +1240,13 @@ impl Element for Div {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Option<Hitbox> {
+        let has_prepaint_listener = self.prepaint_listener.is_some();
+        let mut children_bounds = Vec::with_capacity(if has_prepaint_listener {
+            request_layout.child_layout_ids.len()
+        } else {
+            0
+        });
+
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
         if let Some(handle) = self.interactivity.scroll_anchor.as_ref() {
@@ -1238,6 +1259,7 @@ impl Element for Div {
             state.child_bounds = Vec::with_capacity(request_layout.child_layout_ids.len());
             state.bounds = bounds;
             let requested = state.requested_scroll_top.take();
+            // TODO az
 
             for (ix, child_layout_id) in request_layout.child_layout_ids.iter().enumerate() {
                 let child_bounds = window.layout_bounds(*child_layout_id);
@@ -1258,6 +1280,10 @@ impl Element for Div {
                 let child_bounds = window.layout_bounds(*child_layout_id);
                 child_min = child_min.min(&child_bounds.origin);
                 child_max = child_max.max(&child_bounds.bottom_right());
+
+                if has_prepaint_listener {
+                    children_bounds.push(child_bounds);
+                }
             }
             (child_max - child_min).into()
         };
@@ -1274,6 +1300,11 @@ impl Element for Div {
                         child.prepaint(window, cx);
                     }
                 });
+
+                if let Some(listener) = self.prepaint_listener.as_ref() {
+                    listener(children_bounds, cx);
+                }
+
                 hitbox
             },
         )
@@ -1478,6 +1509,7 @@ impl Interactivity {
                                 None
                             };
 
+<<<<<<< HEAD
                             let invalidate_tooltip = hitbox.as_ref().map_or(true, |hitbox| {
                                 !hitbox.bounds.contains(&window.mouse_position())
                             });
@@ -1497,6 +1529,12 @@ impl Interactivity {
                             (result, element_state)
                         },
                     )
+=======
+                        let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);
+                        let result = f(&style, scroll_offset, hitbox, cx);
+                        (result, element_state)
+                    })
+>>>>>>> main
                 })
             },
         )
@@ -2015,6 +2053,7 @@ impl Interactivity {
                 window.on_mouse_event({
                     let active_tooltip = active_tooltip.clone();
                     let hitbox = hitbox.clone();
+                    let source_bounds = hitbox.bounds;
                     let tooltip_id = self.tooltip_id;
                     move |_: &MouseMoveEvent, phase, window, cx| {
                         let is_hovered =
@@ -2042,8 +2081,15 @@ impl Interactivity {
                                     cx.update(|window, cx| {
                                         active_tooltip.borrow_mut().replace(ActiveTooltip {
                                             tooltip: Some(AnyTooltip {
+<<<<<<< HEAD
                                                 view: build_tooltip(window, cx),
                                                 mouse_position: window.mouse_position(),
+=======
+                                                view: build_tooltip(cx),
+                                                mouse_position: cx.mouse_position(),
+                                                hoverable: tooltip_is_hoverable,
+                                                origin_bounds: source_bounds,
+>>>>>>> main
                                             }),
                                             _task: None,
                                         });
@@ -2426,7 +2472,23 @@ where
     }
 }
 
+<<<<<<< HEAD
 impl<E> Element for FocusableWrapper<E>
+=======
+impl Focusable<Div> {
+    /// Add a listener to be called when the children of this `Div` are prepainted.
+    /// This allows you to store the [`Bounds`] of the children for later use.
+    pub fn on_children_prepainted(
+        mut self,
+        listener: impl Fn(Vec<Bounds<Pixels>>, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.element = self.element.on_children_prepainted(listener);
+        self
+    }
+}
+
+impl<E> Element for Focusable<E>
+>>>>>>> main
 where
     E: Element,
 {

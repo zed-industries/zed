@@ -1,10 +1,18 @@
 use crate::fallback_themes::zed_default_dark;
-use crate::{Appearance, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent};
+use crate::{
+    Appearance, IconTheme, SyntaxTheme, Theme, ThemeRegistry, ThemeStyleContent,
+    DEFAULT_ICON_THEME_NAME,
+};
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
+<<<<<<< HEAD
     px, AppContext, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, ModelContext,
     Pixels, Subscription, Window,
+=======
+    px, AppContext, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
+    WindowContext,
+>>>>>>> main
 };
 use refineable::Refineable;
 use schemars::{
@@ -118,6 +126,8 @@ pub struct ThemeSettings {
     ///
     /// Note: This setting is still experimental. See [this tracking issue](https://github.com/zed-industries/zed/issues/18078)
     pub theme_overrides: Option<ThemeStyleContent>,
+    /// The active icon theme.
+    pub active_icon_theme: Arc<IconTheme>,
     /// The density of the UI.
     /// Note: This setting is still experimental. See [this tracking issue](
     pub ui_density: UiDensity,
@@ -201,16 +211,6 @@ impl SystemAppearance {
         cx.global_mut::<GlobalSystemAppearance>()
     }
 }
-
-#[derive(Default)]
-pub(crate) struct AdjustedBufferFontSize(Pixels);
-
-impl Global for AdjustedBufferFontSize {}
-
-#[derive(Default)]
-pub(crate) struct AdjustedUiFontSize(Pixels);
-
-impl Global for AdjustedUiFontSize {}
 
 /// Represents the selection of a theme, which can be either static or dynamic.
 #[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -324,6 +324,12 @@ pub struct ThemeSettingsContent {
     /// The name of the Zed theme to use.
     #[serde(default)]
     pub theme: Option<ThemeSelection>,
+    /// The name of the icon theme to use.
+    ///
+    /// Currently not exposed to the user.
+    #[serde(skip)]
+    #[serde(default)]
+    pub icon_theme: Option<String>,
 
     /// UNSTABLE: Expect many elements to be broken.
     ///
@@ -429,10 +435,13 @@ impl BufferLineHeight {
 
 impl ThemeSettings {
     /// Returns the [AdjustedBufferFontSize].
-    pub fn buffer_font_size(&self, cx: &AppContext) -> Pixels {
-        cx.try_global::<AdjustedBufferFontSize>()
-            .map_or(self.buffer_font_size, |size| size.0)
-            .max(MIN_FONT_SIZE)
+    pub fn buffer_font_size(&self) -> Pixels {
+        Self::clamp_font_size(self.buffer_font_size)
+    }
+
+    /// Ensures that the font size is within the valid range.
+    pub fn clamp_font_size(size: Pixels) -> Pixels {
+        size.max(MIN_FONT_SIZE)
     }
 
     // TODO: Rename: `line_height` -> `buffer_line_height`
@@ -489,6 +498,7 @@ impl ThemeSettings {
     }
 }
 
+<<<<<<< HEAD
 /// Observe changes to the adjusted buffer font size.
 pub fn observe_buffer_font_size_adjustment<V: 'static>(
     window: &mut Window,
@@ -543,19 +553,22 @@ pub fn reset_buffer_font_size(cx: &mut AppContext) {
     }
 }
 
+=======
+>>>>>>> main
 // TODO: Make private, change usages to use `get_ui_font_size` instead.
 #[allow(missing_docs)]
 pub fn setup_ui_font(window: &mut Window, cx: &mut AppContext) -> gpui::Font {
     let (ui_font, ui_font_size) = {
         let theme_settings = ThemeSettings::get_global(cx);
         let font = theme_settings.ui_font.clone();
-        (font, get_ui_font_size(cx))
+        (font, theme_settings.ui_font_size)
     };
 
     window.set_rem_size(ui_font_size);
     ui_font
 }
 
+<<<<<<< HEAD
 /// Gets the adjusted UI font size.
 pub fn get_ui_font_size(cx: &AppContext) -> Pixels {
     let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
@@ -589,6 +602,8 @@ pub fn reset_ui_font_size(cx: &mut AppContext) {
     }
 }
 
+=======
+>>>>>>> main
 fn clamp_font_weight(weight: f32) -> FontWeight {
     FontWeight(weight.clamp(100., 950.))
 }
@@ -633,6 +648,11 @@ impl settings::Settings for ThemeSettings {
                 .or(themes.get(&zed_default_dark().name))
                 .unwrap(),
             theme_overrides: None,
+            active_icon_theme: defaults
+                .icon_theme
+                .as_ref()
+                .and_then(|name| themes.get_icon_theme(name).ok())
+                .unwrap_or_else(|| themes.get_icon_theme(DEFAULT_ICON_THEME_NAME).unwrap()),
             ui_density: defaults.ui_density.unwrap_or(UiDensity::Default),
             unnecessary_code_fade: defaults.unnecessary_code_fade.unwrap_or(0.0),
         };
@@ -685,6 +705,12 @@ impl settings::Settings for ThemeSettings {
 
             this.theme_overrides.clone_from(&value.theme_overrides);
             this.apply_theme_overrides();
+
+            if let Some(value) = &value.icon_theme {
+                if let Some(icon_theme) = themes.get_icon_theme(value).log_err() {
+                    this.active_icon_theme = icon_theme.clone();
+                }
+            }
 
             merge(&mut this.ui_font_size, value.ui_font_size.map(Into::into));
             this.ui_font_size = this.ui_font_size.clamp(px(6.), px(100.));

@@ -10,21 +10,29 @@ use editor::{
     movement::{self, FindRange},
     Bias, DisplayPoint, Editor,
 };
+<<<<<<< HEAD
 
 use itertools::Itertools;
 
 use gpui::{actions, impl_actions, ModelContext, Window};
+=======
+use gpui::{actions, impl_actions, ViewContext};
+use itertools::Itertools;
+>>>>>>> main
 use language::{BufferSnapshot, CharKind, Point, Selection, TextObject, TreeSitterOptions};
 use multi_buffer::MultiBufferRow;
+use schemars::JsonSchema;
 use serde::Deserialize;
 
-#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Deserialize, JsonSchema)]
 pub enum Object {
     Word { ignore_punctuation: bool },
+    Subword { ignore_punctuation: bool },
     Sentence,
     Paragraph,
     Quotes,
     BackQuotes,
+    AnyQuotes,
     DoubleQuotes,
     VerticalBars,
     Parentheses,
@@ -39,20 +47,27 @@ pub enum Object {
     Comment,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct Word {
     #[serde(default)]
     ignore_punctuation: bool,
 }
-#[derive(Clone, Deserialize, PartialEq)]
+
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
+#[serde(rename_all = "camelCase")]
+struct Subword {
+    #[serde(default)]
+    ignore_punctuation: bool,
+}
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct IndentObj {
     #[serde(default)]
     include_below: bool,
 }
 
-impl_actions!(vim, [Word, IndentObj]);
+impl_actions!(vim, [Word, Subword, IndentObj]);
 
 actions!(
     vim,
@@ -61,6 +76,7 @@ actions!(
         Paragraph,
         Quotes,
         BackQuotes,
+        AnyQuotes,
         DoubleQuotes,
         VerticalBars,
         Parentheses,
@@ -83,8 +99,21 @@ pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>)
             vim.object(Object::Word { ignore_punctuation }, window, cx)
         },
     );
+<<<<<<< HEAD
     Vim::action(editor, cx, |vim, _: &Tag, window, cx| {
         vim.object(Object::Tag, window, cx)
+=======
+    Vim::action(
+        editor,
+        cx,
+        |vim, &Subword { ignore_punctuation }: &Subword, cx| {
+            vim.object(Object::Subword { ignore_punctuation }, cx)
+        },
+    );
+    Vim::action(editor, cx, |vim, _: &Tag, cx| vim.object(Object::Tag, cx));
+    Vim::action(editor, cx, |vim, _: &Sentence, cx| {
+        vim.object(Object::Sentence, cx)
+>>>>>>> main
     });
     Vim::action(editor, cx, |vim, _: &Sentence, window, cx| {
         vim.object(Object::Sentence, window, cx)
@@ -95,8 +124,16 @@ pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>)
     Vim::action(editor, cx, |vim, _: &Quotes, window, cx| {
         vim.object(Object::Quotes, window, cx)
     });
+<<<<<<< HEAD
     Vim::action(editor, cx, |vim, _: &BackQuotes, window, cx| {
         vim.object(Object::BackQuotes, window, cx)
+=======
+    Vim::action(editor, cx, |vim, _: &AnyQuotes, cx| {
+        vim.object(Object::AnyQuotes, cx)
+    });
+    Vim::action(editor, cx, |vim, _: &DoubleQuotes, cx| {
+        vim.object(Object::DoubleQuotes, cx)
+>>>>>>> main
     });
     Vim::action(editor, cx, |vim, _: &DoubleQuotes, window, cx| {
         vim.object(Object::DoubleQuotes, window, cx)
@@ -158,8 +195,10 @@ impl Object {
     pub fn is_multiline(self) -> bool {
         match self {
             Object::Word { .. }
+            | Object::Subword { .. }
             | Object::Quotes
             | Object::BackQuotes
+            | Object::AnyQuotes
             | Object::VerticalBars
             | Object::DoubleQuotes => false,
             Object::Sentence
@@ -180,12 +219,14 @@ impl Object {
     pub fn always_expands_both_ways(self) -> bool {
         match self {
             Object::Word { .. }
+            | Object::Subword { .. }
             | Object::Sentence
             | Object::Paragraph
             | Object::Argument
             | Object::IndentObj { .. } => false,
             Object::Quotes
             | Object::BackQuotes
+            | Object::AnyQuotes
             | Object::DoubleQuotes
             | Object::VerticalBars
             | Object::Parentheses
@@ -202,8 +243,10 @@ impl Object {
     pub fn target_visual_mode(self, current_mode: Mode, around: bool) -> Mode {
         match self {
             Object::Word { .. }
+            | Object::Subword { .. }
             | Object::Sentence
             | Object::Quotes
+            | Object::AnyQuotes
             | Object::BackQuotes
             | Object::DoubleQuotes => {
                 if current_mode == Mode::VisualBlock {
@@ -247,6 +290,13 @@ impl Object {
                     in_word(map, relative_to, ignore_punctuation)
                 }
             }
+            Object::Subword { ignore_punctuation } => {
+                if around {
+                    around_subword(map, relative_to, ignore_punctuation)
+                } else {
+                    in_subword(map, relative_to, ignore_punctuation)
+                }
+            }
             Object::Sentence => sentence(map, relative_to, around),
             Object::Paragraph => paragraph(map, relative_to, around),
             Object::Quotes => {
@@ -254,6 +304,35 @@ impl Object {
             }
             Object::BackQuotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '`', '`')
+            }
+            Object::AnyQuotes => {
+                let quote_types = ['\'', '"', '`']; // Types of quotes to handle
+                let relative_offset = relative_to.to_offset(map, Bias::Left) as isize;
+
+                // Find the closest matching quote range
+                quote_types
+                    .iter()
+                    .flat_map(|&quote| {
+                        // Get ranges for each quote type
+                        surrounding_markers(
+                            map,
+                            relative_to,
+                            around,
+                            self.is_multiline(),
+                            quote,
+                            quote,
+                        )
+                    })
+                    .min_by_key(|range| {
+                        // Calculate proximity of ranges to the cursor
+                        let start_distance = (relative_offset
+                            - range.start.to_offset(map, Bias::Left) as isize)
+                            .abs();
+                        let end_distance = (relative_offset
+                            - range.end.to_offset(map, Bias::Right) as isize)
+                            .abs();
+                        start_distance + end_distance
+                    })
             }
             Object::DoubleQuotes => {
                 surrounding_markers(map, relative_to, around, self.is_multiline(), '"', '"')
@@ -349,6 +428,63 @@ fn in_word(
 
     let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
         classifier.kind(left) != classifier.kind(right)
+    });
+
+    Some(start..end)
+}
+
+fn in_subword(
+    map: &DisplaySnapshot,
+    relative_to: DisplayPoint,
+    ignore_punctuation: bool,
+) -> Option<Range<DisplayPoint>> {
+    let offset = relative_to.to_offset(map, Bias::Left);
+    // Use motion::right so that we consider the character under the cursor when looking for the start
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(relative_to.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
+    let in_subword = map
+        .buffer_chars_at(offset)
+        .next()
+        .map(|(c, _)| {
+            if classifier.is_word('-') {
+                !classifier.is_whitespace(c) && c != '_' && c != '-'
+            } else {
+                !classifier.is_whitespace(c) && c != '_'
+            }
+        })
+        .unwrap_or(false);
+
+    let start = if in_subword {
+        movement::find_preceding_boundary_display_point(
+            map,
+            right(map, relative_to, 1),
+            movement::FindRange::SingleLine,
+            |left, right| {
+                let is_word_start = classifier.kind(left) != classifier.kind(right);
+                let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
+                    || left == '_' && right != '_'
+                    || left.is_lowercase() && right.is_uppercase();
+                is_word_start || is_subword_start
+            },
+        )
+    } else {
+        movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
+            let is_word_start = classifier.kind(left) != classifier.kind(right);
+            let is_subword_start = classifier.is_word('-') && left == '-' && right != '-'
+                || left == '_' && right != '_'
+                || left.is_lowercase() && right.is_uppercase();
+            is_word_start || is_subword_start
+        })
+    };
+
+    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
+        let is_word_end = classifier.kind(left) != classifier.kind(right);
+        let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
+            || left != '_' && right == '_'
+            || left.is_lowercase() && right.is_uppercase();
+        is_word_end || is_subword_end
     });
 
     Some(start..end)
@@ -465,6 +601,40 @@ fn around_word(
     }
 }
 
+fn around_subword(
+    map: &DisplaySnapshot,
+    relative_to: DisplayPoint,
+    ignore_punctuation: bool,
+) -> Option<Range<DisplayPoint>> {
+    // Use motion::right so that we consider the character under the cursor when looking for the start
+    let classifier = map
+        .buffer_snapshot
+        .char_classifier_at(relative_to.to_point(map))
+        .ignore_punctuation(ignore_punctuation);
+    let start = movement::find_preceding_boundary_display_point(
+        map,
+        right(map, relative_to, 1),
+        movement::FindRange::SingleLine,
+        |left, right| {
+            let is_word_start = classifier.kind(left) != classifier.kind(right);
+            let is_subword_start = classifier.is_word('-') && left != '-' && right == '-'
+                || left != '_' && right == '_'
+                || left.is_lowercase() && right.is_uppercase();
+            is_word_start || is_subword_start
+        },
+    );
+
+    let end = movement::find_boundary(map, relative_to, FindRange::SingleLine, |left, right| {
+        let is_word_end = classifier.kind(left) != classifier.kind(right);
+        let is_subword_end = classifier.is_word('-') && left != '-' && right == '-'
+            || left != '_' && right == '_'
+            || left.is_lowercase() && right.is_uppercase();
+        is_word_end || is_subword_end
+    });
+
+    Some(start..end)
+}
+
 fn around_containing_word(
     map: &DisplaySnapshot,
     relative_to: DisplayPoint,
@@ -518,13 +688,15 @@ fn text_object(
 
     let excerpt = snapshot.excerpt_containing(offset..offset)?;
     let buffer = excerpt.buffer();
+    let offset = excerpt.map_offset_to_buffer(offset);
 
     let mut matches: Vec<Range<usize>> = buffer
         .text_object_ranges(offset..offset, TreeSitterOptions::default())
         .filter_map(|(r, m)| if m == target { Some(r) } else { None })
         .collect();
     matches.sort_by_key(|r| (r.end - r.start));
-    if let Some(range) = matches.first() {
+    if let Some(buffer_range) = matches.first() {
+        let range = excerpt.map_range_from_buffer(buffer_range.clone());
         return Some(range.start.to_display_point(map)..range.end.to_display_point(map));
     }
 
@@ -541,12 +713,14 @@ fn text_object(
         .filter_map(|(r, m)| if m == target { Some(r) } else { None })
         .collect();
     matches.sort_by_key(|r| r.start);
-    if let Some(range) = matches.first() {
-        if !range.is_empty() {
+    if let Some(buffer_range) = matches.first() {
+        if !buffer_range.is_empty() {
+            let range = excerpt.map_range_from_buffer(buffer_range.clone());
             return Some(range.start.to_display_point(map)..range.end.to_display_point(map));
         }
     }
-    return Some(around_range.start.to_display_point(map)..around_range.end.to_display_point(map));
+    let buffer_range = excerpt.map_range_from_buffer(around_range.clone());
+    return Some(buffer_range.start.to_display_point(map)..buffer_range.end.to_display_point(map));
 }
 
 fn argument(
@@ -1748,6 +1922,120 @@ mod test {
             cx.simulate_at_each_offset(&format!("d a {end}"), &marked_string)
                 .await
                 .assert_matches();
+        }
+    }
+
+    #[gpui::test]
+    async fn test_anyquotes_object(cx: &mut gpui::TestAppContext) {
+        let mut cx = VimTestContext::new(cx, true).await;
+
+        const TEST_CASES: &[(&str, &str, &str, Mode)] = &[
+            // Single quotes
+            (
+                "c i q",
+                "This is a 'qˇuote' example.",
+                "This is a 'ˇ' example.",
+                Mode::Insert,
+            ),
+            (
+                "c a q",
+                "This is a 'qˇuote' example.",
+                "This is a ˇexample.",
+                Mode::Insert,
+            ),
+            (
+                "d i q",
+                "This is a 'qˇuote' example.",
+                "This is a 'ˇ' example.",
+                Mode::Normal,
+            ),
+            (
+                "d a q",
+                "This is a 'qˇuote' example.",
+                "This is a ˇexample.",
+                Mode::Normal,
+            ),
+            // Double quotes
+            (
+                "c i q",
+                "This is a \"qˇuote\" example.",
+                "This is a \"ˇ\" example.",
+                Mode::Insert,
+            ),
+            (
+                "c a q",
+                "This is a \"qˇuote\" example.",
+                "This is a ˇexample.",
+                Mode::Insert,
+            ),
+            (
+                "d i q",
+                "This is a \"qˇuote\" example.",
+                "This is a \"ˇ\" example.",
+                Mode::Normal,
+            ),
+            (
+                "d a q",
+                "This is a \"qˇuote\" example.",
+                "This is a ˇexample.",
+                Mode::Normal,
+            ),
+            // Back quotes
+            (
+                "c i q",
+                "This is a `qˇuote` example.",
+                "This is a `ˇ` example.",
+                Mode::Insert,
+            ),
+            (
+                "c a q",
+                "This is a `qˇuote` example.",
+                "This is a ˇexample.",
+                Mode::Insert,
+            ),
+            (
+                "d i q",
+                "This is a `qˇuote` example.",
+                "This is a `ˇ` example.",
+                Mode::Normal,
+            ),
+            (
+                "d a q",
+                "This is a `qˇuote` example.",
+                "This is a ˇexample.",
+                Mode::Normal,
+            ),
+        ];
+
+        for (keystrokes, initial_state, expected_state, expected_mode) in TEST_CASES {
+            cx.set_state(initial_state, Mode::Normal);
+
+            cx.simulate_keystrokes(keystrokes);
+
+            cx.assert_state(expected_state, *expected_mode);
+        }
+
+        const INVALID_CASES: &[(&str, &str, Mode)] = &[
+            ("c i q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
+            ("c a q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
+            ("d i q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
+            ("d a q", "this is a 'qˇuote example.", Mode::Normal), // Missing closing simple quote
+            ("c i q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing double quote
+            ("c a q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing double quote
+            ("d i q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing double quote
+            ("d a q", "this is a \"qˇuote example.", Mode::Normal), // Missing closing back quote
+            ("c i q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
+            ("c a q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
+            ("d i q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
+            ("d a q", "this is a `qˇuote example.", Mode::Normal), // Missing closing back quote
+        ];
+
+        for (keystrokes, initial_state, mode) in INVALID_CASES {
+            cx.set_state(initial_state, Mode::Normal);
+
+            cx.simulate_keystrokes(keystrokes);
+
+            cx.assert_state(initial_state, *mode);
         }
     }
 

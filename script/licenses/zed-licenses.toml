@@ -116,6 +116,12 @@ license = "MIT"
 path = 'LICENSE'
 checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
 
+[pet-pixi.clarify]
+license = "MIT"
+[[pet-pixi.clarify.git]]
+path = 'LICENSE'
+checksum = 'c2cfccb812fe482101a8f04597dfc5a9991a6b2748266c47ac91b6a5aae15383'
+
 [pet-poetry.clarify]
 license = "MIT"
 [[pet-poetry.clarify.git]]

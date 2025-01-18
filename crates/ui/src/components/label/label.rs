@@ -36,7 +36,6 @@ use crate::{prelude::*, LabelCommon, LabelLike, LabelSize, LineHeightStyle};
 pub struct Label {
     base: LabelLike,
     label: SharedString,
-    single_line: bool,
 }
 
 impl Label {
@@ -53,7 +52,6 @@ impl Label {
         Self {
             base: LabelLike::new(),
             label: label.into(),
-            single_line: false,
         }
     }
 }
@@ -170,13 +168,14 @@ impl LabelCommon for Label {
     }
 
     fn single_line(mut self) -> Self {
-        self.single_line = true;
+        self.label = SharedString::from(self.label.replace('\n', "␤"));
         self.base = self.base.single_line();
         self
     }
 }
 
 impl RenderOnce for Label {
+<<<<<<< HEAD
     fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
         let target_label = if self.single_line {
             SharedString::from(self.label.replace('\n', "␤"))
@@ -184,5 +183,9 @@ impl RenderOnce for Label {
             self.label
         };
         self.base.child(target_label)
+=======
+    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+        self.base.child(self.label)
+>>>>>>> main
     }
 }

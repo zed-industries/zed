@@ -175,6 +175,7 @@ impl From<&dyn PanelHandle> for AnyView {
 pub struct Dock {
     position: DockPosition,
     panel_entries: Vec<PanelEntry>,
+    workspace: WeakView<Workspace>,
     is_open: bool,
     active_panel_index: Option<usize>,
     focus_handle: FocusHandle,
@@ -246,6 +247,7 @@ impl Dock {
             });
             Self {
                 position,
+                workspace: workspace.downgrade(),
                 panel_entries: Default::default(),
                 active_panel_index: None,
                 is_open: false,
@@ -375,6 +377,11 @@ impl Dock {
             }
         }
 
+        self.workspace
+            .update(cx, |workspace, cx| {
+                workspace.serialize_workspace(cx);
+            })
+            .ok();
         cx.notify();
     }
 
@@ -513,9 +520,16 @@ impl Dock {
             },
         );
 
+<<<<<<< HEAD
         if !self.restore_state(window, cx) && panel.read(cx).starts_open(window, cx) {
             self.activate_panel(index, window, cx);
             self.set_open(true, window, cx);
+=======
+        self.restore_state(cx);
+        if panel.read(cx).starts_open(cx) {
+            self.activate_panel(index, cx);
+            self.set_open(true, cx);
+>>>>>>> main
         }
 
         cx.notify();
@@ -702,9 +716,20 @@ impl Render for Dock {
                     )
                     .on_mouse_up(
                         MouseButton::Left,
+<<<<<<< HEAD
                         cx.listener(|v, e: &MouseUpEvent, window, cx| {
                             if e.click_count == 2 {
                                 v.resize_active_panel(None, window, cx);
+=======
+                        cx.listener(|dock, e: &MouseUpEvent, cx| {
+                            if e.click_count == 2 {
+                                dock.resize_active_panel(None, cx);
+                                dock.workspace
+                                    .update(cx, |workspace, cx| {
+                                        workspace.serialize_workspace(cx);
+                                    })
+                                    .ok();
+>>>>>>> main
                                 cx.stop_propagation();
                             }
                         }),

@@ -3,7 +3,7 @@ use crate::{
     hover_links::{InlayHighlight, RangeInEditor},
     scroll::ScrollAmount,
     Anchor, AnchorRangeExt, DisplayPoint, DisplayRow, Editor, EditorSettings, EditorSnapshot,
-    Hover, RangeToAnchorExt,
+    Hover,
 };
 use gpui::{
     div, px, AnyElement, AsyncWindowContext, Focusable as _, FontWeight, Hsla, InteractiveElement,
@@ -12,11 +12,11 @@ use gpui::{
     Window,
 };
 use itertools::Itertools;
-use language::{Diagnostic, DiagnosticEntry, Language, LanguageRegistry};
+use language::{DiagnosticEntry, Language, LanguageRegistry};
 use lsp::DiagnosticSeverity;
 use markdown::{Markdown, MarkdownStyle};
 use multi_buffer::ToOffset;
-use project::{HoverBlock, InlayHintLabelPart};
+use project::{HoverBlock, HoverBlockKind, InlayHintLabelPart};
 use settings::Settings;
 use std::rc::Rc;
 use std::{borrow::Cow, cell::RefCell};
@@ -279,63 +279,14 @@ fn show_hover(
                 delay.await;
             }
 
-            // If there's a diagnostic, assign it on the hover state and notify
-            let mut local_diagnostic = snapshot
+            let local_diagnostic = snapshot
                 .buffer_snapshot
-                .diagnostics_in_range::<_, usize>(anchor..anchor, false)
+                .diagnostics_in_range(anchor..anchor, false)
                 // Find the entry with the most specific range
-                .min_by_key(|entry| entry.range.end - entry.range.start)
-                .map(|entry| DiagnosticEntry {
-                    diagnostic: entry.diagnostic,
-                    range: entry.range.to_anchors(&snapshot.buffer_snapshot),
+                .min_by_key(|entry| {
+                    let range = entry.range.to_offset(&snapshot.buffer_snapshot);
+                    range.end - range.start
                 });
-
-            // Pull the primary diagnostic out so we can jump to it if the popover is clicked
-            let primary_diagnostic = local_diagnostic.as_ref().and_then(|local_diagnostic| {
-                snapshot
-                    .buffer_snapshot
-                    .diagnostic_group::<usize>(local_diagnostic.diagnostic.group_id)
-                    .find(|diagnostic| diagnostic.diagnostic.is_primary)
-                    .map(|entry| DiagnosticEntry {
-                        diagnostic: entry.diagnostic,
-                        range: entry.range.to_anchors(&snapshot.buffer_snapshot),
-                    })
-            });
-            if let Some(invisible) = snapshot
-                .buffer_snapshot
-                .chars_at(anchor)
-                .next()
-                .filter(|&c| is_invisible(c))
-            {
-                let after = snapshot.buffer_snapshot.anchor_after(
-                    anchor.to_offset(&snapshot.buffer_snapshot) + invisible.len_utf8(),
-                );
-                local_diagnostic = Some(DiagnosticEntry {
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::HINT,
-                        message: format!("Unicode character U+{:02X}", invisible as u32),
-                        ..Default::default()
-                    },
-                    range: anchor..after,
-                })
-            } else if let Some(invisible) = snapshot
-                .buffer_snapshot
-                .reversed_chars_at(anchor)
-                .next()
-                .filter(|&c| is_invisible(c))
-            {
-                let before = snapshot.buffer_snapshot.anchor_before(
-                    anchor.to_offset(&snapshot.buffer_snapshot) - invisible.len_utf8(),
-                );
-                local_diagnostic = Some(DiagnosticEntry {
-                    diagnostic: Diagnostic {
-                        severity: DiagnosticSeverity::HINT,
-                        message: format!("Unicode character U+{:02X}", invisible as u32),
-                        ..Default::default()
-                    },
-                    range: before..anchor,
-                })
-            }
 
             let diagnostic_popover = if let Some(local_diagnostic) = local_diagnostic {
                 let text = match local_diagnostic.diagnostic.source {
@@ -404,7 +355,6 @@ fn show_hover(
 
                 Some(DiagnosticPopover {
                     local_diagnostic,
-                    primary_diagnostic,
                     parsed_content,
                     border_color,
                     background_color,
@@ -419,6 +369,31 @@ fn show_hover(
                 this.hover_state.diagnostic_popover = diagnostic_popover;
             })?;
 
+            let invisible_char = if let Some(invisible) = snapshot
+                .buffer_snapshot
+                .chars_at(anchor)
+                .next()
+                .filter(|&c| is_invisible(c))
+            {
+                let after = snapshot.buffer_snapshot.anchor_after(
+                    anchor.to_offset(&snapshot.buffer_snapshot) + invisible.len_utf8(),
+                );
+                Some((invisible, anchor..after))
+            } else if let Some(invisible) = snapshot
+                .buffer_snapshot
+                .reversed_chars_at(anchor)
+                .next()
+                .filter(|&c| is_invisible(c))
+            {
+                let before = snapshot.buffer_snapshot.anchor_before(
+                    anchor.to_offset(&snapshot.buffer_snapshot) - invisible.len_utf8(),
+                );
+
+                Some((invisible, before..anchor))
+            } else {
+                None
+            };
+
             let hovers_response = if let Some(hover_request) = hover_request {
                 hover_request.await
             } else {
@@ -426,8 +401,26 @@ fn show_hover(
             };
             let snapshot = this.update_in(&mut cx, |this, window, cx| this.snapshot(window, cx))?;
             let mut hover_highlights = Vec::with_capacity(hovers_response.len());
-            let mut info_popovers = Vec::with_capacity(hovers_response.len());
-            let mut info_popover_tasks = Vec::with_capacity(hovers_response.len());
+            let mut info_popovers = Vec::with_capacity(
+                hovers_response.len() + if invisible_char.is_some() { 1 } else { 0 },
+            );
+
+            if let Some((invisible, range)) = invisible_char {
+                let blocks = vec![HoverBlock {
+                    text: format!("Unicode character U+{:02X}", invisible as u32),
+                    kind: HoverBlockKind::PlainText,
+                }];
+                let parsed_content = parse_blocks(&blocks, &language_registry, None, &mut cx).await;
+                let scroll_handle = ScrollHandle::new();
+                info_popovers.push(InfoPopover {
+                    symbol_range: RangeInEditor::Text(range),
+                    parsed_content,
+                    scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
+                    scroll_handle,
+                    keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
+                    anchor: Some(anchor),
+                })
+            }
 
             for hover_result in hovers_response {
                 // Create symbol range of anchors for highlighting and filtering of future requests.
@@ -440,7 +433,6 @@ fn show_hover(
                         let end = snapshot
                             .buffer_snapshot
                             .anchor_in_excerpt(excerpt_id, range.end)?;
-
                         Some(start..end)
                     })
                     .or_else(|| {
@@ -458,21 +450,15 @@ fn show_hover(
                 let parsed_content =
                     parse_blocks(&blocks, &language_registry, language, &mut cx).await;
                 let scroll_handle = ScrollHandle::new();
-                info_popover_tasks.push((
-                    range.clone(),
-                    InfoPopover {
-                        symbol_range: RangeInEditor::Text(range),
-                        parsed_content,
-                        scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
-                        scroll_handle,
-                        keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
-                        anchor: Some(anchor),
-                    },
-                ));
-            }
-            for (highlight_range, info_popover) in info_popover_tasks {
-                hover_highlights.push(highlight_range);
-                info_popovers.push(info_popover);
+                hover_highlights.push(range.clone());
+                info_popovers.push(InfoPopover {
+                    symbol_range: RangeInEditor::Text(range),
+                    parsed_content,
+                    scrollbar_state: ScrollbarState::new(scroll_handle.clone()),
+                    scroll_handle,
+                    keyboard_grace: Rc::new(RefCell::new(ignore_timeout)),
+                    anchor: Some(anchor),
+                });
             }
 
             this.update_in(&mut cx, |editor, window, cx| {
@@ -621,6 +607,7 @@ async fn parse_blocks(
                 window,
                 cx,
             )
+            .copy_code_block_buttons(false)
         })
         .ok();
 
@@ -768,7 +755,12 @@ impl InfoPopover {
         cx.notify();
         self.scroll_handle.set_offset(current);
     }
+<<<<<<< HEAD
     fn render_vertical_scrollbar(&self, cx: &mut ModelContext<Editor>) -> Stateful<Div> {
+=======
+
+    fn render_vertical_scrollbar(&self, cx: &mut ViewContext<Editor>) -> Stateful<Div> {
+>>>>>>> main
         div()
             .occlude()
             .id("info-popover-vertical-scroll")
@@ -805,8 +797,12 @@ impl InfoPopover {
 #[derive(Debug, Clone)]
 pub struct DiagnosticPopover {
     local_diagnostic: DiagnosticEntry<Anchor>,
+<<<<<<< HEAD
     primary_diagnostic: Option<DiagnosticEntry<Anchor>>,
     parsed_content: Option<Model<Markdown>>,
+=======
+    parsed_content: Option<View<Markdown>>,
+>>>>>>> main
     border_color: Option<Hsla>,
     background_color: Option<Hsla>,
     pub keyboard_grace: Rc<RefCell<bool>>,
@@ -859,13 +855,8 @@ impl DiagnosticPopover {
         diagnostic_div.into_any_element()
     }
 
-    pub fn activation_info(&self) -> (usize, Anchor) {
-        let entry = self
-            .primary_diagnostic
-            .as_ref()
-            .unwrap_or(&self.local_diagnostic);
-
-        (entry.diagnostic.group_id, entry.range.start)
+    pub fn group_id(&self) -> usize {
+        self.local_diagnostic.diagnostic.group_id
     }
 }
 

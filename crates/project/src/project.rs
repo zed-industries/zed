@@ -2,6 +2,7 @@ pub mod buffer_store;
 mod color_extractor;
 pub mod connection_manager;
 pub mod debounced_delay;
+pub mod git;
 pub mod image_store;
 pub mod lsp_command;
 pub mod lsp_ext_command;
@@ -24,6 +25,7 @@ pub use environment::EnvironmentErrorMessage;
 pub mod search_history;
 mod yarn;
 
+use crate::git::GitState;
 use anyhow::{anyhow, Context as _, Result};
 use buffer_store::{BufferChangeSet, BufferStore, BufferStoreEvent};
 use client::{proto, Client, Collaborator, PendingEntitySubscription, TypedEnvelope, UserStore};
@@ -39,7 +41,11 @@ use futures::{
 pub use image_store::{ImageItem, ImageStore};
 use image_store::{ImageItemEvent, ImageStoreEvent};
 
-use git::{blame::Blame, repository::GitRepository};
+use ::git::{
+    blame::Blame,
+    repository::{Branch, GitRepository},
+    status::FileStatus,
+};
 use gpui::{
     AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context as _, EventEmitter, Hsla,
     Model, ModelContext, SharedString, Task, WeakModel, Window,
@@ -56,6 +62,7 @@ use lsp::{
     LanguageServerId, LanguageServerName, MessageActionItem,
 };
 use lsp_command::*;
+use lsp_store::LspFormatTarget;
 use node_runtime::NodeRuntime;
 use parking_lot::Mutex;
 pub use prettier_store::PrettierStore;
@@ -75,6 +82,7 @@ use std::{
     borrow::Cow,
     ops::Range,
     path::{Component, Path, PathBuf},
+    pin::pin,
     str,
     sync::Arc,
     time::Duration,
@@ -95,9 +103,8 @@ pub use task_inventory::{
     BasicContextProvider, ContextProviderWithTasks, Inventory, TaskSourceKind,
 };
 pub use worktree::{
-    Entry, EntryKind, File, LocalWorktree, PathChange, ProjectEntryId, RepositoryEntry,
-    UpdatedEntriesSet, UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings,
-    FS_WATCH_LATENCY,
+    Entry, EntryKind, File, LocalWorktree, PathChange, ProjectEntryId, UpdatedEntriesSet,
+    UpdatedGitRepositoriesSet, Worktree, WorktreeId, WorktreeSettings, FS_WATCH_LATENCY,
 };
 
 pub use buffer_store::ProjectTransaction;
@@ -147,6 +154,7 @@ pub struct Project {
     fs: Arc<dyn Fs>,
     ssh_client: Option<Model<SshRemoteClient>>,
     client_state: ProjectClientState,
+    git_state: Option<Model<GitState>>,
     collaborators: HashMap<proto::PeerId, Collaborator>,
     client_subscriptions: Vec<client::Subscription>,
     worktree_store: Model<WorktreeStore>,
@@ -301,6 +309,14 @@ impl ProjectPath {
             path: Path::new("").into(),
         }
     }
+}
+
+#[derive(Debug, Default)]
+pub enum PrepareRenameResponse {
+    Success(Range<Anchor>),
+    OnlyUnpreparedRenameSupported,
+    #[default]
+    InvalidPosition,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -677,6 +693,9 @@ impl Project {
                     cx,
                 )
             });
+
+            let git_state = Some(cx.new_model(|cx| GitState::new(cx)));
+
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
             Self {
@@ -688,6 +707,7 @@ impl Project {
                 lsp_store,
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
+                git_state,
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![cx.on_release(Self::release)],
                 active_entry: None,
@@ -806,6 +826,7 @@ impl Project {
                 lsp_store,
                 join_project_response_message_id: 0,
                 client_state: ProjectClientState::Local,
+                git_state: None,
                 client_subscriptions: Vec::new(),
                 _subscriptions: vec![
                     cx.on_release(Self::release),
@@ -1037,6 +1058,7 @@ impl Project {
                     remote_id,
                     replica_id,
                 },
+                git_state: None,
                 buffers_needing_diff: Default::default(),
                 git_diff_debouncer: DebouncedDelay::new(),
                 terminals: Terminals {
@@ -1432,6 +1454,15 @@ impl Project {
                     .is_some_and(|e| e.id == entry_id)
             })
             .unwrap_or(false)
+    }
+
+    pub fn project_path_git_status(
+        &self,
+        project_path: &ProjectPath,
+        cx: &AppContext,
+    ) -> Option<FileStatus> {
+        self.worktree_for_id(project_path.worktree_id, cx)
+            .and_then(|worktree| worktree.read(cx).status_for_file(&project_path.path))
     }
 
     pub fn visibility_for_paths(&self, paths: &[PathBuf], cx: &AppContext) -> Option<bool> {
@@ -2622,13 +2653,13 @@ impl Project {
     pub fn format(
         &mut self,
         buffers: HashSet<Model<Buffer>>,
+        target: LspFormatTarget,
         push_to_history: bool,
         trigger: lsp_store::FormatTrigger,
-        target: lsp_store::FormatTarget,
         cx: &mut ModelContext<Project>,
     ) -> Task<anyhow::Result<ProjectTransaction>> {
         self.lsp_store.update(cx, |lsp_store, cx| {
-            lsp_store.format(buffers, push_to_history, trigger, target, cx)
+            lsp_store.format(buffers, target, push_to_history, trigger, cx)
         })
     }
 
@@ -2896,7 +2927,7 @@ impl Project {
         buffer: Model<Buffer>,
         position: PointUtf16,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<Range<Anchor>>>> {
+    ) -> Task<Result<PrepareRenameResponse>> {
         self.request_lsp(
             buffer,
             LanguageServerToQuery::Primary,
@@ -2909,19 +2940,19 @@ impl Project {
         buffer: Model<Buffer>,
         position: T,
         cx: &mut ModelContext<Self>,
-    ) -> Task<Result<Option<Range<Anchor>>>> {
+    ) -> Task<Result<PrepareRenameResponse>> {
         let position = position.to_point_utf16(buffer.read(cx));
         self.prepare_rename_impl(buffer, position, cx)
     }
 
-    fn perform_rename_impl(
+    pub fn perform_rename<T: ToPointUtf16>(
         &mut self,
         buffer: Model<Buffer>,
-        position: PointUtf16,
+        position: T,
         new_name: String,
-        push_to_history: bool,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<ProjectTransaction>> {
+        let push_to_history = true;
         let position = position.to_point_utf16(buffer.read(cx));
         self.request_lsp(
             buffer,
@@ -2933,17 +2964,6 @@ impl Project {
             },
             cx,
         )
-    }
-
-    pub fn perform_rename<T: ToPointUtf16>(
-        &mut self,
-        buffer: Model<Buffer>,
-        position: T,
-        new_name: String,
-        cx: &mut ModelContext<Self>,
-    ) -> Task<Result<ProjectTransaction>> {
-        let position = position.to_point_utf16(buffer.read(cx));
-        self.perform_rename_impl(buffer, position, new_name, true, cx)
     }
 
     pub fn on_type_format<T: ToPointUtf16>(
@@ -3008,6 +3028,7 @@ impl Project {
             // 64 buffers at a time to avoid overwhelming the main thread. For each
             // opened buffer, we will spawn a background task that retrieves all the
             // ranges in the buffer matched by the query.
+            let mut chunks = pin!(chunks);
             'outer: while let Some(matching_buffer_chunk) = chunks.next().await {
                 let mut chunk_results = Vec::new();
                 for buffer in matching_buffer_chunk {
@@ -3517,17 +3538,6 @@ impl Project {
         )
     }
 
-    pub fn get_repo(
-        &self,
-        project_path: &ProjectPath,
-        cx: &AppContext,
-    ) -> Option<Arc<dyn GitRepository>> {
-        self.worktree_for_id(project_path.worktree_id, cx)?
-            .read(cx)
-            .as_local()?
-            .local_git_repo(&project_path.path)
-    }
-
     pub fn get_first_worktree_root_repo(&self, cx: &AppContext) -> Option<Arc<dyn GitRepository>> {
         let worktree = self.visible_worktrees(cx).next()?.read(cx).as_local()?;
         let root_entry = worktree.root_git_entry()?;
@@ -3538,7 +3548,7 @@ impl Project {
         &self,
         project_path: ProjectPath,
         cx: &AppContext,
-    ) -> Task<Result<Vec<git::repository::Branch>>> {
+    ) -> Task<Result<Vec<Branch>>> {
         self.worktree_store().read(cx).branches(project_path, cx)
     }
 
@@ -3748,6 +3758,7 @@ impl Project {
         // next `flush_effects()` call.
         drop(this);
 
+        let mut rx = pin!(rx);
         let answer = rx.next().await;
 
         Ok(LanguageServerPromptResponse {
@@ -3889,7 +3900,7 @@ impl Project {
                 .query
                 .ok_or_else(|| anyhow!("missing query field"))?,
         )?;
-        let mut results = this.update(&mut cx, |this, cx| {
+        let results = this.update(&mut cx, |this, cx| {
             this.find_search_candidate_buffers(&query, message.limit as _, cx)
         })?;
 
@@ -3897,7 +3908,7 @@ impl Project {
             buffer_ids: Vec::new(),
         };
 
-        while let Some(buffer) = results.next().await {
+        while let Ok(buffer) = results.recv().await {
             this.update(&mut cx, |this, cx| {
                 let buffer_id = this.create_buffer_for_peer(&buffer, peer_id, cx);
                 response.buffer_ids.push(buffer_id.to_proto());
@@ -4144,14 +4155,6 @@ impl Project {
         self.lsp_store.read(cx).supplementary_language_servers()
     }
 
-    pub fn language_server_for_id(
-        &self,
-        id: LanguageServerId,
-        cx: &AppContext,
-    ) -> Option<Arc<LanguageServer>> {
-        self.lsp_store.read(cx).language_server_for_id(id)
-    }
-
     pub fn language_servers_for_local_buffer<'a>(
         &'a self,
         buffer: &'a Buffer,
@@ -4164,6 +4167,10 @@ impl Project {
 
     pub fn buffer_store(&self) -> &Model<BufferStore> {
         &self.buffer_store
+    }
+
+    pub fn git_state(&self) -> Option<&Model<GitState>> {
+        self.git_state.as_ref()
     }
 }
 
@@ -4427,8 +4434,10 @@ impl Completion {
     }
 }
 
-pub fn sort_worktree_entries(entries: &mut [Entry]) {
+pub fn sort_worktree_entries(entries: &mut [impl AsRef<Entry>]) {
     entries.sort_by(|entry_a, entry_b| {
+        let entry_a = entry_a.as_ref();
+        let entry_b = entry_b.as_ref();
         compare_paths(
             (&entry_a.path, entry_a.is_file()),
             (&entry_b.path, entry_b.is_file()),

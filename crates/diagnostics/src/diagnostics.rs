@@ -14,7 +14,6 @@ use editor::{
     scroll::Autoscroll,
     Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
-use feature_flags::FeatureFlagAppExt;
 use gpui::{
     actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
     Focusable, Global, HighlightStyle, InteractiveElement, IntoElement, Model, ModelContext,
@@ -95,6 +94,7 @@ impl Render for ProjectDiagnosticsEditor {
     fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let child = if self.path_states.is_empty() {
             div()
+                .key_context("EmptyPane")
                 .bg(cx.theme().colors().editor_background)
                 .flex()
                 .items_center()
@@ -106,10 +106,8 @@ impl Render for ProjectDiagnosticsEditor {
         };
 
         div()
+            .key_context("Diagnostics")
             .track_focus(&self.focus_handle(cx))
-            .when(self.path_states.is_empty(), |el| {
-                el.key_context("EmptyPane")
-            })
             .size_full()
             .on_action(cx.listener(Self::toggle_warnings))
             .child(child)
@@ -904,27 +902,46 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
 
         h_flex()
             .id(DIAGNOSTIC_HEADER)
+            .block_mouse_down()
+            .h(2. * cx.line_height())
             .w_full()
-            .relative()
-            .child(
-                div()
-                    .top(px(0.))
-                    .absolute()
-                    .w_full()
-                    .h_px()
-                    .bg(color.border_variant),
-            )
+            .px_9()
+            .justify_between()
+            .gap_2()
             .child(
                 h_flex()
+<<<<<<< HEAD
                     .block_mouse_down()
                     .h(2. * cx.window.line_height())
                     .pl_10()
                     .pr_5()
                     .w_full()
                     .justify_between()
+=======
+>>>>>>> main
                     .gap_2()
+                    .px_1()
+                    .rounded_md()
+                    .bg(color.surface_background.opacity(0.5))
+                    .map(|stack| {
+                        stack.child(
+                            svg()
+                                .size(cx.text_style().font_size)
+                                .flex_none()
+                                .map(|icon| {
+                                    if diagnostic.severity == DiagnosticSeverity::ERROR {
+                                        icon.path(IconName::XCircle.path())
+                                            .text_color(Color::Error.color(cx))
+                                    } else {
+                                        icon.path(IconName::Warning.path())
+                                            .text_color(Color::Warning.color(cx))
+                                    }
+                                }),
+                        )
+                    })
                     .child(
                         h_flex()
+<<<<<<< HEAD
                             .gap_3()
                             .map(|stack| {
                                 stack.child(
@@ -969,10 +986,33 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                                 div()
                                     .child(SharedString::from(source.clone()))
                                     .text_color(cx.theme().colors().text_muted),
+=======
+                            .gap_1()
+                            .child(
+                                StyledText::new(message.clone()).with_highlights(
+                                    &cx.text_style(),
+                                    code_ranges
+                                        .iter()
+                                        .map(|range| (range.clone(), highlight_style)),
+                                ),
+>>>>>>> main
                             )
-                        },
-                    )),
+                            .when_some(diagnostic.code.as_ref(), |stack, code| {
+                                stack.child(
+                                    div()
+                                        .child(SharedString::from(format!("({code})")))
+                                        .text_color(color.text_muted),
+                                )
+                            }),
+                    ),
             )
+            .when_some(diagnostic.source.as_ref(), |stack, source| {
+                stack.child(
+                    div()
+                        .child(SharedString::from(source.clone()))
+                        .text_color(color.text_muted),
+                )
+            })
             .into_any_element()
     })
 }
@@ -1010,18 +1050,16 @@ fn context_range_for_entry(
     snapshot: &BufferSnapshot,
     cx: &AppContext,
 ) -> Range<Point> {
-    if cx.is_staff() {
-        if let Some(rows) = heuristic_syntactic_expand(
-            entry.range.clone(),
-            DIAGNOSTIC_EXPANSION_ROW_LIMIT,
-            snapshot,
-            cx,
-        ) {
-            return Range {
-                start: Point::new(*rows.start(), 0),
-                end: snapshot.clip_point(Point::new(*rows.end(), u32::MAX), Bias::Left),
-            };
-        }
+    if let Some(rows) = heuristic_syntactic_expand(
+        entry.range.clone(),
+        DIAGNOSTIC_EXPANSION_ROW_LIMIT,
+        snapshot,
+        cx,
+    ) {
+        return Range {
+            start: Point::new(*rows.start(), 0),
+            end: snapshot.clip_point(Point::new(*rows.end(), u32::MAX), Bias::Left),
+        };
     }
     Range {
         start: Point::new(entry.range.start.row.saturating_sub(context), 0),

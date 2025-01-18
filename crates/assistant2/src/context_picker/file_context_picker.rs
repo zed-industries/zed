@@ -1,20 +1,24 @@
-use std::fmt::Write as _;
-use std::ops::RangeInclusive;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use file_icons::FileIcons;
 use fuzzy::PathMatch;
+<<<<<<< HEAD
 use gpui::{AppContext, DismissEvent, FocusHandle, Focusable, Model, Task, WeakModel};
+=======
+use gpui::{
+    AppContext, DismissEvent, FocusHandle, FocusableView, Stateful, Task, View, WeakModel, WeakView,
+};
+>>>>>>> main
 use picker::{Picker, PickerDelegate};
-use project::{PathMatchCandidateSet, WorktreeId};
-use ui::{prelude::*, ListItem};
+use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
+use ui::{prelude::*, ListItem, Tooltip};
 use util::ResultExt as _;
 use workspace::Workspace;
 
-use crate::context::ContextKind;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
-use crate::context_store::ContextStore;
+use crate::context_store::{ContextStore, FileInclusion};
 
 pub struct FileContextPicker {
     picker: Model<Picker<FileContextPickerDelegate>>,
@@ -213,16 +217,24 @@ impl PickerDelegate for FileContextPickerDelegate {
             return;
         };
 
-        let workspace = self.workspace.clone();
-        let Some(project) = workspace
-            .upgrade()
-            .map(|workspace| workspace.read(cx).project().clone())
+        let project_path = ProjectPath {
+            worktree_id: WorktreeId::from_usize(mat.worktree_id),
+            path: mat.path.clone(),
+        };
+
+        let Some(task) = self
+            .context_store
+            .update(cx, |context_store, cx| {
+                context_store.add_file_from_path(project_path, cx)
+            })
+            .ok()
         else {
             return;
         };
-        let path = mat.path.clone();
-        let worktree_id = WorktreeId::from_usize(mat.worktree_id);
+
+        let workspace = self.workspace.clone();
         let confirm_behavior = self.confirm_behavior;
+<<<<<<< HEAD
         cx.spawn_in(window, |this, mut cx| async move {
             let Some(open_buffer_task) = project
                 .update(&mut cx, |project, cx| {
@@ -258,10 +270,26 @@ impl PickerDelegate for FileContextPickerDelegate {
                 match confirm_behavior {
                     ConfirmBehavior::KeepOpen => {}
                     ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
+=======
+        cx.spawn(|this, mut cx| async move {
+            match task.await {
+                Ok(()) => {
+                    this.update(&mut cx, |this, cx| match confirm_behavior {
+                        ConfirmBehavior::KeepOpen => {}
+                        ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                    })?;
+>>>>>>> main
                 }
+                Err(err) => {
+                    let Some(workspace) = workspace.upgrade() else {
+                        return anyhow::Ok(());
+                    };
 
-                anyhow::Ok(())
-            })??;
+                    workspace.update(&mut cx, |workspace, cx| {
+                        workspace.show_error(&err, cx);
+                    })?;
+                }
+            }
 
             anyhow::Ok(())
         })
@@ -270,8 +298,7 @@ impl PickerDelegate for FileContextPickerDelegate {
 
     fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         self.context_picker
-            .update(cx, |this, cx| {
-                this.reset_mode();
+            .update(cx, |_, cx| {
                 cx.emit(DismissEvent);
             })
             .ok();
@@ -281,68 +308,106 @@ impl PickerDelegate for FileContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
+<<<<<<< HEAD
         _window: &mut Window,
         _cx: &mut ModelContext<Picker<Self>>,
+=======
+        cx: &mut ViewContext<Picker<Self>>,
+>>>>>>> main
     ) -> Option<Self::ListItem> {
         let path_match = &self.matches[ix];
 
-        let (file_name, directory) = if path_match.path.as_ref() == Path::new("") {
-            (SharedString::from(path_match.path_prefix.clone()), None)
-        } else {
-            let file_name = path_match
-                .path
-                .file_name()
-                .unwrap_or_default()
-                .to_string_lossy()
-                .to_string()
-                .into();
-
-            let mut directory = format!("{}/", path_match.path_prefix);
-            if let Some(parent) = path_match
-                .path
-                .parent()
-                .filter(|parent| parent != &Path::new(""))
-            {
-                directory.push_str(&parent.to_string_lossy());
-                directory.push('/');
-            }
-
-            (file_name, Some(directory))
-        };
-
         Some(
-            ListItem::new(ix).inset(true).toggle_state(selected).child(
-                h_flex()
-                    .gap_2()
-                    .child(Label::new(file_name))
-                    .children(directory.map(|directory| {
-                        Label::new(directory)
-                            .size(LabelSize::Small)
-                            .color(Color::Muted)
-                    })),
-            ),
+            ListItem::new(ix)
+                .inset(true)
+                .toggle_state(selected)
+                .child(render_file_context_entry(
+                    ElementId::NamedInteger("file-ctx-picker".into(), ix),
+                    &path_match.path,
+                    &path_match.path_prefix,
+                    self.context_store.clone(),
+                    cx,
+                )),
         )
     }
 }
 
-fn codeblock_fence_for_path(path: Option<&Path>, row_range: Option<RangeInclusive<u32>>) -> String {
-    let mut text = String::new();
-    write!(text, "```").unwrap();
+pub fn render_file_context_entry(
+    id: ElementId,
+    path: &Path,
+    path_prefix: &Arc<str>,
+    context_store: WeakModel<ContextStore>,
+    cx: &WindowContext,
+) -> Stateful<Div> {
+    let (file_name, directory) = if path == Path::new("") {
+        (SharedString::from(path_prefix.clone()), None)
+    } else {
+        let file_name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
+            .into();
 
-    if let Some(path) = path {
-        if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
-            write!(text, "{} ", extension).unwrap();
+        let mut directory = format!("{}/", path_prefix);
+
+        if let Some(parent) = path.parent().filter(|parent| parent != &Path::new("")) {
+            directory.push_str(&parent.to_string_lossy());
+            directory.push('/');
         }
 
-        write!(text, "{}", path.display()).unwrap();
-    } else {
-        write!(text, "untitled").unwrap();
-    }
+        (file_name, Some(directory))
+    };
 
-    if let Some(row_range) = row_range {
-        write!(text, ":{}-{}", row_range.start() + 1, row_range.end() + 1).unwrap();
-    }
+    let added = context_store
+        .upgrade()
+        .and_then(|context_store| context_store.read(cx).will_include_file_path(path, cx));
 
-    text.push('\n');
-    text
+    let file_icon = FileIcons::get_icon(&path, cx)
+        .map(Icon::from_path)
+        .unwrap_or_else(|| Icon::new(IconName::File));
+
+    h_flex()
+        .id(id)
+        .gap_1()
+        .w_full()
+        .child(file_icon.size(IconSize::Small))
+        .child(
+            h_flex()
+                .gap_2()
+                .child(Label::new(file_name))
+                .children(directory.map(|directory| {
+                    Label::new(directory)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                })),
+        )
+        .child(div().w_full())
+        .when_some(added, |el, added| match added {
+            FileInclusion::Direct(_) => el.child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::Check)
+                            .size(IconSize::Small)
+                            .color(Color::Success),
+                    )
+                    .child(Label::new("Added").size(LabelSize::Small)),
+            ),
+            FileInclusion::InDirectory(dir_name) => {
+                let dir_name = dir_name.to_string_lossy().into_owned();
+
+                el.child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Icon::new(IconName::Check)
+                                .size(IconSize::Small)
+                                .color(Color::Success),
+                        )
+                        .child(Label::new("Included").size(LabelSize::Small)),
+                )
+                .tooltip(move |cx| Tooltip::text(format!("in {dir_name}"), cx))
+            }
+        })
 }

@@ -1,10 +1,10 @@
 [package]
 name = "gpui"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 authors = ["Nathan Sobo <nathan@zed.dev>"]
 description = "Zed's GPU-accelerated UI framework"
-publish = false
+publish.workspace = true
 license = "Apache-2.0"
 
 [lints]
@@ -118,12 +118,12 @@ util = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 unicode-segmentation.workspace = true
 
-[build-dependencies]
+[target.'cfg(target_os = "windows")'.build-dependencies]
 embed-resource = "3.0"
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
 bindgen = "0.70.0"
-cbindgen = { version = "0.27.0", default-features = false }
+cbindgen = { version = "0.28.0", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"
@@ -148,7 +148,7 @@ pathfinder_geometry = "0.5"
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 # Always used
 flume = "0.11"
-oo7 = "0.3.0"
+oo7 = { git = "https://github.com/zed-industries/oo7", branch = "avoid-crypto-panic" }
 
 # Used in both windowing options
 ashpd = { workspace = true, optional = true }

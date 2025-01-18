@@ -13,6 +13,7 @@ use gpui::{
 };
 use parking_lot::Mutex;
 use project::Project;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
@@ -723,7 +724,7 @@ impl PaneAxis {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, JsonSchema)]
 pub enum SplitDirection {
     Up,
     Down,
@@ -806,7 +807,7 @@ impl SplitDirection {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema, PartialEq)]
 pub enum ResizeIntent {
     Lengthen,
     Shorten,

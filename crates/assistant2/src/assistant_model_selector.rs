@@ -1,24 +1,35 @@
+use assistant_settings::AssistantSettings;
 use fs::Fs;
+<<<<<<< HEAD
 use gpui::{Focusable, Model};
+=======
+use gpui::{FocusHandle, View};
+>>>>>>> main
 use language_model::LanguageModelRegistry;
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use settings::update_settings_file;
 use std::sync::Arc;
 use ui::{prelude::*, ButtonLike, PopoverMenuHandle, Tooltip};
 
-use crate::{assistant_settings::AssistantSettings, ToggleModelSelector};
+use crate::ToggleModelSelector;
 
 pub struct AssistantModelSelector {
     selector: Model<LanguageModelSelector>,
     menu_handle: PopoverMenuHandle<LanguageModelSelector>,
+    focus_handle: FocusHandle,
 }
 
 impl AssistantModelSelector {
     pub(crate) fn new(
         fs: Arc<dyn Fs>,
         menu_handle: PopoverMenuHandle<LanguageModelSelector>,
+<<<<<<< HEAD
         window: &mut Window,
         cx: &mut AppContext,
+=======
+        focus_handle: FocusHandle,
+        cx: &mut WindowContext,
+>>>>>>> main
     ) -> Self {
         Self {
             selector: cx.new_model(|cx| {
@@ -36,6 +47,7 @@ impl AssistantModelSelector {
                 )
             }),
             menu_handle,
+            focus_handle,
         }
     }
 }
@@ -43,7 +55,7 @@ impl AssistantModelSelector {
 impl Render for AssistantModelSelector {
     fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let active_model = LanguageModelRegistry::read_global(cx).active_model();
-        let focus_handle = self.selector.focus_handle(cx).clone();
+        let focus_handle = self.focus_handle.clone();
 
         LanguageModelSelectorPopoverMenu::new(
             self.selector.clone(),
@@ -51,7 +63,6 @@ impl Render for AssistantModelSelector {
                 .style(ButtonStyle::Subtle)
                 .child(
                     h_flex()
-                        .w_full()
                         .gap_0p5()
                         .child(
                             div()

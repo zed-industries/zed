@@ -44,6 +44,8 @@ actions!(
         InsertLineAbove,
         InsertLineBelow,
         InsertAtPrevious,
+        JoinLines,
+        JoinLinesNoWhitespace,
         DeleteLeft,
         DeleteRight,
         ChangeToEndOfLine,
@@ -53,7 +55,6 @@ actions!(
         ChangeCase,
         ConvertToUpperCase,
         ConvertToLowerCase,
-        JoinLines,
         ToggleComments,
         Undo,
         Redo,
@@ -109,6 +110,7 @@ pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelC
             cx,
         );
     });
+<<<<<<< HEAD
     Vim::action(editor, cx, |vim, _: &JoinLines, window, cx| {
         vim.record_current_action(cx);
         let mut times = Vim::take_count(cx).unwrap_or(1);
@@ -129,6 +131,14 @@ pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelC
         if vim.mode.is_visual() {
             vim.switch_mode(Mode::Normal, true, window, cx)
         }
+=======
+    Vim::action(editor, cx, |vim, _: &JoinLines, cx| {
+        vim.join_lines_impl(true, cx);
+    });
+
+    Vim::action(editor, cx, |vim, _: &JoinLinesNoWhitespace, cx| {
+        vim.join_lines_impl(false, cx);
+>>>>>>> main
     });
 
     Vim::action(editor, cx, |vim, _: &Undo, window, cx| {
@@ -180,6 +190,7 @@ impl Vim {
             Some(Operator::AutoIndent) => {
                 self.indent_motion(motion, times, IndentDirection::Auto, window, cx)
             }
+            Some(Operator::ShellCommand) => self.shell_command_motion(motion, times, cx),
             Some(Operator::Lowercase) => {
                 self.change_case_motion(motion, times, CaseTarget::Lowercase, window, cx)
             }
@@ -222,7 +233,14 @@ impl Vim {
                 Some(Operator::AutoIndent) => {
                     self.indent_object(object, around, IndentDirection::Auto, window, cx)
                 }
+<<<<<<< HEAD
                 Some(Operator::Rewrap) => self.rewrap_object(object, around, window, cx),
+=======
+                Some(Operator::ShellCommand) => {
+                    self.shell_command_object(object, around, cx);
+                }
+                Some(Operator::Rewrap) => self.rewrap_object(object, around, cx),
+>>>>>>> main
                 Some(Operator::Lowercase) => {
                     self.change_case_object(object, around, CaseTarget::Lowercase, window, cx)
                 }
@@ -444,7 +462,33 @@ impl Vim {
         });
     }
 
+<<<<<<< HEAD
     fn yank_line(&mut self, _: &YankLine, window: &mut Window, cx: &mut ModelContext<Self>) {
+=======
+    fn join_lines_impl(&mut self, insert_whitespace: bool, cx: &mut ViewContext<Self>) {
+        self.record_current_action(cx);
+        let mut times = Vim::take_count(cx).unwrap_or(1);
+        if self.mode.is_visual() {
+            times = 1;
+        } else if times > 1 {
+            // 2J joins two lines together (same as J or 1J)
+            times -= 1;
+        }
+
+        self.update_editor(cx, |_, editor, cx| {
+            editor.transact(cx, |editor, cx| {
+                for _ in 0..times {
+                    editor.join_lines_impl(insert_whitespace, cx)
+                }
+            })
+        });
+        if self.mode.is_visual() {
+            self.switch_mode(Mode::Normal, true, cx)
+        }
+    }
+
+    fn yank_line(&mut self, _: &YankLine, cx: &mut ViewContext<Self>) {
+>>>>>>> main
         let count = Vim::take_count(cx);
         self.yank_motion(motion::Motion::CurrentLine, count, window, cx)
     }

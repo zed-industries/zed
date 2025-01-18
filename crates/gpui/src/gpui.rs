@@ -102,7 +102,9 @@ mod window;
 /// Do not touch, here be dragons for use by gpui_macros and such.
 #[doc(hidden)]
 pub mod private {
+    pub use anyhow;
     pub use linkme;
+    pub use schemars;
     pub use serde;
     pub use serde_derive;
     pub use serde_json;

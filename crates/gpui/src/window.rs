@@ -1618,9 +1618,26 @@ impl Window {
             }
         }
 
+<<<<<<< HEAD
         self.with_absolute_element_offset(tooltip_bounds.origin, |window| {
             element.prepaint(window, cx)
         });
+=======
+        // Element's parent can get hidden (e.g. via the `visible_on_hover` method),
+        // and element's `paint` won't be called (ergo, mouse listeners also won't be active) to detect that the tooltip has to be removed.
+        // Ensure it's not stuck around in such cases.
+        let invalidate_tooltip = !tooltip_request
+            .tooltip
+            .origin_bounds
+            .contains(&self.mouse_position())
+            && (!tooltip_request.tooltip.hoverable
+                || !tooltip_bounds.contains(&self.mouse_position()));
+        if invalidate_tooltip {
+            return None;
+        }
+
+        self.with_absolute_element_offset(tooltip_bounds.origin, |cx| element.prepaint(cx));
+>>>>>>> main
 
         self.tooltip_bounds = Some(TooltipBounds {
             id: tooltip_request.id,
@@ -3047,7 +3064,8 @@ impl Window {
         false
     }
 
-    /// Represent this action as a key binding string, to display in the UI.
+    /// Return a key binding string for an action, to display in the UI. Uses the highest precedence
+    /// binding for the action (last binding added to the keymap).
     pub fn keystroke_text_for(&self, action: &dyn Action) -> String {
         self.bindings_for_action(action)
             .into_iter()
@@ -3691,19 +3709,30 @@ impl Window {
         actions
     }
 
-    /// Returns key bindings that invoke the given action on the currently focused element.
+    /// Returns key bindings that invoke an action on the currently focused element, in precedence
+    /// order (reverse of the order they were added to the keymap).
     pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
         self.rendered_frame
             .dispatch_tree
             .bindings_for_action(action, &self.rendered_frame.dispatch_tree.context_stack)
     }
 
+<<<<<<< HEAD
     /// Returns key bindings that invoke the given action on the currently focused element.
     pub fn all_bindings_for_input(&self, input: &[Keystroke], cx: &AppContext) -> Vec<KeyBinding> {
         RefCell::borrow(&cx.keymap).all_bindings_for_input(input)
+=======
+    /// Returns key bindings that invoke the given action on the currently focused element, without
+    /// checking context. Bindings are returned returned in precedence order (reverse of the order
+    /// they were added to the keymap).
+    pub fn all_bindings_for_input(&self, input: &[Keystroke]) -> Vec<KeyBinding> {
+        RefCell::borrow(&self.keymap).all_bindings_for_input(input)
+>>>>>>> main
     }
 
-    /// Returns any bindings that would invoke the given action on the given focus handle if it were focused.
+    /// Returns any bindings that would invoke an action on the given focus handle if it were
+    /// focused. Bindings are returned returned in precedence order (reverse of the order
+    /// they were added to the keymap).
     pub fn bindings_for_action_in(
         &self,
         action: &dyn Action,
@@ -4012,6 +4041,8 @@ pub enum ElementId {
     FocusHandle(FocusId),
     /// A combination of a name and an integer.
     NamedInteger(SharedString, usize),
+    /// A path
+    Path(Arc<std::path::Path>),
 }
 
 impl Display for ElementId {
@@ -4023,6 +4054,7 @@ impl Display for ElementId {
             ElementId::FocusHandle(_) => write!(f, "FocusHandle")?,
             ElementId::NamedInteger(s, i) => write!(f, "{}-{}", s, i)?,
             ElementId::Uuid(uuid) => write!(f, "{}", uuid)?,
+            ElementId::Path(path) => write!(f, "{}", path.display())?,
         }
 
         Ok(())
@@ -4056,6 +4088,12 @@ impl From<i32> for ElementId {
 impl From<SharedString> for ElementId {
     fn from(name: SharedString) -> Self {
         ElementId::Name(name)
+    }
+}
+
+impl From<Arc<std::path::Path>> for ElementId {
+    fn from(path: Arc<std::path::Path>) -> Self {
+        ElementId::Path(path)
     }
 }
 

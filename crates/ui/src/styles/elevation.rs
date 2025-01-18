@@ -22,12 +22,8 @@ pub enum ElevationIndex {
     EditorSurface,
     /// A surface that is elevated above the primary surface. but below washes, models, and dragged elements.
     ElevatedSurface,
-    /// A surface that is above all non-modal surfaces, and separates the app from focused intents, like dialogs, alerts, modals, etc.
-    Wash,
     /// A surface above the [ElevationIndex::Wash] that is used for dialogs, alerts, modals, etc.
     ModalSurface,
-    /// A surface above all other surfaces, reserved exclusively for dragged elements, like a dragged file, tab or other draggable element.
-    DraggedElement,
 }
 
 impl Display for ElevationIndex {
@@ -37,9 +33,7 @@ impl Display for ElevationIndex {
             ElevationIndex::Surface => write!(f, "Surface"),
             ElevationIndex::EditorSurface => write!(f, "Editor Surface"),
             ElevationIndex::ElevatedSurface => write!(f, "Elevated Surface"),
-            ElevationIndex::Wash => write!(f, "Wash"),
             ElevationIndex::ModalSurface => write!(f, "Modal Surface"),
-            ElevationIndex::DraggedElement => write!(f, "Dragged Element"),
         }
     }
 }
@@ -90,9 +84,31 @@ impl ElevationIndex {
             ElevationIndex::Surface => cx.theme().colors().surface_background,
             ElevationIndex::EditorSurface => cx.theme().colors().editor_background,
             ElevationIndex::ElevatedSurface => cx.theme().colors().elevated_surface_background,
-            ElevationIndex::Wash => gpui::transparent_black(),
             ElevationIndex::ModalSurface => cx.theme().colors().elevated_surface_background,
-            ElevationIndex::DraggedElement => gpui::transparent_black(),
+        }
+    }
+
+    /// Returns a color that is appropriate a filled element on this elevation
+    pub fn on_elevation_bg(&self, cx: &WindowContext) -> Hsla {
+        match self {
+            ElevationIndex::Background => cx.theme().colors().surface_background,
+            ElevationIndex::Surface => cx.theme().colors().background,
+            ElevationIndex::EditorSurface => cx.theme().colors().surface_background,
+            ElevationIndex::ElevatedSurface => cx.theme().colors().background,
+            ElevationIndex::ModalSurface => cx.theme().colors().background,
+        }
+    }
+
+    /// Attempts to return a darker background color than the current elevation index's background.
+    ///
+    /// If the current background color is already dark, it will return a lighter color instead.
+    pub fn darker_bg(&self, cx: &WindowContext) -> Hsla {
+        match self {
+            ElevationIndex::Background => cx.theme().colors().surface_background,
+            ElevationIndex::Surface => cx.theme().colors().editor_background,
+            ElevationIndex::EditorSurface => cx.theme().colors().surface_background,
+            ElevationIndex::ElevatedSurface => cx.theme().colors().editor_background,
+            ElevationIndex::ModalSurface => cx.theme().colors().editor_background,
         }
     }
 }

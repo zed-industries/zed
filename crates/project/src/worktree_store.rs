@@ -1,5 +1,6 @@
 use std::{
     path::{Path, PathBuf},
+    pin::pin,
     sync::{atomic::AtomicUsize, Arc},
 };
 
@@ -322,6 +323,7 @@ impl WorktreeStore {
             let worktree = Worktree::local(path.clone(), visible, fs, next_entry_id, &mut cx).await;
 
             let worktree = worktree?;
+
             this.update(&mut cx, |this, cx| this.add(&worktree, cx))?;
 
             if visible {
@@ -583,11 +585,11 @@ impl WorktreeStore {
     pub fn shared(
         &mut self,
         remote_id: u64,
-        downsteam_client: AnyProtoClient,
+        downstream_client: AnyProtoClient,
         cx: &mut ModelContext<Self>,
     ) {
         self.retain_worktrees = true;
-        self.downstream_client = Some((downsteam_client, remote_id));
+        self.downstream_client = Some((downstream_client, remote_id));
 
         // When shared, retain all worktrees
         for worktree_handle in self.worktrees.iter_mut() {
@@ -647,7 +649,7 @@ impl WorktreeStore {
         // We spawn a number of workers that take items from the filter channel and check the query
         // against the version of the file on disk.
         let (filter_tx, filter_rx) = smol::channel::bounded(64);
-        let (output_tx, mut output_rx) = smol::channel::bounded(64);
+        let (output_tx, output_rx) = smol::channel::bounded(64);
         let (matching_paths_tx, matching_paths_rx) = smol::channel::unbounded();
 
         let input = cx.background_executor().spawn({
@@ -684,7 +686,7 @@ impl WorktreeStore {
         cx.background_executor()
             .spawn(async move {
                 let mut matched = 0;
-                while let Some(mut receiver) = output_rx.next().await {
+                while let Ok(mut receiver) = output_rx.recv().await {
                     let Some(path) = receiver.next().await else {
                         continue;
                     };
@@ -989,6 +991,7 @@ impl WorktreeStore {
         mut input: Receiver<MatchingEntry>,
         query: &SearchQuery,
     ) -> Result<()> {
+        let mut input = pin!(input);
         while let Some(mut entry) = input.next().await {
             let abs_path = entry.worktree_path.join(&entry.path.path);
             let Some(file) = fs.open_sync(&abs_path).await.log_err() else {

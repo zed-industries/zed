@@ -1,8 +1,15 @@
 use crate::{
+<<<<<<< HEAD
     ActiveTooltip, AnyTooltip, AnyView, AppContext, Bounds, DispatchPhase, Element, ElementId,
     GlobalElementId, HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent,
     MouseUpEvent, Pixels, Point, SharedString, Size, TextRun, TextStyle, Truncate, WhiteSpace,
     Window, WrappedLine, TOOLTIP_DELAY,
+=======
+    ActiveTooltip, AnyTooltip, AnyView, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
+    HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
+    Pixels, Point, SharedString, Size, TextRun, TextStyle, Truncate, WhiteSpace, WindowContext,
+    WrappedLine, WrappedLineLayout, TOOLTIP_DELAY,
+>>>>>>> main
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
@@ -455,6 +462,36 @@ impl TextLayout {
         None
     }
 
+    /// Retrieve the layout for the line containing the given byte index.
+    pub fn line_layout_for_index(&self, index: usize) -> Option<Arc<WrappedLineLayout>> {
+        let element_state = self.lock();
+        let element_state = element_state
+            .as_ref()
+            .expect("measurement has not been performed");
+        let bounds = element_state
+            .bounds
+            .expect("prepaint has not been performed");
+        let line_height = element_state.line_height;
+
+        let mut line_origin = bounds.origin;
+        let mut line_start_ix = 0;
+
+        for line in &element_state.lines {
+            let line_end_ix = line_start_ix + line.len();
+            if index < line_start_ix {
+                break;
+            } else if index > line_end_ix {
+                line_origin.y += line.size(line_height).height;
+                line_start_ix = line_end_ix + 1;
+                continue;
+            } else {
+                return Some(line.layout.clone());
+            }
+        }
+
+        None
+    }
+
     /// The bounds of this layout.
     pub fn bounds(&self) -> Bounds<Pixels> {
         self.0.lock().as_ref().unwrap().bounds.unwrap()
@@ -693,6 +730,7 @@ impl Element for InteractiveText {
 
                 if let Some(tooltip_builder) = self.tooltip_builder.clone() {
                     let hitbox = hitbox.clone();
+                    let source_bounds = hitbox.bounds;
                     let active_tooltip = interactive_state.active_tooltip.clone();
                     let pending_mouse_down = interactive_state.mouse_down_index.clone();
                     let text_layout = text_layout.clone();
@@ -719,6 +757,7 @@ impl Element for InteractiveText {
 
                                 move |mut cx| async move {
                                     cx.background_executor().timer(TOOLTIP_DELAY).await;
+<<<<<<< HEAD
                                     cx.update(|window, cx| {
                                         let new_tooltip = tooltip_builder(position, window, cx)
                                             .map(|tooltip| ActiveTooltip {
@@ -727,6 +766,20 @@ impl Element for InteractiveText {
                                                     mouse_position: window.mouse_position(),
                                                 }),
                                                 _task: None,
+=======
+                                    cx.update(|cx| {
+                                        let new_tooltip =
+                                            tooltip_builder(position, cx).map(|tooltip| {
+                                                ActiveTooltip {
+                                                    tooltip: Some(AnyTooltip {
+                                                        view: tooltip,
+                                                        mouse_position: cx.mouse_position(),
+                                                        hoverable: true,
+                                                        origin_bounds: source_bounds,
+                                                    }),
+                                                    _task: None,
+                                                }
+>>>>>>> main
                                             });
                                         *active_tooltip.borrow_mut() = new_tooltip;
                                         window.refresh();

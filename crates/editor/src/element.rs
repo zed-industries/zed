@@ -6,7 +6,7 @@ use crate::{
     },
     editor_settings::{
         CurrentLineHighlight, DoubleClickInMultibuffer, MultiCursorModifier, ScrollBeyondLastLine,
-        ShowScrollbar,
+        ScrollbarDiagnostics, ShowScrollbar,
     },
     git::blame::{CommitDetails, GitBlame},
     hover_popover::{
@@ -45,7 +45,7 @@ use language::{
         IndentGuideBackgroundColoring, IndentGuideColoring, IndentGuideSettings,
         ShowWhitespaceSetting,
     },
-    ChunkRendererContext,
+    ChunkRendererContext, DiagnosticEntry,
 };
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
@@ -73,7 +73,7 @@ use ui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 use util::{RangeExt, ResultExt};
-use workspace::{item::Item, Workspace};
+use workspace::{item::Item, notifications::NotifyTaskExt, Workspace};
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -327,6 +327,7 @@ impl EditorElement {
                 .go_to_definition_split(a, window, cx)
                 .detach_and_log_err(cx);
         });
+<<<<<<< HEAD
         register_action(view, window, |editor, a, window, cx| {
             editor
                 .go_to_declaration(a, window, cx)
@@ -399,51 +400,134 @@ impl EditorElement {
         register_action(view, window, |editor, action, window, cx| {
             if let Some(task) = editor.format(action, window, cx) {
                 task.detach_and_log_err(cx);
+=======
+        register_action(view, cx, Editor::open_url);
+        register_action(view, cx, Editor::open_selected_filename);
+        register_action(view, cx, Editor::fold);
+        register_action(view, cx, Editor::fold_at_level);
+        register_action(view, cx, Editor::fold_all);
+        register_action(view, cx, Editor::fold_function_bodies);
+        register_action(view, cx, Editor::fold_at);
+        register_action(view, cx, Editor::fold_recursive);
+        register_action(view, cx, Editor::toggle_fold);
+        register_action(view, cx, Editor::toggle_fold_recursive);
+        register_action(view, cx, Editor::unfold_lines);
+        register_action(view, cx, Editor::unfold_recursive);
+        register_action(view, cx, Editor::unfold_all);
+        register_action(view, cx, Editor::unfold_at);
+        register_action(view, cx, Editor::fold_selected_ranges);
+        register_action(view, cx, Editor::show_completions);
+        register_action(view, cx, Editor::toggle_code_actions);
+        register_action(view, cx, Editor::open_excerpts);
+        register_action(view, cx, Editor::open_excerpts_in_split);
+        register_action(view, cx, Editor::open_proposed_changes_editor);
+        register_action(view, cx, Editor::toggle_soft_wrap);
+        register_action(view, cx, Editor::toggle_tab_bar);
+        register_action(view, cx, Editor::toggle_line_numbers);
+        register_action(view, cx, Editor::toggle_relative_line_numbers);
+        register_action(view, cx, Editor::toggle_indent_guides);
+        register_action(view, cx, Editor::toggle_inlay_hints);
+        register_action(view, cx, Editor::toggle_inline_completions);
+        register_action(view, cx, hover_popover::hover);
+        register_action(view, cx, Editor::reveal_in_finder);
+        register_action(view, cx, Editor::copy_path);
+        register_action(view, cx, Editor::copy_relative_path);
+        register_action(view, cx, Editor::copy_highlight_json);
+        register_action(view, cx, Editor::copy_permalink_to_line);
+        register_action(view, cx, Editor::open_permalink_to_line);
+        register_action(view, cx, Editor::copy_file_location);
+        register_action(view, cx, Editor::toggle_git_blame);
+        register_action(view, cx, Editor::toggle_git_blame_inline);
+        register_action(view, cx, Editor::toggle_hunk_diff);
+        register_action(view, cx, Editor::expand_all_hunk_diffs);
+        register_action(view, cx, |editor, action, cx| {
+            if let Some(task) = editor.format(action, cx) {
+                task.detach_and_notify_err(cx);
+>>>>>>> main
             } else {
                 cx.propagate();
             }
         });
+<<<<<<< HEAD
         register_action(view, window, |editor, action, window, cx| {
             if let Some(task) = editor.format_selections(action, window, cx) {
                 task.detach_and_log_err(cx);
+=======
+        register_action(view, cx, |editor, action, cx| {
+            if let Some(task) = editor.format_selections(action, cx) {
+                task.detach_and_notify_err(cx);
+>>>>>>> main
             } else {
                 cx.propagate();
             }
         });
+<<<<<<< HEAD
         register_action(view, window, Editor::restart_language_server);
         register_action(view, window, Editor::cancel_language_server_work);
         register_action(view, window, Editor::show_character_palette);
         register_action(view, window, |editor, action, window, cx| {
             if let Some(task) = editor.confirm_completion(action, window, cx) {
                 task.detach_and_log_err(cx);
+=======
+        register_action(view, cx, Editor::restart_language_server);
+        register_action(view, cx, Editor::cancel_language_server_work);
+        register_action(view, cx, Editor::show_character_palette);
+        register_action(view, cx, |editor, action, cx| {
+            if let Some(task) = editor.confirm_completion(action, cx) {
+                task.detach_and_notify_err(cx);
+>>>>>>> main
             } else {
                 cx.propagate();
             }
         });
+<<<<<<< HEAD
         register_action(view, window, |editor, action, window, cx| {
             if let Some(task) = editor.compose_completion(action, window, cx) {
                 task.detach_and_log_err(cx);
+=======
+        register_action(view, cx, |editor, action, cx| {
+            if let Some(task) = editor.compose_completion(action, cx) {
+                task.detach_and_notify_err(cx);
+>>>>>>> main
             } else {
                 cx.propagate();
             }
         });
+<<<<<<< HEAD
         register_action(view, window, |editor, action, window, cx| {
             if let Some(task) = editor.confirm_code_action(action, window, cx) {
                 task.detach_and_log_err(cx);
+=======
+        register_action(view, cx, |editor, action, cx| {
+            if let Some(task) = editor.confirm_code_action(action, cx) {
+                task.detach_and_notify_err(cx);
+>>>>>>> main
             } else {
                 cx.propagate();
             }
         });
+<<<<<<< HEAD
         register_action(view, window, |editor, action, window, cx| {
             if let Some(task) = editor.rename(action, window, cx) {
                 task.detach_and_log_err(cx);
+=======
+        register_action(view, cx, |editor, action, cx| {
+            if let Some(task) = editor.rename(action, cx) {
+                task.detach_and_notify_err(cx);
+>>>>>>> main
             } else {
                 cx.propagate();
             }
         });
+<<<<<<< HEAD
         register_action(view, window, |editor, action, window, cx| {
             if let Some(task) = editor.confirm_rename(action, window, cx) {
                 task.detach_and_log_err(cx);
+=======
+        register_action(view, cx, |editor, action, cx| {
+            if let Some(task) = editor.confirm_rename(action, cx) {
+                task.detach_and_notify_err(cx);
+>>>>>>> main
             } else {
                 cx.propagate();
             }
@@ -533,9 +617,14 @@ impl EditorElement {
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
         gutter_hitbox: &Hitbox,
+<<<<<<< HEAD
         line_numbers: &HashMap<MultiBufferRow, (ShapedLine, Option<Hitbox>)>,
         window: &mut Window,
         cx: &mut ModelContext<Editor>,
+=======
+        line_numbers: &HashMap<MultiBufferRow, LineNumberLayout>,
+        cx: &mut ViewContext<Editor>,
+>>>>>>> main
     ) {
         if window.default_prevented() {
             return;
@@ -567,8 +656,33 @@ impl EditorElement {
                         // and run the selection logic.
                         modifiers.alt = false;
                     } else {
+                        let scroll_position_row =
+                            position_map.scroll_pixel_position.y / position_map.line_height;
+                        let display_row = (((event.position - gutter_hitbox.bounds.origin).y
+                            + position_map.scroll_pixel_position.y)
+                            / position_map.line_height)
+                            as u32;
+                        let multi_buffer_row = position_map
+                            .snapshot
+                            .display_point_to_point(
+                                DisplayPoint::new(DisplayRow(display_row), 0),
+                                Bias::Right,
+                            )
+                            .row;
+                        let line_offset_from_top = display_row - scroll_position_row as u32;
                         // if double click is made without alt, open the corresponding excerp
+<<<<<<< HEAD
                         editor.open_excerpts(&OpenExcerpts, window, cx);
+=======
+                        editor.open_excerpts_common(
+                            Some(JumpData::MultiBufferRow {
+                                row: MultiBufferRow(multi_buffer_row),
+                                line_offset_from_top,
+                            }),
+                            false,
+                            cx,
+                        );
+>>>>>>> main
                         return;
                     }
                 }
@@ -624,6 +738,7 @@ impl EditorElement {
                 .snapshot
                 .display_point_to_point(DisplayPoint::new(DisplayRow(display_row), 0), Bias::Right)
                 .row;
+<<<<<<< HEAD
             if let Some((_, Some(hitbox))) = line_numbers.get(&MultiBufferRow(multi_buffer_row)) {
                 if hitbox.contains(&event.position) {
                     editor.open_excerpts_common(
@@ -634,6 +749,26 @@ impl EditorElement {
                     );
                     cx.stop_propagation();
                 }
+=======
+            if line_numbers
+                .get(&MultiBufferRow(multi_buffer_row))
+                .and_then(|line_number| line_number.hitbox.as_ref())
+                .is_some_and(|hitbox| hitbox.contains(&event.position))
+            {
+                let scroll_position_row =
+                    position_map.scroll_pixel_position.y / position_map.line_height;
+                let line_offset_from_top = display_row - scroll_position_row as u32;
+
+                editor.open_excerpts_common(
+                    Some(JumpData::MultiBufferRow {
+                        row: MultiBufferRow(multi_buffer_row),
+                        line_offset_from_top,
+                    }),
+                    modifiers.alt,
+                    cx,
+                );
+                cx.stop_propagation();
+>>>>>>> main
             }
         }
     }
@@ -1275,7 +1410,7 @@ impl EditorElement {
                     (is_singleton && scrollbar_settings.selected_symbol && (editor.has_background_highlights::<DocumentHighlightRead>() || editor.has_background_highlights::<DocumentHighlightWrite>()))
                     ||
                     // Diagnostics
-                    (is_singleton && scrollbar_settings.diagnostics && snapshot.buffer_snapshot.has_diagnostics())
+                    (is_singleton && scrollbar_settings.diagnostics != ScrollbarDiagnostics::None && snapshot.buffer_snapshot.has_diagnostics())
                     ||
                     // Cursors out of sight
                     non_visible_cursors
@@ -2063,12 +2198,16 @@ impl EditorElement {
         scroll_position: gpui::Point<f32>,
         rows: Range<DisplayRow>,
         buffer_rows: impl Iterator<Item = Option<MultiBufferRow>>,
-        active_rows: &BTreeMap<DisplayRow, bool>,
         newest_selection_head: Option<DisplayPoint>,
         snapshot: &EditorSnapshot,
+<<<<<<< HEAD
         window: &mut Window,
         cx: &mut AppContext,
     ) -> Arc<HashMap<MultiBufferRow, (ShapedLine, Option<Hitbox>)>> {
+=======
+        cx: &mut WindowContext,
+    ) -> Arc<HashMap<MultiBufferRow, LineNumberLayout>> {
+>>>>>>> main
         let include_line_numbers = snapshot.show_line_numbers.unwrap_or_else(|| {
             EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode == EditorMode::Full
         });
@@ -2106,19 +2245,15 @@ impl EditorElement {
             .enumerate()
             .flat_map(|(ix, buffer_row)| {
                 let buffer_row = buffer_row?;
-                let display_row = DisplayRow(rows.start.0 + ix as u32);
-                let color = if active_rows.contains_key(&display_row) {
-                    cx.theme().colors().editor_active_line_number
-                } else {
-                    cx.theme().colors().editor_line_number
-                };
                 line_number.clear();
-                let default_number = buffer_row.0 + 1;
+                let display_row = DisplayRow(rows.start.0 + ix as u32);
+                let non_relative_number = buffer_row.0 + 1;
                 let number = relative_rows
-                    .get(&DisplayRow(ix as u32 + rows.start.0))
-                    .unwrap_or(&default_number);
+                    .get(&display_row)
+                    .unwrap_or(&non_relative_number);
                 write!(&mut line_number, "{number}").unwrap();
 
+                let color = cx.theme().colors().editor_line_number;
                 let shaped_line = self
                     .shape_line_number(SharedString::from(&line_number), color, window)
                     .log_err()?;
@@ -2146,7 +2281,12 @@ impl EditorElement {
 
                 let multi_buffer_row = DisplayPoint::new(display_row, 0).to_point(snapshot).row;
                 let multi_buffer_row = MultiBufferRow(multi_buffer_row);
-                Some((multi_buffer_row, (shaped_line, hitbox)))
+                let line_number = LineNumberLayout {
+                    shaped_line,
+                    hitbox,
+                    display_row,
+                };
+                Some((multi_buffer_row, line_number))
             })
             .collect();
         Arc::new(line_numbers)
@@ -3054,7 +3194,12 @@ impl EditorElement {
         window: &mut Window,
         cx: &mut AppContext,
     ) -> AnyElement {
-        let jump_data = header_jump_data(snapshot, DisplayRow(0), FILE_HEADER_HEIGHT, excerpt);
+        let jump_data = header_jump_data(
+            snapshot,
+            DisplayRow(scroll_position as u32),
+            FILE_HEADER_HEIGHT + MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+            excerpt,
+        );
 
         let editor_bg_color = cx.theme().colors().editor_background;
 
@@ -4052,17 +4197,36 @@ impl EditorElement {
         let line_height = layout.position_map.line_height;
         window.set_cursor_style(CursorStyle::Arrow, &layout.gutter_hitbox);
 
-        for (_, (line, hitbox)) in layout.line_numbers.iter() {
+        for LineNumberLayout {
+            shaped_line,
+            hitbox,
+            display_row,
+        } in layout.line_numbers.values()
+        {
             let Some(hitbox) = hitbox else {
                 continue;
             };
+<<<<<<< HEAD
             let color = if !is_singleton && hitbox.is_hovered(window) {
+=======
+
+            let is_active = layout.active_rows.contains_key(&display_row);
+
+            let color = if is_active {
+>>>>>>> main
                 cx.theme().colors().editor_active_line_number
+            } else if !is_singleton && hitbox.is_hovered(cx) {
+                cx.theme().colors().editor_hover_line_number
             } else {
                 cx.theme().colors().editor_line_number
             };
+
             let Some(line) = self
+<<<<<<< HEAD
                 .shape_line_number(line.text.clone(), color, window)
+=======
+                .shape_line_number(shaped_line.text.clone(), color, cx)
+>>>>>>> main
                 .log_err()
             else {
                 continue;
@@ -4070,7 +4234,17 @@ impl EditorElement {
             let Some(()) = line.paint(hitbox.origin, line_height, window, cx).log_err() else {
                 continue;
             };
+<<<<<<< HEAD
             window.set_cursor_style(CursorStyle::PointingHand, hitbox);
+=======
+            // In singleton buffers, we select corresponding lines on the line number click, so use | -like cursor.
+            // In multi buffers, we open file at the line number clicked, so use a pointing hand cursor.
+            if is_singleton {
+                cx.set_cursor_style(CursorStyle::IBeam, hitbox);
+            } else {
+                cx.set_cursor_style(CursorStyle::PointingHand, hitbox);
+            }
+>>>>>>> main
         }
     }
 
@@ -4878,13 +5052,39 @@ impl EditorElement {
                                 }
                             }
 
-                            if scrollbar_settings.diagnostics {
+                            if scrollbar_settings.diagnostics != ScrollbarDiagnostics::None {
                                 let diagnostics = snapshot
                                     .buffer_snapshot
-                                    .diagnostics_in_range::<_, Point>(
-                                        Point::zero()..max_point,
-                                        false,
-                                    )
+                                    .diagnostics_in_range(Point::zero()..max_point, false)
+                                    .map(|DiagnosticEntry { diagnostic, range }| DiagnosticEntry {
+                                        diagnostic,
+                                        range: range.to_point(&snapshot.buffer_snapshot),
+                                    })
+                                    // Don't show diagnostics the user doesn't care about
+                                    .filter(|diagnostic| {
+                                        match (
+                                            scrollbar_settings.diagnostics,
+                                            diagnostic.diagnostic.severity,
+                                        ) {
+                                            (ScrollbarDiagnostics::All, _) => true,
+                                            (
+                                                ScrollbarDiagnostics::Error,
+                                                DiagnosticSeverity::ERROR,
+                                            ) => true,
+                                            (
+                                                ScrollbarDiagnostics::Warning,
+                                                DiagnosticSeverity::ERROR
+                                                | DiagnosticSeverity::WARNING,
+                                            ) => true,
+                                            (
+                                                ScrollbarDiagnostics::Information,
+                                                DiagnosticSeverity::ERROR
+                                                | DiagnosticSeverity::WARNING
+                                                | DiagnosticSeverity::INFORMATION,
+                                            ) => true,
+                                            (_, _) => false,
+                                        }
+                                    })
                                     // We want to sort by severity, in order to paint the most severe diagnostics last.
                                     .sorted_by_key(|diagnostic| {
                                         std::cmp::Reverse(diagnostic.diagnostic.severity)
@@ -5292,13 +5492,12 @@ fn header_jump_data(
     let offset_from_excerpt_start = if jump_anchor == excerpt_start {
         0
     } else {
-        let excerpt_start_row = language::ToPoint::to_point(&jump_anchor, buffer).row;
+        let excerpt_start_row = language::ToPoint::to_point(&excerpt_start, buffer).row;
         jump_position.row - excerpt_start_row
     };
 
-    let line_offset_from_top = block_row_start.0
-        + height
-        + offset_from_excerpt_start.saturating_sub(
+    let line_offset_from_top = (block_row_start.0 + height + offset_from_excerpt_start)
+        .saturating_sub(
             snapshot
                 .scroll_anchor
                 .scroll_position(&snapshot.display_snapshot)
@@ -5753,21 +5952,21 @@ impl LineWithInvisibles {
                                     });
                                 }
                             } else {
-                                invisibles.extend(
-                                    line_chunk
-                                        .bytes()
-                                        .enumerate()
-                                        .filter(|(_, line_byte)| {
-                                            let is_whitespace =
-                                                (*line_byte as char).is_whitespace();
-                                            non_whitespace_added |= !is_whitespace;
-                                            is_whitespace
-                                                && (non_whitespace_added || !is_soft_wrapped)
-                                        })
-                                        .map(|(whitespace_index, _)| Invisible::Whitespace {
-                                            line_offset: line.len() + whitespace_index,
-                                        }),
-                                )
+                                invisibles.extend(line_chunk.char_indices().filter_map(
+                                    |(index, c)| {
+                                        let is_whitespace = c.is_whitespace();
+                                        non_whitespace_added |= !is_whitespace;
+                                        if is_whitespace
+                                            && (non_whitespace_added || !is_soft_wrapped)
+                                        {
+                                            Some(Invisible::Whitespace {
+                                                line_offset: line.len() + index,
+                                            })
+                                        } else {
+                                            None
+                                        }
+                                    },
+                                ))
                             }
                         }
 
@@ -6456,7 +6655,6 @@ impl Element for EditorElement {
                         scroll_position,
                         start_row..end_row,
                         buffer_rows.iter().copied(),
-                        &active_rows,
                         newest_selection_head,
                         &snapshot,
                         window,
@@ -7203,7 +7401,7 @@ pub struct EditorLayout {
     active_rows: BTreeMap<DisplayRow, bool>,
     highlighted_rows: BTreeMap<DisplayRow, Hsla>,
     line_elements: SmallVec<[AnyElement; 1]>,
-    line_numbers: Arc<HashMap<MultiBufferRow, (ShapedLine, Option<Hitbox>)>>,
+    line_numbers: Arc<HashMap<MultiBufferRow, LineNumberLayout>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_blame: Option<AnyElement>,
@@ -7229,6 +7427,12 @@ impl EditorLayout {
     fn line_end_overshoot(&self) -> Pixels {
         0.15 * self.position_map.line_height
     }
+}
+
+struct LineNumberLayout {
+    shaped_line: ShapedLine,
+    hitbox: Option<Hitbox>,
+    display_row: DisplayRow,
 }
 
 struct ColoredRange<T> {
@@ -7881,7 +8085,6 @@ mod tests {
                     gpui::Point::default(),
                     DisplayRow(0)..DisplayRow(6),
                     (0..6).map(MultiBufferRow).map(Some),
-                    &Default::default(),
                     Some(DisplayPoint::new(DisplayRow(0), 0)),
                     &snapshot,
                     window,
@@ -8138,7 +8341,7 @@ mod tests {
             state
                 .line_numbers
                 .get(&MultiBufferRow(0))
-                .and_then(|(line, _)| line.text.as_str()),
+                .and_then(|line_number| line_number.shaped_line.text.as_str()),
             Some("1")
         );
     }

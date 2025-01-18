@@ -2,7 +2,12 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use editor::Editor;
+<<<<<<< HEAD
 use gpui::{impl_actions, AppContext, Keystroke, KeystrokeEvent, ModelContext, Window};
+=======
+use gpui::{impl_actions, AppContext, Keystroke, KeystrokeEvent};
+use schemars::JsonSchema;
+>>>>>>> main
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::LazyLock;
@@ -11,7 +16,7 @@ use crate::{state::Operator, Vim, VimSettings};
 
 mod default;
 
-#[derive(PartialEq, Clone, Deserialize)]
+#[derive(Debug, Clone, Deserialize, JsonSchema, PartialEq)]
 struct Literal(String, char);
 impl_actions!(vim, [Literal]);
 

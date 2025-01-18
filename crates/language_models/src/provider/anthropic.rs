@@ -52,6 +52,8 @@ pub struct AvailableModel {
     pub cache_configuration: Option<LanguageModelCacheConfiguration>,
     pub max_output_tokens: Option<u32>,
     pub default_temperature: Option<f32>,
+    #[serde(default)]
+    pub extra_beta_headers: Vec<String>,
 }
 
 pub struct AnthropicLanguageModelProvider {
@@ -202,6 +204,7 @@ impl LanguageModelProvider for AnthropicLanguageModelProvider {
                     }),
                     max_output_tokens: model.max_output_tokens,
                     default_temperature: model.default_temperature,
+                    extra_beta_headers: model.extra_beta_headers.clone(),
                 },
             );
         }

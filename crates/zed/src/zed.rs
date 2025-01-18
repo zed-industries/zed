@@ -12,7 +12,6 @@ pub(crate) mod windows_only_instance;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
-use assistant::PromptBuilder;
 use breadcrumbs::Breadcrumbs;
 use client::{zed_urls, ZED_URL_SCHEME};
 use collections::VecDeque;
@@ -20,6 +19,7 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt;
+use futures::FutureExt;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
     actions, point, px, AppContext, AsyncAppContext, Context, Focusable, MenuItem, Model,
@@ -31,20 +31,21 @@ use outline_panel::OutlinePanel;
 use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
 use project::{DirectoryLister, ProjectItem};
 use project_panel::ProjectPanel;
+use prompt_library::PromptBuilder;
 use quick_action_bar::QuickActionBar;
 use recent_projects::open_ssh_project;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    initial_project_settings_content, initial_tasks_content, KeymapFile, Settings, SettingsStore,
-    DEFAULT_KEYMAP_PATH,
+    initial_project_settings_content, initial_tasks_content, update_settings_file, KeymapFile,
+    Settings, SettingsStore, DEFAULT_KEYMAP_PATH, VIM_KEYMAP_PATH,
 };
 use std::any::TypeId;
 use std::path::PathBuf;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
-use theme::ActiveTheme;
+use theme::{ActiveTheme, ThemeSettings};
 use util::{asset_str, ResultExt};
 use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
@@ -156,8 +157,8 @@ pub fn initialize_workspace(
         })
         .detach();
 
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        initialize_linux_file_watcher(cx);
+        #[cfg(not(target_os = "macos"))]
+        initialize_file_watcher(cx);
 
         if let Some(specs) = window.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);
@@ -242,8 +243,13 @@ fn feature_gate_zed_pro_actions(cx: &mut AppContext) {
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
+<<<<<<< HEAD
 fn initialize_linux_file_watcher(window: &mut Window, cx: &mut ModelContext<Workspace>) {
     if let Err(e) = fs::linux_watcher::global(|_| {}) {
+=======
+fn initialize_file_watcher(cx: &mut ViewContext<Workspace>) {
+    if let Err(e) = fs::fs_watcher::global(|_| {}) {
+>>>>>>> main
         let message = format!(
             db::indoc! {r#"
             inotify_init returned {}
@@ -263,6 +269,36 @@ fn initialize_linux_file_watcher(window: &mut Window, cx: &mut ModelContext<Work
                 cx.update(|cx| {
                     cx.open_url("https://zed.dev/docs/linux#could-not-start-inotify");
                     cx.quit();
+                })
+                .ok();
+            }
+        })
+        .detach()
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn initialize_file_watcher(cx: &mut ViewContext<Workspace>) {
+    if let Err(e) = fs::fs_watcher::global(|_| {}) {
+        let message = format!(
+            db::indoc! {r#"
+            ReadDirectoryChangesW initialization failed: {}
+
+            This may occur on network filesystems and WSL paths. For troubleshooting see: https://zed.dev/docs/windows
+            "#},
+            e
+        );
+        let prompt = cx.prompt(
+            PromptLevel::Critical,
+            "Could not start ReadDirectoryChangesW",
+            Some(&message),
+            &["Troubleshoot and Quit"],
+        );
+        cx.spawn(|_, mut cx| async move {
+            if prompt.await == Ok(0) {
+                cx.update(|cx| {
+                    cx.open_url("https://zed.dev/docs/windows");
+                    cx.quit()
                 })
                 .ok();
             }
@@ -362,7 +398,16 @@ fn initialize_panels(
             workspace.add_panel(assistant_panel, window, cx)
         })?;
 
-        let git_ui_enabled = git_ui_feature_flag.await;
+        let git_ui_enabled = {
+            let mut git_ui_feature_flag = git_ui_feature_flag.fuse();
+            let mut timeout =
+                FutureExt::fuse(smol::Timer::after(std::time::Duration::from_secs(5)));
+
+            select_biased! {
+                is_git_ui_enabled = git_ui_feature_flag => is_git_ui_enabled,
+                _ = timeout => false,
+            }
+        };
         let git_panel = if git_ui_enabled {
             Some(git_ui::git_panel::GitPanel::load(workspace_handle.clone(), cx.clone()).await?)
         } else {
@@ -377,7 +422,14 @@ fn initialize_panels(
         let is_assistant2_enabled = if cfg!(test) {
             false
         } else {
-            assistant2_feature_flag.await
+            let mut assistant2_feature_flag = assistant2_feature_flag.fuse();
+            let mut timeout =
+                FutureExt::fuse(smol::Timer::after(std::time::Duration::from_secs(5)));
+
+            select_biased! {
+                is_assistant2_enabled = assistant2_feature_flag => is_assistant2_enabled,
+                _ = timeout => false,
+            }
         };
         let assistant2_panel = if is_assistant2_enabled {
             Some(assistant2::AssistantPanel::load(workspace_handle.clone(), cx.clone()).await?)
@@ -421,11 +473,16 @@ fn register_actions(
         .register_action(|_, action: &OpenZedUrl, _, cx| {
             OpenListener::global(cx).open_urls(vec![action.url.clone()])
         })
+<<<<<<< HEAD
         .register_action(|_, action: &OpenBrowser, _, cx| cx.open_url(&action.url))
         .register_action(move |_, _: &zed_actions::IncreaseBufferFontSize, _, cx| {
             theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
         })
         .register_action(|workspace, _: &workspace::Open, window, cx| {
+=======
+        .register_action(|_, action: &OpenBrowser, cx| cx.open_url(&action.url))
+        .register_action(|workspace, _: &workspace::Open, cx| {
+>>>>>>> main
             workspace
                 .client()
                 .telemetry()
@@ -461,6 +518,7 @@ fn register_actions(
             })
             .detach()
         })
+<<<<<<< HEAD
         .register_action(move |_, _: &zed_actions::DecreaseBufferFontSize, _, cx| {
             theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
         })
@@ -484,6 +542,70 @@ fn register_actions(
         })
         .register_action(move |_, _: &zed_actions::ResetBufferFontSize, _, cx| {
             theme::reset_buffer_font_size(cx)
+=======
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, _: &zed_actions::IncreaseUiFontSize, cx| {
+                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
+                    let buffer_font_size = ThemeSettings::clamp_font_size(
+                        ThemeSettings::get_global(cx).ui_font_size + px(1.),
+                    );
+
+                    let _ = settings.ui_font_size.insert(buffer_font_size.into());
+                });
+            }
+        })
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, _: &zed_actions::DecreaseUiFontSize, cx| {
+                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
+                    let buffer_font_size = ThemeSettings::clamp_font_size(
+                        ThemeSettings::get_global(cx).ui_font_size - px(1.),
+                    );
+
+                    let _ = settings.ui_font_size.insert(buffer_font_size.into());
+                });
+            }
+        })
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, _: &zed_actions::ResetUiFontSize, cx| {
+                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, _| {
+                    let _ = settings.ui_font_size.take();
+                });
+            }
+        })
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, _: &zed_actions::IncreaseBufferFontSize, cx| {
+                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
+                    let buffer_font_size = ThemeSettings::clamp_font_size(
+                        ThemeSettings::get_global(cx).buffer_font_size() + px(1.),
+                    );
+
+                    let _ = settings.buffer_font_size.insert(buffer_font_size.into());
+                });
+            }
+        })
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
+                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
+                    let buffer_font_size = ThemeSettings::clamp_font_size(
+                        ThemeSettings::get_global(cx).buffer_font_size() - px(1.),
+                    );
+                    let _ = settings.buffer_font_size.insert(buffer_font_size.into());
+                });
+            }
+        })
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, _: &zed_actions::ResetBufferFontSize, cx| {
+                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, _| {
+                    let _ = settings.buffer_font_size.take();
+                });
+            }
+>>>>>>> main
         })
         .register_action(install_cli)
         .register_action(|_, _: &install_cli::RegisterZedScheme, window, cx| {
@@ -1049,7 +1171,7 @@ pub fn load_default_keymap(cx: &mut AppContext) {
 
     KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap();
     if VimModeSetting::get_global(cx).0 {
-        KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
+        KeymapFile::load_asset(VIM_KEYMAP_PATH, cx).unwrap();
     }
 
     if let Some(asset_path) = base_keymap.asset_path() {
@@ -3626,6 +3748,73 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         assert_key_bindings_for(workspace.into(), cx, vec![("6", &Deploy)], line!());
+    }
+
+    #[gpui::test]
+    async fn test_generate_keymap_json_schema_for_registered_actions(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_keymap_test(cx);
+        cx.update(|cx| {
+            // Make sure it doesn't panic.
+            KeymapFile::generate_json_schema_for_registered_actions(cx);
+        });
+    }
+
+    /// Actions that don't build from empty input won't work from command palette invocation.
+    #[gpui::test]
+    async fn test_actions_build_with_empty_input(cx: &mut gpui::TestAppContext) {
+        init_keymap_test(cx);
+        cx.update(|cx| {
+            let all_actions = cx.all_action_names();
+            let mut failing_names = Vec::new();
+            let mut errors = Vec::new();
+            for action in all_actions {
+                match action.to_string().as_str() {
+                    "vim::FindCommand"
+                    | "vim::Literal"
+                    | "vim::ResizePane"
+                    | "vim::SwitchMode"
+                    | "vim::PushOperator"
+                    | "vim::Number"
+                    | "vim::SelectRegister"
+                    | "terminal::SendText"
+                    | "terminal::SendKeystroke"
+                    | "app_menu::OpenApplicationMenu"
+                    | "app_menu::NavigateApplicationMenuInDirection"
+                    | "picker::ConfirmInput"
+                    | "editor::HandleInput"
+                    | "editor::FoldAtLevel"
+                    | "pane::ActivateItem"
+                    | "workspace::ActivatePane"
+                    | "workspace::ActivatePaneInDirection"
+                    | "workspace::MoveItemToPane"
+                    | "workspace::MoveItemToPaneInDirection"
+                    | "workspace::OpenTerminal"
+                    | "workspace::SwapPaneInDirection"
+                    | "workspace::SendKeystrokes"
+                    | "zed::OpenBrowser"
+                    | "zed::OpenZedUrl" => {}
+                    _ => {
+                        let result = cx.build_action(action, None);
+                        match &result {
+                            Ok(_) => {}
+                            Err(err) => {
+                                failing_names.push(action);
+                                errors.push(format!("{action} failed to build: {err:?}"));
+                            }
+                        }
+                    }
+                }
+            }
+            if errors.len() > 0 {
+                panic!(
+                    "Failed to build actions using {{}} as input: {:?}. Errors:\n{}",
+                    failing_names,
+                    errors.join("\n")
+                );
+            }
+        });
     }
 
     #[gpui::test]

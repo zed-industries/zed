@@ -534,7 +534,7 @@ List of `string` values
   "git_diff": true,
   "search_results": true,
   "selected_symbol": true,
-  "diagnostics": true,
+  "diagnostics": "all",
   "axes": {
     "horizontal": true,
     "vertical": true,
@@ -624,13 +624,51 @@ List of `string` values
 
 ### Diagnostics
 
-- Description: Whether to show diagnostic indicators in the scrollbar.
+- Description: Which diagnostic indicators to show in the scrollbar.
 - Setting: `diagnostics`
-- Default: `true`
+- Default: `all`
 
 **Options**
 
-`boolean` values
+1. Show all diagnostics:
+
+```json
+{
+  "diagnostics": "all"
+}
+```
+
+2. Do not show any diagnostics:
+
+```json
+{
+  "diagnostics": "none"
+}
+```
+
+3. Show only errors:
+
+```json
+{
+  "diagnostics": "error"
+}
+```
+
+4. Show only errors and warnings:
+
+```json
+{
+  "diagnostics": "warning"
+}
+```
+
+5. Show only errors, warnings, and information:
+
+```json
+{
+  "diagnostics": "information"
+}
+```
 
 ### Axes
 
@@ -958,10 +996,12 @@ WARNING: `{buffer_path}` should not be used to direct your formatter to read fro
 ```json
 {
   "formatter": [
-    {"language_server": {"name": "rust-analyzer"}},
-    {"external": {
-      "command": "sed",
-      "arguments": ["-e", "s/ *$//"]
+    { "language_server": { "name": "rust-analyzer" } },
+    {
+      "external": {
+        "command": "sed",
+        "arguments": ["-e", "s/ *$//"]
+      }
     }
   ]
 }
@@ -2224,6 +2264,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "button": true,
     "default_width": 240,
     "dock": "left",
+    "entry_spacing": "comfortable",
     "file_icons": true,
     "folder_icons": true,
     "git_status": true,
@@ -2262,6 +2303,30 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 ```json
 {
   "dock": "right"
+}
+```
+
+### Entry Spacing
+
+- Description: Spacing between worktree entries
+- Setting: `entry_spacing`
+- Default: `comfortable`
+
+**Options**
+
+1. Comfortable entry spacing
+
+```json
+{
+  "entry_spacing": "comfortable"
+}
+```
+
+2. Standard entry spacing
+
+```json
+{
+  "entry_spacing": "standard"
 }
 ```
 

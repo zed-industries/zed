@@ -39,7 +39,7 @@ pub async fn launch_remote_kernel(
     let kernel_launch_request = KernelLaunchRequest {
         name: kernel_name.to_string(),
         // Note: since the path we have locally may not be the same as the one on the remote server,
-        // we don't send it. We'll have to evaluate this decisiion along the way.
+        // we don't send it. We'll have to evaluate this decision along the way.
         path: None,
     };
 

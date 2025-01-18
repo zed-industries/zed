@@ -19,7 +19,7 @@ pub struct SupermavenCompletionProvider {
     buffer_id: Option<EntityId>,
     completion_id: Option<SupermavenCompletionStateId>,
     file_extension: Option<String>,
-    pending_refresh: Task<Result<()>>,
+    pending_refresh: Option<Task<Result<()>>>,
 }
 
 impl SupermavenCompletionProvider {
@@ -29,7 +29,7 @@ impl SupermavenCompletionProvider {
             buffer_id: None,
             completion_id: None,
             file_extension: None,
-            pending_refresh: Task::ready(Ok(())),
+            pending_refresh: None,
         }
     }
 }
@@ -106,6 +106,10 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         false
     }
 
+    fn show_completions_in_normal_mode() -> bool {
+        false
+    }
+
     fn is_enabled(&self, buffer: &Model<Buffer>, cursor_position: Anchor, cx: &AppContext) -> bool {
         if !self.supermaven.read(cx).is_enabled() {
             return false;
@@ -116,6 +120,10 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
         let language = buffer.language_at(cursor_position);
         let settings = all_language_settings(file, cx);
         settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()), cx)
+    }
+
+    fn is_refreshing(&self) -> bool {
+        self.pending_refresh.is_some()
     }
 
     fn refresh(
@@ -131,7 +139,7 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
             return;
         };
 
-        self.pending_refresh = cx.spawn(|this, mut cx| async move {
+        self.pending_refresh = Some(cx.spawn(|this, mut cx| async move {
             if debounce {
                 cx.background_executor().timer(DEBOUNCE_TIMEOUT).await;
             }
@@ -148,11 +156,12 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
                                 .to_string(),
                         )
                     });
+                    this.pending_refresh = None;
                     cx.notify();
                 })?;
             }
             Ok(())
-        });
+        }));
     }
 
     fn cycle(
@@ -165,12 +174,12 @@ impl InlineCompletionProvider for SupermavenCompletionProvider {
     }
 
     fn accept(&mut self, _cx: &mut ModelContext<Self>) {
-        self.pending_refresh = Task::ready(Ok(()));
+        self.pending_refresh = None;
         self.completion_id = None;
     }
 
     fn discard(&mut self, _cx: &mut ModelContext<Self>) {
-        self.pending_refresh = Task::ready(Ok(()));
+        self.pending_refresh = None;
         self.completion_id = None;
     }
 

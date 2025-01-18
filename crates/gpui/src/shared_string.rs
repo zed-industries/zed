@@ -81,6 +81,12 @@ impl<'a> PartialEq<&'a str> for SharedString {
     }
 }
 
+impl From<&SharedString> for SharedString {
+    fn from(value: &SharedString) -> Self {
+        value.clone()
+    }
+}
+
 impl From<SharedString> for Arc<str> {
     fn from(val: SharedString) -> Self {
         match val.0 {

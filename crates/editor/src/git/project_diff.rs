@@ -9,10 +9,7 @@ use std::{
 use anyhow::{anyhow, Context as _};
 use collections::{BTreeMap, HashMap};
 use feature_flags::FeatureFlagAppExt;
-use git::{
-    diff::{BufferDiff, DiffHunk},
-    repository::GitFileStatus,
-};
+use git::diff::{BufferDiff, DiffHunk};
 use gpui::{
     actions, AnyElement, AnyView, AppContext, EventEmitter, FocusHandle, Focusable,
     InteractiveElement, Model, Render, Subscription, Task, WeakModel,
@@ -54,7 +51,6 @@ struct ProjectDiffEditor {
 
 #[derive(Debug)]
 struct Changes {
-    _status: GitFileStatus,
     buffer: Model<Buffer>,
     hunks: Vec<DiffHunk>,
 }
@@ -210,22 +206,32 @@ impl ProjectDiffEditor {
                 let open_tasks = project
                     .update(&mut cx, |project, cx| {
                         let worktree = project.worktree_for_id(id, cx)?;
-                        let applicable_entries = worktree
-                            .read(cx)
-                            .entries(false, 0)
-                            .filter(|entry| !entry.is_external)
-                            .filter(|entry| entry.is_file())
-                            .filter_map(|entry| Some((entry.git_status?, entry)))
-                            .filter_map(|(git_status, entry)| {
-                                Some((git_status, entry.id, project.path_for_entry(entry.id, cx)?))
+                        let snapshot = worktree.read(cx).snapshot();
+                        let applicable_entries = snapshot
+                            .repositories()
+                            .iter()
+                            .flat_map(|entry| {
+                                entry
+                                    .status()
+                                    .map(|git_entry| entry.join(git_entry.repo_path))
+                            })
+                            .filter_map(|path| {
+                                let id = snapshot.entry_for_path(&path)?.id;
+                                Some((
+                                    id,
+                                    ProjectPath {
+                                        worktree_id: snapshot.id(),
+                                        path: path.into(),
+                                    },
+                                ))
                             })
                             .collect::<Vec<_>>();
                         Some(
                             applicable_entries
                                 .into_iter()
-                                .map(|(status, entry_id, entry_path)| {
+                                .map(|(entry_id, entry_path)| {
                                     let open_task = project.open_path(entry_path.clone(), cx);
-                                    (status, entry_id, entry_path, open_task)
+                                    (entry_id, entry_path, open_task)
                                 })
                                 .collect::<Vec<_>>(),
                         )
@@ -239,15 +245,10 @@ impl ProjectDiffEditor {
                         let mut new_entries = Vec::new();
                         let mut buffers = HashMap::<
                             ProjectEntryId,
-                            (
-                                GitFileStatus,
-                                text::BufferSnapshot,
-                                Model<Buffer>,
-                                BufferDiff,
-                            ),
+                            (text::BufferSnapshot, Model<Buffer>, BufferDiff),
                         >::default();
                         let mut change_sets = Vec::new();
-                        for (status, entry_id, entry_path, open_task) in open_tasks {
+                        for (entry_id, entry_path, open_task) in open_tasks {
                             let Some(buffer) = open_task
                                 .await
                                 .and_then(|(_, opened_model)| {
@@ -277,7 +278,6 @@ impl ProjectDiffEditor {
                                 buffers.insert(
                                     entry_id,
                                     (
-                                        status,
                                         buffer.read(cx).text_snapshot(),
                                         buffer,
                                         change_set.read(cx).diff_to_buffer.clone(),
@@ -300,11 +300,10 @@ impl ProjectDiffEditor {
                     .background_executor()
                     .spawn(async move {
                         let mut new_changes = HashMap::<ProjectEntryId, Changes>::default();
-                        for (entry_id, (status, buffer_snapshot, buffer, buffer_diff)) in buffers {
+                        for (entry_id, (buffer_snapshot, buffer, buffer_diff)) in buffers {
                             new_changes.insert(
                                 entry_id,
                                 Changes {
-                                    _status: status,
                                     buffer,
                                     hunks: buffer_diff
                                         .hunks_in_row_range(0..BufferRow::MAX, &buffer_snapshot)
@@ -1139,6 +1138,7 @@ impl Render for ProjectDiffEditor {
 
 #[cfg(test)]
 mod tests {
+    use git::status::{StatusCode, TrackedStatus};
     use gpui::{SemanticVersion, TestAppContext, VisualTestContext};
     use project::buffer_store::BufferChangeSet;
     use serde_json::json;
@@ -1257,7 +1257,14 @@ mod tests {
         });
         fs.set_status_for_repo_via_git_operation(
             Path::new("/root/.git"),
-            &[(Path::new("file_a"), GitFileStatus::Modified)],
+            &[(
+                Path::new("file_a"),
+                TrackedStatus {
+                    worktree_status: StatusCode::Modified,
+                    index_status: StatusCode::Unmodified,
+                }
+                .into(),
+            )],
         );
         cx.executor()
             .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));

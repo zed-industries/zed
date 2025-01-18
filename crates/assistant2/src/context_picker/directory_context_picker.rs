@@ -1,6 +1,3 @@
-// TODO: Remove this when we finish the implementation.
-#![allow(unused)]
-
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -8,12 +5,11 @@ use std::sync::Arc;
 use fuzzy::PathMatch;
 use gpui::{AppContext, DismissEvent, FocusHandle, Focusable, Model, Task, WeakModel};
 use picker::{Picker, PickerDelegate};
-use project::{PathMatchCandidateSet, WorktreeId};
+use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use ui::{prelude::*, ListItem};
 use util::ResultExt as _;
 use workspace::Workspace;
 
-use crate::context::ContextKind;
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 
@@ -199,16 +195,24 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
             return;
         };
 
-        let workspace = self.workspace.clone();
-        let Some(project) = workspace
-            .upgrade()
-            .map(|workspace| workspace.read(cx).project().clone())
+        let project_path = ProjectPath {
+            worktree_id: WorktreeId::from_usize(mat.worktree_id),
+            path: mat.path.clone(),
+        };
+
+        let Some(task) = self
+            .context_store
+            .update(cx, |context_store, cx| {
+                context_store.add_directory(project_path, cx)
+            })
+            .ok()
         else {
             return;
         };
-        let path = mat.path.clone();
-        let worktree_id = WorktreeId::from_usize(mat.worktree_id);
+
+        let workspace = self.workspace.clone();
         let confirm_behavior = self.confirm_behavior;
+<<<<<<< HEAD
         cx.spawn_in(window, |this, mut cx| async move {
             this.update_in(&mut cx, |this, window, cx| {
                 let mut text = String::new();
@@ -228,20 +232,35 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
                 match confirm_behavior {
                     ConfirmBehavior::KeepOpen => {}
                     ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
+=======
+        cx.spawn(|this, mut cx| async move {
+            match task.await {
+                Ok(()) => {
+                    this.update(&mut cx, |this, cx| match confirm_behavior {
+                        ConfirmBehavior::KeepOpen => {}
+                        ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                    })?;
+>>>>>>> main
                 }
+                Err(err) => {
+                    let Some(workspace) = workspace.upgrade() else {
+                        return anyhow::Ok(());
+                    };
 
-                anyhow::Ok(())
-            })??;
+                    workspace.update(&mut cx, |workspace, cx| {
+                        workspace.show_error(&err, cx);
+                    })?;
+                }
+            }
 
             anyhow::Ok(())
         })
-        .detach_and_log_err(cx)
+        .detach_and_log_err(cx);
     }
 
     fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         self.context_picker
-            .update(cx, |this, cx| {
-                this.reset_mode();
+            .update(cx, |_, cx| {
                 cx.emit(DismissEvent);
             })
             .ok();
@@ -251,17 +270,40 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
+<<<<<<< HEAD
         _window: &mut Window,
         _cx: &mut ModelContext<Picker<Self>>,
+=======
+        cx: &mut ViewContext<Picker<Self>>,
+>>>>>>> main
     ) -> Option<Self::ListItem> {
         let path_match = &self.matches[ix];
         let directory_name = path_match.path.to_string_lossy().to_string();
+
+        let added = self.context_store.upgrade().map_or(false, |context_store| {
+            context_store
+                .read(cx)
+                .includes_directory(&path_match.path)
+                .is_some()
+        });
 
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .toggle_state(selected)
-                .child(h_flex().gap_2().child(Label::new(directory_name))),
+                .child(h_flex().gap_2().child(Label::new(directory_name)))
+                .when(added, |el| {
+                    el.end_slot(
+                        h_flex()
+                            .gap_1()
+                            .child(
+                                Icon::new(IconName::Check)
+                                    .size(IconSize::Small)
+                                    .color(Color::Success),
+                            )
+                            .child(Label::new("Added").size(LabelSize::Small)),
+                    )
+                }),
         )
     }
 }

@@ -1,13 +1,11 @@
-use crate::buffer_codegen::{BufferCodegen, CodegenAlternative, CodegenEvent};
-use crate::context_store::ContextStore;
-use crate::inline_prompt_editor::{CodegenStatus, InlineAssistId, PromptEditor, PromptEditorEvent};
-use crate::thread_store::ThreadStore;
-use crate::AssistantPanel;
-use crate::{
-    assistant_settings::AssistantSettings, prompts::PromptBuilder,
-    terminal_inline_assistant::TerminalInlineAssistant,
-};
+use std::cmp;
+use std::mem;
+use std::ops::Range;
+use std::rc::Rc;
+use std::sync::Arc;
+
 use anyhow::{Context as _, Result};
+use assistant_settings::AssistantSettings;
 use client::telemetry::Telemetry;
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
@@ -19,9 +17,8 @@ use editor::{
     Anchor, AnchorRangeExt, CodeActionProvider, Editor, EditorEvent, ExcerptId, ExcerptRange,
     GutterDimensions, MultiBuffer, MultiBufferSnapshot, ToOffset as _, ToPoint,
 };
+use feature_flags::{Assistant2FeatureFlag, FeatureFlagViewExt as _};
 use fs::Fs;
-use util::ResultExt;
-
 use gpui::{
     point, AppContext, Focusable, Global, HighlightStyle, Model, ModelContext, Subscription, Task,
     UpdateGlobal, WeakModel, Window,
@@ -32,15 +29,23 @@ use language_models::report_assistant_event;
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, ProjectTransaction};
+use prompt_library::PromptBuilder;
 use settings::{Settings, SettingsStore};
-use std::{cmp, mem, ops::Range, rc::Rc, sync::Arc};
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use text::{OffsetRangeExt, ToPoint as _};
 use ui::prelude::*;
 use util::RangeExt;
+use util::ResultExt;
 use workspace::{dock::Panel, ShowConfiguration};
 use workspace::{notifications::NotificationId, ItemHandle, Toast, Workspace};
+
+use crate::buffer_codegen::{BufferCodegen, CodegenAlternative, CodegenEvent};
+use crate::context_store::ContextStore;
+use crate::inline_prompt_editor::{CodegenStatus, InlineAssistId, PromptEditor, PromptEditorEvent};
+use crate::terminal_inline_assistant::TerminalInlineAssistant;
+use crate::thread_store::ThreadStore;
+use crate::AssistantPanel;
 
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -52,8 +57,21 @@ pub fn init(
     cx.observe_new_models(|_workspace: &mut Workspace, window, cx| {
         let workspace = cx.model().clone();
         InlineAssistant::update_global(cx, |inline_assistant, cx| {
+<<<<<<< HEAD
             inline_assistant.register_workspace(&workspace, window, cx)
+=======
+            inline_assistant.register_workspace(&workspace, cx)
+        });
+
+        cx.observe_flag::<Assistant2FeatureFlag, _>({
+            |is_assistant2_enabled, _view, cx| {
+                InlineAssistant::update_global(cx, |inline_assistant, _cx| {
+                    inline_assistant.is_assistant2_enabled = is_assistant2_enabled;
+                });
+            }
+>>>>>>> main
         })
+        .detach();
     })
     .detach();
 }
@@ -76,6 +94,7 @@ pub struct InlineAssistant {
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Arc<Telemetry>,
     fs: Arc<dyn Fs>,
+    is_assistant2_enabled: bool,
 }
 
 impl Global for InlineAssistant {}
@@ -97,6 +116,7 @@ impl InlineAssistant {
             prompt_builder,
             telemetry,
             fs,
+            is_assistant2_enabled: false,
         }
     }
 
@@ -127,7 +147,7 @@ impl InlineAssistant {
             };
             let enabled = AssistantSettings::get_global(cx).enabled;
             terminal_panel.update(cx, |terminal_panel, cx| {
-                terminal_panel.asssistant_enabled(enabled, cx)
+                terminal_panel.set_assistant_enabled(enabled, cx)
             });
         })
         .detach();
@@ -168,13 +188,17 @@ impl InlineAssistant {
         window: &mut Window,
         cx: &mut AppContext,
     ) {
+        let is_assistant2_enabled = self.is_assistant2_enabled;
+
         if let Some(editor) = item.act_as::<Editor>(cx) {
             editor.update(cx, |editor, cx| {
-                let thread_store = workspace
-                    .read(cx)
-                    .panel::<AssistantPanel>(cx)
-                    .map(|assistant_panel| assistant_panel.read(cx).thread_store().downgrade());
+                if is_assistant2_enabled {
+                    let thread_store = workspace
+                        .read(cx)
+                        .panel::<AssistantPanel>(cx)
+                        .map(|assistant_panel| assistant_panel.read(cx).thread_store().downgrade());
 
+<<<<<<< HEAD
                 editor.push_code_action_provider(
                     Rc::new(AssistantCodeActionProvider {
                         editor: cx.model().downgrade(),
@@ -184,6 +208,23 @@ impl InlineAssistant {
                     window,
                     cx,
                 );
+=======
+                    editor.add_code_action_provider(
+                        Rc::new(AssistantCodeActionProvider {
+                            editor: cx.view().downgrade(),
+                            workspace: workspace.downgrade(),
+                            thread_store,
+                        }),
+                        cx,
+                    );
+
+                    // Remove the Assistant1 code action provider, as it still might be registered.
+                    editor.remove_code_action_provider("assistant".into(), cx);
+                } else {
+                    editor
+                        .remove_code_action_provider(ASSISTANT_CODE_ACTION_PROVIDER_ID.into(), cx);
+                }
+>>>>>>> main
             });
         }
     }
@@ -365,7 +406,7 @@ impl InlineAssistant {
         let mut assist_to_focus = None;
         for range in codegen_ranges {
             let assist_id = self.next_assist_id.post_inc();
-            let context_store = cx.new_model(|_cx| ContextStore::new());
+            let context_store = cx.new_model(|_cx| ContextStore::new(workspace.clone()));
             let codegen = cx.new_model(|cx| {
                 BufferCodegen::new(
                     editor.read(cx).buffer().clone(),
@@ -478,7 +519,7 @@ impl InlineAssistant {
             range.end = range.end.bias_right(&snapshot);
         }
 
-        let context_store = cx.new_model(|_cx| ContextStore::new());
+        let context_store = cx.new_model(|_cx| ContextStore::new(workspace.clone()));
 
         let codegen = cx.new_model(|cx| {
             BufferCodegen::new(
@@ -934,10 +975,11 @@ impl InlineAssistant {
             if let Some(model) = LanguageModelRegistry::read_global(cx).active_model() {
                 let language_name = assist.editor.upgrade().and_then(|editor| {
                     let multibuffer = editor.read(cx).buffer().read(cx);
-                    let ranges = multibuffer.range_to_buffer_ranges(assist.range.clone(), cx);
+                    let snapshot = multibuffer.snapshot(cx);
+                    let ranges = snapshot.range_to_buffer_ranges(assist.range.clone());
                     ranges
                         .first()
-                        .and_then(|(buffer, _, _)| buffer.read(cx).language())
+                        .and_then(|(excerpt, _)| excerpt.buffer().language())
                         .map(|language| language.name())
                 });
                 report_assistant_event(
@@ -1666,7 +1708,13 @@ struct AssistantCodeActionProvider {
     thread_store: Option<WeakModel<ThreadStore>>,
 }
 
+const ASSISTANT_CODE_ACTION_PROVIDER_ID: &str = "assistant2";
+
 impl CodeActionProvider for AssistantCodeActionProvider {
+    fn id(&self) -> Arc<str> {
+        ASSISTANT_CODE_ACTION_PROVIDER_ID.into()
+    }
+
     fn code_actions(
         &self,
         buffer: &Model<Buffer>,

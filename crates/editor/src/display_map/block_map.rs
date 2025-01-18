@@ -2749,7 +2749,7 @@ mod tests {
                 .iter()
                 .filter(|(_, block)| matches!(block, Block::FoldedBuffer { .. }))
                 .count(),
-            "Should have one folded block, prodicing a header of the second buffer"
+            "Should have one folded block, producing a header of the second buffer"
         );
         assert_eq!(
             blocks_snapshot.text(),
@@ -2995,7 +2995,7 @@ mod tests {
                     }
                 })
                 .count(),
-            "Should have one folded block, prodicing a header of the second buffer"
+            "Should have one folded block, producing a header of the second buffer"
         );
         assert_eq!(blocks_snapshot.text(), "\n");
         assert_eq!(

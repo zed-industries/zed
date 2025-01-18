@@ -110,7 +110,7 @@
       "g y": "editor::GoToTypeDefinition",
       "g shift-i": "editor::GoToImplementation",
       "g x": "editor::OpenUrl",
-      "g f": "editor::OpenFile",
+      "g f": "editor::OpenSelectedFilename",
       "g n": "vim::SelectNextMatch",
       "g shift-n": "vim::SelectPreviousMatch",
       "g l": "vim::SelectNext",
@@ -197,6 +197,7 @@
       "d": ["vim::PushOperator", "Delete"],
       "shift-d": "vim::DeleteToEndOfLine",
       "shift-j": "vim::JoinLines",
+      "g shift-j": "vim::JoinLinesNoWhitespace",
       "y": ["vim::PushOperator", "Yank"],
       "shift-y": "vim::YankLine",
       "i": "vim::InsertBefore",
@@ -220,6 +221,7 @@
       ">": ["vim::PushOperator", "Indent"],
       "<": ["vim::PushOperator", "Outdent"],
       "=": ["vim::PushOperator", "AutoIndent"],
+      "!": ["vim::PushOperator", "ShellCommand"],
       "g u": ["vim::PushOperator", "Lowercase"],
       "g shift-u": ["vim::PushOperator", "Uppercase"],
       "g ~": ["vim::PushOperator", "OppositeCase"],
@@ -259,7 +261,7 @@
       "shift-d": "vim::VisualDeleteLine",
       "shift-x": "vim::VisualDeleteLine",
       "y": "vim::VisualYank",
-      "shift-y": "vim::VisualYank",
+      "shift-y": "vim::VisualYankLine",
       "p": "vim::Paste",
       "shift-p": ["vim::Paste", { "preserveClipboard": true }],
       "s": "vim::Substitute",
@@ -278,6 +280,7 @@
       "g shift-i": "vim::VisualInsertFirstNonWhiteSpace",
       "g shift-a": "vim::VisualInsertEndOfLine",
       "shift-j": "vim::JoinLines",
+      "g shift-j": "vim::JoinLinesNoWhitespace",
       "r": ["vim::PushOperator", "Replace"],
       "ctrl-c": ["vim::SwitchMode", "Normal"],
       "escape": ["vim::SwitchMode", "Normal"],
@@ -285,6 +288,7 @@
       ">": "vim::Indent",
       "<": "vim::Outdent",
       "=": "vim::AutoIndent",
+      "!": "vim::ShellCommand",
       "i": ["vim::PushOperator", { "Object": { "around": false } }],
       "a": ["vim::PushOperator", { "Object": { "around": true } }],
       "g c": "vim::ToggleComments",
@@ -389,12 +393,16 @@
     "bindings": {
       "w": "vim::Word",
       "shift-w": ["vim::Word", { "ignorePunctuation": true }],
+      // Subword TextObject
+      // "w": "vim::Subword",
+      // "shift-w": ["vim::Subword", { "ignorePunctuation": true }],
       "t": "vim::Tag",
       "s": "vim::Sentence",
       "p": "vim::Paragraph",
       "'": "vim::Quotes",
       "`": "vim::BackQuotes",
       "\"": "vim::DoubleQuotes",
+      "q": "vim::AnyQuotes",
       "|": "vim::VerticalBars",
       "(": "vim::Parentheses",
       ")": "vim::Parentheses",
@@ -490,6 +498,12 @@
     "context": "vim_operator == eq",
     "bindings": {
       "=": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "vim_operator == sh",
+    "bindings": {
+      "!": "vim::CurrentLine"
     }
   },
   {
