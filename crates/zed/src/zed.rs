@@ -243,13 +243,8 @@ fn feature_gate_zed_pro_actions(cx: &mut AppContext) {
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-<<<<<<< HEAD
-fn initialize_linux_file_watcher(window: &mut Window, cx: &mut ModelContext<Workspace>) {
-    if let Err(e) = fs::linux_watcher::global(|_| {}) {
-=======
 fn initialize_file_watcher(cx: &mut ViewContext<Workspace>) {
     if let Err(e) = fs::fs_watcher::global(|_| {}) {
->>>>>>> main
         let message = format!(
             db::indoc! {r#"
             inotify_init returned {}
@@ -473,16 +468,8 @@ fn register_actions(
         .register_action(|_, action: &OpenZedUrl, _, cx| {
             OpenListener::global(cx).open_urls(vec![action.url.clone()])
         })
-<<<<<<< HEAD
-        .register_action(|_, action: &OpenBrowser, _, cx| cx.open_url(&action.url))
-        .register_action(move |_, _: &zed_actions::IncreaseBufferFontSize, _, cx| {
-            theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
-        })
-        .register_action(|workspace, _: &workspace::Open, window, cx| {
-=======
         .register_action(|_, action: &OpenBrowser, cx| cx.open_url(&action.url))
         .register_action(|workspace, _: &workspace::Open, cx| {
->>>>>>> main
             workspace
                 .client()
                 .telemetry()
@@ -518,31 +505,6 @@ fn register_actions(
             })
             .detach()
         })
-<<<<<<< HEAD
-        .register_action(move |_, _: &zed_actions::DecreaseBufferFontSize, _, cx| {
-            theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
-        })
-        .register_action(move |_, _: &zed_actions::ResetBufferFontSize, _, cx| {
-            theme::reset_buffer_font_size(cx)
-        })
-        .register_action(move |_, _: &zed_actions::IncreaseUiFontSize, _, cx| {
-            theme::adjust_ui_font_size(cx, |size| *size += px(1.0))
-        })
-        .register_action(move |_, _: &zed_actions::DecreaseUiFontSize, _, cx| {
-            theme::adjust_ui_font_size(cx, |size| *size -= px(1.0))
-        })
-        .register_action(move |_, _: &zed_actions::ResetUiFontSize, _, cx| {
-            theme::reset_ui_font_size(cx)
-        })
-        .register_action(move |_, _: &zed_actions::IncreaseBufferFontSize, _, cx| {
-            theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
-        })
-        .register_action(move |_, _: &zed_actions::DecreaseBufferFontSize, _, cx| {
-            theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
-        })
-        .register_action(move |_, _: &zed_actions::ResetBufferFontSize, _, cx| {
-            theme::reset_buffer_font_size(cx)
-=======
         .register_action({
             let fs = app_state.fs.clone();
             move |_, _: &zed_actions::IncreaseUiFontSize, cx| {
@@ -605,7 +567,6 @@ fn register_actions(
                     let _ = settings.buffer_font_size.take();
                 });
             }
->>>>>>> main
         })
         .register_action(install_cli)
         .register_action(|_, _: &install_cli::RegisterZedScheme, window, cx| {

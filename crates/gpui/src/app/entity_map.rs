@@ -127,17 +127,9 @@ impl EntityMap {
 
     pub fn read<T: 'static>(&self, model: &Model<T>) -> &T {
         self.assert_valid_context(model);
-<<<<<<< HEAD
-        let mut accessed_entities = self.accessed_entities.borrow_mut();
-        accessed_entities.insert(model.entity_id);
-
-        self.entities[model.entity_id]
-            .downcast_ref()
-=======
         self.entities
             .get(model.entity_id)
             .and_then(|entity| entity.downcast_ref())
->>>>>>> main
             .unwrap_or_else(|| double_lease_panic::<T>("read"))
     }
 

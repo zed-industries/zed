@@ -4,14 +4,9 @@ use editor::{scroll::Autoscroll, Editor};
 use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
 use fs::Fs;
 use gpui::{
-<<<<<<< HEAD
-    actions, div, Action, AppContext, AsyncWindowContext, Corner, Entity, IntoElement, Model,
-    ModelContext, ParentElement, Render, Subscription, WeakModel, Window,
-=======
     actions, div, pulsating_between, Action, Animation, AnimationExt, AppContext,
     AsyncWindowContext, Corner, Entity, IntoElement, ParentElement, Render, Subscription, View,
     ViewContext, WeakView, WindowContext,
->>>>>>> main
 };
 use language::{
     language_settings::{
@@ -214,27 +209,6 @@ impl Render for InlineCompletionButton {
                     return div();
                 }
 
-<<<<<<< HEAD
-                div().child(
-                    IconButton::new("zeta", IconName::ZedPredict)
-                        .tooltip(|window, cx| {
-                            Tooltip::with_meta(
-                                "Zed Predict",
-                                Some(&RateCompletions),
-                                "Click to rate completions",
-                                window,
-                                cx,
-                            )
-                        })
-                        .on_click(cx.listener(|this, _, window, cx| {
-                            if let Some(workspace) = this.workspace.upgrade() {
-                                workspace.update(cx, |workspace, cx| {
-                                    RateCompletionModal::toggle(workspace, window, cx)
-                                });
-                            }
-                        })),
-                )
-=======
                 let this = cx.view().clone();
                 let button = IconButton::new("zeta", IconName::ZedPredict)
                     .tooltip(|cx| Tooltip::text("Edit Prediction", cx));
@@ -264,7 +238,6 @@ impl Render for InlineCompletionButton {
                 }
 
                 div().child(popover_menu.into_any_element())
->>>>>>> main
             }
         }
     }
@@ -419,9 +392,6 @@ impl InlineCompletionButton {
         })
     }
 
-<<<<<<< HEAD
-    pub fn update_enabled(&mut self, editor: Model<Editor>, cx: &mut ModelContext<Self>) {
-=======
     fn build_zeta_context_menu(&self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
         let workspace = self.workspace.clone();
         ContextMenu::build(cx, |menu, cx| {
@@ -442,7 +412,6 @@ impl InlineCompletionButton {
     }
 
     pub fn update_enabled(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
->>>>>>> main
         let editor = editor.read(cx);
         let snapshot = editor.buffer().read(cx).snapshot(cx);
         let suggestion_anchor = editor.selections.newest_anchor().start;

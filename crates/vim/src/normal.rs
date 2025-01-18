@@ -110,35 +110,12 @@ pub(crate) fn register(editor: &mut Editor, window: &mut Window, cx: &mut ModelC
             cx,
         );
     });
-<<<<<<< HEAD
-    Vim::action(editor, cx, |vim, _: &JoinLines, window, cx| {
-        vim.record_current_action(cx);
-        let mut times = Vim::take_count(cx).unwrap_or(1);
-        if vim.mode.is_visual() {
-            times = 1;
-        } else if times > 1 {
-            // 2J joins two lines together (same as J or 1J)
-            times -= 1;
-        }
-
-        vim.update_editor(window, cx, |_, editor, window, cx| {
-            editor.transact(window, cx, |editor, window, cx| {
-                for _ in 0..times {
-                    editor.join_lines(&Default::default(), window, cx)
-                }
-            })
-        });
-        if vim.mode.is_visual() {
-            vim.switch_mode(Mode::Normal, true, window, cx)
-        }
-=======
     Vim::action(editor, cx, |vim, _: &JoinLines, cx| {
         vim.join_lines_impl(true, cx);
     });
 
     Vim::action(editor, cx, |vim, _: &JoinLinesNoWhitespace, cx| {
         vim.join_lines_impl(false, cx);
->>>>>>> main
     });
 
     Vim::action(editor, cx, |vim, _: &Undo, window, cx| {
@@ -233,14 +210,10 @@ impl Vim {
                 Some(Operator::AutoIndent) => {
                     self.indent_object(object, around, IndentDirection::Auto, window, cx)
                 }
-<<<<<<< HEAD
-                Some(Operator::Rewrap) => self.rewrap_object(object, around, window, cx),
-=======
                 Some(Operator::ShellCommand) => {
                     self.shell_command_object(object, around, cx);
                 }
                 Some(Operator::Rewrap) => self.rewrap_object(object, around, cx),
->>>>>>> main
                 Some(Operator::Lowercase) => {
                     self.change_case_object(object, around, CaseTarget::Lowercase, window, cx)
                 }
@@ -462,9 +435,6 @@ impl Vim {
         });
     }
 
-<<<<<<< HEAD
-    fn yank_line(&mut self, _: &YankLine, window: &mut Window, cx: &mut ModelContext<Self>) {
-=======
     fn join_lines_impl(&mut self, insert_whitespace: bool, cx: &mut ViewContext<Self>) {
         self.record_current_action(cx);
         let mut times = Vim::take_count(cx).unwrap_or(1);
@@ -488,7 +458,6 @@ impl Vim {
     }
 
     fn yank_line(&mut self, _: &YankLine, cx: &mut ViewContext<Self>) {
->>>>>>> main
         let count = Vim::take_count(cx);
         self.yank_motion(motion::Motion::CurrentLine, count, window, cx)
     }

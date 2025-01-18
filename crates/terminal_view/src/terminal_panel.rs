@@ -83,10 +83,6 @@ impl TerminalPanel {
         let project = workspace.project();
         let pane = new_terminal_pane(workspace.weak_handle(), project.clone(), false, window, cx);
         let center = PaneGroup::new(pane.clone());
-<<<<<<< HEAD
-        window.focus(&pane.focus_handle(cx));
-=======
->>>>>>> main
         let terminal_panel = Self {
             center,
             active_pane: pane,
@@ -105,11 +101,7 @@ impl TerminalPanel {
         terminal_panel
     }
 
-<<<<<<< HEAD
-    pub fn asssistant_enabled(&mut self, enabled: bool, cx: &mut ModelContext<Self>) {
-=======
     pub fn set_assistant_enabled(&mut self, enabled: bool, cx: &mut ViewContext<Self>) {
->>>>>>> main
         self.assistant_enabled = enabled;
         if enabled {
             let focus_handle = self
@@ -465,17 +457,7 @@ impl TerminalPanel {
             .detach_and_log_err(cx);
     }
 
-<<<<<<< HEAD
-    fn spawn_task(
-        &mut self,
-        spawn_in_terminal: &SpawnInTerminal,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let mut spawn_task = spawn_in_terminal.clone();
-=======
     fn spawn_task(&mut self, task: &SpawnInTerminal, cx: &mut ViewContext<Self>) {
->>>>>>> main
         let Ok(is_local) = self
             .workspace
             .update(cx, |workspace, cx| workspace.project().read(cx).is_local())
@@ -487,103 +469,11 @@ impl TerminalPanel {
         let command_label = builder.command_label(&task.command_label);
         let (command, args) = builder.build(task.command.clone(), &task.args);
 
-<<<<<<< HEAD
-        if allow_concurrent_runs && use_new_terminal {
-            self.spawn_in_new_terminal(spawn_task, window, cx)
-                .detach_and_log_err(cx);
-            return;
-        }
-
-        let terminals_for_task = self.terminals_for_task(&spawn_in_terminal.full_label, cx);
-        if terminals_for_task.is_empty() {
-            self.spawn_in_new_terminal(spawn_task, window, cx)
-                .detach_and_log_err(cx);
-            return;
-        }
-        let (existing_item_index, task_pane, existing_terminal) = terminals_for_task
-            .last()
-            .expect("covered no terminals case above")
-            .clone();
-        let id = spawn_in_terminal.id.clone();
-        cx.spawn_in(window, move |this, mut cx| async move {
-            if allow_concurrent_runs {
-                debug_assert!(
-                    !use_new_terminal,
-                    "Should have handled 'allow_concurrent_runs && use_new_terminal' case above"
-                );
-                this.update_in(&mut cx, |terminal_panel, window, cx| {
-                    terminal_panel.replace_terminal(
-                        spawn_task,
-                        task_pane,
-                        existing_item_index,
-                        existing_terminal,
-                        window,
-                        cx,
-                    )
-                })?
-                .await;
-            } else {
-                this.update_in(&mut cx, |this, window, cx| {
-                    this.deferred_tasks.insert(
-                        id,
-                        cx.spawn_in(window, |terminal_panel, mut cx| async move {
-                            wait_for_terminals_tasks(terminals_for_task, &mut cx).await;
-                            let Ok(Some(new_terminal_task)) =
-                                terminal_panel.update_in(&mut cx, |terminal_panel, window, cx| {
-                                    if use_new_terminal {
-                                        terminal_panel
-                                            .spawn_in_new_terminal(spawn_task, window, cx)
-                                            .detach_and_log_err(cx);
-                                        None
-                                    } else {
-                                        Some(terminal_panel.replace_terminal(
-                                            spawn_task,
-                                            task_pane,
-                                            existing_item_index,
-                                            existing_terminal,
-                                            window,
-                                            cx,
-                                        ))
-                                    }
-                                })
-                            else {
-                                return;
-                            };
-                            new_terminal_task.await;
-                        }),
-                    );
-                })
-                .ok();
-            }
-            anyhow::Result::<_, anyhow::Error>::Ok(())
-        })
-        .detach()
-    }
-
-    pub fn fill_command(
-        is_local: bool,
-        spawn_in_terminal: &SpawnInTerminal,
-        spawn_task: &mut SpawnInTerminal,
-    ) -> ControlFlow<()> {
-        let Some((shell, mut user_args)) = (match spawn_in_terminal.shell.clone() {
-            Shell::System => {
-                if is_local {
-                    retrieve_system_shell().map(|shell| (shell, Vec::new()))
-                } else {
-                    Some(("\"${SHELL:-sh}\"".to_string(), Vec::new()))
-                }
-            }
-            Shell::Program(shell) => Some((shell, Vec::new())),
-            Shell::WithArguments { program, args, .. } => Some((program, args)),
-        }) else {
-            return ControlFlow::Break(());
-=======
         let task = SpawnInTerminal {
             command_label,
             command,
             args,
             ..task.clone()
->>>>>>> main
         };
 
         if task.allow_concurrent_runs && task.use_new_terminal {
@@ -1423,15 +1313,10 @@ impl Panel for TerminalPanel {
         cx.notify();
     }
 
-<<<<<<< HEAD
-    fn set_active(&mut self, active: bool, window: &mut Window, cx: &mut ModelContext<Self>) {
-        if !active || !self.has_no_terminals(cx) {
-=======
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
         let old_active = self.active;
         self.active = active;
         if !active || old_active == active || !self.has_no_terminals(cx) {
->>>>>>> main
             return;
         }
         cx.defer_in(window, |this, window, cx| {

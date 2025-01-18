@@ -6,13 +6,8 @@ use crate::{
 use anyhow::Result;
 use derive_more::{Deref, DerefMut};
 use gpui::{
-<<<<<<< HEAD
-    px, AppContext, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, ModelContext,
-    Pixels, Subscription, Window,
-=======
     px, AppContext, Font, FontFallbacks, FontFeatures, FontStyle, FontWeight, Global, Pixels,
     WindowContext,
->>>>>>> main
 };
 use refineable::Refineable;
 use schemars::{
@@ -498,63 +493,6 @@ impl ThemeSettings {
     }
 }
 
-<<<<<<< HEAD
-/// Observe changes to the adjusted buffer font size.
-pub fn observe_buffer_font_size_adjustment<V: 'static>(
-    window: &mut Window,
-    cx: &mut ModelContext<V>,
-    f: impl 'static + Fn(&mut V, &mut Window, &mut ModelContext<V>),
-) -> Subscription {
-    cx.observe_global_in::<AdjustedBufferFontSize>(window, f)
-}
-
-/// Sets the adjusted buffer font size.
-pub fn adjusted_font_size(size: Pixels, cx: &AppContext) -> Pixels {
-    if let Some(AdjustedBufferFontSize(adjusted_size)) = cx.try_global::<AdjustedBufferFontSize>() {
-        let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
-        let delta = *adjusted_size - buffer_font_size;
-        size + delta
-    } else {
-        size
-    }
-    .max(MIN_FONT_SIZE)
-}
-
-/// Returns the adjusted buffer font size.
-pub fn get_buffer_font_size(cx: &AppContext) -> Pixels {
-    let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
-    cx.try_global::<AdjustedBufferFontSize>()
-        .map_or(buffer_font_size, |adjusted_size| adjusted_size.0)
-}
-
-/// Adjusts the buffer font size.
-pub fn adjust_buffer_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
-    let buffer_font_size = ThemeSettings::get_global(cx).buffer_font_size;
-    let mut adjusted_size = cx
-        .try_global::<AdjustedBufferFontSize>()
-        .map_or(buffer_font_size, |adjusted_size| adjusted_size.0);
-
-    f(&mut adjusted_size);
-    adjusted_size = adjusted_size.max(MIN_FONT_SIZE);
-    cx.set_global(AdjustedBufferFontSize(adjusted_size));
-    cx.refresh_windows();
-}
-
-/// Returns whether the buffer font size has been adjusted.
-pub fn has_adjusted_buffer_font_size(cx: &AppContext) -> bool {
-    cx.has_global::<AdjustedBufferFontSize>()
-}
-
-/// Resets the buffer font size to the default value.
-pub fn reset_buffer_font_size(cx: &mut AppContext) {
-    if cx.has_global::<AdjustedBufferFontSize>() {
-        cx.remove_global::<AdjustedBufferFontSize>();
-        cx.refresh_windows();
-    }
-}
-
-=======
->>>>>>> main
 // TODO: Make private, change usages to use `get_ui_font_size` instead.
 #[allow(missing_docs)]
 pub fn setup_ui_font(window: &mut Window, cx: &mut AppContext) -> gpui::Font {
@@ -568,42 +506,6 @@ pub fn setup_ui_font(window: &mut Window, cx: &mut AppContext) -> gpui::Font {
     ui_font
 }
 
-<<<<<<< HEAD
-/// Gets the adjusted UI font size.
-pub fn get_ui_font_size(cx: &AppContext) -> Pixels {
-    let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
-    cx.try_global::<AdjustedUiFontSize>()
-        .map_or(ui_font_size, |adjusted_size| adjusted_size.0)
-}
-
-/// Sets the adjusted UI font size.
-pub fn adjust_ui_font_size(cx: &mut AppContext, f: fn(&mut Pixels)) {
-    let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
-    let mut adjusted_size = cx
-        .try_global::<AdjustedUiFontSize>()
-        .map_or(ui_font_size, |adjusted_size| adjusted_size.0);
-
-    f(&mut adjusted_size);
-    adjusted_size = adjusted_size.max(MIN_FONT_SIZE);
-    cx.set_global(AdjustedUiFontSize(adjusted_size));
-    cx.refresh_windows();
-}
-
-/// Returns whether the UI font size has been adjusted.
-pub fn has_adjusted_ui_font_size(cx: &AppContext) -> bool {
-    cx.has_global::<AdjustedUiFontSize>()
-}
-
-/// Resets the UI font size to the default value.
-pub fn reset_ui_font_size(cx: &mut AppContext) {
-    if cx.has_global::<AdjustedUiFontSize>() {
-        cx.remove_global::<AdjustedUiFontSize>();
-        cx.refresh_windows();
-    }
-}
-
-=======
->>>>>>> main
 fn clamp_font_weight(weight: f32) -> FontWeight {
     FontWeight(weight.clamp(100., 950.))
 }

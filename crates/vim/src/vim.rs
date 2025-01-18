@@ -26,13 +26,8 @@ use editor::{
     Anchor, Bias, Editor, EditorEvent, EditorMode, ToPoint,
 };
 use gpui::{
-<<<<<<< HEAD
-    actions, impl_actions, Action, AppContext, Axis, Context as _, Entity, EventEmitter,
-    KeyContext, KeystrokeEvent, Model, ModelContext, Render, Subscription, WeakModel, Window,
-=======
     actions, impl_actions, Action, AppContext, Axis, Entity, EventEmitter, KeyContext,
     KeystrokeEvent, Render, Subscription, Task, View, ViewContext, WeakView,
->>>>>>> main
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};

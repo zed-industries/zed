@@ -2,12 +2,8 @@ use std::sync::Arc;
 
 use collections::HashMap;
 use editor::Editor;
-<<<<<<< HEAD
-use gpui::{impl_actions, AppContext, Keystroke, KeystrokeEvent, ModelContext, Window};
-=======
 use gpui::{impl_actions, AppContext, Keystroke, KeystrokeEvent};
 use schemars::JsonSchema;
->>>>>>> main
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::LazyLock;

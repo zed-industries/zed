@@ -13,13 +13,9 @@ use language::Point;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsStore};
-<<<<<<< HEAD
-use ui::{ModelContext, SharedString};
-=======
 use std::borrow::BorrowMut;
 use std::{fmt::Display, ops::Range, sync::Arc};
 use ui::{SharedString, ViewContext};
->>>>>>> main
 use workspace::searchable::Direction;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize, JsonSchema, Serialize)]

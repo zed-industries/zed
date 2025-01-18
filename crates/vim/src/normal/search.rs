@@ -1,9 +1,5 @@
 use editor::Editor;
-<<<<<<< HEAD
-use gpui::{actions, impl_actions, ModelContext, Window};
-=======
 use gpui::{actions, impl_actions, impl_internal_actions, ViewContext};
->>>>>>> main
 use language::Point;
 use schemars::JsonSchema;
 use search::{buffer_search, BufferSearchBar, SearchOptions};

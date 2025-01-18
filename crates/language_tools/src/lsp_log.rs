@@ -604,42 +604,6 @@ impl LspLogView {
             .map(|(id, _)| *id);
 
         let weak_project = project.downgrade();
-<<<<<<< HEAD
-        let model_changes_subscription =
-            cx.observe_in(&log_store, window, move |this, store, window, cx| {
-                let first_server_id_for_project =
-                    store.read(cx).server_ids_for_project(&weak_project).next();
-                if let Some(current_lsp) = this.current_server_id {
-                    if !store.read(cx).language_servers.contains_key(&current_lsp) {
-                        if let Some(server_id) = first_server_id_for_project {
-                            match this.active_entry_kind {
-                                LogKind::Rpc => {
-                                    this.show_rpc_trace_for_server(server_id, window, cx)
-                                }
-                                LogKind::Trace => this.show_trace_for_server(server_id, window, cx),
-                                LogKind::Logs => this.show_logs_for_server(server_id, window, cx),
-                                LogKind::Capabilities => {
-                                    this.show_capabilities_for_server(server_id, window, cx)
-                                }
-                            }
-                        } else {
-                            this.current_server_id = None;
-                            this.editor.update(cx, |editor, cx| {
-                                editor.set_read_only(false);
-                                editor.clear(window, cx);
-                                editor.set_read_only(true);
-                            });
-                            cx.notify();
-                        }
-                    }
-                } else if let Some(server_id) = first_server_id_for_project {
-                    match this.active_entry_kind {
-                        LogKind::Rpc => this.show_rpc_trace_for_server(server_id, window, cx),
-                        LogKind::Trace => this.show_trace_for_server(server_id, window, cx),
-                        LogKind::Logs => this.show_logs_for_server(server_id, window, cx),
-                        LogKind::Capabilities => {
-                            this.show_capabilities_for_server(server_id, window, cx)
-=======
         let model_changes_subscription = cx.observe(&log_store, move |this, store, cx| {
             let first_server_id_for_project =
                 store.read(cx).server_ids_for_project(&weak_project).next();
@@ -651,12 +615,9 @@ impl LspLogView {
                             LogKind::Trace => this.show_trace_for_server(server_id, cx),
                             LogKind::Logs => this.show_logs_for_server(server_id, cx),
                             LogKind::ServerInfo => this.show_server_info(server_id, cx),
->>>>>>> main
                         }
                     }
                 }
-<<<<<<< HEAD
-=======
             } else if let Some(server_id) = first_server_id_for_project {
                 match this.active_entry_kind {
                     LogKind::Rpc => this.show_rpc_trace_for_server(server_id, cx),
@@ -665,7 +626,6 @@ impl LspLogView {
                     LogKind::ServerInfo => this.show_server_info(server_id, cx),
                 }
             }
->>>>>>> main
 
                 cx.notify();
             });
@@ -738,12 +698,8 @@ impl LspLogView {
             editor.set_text(log_contents, window, cx);
             editor.move_to_end(&MoveToEnd, window, cx);
             editor.set_read_only(true);
-<<<<<<< HEAD
-            editor.set_show_inline_completions(Some(false), window, cx);
-=======
             editor.set_show_inline_completions(Some(false), cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
->>>>>>> main
             editor
         });
         let editor_subscription = cx.subscribe(
@@ -757,23 +713,6 @@ impl LspLogView {
         (editor, vec![editor_subscription, search_subscription])
     }
 
-<<<<<<< HEAD
-    fn editor_for_capabilities(
-        capabilities: ServerCapabilities,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> (Model<Editor>, Vec<Subscription>) {
-        let editor = cx.new_model(|cx| {
-            let mut editor = Editor::multi_line(window, cx);
-            editor.set_text(
-                serde_json::to_string_pretty(&capabilities).unwrap(),
-                window,
-                cx,
-            );
-            editor.move_to_end(&MoveToEnd, window, cx);
-            editor.set_read_only(true);
-            editor.set_show_inline_completions(Some(false), window, cx);
-=======
     fn editor_for_server_info(
         server: &LanguageServer,
         cx: &mut ViewContext<Self>,
@@ -803,7 +742,6 @@ impl LspLogView {
             editor.set_read_only(true);
             editor.set_show_inline_completions(Some(false), cx);
             editor.set_soft_wrap_mode(SoftWrap::EditorWidth, cx);
->>>>>>> main
             editor
         });
         let editor_subscription = cx.subscribe(
@@ -1041,26 +979,6 @@ impl LspLogView {
         }
     }
 
-<<<<<<< HEAD
-    fn show_capabilities_for_server(
-        &mut self,
-        server_id: LanguageServerId,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let capabilities = self.log_store.read(cx).server_capabilities(server_id);
-
-        if let Some(capabilities) = capabilities {
-            self.current_server_id = Some(server_id);
-            self.active_entry_kind = LogKind::Capabilities;
-            let (editor, editor_subscriptions) =
-                Self::editor_for_capabilities(capabilities.clone(), window, cx);
-            self.editor = editor;
-            self.editor_subscriptions = editor_subscriptions;
-            cx.notify();
-        }
-        window.focus(&self.focus_handle);
-=======
     fn show_server_info(&mut self, server_id: LanguageServerId, cx: &mut ViewContext<Self>) {
         let lsp_store = self.project.read(cx).lsp_store();
         let Some(server) = lsp_store.read(cx).language_server_for_id(server_id) else {
@@ -1073,7 +991,6 @@ impl LspLogView {
         self.editor_subscriptions = editor_subscriptions;
         cx.notify();
         cx.focus(&self.focus_handle);
->>>>>>> main
     }
 }
 
@@ -1142,19 +1059,10 @@ impl Item for LspLogView {
             let mut new_view = Self::new(self.project.clone(), self.log_store.clone(), window, cx);
             if let Some(server_id) = self.current_server_id {
                 match self.active_entry_kind {
-<<<<<<< HEAD
-                    LogKind::Rpc => new_view.show_rpc_trace_for_server(server_id, window, cx),
-                    LogKind::Trace => new_view.show_trace_for_server(server_id, window, cx),
-                    LogKind::Logs => new_view.show_logs_for_server(server_id, window, cx),
-                    LogKind::Capabilities => {
-                        new_view.show_capabilities_for_server(server_id, window, cx)
-                    }
-=======
                     LogKind::Rpc => new_view.show_rpc_trace_for_server(server_id, cx),
                     LogKind::Trace => new_view.show_trace_for_server(server_id, cx),
                     LogKind::Logs => new_view.show_logs_for_server(server_id, cx),
                     LogKind::ServerInfo => new_view.show_server_info(server_id, cx),
->>>>>>> main
                 }
             }
             new_view
@@ -1343,15 +1251,9 @@ impl Render for LspLogToolbarItemView {
                                         LogKind::Logs => {
                                             view.show_logs_for_server(server_id, window, cx)
                                         }
-<<<<<<< HEAD
-                                        LogKind::Capabilities => {
-                                            view.show_capabilities_for_server(server_id, window, cx)
-                                        }
-=======
                                         LogKind::Trace => view.show_trace_for_server(server_id, cx),
                                         LogKind::Logs => view.show_logs_for_server(server_id, cx),
                                         LogKind::ServerInfo => view.show_server_info(server_id, cx),
->>>>>>> main
                                     }
                                     cx.notify();
                                 }),
@@ -1436,13 +1338,8 @@ impl Render for LspLogToolbarItemView {
                         .entry(
                             SERVER_INFO,
                             None,
-<<<<<<< HEAD
-                            window.handler_for(&log_view, move |view, window, cx| {
-                                view.show_capabilities_for_server(server_id, window, cx);
-=======
                             cx.handler_for(&log_view, move |view, cx| {
                                 view.show_server_info(server_id, cx);
->>>>>>> main
                             }),
                         )
                     }))

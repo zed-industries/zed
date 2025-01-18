@@ -2276,16 +2276,11 @@ impl Pane {
                 this.drag_split_direction = None;
                 this.handle_external_paths_drop(paths, window, cx)
             }))
-<<<<<<< HEAD
-            .when_some(item.tab_tooltip_text(cx), |tab, text| {
-                tab.tooltip(Tooltip::text(text.clone()))
-=======
             .when_some(item.tab_tooltip_content(cx), |tab, content| match content {
                 TabTooltipContent::Text(text) => {
                     tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
                 }
                 TabTooltipContent::Custom(element_fn) => tab.tooltip(move |cx| element_fn(cx)),
->>>>>>> main
             })
             .start_slot::<Indicator>(indicator)
             .map(|this| {
@@ -3313,11 +3308,6 @@ impl Render for Pane {
 }
 
 impl ItemNavHistory {
-<<<<<<< HEAD
-    pub fn push<D: 'static + Send + Any>(&mut self, data: Option<D>, cx: &mut AppContext) {
-        self.history
-            .push(data, self.item.clone(), self.is_preview, cx);
-=======
     pub fn push<D: 'static + Send + Any>(&mut self, data: Option<D>, cx: &mut WindowContext) {
         if self
             .item
@@ -3327,7 +3317,6 @@ impl ItemNavHistory {
             self.history
                 .push(data, self.item.clone(), self.is_preview, cx);
         }
->>>>>>> main
     }
 
     pub fn pop_backward(&mut self, cx: &mut AppContext) -> Option<NavigationEntry> {

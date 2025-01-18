@@ -76,9 +76,6 @@ pub fn init(
     cx.observe_new_models(|_, window, cx| {
         let workspace = cx.model().clone();
         InlineAssistant::update_global(cx, |inline_assistant, cx| {
-<<<<<<< HEAD
-            inline_assistant.register_workspace(&workspace, window, cx)
-=======
             inline_assistant.register_workspace(&workspace, cx)
         });
 
@@ -88,7 +85,6 @@ pub fn init(
                     inline_assistant.is_assistant2_enabled = is_assistant2_enabled;
                 });
             }
->>>>>>> main
         })
         .detach();
     })
@@ -206,16 +202,6 @@ impl InlineAssistant {
 
         if let Some(editor) = item.act_as::<Editor>(cx) {
             editor.update(cx, |editor, cx| {
-<<<<<<< HEAD
-                editor.push_code_action_provider(
-                    Rc::new(AssistantCodeActionProvider {
-                        editor: cx.model().downgrade(),
-                        workspace: workspace.downgrade(),
-                    }),
-                    window,
-                    cx,
-                );
-=======
                 if is_assistant2_enabled {
                     editor
                         .remove_code_action_provider(ASSISTANT_CODE_ACTION_PROVIDER_ID.into(), cx);
@@ -228,7 +214,6 @@ impl InlineAssistant {
                         cx,
                     );
                 }
->>>>>>> main
             });
         }
     }

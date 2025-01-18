@@ -1,10 +1,6 @@
-<<<<<<< HEAD
-use gpui::{Model, OwnedMenu, OwnedMenuItem};
-=======
 use gpui::{impl_actions, OwnedMenu, OwnedMenuItem, View};
 use schemars::JsonSchema;
 use serde::Deserialize;
->>>>>>> main
 use smallvec::SmallVec;
 use ui::{prelude::*, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
 
@@ -79,20 +75,10 @@ impl ApplicationMenu {
         cleaned
     }
 
-<<<<<<< HEAD
-    fn build_menu_from_items(
-        entry: MenuEntry,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Model<ContextMenu> {
-        ContextMenu::build(window, cx, |menu, window, cx| {
-            let menu = menu.when_some(window.focused(cx), |menu, focused| menu.context(focused));
-=======
     fn build_menu_from_items(entry: MenuEntry, cx: &mut WindowContext) -> View<ContextMenu> {
         ContextMenu::build(cx, |menu, cx| {
             // Grab current focus handle so menu can shown items in context with the focused element
             let menu = menu.when_some(cx.focused(), |menu, focused| menu.context(focused));
->>>>>>> main
             let sanitized_items = Self::sanitize_menu_items(entry.menu.items);
 
             sanitized_items
@@ -176,12 +162,7 @@ impl ApplicationMenu {
                     )
                     .with_handle(current_handle.clone()),
             )
-<<<<<<< HEAD
-            .on_hover(move |hover_enter, window, cx| {
-                // Skip if menu is already open to avoid focus issue
-=======
             .on_hover(move |hover_enter, cx| {
->>>>>>> main
                 if *hover_enter && !current_handle.is_deployed() {
                     all_handles.iter().for_each(|h| h.hide(cx));
 
@@ -243,10 +224,6 @@ impl ApplicationMenu {
 }
 
 impl Render for ApplicationMenu {
-<<<<<<< HEAD
-    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
-        let is_any_deployed = self.is_any_deployed();
-=======
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let all_menus_shown = self.all_menus_shown();
 
@@ -279,7 +256,6 @@ impl Render for ApplicationMenu {
             }
         }
 
->>>>>>> main
         div()
             .key_context("ApplicationMenu")
             .flex()

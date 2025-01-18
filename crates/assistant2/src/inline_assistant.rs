@@ -57,9 +57,6 @@ pub fn init(
     cx.observe_new_models(|_workspace: &mut Workspace, window, cx| {
         let workspace = cx.model().clone();
         InlineAssistant::update_global(cx, |inline_assistant, cx| {
-<<<<<<< HEAD
-            inline_assistant.register_workspace(&workspace, window, cx)
-=======
             inline_assistant.register_workspace(&workspace, cx)
         });
 
@@ -69,7 +66,6 @@ pub fn init(
                     inline_assistant.is_assistant2_enabled = is_assistant2_enabled;
                 });
             }
->>>>>>> main
         })
         .detach();
     })
@@ -198,17 +194,6 @@ impl InlineAssistant {
                         .panel::<AssistantPanel>(cx)
                         .map(|assistant_panel| assistant_panel.read(cx).thread_store().downgrade());
 
-<<<<<<< HEAD
-                editor.push_code_action_provider(
-                    Rc::new(AssistantCodeActionProvider {
-                        editor: cx.model().downgrade(),
-                        workspace: workspace.downgrade(),
-                        thread_store,
-                    }),
-                    window,
-                    cx,
-                );
-=======
                     editor.add_code_action_provider(
                         Rc::new(AssistantCodeActionProvider {
                             editor: cx.view().downgrade(),
@@ -224,7 +209,6 @@ impl InlineAssistant {
                     editor
                         .remove_code_action_provider(ASSISTANT_CODE_ACTION_PROVIDER_ID.into(), cx);
                 }
->>>>>>> main
             });
         }
     }

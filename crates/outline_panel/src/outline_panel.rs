@@ -870,15 +870,6 @@ impl OutlinePanel {
         dispatch_context
     }
 
-<<<<<<< HEAD
-    fn unfold_directory(
-        &mut self,
-        _: &UnfoldDirectory,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
-        if let Some(PanelEntry::FoldedDirs(worktree_id, entries)) = self.selected_entry().cloned() {
-=======
     fn unfold_directory(&mut self, _: &UnfoldDirectory, cx: &mut ViewContext<Self>) {
         if let Some(PanelEntry::FoldedDirs(FoldedDirsEntry {
             worktree_id,
@@ -886,7 +877,6 @@ impl OutlinePanel {
             ..
         })) = self.selected_entry().cloned()
         {
->>>>>>> main
             self.unfolded_dirs
                 .entry(worktree_id)
                 .or_default()
@@ -1902,21 +1892,11 @@ impl OutlinePanel {
         }
     }
 
-<<<<<<< HEAD
-    fn reveal_entry_for_selection(
-        &mut self,
-        editor: Model<Editor>,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
-        if !self.active || !OutlinePanelSettings::get_global(cx).auto_reveal_entries {
-=======
     fn reveal_entry_for_selection(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
         if !self.active
             || !OutlinePanelSettings::get_global(cx).auto_reveal_entries
             || self.focus_handle.contains_focused(cx)
         {
->>>>>>> main
             return;
         }
         let project = self.project.clone();
@@ -4539,34 +4519,6 @@ impl OutlinePanel {
                                         cx,
                                     ))
                                 }
-<<<<<<< HEAD
-                                PanelEntry::Outline(OutlineEntry::Excerpt(
-                                    buffer_id,
-                                    excerpt_id,
-                                    excerpt,
-                                )) => outline_panel.render_excerpt(
-                                    buffer_id,
-                                    excerpt_id,
-                                    &excerpt,
-                                    cached_entry.depth,
-                                    window,
-                                    cx,
-                                ),
-                                PanelEntry::Outline(OutlineEntry::Outline(
-                                    buffer_id,
-                                    excerpt_id,
-                                    outline,
-                                )) => Some(outline_panel.render_outline(
-                                    buffer_id,
-                                    excerpt_id,
-                                    &outline,
-                                    cached_entry.depth,
-                                    cached_entry.string_match.as_ref(),
-                                    window,
-                                    cx,
-                                )),
-=======
->>>>>>> main
                                 PanelEntry::Search(SearchEntry {
                                     match_range,
                                     render_data,
@@ -4855,26 +4807,6 @@ impl Panel for OutlinePanel {
                 .update_in(&mut cx, |outline_panel, window, cx| {
                     let old_active = outline_panel.active;
                     outline_panel.active = active;
-<<<<<<< HEAD
-                    if active && old_active != active {
-                        if let Some((active_item, active_editor)) = outline_panel
-                            .workspace
-                            .upgrade()
-                            .and_then(|workspace| workspace_active_editor(workspace.read(cx), cx))
-                        {
-                            if outline_panel.should_replace_active_item(active_item.as_ref()) {
-                                outline_panel.replace_active_editor(
-                                    active_item,
-                                    active_editor,
-                                    window,
-                                    cx,
-                                );
-                            } else {
-                                outline_panel.update_fs_entries(active_editor, None, window, cx)
-                            }
-                        } else if !outline_panel.pinned {
-                            outline_panel.clear_previous(window, cx);
-=======
                     if old_active != active {
                         if active {
                             if let Some((active_item, active_editor)) =
@@ -4897,7 +4829,6 @@ impl Panel for OutlinePanel {
 
                         if !outline_panel.pinned {
                             outline_panel.clear_previous(cx);
->>>>>>> main
                         }
                     }
                     outline_panel.serialize(cx);
@@ -5049,18 +4980,11 @@ fn subscribe_for_editor_events(
     cx: &mut ModelContext<OutlinePanel>,
 ) -> Subscription {
     let debounce = Some(UPDATE_DEBOUNCE);
-<<<<<<< HEAD
-    cx.subscribe_in(
-        editor,
-        window,
-        move |outline_panel, editor, e: &EditorEvent, window, cx| match e {
-=======
     cx.subscribe(editor, move |outline_panel, editor, e: &EditorEvent, cx| {
         if !outline_panel.active {
             return;
         }
         match e {
->>>>>>> main
             EditorEvent::SelectionsChanged { local: true } => {
                 outline_panel.reveal_entry_for_selection(editor.clone(), window, cx);
                 cx.notify();

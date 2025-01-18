@@ -1205,11 +1205,7 @@ impl ProjectPanel {
         }
     }
 
-<<<<<<< HEAD
-    fn rename(&mut self, _: &Rename, window: &mut Window, cx: &mut ModelContext<Self>) {
-=======
     fn rename_impl(&mut self, selection: Option<Range<usize>>, cx: &mut ViewContext<Self>) {
->>>>>>> main
         if let Some(SelectedEntry {
             worktree_id,
             entry_id,
@@ -1240,15 +1236,9 @@ impl ProjectPanel {
                         0..selection_end
                     });
                     self.filename_editor.update(cx, |editor, cx| {
-<<<<<<< HEAD
-                        editor.set_text(file_name, window, cx);
-                        editor.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-                            s.select_ranges([0..selection_end])
-=======
                         editor.set_text(file_name, cx);
                         editor.change_selections(Some(Autoscroll::fit()), cx, |s| {
                             s.select_ranges([selection])
->>>>>>> main
                         });
                         window.focus(&editor.focus_handle(cx));
                     });
@@ -1260,17 +1250,12 @@ impl ProjectPanel {
         }
     }
 
-<<<<<<< HEAD
-    fn trash(&mut self, action: &Trash, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.remove(true, action.skip_prompt, window, cx);
-=======
     fn rename(&mut self, _: &Rename, cx: &mut ViewContext<Self>) {
         self.rename_impl(None, cx);
     }
 
     fn trash(&mut self, action: &Trash, cx: &mut ViewContext<Self>) {
         self.remove(true, action.skip_prompt, cx);
->>>>>>> main
     }
 
     fn delete(&mut self, action: &Delete, window: &mut Window, cx: &mut ModelContext<Self>) {
@@ -2107,20 +2092,9 @@ impl ProjectPanel {
         }
     }
 
-<<<<<<< HEAD
-    fn remove_from_project(
-        &mut self,
-        _: &RemoveFromProject,
-        _: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
-        if let Some((worktree, _)) = self.selected_sub_entry(cx) {
-            let worktree_id = worktree.read(cx).id();
-=======
     fn remove_from_project(&mut self, _: &RemoveFromProject, cx: &mut ViewContext<Self>) {
         for entry in self.effective_entries().iter() {
             let worktree_id = entry.worktree_id;
->>>>>>> main
             self.project
                 .update(cx, |project, cx| project.remove_worktree(worktree_id, cx));
         }
@@ -2912,11 +2886,7 @@ impl ProjectPanel {
                     .collect()
             });
             for entry in visible_worktree_entries[entry_range].iter() {
-<<<<<<< HEAD
-                callback(entry, entries, window, cx);
-=======
                 callback(&entry, entries, cx);
->>>>>>> main
             }
             ix = end_ix;
         }
@@ -3122,15 +3092,9 @@ impl ProjectPanel {
         worktree_id: WorktreeId,
         reverse_search: bool,
         only_visible_entries: bool,
-<<<<<<< HEAD
-        predicate: impl Fn(&Entry, WorktreeId) -> bool,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<Entry> {
-=======
         predicate: impl Fn(GitEntryRef, WorktreeId) -> bool,
         cx: &mut ViewContext<Self>,
     ) -> Option<GitEntry> {
->>>>>>> main
         if only_visible_entries {
             let entries = self
                 .visible_entries
@@ -3164,13 +3128,8 @@ impl ProjectPanel {
         &self,
         start: Option<&SelectedEntry>,
         reverse_search: bool,
-<<<<<<< HEAD
-        predicate: impl Fn(&Entry, WorktreeId) -> bool,
-        cx: &mut ModelContext<Self>,
-=======
         predicate: impl Fn(GitEntryRef, WorktreeId) -> bool,
         cx: &mut ViewContext<Self>,
->>>>>>> main
     ) -> Option<SelectedEntry> {
         let mut worktree_ids: Vec<_> = self
             .visible_entries
@@ -3276,13 +3235,8 @@ impl ProjectPanel {
         &self,
         start: Option<&SelectedEntry>,
         reverse_search: bool,
-<<<<<<< HEAD
-        predicate: impl Fn(&Entry, WorktreeId) -> bool,
-        cx: &mut ModelContext<Self>,
-=======
         predicate: impl Fn(GitEntryRef, WorktreeId) -> bool,
         cx: &mut ViewContext<Self>,
->>>>>>> main
     ) -> Option<SelectedEntry> {
         let mut worktree_ids: Vec<_> = self
             .visible_entries
@@ -3533,10 +3487,6 @@ impl ProjectPanel {
                     },
                 ))
             })
-<<<<<<< HEAD
-            .on_drag(dragged_selection, move |selection, click_offset, _, cx| {
-                cx.new_model(|_| DraggedProjectEntryView {
-=======
             .on_drag_move::<DraggedSelection>(cx.listener(
                 move |this, event: &DragMoveEvent<DraggedSelection>, cx| {
                     if event.bounds.contains(&event.event.position) {
@@ -3577,7 +3527,6 @@ impl ProjectPanel {
             ))
             .on_drag(dragged_selection, move |selection, click_offset, cx| {
                 cx.new_view(|_| DraggedProjectEntryView {
->>>>>>> main
                     details: details.clone(),
                     width,
                     click_offset,
@@ -3585,22 +3534,12 @@ impl ProjectPanel {
                     selections: selection.marked_selections.clone(),
                 })
             })
-<<<<<<< HEAD
-            .drag_over::<DraggedSelection>(move |style, _, _, _| style.bg(item_colors.drag_over))
-            .on_drop(
-                cx.listener(move |this, selections: &DraggedSelection, window, cx| {
-                    this.hover_scroll_task.take();
-                    this.drag_onto(selections, entry_id, kind.is_file(), window, cx);
-                }),
-            )
-=======
             .drag_over::<DraggedSelection>(move |style, _, _| style.bg(item_colors.drag_over))
             .on_drop(cx.listener(move |this, selections: &DraggedSelection, cx| {
                 this.hover_scroll_task.take();
                 this.hover_expand_task.take();
                 this.drag_onto(selections, entry_id, kind.is_file(), cx);
             }))
->>>>>>> main
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, _, _, cx| {
@@ -3616,10 +3555,6 @@ impl ProjectPanel {
                     {
                         return;
                     }
-<<<<<<< HEAD
-                    if event.down.button == MouseButton::Left {
-                        this.mouse_down = false;
-=======
                 } else if event.down.modifiers.secondary() {
                     if event.down.click_count > 1 {
                         this.split_entry(entry_id, cx);
@@ -3628,7 +3563,6 @@ impl ProjectPanel {
                         if !this.marked_entries.insert(selection) {
                             this.marked_entries.remove(&selection);
                         }
->>>>>>> main
                     }
                     cx.stop_propagation();
 
@@ -5657,10 +5591,6 @@ mod tests {
             ]
         );
 
-<<<<<<< HEAD
-        panel.update_in(cx, |panel, window, cx| {
-            panel.paste(&Default::default(), window, cx);
-=======
         panel.update(cx, |panel, cx| {
             panel.filename_editor.update(cx, |editor, cx| {
                 let file_name_selections = editor.selections.all::<usize>(cx);
@@ -5674,7 +5604,6 @@ mod tests {
 
         panel.update(cx, |panel, cx| {
             panel.paste(&Default::default(), cx);
->>>>>>> main
         });
         cx.executor().run_until_parked();
 
@@ -5998,11 +5927,6 @@ mod tests {
             panel.paste(&Default::default(), window, cx)
         });
         cx.executor().run_until_parked();
-<<<<<<< HEAD
-        panel.update_in(cx, |panel, window, cx| {
-            panel.paste(&Default::default(), window, cx)
-        });
-=======
         assert_eq!(
             visible_entries_as_strings(&panel, 0..50, cx),
             &[
@@ -6046,7 +5970,6 @@ mod tests {
         confirm.await.unwrap();
 
         panel.update(cx, |panel, cx| panel.paste(&Default::default(), cx));
->>>>>>> main
         cx.executor().run_until_parked();
         assert_eq!(
             visible_entries_as_strings(&panel, 0..50, cx),

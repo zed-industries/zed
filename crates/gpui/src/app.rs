@@ -30,15 +30,9 @@ use util::ResultExt;
 
 use crate::{
     current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
-<<<<<<< HEAD
-    Asset, AssetSource, BackgroundExecutor, ClipboardItem, Context, DispatchPhase, DisplayId,
-    Entity, EventEmitter, FocusHandle, FocusMap, ForegroundExecutor, Global, KeyBinding, Keymap,
-    Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-=======
     Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, Context, DispatchPhase,
     DisplayId, Entity, EventEmitter, FocusHandle, FocusId, ForegroundExecutor, Global, KeyBinding,
     Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
->>>>>>> main
     PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
     Subscription, SvgRenderer, Task, TextSystem, Window, WindowAppearance, WindowHandle, WindowId,

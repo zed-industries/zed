@@ -37,12 +37,8 @@ use workspace::Workspace;
 pub struct PromptEditor<T> {
     pub editor: Model<Editor>,
     mode: PromptEditorMode,
-<<<<<<< HEAD
-    context_strip: Model<ContextStrip>,
-=======
     context_store: Model<ContextStore>,
     context_strip: View<ContextStrip>,
->>>>>>> main
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
     model_selector: Model<AssistantModelSelector>,
     model_selector_menu_handle: PopoverMenuHandle<LanguageModelSelector>,
@@ -60,12 +56,8 @@ pub struct PromptEditor<T> {
 impl<T: 'static> EventEmitter<PromptEditorEvent> for PromptEditor<T> {}
 
 impl<T: 'static> Render for PromptEditor<T> {
-<<<<<<< HEAD
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
-=======
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let ui_font_size = ThemeSettings::get_global(cx).ui_font_size;
->>>>>>> main
         let mut buttons = Vec::new();
 
         let left_gutter_width = match &self.mode {
@@ -185,10 +177,6 @@ impl<T: 'static> Render for PromptEditor<T> {
                         h_flex()
                             .w_full()
                             .justify_between()
-<<<<<<< HEAD
-                            .child(div().flex_1().child(self.render_editor(window, cx)))
-                            .child(h_flex().gap_1().children(buttons)),
-=======
                             .child(div().flex_1().child(self.render_editor(cx)))
                             .child(
                                 WithRemSize::new(ui_font_size)
@@ -198,7 +186,6 @@ impl<T: 'static> Render for PromptEditor<T> {
                                     .gap_1()
                                     .children(buttons),
                             ),
->>>>>>> main
                     ),
             )
             .child(
@@ -375,21 +362,12 @@ impl<T: 'static> PromptEditor<T> {
         self.model_selector_menu_handle.toggle(window, cx);
     }
 
-<<<<<<< HEAD
-    fn cancel(
-        &mut self,
-        _: &editor::actions::Cancel,
-        _window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
-=======
     pub fn remove_all_context(&mut self, _: &RemoveAllContext, cx: &mut ViewContext<Self>) {
         self.context_store.update(cx, |store, _cx| store.clear());
         cx.notify();
     }
 
     fn cancel(&mut self, _: &editor::actions::Cancel, cx: &mut ViewContext<Self>) {
->>>>>>> main
         match self.codegen_status(cx) {
             CodegenStatus::Idle | CodegenStatus::Done | CodegenStatus::Error(_) => {
                 cx.emit(PromptEditorEvent::CancelRequested);
@@ -909,22 +887,6 @@ impl PromptEditor<BufferCodegen> {
 
         let mut this: PromptEditor<BufferCodegen> = PromptEditor {
             editor: prompt_editor.clone(),
-<<<<<<< HEAD
-            context_strip: cx.new_model(|cx| {
-                ContextStrip::new(
-                    context_store,
-                    workspace.clone(),
-                    thread_store.clone(),
-                    prompt_editor.focus_handle(cx),
-                    context_picker_menu_handle.clone(),
-                    window,
-                    cx,
-                )
-            }),
-            context_picker_menu_handle,
-            model_selector: cx.new_model(|cx| {
-                AssistantModelSelector::new(fs, model_selector_menu_handle.clone(), window, cx)
-=======
             context_store,
             context_strip,
             context_picker_menu_handle,
@@ -935,7 +897,6 @@ impl PromptEditor<BufferCodegen> {
                     prompt_editor.focus_handle(cx),
                     cx,
                 )
->>>>>>> main
             }),
             model_selector_menu_handle,
             edited_since_done: false,
@@ -1079,22 +1040,6 @@ impl PromptEditor<TerminalCodegen> {
 
         let mut this = Self {
             editor: prompt_editor.clone(),
-<<<<<<< HEAD
-            context_strip: cx.new_model(|cx| {
-                ContextStrip::new(
-                    context_store,
-                    workspace.clone(),
-                    thread_store.clone(),
-                    prompt_editor.focus_handle(cx),
-                    context_picker_menu_handle.clone(),
-                    window,
-                    cx,
-                )
-            }),
-            context_picker_menu_handle,
-            model_selector: cx.new_model(|cx| {
-                AssistantModelSelector::new(fs, model_selector_menu_handle.clone(), window, cx)
-=======
             context_store,
             context_strip,
             context_picker_menu_handle,
@@ -1105,7 +1050,6 @@ impl PromptEditor<TerminalCodegen> {
                     prompt_editor.focus_handle(cx),
                     cx,
                 )
->>>>>>> main
             }),
             model_selector_menu_handle,
             edited_since_done: false,

@@ -151,19 +151,9 @@ impl Workspace {
     where
         E: std::fmt::Debug + std::fmt::Display,
     {
-<<<<<<< HEAD
-        struct WorkspaceErrorNotification;
-
-        self.show_notification(
-            NotificationId::unique::<WorkspaceErrorNotification>(),
-            cx,
-            |cx| cx.new_model(|_| ErrorMessagePrompt::new(format!("Error: {err:#}"))),
-        );
-=======
         self.show_notification(workspace_error_notification_id(), cx, |cx| {
             cx.new_view(|_cx| ErrorMessagePrompt::new(format!("Error: {err}")))
         });
->>>>>>> main
     }
 
     pub fn show_portal_error(&mut self, err: String, cx: &mut ModelContext<Self>) {
@@ -282,12 +272,8 @@ impl Render for LanguageServerPrompt {
             .group("language_server_prompt_notification")
             .occlude()
             .w_full()
-<<<<<<< HEAD
-            .max_h(vh(0.8, window))
-=======
             .max_h(vh(0.8, cx))
             .elevation_3(cx)
->>>>>>> main
             .overflow_y_scroll()
             .track_scroll(&self.scroll_handle)
             .child(
@@ -300,69 +286,6 @@ impl Render for LanguageServerPrompt {
                             .items_start()
                             .child(
                                 h_flex()
-<<<<<<< HEAD
-                                    .flex_grow()
-                                    .children(
-                                        match request.level {
-                                            PromptLevel::Info => None,
-                                            PromptLevel::Warning => {
-                                                Some(DiagnosticSeverity::WARNING)
-                                            }
-                                            PromptLevel::Critical => {
-                                                Some(DiagnosticSeverity::ERROR)
-                                            }
-                                        }
-                                        .map(|severity| {
-                                            svg()
-                                                .size(window.text_style().font_size)
-                                                .flex_none()
-                                                .mr_1()
-                                                .mt(px(-2.0))
-                                                .map(|icon| {
-                                                    if severity == DiagnosticSeverity::ERROR {
-                                                        icon.path(IconName::Warning.path())
-                                                            .text_color(Color::Error.color(cx))
-                                                    } else {
-                                                        icon.path(IconName::Warning.path())
-                                                            .text_color(Color::Warning.color(cx))
-                                                    }
-                                                })
-                                        }),
-                                    )
-                                    .child(
-                                        Label::new(request.lsp_name.clone())
-                                            .size(LabelSize::Default),
-                                    ),
-                            )
-                            .child(
-                                ui::IconButton::new("close", ui::IconName::Close).on_click(
-                                    cx.listener(|_, _, _, cx| cx.emit(gpui::DismissEvent)),
-                                ),
-                            ),
-                    )
-                    .child(
-                        v_flex()
-                            .child(
-                                h_flex().absolute().right_0().rounded_md().child(
-                                    ui::IconButton::new("copy", ui::IconName::Copy)
-                                        .on_click({
-                                            let message = request.message.clone();
-                                            move |_, _, cx| {
-                                                cx.write_to_clipboard(ClipboardItem::new_string(
-                                                    message.clone(),
-                                                ))
-                                            }
-                                        })
-                                        .tooltip(Tooltip::text("Copy"))
-                                        .visible_on_hover(""),
-                                ),
-                            )
-                            .child(Label::new(request.message.to_string()).size(LabelSize::Small)),
-                    )
-                    .children(request.actions.iter().enumerate().map(|(ix, action)| {
-                        let this_handle = cx.model().clone();
-                        ui::Button::new(ix, action.title.clone())
-=======
                                     .gap_2()
                                     .child(Icon::new(icon).color(color))
                                     .child(Label::new(request.lsp_name.clone())),
@@ -390,7 +313,6 @@ impl Render for LanguageServerPrompt {
                     .children(request.actions.iter().enumerate().map(|(ix, action)| {
                         let this_handle = cx.view().clone();
                         Button::new(ix, action.title.clone())
->>>>>>> main
                             .size(ButtonSize::Large)
                             .on_click(move |_, window, cx| {
                                 let this_handle = this_handle.clone();
@@ -497,13 +419,6 @@ impl Render for ErrorMessagePrompt {
 impl EventEmitter<DismissEvent> for ErrorMessagePrompt {}
 
 pub mod simple_message_notification {
-<<<<<<< HEAD
-    use gpui::{
-        div, DismissEvent, EventEmitter, InteractiveElement, ModelContext, ParentElement, Render,
-        SharedString, StatefulInteractiveElement, Styled, Window,
-    };
-=======
->>>>>>> main
     use std::sync::Arc;
 
     use gpui::{
@@ -517,13 +432,8 @@ pub mod simple_message_notification {
     use super::NotificationId;
 
     pub struct MessageNotification {
-<<<<<<< HEAD
-        message: SharedString,
-        on_click: Option<Arc<dyn Fn(&mut Window, &mut ModelContext<Self>)>>,
-=======
         content: Box<dyn Fn(&mut ViewContext<Self>) -> AnyElement>,
         on_click: Option<Arc<dyn Fn(&mut ViewContext<Self>)>>,
->>>>>>> main
         click_message: Option<SharedString>,
         secondary_click_message: Option<SharedString>,
         secondary_on_click: Option<Arc<dyn Fn(&mut Window, &mut ModelContext<Self>)>>,
@@ -612,26 +522,14 @@ pub mod simple_message_notification {
                         .items_start()
                         .child(div().max_w_96().child((self.content)(cx)))
                         .child(
-<<<<<<< HEAD
-                            div()
-                                .id("cancel")
-                                .child(Icon::new(IconName::Close))
-                                .cursor_pointer()
-                                .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),
-=======
                             IconButton::new("close", IconName::Close)
                                 .on_click(cx.listener(|this, _, cx| this.dismiss(cx))),
->>>>>>> main
                         ),
                 )
                 .child(
                     h_flex()
                         .gap_2()
                         .children(self.click_message.iter().map(|message| {
-<<<<<<< HEAD
-                            Button::new(message.clone(), message.clone()).on_click(cx.listener(
-                                |this, _, window, cx| {
-=======
                             Button::new(message.clone(), message.clone())
                                 .label_size(LabelSize::Small)
                                 .icon(IconName::Check)
@@ -639,7 +537,6 @@ pub mod simple_message_notification {
                                 .icon_size(IconSize::Small)
                                 .icon_color(Color::Success)
                                 .on_click(cx.listener(|this, _, cx| {
->>>>>>> main
                                     if let Some(on_click) = this.on_click.as_ref() {
                                         (on_click)(window, cx)
                                     };
@@ -648,17 +545,12 @@ pub mod simple_message_notification {
                         }))
                         .children(self.secondary_click_message.iter().map(|message| {
                             Button::new(message.clone(), message.clone())
-<<<<<<< HEAD
-                                .style(ButtonStyle::Filled)
-                                .on_click(cx.listener(|this, _, window, cx| {
-=======
                                 .label_size(LabelSize::Small)
                                 .icon(IconName::Close)
                                 .icon_position(IconPosition::Start)
                                 .icon_size(IconSize::Small)
                                 .icon_color(Color::Error)
                                 .on_click(cx.listener(|this, _, cx| {
->>>>>>> main
                                     if let Some(on_click) = this.secondary_on_click.as_ref() {
                                         (on_click)(window, cx)
                                     };

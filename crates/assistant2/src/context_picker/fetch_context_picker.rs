@@ -211,16 +211,11 @@ impl PickerDelegate for FetchContextPickerDelegate {
         let http_client = workspace.read(cx).client().http_client().clone();
         let url = self.url.clone();
         let confirm_behavior = self.confirm_behavior;
-<<<<<<< HEAD
-        cx.spawn_in(window, |this, mut cx| async move {
-            let text = Self::build_message(http_client, &url).await?;
-=======
         cx.spawn(|this, mut cx| async move {
             let text = cx
                 .background_executor()
                 .spawn(Self::build_message(http_client, url.clone()))
                 .await?;
->>>>>>> main
 
             this.update_in(&mut cx, |this, window, cx| {
                 this.delegate
@@ -254,12 +249,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-<<<<<<< HEAD
-        _window: &mut Window,
-        _cx: &mut ModelContext<Picker<Self>>,
-=======
         cx: &mut ViewContext<Picker<Self>>,
->>>>>>> main
     ) -> Option<Self::ListItem> {
         let added = self.context_store.upgrade().map_or(false, |context_store| {
             context_store.read(cx).includes_url(&self.url).is_some()

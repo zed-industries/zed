@@ -1,10 +1,6 @@
 use gpui::{
-<<<<<<< HEAD
-    uniform_list, AppContext, FocusHandle, Focusable, Model, UniformListScrollHandle, WeakModel,
-=======
     uniform_list, AppContext, FocusHandle, FocusableView, Model, ScrollStrategy,
     UniformListScrollHandle, WeakView,
->>>>>>> main
 };
 use time::{OffsetDateTime, UtcOffset};
 use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing, Tooltip};
@@ -178,13 +174,6 @@ impl Render for ThreadHistory {
 #[derive(IntoElement)]
 pub struct PastThread {
     thread: Model<Thread>,
-<<<<<<< HEAD
-    assistant_panel: WeakModel<AssistantPanel>,
-}
-
-impl PastThread {
-    pub fn new(thread: Model<Thread>, assistant_panel: WeakModel<AssistantPanel>) -> Self {
-=======
     assistant_panel: WeakView<AssistantPanel>,
     selected: bool,
 }
@@ -195,7 +184,6 @@ impl PastThread {
         assistant_panel: WeakView<AssistantPanel>,
         selected: bool,
     ) -> Self {
->>>>>>> main
         Self {
             thread,
             assistant_panel,

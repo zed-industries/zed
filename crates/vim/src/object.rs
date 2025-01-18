@@ -10,15 +10,8 @@ use editor::{
     movement::{self, FindRange},
     Bias, DisplayPoint, Editor,
 };
-<<<<<<< HEAD
-
-use itertools::Itertools;
-
-use gpui::{actions, impl_actions, ModelContext, Window};
-=======
 use gpui::{actions, impl_actions, ViewContext};
 use itertools::Itertools;
->>>>>>> main
 use language::{BufferSnapshot, CharKind, Point, Selection, TextObject, TreeSitterOptions};
 use multi_buffer::MultiBufferRow;
 use schemars::JsonSchema;
@@ -99,10 +92,6 @@ pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>)
             vim.object(Object::Word { ignore_punctuation }, window, cx)
         },
     );
-<<<<<<< HEAD
-    Vim::action(editor, cx, |vim, _: &Tag, window, cx| {
-        vim.object(Object::Tag, window, cx)
-=======
     Vim::action(
         editor,
         cx,
@@ -113,7 +102,6 @@ pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>)
     Vim::action(editor, cx, |vim, _: &Tag, cx| vim.object(Object::Tag, cx));
     Vim::action(editor, cx, |vim, _: &Sentence, cx| {
         vim.object(Object::Sentence, cx)
->>>>>>> main
     });
     Vim::action(editor, cx, |vim, _: &Sentence, window, cx| {
         vim.object(Object::Sentence, window, cx)
@@ -124,16 +112,11 @@ pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>)
     Vim::action(editor, cx, |vim, _: &Quotes, window, cx| {
         vim.object(Object::Quotes, window, cx)
     });
-<<<<<<< HEAD
-    Vim::action(editor, cx, |vim, _: &BackQuotes, window, cx| {
-        vim.object(Object::BackQuotes, window, cx)
-=======
     Vim::action(editor, cx, |vim, _: &AnyQuotes, cx| {
         vim.object(Object::AnyQuotes, cx)
     });
     Vim::action(editor, cx, |vim, _: &DoubleQuotes, cx| {
         vim.object(Object::DoubleQuotes, cx)
->>>>>>> main
     });
     Vim::action(editor, cx, |vim, _: &DoubleQuotes, window, cx| {
         vim.object(Object::DoubleQuotes, window, cx)

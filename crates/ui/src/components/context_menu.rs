@@ -16,19 +16,7 @@ pub enum ContextMenuItem {
     Separator,
     Header(SharedString),
     Label(SharedString),
-<<<<<<< HEAD
-    Entry {
-        toggle: Option<(IconPosition, bool)>,
-        label: SharedString,
-        icon: Option<IconName>,
-        icon_size: IconSize,
-        handler: Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut AppContext)>,
-        action: Option<Box<dyn Action>>,
-        disabled: bool,
-    },
-=======
     Entry(ContextMenuEntry),
->>>>>>> main
     CustomEntry {
         entry_render: Box<dyn Fn(&mut Window, &mut AppContext) -> AnyElement>,
         handler: Rc<dyn Fn(Option<&FocusHandle>, &mut Window, &mut AppContext)>,
@@ -488,12 +476,8 @@ impl Render for ContextMenu {
                 v_flex()
                     .id("context-menu")
                     .min_w(px(200.))
-<<<<<<< HEAD
-                    .max_h(vh(0.75, window))
-=======
                     .max_h(vh(0.75, cx))
                     .flex_1()
->>>>>>> main
                     .overflow_y_scroll()
                     .track_focus(&self.focus_handle(cx))
                     .on_mouse_down_out(

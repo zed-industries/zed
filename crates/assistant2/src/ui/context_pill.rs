@@ -6,11 +6,6 @@ use ui::{prelude::*, IconButtonShape, Tooltip};
 use crate::context::{ContextKind, ContextSnapshot};
 
 #[derive(IntoElement)]
-<<<<<<< HEAD
-pub struct ContextPill {
-    context: Context,
-    on_remove: Option<Rc<dyn Fn(&ClickEvent, &mut Window, &mut AppContext)>>,
-=======
 pub enum ContextPill {
     Added {
         context: ContextSnapshot,
@@ -26,7 +21,6 @@ pub enum ContextPill {
         focused: bool,
         on_click: Option<Rc<dyn Fn(&ClickEvent, &mut WindowContext)>>,
     },
->>>>>>> main
 }
 
 impl ContextPill {
@@ -45,13 +39,6 @@ impl ContextPill {
         }
     }
 
-<<<<<<< HEAD
-    pub fn on_remove(
-        mut self,
-        on_remove: Rc<dyn Fn(&ClickEvent, &mut Window, &mut AppContext)>,
-    ) -> Self {
-        self.on_remove = Some(on_remove);
-=======
     pub fn new_suggested(
         name: SharedString,
         icon_path: Option<SharedString>,
@@ -76,7 +63,6 @@ impl ContextPill {
                 *on_click = Some(listener);
             }
         }
->>>>>>> main
         self
     }
 
@@ -109,23 +95,8 @@ impl ContextPill {
 }
 
 impl RenderOnce for ContextPill {
-<<<<<<< HEAD
-    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
-        let padding_right = if self.on_remove.is_some() {
-            px(2.)
-        } else {
-            px(4.)
-        };
-        let icon = match self.context.kind {
-            ContextKind::File => IconName::File,
-            ContextKind::Directory => IconName::Folder,
-            ContextKind::FetchedUrl => IconName::Globe,
-            ContextKind::Thread => IconName::MessageCircle,
-        };
-=======
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let color = cx.theme().colors();
->>>>>>> main
 
         let base_pill = h_flex()
             .id(self.id())
@@ -133,18 +104,6 @@ impl RenderOnce for ContextPill {
             .pb(px(1.))
             .border_1()
             .rounded_md()
-<<<<<<< HEAD
-            .child(Icon::new(icon).size(IconSize::XSmall).color(Color::Muted))
-            .child(Label::new(self.context.name.clone()).size(LabelSize::Small))
-            .when_some(self.on_remove, |parent, on_remove| {
-                parent.child(
-                    IconButton::new(("remove", self.context.id.0), IconName::Close)
-                        .shape(IconButtonShape::Square)
-                        .icon_size(IconSize::XSmall)
-                        .on_click({
-                            let on_remove = on_remove.clone();
-                            move |event, window, cx| on_remove(event, window, cx)
-=======
             .gap_1()
             .child(self.icon().size(IconSize::XSmall).color(Color::Muted));
 
@@ -181,7 +140,6 @@ impl RenderOnce for ContextPill {
                         })
                         .when_some(context.tooltip.clone(), |element, tooltip| {
                             element.tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
->>>>>>> main
                         }),
                 )
                 .when_some(on_remove.as_ref(), |element, on_remove| {

@@ -212,27 +212,6 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
 
         let workspace = self.workspace.clone();
         let confirm_behavior = self.confirm_behavior;
-<<<<<<< HEAD
-        cx.spawn_in(window, |this, mut cx| async move {
-            this.update_in(&mut cx, |this, window, cx| {
-                let mut text = String::new();
-
-                // TODO: Add the files from the selected directory.
-
-                this.delegate
-                    .context_store
-                    .update(cx, |context_store, cx| {
-                        context_store.insert_context(
-                            ContextKind::Directory,
-                            path.to_string_lossy().to_string(),
-                            text,
-                        );
-                    })?;
-
-                match confirm_behavior {
-                    ConfirmBehavior::KeepOpen => {}
-                    ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
-=======
         cx.spawn(|this, mut cx| async move {
             match task.await {
                 Ok(()) => {
@@ -240,7 +219,6 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
                         ConfirmBehavior::KeepOpen => {}
                         ConfirmBehavior::Close => this.delegate.dismissed(cx),
                     })?;
->>>>>>> main
                 }
                 Err(err) => {
                     let Some(workspace) = workspace.upgrade() else {
@@ -270,12 +248,7 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-<<<<<<< HEAD
-        _window: &mut Window,
-        _cx: &mut ModelContext<Picker<Self>>,
-=======
         cx: &mut ViewContext<Picker<Self>>,
->>>>>>> main
     ) -> Option<Self::ListItem> {
         let path_match = &self.matches[ix];
         let directory_name = path_match.path.to_string_lossy().to_string();

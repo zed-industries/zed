@@ -275,26 +275,6 @@ impl Render for WelcomePage {
                             .child(
                                 h_flex()
                                     .justify_between()
-<<<<<<< HEAD
-                                    .child(CheckboxWithLabel::new(
-                                        "enable-vim",
-                                        Label::new("Enable Vim Mode"),
-                                        if VimModeSetting::get_global(cx).0 {
-                                            ui::ToggleState::Selected
-                                        } else {
-                                            ui::ToggleState::Unselected
-                                        },
-                                        cx.listener(move |this, selection, _, cx| {
-                                            this.telemetry
-                                                .report_app_event("welcome page: toggle vim".to_string());
-                                            this.update_settings::<VimModeSetting>(
-                                                selection,
-                                                 cx,
-                                                |setting, value| *setting = Some(value),
-                                            );
-                                        }),
-                                    ))
-=======
                                     .child(
                                         CheckboxWithLabel::new(
                                             "enable-vim",
@@ -317,57 +297,10 @@ impl Render for WelcomePage {
                                         .fill()
                                         .elevation(ElevationIndex::ElevatedSurface),
                                     )
->>>>>>> main
                                     .child(
                                         IconButton::new("vim-mode", IconName::Info)
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
-<<<<<<< HEAD
-                                            .tooltip(Tooltip::text("You can also toggle Vim Mode via the command palette or Editor Controls menu.")),
-                                    )
-                            )
-                            .child(CheckboxWithLabel::new(
-                                "enable-crash",
-                                Label::new("Send Crash Reports"),
-                                if TelemetrySettings::get_global(cx).diagnostics {
-                                    ui::ToggleState::Selected
-                                } else {
-                                    ui::ToggleState::Unselected
-                                },
-                                cx.listener(move |this, selection, _, cx| {
-                                    this.telemetry.report_app_event(
-                                        "welcome page: toggle diagnostic telemetry".to_string(),
-                                    );
-                                    this.update_settings::<TelemetrySettings>(selection, cx, {
-                                        move |settings, value| {
-                                            settings.diagnostics = Some(value);
-
-                                            telemetry::event!("Settings Changed", setting = "diagnostic telemetry", value);
-                                        }
-                                    });
-                                }),
-                            ))
-                            .child(CheckboxWithLabel::new(
-                                "enable-telemetry",
-                                Label::new("Send Telemetry"),
-                                if TelemetrySettings::get_global(cx).metrics {
-                                    ui::ToggleState::Selected
-                                } else {
-                                    ui::ToggleState::Unselected
-                                },
-                                cx.listener(move |this, selection, _, cx| {
-                                    this.telemetry.report_app_event(
-                                        "welcome page: toggle metric telemetry".to_string(),
-                                    );
-                                    this.update_settings::<TelemetrySettings>(selection, cx, {
-                                        move |settings, value| {
-                                            settings.metrics = Some(value);
-                                            telemetry::event!("Settings Changed", setting = "metric telemetry", value);
-                                        }
-                                    });
-                                }),
-                            )),
-=======
                                             .tooltip(|cx| {
                                                 Tooltip::text(
                                                     "You can also toggle Vim Mode via the command palette or Editor Controls menu.",
@@ -432,7 +365,6 @@ impl Render for WelcomePage {
                                 .fill()
                                 .elevation(ElevationIndex::ElevatedSurface),
                             ),
->>>>>>> main
                     ),
             )
     }

@@ -1,14 +1,8 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-<<<<<<< HEAD
-    div, px, uniform_list, AnyElement, BackgroundExecutor, Div, FontWeight, ListSizingBehavior,
-    Model, ModelContext, ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText,
-    UniformListScrollHandle, WeakModel, Window,
-=======
     div, pulsating_between, px, uniform_list, Animation, AnimationExt, AnyElement,
     BackgroundExecutor, Div, FontWeight, ListSizingBehavior, Model, ScrollStrategy, SharedString,
     Size, StrikethroughStyle, StyledText, UniformListScrollHandle, ViewContext, WeakView,
->>>>>>> main
 };
 use language::Buffer;
 use language::{CodeLabel, Documentation};
@@ -311,12 +305,8 @@ impl CompletionsMenu {
         window: &mut Window,
         cx: &mut ModelContext<Editor>,
     ) {
-<<<<<<< HEAD
-        self.update_selection_index(self.entries.len() - 1, provider, window, cx);
-=======
         let index = self.entries.borrow().len() - 1;
         self.update_selection_index(index, provider, cx);
->>>>>>> main
     }
 
     fn update_selection_index(
@@ -504,13 +494,8 @@ impl CompletionsMenu {
         let list = uniform_list(
             cx.model().clone(),
             "completions",
-<<<<<<< HEAD
-            matches.len(),
-            move |_editor, range, _, cx| {
-=======
             self.entries.borrow().len(),
             move |_editor, range, cx| {
->>>>>>> main
                 last_rendered_range.borrow_mut().replace(range.clone());
                 let start_ix = range.start;
                 let completions_guard = completions.borrow_mut();

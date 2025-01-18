@@ -1509,32 +1509,10 @@ impl Interactivity {
                                 None
                             };
 
-<<<<<<< HEAD
-                            let invalidate_tooltip = hitbox.as_ref().map_or(true, |hitbox| {
-                                !hitbox.bounds.contains(&window.mouse_position())
-                            });
-                            if invalidate_tooltip {
-                                if let Some(active_tooltip) = element_state
-                                    .as_ref()
-                                    .and_then(|state| state.active_tooltip.as_ref())
-                                {
-                                    *active_tooltip.borrow_mut() = None;
-                                    self.tooltip_id = None;
-                                }
-                            }
-
-                            let scroll_offset =
-                                self.clamp_scroll_position(bounds, &style, window, cx);
-                            let result = f(&style, scroll_offset, hitbox, window, cx);
-                            (result, element_state)
-                        },
-                    )
-=======
                         let scroll_offset = self.clamp_scroll_position(bounds, &style, cx);
                         let result = f(&style, scroll_offset, hitbox, cx);
                         (result, element_state)
                     })
->>>>>>> main
                 })
             },
         )
@@ -2081,15 +2059,10 @@ impl Interactivity {
                                     cx.update(|window, cx| {
                                         active_tooltip.borrow_mut().replace(ActiveTooltip {
                                             tooltip: Some(AnyTooltip {
-<<<<<<< HEAD
-                                                view: build_tooltip(window, cx),
-                                                mouse_position: window.mouse_position(),
-=======
                                                 view: build_tooltip(cx),
                                                 mouse_position: cx.mouse_position(),
                                                 hoverable: tooltip_is_hoverable,
                                                 origin_bounds: source_bounds,
->>>>>>> main
                                             }),
                                             _task: None,
                                         });
@@ -2472,9 +2445,6 @@ where
     }
 }
 
-<<<<<<< HEAD
-impl<E> Element for FocusableWrapper<E>
-=======
 impl Focusable<Div> {
     /// Add a listener to be called when the children of this `Div` are prepainted.
     /// This allows you to store the [`Bounds`] of the children for later use.
@@ -2488,7 +2458,6 @@ impl Focusable<Div> {
 }
 
 impl<E> Element for Focusable<E>
->>>>>>> main
 where
     E: Element,
 {

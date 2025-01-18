@@ -5,13 +5,8 @@ pub use assistant_slash_command::SlashCommand;
 use assistant_slash_command::SlashCommandWorkingSet;
 use editor::{CompletionProvider, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
-<<<<<<< HEAD
-use gpui::{AppContext, Model, ModelContext, Task, WeakModel, Window};
-use language::{Anchor, Buffer, CodeLabel, Documentation, HighlightId, LanguageServerId, ToPoint};
-=======
 use gpui::{Model, Task, ViewContext, WeakView, WindowContext};
 use language::{Anchor, Buffer, Documentation, LanguageServerId, ToPoint};
->>>>>>> main
 use parking_lot::Mutex;
 use project::CompletionIntent;
 use rope::Point;

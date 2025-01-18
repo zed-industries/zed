@@ -178,16 +178,12 @@ impl TabContentParams {
     }
 }
 
-<<<<<<< HEAD
-pub trait Item: Focusable + EventEmitter<Self::Event> + Render + Sized {
-=======
 pub enum TabTooltipContent {
     Text(SharedString),
     Custom(Box<dyn Fn(&mut WindowContext) -> AnyView>),
 }
 
 pub trait Item: FocusableView + EventEmitter<Self::Event> {
->>>>>>> main
     type Event;
 
     /// Returns the tab contents.
@@ -457,29 +453,6 @@ pub trait ItemHandle: 'static + Send {
         cx: &mut AppContext,
         handler: Box<dyn Fn(ItemEvent, &mut Window, &mut AppContext)>,
     ) -> gpui::Subscription;
-<<<<<<< HEAD
-    fn item_focus_handle(&self, cx: &AppContext) -> FocusHandle;
-    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString>;
-    fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
-    fn tab_content(
-        &self,
-        params: TabContentParams,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> AnyElement;
-    fn tab_icon(&self, window: &mut Window, cx: &mut AppContext) -> Option<Icon>;
-    fn telemetry_event_text(
-        &self,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> Option<&'static str>;
-    fn dragged_tab_content(
-        &self,
-        params: TabContentParams,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> AnyElement;
-=======
     fn focus_handle(&self, cx: &WindowContext) -> FocusHandle;
     fn tab_description(&self, detail: usize, cx: &AppContext) -> Option<SharedString>;
     fn tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement;
@@ -488,7 +461,6 @@ pub trait ItemHandle: 'static + Send {
     fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent>;
     fn telemetry_event_text(&self, cx: &WindowContext) -> Option<&'static str>;
     fn dragged_tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement;
->>>>>>> main
     fn project_path(&self, cx: &AppContext) -> Option<ProjectPath>;
     fn project_entry_ids(&self, cx: &AppContext) -> SmallVec<[ProjectEntryId; 3]>;
     fn project_paths(&self, cx: &AppContext) -> SmallVec<[ProjectPath; 3]>;
@@ -598,15 +570,7 @@ impl<T: Item> ItemHandle for Model<T> {
         self.read(cx).focus_handle(cx)
     }
 
-<<<<<<< HEAD
-    fn tab_tooltip_text(&self, cx: &AppContext) -> Option<SharedString> {
-        self.read(cx).tab_tooltip_text(cx)
-    }
-
-    fn telemetry_event_text(&self, _: &mut Window, cx: &mut AppContext) -> Option<&'static str> {
-=======
     fn telemetry_event_text(&self, cx: &WindowContext) -> Option<&'static str> {
->>>>>>> main
         self.read(cx).telemetry_event_text()
     }
 
@@ -627,14 +591,6 @@ impl<T: Item> ItemHandle for Model<T> {
         self.read(cx).tab_icon(window, cx)
     }
 
-<<<<<<< HEAD
-    fn dragged_tab_content(
-        &self,
-        params: TabContentParams,
-        window: &mut Window,
-        cx: &mut AppContext,
-    ) -> AnyElement {
-=======
     fn tab_tooltip_content(&self, cx: &AppContext) -> Option<TabTooltipContent> {
         self.read(cx).tab_tooltip_content(cx)
     }
@@ -644,7 +600,6 @@ impl<T: Item> ItemHandle for Model<T> {
     }
 
     fn dragged_tab_content(&self, params: TabContentParams, cx: &WindowContext) -> AnyElement {
->>>>>>> main
         self.read(cx).tab_content(
             TabContentParams {
                 selected: true,

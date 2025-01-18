@@ -1,11 +1,7 @@
 use std::sync::Arc;
 
-<<<<<<< HEAD
-use gpui::{AnyElement, DismissEvent, SharedString, Task, WeakModel};
-=======
 use assistant_slash_command::SlashCommandWorkingSet;
 use gpui::{AnyElement, DismissEvent, SharedString, Task, WeakView};
->>>>>>> main
 use picker::{Picker, PickerDelegate, PickerEditorPosition};
 use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverTrigger, Tooltip};
 

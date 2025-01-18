@@ -1255,15 +1255,6 @@ impl AssistantPanel {
         }
     }
 
-<<<<<<< HEAD
-    fn deploy_prompt_library(
-        &mut self,
-        _: &DeployPromptLibrary,
-        _: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
-        open_prompt_library(self.languages.clone(), cx).detach_and_log_err(cx);
-=======
     fn deploy_prompt_library(&mut self, _: &DeployPromptLibrary, cx: &mut ViewContext<Self>) {
         open_prompt_library(
             self.languages.clone(),
@@ -1278,7 +1269,6 @@ impl AssistantPanel {
             cx,
         )
         .detach_and_log_err(cx);
->>>>>>> main
     }
 
     fn toggle_model_selector(
@@ -3858,13 +3848,8 @@ impl ContextEditor {
 
         let (style, tooltip) = match token_state(&self.context, cx) {
             Some(TokenState::NoTokensLeft { .. }) => (
-<<<<<<< HEAD
-                ButtonStyle::Tinted(TintColor::Negative),
-                Some(Tooltip::simple("Token limit reached", cx)),
-=======
                 ButtonStyle::Tinted(TintColor::Error),
                 Some(Tooltip::text("Token limit reached", cx)),
->>>>>>> main
             ),
             Some(TokenState::HasMoreTokens {
                 over_warn_threshold,
@@ -3924,13 +3909,8 @@ impl ContextEditor {
 
         let (style, tooltip) = match token_state(&self.context, cx) {
             Some(TokenState::NoTokensLeft { .. }) => (
-<<<<<<< HEAD
-                ButtonStyle::Tinted(TintColor::Negative),
-                Some(Tooltip::simple("Token limit reached", cx)),
-=======
                 ButtonStyle::Tinted(TintColor::Error),
                 Some(Tooltip::text("Token limit reached", cx)),
->>>>>>> main
             ),
             Some(TokenState::HasMoreTokens {
                 over_warn_threshold,
@@ -4213,102 +4193,6 @@ fn find_surrounding_code_block(snapshot: &BufferSnapshot, offset: usize) -> Opti
     None
 }
 
-<<<<<<< HEAD
-pub fn selections_creases(
-    workspace: &mut workspace::Workspace,
-    cx: &mut ModelContext<Workspace>,
-) -> Option<Vec<(String, String)>> {
-    let editor = workspace
-        .active_item(cx)
-        .and_then(|item| item.act_as::<Editor>(cx))?;
-
-    let mut creases = vec![];
-    editor.update(cx, |editor, cx| {
-        let selections = editor.selections.all_adjusted(cx);
-        let buffer = editor.buffer().read(cx).snapshot(cx);
-        for selection in selections {
-            let range = editor::ToOffset::to_offset(&selection.start, &buffer)
-                ..editor::ToOffset::to_offset(&selection.end, &buffer);
-            let selected_text = buffer.text_for_range(range.clone()).collect::<String>();
-            if selected_text.is_empty() {
-                continue;
-            }
-            let start_language = buffer.language_at(range.start);
-            let end_language = buffer.language_at(range.end);
-            let language_name = if start_language == end_language {
-                start_language.map(|language| language.code_fence_block_name())
-            } else {
-                None
-            };
-            let language_name = language_name.as_deref().unwrap_or("");
-            let filename = buffer
-                .file_at(selection.start)
-                .map(|file| file.full_path(cx));
-            let text = if language_name == "markdown" {
-                selected_text
-                    .lines()
-                    .map(|line| format!("> {}", line))
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            } else {
-                let start_symbols = buffer
-                    .symbols_containing(selection.start, None)
-                    .map(|(_, symbols)| symbols);
-                let end_symbols = buffer
-                    .symbols_containing(selection.end, None)
-                    .map(|(_, symbols)| symbols);
-
-                let outline_text =
-                    if let Some((start_symbols, end_symbols)) = start_symbols.zip(end_symbols) {
-                        Some(
-                            start_symbols
-                                .into_iter()
-                                .zip(end_symbols)
-                                .take_while(|(a, b)| a == b)
-                                .map(|(a, _)| a.text)
-                                .collect::<Vec<_>>()
-                                .join(" > "),
-                        )
-                    } else {
-                        None
-                    };
-
-                let line_comment_prefix = start_language
-                    .and_then(|l| l.default_scope().line_comment_prefixes().first().cloned());
-
-                let fence = codeblock_fence_for_path(
-                    filename.as_deref(),
-                    Some(selection.start.row..=selection.end.row),
-                );
-
-                if let Some((line_comment_prefix, outline_text)) =
-                    line_comment_prefix.zip(outline_text)
-                {
-                    let breadcrumb = format!("{line_comment_prefix}Excerpt from: {outline_text}\n");
-                    format!("{fence}{breadcrumb}{selected_text}\n```")
-                } else {
-                    format!("{fence}{selected_text}\n```")
-                }
-            };
-            let crease_title = if let Some(path) = filename {
-                let start_line = selection.start.row + 1;
-                let end_line = selection.end.row + 1;
-                if start_line == end_line {
-                    format!("{}, Line {}", path.display(), start_line)
-                } else {
-                    format!("{}, Lines {} to {}", path.display(), start_line, end_line)
-                }
-            } else {
-                "Quoted selection".to_string()
-            };
-            creases.push((text, crease_title));
-        }
-    });
-    Some(creases)
-}
-
-=======
->>>>>>> main
 fn render_fold_icon_button(
     editor: WeakModel<Editor>,
     icon: IconName,

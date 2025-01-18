@@ -229,35 +229,6 @@ impl Render for BufferSearchBar {
                     .track_scroll(&self.editor_scroll_handle)
                     .child(self.render_text_input(&self.query_editor, text_color.color(cx), cx))
                     .when(!hide_inline_icons, |div| {
-<<<<<<< HEAD
-                        div.children(supported_options.case.then(|| {
-                            self.render_search_option_button(
-                                SearchOptions::CASE_SENSITIVE,
-                                focus_handle.clone(),
-                                cx.listener(|this, _, window, cx| {
-                                    this.toggle_case_sensitive(&ToggleCaseSensitive, window, cx)
-                                }),
-                            )
-                        }))
-                        .children(supported_options.word.then(|| {
-                            self.render_search_option_button(
-                                SearchOptions::WHOLE_WORD,
-                                focus_handle.clone(),
-                                cx.listener(|this, _, window, cx| {
-                                    this.toggle_whole_word(&ToggleWholeWord, window, cx)
-                                }),
-                            )
-                        }))
-                        .children(supported_options.regex.then(|| {
-                            self.render_search_option_button(
-                                SearchOptions::REGEX,
-                                focus_handle.clone(),
-                                cx.listener(|this, _, window, cx| {
-                                    this.toggle_regex(&ToggleRegex, window, cx)
-                                }),
-                            )
-                        }))
-=======
                         div.child(
                             h_flex()
                                 .gap_1()
@@ -289,7 +260,6 @@ impl Render for BufferSearchBar {
                                     )
                                 })),
                         )
->>>>>>> main
                     }),
             )
             .child(

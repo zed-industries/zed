@@ -5,11 +5,7 @@ use collections::HashMap;
 use gpui::{
     list, AbsoluteLength, AnyElement, AppContext, DefiniteLength, EdgesRefinement, Empty, Length,
     ListAlignment, ListOffset, ListState, Model, StyleRefinement, Subscription,
-<<<<<<< HEAD
-    TextStyleRefinement, WeakModel,
-=======
     TextStyleRefinement, UnderlineStyle, View, WeakView,
->>>>>>> main
 };
 use language::LanguageRegistry;
 use language_model::Role;
@@ -332,15 +328,10 @@ impl ActiveThread {
 }
 
 impl Render for ActiveThread {
-<<<<<<< HEAD
-    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
-        list(self.list_state.clone()).flex_1().py_1()
-=======
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .size_full()
             .pt_1p5()
             .child(list(self.list_state.clone()).flex_grow())
->>>>>>> main
     }
 }

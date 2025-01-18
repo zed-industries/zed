@@ -9,12 +9,7 @@ use std::sync::Arc;
 use editor::Editor;
 use file_context_picker::render_file_context_entry;
 use gpui::{
-<<<<<<< HEAD
-    AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model, SharedString, Task,
-    WeakModel,
-=======
     AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, View, WeakModel, WeakView,
->>>>>>> main
 };
 use project::ProjectPath;
 use thread_context_picker::{render_thread_context_entry, ThreadContextEntry};
@@ -38,31 +33,19 @@ pub enum ConfirmBehavior {
 
 #[derive(Debug, Clone)]
 enum ContextPickerMode {
-<<<<<<< HEAD
-    Default,
-    File(Model<FileContextPicker>),
-    Directory(Model<DirectoryContextPicker>),
-    Fetch(Model<FetchContextPicker>),
-    Thread(Model<ThreadContextPicker>),
-=======
     Default(View<ContextMenu>),
     File(View<FileContextPicker>),
     Directory(View<DirectoryContextPicker>),
     Fetch(View<FetchContextPicker>),
     Thread(View<ThreadContextPicker>),
->>>>>>> main
 }
 
 pub(super) struct ContextPicker {
     mode: ContextPickerMode,
-<<<<<<< HEAD
-    picker: Model<Picker<ContextPickerDelegate>>,
-=======
     workspace: WeakView<Workspace>,
     context_store: WeakModel<ContextStore>,
     thread_store: Option<WeakModel<ThreadStore>>,
     confirm_behavior: ConfirmBehavior,
->>>>>>> main
 }
 
 impl ContextPicker {
@@ -74,54 +57,6 @@ impl ContextPicker {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) -> Self {
-<<<<<<< HEAD
-        let mut entries = Vec::new();
-        entries.push(ContextPickerEntry {
-            name: "File".into(),
-            kind: ContextKind::File,
-            icon: IconName::File,
-        });
-        let release_channel = ReleaseChannel::global(cx);
-        // The directory context picker isn't fully implemented yet, so limit it
-        // to development builds.
-        if release_channel == ReleaseChannel::Dev {
-            entries.push(ContextPickerEntry {
-                name: "Folder".into(),
-                kind: ContextKind::Directory,
-                icon: IconName::Folder,
-            });
-        }
-        entries.push(ContextPickerEntry {
-            name: "Fetch".into(),
-            kind: ContextKind::FetchedUrl,
-            icon: IconName::Globe,
-        });
-
-        if thread_store.is_some() {
-            entries.push(ContextPickerEntry {
-                name: "Thread".into(),
-                kind: ContextKind::Thread,
-                icon: IconName::MessageCircle,
-            });
-        }
-
-        let delegate = ContextPickerDelegate {
-            context_picker: cx.model().downgrade(),
-            workspace,
-            thread_store,
-            context_store,
-            confirm_behavior,
-            entries,
-            selected_ix: 0,
-        };
-
-        let picker = cx.new_model(|cx| {
-            Picker::nonsearchable_uniform_list(delegate, window, cx)
-                .max_height(Some(rems(20.).into()))
-        });
-
-=======
->>>>>>> main
         ContextPicker {
             mode: ContextPickerMode::Default(ContextMenu::build(cx, |menu, _cx| menu)),
             workspace,
@@ -450,169 +385,10 @@ impl Render for ContextPicker {
             })
     }
 }
-<<<<<<< HEAD
-
-#[derive(Clone)]
-struct ContextPickerEntry {
-    name: SharedString,
-    kind: ContextKind,
-    icon: IconName,
-}
-
-pub(crate) struct ContextPickerDelegate {
-    context_picker: WeakModel<ContextPicker>,
-    workspace: WeakModel<Workspace>,
-    thread_store: Option<WeakModel<ThreadStore>>,
-    context_store: WeakModel<ContextStore>,
-    confirm_behavior: ConfirmBehavior,
-    entries: Vec<ContextPickerEntry>,
-    selected_ix: usize,
-}
-
-impl PickerDelegate for ContextPickerDelegate {
-    type ListItem = ListItem;
-
-    fn match_count(&self) -> usize {
-        self.entries.len()
-    }
-
-    fn selected_index(&self) -> usize {
-        self.selected_ix
-    }
-
-    fn set_selected_index(
-        &mut self,
-        ix: usize,
-        _: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
-    ) {
-        self.selected_ix = ix.min(self.entries.len().saturating_sub(1));
-        cx.notify();
-    }
-
-    fn placeholder_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Arc<str> {
-        "Select a context source…".into()
-    }
-
-    fn update_matches(
-        &mut self,
-        _query: String,
-        _window: &mut Window,
-        _cx: &mut ModelContext<Picker<Self>>,
-    ) -> Task<()> {
-        Task::ready(())
-    }
-
-    fn confirm(
-        &mut self,
-        _secondary: bool,
-        window: &mut Window,
-        cx: &mut ModelContext<Picker<Self>>,
-    ) {
-        if let Some(entry) = self.entries.get(self.selected_ix) {
-            self.context_picker
-                .update(cx, |this, cx| {
-                    match entry.kind {
-                        ContextKind::File => {
-                            this.mode = ContextPickerMode::File(cx.new_model(|cx| {
-                                FileContextPicker::new(
-                                    self.context_picker.clone(),
-                                    self.workspace.clone(),
-                                    self.context_store.clone(),
-                                    self.confirm_behavior,
-                                    window,
-                                    cx,
-                                )
-                            }));
-                        }
-                        ContextKind::Directory => {
-                            this.mode = ContextPickerMode::Directory(cx.new_model(|cx| {
-                                DirectoryContextPicker::new(
-                                    self.context_picker.clone(),
-                                    self.workspace.clone(),
-                                    self.context_store.clone(),
-                                    self.confirm_behavior,
-                                    window,
-                                    cx,
-                                )
-                            }));
-                        }
-                        ContextKind::FetchedUrl => {
-                            this.mode = ContextPickerMode::Fetch(cx.new_model(|cx| {
-                                FetchContextPicker::new(
-                                    self.context_picker.clone(),
-                                    self.workspace.clone(),
-                                    self.context_store.clone(),
-                                    self.confirm_behavior,
-                                    window,
-                                    cx,
-                                )
-                            }));
-                        }
-                        ContextKind::Thread => {
-                            if let Some(thread_store) = self.thread_store.as_ref() {
-                                this.mode = ContextPickerMode::Thread(cx.new_model(|cx| {
-                                    ThreadContextPicker::new(
-                                        thread_store.clone(),
-                                        self.context_picker.clone(),
-                                        self.context_store.clone(),
-                                        self.confirm_behavior,
-                                        window,
-                                        cx,
-                                    )
-                                }));
-                            }
-                        }
-                    }
-
-                    cx.focus_self(window);
-                })
-                .log_err();
-        }
-    }
-
-    fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
-        self.context_picker
-            .update(cx, |this, cx| match this.mode {
-                ContextPickerMode::Default => cx.emit(DismissEvent),
-                ContextPickerMode::File(_)
-                | ContextPickerMode::Directory(_)
-                | ContextPickerMode::Fetch(_)
-                | ContextPickerMode::Thread(_) => {}
-            })
-            .log_err();
-    }
-
-    fn render_match(
-        &self,
-        ix: usize,
-        selected: bool,
-        _window: &mut Window,
-        _cx: &mut ModelContext<Picker<Self>>,
-    ) -> Option<Self::ListItem> {
-        let entry = &self.entries[ix];
-
-        Some(
-            ListItem::new(ix)
-                .inset(true)
-                .spacing(ListItemSpacing::Dense)
-                .toggle_state(selected)
-                .child(
-                    h_flex()
-                        .min_w(px(250.))
-                        .max_w(px(400.))
-                        .gap_2()
-                        .child(Icon::new(entry.icon).size(IconSize::Small))
-                        .child(Label::new(entry.name.clone()).single_line()),
-                ),
-        )
-    }
-=======
 enum RecentEntry {
     File {
         project_path: ProjectPath,
         path_prefix: Arc<str>,
     },
     Thread(ThreadContextEntry),
->>>>>>> main
 }

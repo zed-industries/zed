@@ -3,14 +3,10 @@ use std::sync::Arc;
 use editor::actions::MoveUp;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
-<<<<<<< HEAD
-use gpui::{AppContext, DismissEvent, Focusable, Model, Subscription, TextStyle, WeakModel};
-=======
 use gpui::{
     pulsating_between, Animation, AnimationExt, AppContext, DismissEvent, FocusableView, Model,
     Subscription, TextStyle, View, WeakModel, WeakView,
 };
->>>>>>> main
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::LanguageModelSelector;
 use rope::Point;
@@ -63,12 +59,8 @@ impl MessageEditor {
 
             editor
         });
-<<<<<<< HEAD
-        let inline_context_picker = cx.new_model(|cx| {
-=======
 
         let inline_context_picker = cx.new_view(|cx| {
->>>>>>> main
             ContextPicker::new(
                 workspace.clone(),
                 Some(thread_store.clone()),
@@ -103,25 +95,6 @@ impl MessageEditor {
         Self {
             thread,
             editor: editor.clone(),
-<<<<<<< HEAD
-            context_store: context_store.clone(),
-            context_strip: cx.new_model(|cx| {
-                ContextStrip::new(
-                    context_store,
-                    workspace.clone(),
-                    Some(thread_store.clone()),
-                    editor.focus_handle(cx),
-                    context_picker_menu_handle.clone(),
-                    window,
-                    cx,
-                )
-            }),
-            context_picker_menu_handle,
-            inline_context_picker,
-            inline_context_picker_menu_handle,
-            model_selector: cx.new_model(|cx| {
-                AssistantModelSelector::new(fs, model_selector_menu_handle.clone(), window, cx)
-=======
             context_store,
             context_strip,
             context_picker_menu_handle,
@@ -134,7 +107,6 @@ impl MessageEditor {
                     editor.focus_handle(cx),
                     cx,
                 )
->>>>>>> main
             }),
             model_selector_menu_handle,
             use_tools: false,
@@ -151,27 +123,6 @@ impl MessageEditor {
         self.model_selector_menu_handle.toggle(window, cx)
     }
 
-<<<<<<< HEAD
-    fn toggle_context_picker(
-        &mut self,
-        _: &ToggleContextPicker,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.context_picker_menu_handle.toggle(window, cx);
-    }
-
-    fn chat(&mut self, _: &Chat, window: &mut Window, cx: &mut ModelContext<Self>) {
-        self.send_to_model(RequestKind::Chat, window, cx);
-    }
-
-    fn send_to_model(
-        &mut self,
-        request_kind: RequestKind,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<()> {
-=======
     fn toggle_chat_mode(&mut self, _: &ChatMode, cx: &mut ViewContext<Self>) {
         self.use_tools = !self.use_tools;
         cx.notify();
@@ -191,7 +142,6 @@ impl MessageEditor {
     }
 
     fn send_to_model(&mut self, request_kind: RequestKind, cx: &mut ViewContext<Self>) {
->>>>>>> main
         let provider = LanguageModelRegistry::read_global(cx).active_provider();
         if provider
             .as_ref()
@@ -363,9 +313,6 @@ impl Render for MessageEditor {
                     })
                     .child(
                         PopoverMenu::new("inline-context-picker")
-<<<<<<< HEAD
-                            .menu(move |_window, _cx| Some(inline_context_picker.clone()))
-=======
                             .menu(move |cx| {
                                 inline_context_picker.update(cx, |this, cx| {
                                     this.init(cx);
@@ -373,7 +320,6 @@ impl Render for MessageEditor {
 
                                 Some(inline_context_picker.clone())
                             })
->>>>>>> main
                             .attach(gpui::Corner::TopLeft)
                             .anchor(gpui::Corner::BottomLeft)
                             .offset(gpui::Point {
@@ -389,22 +335,6 @@ impl Render for MessageEditor {
                     .child(
                         h_flex()
                             .justify_between()
-<<<<<<< HEAD
-                            .child(SwitchWithLabel::new(
-                                "use-tools",
-                                Label::new("Tools"),
-                                self.use_tools.into(),
-                                cx.listener(|this, selection, _window, _cx| {
-                                    this.use_tools = match selection {
-                                        ToggleState::Selected => true,
-                                        ToggleState::Unselected | ToggleState::Indeterminate => {
-                                            false
-                                        }
-                                    };
-                                }),
-                            ))
-=======
->>>>>>> main
                             .child(
                                 Switch::new("use-tools", self.use_tools.into())
                                     .label("Tools")
@@ -460,19 +390,6 @@ impl Render for MessageEditor {
                                     ButtonLike::new("submit-message")
                                         .width(button_width.into())
                                         .style(ButtonStyle::Filled)
-<<<<<<< HEAD
-                                        .layer(ElevationIndex::ModalSurface)
-                                        .child(Label::new("Submit"))
-                                        .children(
-                                            KeyBinding::for_action_in(&Chat, &focus_handle, window)
-                                                .map(|binding| binding.into_any_element()),
-                                        )
-                                        .on_click(move |_event, window, cx| {
-                                            focus_handle.dispatch_action(&Chat, window, cx);
-                                        }),
-                                ),
-                            ),
-=======
                                         .child(
                                             h_flex()
                                                 .w_full()
@@ -492,7 +409,6 @@ impl Render for MessageEditor {
                                         })
                                 },
                             )),
->>>>>>> main
                     ),
             )
     }

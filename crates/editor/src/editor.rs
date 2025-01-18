@@ -1389,16 +1389,9 @@ impl Editor {
                 cx.subscribe_in(&buffer, window, Self::on_buffer_event),
                 cx.observe_in(&display_map, window, Self::on_display_map_changed),
                 cx.observe(&blink_manager, |_, _, cx| cx.notify()),
-<<<<<<< HEAD
-                cx.observe_global_in::<SettingsStore>(window, Self::settings_changed),
-                observe_buffer_font_size_adjustment(window, cx, |_, _, cx| cx.notify()),
-                cx.observe_window_activation(window, |editor, window, cx| {
-                    let active = window.is_window_active();
-=======
                 cx.observe_global::<SettingsStore>(Self::settings_changed),
                 cx.observe_window_activation(|editor, cx| {
                     let active = cx.is_window_active();
->>>>>>> main
                     editor.blink_manager.update(cx, |blink_manager, cx| {
                         if active {
                             blink_manager.enable(cx);
@@ -3991,13 +3984,8 @@ impl Editor {
         let entries = completions_menu.entries.borrow();
         let mat = entries.get(item_ix.unwrap_or(completions_menu.selected_item))?;
         let mat = match mat {
-<<<<<<< HEAD
-            CompletionEntry::InlineCompletionHint { .. } => {
-                self.accept_inline_completion(&AcceptInlineCompletion, window, cx);
-=======
             CompletionEntry::InlineCompletionHint(_) => {
                 self.accept_inline_completion(&AcceptInlineCompletion, cx);
->>>>>>> main
                 cx.stop_propagation();
                 return Some(Task::ready(Ok(())));
             }
@@ -4489,13 +4477,6 @@ impl Editor {
         self.refresh_code_actions(window, cx);
     }
 
-<<<<<<< HEAD
-    fn refresh_code_actions(
-        &mut self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<()> {
-=======
     pub fn remove_code_action_provider(&mut self, id: Arc<str>, cx: &mut ViewContext<Self>) {
         self.code_action_providers
             .retain(|provider| provider.id() != id);
@@ -4503,7 +4484,6 @@ impl Editor {
     }
 
     fn refresh_code_actions(&mut self, cx: &mut ViewContext<Self>) -> Option<()> {
->>>>>>> main
         let buffer = self.buffer.read(cx);
         let newest_selection = self.selections.newest_anchor().clone();
         let (start_buffer, start) = buffer.text_anchor_for_position(newest_selection.start, cx)?;
@@ -4694,12 +4674,8 @@ impl Editor {
         if !user_requested
             && (!self.enable_inline_completions
                 || !self.should_show_inline_completions(&buffer, cursor_buffer_position, cx)
-<<<<<<< HEAD
-                || !self.is_focused(window))
-=======
                 || !self.is_focused(cx)
                 || buffer.read(cx).is_empty())
->>>>>>> main
         {
             self.discard_inline_completion(false, cx);
             return None;
@@ -5125,12 +5101,7 @@ impl Editor {
     ) -> Option<InlineCompletionMenuHint> {
         let provider = self.inline_completion_provider()?;
         if self.has_active_inline_completion() {
-<<<<<<< HEAD
-            let provider_name = self.inline_completion_provider()?.display_name();
-            let editor_snapshot = self.snapshot(window, cx);
-=======
             let editor_snapshot = self.snapshot(cx);
->>>>>>> main
 
             let text = match &self.active_inline_completion.as_ref()?.completion {
                 InlineCompletion::Edit(edits) => {
@@ -6166,11 +6137,7 @@ impl Editor {
         });
     }
 
-<<<<<<< HEAD
-    pub fn join_lines(&mut self, _: &JoinLines, window: &mut Window, cx: &mut ModelContext<Self>) {
-=======
     pub fn join_lines_impl(&mut self, insert_whitespace: bool, cx: &mut ViewContext<Self>) {
->>>>>>> main
         if self.read_only(cx) {
             return;
         }
@@ -6542,20 +6509,8 @@ impl Editor {
         self.manipulate_text(window, cx, |text| text.to_lowercase())
     }
 
-<<<<<<< HEAD
-    pub fn convert_to_title_case(
-        &mut self,
-        _: &ConvertToTitleCase,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
-        self.manipulate_text(window, cx, |text| {
-            // Hack to get around the fact that to_case crate doesn't support '\n' as a word boundary
-            // https://github.com/rutrum/convert-case/issues/16
-=======
     pub fn convert_to_title_case(&mut self, _: &ConvertToTitleCase, cx: &mut ViewContext<Self>) {
         self.manipulate_text(cx, |text| {
->>>>>>> main
             text.split('\n')
                 .map(|line| line.to_case(Case::Title))
                 .join("\n")
@@ -6586,13 +6541,7 @@ impl Editor {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-<<<<<<< HEAD
-        self.manipulate_text(window, cx, |text| {
-            // Hack to get around the fact that to_case crate doesn't support '\n' as a word boundary
-            // https://github.com/rutrum/convert-case/issues/16
-=======
         self.manipulate_text(cx, |text| {
->>>>>>> main
             text.split('\n')
                 .map(|line| line.to_case(Case::UpperCamel))
                 .join("\n")
@@ -9838,16 +9787,10 @@ impl Editor {
         // If there is an active Diagnostic Popover jump to its diagnostic instead.
         if direction == Direction::Next {
             if let Some(popover) = self.hover_state.diagnostic_popover.as_ref() {
-<<<<<<< HEAD
-                let (group_id, jump_to) = popover.activation_info();
-                if self.activate_diagnostics(group_id, window, cx) {
-                    self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-=======
                 self.activate_diagnostics(popover.group_id(), cx);
                 if let Some(active_diagnostics) = self.active_diagnostics.as_ref() {
                     let primary_range_start = active_diagnostics.primary_range.start;
                     self.change_selections(Some(Autoscroll::fit()), cx, |s| {
->>>>>>> main
                         let mut new_selection = s.newest_anchor().clone();
                         new_selection.collapse_to(primary_range_start, SelectionGoal::None);
                         s.select_anchors(vec![new_selection.clone()]);
@@ -9916,15 +9859,10 @@ impl Editor {
                 });
 
             if let Some((primary_range, group_id)) = group {
-<<<<<<< HEAD
-                if self.activate_diagnostics(group_id, window, cx) {
-                    self.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
-=======
                 self.activate_diagnostics(group_id, cx);
                 let primary_range = primary_range.to_offset(&buffer);
                 if self.active_diagnostics.is_some() {
                     self.change_selections(Some(Autoscroll::fit()), cx, |s| {
->>>>>>> main
                         s.select(vec![Selection {
                             id: selection.id,
                             start: primary_range.start,
@@ -10222,11 +10160,7 @@ impl Editor {
         url_finder.detach();
     }
 
-<<<<<<< HEAD
-    pub fn open_file(&mut self, _: &OpenFile, window: &mut Window, cx: &mut ModelContext<Self>) {
-=======
     pub fn open_selected_filename(&mut self, _: &OpenSelectedFilename, cx: &mut ViewContext<Self>) {
->>>>>>> main
         let Some(workspace) = self.workspace() else {
             return;
         };
@@ -10948,17 +10882,7 @@ impl Editor {
             None => return None,
         };
 
-<<<<<<< HEAD
-        Some(self.perform_format(
-            project,
-            FormatTrigger::Manual,
-            FormatTarget::Buffer,
-            window,
-            cx,
-        ))
-=======
         Some(self.perform_format(project, FormatTrigger::Manual, FormatTarget::Buffers, cx))
->>>>>>> main
     }
 
     fn format_selections(
@@ -10982,12 +10906,7 @@ impl Editor {
         Some(self.perform_format(
             project,
             FormatTrigger::Manual,
-<<<<<<< HEAD
-            FormatTarget::Ranges(selections),
-            window,
-=======
             FormatTarget::Ranges(ranges),
->>>>>>> main
             cx,
         ))
     }
@@ -11131,16 +11050,7 @@ impl Editor {
         }
     }
 
-<<<<<<< HEAD
-    fn activate_diagnostics(
-        &mut self,
-        group_id: usize,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> bool {
-=======
     fn activate_diagnostics(&mut self, group_id: usize, cx: &mut ViewContext<Self>) {
->>>>>>> main
         self.dismiss_diagnostics(cx);
         let snapshot = self.snapshot(window, cx);
         self.active_diagnostics = self.display_map.update(cx, |display_map, cx| {
@@ -12276,14 +12186,6 @@ impl Editor {
             .and_then(|f| f.as_local())
     }
 
-<<<<<<< HEAD
-    pub fn reveal_in_finder(
-        &mut self,
-        _: &RevealInFileManager,
-        _: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
-=======
     fn target_file_abs_path(&self, cx: &mut ViewContext<Self>) -> Option<PathBuf> {
         self.active_excerpt(cx).and_then(|(_, buffer, _)| {
             let project_path = buffer.read(cx).project_path(cx)?;
@@ -12303,40 +12205,22 @@ impl Editor {
     }
 
     pub fn reveal_in_finder(&mut self, _: &RevealInFileManager, cx: &mut ViewContext<Self>) {
->>>>>>> main
         if let Some(target) = self.target_file(cx) {
             cx.reveal_path(&target.abs_path(cx));
         }
     }
 
-<<<<<<< HEAD
-    pub fn copy_path(&mut self, _: &CopyPath, _: &mut Window, cx: &mut ModelContext<Self>) {
-        if let Some(file) = self.target_file(cx) {
-            if let Some(path) = file.abs_path(cx).to_str() {
-=======
     pub fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
         if let Some(path) = self.target_file_abs_path(cx) {
             if let Some(path) = path.to_str() {
->>>>>>> main
                 cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
             }
         }
     }
 
-<<<<<<< HEAD
-    pub fn copy_relative_path(
-        &mut self,
-        _: &CopyRelativePath,
-        _: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
-        if let Some(file) = self.target_file(cx) {
-            if let Some(path) = file.path().to_str() {
-=======
     pub fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
         if let Some(path) = self.target_file_path(cx) {
             if let Some(path) = path.to_str() {
->>>>>>> main
                 cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
             }
         }

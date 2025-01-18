@@ -780,12 +780,7 @@ impl Item for Editor {
                     editor.perform_format(
                         project.clone(),
                         FormatTrigger::Save,
-<<<<<<< HEAD
-                        FormatTarget::Buffer,
-                        window,
-=======
                         FormatTarget::Buffers,
->>>>>>> main
                         cx,
                     )
                 })?

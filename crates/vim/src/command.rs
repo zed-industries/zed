@@ -7,13 +7,9 @@ use editor::{
     scroll::Autoscroll,
     Bias, Editor, ToPoint,
 };
-<<<<<<< HEAD
-use gpui::{actions, impl_actions, Action, AppContext, Global, ModelContext, Window};
-=======
 use gpui::{
     actions, impl_internal_actions, Action, AppContext, Global, ViewContext, WindowContext,
 };
->>>>>>> main
 use language::Point;
 use multi_buffer::MultiBufferRow;
 use regex::Regex;
@@ -115,10 +111,6 @@ pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>)
         })
     });
 
-<<<<<<< HEAD
-    Vim::action(editor, cx, |vim, _: &CountCommand, window, cx| {
-        let Some(workspace) = vim.workspace(window) else {
-=======
     Vim::action(editor, cx, |vim, _: &ShellCommand, cx| {
         let Some(workspace) = vim.workspace(cx) else {
             return;
@@ -130,7 +122,6 @@ pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>)
 
     Vim::action(editor, cx, |vim, _: &CountCommand, cx| {
         let Some(workspace) = vim.workspace(cx) else {
->>>>>>> main
             return;
         };
         let count = Vim::take_count(cx).unwrap_or(1);
@@ -140,16 +131,7 @@ pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>)
             ".".to_string()
         };
         workspace.update(cx, |workspace, cx| {
-<<<<<<< HEAD
-            command_palette::CommandPalette::toggle(
-                workspace,
-                &format!(".,.+{}", count.saturating_sub(1)),
-                window,
-                cx,
-            );
-=======
             command_palette::CommandPalette::toggle(workspace, &n, cx);
->>>>>>> main
         })
     });
 
@@ -225,13 +207,6 @@ pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>)
         };
 
         let previous_selections = vim
-<<<<<<< HEAD
-            .update_editor(window, cx, |_, editor, window, cx| {
-                let selections = action
-                    .restore_selection
-                    .then(|| editor.selections.disjoint_anchor_ranges());
-                editor.change_selections(None, window, cx, |s| {
-=======
             .update_editor(cx, |_, editor, cx| {
                 let selections = action.restore_selection.then(|| {
                     editor
@@ -240,7 +215,6 @@ pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>)
                         .collect::<Vec<_>>()
                 });
                 editor.change_selections(None, cx, |s| {
->>>>>>> main
                     let end = Point::new(range.end.0, s.buffer().line_len(range.end));
                     s.select_ranges([end..Point::new(range.start.0, 0)]);
                 });
@@ -263,17 +237,12 @@ pub fn register(editor: &mut Editor, _: &mut Window, cx: &mut ModelContext<Vim>)
         });
     });
 
-<<<<<<< HEAD
-    Vim::action(editor, cx, |vim, action: &OnMatchingLines, window, cx| {
-        action.run(vim, window, cx)
-=======
     Vim::action(editor, cx, |vim, action: &OnMatchingLines, cx| {
         action.run(vim, cx)
     });
 
     Vim::action(editor, cx, |vim, action: &ShellExec, cx| {
         action.run(vim, cx)
->>>>>>> main
     })
 }
 

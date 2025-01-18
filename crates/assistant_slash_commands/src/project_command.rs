@@ -1,27 +1,3 @@
-<<<<<<< HEAD:crates/assistant/src/slash_command/project_command.rs
-use super::{
-    create_label_for_command, search_command::add_search_result_section, SlashCommand,
-    SlashCommandOutput,
-};
-use crate::PromptBuilder;
-use anyhow::{anyhow, Result};
-use assistant_slash_command::{ArgumentCompletion, SlashCommandOutputSection, SlashCommandResult};
-use feature_flags::FeatureFlag;
-use gpui::{AppContext, Task, WeakModel, Window};
-use language::{Anchor, CodeLabel, LspAdapterDelegate};
-use language_model::{LanguageModelRegistry, LanguageModelTool};
-use schemars::JsonSchema;
-use semantic_index::SemanticDb;
-use serde::Deserialize;
-
-pub struct ProjectSlashCommandFeatureFlag;
-
-impl FeatureFlag for ProjectSlashCommandFeatureFlag {
-    const NAME: &'static str = "project-slash-command";
-}
-
-=======
->>>>>>> main:crates/assistant_slash_commands/src/project_command.rs
 use std::{
     fmt::Write as _,
     ops::DerefMut,

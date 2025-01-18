@@ -2,13 +2,8 @@ use std::sync::Arc;
 
 use feature_flags::ZedPro;
 use gpui::{
-<<<<<<< HEAD
-    Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, Focusable, Model,
-    Task, WeakModel,
-=======
     Action, AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
     Subscription, Task, View, WeakView,
->>>>>>> main
 };
 use language_model::{LanguageModel, LanguageModelAvailability, LanguageModelRegistry};
 use picker::{Picker, PickerDelegate};
@@ -21,15 +16,11 @@ const TRY_ZED_PRO_URL: &str = "https://zed.dev/pro";
 type OnModelChanged = Arc<dyn Fn(Arc<dyn LanguageModel>, &AppContext) + 'static>;
 
 pub struct LanguageModelSelector {
-<<<<<<< HEAD
-    picker: Model<Picker<LanguageModelPickerDelegate>>,
-=======
     picker: View<Picker<LanguageModelPickerDelegate>>,
     /// The task used to update the picker's matches when there is a change to
     /// the language model registry.
     update_matches_task: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
->>>>>>> main
 }
 
 impl LanguageModelSelector {
@@ -102,25 +93,7 @@ impl LanguageModelSelector {
                     }
                 })
             })
-<<<<<<< HEAD
-            .collect::<Vec<_>>();
-
-        let delegate = LanguageModelPickerDelegate {
-            language_model_selector: cx.model().downgrade(),
-            on_model_changed: on_model_changed.clone(),
-            all_models: all_models.clone(),
-            filtered_models: all_models,
-            selected_index: 0,
-        };
-
-        let picker = cx.new_model(|cx| {
-            Picker::uniform_list(delegate, window, cx).max_height(Some(rems(20.).into()))
-        });
-
-        LanguageModelSelector { picker }
-=======
             .collect::<Vec<_>>()
->>>>>>> main
     }
 }
 

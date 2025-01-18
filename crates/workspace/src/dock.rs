@@ -520,16 +520,10 @@ impl Dock {
             },
         );
 
-<<<<<<< HEAD
-        if !self.restore_state(window, cx) && panel.read(cx).starts_open(window, cx) {
-            self.activate_panel(index, window, cx);
-            self.set_open(true, window, cx);
-=======
         self.restore_state(cx);
         if panel.read(cx).starts_open(cx) {
             self.activate_panel(index, cx);
             self.set_open(true, cx);
->>>>>>> main
         }
 
         cx.notify();
@@ -716,11 +710,6 @@ impl Render for Dock {
                     )
                     .on_mouse_up(
                         MouseButton::Left,
-<<<<<<< HEAD
-                        cx.listener(|v, e: &MouseUpEvent, window, cx| {
-                            if e.click_count == 2 {
-                                v.resize_active_panel(None, window, cx);
-=======
                         cx.listener(|dock, e: &MouseUpEvent, cx| {
                             if e.click_count == 2 {
                                 dock.resize_active_panel(None, cx);
@@ -729,7 +718,6 @@ impl Render for Dock {
                                         workspace.serialize_workspace(cx);
                                     })
                                     .ok();
->>>>>>> main
                                 cx.stop_propagation();
                             }
                         }),

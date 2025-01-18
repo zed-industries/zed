@@ -1618,11 +1618,6 @@ impl Window {
             }
         }
 
-<<<<<<< HEAD
-        self.with_absolute_element_offset(tooltip_bounds.origin, |window| {
-            element.prepaint(window, cx)
-        });
-=======
         // Element's parent can get hidden (e.g. via the `visible_on_hover` method),
         // and element's `paint` won't be called (ergo, mouse listeners also won't be active) to detect that the tooltip has to be removed.
         // Ensure it's not stuck around in such cases.
@@ -1637,7 +1632,6 @@ impl Window {
         }
 
         self.with_absolute_element_offset(tooltip_bounds.origin, |cx| element.prepaint(cx));
->>>>>>> main
 
         self.tooltip_bounds = Some(TooltipBounds {
             id: tooltip_request.id,
@@ -3717,17 +3711,11 @@ impl Window {
             .bindings_for_action(action, &self.rendered_frame.dispatch_tree.context_stack)
     }
 
-<<<<<<< HEAD
-    /// Returns key bindings that invoke the given action on the currently focused element.
-    pub fn all_bindings_for_input(&self, input: &[Keystroke], cx: &AppContext) -> Vec<KeyBinding> {
-        RefCell::borrow(&cx.keymap).all_bindings_for_input(input)
-=======
     /// Returns key bindings that invoke the given action on the currently focused element, without
     /// checking context. Bindings are returned returned in precedence order (reverse of the order
     /// they were added to the keymap).
     pub fn all_bindings_for_input(&self, input: &[Keystroke]) -> Vec<KeyBinding> {
         RefCell::borrow(&self.keymap).all_bindings_for_input(input)
->>>>>>> main
     }
 
     /// Returns any bindings that would invoke an action on the given focus handle if it were

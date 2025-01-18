@@ -34,15 +34,9 @@ use gpui::{
     action_as, actions, canvas, impl_action_as, impl_actions, point, relative, size,
     transparent_black, Action, AnyView, AnyWeakView, AppContext, AsyncAppContext,
     AsyncWindowContext, Bounds, CursorStyle, Decorations, DragMoveEvent, Entity as _, EntityId,
-<<<<<<< HEAD
-    EventEmitter, Flatten, FocusHandle, Focusable, Global, Hsla, KeyContext, Keystroke,
-    ManagedView, Model, ModelContext, MouseButton, PathPromptOptions, Point, PromptLevel, Render,
-    ResizeEdge, Size, Stateful, Subscription, Task, Tiling, WeakModel, WindowBounds, WindowHandle,
-=======
     EventEmitter, FocusHandle, FocusableView, Global, Hsla, KeyContext, Keystroke, ManagedView,
     Model, ModelContext, MouseButton, PathPromptOptions, Point, PromptLevel, Render, ResizeEdge,
     Size, Stateful, Subscription, Task, Tiling, View, WeakView, WindowBounds, WindowHandle,
->>>>>>> main
     WindowId, WindowOptions,
 };
 pub use item::{
@@ -383,36 +377,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
         let app_state = Arc::downgrade(&app_state);
         move |_: &Open, cx: &mut AppContext| {
             if let Some(app_state) = app_state.upgrade() {
-<<<<<<< HEAD
-                cx.spawn(move |cx| async move {
-                    match Flatten::flatten(paths.await.map_err(|e| e.into())) {
-                        Ok(Some(paths)) => {
-                            cx.update(|cx| {
-                                open_paths(&paths, app_state, OpenOptions::default(), cx)
-                                    .detach_and_log_err(cx)
-                            })
-                            .ok();
-                        }
-                        Ok(None) => {}
-                        Err(err) => {
-                            cx.update(|cx| {
-                                if let Some(workspace_window) = cx
-                                    .active_window()
-                                    .and_then(|window| window.downcast::<Workspace>())
-                                {
-                                    workspace_window
-                                        .update(cx, |workspace, _, cx| {
-                                            workspace.show_portal_error(err.to_string(), cx);
-                                        })
-                                        .ok();
-                                }
-                            })
-                            .ok();
-                        }
-                    };
-                })
-                .detach();
-=======
                 prompt_and_open_paths(
                     app_state,
                     PathPromptOptions {
@@ -439,7 +403,6 @@ pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
                     },
                     cx,
                 );
->>>>>>> main
             }
         }
     });
@@ -1119,23 +1082,7 @@ impl Workspace {
 
                 ThemeSettings::reload_current_theme(cx);
             }),
-<<<<<<< HEAD
-            cx.observe_in(&left_dock, window, |this, _, window, cx| {
-                this.serialize_workspace(window, cx);
-                cx.notify();
-            }),
-            cx.observe_in(&bottom_dock, window, |this, _, window, cx| {
-                this.serialize_workspace(window, cx);
-                cx.notify();
-            }),
-            cx.observe_in(&right_dock, window, |this, _, window, cx| {
-                this.serialize_workspace(window, cx);
-                cx.notify();
-            }),
-            cx.on_release_in(window, |this, window, cx| {
-=======
             cx.on_release(|this, window, cx| {
->>>>>>> main
                 this.app_state.workspace_store.update(cx, |store, _| {
                     let window = window.downcast::<Self>().unwrap();
                     store.workspaces.remove(&window);
@@ -2451,14 +2398,6 @@ impl Workspace {
         }
     }
 
-<<<<<<< HEAD
-    pub fn toggle_dock(
-        &mut self,
-        dock_side: DockPosition,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) {
-=======
     pub fn is_dock_at_position_open(
         &self,
         position: DockPosition,
@@ -2473,7 +2412,6 @@ impl Workspace {
     }
 
     pub fn toggle_dock(&mut self, dock_side: DockPosition, cx: &mut ViewContext<Self>) {
->>>>>>> main
         let dock = match dock_side {
             DockPosition::Left => &self.left_dock,
             DockPosition::Bottom => &self.bottom_dock,
@@ -3372,16 +3310,6 @@ impl Workspace {
             pane::Event::Split(direction) => {
                 self.split_and_clone(pane.clone(), *direction, window, cx);
             }
-<<<<<<< HEAD
-            pane::Event::JoinIntoNext => self.join_pane_into_next(pane.clone(), window, cx),
-            pane::Event::JoinAll => self.join_all_panes(window, cx),
-            pane::Event::Remove { focus_on_pane } => {
-                self.remove_pane(pane.clone(), focus_on_pane.clone(), window, cx)
-            }
-            pane::Event::ActivateItem { local } => {
-                cx.on_next_frame(window, |_, window, _| {
-                    window.invalidate_character_coordinates();
-=======
             pane::Event::JoinIntoNext => {
                 self.join_pane_into_next(pane, cx);
             }
@@ -3397,7 +3325,6 @@ impl Workspace {
             } => {
                 cx.on_next_frame(|_, cx| {
                     cx.invalidate_character_coordinates();
->>>>>>> main
                 });
 
                 pane.update(cx, |pane, _| {
@@ -3424,12 +3351,8 @@ impl Workspace {
                 if *pane == self.active_pane {
                     self.active_item_path_changed(window, cx);
                 }
-<<<<<<< HEAD
-                self.update_window_edited(window, cx);
-=======
                 self.update_window_edited(cx);
                 serialize_workspace = false;
->>>>>>> main
             }
             pane::Event::RemoveItem { .. } => {}
             pane::Event::RemovedItem { item_id } => {
@@ -3468,13 +3391,9 @@ impl Workspace {
             }
         }
 
-<<<<<<< HEAD
-        self.serialize_workspace(window, cx);
-=======
         if serialize_workspace {
             self.serialize_workspace(cx);
         }
->>>>>>> main
     }
 
     pub fn unfollow_in_pane(
@@ -5364,37 +5283,6 @@ impl Render for Workspace {
                                 })
                                 .when(self.zoomed.is_none(), |this| {
                                     this.on_drag_move(cx.listener(
-<<<<<<< HEAD
-                                        |workspace, e: &DragMoveEvent<DraggedDock>, window, cx| {
-                                            match e.drag(cx).0 {
-                                                DockPosition::Left => {
-                                                    resize_left_dock(
-                                                        e.event.position.x
-                                                            - workspace.bounds.left(),
-                                                        workspace,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }
-                                                DockPosition::Right => {
-                                                    resize_right_dock(
-                                                        workspace.bounds.right()
-                                                            - e.event.position.x,
-                                                        workspace,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }
-                                                DockPosition::Bottom => {
-                                                    resize_bottom_dock(
-                                                        workspace.bounds.bottom()
-                                                            - e.event.position.y,
-                                                        workspace,
-                                                        window,
-                                                        cx,
-                                                    );
-                                                }
-=======
                                         move |workspace, e: &DragMoveEvent<DraggedDock>, cx| {
                                             if workspace.previous_dock_drag_coordinates
                                                 != Some(e.event.position)
@@ -5428,7 +5316,6 @@ impl Render for Workspace {
                                                     }
                                                 };
                                                 workspace.serialize_workspace(cx);
->>>>>>> main
                                             }
                                         },
                                     ))
@@ -6074,17 +5961,6 @@ pub fn open_paths(
         }
 
         if let Some(existing) = existing {
-<<<<<<< HEAD
-            Ok((
-                existing,
-                existing
-                    .update(&mut cx, |workspace, window, cx| {
-                        window.activate_window();
-                        workspace.open_paths(abs_paths, open_visible, None, window, cx)
-                    })?
-                    .await,
-            ))
-=======
             let open_task = existing
                 .update(&mut cx, |workspace, cx| {
                     cx.activate_window();
@@ -6101,7 +5977,6 @@ pub fn open_paths(
             });
 
             Ok((existing, open_task))
->>>>>>> main
         } else {
             cx.update(move |cx| {
                 Workspace::new_local(

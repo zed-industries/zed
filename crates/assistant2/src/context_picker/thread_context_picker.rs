@@ -202,12 +202,7 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-<<<<<<< HEAD
-        _window: &mut Window,
-        _cx: &mut ModelContext<Picker<Self>>,
-=======
         cx: &mut ViewContext<Picker<Self>>,
->>>>>>> main
     ) -> Option<Self::ListItem> {
         let thread = &self.matches[ix];
 

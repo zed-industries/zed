@@ -1,10 +1,4 @@
-<<<<<<< HEAD
-#![allow(missing_docs)]
-
-use gpui::{div, prelude::*, AppContext, ElementId, IntoElement, Styled, Window};
-=======
 use gpui::{div, hsla, prelude::*, AnyView, ElementId, Hsla, IntoElement, Styled, WindowContext};
->>>>>>> main
 use std::sync::Arc;
 
 use crate::utils::is_light;
@@ -47,14 +41,10 @@ pub struct Checkbox {
     id: ElementId,
     toggle_state: ToggleState,
     disabled: bool,
-<<<<<<< HEAD
-    on_click: Option<Box<dyn Fn(&ToggleState, &mut Window, &mut AppContext) + 'static>>,
-=======
     on_click: Option<Box<dyn Fn(&ToggleState, &mut WindowContext) + 'static>>,
     filled: bool,
     style: ToggleStyle,
     tooltip: Option<Box<dyn Fn(&mut WindowContext) -> AnyView>>,
->>>>>>> main
 }
 
 impl Checkbox {
@@ -208,13 +198,9 @@ pub struct CheckboxWithLabel {
     id: ElementId,
     label: Label,
     checked: ToggleState,
-<<<<<<< HEAD
-    on_click: Arc<dyn Fn(&ToggleState, &mut Window, &mut AppContext) + 'static>,
-=======
     on_click: Arc<dyn Fn(&ToggleState, &mut WindowContext) + 'static>,
     filled: bool,
     style: ToggleStyle,
->>>>>>> main
 }
 
 impl CheckboxWithLabel {
@@ -258,14 +244,6 @@ impl RenderOnce for CheckboxWithLabel {
     fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
         h_flex()
             .gap(DynamicSpacing::Base08.rems(cx))
-<<<<<<< HEAD
-            .child(Checkbox::new(self.id.clone(), self.checked).on_click({
-                let on_click = self.on_click.clone();
-                move |checked, window, cx| {
-                    (on_click)(checked, window, cx);
-                }
-            }))
-=======
             .child(
                 Checkbox::new(self.id.clone(), self.checked)
                     .style(self.style)
@@ -277,7 +255,6 @@ impl RenderOnce for CheckboxWithLabel {
                         }
                     }),
             )
->>>>>>> main
             .child(
                 div()
                     .id(SharedString::from(format!("{}-label", self.id)))
@@ -297,13 +274,9 @@ pub struct Switch {
     id: ElementId,
     toggle_state: ToggleState,
     disabled: bool,
-<<<<<<< HEAD
-    on_click: Option<Box<dyn Fn(&ToggleState, &mut Window, &mut AppContext) + 'static>>,
-=======
     on_click: Option<Box<dyn Fn(&ToggleState, &mut WindowContext) + 'static>>,
     label: Option<SharedString>,
     key_binding: Option<KeyBinding>,
->>>>>>> main
 }
 
 impl Switch {
@@ -420,59 +393,10 @@ impl RenderOnce for Switch {
                     })
                 },
             )
-<<<<<<< HEAD
-    }
-}
-
-/// A [`Switch`] that has a [`Label`].
-#[derive(IntoElement)]
-pub struct SwitchWithLabel {
-    id: ElementId,
-    label: Label,
-    checked: ToggleState,
-    on_click: Arc<dyn Fn(&ToggleState, &mut Window, &mut AppContext) + 'static>,
-}
-
-impl SwitchWithLabel {
-    pub fn new(
-        id: impl Into<ElementId>,
-        label: Label,
-        checked: ToggleState,
-        on_click: impl Fn(&ToggleState, &mut Window, &mut AppContext) + 'static,
-    ) -> Self {
-        Self {
-            id: id.into(),
-            label,
-            checked,
-            on_click: Arc::new(on_click),
-        }
-    }
-}
-
-impl RenderOnce for SwitchWithLabel {
-    fn render(self, _window: &mut Window, cx: &mut AppContext) -> impl IntoElement {
-        h_flex()
-            .gap(DynamicSpacing::Base08.rems(cx))
-            .child(Switch::new(self.id.clone(), self.checked).on_click({
-                let on_click = self.on_click.clone();
-                move |checked, window, cx| {
-                    (on_click)(checked, window, cx);
-                }
-            }))
-            .child(
-                div()
-                    .id(SharedString::from(format!("{}-label", self.id)))
-                    .on_click(move |_event, window, cx| {
-                        (self.on_click)(&self.checked.inverse(), window, cx);
-                    })
-                    .child(self.label),
-            )
-=======
             .when_some(self.label, |this, label| {
                 this.child(Label::new(label).size(LabelSize::Small))
             })
             .children(self.key_binding)
->>>>>>> main
     }
 }
 
@@ -759,35 +683,3 @@ impl ComponentPreview for CheckboxWithLabel {
         ])]
     }
 }
-<<<<<<< HEAD
-
-impl ComponentPreview for SwitchWithLabel {
-    fn description() -> impl Into<Option<&'static str>> {
-        "A switch with an associated label, allowing users to select an option while providing a descriptive text."
-    }
-
-    fn examples(_window: &mut Window, _: &mut AppContext) -> Vec<ComponentExampleGroup<Self>> {
-        vec![example_group(vec![
-            single_example(
-                "Off",
-                SwitchWithLabel::new(
-                    "switch_with_label_unselected",
-                    Label::new("Always save on quit"),
-                    ToggleState::Unselected,
-                    |_, _, _| {},
-                ),
-            ),
-            single_example(
-                "On",
-                SwitchWithLabel::new(
-                    "switch_with_label_selected",
-                    Label::new("Always save on quit"),
-                    ToggleState::Selected,
-                    |_, _, _| {},
-                ),
-            ),
-        ])]
-    }
-}
-=======
->>>>>>> main

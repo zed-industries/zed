@@ -55,14 +55,6 @@ actions!(
 );
 
 pub fn init(cx: &mut AppContext) {
-<<<<<<< HEAD
-    cx.observe_new_models(|workspace: &mut Workspace, window, cx| {
-        let Some(window) = window else {
-            return;
-        };
-        let item = cx.new_model(|cx| TitleBar::new("title-bar", workspace, window, cx));
-        workspace.set_titlebar_item(item.into(), window, cx)
-=======
     cx.observe_new_views(|workspace: &mut Workspace, cx| {
         let item = cx.new_view(|cx| TitleBar::new("title-bar", workspace, cx));
         workspace.set_titlebar_item(item.into(), cx);
@@ -98,7 +90,6 @@ pub fn init(cx: &mut AppContext) {
                 }
             },
         );
->>>>>>> main
     })
     .detach();
 }

@@ -380,13 +380,8 @@ impl TitleBar {
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
                 .toggle_state(is_muted)
-<<<<<<< HEAD
-                .selected_style(ButtonStyle::Tinted(TintColor::Negative))
-                .on_click(move |_, _window, cx| {
-=======
                 .selected_style(ButtonStyle::Tinted(TintColor::Error))
                 .on_click(move |_, cx| {
->>>>>>> main
                     toggle_mute(&Default::default(), cx);
                 })
                 .into_any_element(),

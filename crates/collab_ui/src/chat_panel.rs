@@ -1160,18 +1160,6 @@ impl Panel for ChatPanel {
         "ChatPanel"
     }
 
-<<<<<<< HEAD
-    fn icon(&self, _: &Window, cx: &AppContext) -> Option<ui::IconName> {
-        match ChatPanelSettings::get_global(cx).button {
-            ChatPanelButton::Never => None,
-            ChatPanelButton::Always => Some(ui::IconName::MessageBubbles),
-            ChatPanelButton::WhenInCall => ActiveCall::global(cx)
-                .read(cx)
-                .room()
-                .filter(|room| room.read(cx).contains_guests())
-                .map(|_| ui::IconName::MessageBubbles),
-        }
-=======
     fn icon(&self, cx: &WindowContext) -> Option<ui::IconName> {
         let show_icon = match ChatPanelSettings::get_global(cx).button {
             ChatPanelButton::Never => false,
@@ -1187,7 +1175,6 @@ impl Panel for ChatPanel {
         };
 
         show_icon.then(|| ui::IconName::MessageBubbles)
->>>>>>> main
     }
 
     fn icon_tooltip(&self, _: &Window, _: &AppContext) -> Option<&'static str> {

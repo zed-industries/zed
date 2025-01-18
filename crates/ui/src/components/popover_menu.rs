@@ -288,15 +288,8 @@ impl<M: ManagedView> Element for PopoverMenu<M> {
                         .anchor(self.anchor)
                         .offset(offset);
                     if let Some(child_bounds) = element_state.child_bounds {
-<<<<<<< HEAD
-                        anchored = anchored.position(
-                            child_bounds.corner(self.resolved_attach())
-                                + self.resolved_offset(window),
-                        );
-=======
                         anchored =
                             anchored.position(child_bounds.corner(self.resolved_attach()) + offset);
->>>>>>> main
                     }
                     let mut element = deferred(anchored.child(div().occlude().child(menu.clone())))
                         .with_priority(1)

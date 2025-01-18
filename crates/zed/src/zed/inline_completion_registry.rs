@@ -4,13 +4,8 @@ use client::Client;
 use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::{Editor, EditorMode};
-<<<<<<< HEAD
-use feature_flags::{FeatureFlagAppExt, ZetaFeatureFlag};
-use gpui::{AnyWindowHandle, AppContext, Context, ModelContext, WeakModel, Window};
-=======
 use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
 use gpui::{AnyWindowHandle, AppContext, Context, ViewContext, WeakView};
->>>>>>> main
 use language::language_settings::{all_language_settings, InlineCompletionProvider};
 use settings::SettingsStore;
 use supermaven::{Supermaven, SupermavenCompletionProvider};

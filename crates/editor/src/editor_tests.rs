@@ -7504,12 +7504,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
             editor.perform_format(
                 project.clone(),
                 FormatTrigger::Manual,
-<<<<<<< HEAD
-                FormatTarget::Buffer,
-                window,
-=======
                 FormatTarget::Buffers,
->>>>>>> main
                 cx,
             )
         })
@@ -7548,19 +7543,8 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
         unreachable!()
     });
     let format = editor
-<<<<<<< HEAD
-        .update_in(cx, |editor, window, cx| {
-            editor.perform_format(
-                project,
-                FormatTrigger::Manual,
-                FormatTarget::Buffer,
-                window,
-                cx,
-            )
-=======
         .update(cx, |editor, cx| {
             editor.perform_format(project, FormatTrigger::Manual, FormatTarget::Buffers, cx)
->>>>>>> main
         })
         .unwrap();
     cx.executor().advance_clock(super::FORMAT_TIMEOUT);
@@ -11519,12 +11503,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
             editor.perform_format(
                 project.clone(),
                 FormatTrigger::Manual,
-<<<<<<< HEAD
-                FormatTarget::Buffer,
-                window,
-=======
                 FormatTarget::Buffers,
->>>>>>> main
                 cx,
             )
         })
@@ -11543,12 +11522,7 @@ async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
         editor.perform_format(
             project.clone(),
             FormatTrigger::Manual,
-<<<<<<< HEAD
-            FormatTarget::Buffer,
-            window,
-=======
             FormatTarget::Buffers,
->>>>>>> main
             cx,
         )
     });
@@ -15024,12 +14998,6 @@ async fn test_rename_with_duplicate_edits(cx: &mut gpui::TestAppContext) {
         );
     });
 
-<<<<<<< HEAD
-    cx.update_editor(|e, window, cx| e.rename(&Rename, window, cx))
-        .expect("Rename was not started")
-        .await
-        .expect("Rename failed");
-=======
     let mut prepare_rename_handler =
         cx.handle_request::<lsp::request::PrepareRenameRequest, _, _>(move |_, _, _| async move {
             Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range {
@@ -15049,7 +15017,6 @@ async fn test_rename_with_duplicate_edits(cx: &mut gpui::TestAppContext) {
     prepare_rename_handler.next().await.unwrap();
     prepare_rename_task.await.expect("Prepare rename failed");
 
->>>>>>> main
     let mut rename_handler =
         cx.handle_request::<lsp::request::Rename, _, _>(move |url, _, _| async move {
             let edit = lsp::TextEdit {
@@ -15070,16 +15037,9 @@ async fn test_rename_with_duplicate_edits(cx: &mut gpui::TestAppContext) {
                 std::collections::HashMap::from_iter(Some((url, vec![edit.clone(), edit]))),
             )))
         });
-<<<<<<< HEAD
-    cx.update_editor(|e, window, cx| e.confirm_rename(&ConfirmRename, window, cx))
-        .expect("Confirm rename was not started")
-        .await
-        .expect("Confirm rename failed");
-=======
     let rename_task = cx
         .update_editor(|e, cx| e.confirm_rename(&ConfirmRename, cx))
         .expect("Confirm rename was not started");
->>>>>>> main
     rename_handler.next().await.unwrap();
     rename_task.await.expect("Confirm rename failed");
     cx.run_until_parked();

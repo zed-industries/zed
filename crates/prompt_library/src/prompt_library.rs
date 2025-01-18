@@ -6,19 +6,9 @@ use collections::{HashMap, HashSet};
 use editor::CompletionProvider;
 use editor::{actions::Tab, CurrentLineHighlight, Editor, EditorElement, EditorEvent, EditorStyle};
 use gpui::{
-<<<<<<< HEAD:crates/assistant/src/prompt_library.rs
-    actions, point, size, transparent_black, Action, AppContext, BackgroundExecutor, Bounds,
-    EventEmitter, Focusable, Global, Model, PromptLevel, ReadGlobal, Subscription, Task, TextStyle,
-    TitlebarOptions, UpdateGlobal, WindowBounds, WindowHandle, WindowOptions,
-};
-use heed::{
-    types::{SerdeBincode, SerdeJson, Str},
-    Database, RoTxn,
-=======
     actions, point, size, transparent_black, Action, AppContext, Bounds, EventEmitter, PromptLevel,
     Subscription, Task, TextStyle, TitlebarOptions, View, WindowBounds, WindowHandle,
     WindowOptions,
->>>>>>> main:crates/prompt_library/src/prompt_library.rs
 };
 use language::{language_settings::SoftWrap, Buffer, LanguageRegistry};
 use language_model::{
@@ -116,10 +106,6 @@ pub fn open_prompt_library(
                         window_bounds: Some(WindowBounds::Windowed(bounds)),
                         ..Default::default()
                     },
-<<<<<<< HEAD:crates/assistant/src/prompt_library.rs
-                    |window, cx| {
-                        cx.new_model(|cx| PromptLibrary::new(store, language_registry, window, cx))
-=======
                     |cx| {
                         cx.new_view(|cx| {
                             PromptLibrary::new(
@@ -130,7 +116,6 @@ pub fn open_prompt_library(
                                 cx,
                             )
                         })
->>>>>>> main:crates/prompt_library/src/prompt_library.rs
                     },
                 )
             })?
@@ -349,14 +334,9 @@ impl PromptLibrary {
     fn new(
         store: Arc<PromptStore>,
         language_registry: Arc<LanguageRegistry>,
-<<<<<<< HEAD:crates/assistant/src/prompt_library.rs
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-=======
         inline_assist_delegate: Box<dyn InlineAssistDelegate>,
         make_completion_provider: Arc<dyn Fn() -> Box<dyn CompletionProvider>>,
         cx: &mut ViewContext<Self>,
->>>>>>> main:crates/prompt_library/src/prompt_library.rs
     ) -> Self {
         let delegate = PromptPickerDelegate {
             store: store.clone(),
@@ -377,13 +357,9 @@ impl PromptLibrary {
             prompt_editors: HashMap::default(),
             active_prompt_id: None,
             pending_load: Task::ready(()),
-<<<<<<< HEAD:crates/assistant/src/prompt_library.rs
-            _subscriptions: vec![cx.subscribe_in(&picker, window, Self::handle_picker_event)],
-=======
             inline_assist_delegate,
             make_completion_provider,
             _subscriptions: vec![cx.subscribe(&picker, Self::handle_picker_event)],
->>>>>>> main:crates/prompt_library/src/prompt_library.rs
             picker,
         }
     }
@@ -563,12 +539,8 @@ impl PromptLibrary {
         } else if let Some(prompt_metadata) = self.store.metadata(prompt_id) {
             let language_registry = self.language_registry.clone();
             let prompt = self.store.load(prompt_id);
-<<<<<<< HEAD:crates/assistant/src/prompt_library.rs
-            self.pending_load = cx.spawn_in(window, |this, mut cx| async move {
-=======
             let make_completion_provider = self.make_completion_provider.clone();
             self.pending_load = cx.spawn(|this, mut cx| async move {
->>>>>>> main:crates/prompt_library/src/prompt_library.rs
                 let prompt = prompt.await;
                 let markdown = language_registry.language_for_name("Markdown").await;
                 this.update_in(&mut cx, |this, window, cx| match prompt {
@@ -802,28 +774,16 @@ impl PromptLibrary {
 
         let initial_prompt = action.prompt.clone();
         if provider.is_authenticated(cx) {
-<<<<<<< HEAD:crates/assistant/src/prompt_library.rs
-            InlineAssistant::update_global(cx, |assistant, cx| {
-                assistant.assist(&prompt_editor, None, None, initial_prompt, window, cx)
-            })
-=======
             self.inline_assist_delegate
                 .assist(prompt_editor, initial_prompt, cx);
->>>>>>> main:crates/prompt_library/src/prompt_library.rs
         } else {
             for window in cx.windows() {
                 if let Some(workspace) = window.downcast::<Workspace>() {
                     let panel = workspace
-<<<<<<< HEAD:crates/assistant/src/prompt_library.rs
-                        .update(cx, |workspace, window, cx| {
-                            window.activate_window();
-                            workspace.focus_panel::<AssistantPanel>(window, cx)
-=======
                         .update(cx, |workspace, cx| {
                             cx.activate_window();
                             self.inline_assist_delegate
                                 .focus_assistant_panel(workspace, cx)
->>>>>>> main:crates/prompt_library/src/prompt_library.rs
                         })
                         .ok();
                     if panel == Some(true) {

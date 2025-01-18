@@ -1,15 +1,8 @@
 use crate::{
-<<<<<<< HEAD
-    ActiveTooltip, AnyTooltip, AnyView, AppContext, Bounds, DispatchPhase, Element, ElementId,
-    GlobalElementId, HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent,
-    MouseUpEvent, Pixels, Point, SharedString, Size, TextRun, TextStyle, Truncate, WhiteSpace,
-    Window, WrappedLine, TOOLTIP_DELAY,
-=======
     ActiveTooltip, AnyTooltip, AnyView, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
     HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
     Pixels, Point, SharedString, Size, TextRun, TextStyle, Truncate, WhiteSpace, WindowContext,
     WrappedLine, WrappedLineLayout, TOOLTIP_DELAY,
->>>>>>> main
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
@@ -757,16 +750,6 @@ impl Element for InteractiveText {
 
                                 move |mut cx| async move {
                                     cx.background_executor().timer(TOOLTIP_DELAY).await;
-<<<<<<< HEAD
-                                    cx.update(|window, cx| {
-                                        let new_tooltip = tooltip_builder(position, window, cx)
-                                            .map(|tooltip| ActiveTooltip {
-                                                tooltip: Some(AnyTooltip {
-                                                    view: tooltip,
-                                                    mouse_position: window.mouse_position(),
-                                                }),
-                                                _task: None,
-=======
                                     cx.update(|cx| {
                                         let new_tooltip =
                                             tooltip_builder(position, cx).map(|tooltip| {
@@ -779,7 +762,6 @@ impl Element for InteractiveText {
                                                     }),
                                                     _task: None,
                                                 }
->>>>>>> main
                                             });
                                         *active_tooltip.borrow_mut() = new_tooltip;
                                         window.refresh();

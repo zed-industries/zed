@@ -4,13 +4,9 @@ use std::sync::Arc;
 
 use file_icons::FileIcons;
 use fuzzy::PathMatch;
-<<<<<<< HEAD
-use gpui::{AppContext, DismissEvent, FocusHandle, Focusable, Model, Task, WeakModel};
-=======
 use gpui::{
     AppContext, DismissEvent, FocusHandle, FocusableView, Stateful, Task, View, WeakModel, WeakView,
 };
->>>>>>> main
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use ui::{prelude::*, ListItem, Tooltip};
@@ -234,43 +230,6 @@ impl PickerDelegate for FileContextPickerDelegate {
 
         let workspace = self.workspace.clone();
         let confirm_behavior = self.confirm_behavior;
-<<<<<<< HEAD
-        cx.spawn_in(window, |this, mut cx| async move {
-            let Some(open_buffer_task) = project
-                .update(&mut cx, |project, cx| {
-                    project.open_buffer((worktree_id, path.clone()), cx)
-                })
-                .ok()
-            else {
-                return anyhow::Ok(());
-            };
-
-            let buffer = open_buffer_task.await?;
-
-            this.update_in(&mut cx, |this, window, cx| {
-                this.delegate
-                    .context_store
-                    .update(cx, |context_store, cx| {
-                        let mut text = String::new();
-                        text.push_str(&codeblock_fence_for_path(Some(&path), None));
-                        text.push_str(&buffer.read(cx).text());
-                        if !text.ends_with('\n') {
-                            text.push('\n');
-                        }
-
-                        text.push_str("```\n");
-
-                        context_store.insert_context(
-                            ContextKind::File,
-                            path.to_string_lossy().to_string(),
-                            text,
-                        );
-                    })?;
-
-                match confirm_behavior {
-                    ConfirmBehavior::KeepOpen => {}
-                    ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
-=======
         cx.spawn(|this, mut cx| async move {
             match task.await {
                 Ok(()) => {
@@ -278,7 +237,6 @@ impl PickerDelegate for FileContextPickerDelegate {
                         ConfirmBehavior::KeepOpen => {}
                         ConfirmBehavior::Close => this.delegate.dismissed(cx),
                     })?;
->>>>>>> main
                 }
                 Err(err) => {
                     let Some(workspace) = workspace.upgrade() else {
@@ -308,12 +266,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-<<<<<<< HEAD
-        _window: &mut Window,
-        _cx: &mut ModelContext<Picker<Self>>,
-=======
         cx: &mut ViewContext<Picker<Self>>,
->>>>>>> main
     ) -> Option<Self::ListItem> {
         let path_match = &self.matches[ix];
 

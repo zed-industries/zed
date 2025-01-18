@@ -362,16 +362,11 @@ impl QuickActionBar {
                 .child(
                     IconButton::new("toggle_repl_icon", IconName::ReplNeutral)
                         .style(ButtonStyle::Subtle)
-<<<<<<< HEAD
-                        .tooltip(Tooltip::text(tooltip))
-                        .on_click(|_, _, cx| {
-=======
                         .shape(ui::IconButtonShape::Square)
                         .icon_size(ui::IconSize::Small)
                         .icon_color(Color::Muted)
                         .tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
                         .on_click(|_, cx| {
->>>>>>> main
                             cx.open_url(&format!("{}#installation", ZED_REPL_DOCUMENTATION))
                         }),
                 )
