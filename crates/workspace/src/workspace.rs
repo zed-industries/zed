@@ -7990,6 +7990,68 @@ mod tests {
         });
     }
 
+    #[gpui::test]
+    async fn test_move_focused_panel_to_next_position(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+
+        // Add a new panel to the right dock, opening the dock and setting the
+        // focus to the new panel.
+        let panel = workspace.update(cx, |workspace, cx| {
+            let panel = cx.new_view(|cx| TestPanel::new(DockPosition::Right, cx));
+            workspace.add_panel(panel.clone(), cx);
+
+            workspace
+                .right_dock()
+                .update(cx, |right_dock, cx| right_dock.set_open(true, cx));
+
+            workspace.toggle_panel_focus::<TestPanel>(cx);
+
+            panel
+        });
+
+        // Dispatch the `MoveFocusedPanelToNextPosition` action, moving the
+        // panel to the next valid position which, in this case, is the left
+        // dock.
+        cx.dispatch_action(MoveFocusedPanelToNextPosition);
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.left_dock().read(cx).is_open());
+            assert_eq!(panel.read(cx).position, DockPosition::Left);
+        });
+
+        // Dispatch the `MoveFocusedPanelToNextPosition` action, moving the
+        // panel to the next valid position which, in this case, is the bottom
+        // dock.
+        cx.dispatch_action(MoveFocusedPanelToNextPosition);
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.bottom_dock().read(cx).is_open());
+            assert_eq!(panel.read(cx).position, DockPosition::Bottom);
+        });
+
+        // Dispatch the `MoveFocusedPanelToNextPosition` action again, this time
+        // around moving the panel to its initial position, the right dock.
+        cx.dispatch_action(MoveFocusedPanelToNextPosition);
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert_eq!(panel.read(cx).position, DockPosition::Right);
+        });
+
+        // Remove focus from the panel, ensuring that, if the panel is not
+        // focused, the `MoveFocusedPanelToNextPosition` action does not update
+        // the panel's position, so the panel is still in the right dock.
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(cx);
+        });
+
+        cx.dispatch_action(MoveFocusedPanelToNextPosition);
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert_eq!(panel.read(cx).position, DockPosition::Right);
+        });
+    }
+
     mod register_project_item_tests {
         use gpui::Context as _;
 

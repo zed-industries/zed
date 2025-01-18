@@ -73,7 +73,7 @@ actions!(
         SelectParent,
         ToggleActiveEditorPin,
         ToggleFocus,
-        UnfoldDirectory
+        UnfoldDirectory,
     ]
 );
 
