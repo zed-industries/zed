@@ -70,7 +70,6 @@ re 'cx.dismiss_view\(' 'window.dismiss_view(cx, '
 re 'cx.focus_view\(' 'window.focus_view(cx, '
 re 'cx.new_view\(' 'window.new_view(cx, '
 re 'cx.replace_root_view\(' 'window.replace_root_view(cx, '
-re 'cx.update_view\(' 'window.update_view(cx, '
 
 # AppContext methods moved to window, that take context
 re 'cx.appearance_changed\(\)' 'window.appearance_changed(cx)'
