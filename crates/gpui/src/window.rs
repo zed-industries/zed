@@ -2457,6 +2457,7 @@ impl<'a> WindowContext<'a> {
             subpixel_variant,
             scale_factor,
             is_emoji: false,
+            is_light: color.is_light(),
         };
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
@@ -2521,6 +2522,7 @@ impl<'a> WindowContext<'a> {
             subpixel_variant: Default::default(),
             scale_factor,
             is_emoji: true,
+            is_light: false,
         };
 
         let raster_bounds = self.text_system().raster_bounds(&params)?;
