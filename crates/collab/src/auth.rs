@@ -248,6 +248,7 @@ mod test {
         let user = db
             .create_user(
                 "example@example.com",
+                None,
                 false,
                 NewUserParams {
                     github_login: "example".into(),

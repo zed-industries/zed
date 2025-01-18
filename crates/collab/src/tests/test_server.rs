@@ -186,6 +186,7 @@ impl TestServer {
                 .db
                 .create_user(
                     &format!("{name}@example.com"),
+                    None,
                     false,
                     NewUserParams {
                         github_login: name.into(),

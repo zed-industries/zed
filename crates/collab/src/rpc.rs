@@ -2418,6 +2418,8 @@ async fn get_users(
             id: user.id.to_proto(),
             avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
             github_login: user.github_login,
+            email: user.email_address,
+            name: user.name,
         })
         .collect();
     response.send(proto::UsersResponse { users })?;
@@ -2449,6 +2451,8 @@ async fn fuzzy_search_users(
             id: user.id.to_proto(),
             avatar_url: format!("https://github.com/{}.png?size=128", user.github_login),
             github_login: user.github_login,
+            name: user.name,
+            email: user.email_address,
         })
         .collect();
     response.send(proto::UsersResponse { users })?;
