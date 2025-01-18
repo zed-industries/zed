@@ -5,10 +5,7 @@ pub use lsp_types::*;
 
 use anyhow::{anyhow, Context, Result};
 use collections::HashMap;
-use futures::{
-    channel::oneshot, future::BoxFuture, io::BufWriter, select, AsyncRead, AsyncWrite, Future,
-    FutureExt,
-};
+use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, SharedString, Task};
 use parking_lot::{Mutex, RwLock};
 use postage::{barrier, prelude::Stream};
@@ -49,7 +46,7 @@ const LSP_REQUEST_TIMEOUT: Duration = Duration::from_secs(60 * 2);
 const SERVER_SHUTDOWN_TIMEOUT: Duration = Duration::from_secs(5);
 
 type NotificationHandler =
-    Arc<dyn Send + Sync + Fn(Option<RequestId>, Value, AsyncAppContext) -> BoxFuture<'static, ()>>;
+    Arc<dyn Send + Sync + Fn(Option<RequestId>, Value, AsyncAppContext) -> Task<()>>;
 type ResponseHandler = Box<dyn Send + FnOnce(Result<String, Error>)>;
 type IoHandler = Box<dyn Send + FnMut(IoKind, &str)>;
 
@@ -967,7 +964,6 @@ impl LanguageServer {
                         callback(params, cx);
                     }
                 })
-                .boxed()
             }),
         );
         assert!(
@@ -1048,9 +1044,8 @@ impl LanguageServer {
                             }
                         }
                     })
-                    .boxed()
                 } else {
-                    async {}.boxed()
+                    Task::ready(())
                 }
             }),
         );
