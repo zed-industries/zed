@@ -1755,16 +1755,22 @@ impl Workspace {
         _: &MoveFocusedPanelToNextPosition,
         cx: &mut ViewContext<Self>,
     ) {
-        [&self.left_dock, &self.bottom_dock, &self.right_dock]
-            .iter()
-            .find(|dock| dock.focus_handle(cx).contains_focused(cx))
-            .map(|dock| {
-                dock.update(cx, |dock, cx| {
-                    dock.active_panel()
-                        .filter(|panel| panel.focus_handle(cx).contains_focused(cx))
-                        .map(|panel| panel.move_to_next_position(cx));
-                })
-            });
+        let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];
+        let active_dock = docks
+            .into_iter()
+            .find(|dock| dock.focus_handle(cx).contains_focused(cx));
+
+        if let Some(dock) = active_dock {
+            dock.update(cx, |dock, cx| {
+                let active_panel = dock
+                    .active_panel()
+                    .filter(|panel| panel.focus_handle(cx).contains_focused(cx));
+
+                if let Some(panel) = active_panel {
+                    panel.move_to_next_position(cx);
+                }
+            })
+        }
     }
 
     pub fn prepare_to_close(
