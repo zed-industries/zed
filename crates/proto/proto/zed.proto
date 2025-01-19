@@ -2501,6 +2501,7 @@ message SetDebugClientCapabilities {
     bool supports_stepping_granularity = 10;
     bool supports_terminate_threads_request = 11;
     bool supports_restart_frame_request = 12;
+    bool supports_clipboard_context = 13;
 }
 
 message Breakpoint {

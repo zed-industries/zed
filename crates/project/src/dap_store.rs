@@ -1296,6 +1296,7 @@ impl DapStore {
         stack_frame_id: u64,
         expression: String,
         context: EvaluateArgumentsContext,
+        source: Option<Source>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<EvaluateResponse>> {
         let Some((_, client)) = self.client_by_id(client_id, cx) else {
@@ -1311,7 +1312,7 @@ impl DapStore {
                     format: None,
                     line: None,
                     column: None,
-                    source: None,
+                    source,
                 })
                 .await
         })

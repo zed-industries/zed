@@ -230,6 +230,7 @@ impl Console {
                 self.stack_frame_list.read(cx).current_stack_frame_id(),
                 expression,
                 dap::EvaluateArgumentsContext::Variables,
+                None,
                 cx,
             )
         });

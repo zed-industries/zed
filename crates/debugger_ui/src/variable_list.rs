@@ -1051,8 +1051,41 @@ impl VariableList {
                 None,
                 cx.handler_for(&this, {
                     let variable_value = variable.value.clone();
-                    move |_, cx| {
-                        cx.write_to_clipboard(ClipboardItem::new_string(variable_value.clone()))
+                    let variable_name = variable.name.clone();
+                    let evaluate_name = variable.evaluate_name.clone();
+                    let source = scope.source.clone();
+                    move |this, cx| {
+                        this.dap_store.update(cx, |dap_store, cx| {
+                            if dap_store
+                                .capabilities_by_id(&this.client_id)
+                                .supports_clipboard_context
+                                .unwrap_or_default()
+                            {
+                                let task = dap_store.evaluate(
+                                    &this.client_id,
+                                    this.stack_frame_list.read(cx).current_stack_frame_id(),
+                                    evaluate_name.clone().unwrap_or(variable_name.clone()),
+                                    dap::EvaluateArgumentsContext::Clipboard,
+                                    source.clone(),
+                                    cx,
+                                );
+
+                                cx.spawn(|_, cx| async move {
+                                    let response = task.await?;
+
+                                    cx.update(|cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(
+                                            response.result,
+                                        ))
+                                    })
+                                })
+                                .detach_and_log_err(cx);
+                            } else {
+                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                    variable_value.clone(),
+                                ))
+                            }
+                        });
                     }
                 }),
             )
