@@ -631,7 +631,7 @@ mod tests {
             language::init(cx);
             editor::init(cx);
             menu::init();
-            go_to::init(cx);
+            go_to_line::init(cx);
             workspace::init(app_state.clone(), cx);
             init(cx);
             Project::init_settings(cx);

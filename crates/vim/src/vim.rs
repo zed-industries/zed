@@ -71,14 +71,14 @@ struct Number(usize);
 struct SelectRegister(String);
 
 /// Used to resize the current pane
-#[derive(Clone, Copy, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Deserialize, JsonSchema, PartialEq)]
 pub struct GoToFileByNumber(pub NumberedFileNavigation);
 
-#[derive(Clone, Copy, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Deserialize, JsonSchema, PartialEq)]
 pub enum NumberedFileNavigation {
     Up,
     Down,
-    Exact,
+    Absolute,
 }
 
 actions!(
@@ -207,7 +207,7 @@ pub fn init(cx: &mut AppContext) {
                 NumberedFileNavigation::Down => {
                     FileNumber::Relative(RelativeFileNumber::Down(count))
                 }
-                NumberedFileNavigation::Exact => FileNumber::Absolute(count),
+                NumberedFileNavigation::Absolute => FileNumber::Absolute(count),
             };
 
             let project = workspace.project().clone();
