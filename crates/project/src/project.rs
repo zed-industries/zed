@@ -1271,6 +1271,7 @@ impl Project {
                     abs_path,
                     source_breakpoints,
                     store.ignore_breakpoints(session_id, cx),
+                    false,
                     cx,
                 )
             }));
@@ -1403,6 +1404,7 @@ impl Project {
                             .map(|breakpoint| breakpoint.to_source_breakpoint(buffer))
                             .collect::<Vec<_>>(),
                         store.ignore_breakpoints(session_id, cx),
+                        false,
                         cx,
                     ),
                 );
@@ -2518,7 +2520,10 @@ impl Project {
                     message: message.clone(),
                 });
             }
-            DapStoreEvent::BreakpointsChanged(project_path) => {
+            DapStoreEvent::BreakpointsChanged {
+                project_path,
+                source_changed,
+            } => {
                 cx.notify(); // so the UI updates
 
                 let buffer_id = self
@@ -2544,6 +2549,7 @@ impl Project {
                             project_path,
                             absolute_path,
                             buffer.read(cx).snapshot(),
+                            *source_changed,
                             cx,
                         )
                         .detach_and_log_err(cx);

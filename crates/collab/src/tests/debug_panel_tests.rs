@@ -944,6 +944,7 @@ async fn test_updated_breakpoints_send_to_dap(
                     }],
                     args.breakpoints.unwrap()
                 );
+                assert!(!args.source_modified.unwrap());
 
                 called_set_breakpoints.store(true, Ordering::SeqCst);
 
@@ -1007,6 +1008,7 @@ async fn test_updated_breakpoints_send_to_dap(
             move |_, args| {
                 assert_eq!("/a/test.txt", args.source.path.unwrap());
                 assert!(args.breakpoints.unwrap().is_empty());
+                assert!(!args.source_modified.unwrap());
 
                 called_set_breakpoints.store(true, Ordering::SeqCst);
 
@@ -1059,6 +1061,7 @@ async fn test_updated_breakpoints_send_to_dap(
                     ],
                     args.breakpoints.unwrap()
                 );
+                assert!(!args.source_modified.unwrap());
 
                 called_set_breakpoints.store(true, Ordering::SeqCst);
 

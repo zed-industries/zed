@@ -75,7 +75,10 @@ pub enum DapStoreEvent {
         message: Message,
     },
     Notification(String),
-    BreakpointsChanged(ProjectPath),
+    BreakpointsChanged {
+        project_path: ProjectPath,
+        source_changed: bool,
+    },
     ActiveDebugLineChanged,
     SetDebugPanelItem(SetDebuggerPanelItem),
     UpdateDebugAdapter(UpdateDebugAdapter),
@@ -1690,7 +1693,10 @@ impl DapStore {
                 store.breakpoints.insert(project_path.clone(), breakpoints);
             }
 
-            cx.emit(DapStoreEvent::BreakpointsChanged(project_path));
+            cx.emit(DapStoreEvent::BreakpointsChanged {
+                project_path,
+                source_changed: false,
+            });
 
             cx.notify();
         })
@@ -1838,7 +1844,10 @@ impl DapStore {
             self.breakpoints.remove(project_path);
         }
 
-        cx.emit(DapStoreEvent::BreakpointsChanged(project_path.clone()));
+        cx.emit(DapStoreEvent::BreakpointsChanged {
+            project_path: project_path.clone(),
+            source_changed: false,
+        });
         cx.notify();
     }
 
@@ -1848,6 +1857,7 @@ impl DapStore {
         absolute_file_path: Arc<Path>,
         mut breakpoints: Vec<SourceBreakpoint>,
         ignore: bool,
+        source_changed: bool,
         cx: &ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some((_, client)) = self.client_by_id(client_id, cx) else {
@@ -1874,7 +1884,7 @@ impl DapStore {
                         checksums: None,
                     },
                     breakpoints: Some(if ignore { Vec::default() } else { breakpoints }),
-                    source_modified: Some(false),
+                    source_modified: Some(source_changed),
                     lines: None,
                 })
                 .await?;
@@ -1888,6 +1898,7 @@ impl DapStore {
         project_path: &ProjectPath,
         absolute_path: PathBuf,
         buffer_snapshot: BufferSnapshot,
+        source_changed: bool,
         cx: &ModelContext<Self>,
     ) -> Task<Result<()>> {
         let Some(local_store) = self.as_local() else {
@@ -1913,6 +1924,7 @@ impl DapStore {
                     Arc::from(absolute_path.clone()),
                     source_breakpoints.clone(),
                     ignore_breakpoints,
+                    source_changed,
                     cx,
                 ));
             }

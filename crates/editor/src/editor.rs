@@ -106,7 +106,10 @@ use language::{
 use language::{point_to_lsp, BufferRow, CharClassifier, Runnable, RunnableRange};
 use linked_editing_ranges::refresh_linked_ranges;
 use mouse_context_menu::MouseContextMenu;
-use project::{dap_store::BreakpointEditAction, ProjectPath};
+use project::{
+    dap_store::{BreakpointEditAction, DapStoreEvent},
+    ProjectPath,
+};
 pub use proposed_changes_editor::{
     ProposedChangeLocation, ProposedChangesEditor, ProposedChangesEditorToolbar,
 };
@@ -12918,9 +12921,21 @@ impl Editor {
             }
             multi_buffer::Event::DirtyChanged => cx.emit(EditorEvent::DirtyChanged),
             multi_buffer::Event::Saved => cx.emit(EditorEvent::Saved),
-            multi_buffer::Event::FileHandleChanged | multi_buffer::Event::Reloaded => {
-                cx.emit(EditorEvent::TitleChanged)
+            multi_buffer::Event::FileHandleChanged => {
+                cx.emit(EditorEvent::TitleChanged);
+
+                if let Some(dap_store) = &self.dap_store {
+                    if let Some(project_path) = self.project_path(cx) {
+                        dap_store.update(cx, |_, cx| {
+                            cx.emit(DapStoreEvent::BreakpointsChanged {
+                                project_path,
+                                source_changed: true,
+                            });
+                        });
+                    }
+                }
             }
+            multi_buffer::Event::Reloaded => cx.emit(EditorEvent::TitleChanged),
             // multi_buffer::Event::DiffBaseChanged => {
             //     self.scrollbar_marker_state.dirty = true;
             //     cx.emit(EditorEvent::DiffBaseChanged);

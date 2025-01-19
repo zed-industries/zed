@@ -2,13 +2,17 @@ use crate::*;
 use dap::{
     client::DebugAdapterClientId,
     requests::{
-        Continue, Disconnect, Initialize, Launch, Next, RunInTerminal, StackTrace, StartDebugging,
-        StepBack, StepIn, StepOut,
+        Continue, Disconnect, Initialize, Launch, Next, RunInTerminal, SetBreakpoints, StackTrace,
+        StartDebugging, StepBack, StepIn, StepOut,
     },
-    ErrorResponse, RunInTerminalRequestArguments, StartDebuggingRequestArguments,
+    ErrorResponse, RunInTerminalRequestArguments, SourceBreakpoint, StartDebuggingRequestArguments,
     StartDebuggingRequestArgumentsRequest,
 };
 use debugger_panel::ThreadStatus;
+use editor::{
+    actions::{self},
+    Editor, EditorMode, MultiBuffer,
+};
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
 use project::{FakeFs, Project};
 use serde_json::json;
@@ -18,7 +22,7 @@ use std::sync::{
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use tests::{active_debug_panel_item, init_test, init_test_workspace};
-use workspace::dock::Panel;
+use workspace::{dock::Panel, Item};
 
 #[gpui::test]
 async fn test_basic_show_debug_panel(executor: BackgroundExecutor, cx: &mut TestAppContext) {
@@ -947,6 +951,197 @@ async fn test_debug_panel_item_thread_status_reset_on_failure(
                 });
         });
     }
+
+    let shutdown_session = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |dap_store, cx| {
+            dap_store.shutdown_session(&session.read(cx).id(), cx)
+        })
+    });
+
+    shutdown_session.await.unwrap();
+}
+
+#[gpui::test]
+async fn test_send_breakpoints_when_editor_has_been_saved(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    fs.insert_tree(
+        "/a",
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let worktree_id = workspace
+        .update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        })
+        .unwrap();
+
+    let task = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |store, cx| {
+            store.start_debug_session(
+                task::DebugAdapterConfig {
+                    label: "test config".into(),
+                    kind: task::DebugAdapterKind::Fake,
+                    request: task::DebugRequestType::Launch,
+                    program: None,
+                    cwd: None,
+                    initialize_args: None,
+                },
+                cx,
+            )
+        })
+    });
+
+    let (session, client) = task.await.unwrap();
+
+    let buffer = project
+        .update(cx, |project, cx| {
+            project.open_buffer((worktree_id, "main.rs"), cx)
+        })
+        .await
+        .unwrap();
+
+    let (editor, cx) = cx.add_window_view(|cx| {
+        Editor::new(
+            EditorMode::Full,
+            MultiBuffer::build_from_buffer(buffer, cx),
+            Some(project.clone()),
+            true,
+            cx,
+        )
+    });
+
+    client
+        .on_request::<Initialize, _>(move |_, _| {
+            Ok(dap::Capabilities {
+                supports_step_back: Some(true),
+                ..Default::default()
+            })
+        })
+        .await;
+
+    client.on_request::<Launch, _>(move |_, _| Ok(())).await;
+
+    client
+        .on_request::<StackTrace, _>(move |_, _| {
+            Ok(dap::StackTraceResponse {
+                stack_frames: Vec::default(),
+                total_frames: None,
+            })
+        })
+        .await;
+
+    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    let called_set_breakpoints = Arc::new(AtomicBool::new(false));
+    client
+        .on_request::<SetBreakpoints, _>({
+            let called_set_breakpoints = called_set_breakpoints.clone();
+            move |_, args| {
+                assert_eq!("/a/main.rs", args.source.path.unwrap());
+                assert_eq!(
+                    vec![SourceBreakpoint {
+                        line: 2,
+                        column: None,
+                        condition: None,
+                        hit_condition: None,
+                        log_message: None,
+                        mode: None
+                    }],
+                    args.breakpoints.unwrap()
+                );
+                assert!(!args.source_modified.unwrap());
+
+                called_set_breakpoints.store(true, Ordering::SeqCst);
+
+                Ok(dap::SetBreakpointsResponse {
+                    breakpoints: Vec::default(),
+                })
+            }
+        })
+        .await;
+
+    editor.update(cx, |editor, cx| {
+        editor.move_down(&actions::MoveDown, cx);
+        editor.toggle_breakpoint(&actions::ToggleBreakpoint, cx);
+    });
+
+    cx.run_until_parked();
+
+    assert!(
+        called_set_breakpoints.load(std::sync::atomic::Ordering::SeqCst),
+        "SetBreakpoint request must be called"
+    );
+
+    let called_set_breakpoints = Arc::new(AtomicBool::new(false));
+    client
+        .on_request::<SetBreakpoints, _>({
+            let called_set_breakpoints = called_set_breakpoints.clone();
+            move |_, args| {
+                assert_eq!("/a/main.rs", args.source.path.unwrap());
+                assert_eq!(
+                    vec![SourceBreakpoint {
+                        line: 3,
+                        column: None,
+                        condition: None,
+                        hit_condition: None,
+                        log_message: None,
+                        mode: None
+                    }],
+                    args.breakpoints.unwrap()
+                );
+                assert!(args.source_modified.unwrap());
+
+                called_set_breakpoints.store(true, Ordering::SeqCst);
+
+                Ok(dap::SetBreakpointsResponse {
+                    breakpoints: Vec::default(),
+                })
+            }
+        })
+        .await;
+
+    editor.update(cx, |editor, cx| {
+        editor.move_up(&actions::MoveUp, cx);
+        editor.insert("new text\n", cx);
+    });
+
+    editor
+        .update(cx, |editor, cx| editor.save(true, project.clone(), cx))
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    assert!(
+        called_set_breakpoints.load(std::sync::atomic::Ordering::SeqCst),
+        "SetBreakpoint request must be called after editor is saved"
+    );
 
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
