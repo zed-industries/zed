@@ -16,6 +16,7 @@ doctest = false
 editor.workspace = true
 gpui.workspace = true
 itertools.workspace = true
+settings.workspace = true
 theme.workspace = true
 ui.workspace = true
 workspace.workspace = true

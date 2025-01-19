@@ -4,12 +4,13 @@ use gpui::{
     Subscription, ViewContext,
 };
 use itertools::Itertools;
+use settings::Settings;
 use std::cmp;
 use theme::ActiveTheme;
 use ui::{prelude::*, ButtonLike, ButtonStyle, Label, Tooltip};
 use workspace::{
     item::{BreadcrumbText, ItemEvent, ItemHandle},
-    ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
+    pane, TabBarSettings, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView,
 };
 
 pub struct Breadcrumbs {
@@ -97,7 +98,6 @@ impl Render for Breadcrumbs {
         {
             Some(editor) => element.child(
                 ButtonLike::new("toggle outline view")
-                    .child(breadcrumbs_stack)
                     .style(ButtonStyle::Transparent)
                     .on_click({
                         let editor = editor.clone();
@@ -126,7 +126,15 @@ impl Render for Breadcrumbs {
                                 cx,
                             )
                         }
-                    }),
+                    })
+                    .children(
+                        [breadcrumbs_stack.into_any_element()].into_iter().chain(
+                            (!TabBarSettings::get_global(cx).show)
+                                .then(|| pane::render_item_indicator(active_item.boxed_clone(), cx))
+                                .flatten()
+                                .map(|item| div().ml_1p5().child(item).into_any_element()),
+                        ),
+                    ),
             ),
             None => element
                 // Match the height of the `ButtonLike` in the other arm.
