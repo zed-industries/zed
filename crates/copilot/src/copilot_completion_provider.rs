@@ -289,7 +289,10 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::future::Future;
-    use util::test::{marked_text_ranges_by, TextRangeMarker};
+    use util::{
+        add_root_for_windows,
+        test::{marked_text_ranges_by, TextRangeMarker},
+    };
 
     #[gpui::test(iterations = 10)]
     async fn test_copilot(executor: BackgroundExecutor, cx: &mut TestAppContext) {
@@ -940,24 +943,24 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/test",
+            add_root_for_windows("/test"),
             json!({
                 ".env": "SECRET=something\n",
                 "README.md": "hello\nworld\nhow\nare\nyou\ntoday"
             }),
         )
         .await;
-        let project = Project::test(fs, ["/test".as_ref()], cx).await;
+        let project = Project::test(fs, [add_root_for_windows("/test").as_ref()], cx).await;
 
         let private_buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/test/.env", cx)
+                project.open_local_buffer(add_root_for_windows("/test/.env"), cx)
             })
             .await
             .unwrap();
         let public_buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/test/README.md", cx)
+                project.open_local_buffer(add_root_for_windows("/test/README.md"), cx)
             })
             .await
             .unwrap();
