@@ -6,14 +6,20 @@ use crate::{
 };
 use editor::{movement, scroll::Autoscroll, Bias};
 use language::BracketPair;
+use schemars::JsonSchema;
+use serde::Deserialize;
 
 use std::sync::Arc;
 use ui::ViewContext;
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Eq)]
 pub enum SurroundsType {
+    #[serde(skip)]
     Motion(Motion),
-    Object(Object, bool),
+    Object {
+        target: Object,
+        around: bool,
+    },
     Selection,
 }
 
@@ -49,8 +55,8 @@ impl Vim {
 
                 for selection in &display_selections {
                     let range = match &target {
-                        SurroundsType::Object(object, around) => {
-                            object.range(&display_map, selection.clone(), *around)
+                        SurroundsType::Object { target, around } => {
+                            target.range(&display_map, selection.clone(), *around)
                         }
                         SurroundsType::Motion(motion) => {
                             motion
