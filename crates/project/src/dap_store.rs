@@ -1112,7 +1112,7 @@ impl DapStore {
     ) -> Task<Result<R::Response>>
     where
         <R::DapRequest as dap::requests::Request>::Response: 'static,
-        <R::DapRequest as dap::requests::Request>::Arguments: 'static,
+        <R::DapRequest as dap::requests::Request>::Arguments: 'static + Send,
     {
         if let Some((upstream_client, upstream_project_id)) = self.upstream_client() {
             return self.send_proto_client_request::<R>(
@@ -1129,17 +1129,17 @@ impl DapStore {
         };
 
         let client_id = *client_id;
-        let request_clone = request.clone();
+        let request = Arc::new(request);
 
+        let request_clone = request.clone();
         let request_task = cx.background_executor().spawn(async move {
             let args = request_clone.to_dap();
             client.request::<R::DapRequest>(args).await
         });
 
-        let request_clone = request.clone();
         cx.spawn(|this, mut cx| async move {
-            let response = request_clone.response_from_dap(request_task.await?);
-            request_clone.handle_response(this, &client_id, response, &mut cx)
+            let response = request.response_from_dap(request_task.await?);
+            request.handle_response(this, &client_id, response, &mut cx)
         })
     }
 
