@@ -196,6 +196,26 @@ impl ContextMenu {
         self
     }
 
+    pub fn disableable_entry(
+        mut self,
+        label: impl Into<SharedString>,
+        action: Option<Box<dyn Action>>,
+        handler: impl Fn(&mut WindowContext) + 'static,
+        disabled: bool,
+    ) -> Self {
+        self.items.push(ContextMenuItem::Entry(ContextMenuEntry {
+            toggle: None,
+            label: label.into(),
+            handler: Rc::new(move |_, cx| handler(cx)),
+            icon: None,
+            icon_size: IconSize::Small,
+            icon_position: IconPosition::End,
+            action,
+            disabled,
+        }));
+        self
+    }
+
     pub fn toggleable_entry(
         mut self,
         label: impl Into<SharedString>,
@@ -584,15 +604,21 @@ impl Render for ContextMenu {
                                                         .map(|binding| div().ml_4().child(binding))
                                                 })),
                                         )
-                                        .on_click({
-                                            let context = self.action_context.clone();
-                                            move |_, cx| {
-                                                handler(context.as_ref(), cx);
-                                                menu.update(cx, |menu, cx| {
-                                                    menu.clicked = true;
-                                                    cx.emit(DismissEvent);
+                                        .map(|builder| {
+                                            if !*disabled {
+                                                builder.on_click({
+                                                    let context = self.action_context.clone();
+                                                    move |_, cx| {
+                                                        handler(context.as_ref(), cx);
+                                                        menu.update(cx, |menu, cx| {
+                                                            menu.clicked = true;
+                                                            cx.emit(DismissEvent);
+                                                        })
+                                                        .ok();
+                                                    }
                                                 })
-                                                .ok();
+                                            } else {
+                                                builder
                                             }
                                         })
                                         .into_any_element()

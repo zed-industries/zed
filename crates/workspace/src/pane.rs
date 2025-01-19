@@ -2239,6 +2239,7 @@ impl Pane {
             let menu_context = menu_context.clone();
             ContextMenu::build(cx, move |mut menu, cx| {
                 if let Some(pane) = pane.upgrade() {
+                    let is_only_item = is_first_item && is_last_item;
                     menu = menu
                         .entry(
                             "Close",
@@ -2248,7 +2249,7 @@ impl Pane {
                                     .detach_and_log_err(cx);
                             }),
                         )
-                        .entry(
+                        .disableable_entry(
                             "Close Others",
                             Some(Box::new(CloseInactiveItems {
                                 save_intent: None,
@@ -2258,9 +2259,10 @@ impl Pane {
                                 pane.close_items(cx, SaveIntent::Close, |id| id != item_id)
                                     .detach_and_log_err(cx);
                             }),
+                            is_only_item,
                         )
                         .separator()
-                        .entry(
+                        .disableable_entry(
                             "Close Left",
                             Some(Box::new(CloseItemsToTheLeft {
                                 close_pinned: false,
@@ -2276,8 +2278,9 @@ impl Pane {
                                 )
                                 .detach_and_log_err(cx);
                             }),
+                            is_first_item,
                         )
-                        .entry(
+                        .disableable_entry(
                             "Close Right",
                             Some(Box::new(CloseItemsToTheRight {
                                 close_pinned: false,
@@ -2293,6 +2296,7 @@ impl Pane {
                                 )
                                 .detach_and_log_err(cx);
                             }),
+                            is_last_item,
                         )
                         .separator()
                         .entry(
