@@ -157,7 +157,7 @@ async fn test_handle_output_event(executor: BackgroundExecutor, cx: &mut TestApp
                 .update(cx, |this, cx| this.active_debug_panel_item(cx))
                 .unwrap();
 
-            assert!(debug_panel.read(cx).message_queue().is_empty());
+            assert!(!debug_panel.read(cx).message_queue().is_empty());
 
             assert_eq!(
                 "First console output line before thread stopped!\nFirst output line before thread stopped!\nSecond output line after thread stopped!\nSecond console output line after thread stopped!\n",
