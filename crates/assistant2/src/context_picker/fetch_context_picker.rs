@@ -4,27 +4,28 @@ use std::sync::Arc;
 
 use anyhow::{bail, Context as _, Result};
 use futures::AsyncReadExt as _;
-use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakModel, WeakView};
+use gpui::{AppContext, DismissEvent, FocusHandle, Focusable, Model, Task, WeakModel};
 use html_to_markdown::{convert_html_to_markdown, markdown, TagHandler};
 use http_client::{AsyncBody, HttpClientWithUrl};
 use picker::{Picker, PickerDelegate};
-use ui::{prelude::*, ListItem, ViewContext};
+use ui::{prelude::*, ListItem, ModelContext, Window};
 use workspace::Workspace;
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 
 pub struct FetchContextPicker {
-    picker: View<Picker<FetchContextPickerDelegate>>,
+    picker: Model<Picker<FetchContextPickerDelegate>>,
 }
 
 impl FetchContextPicker {
     pub fn new(
-        context_picker: WeakView<ContextPicker>,
-        workspace: WeakView<Workspace>,
+        context_picker: WeakModel<ContextPicker>,
+        workspace: WeakModel<Workspace>,
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let delegate = FetchContextPickerDelegate::new(
             context_picker,
@@ -32,20 +33,20 @@ impl FetchContextPicker {
             context_store,
             confirm_behavior,
         );
-        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
+        let picker = cx.new_model(|cx| Picker::uniform_list(delegate, window, cx));
 
         Self { picker }
     }
 }
 
-impl FocusableView for FetchContextPicker {
+impl Focusable for FetchContextPicker {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
 }
 
 impl Render for FetchContextPicker {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         self.picker.clone()
     }
 }
@@ -58,8 +59,8 @@ enum ContentType {
 }
 
 pub struct FetchContextPickerDelegate {
-    context_picker: WeakView<ContextPicker>,
-    workspace: WeakView<Workspace>,
+    context_picker: WeakModel<ContextPicker>,
+    workspace: WeakModel<Workspace>,
     context_store: WeakModel<ContextStore>,
     confirm_behavior: ConfirmBehavior,
     url: String,
@@ -67,8 +68,8 @@ pub struct FetchContextPickerDelegate {
 
 impl FetchContextPickerDelegate {
     pub fn new(
-        context_picker: WeakView<ContextPicker>,
-        workspace: WeakView<Workspace>,
+        context_picker: WeakModel<ContextPicker>,
+        workspace: WeakModel<Workspace>,
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
     ) -> Self {
@@ -166,7 +167,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
         }
     }
 
-    fn no_matches_text(&self, _cx: &mut WindowContext) -> SharedString {
+    fn no_matches_text(&self, _window: &mut Window, _cx: &mut AppContext) -> SharedString {
         "Enter the URL that you would like to fetch".into()
     }
 
@@ -174,19 +175,35 @@ impl PickerDelegate for FetchContextPickerDelegate {
         0
     }
 
-    fn set_selected_index(&mut self, _ix: usize, _cx: &mut ViewContext<Picker<Self>>) {}
+    fn set_selected_index(
+        &mut self,
+        _ix: usize,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
+    ) {
+    }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Arc<str> {
         "Enter a URL…".into()
     }
 
-    fn update_matches(&mut self, query: String, _cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
+    ) -> Task<()> {
         self.url = query;
 
         Task::ready(())
     }
 
-    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(
+        &mut self,
+        _secondary: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) {
         let Some(workspace) = self.workspace.upgrade() else {
             return;
         };
@@ -194,13 +211,13 @@ impl PickerDelegate for FetchContextPickerDelegate {
         let http_client = workspace.read(cx).client().http_client().clone();
         let url = self.url.clone();
         let confirm_behavior = self.confirm_behavior;
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             let text = cx
                 .background_executor()
                 .spawn(Self::build_message(http_client, url.clone()))
                 .await?;
 
-            this.update(&mut cx, |this, cx| {
+            this.update_in(&mut cx, |this, window, cx| {
                 this.delegate
                     .context_store
                     .update(cx, |context_store, _cx| {
@@ -209,7 +226,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
 
                 match confirm_behavior {
                     ConfirmBehavior::KeepOpen => {}
-                    ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                    ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
                 }
 
                 anyhow::Ok(())
@@ -220,7 +237,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
         .detach_and_log_err(cx);
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         self.context_picker
             .update(cx, |_, cx| {
                 cx.emit(DismissEvent);
@@ -232,7 +249,8 @@ impl PickerDelegate for FetchContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        _window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let added = self.context_store.upgrade().map_or(false, |context_store| {
             context_store.read(cx).includes_url(&self.url).is_some()

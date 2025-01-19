@@ -26,7 +26,7 @@ use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
     AnyElement, AppContext, Context as _, EventEmitter, HighlightStyle, Model, ModelContext,
-    Pixels, Task, TaskLabel, WindowContext,
+    Pixels, Task, TaskLabel, Window,
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
@@ -527,7 +527,8 @@ pub struct ChunkRenderer {
 }
 
 pub struct ChunkRendererContext<'a, 'b> {
-    pub context: &'a mut WindowContext<'b>,
+    pub window: &'a mut Window,
+    pub context: &'b mut AppContext,
     pub max_width: Pixels,
 }
 
@@ -540,7 +541,7 @@ impl fmt::Debug for ChunkRenderer {
 }
 
 impl<'a, 'b> Deref for ChunkRendererContext<'a, 'b> {
-    type Target = WindowContext<'b>;
+    type Target = AppContext;
 
     fn deref(&self) -> &Self::Target {
         self.context
@@ -801,7 +802,7 @@ impl Buffer {
     }
 
     pub fn branch(&mut self, cx: &mut ModelContext<Self>) -> Model<Self> {
-        let this = cx.handle();
+        let this = cx.model();
         cx.new_model(|cx| {
             let mut branch = Self {
                 branch_state: Some(BufferBranchState {

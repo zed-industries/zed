@@ -4,7 +4,7 @@ use super::{
 };
 use crate::{EditorStyle, GutterDimensions};
 use collections::{Bound, HashMap, HashSet};
-use gpui::{AnyElement, AppContext, EntityId, Pixels, WindowContext};
+use gpui::{AnyElement, AppContext, EntityId, Pixels, Window};
 use language::{Chunk, Patch, Point};
 use multi_buffer::{
     Anchor, ExcerptId, ExcerptInfo, MultiBuffer, MultiBufferRow, MultiBufferSnapshot, ToOffset,
@@ -226,7 +226,8 @@ pub enum BlockStyle {
 }
 
 pub struct BlockContext<'a, 'b> {
-    pub context: &'b mut WindowContext<'a>,
+    pub window: &'a mut Window,
+    pub app: &'b mut AppContext,
     pub anchor_x: Pixels,
     pub max_width: Pixels,
     pub gutter_dimensions: &'b GutterDimensions,
@@ -1930,16 +1931,16 @@ impl<'a> sum_tree::Dimension<'a, TransformSummary> for BlockRow {
 }
 
 impl<'a> Deref for BlockContext<'a, '_> {
-    type Target = WindowContext<'a>;
+    type Target = AppContext;
 
     fn deref(&self) -> &Self::Target {
-        self.context
+        self.app
     }
 }
 
 impl DerefMut for BlockContext<'_, '_> {
     fn deref_mut(&mut self) -> &mut Self::Target {
-        self.context
+        self.app
     }
 }
 

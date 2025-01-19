@@ -367,8 +367,8 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         Task::ready(Ok(()))
     }
 
-    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|_cx| ConfigurationView {
+    fn configuration_view(&self, _: &mut Window, cx: &mut AppContext) -> AnyView {
+        cx.new_model(|_| ConfigurationView {
             state: self.state.clone(),
         })
         .into()
@@ -378,7 +378,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
         !self.state.read(cx).has_accepted_terms_of_service(cx)
     }
 
-    fn render_accept_terms(&self, cx: &mut WindowContext) -> Option<AnyElement> {
+    fn render_accept_terms(&self, _: &mut Window, cx: &mut AppContext) -> Option<AnyElement> {
         let state = self.state.read(cx);
 
         let terms = [(
@@ -392,7 +392,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                 .icon(IconName::ExternalLink)
                 .icon_size(IconSize::XSmall)
                 .icon_color(Color::Muted)
-                .on_click(move |_, cx| cx.open_url(url))
+                .on_click(move |_, _, cx| cx.open_url(url))
         });
 
         if state.has_accepted_terms_of_service(cx) {
@@ -419,7 +419,7 @@ impl LanguageModelProvider for CloudLanguageModelProvider {
                                 .disabled(disabled)
                                 .on_click({
                                     let state = self.state.downgrade();
-                                    move |_, cx| {
+                                    move |_, _, cx| {
                                         state
                                             .update(cx, |state, cx| {
                                                 state.accept_terms_of_service(cx)
@@ -846,14 +846,14 @@ struct ConfigurationView {
 }
 
 impl ConfigurationView {
-    fn authenticate(&mut self, cx: &mut ViewContext<Self>) {
+    fn authenticate(&mut self, cx: &mut ModelContext<Self>) {
         self.state.update(cx, |state, cx| {
             state.authenticate(cx).detach_and_log_err(cx);
         });
         cx.notify();
     }
 
-    fn render_accept_terms(&mut self, cx: &mut ViewContext<Self>) -> Option<AnyElement> {
+    fn render_accept_terms(&mut self, cx: &mut ModelContext<Self>) -> Option<AnyElement> {
         if self.state.read(cx).has_accepted_terms_of_service(cx) {
             return None;
         }
@@ -864,7 +864,7 @@ impl ConfigurationView {
             .style(ButtonStyle::Subtle)
             .icon(IconName::ExternalLink)
             .icon_color(Color::Muted)
-            .on_click(move |_, cx| cx.open_url("https://zed.dev/terms-of-service"));
+            .on_click(move |_, _, cx| cx.open_url("https://zed.dev/terms-of-service"));
 
         let text =
             "In order to use Zed AI, please read and accept our terms and conditions to continue:";
@@ -881,7 +881,7 @@ impl ConfigurationView {
                         .disabled(accept_terms_disabled)
                         .on_click({
                             let state = self.state.downgrade();
-                            move |_, cx| {
+                            move |_, _, cx| {
                                 state
                                     .update(cx, |state, cx| state.accept_terms_of_service(cx))
                                     .ok();
@@ -895,7 +895,7 @@ impl ConfigurationView {
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         const ZED_AI_URL: &str = "https://zed.dev/ai";
 
         let is_connected = !self.state.read(cx).is_signed_out();
@@ -913,7 +913,9 @@ impl Render for ConfigurationView {
                 h_flex().child(
                     Button::new("manage_settings", "Manage Subscription")
                         .style(ButtonStyle::Tinted(TintColor::Accent))
-                        .on_click(cx.listener(|_, _, cx| cx.open_url(&zed_urls::account_url(cx)))),
+                        .on_click(
+                            cx.listener(|_, _, _, cx| cx.open_url(&zed_urls::account_url(cx))),
+                        ),
                 ),
             )
         } else if cx.has_flag::<ZedPro>() {
@@ -923,14 +925,14 @@ impl Render for ConfigurationView {
                     .child(
                         Button::new("learn_more", "Learn more")
                             .style(ButtonStyle::Subtle)
-                            .on_click(cx.listener(|_, _, cx| cx.open_url(ZED_AI_URL))),
+                            .on_click(cx.listener(|_, _, _, cx| cx.open_url(ZED_AI_URL))),
                     )
                     .child(
                         Button::new("upgrade", "Upgrade")
                             .style(ButtonStyle::Subtle)
                             .color(Color::Accent)
                             .on_click(
-                                cx.listener(|_, _, cx| cx.open_url(&zed_urls::account_url(cx))),
+                                cx.listener(|_, _, _, cx| cx.open_url(&zed_urls::account_url(cx))),
                             ),
                     ),
             )
@@ -956,7 +958,7 @@ impl Render for ConfigurationView {
                         .icon_color(Color::Muted)
                         .icon(IconName::Github)
                         .icon_position(IconPosition::Start)
-                        .on_click(cx.listener(move |this, _, cx| this.authenticate(cx))),
+                        .on_click(cx.listener(move |this, _, _, cx| this.authenticate(cx))),
                 )
         }
     }

@@ -4,9 +4,7 @@ use std::sync::Arc;
 
 use file_icons::FileIcons;
 use fuzzy::PathMatch;
-use gpui::{
-    AppContext, DismissEvent, FocusHandle, FocusableView, Stateful, Task, View, WeakModel, WeakView,
-};
+use gpui::{AppContext, DismissEvent, FocusHandle, Focusable, Model, Stateful, Task, WeakModel};
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use ui::{prelude::*, ListItem, Tooltip};
@@ -17,16 +15,17 @@ use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::{ContextStore, FileInclusion};
 
 pub struct FileContextPicker {
-    picker: View<Picker<FileContextPickerDelegate>>,
+    picker: Model<Picker<FileContextPickerDelegate>>,
 }
 
 impl FileContextPicker {
     pub fn new(
-        context_picker: WeakView<ContextPicker>,
-        workspace: WeakView<Workspace>,
+        context_picker: WeakModel<ContextPicker>,
+        workspace: WeakModel<Workspace>,
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let delegate = FileContextPickerDelegate::new(
             context_picker,
@@ -34,27 +33,27 @@ impl FileContextPicker {
             context_store,
             confirm_behavior,
         );
-        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
+        let picker = cx.new_model(|cx| Picker::uniform_list(delegate, window, cx));
 
         Self { picker }
     }
 }
 
-impl FocusableView for FileContextPicker {
+impl Focusable for FileContextPicker {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
 }
 
 impl Render for FileContextPicker {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         self.picker.clone()
     }
 }
 
 pub struct FileContextPickerDelegate {
-    context_picker: WeakView<ContextPicker>,
-    workspace: WeakView<Workspace>,
+    context_picker: WeakModel<ContextPicker>,
+    workspace: WeakModel<Workspace>,
     context_store: WeakModel<ContextStore>,
     confirm_behavior: ConfirmBehavior,
     matches: Vec<PathMatch>,
@@ -63,8 +62,8 @@ pub struct FileContextPickerDelegate {
 
 impl FileContextPickerDelegate {
     pub fn new(
-        context_picker: WeakView<ContextPicker>,
-        workspace: WeakView<Workspace>,
+        context_picker: WeakModel<ContextPicker>,
+        workspace: WeakModel<Workspace>,
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
     ) -> Self {
@@ -82,8 +81,9 @@ impl FileContextPickerDelegate {
         &mut self,
         query: String,
         cancellation_flag: Arc<AtomicBool>,
-        workspace: &View<Workspace>,
-        cx: &mut ViewContext<Picker<Self>>,
+        workspace: &Model<Workspace>,
+
+        cx: &mut ModelContext<Picker<Self>>,
     ) -> Task<Vec<PathMatch>> {
         if query.is_empty() {
             let workspace = workspace.read(cx);
@@ -165,22 +165,32 @@ impl PickerDelegate for FileContextPickerDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
+    ) {
         self.selected_index = ix;
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Arc<str> {
         "Search files…".into()
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) -> Task<()> {
         let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(());
         };
 
         let search_task = self.search(query, Arc::<AtomicBool>::default(), &workspace, cx);
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             // TODO: This should be probably be run in the background.
             let paths = search_task.await;
 
@@ -191,7 +201,12 @@ impl PickerDelegate for FileContextPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(
+        &mut self,
+        _secondary: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) {
         let Some(mat) = self.matches.get(self.selected_index) else {
             return;
         };
@@ -212,19 +227,19 @@ impl PickerDelegate for FileContextPickerDelegate {
         };
 
         let confirm_behavior = self.confirm_behavior;
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             match task.await.notify_async_err(&mut cx) {
                 None => anyhow::Ok(()),
-                Some(()) => this.update(&mut cx, |this, cx| match confirm_behavior {
+                Some(()) => this.update_in(&mut cx, |this, window, cx| match confirm_behavior {
                     ConfirmBehavior::KeepOpen => {}
-                    ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                    ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
                 }),
             }
         })
         .detach_and_log_err(cx);
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+    fn dismissed(&mut self, _: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         self.context_picker
             .update(cx, |_, cx| {
                 cx.emit(DismissEvent);
@@ -236,7 +251,8 @@ impl PickerDelegate for FileContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        _window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let path_match = &self.matches[ix];
 
@@ -260,7 +276,7 @@ pub fn render_file_context_entry(
     path: &Path,
     path_prefix: &Arc<str>,
     context_store: WeakModel<ContextStore>,
-    cx: &WindowContext,
+    cx: &AppContext,
 ) -> Stateful<Div> {
     let (file_name, directory) = if path == Path::new("") {
         (SharedString::from(path_prefix.clone()), None)
@@ -330,7 +346,7 @@ pub fn render_file_context_entry(
                         )
                         .child(Label::new("Included").size(LabelSize::Small)),
                 )
-                .tooltip(move |cx| Tooltip::text(format!("in {dir_name}"), cx))
+                .tooltip(Tooltip::text(format!("in {dir_name}")))
             }
         })
 }

@@ -211,9 +211,10 @@ impl LanguageModelProvider for OllamaLanguageModelProvider {
         self.state.update(cx, |state, cx| state.authenticate(cx))
     }
 
-    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
+    fn configuration_view(&self, window: &mut Window, cx: &mut AppContext) -> AnyView {
         let state = self.state.clone();
-        cx.new_view(|cx| ConfigurationView::new(state, cx)).into()
+        cx.new_model(|cx| ConfigurationView::new(state, window, cx))
+            .into()
     }
 
     fn reset_credentials(&self, cx: &mut AppContext) -> Task<Result<()>> {
@@ -412,8 +413,12 @@ struct ConfigurationView {
 }
 
 impl ConfigurationView {
-    pub fn new(state: gpui::Model<State>, cx: &mut ViewContext<Self>) -> Self {
-        let loading_models_task = Some(cx.spawn({
+    pub fn new(
+        state: gpui::Model<State>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) -> Self {
+        let loading_models_task = Some(cx.spawn_in(window, {
             let state = state.clone();
             |this, mut cx| async move {
                 if let Some(task) = state
@@ -436,7 +441,7 @@ impl ConfigurationView {
         }
     }
 
-    fn retry_connection(&self, cx: &mut WindowContext) {
+    fn retry_connection(&self, cx: &mut AppContext) {
         self.state
             .update(cx, |state, cx| state.fetch_models(cx))
             .detach_and_log_err(cx);
@@ -444,7 +449,7 @@ impl ConfigurationView {
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let is_authenticated = self.state.read(cx).is_authenticated();
 
         let ollama_intro = "Get up and running with Llama 3.3, Mistral, Gemma 2, and other large language models with Ollama.";
@@ -498,7 +503,7 @@ impl Render for ConfigurationView {
                                                 .icon(IconName::ExternalLink)
                                                 .icon_size(IconSize::XSmall)
                                                 .icon_color(Color::Muted)
-                                                .on_click(move |_, cx| cx.open_url(OLLAMA_SITE))
+                                                .on_click(move |_, _, cx| cx.open_url(OLLAMA_SITE))
                                                 .into_any_element(),
                                         )
                                     } else {
@@ -511,7 +516,9 @@ impl Render for ConfigurationView {
                                             .icon(IconName::ExternalLink)
                                             .icon_size(IconSize::XSmall)
                                             .icon_color(Color::Muted)
-                                            .on_click(move |_, cx| cx.open_url(OLLAMA_DOWNLOAD_URL))
+                                            .on_click(move |_, _, cx| {
+                                                cx.open_url(OLLAMA_DOWNLOAD_URL)
+                                            })
                                             .into_any_element(),
                                         )
                                     }
@@ -522,7 +529,7 @@ impl Render for ConfigurationView {
                                         .icon(IconName::ExternalLink)
                                         .icon_size(IconSize::XSmall)
                                         .icon_color(Color::Muted)
-                                        .on_click(move |_, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
+                                        .on_click(move |_, _, cx| cx.open_url(OLLAMA_LIBRARY_URL)),
                                 ),
                         )
                         .child(if is_authenticated {
@@ -544,7 +551,9 @@ impl Render for ConfigurationView {
                             Button::new("retry_ollama_models", "Connect")
                                 .icon_position(IconPosition::Start)
                                 .icon(IconName::ArrowCircle)
-                                .on_click(cx.listener(move |this, _, cx| this.retry_connection(cx)))
+                                .on_click(
+                                    cx.listener(move |this, _, _, cx| this.retry_connection(cx)),
+                                )
                                 .into_any_element()
                         }),
                 )

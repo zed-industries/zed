@@ -3,9 +3,7 @@ use std::sync::Arc;
 use anyhow::Result;
 use collections::HashMap;
 use command_palette_hooks::CommandPaletteFilter;
-use gpui::{
-    prelude::*, AppContext, EntityId, Global, Model, ModelContext, Subscription, Task, View,
-};
+use gpui::{prelude::*, AppContext, EntityId, Global, Model, ModelContext, Subscription, Task};
 use jupyter_websocket_client::RemoteServer;
 use language::Language;
 use project::{Fs, Project, WorktreeId};
@@ -23,7 +21,7 @@ impl Global for GlobalReplStore {}
 pub struct ReplStore {
     fs: Arc<dyn Fs>,
     enabled: bool,
-    sessions: HashMap<EntityId, View<Session>>,
+    sessions: HashMap<EntityId, Model<Session>>,
     kernel_specifications: Vec<KernelSpecification>,
     selected_kernel_for_worktree: HashMap<WorktreeId, KernelSpecification>,
     kernel_specifications_for_worktree: HashMap<WorktreeId, Vec<KernelSpecification>>,
@@ -88,7 +86,7 @@ impl ReplStore {
         self.kernel_specifications.iter()
     }
 
-    pub fn sessions(&self) -> impl Iterator<Item = &View<Session>> {
+    pub fn sessions(&self) -> impl Iterator<Item = &Model<Session>> {
         self.sessions.values()
     }
 
@@ -270,11 +268,11 @@ impl ReplStore {
             .cloned()
     }
 
-    pub fn get_session(&self, entity_id: EntityId) -> Option<&View<Session>> {
+    pub fn get_session(&self, entity_id: EntityId) -> Option<&Model<Session>> {
         self.sessions.get(&entity_id)
     }
 
-    pub fn insert_session(&mut self, entity_id: EntityId, session: View<Session>) {
+    pub fn insert_session(&mut self, entity_id: EntityId, session: Model<Session>) {
         self.sessions.insert(entity_id, session);
     }
 

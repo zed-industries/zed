@@ -48,7 +48,7 @@ use ::git::{
 };
 use gpui::{
     AnyModel, AppContext, AsyncAppContext, BorrowAppContext, Context as _, EventEmitter, Hsla,
-    Model, ModelContext, SharedString, Task, WeakModel, WindowContext,
+    Model, ModelContext, SharedString, Task, WeakModel, Window,
 };
 use itertools::Itertools;
 use language::{
@@ -373,7 +373,8 @@ pub struct Completion {
     /// Returns, whether new completions should be retriggered after the current one.
     /// If `true` is returned, the editor will show a new completion menu after this completion is confirmed.
     /// if no confirmation is provided or `false` is returned, the completion will be committed.
-    pub confirm: Option<Arc<dyn Send + Sync + Fn(CompletionIntent, &mut WindowContext) -> bool>>,
+    pub confirm:
+        Option<Arc<dyn Send + Sync + Fn(CompletionIntent, &mut Window, &mut AppContext) -> bool>>,
 }
 
 impl std::fmt::Debug for Completion {
@@ -869,7 +870,7 @@ impl Project {
             };
 
             let ssh = ssh.read(cx);
-            ssh.subscribe_to_entity(SSH_PROJECT_ID, &cx.handle());
+            ssh.subscribe_to_entity(SSH_PROJECT_ID, &cx.model());
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.buffer_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.worktree_store);
             ssh.subscribe_to_entity(SSH_PROJECT_ID, &this.lsp_store);
@@ -1595,7 +1596,7 @@ impl Project {
         self.client_subscriptions.extend([
             self.client
                 .subscribe_to_entity(project_id)?
-                .set_model(&cx.handle(), &mut cx.to_async()),
+                .set_model(&cx.model(), &mut cx.to_async()),
             self.client
                 .subscribe_to_entity(project_id)?
                 .set_model(&self.worktree_store, &mut cx.to_async()),

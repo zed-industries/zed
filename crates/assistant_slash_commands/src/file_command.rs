@@ -6,7 +6,7 @@ use assistant_slash_command::{
 use futures::channel::mpsc;
 use futures::Stream;
 use fuzzy::PathMatch;
-use gpui::{AppContext, Model, Task, View, WeakView};
+use gpui::{AppContext, Model, Task, WeakModel};
 use language::{BufferSnapshot, CodeLabel, HighlightId, LineEnding, LspAdapterDelegate};
 use project::{PathMatchCandidateSet, Project};
 use serde::{Deserialize, Serialize};
@@ -28,7 +28,7 @@ impl FileSlashCommand {
         &self,
         query: String,
         cancellation_flag: Arc<AtomicBool>,
-        workspace: &View<Workspace>,
+        workspace: &Model<Workspace>,
         cx: &mut AppContext,
     ) -> Task<Vec<PathMatch>> {
         if query.is_empty() {
@@ -134,8 +134,9 @@ impl SlashCommand for FileSlashCommand {
         self: Arc<Self>,
         arguments: &[String],
         cancellation_flag: Arc<AtomicBool>,
-        workspace: Option<WeakView<Workspace>>,
-        cx: &mut WindowContext,
+        workspace: Option<WeakModel<Workspace>>,
+        _: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         let Some(workspace) = workspace.and_then(|workspace| workspace.upgrade()) else {
             return Task::ready(Err(anyhow!("workspace was dropped")));
@@ -187,9 +188,10 @@ impl SlashCommand for FileSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        _: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow!("workspace was dropped")));

@@ -2,7 +2,7 @@
 
 GPUI makes extensive use of _context parameters_, typically named `cx` and positioned at the end of the parameter list, unless they're before a final function parameter. A context reference provides access to application state and services.
 
-There are multiple kinds of contexts, and contexts implement the `Deref` trait so that a function taking `&mut AppContext` could be passed a `&mut WindowContext` or `&mut ViewContext` instead.
+There are multiple kinds of contexts, and contexts implement the `Deref` trait so that a function taking `&mut AppContext` could be passed a `&mut Window, &mut AppContext` or `&mut ViewContext` instead.
 
 ```
      AppContext

@@ -1,6 +1,6 @@
 #![allow(missing_docs)]
 
-use gpui::{Action, AnyView, FocusHandle, IntoElement, Render, VisualContext};
+use gpui::{Action, AnyView, FocusHandle, IntoElement, Render};
 use settings::Settings;
 use theme::ThemeSettings;
 
@@ -14,8 +14,8 @@ pub struct Tooltip {
 }
 
 impl Tooltip {
-    pub fn text(title: impl Into<SharedString>, cx: &mut WindowContext) -> AnyView {
-        cx.new_view(|_cx| Self {
+    pub fn simple(title: impl Into<SharedString>, cx: &mut AppContext) -> AnyView {
+        cx.new_model(|_| Self {
             title: title.into(),
             meta: None,
             key_binding: None,
@@ -23,15 +23,30 @@ impl Tooltip {
         .into()
     }
 
+    pub fn text(
+        title: impl Into<SharedString>,
+    ) -> impl Fn(&mut Window, &mut AppContext) -> AnyView {
+        let title = title.into();
+        move |_, cx| {
+            cx.new_model(|_| Self {
+                title: title.clone(),
+                meta: None,
+                key_binding: None,
+            })
+            .into()
+        }
+    }
+
     pub fn for_action(
         title: impl Into<SharedString>,
         action: &dyn Action,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> AnyView {
-        cx.new_view(|cx| Self {
+        cx.new_model(|_| Self {
             title: title.into(),
             meta: None,
-            key_binding: KeyBinding::for_action(action, cx),
+            key_binding: KeyBinding::for_action(action, window),
         })
         .into()
     }
@@ -40,12 +55,13 @@ impl Tooltip {
         title: impl Into<SharedString>,
         action: &dyn Action,
         focus_handle: &FocusHandle,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> AnyView {
-        cx.new_view(|cx| Self {
+        cx.new_model(|_| Self {
             title: title.into(),
             meta: None,
-            key_binding: KeyBinding::for_action_in(action, focus_handle, cx),
+            key_binding: KeyBinding::for_action_in(action, focus_handle, window),
         })
         .into()
     }
@@ -54,12 +70,13 @@ impl Tooltip {
         title: impl Into<SharedString>,
         action: Option<&dyn Action>,
         meta: impl Into<SharedString>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> AnyView {
-        cx.new_view(|cx| Self {
+        cx.new_model(|_| Self {
             title: title.into(),
             meta: Some(meta.into()),
-            key_binding: action.and_then(|action| KeyBinding::for_action(action, cx)),
+            key_binding: action.and_then(|action| KeyBinding::for_action(action, window)),
         })
         .into()
     }
@@ -69,13 +86,14 @@ impl Tooltip {
         action: Option<&dyn Action>,
         meta: impl Into<SharedString>,
         focus_handle: &FocusHandle,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> AnyView {
-        cx.new_view(|cx| Self {
+        cx.new_model(|_| Self {
             title: title.into(),
             meta: Some(meta.into()),
             key_binding: action
-                .and_then(|action| KeyBinding::for_action_in(action, focus_handle, cx)),
+                .and_then(|action| KeyBinding::for_action_in(action, focus_handle, window)),
         })
         .into()
     }
@@ -100,8 +118,8 @@ impl Tooltip {
 }
 
 impl Render for Tooltip {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        tooltip_container(cx, |el, _| {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+        tooltip_container(window, cx, |el, _, _| {
             el.child(
                 h_flex()
                     .gap_4()
@@ -118,8 +136,9 @@ impl Render for Tooltip {
 }
 
 pub fn tooltip_container<V>(
-    cx: &mut ViewContext<V>,
-    f: impl FnOnce(Div, &mut ViewContext<V>) -> Div,
+    window: &mut Window,
+    cx: &mut ModelContext<V>,
+    f: impl FnOnce(Div, &mut Window, &mut ModelContext<V>) -> Div,
 ) -> impl IntoElement {
     let ui_font = ThemeSettings::get_global(cx).ui_font.clone();
 
@@ -132,7 +151,7 @@ pub fn tooltip_container<V>(
             .text_color(cx.theme().colors().text)
             .py_1()
             .px_2()
-            .map(|el| f(el, cx)),
+            .map(|el| f(el, window, cx)),
     )
 }
 
@@ -141,7 +160,7 @@ pub struct LinkPreview {
 }
 
 impl LinkPreview {
-    pub fn new(url: &str, cx: &mut WindowContext) -> AnyView {
+    pub fn new(url: &str, cx: &mut AppContext) -> AnyView {
         let mut wrapped_url = String::new();
         for (i, ch) in url.chars().enumerate() {
             if i == 500 {
@@ -153,7 +172,7 @@ impl LinkPreview {
             }
             wrapped_url.push(ch);
         }
-        cx.new_view(|_cx| LinkPreview {
+        cx.new_model(|_| LinkPreview {
             link: wrapped_url.into(),
         })
         .into()
@@ -161,8 +180,8 @@ impl LinkPreview {
 }
 
 impl Render for LinkPreview {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        tooltip_container(cx, |el, _| {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+        tooltip_container(window, cx, |el, _, _| {
             el.child(
                 Label::new(self.link.clone())
                     .size(LabelSize::XSmall)

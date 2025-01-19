@@ -11,7 +11,9 @@ mod worktree_index;
 use anyhow::{Context as _, Result};
 use collections::HashMap;
 use fs::Fs;
-use gpui::{AppContext, AsyncAppContext, BorrowAppContext, Context, Global, Model, WeakModel};
+use gpui::{
+    AppContext, AsyncAppContext, BorrowAppContext, Context, Global, Model, ModelContext, WeakModel,
+};
 use language::LineEnding;
 use project::{Project, Worktree};
 use std::{
@@ -19,7 +21,6 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use ui::ViewContext;
 use util::ResultExt as _;
 use workspace::Workspace;
 
@@ -57,8 +58,8 @@ impl SemanticDb {
             .context("opening database connection")?;
 
         cx.update(|cx| {
-            cx.observe_new_views(
-                |workspace: &mut Workspace, cx: &mut ViewContext<Workspace>| {
+            cx.observe_new_models(
+                |workspace: &mut Workspace, _window, cx: &mut ModelContext<Workspace>| {
                     let project = workspace.project().clone();
 
                     if cx.has_global::<SemanticDb>() {

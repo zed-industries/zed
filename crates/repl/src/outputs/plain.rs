@@ -57,7 +57,7 @@ const DEFAULT_NUM_LINES: usize = 32;
 const DEFAULT_NUM_COLUMNS: usize = 128;
 
 /// Returns the default text style for the terminal output.
-pub fn text_style(cx: &mut WindowContext) -> TextStyle {
+pub fn text_style(window: &mut Window, cx: &mut AppContext) -> TextStyle {
     let settings = ThemeSettings::get_global(cx).clone();
 
     let font_size = settings.buffer_font_size().into();
@@ -75,7 +75,7 @@ pub fn text_style(cx: &mut WindowContext) -> TextStyle {
         font_fallbacks,
         font_size,
         font_style: FontStyle::Normal,
-        line_height: cx.line_height().into(),
+        line_height: window.line_height().into(),
         background_color: Some(theme.colors().terminal_ansi_background),
         white_space: WhiteSpace::Normal,
         truncate: None,
@@ -89,13 +89,13 @@ pub fn text_style(cx: &mut WindowContext) -> TextStyle {
 }
 
 /// Returns the default terminal size for the terminal output.
-pub fn terminal_size(cx: &mut WindowContext) -> terminal::TerminalSize {
-    let text_style = text_style(cx);
-    let text_system = cx.text_system();
+pub fn terminal_size(window: &mut Window, cx: &mut AppContext) -> terminal::TerminalSize {
+    let text_style = text_style(window, cx);
+    let text_system = window.text_system();
 
-    let line_height = cx.line_height();
+    let line_height = window.line_height();
 
-    let font_pixels = text_style.font_size.to_pixels(cx.rem_size());
+    let font_pixels = text_style.font_size.to_pixels(window.rem_size());
     let font_id = text_system.resolve_font(&text_style.font());
 
     let cell_width = text_system
@@ -108,7 +108,7 @@ pub fn terminal_size(cx: &mut WindowContext) -> terminal::TerminalSize {
 
     // Reversed math from terminal::TerminalSize to get pixel width according to terminal width
     let width = columns as f32 * cell_width;
-    let height = num_lines as f32 * cx.line_height();
+    let height = num_lines as f32 * window.line_height();
 
     terminal::TerminalSize {
         cell_width,
@@ -123,11 +123,11 @@ impl TerminalOutput {
     /// This method initializes a new terminal emulator with default configuration
     /// and sets up the necessary components for handling terminal events and rendering.
     ///
-    pub fn new(cx: &mut WindowContext) -> Self {
+    pub fn new(window: &mut Window, cx: &mut AppContext) -> Self {
         let (events_tx, events_rx) = futures::channel::mpsc::unbounded();
         let term = alacritty_terminal::Term::new(
             Config::default(),
-            &terminal_size(cx),
+            &terminal_size(window, cx),
             terminal::ZedListener(events_tx.clone()),
         );
 
@@ -151,8 +151,8 @@ impl TerminalOutput {
     /// # Returns
     ///
     /// A new instance of `TerminalOutput` containing the provided text.
-    pub fn from(text: &str, cx: &mut WindowContext) -> Self {
-        let mut output = Self::new(cx);
+    pub fn from(text: &str, window: &mut Window, cx: &mut AppContext) -> Self {
+        let mut output = Self::new(window, cx);
         output.append_text(text, cx);
         output
     }
@@ -183,7 +183,7 @@ impl TerminalOutput {
     /// # Arguments
     ///
     /// * `text` - A string slice containing the text to be appended.
-    pub fn append_text(&mut self, text: &str, cx: &mut WindowContext) {
+    pub fn append_text(&mut self, text: &str, cx: &mut AppContext) {
         for byte in text.as_bytes() {
             if *byte == b'\n' {
                 // Dirty (?) hack to move the cursor down
@@ -247,9 +247,9 @@ impl Render for TerminalOutput {
     /// Converts the current terminal state into a renderable GPUI element. It handles
     /// the layout of the terminal grid, calculates the dimensions of the output, and
     /// creates a canvas element that paints the terminal cells and background rectangles.
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let text_style = text_style(cx);
-        let text_system = cx.text_system();
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+        let text_style = text_style(window, cx);
+        let text_system = window.text_system();
 
         let grid = self
             .handler
@@ -259,14 +259,15 @@ impl Render for TerminalOutput {
                 point: ic.point,
                 cell: ic.cell.clone(),
             });
-        let (cells, rects) = TerminalElement::layout_grid(grid, &text_style, text_system, None, cx);
+        let (cells, rects) =
+            TerminalElement::layout_grid(grid, &text_style, text_system, None, window, cx);
 
         // lines are 0-indexed, so we must add 1 to get the number of lines
-        let text_line_height = text_style.line_height_in_pixels(cx.rem_size());
+        let text_line_height = text_style.line_height_in_pixels(window.rem_size());
         let num_lines = cells.iter().map(|c| c.point.line).max().unwrap_or(0) + 1;
         let height = num_lines as f32 * text_line_height;
 
-        let font_pixels = text_style.font_size.to_pixels(cx.rem_size());
+        let font_pixels = text_style.font_size.to_pixels(window.rem_size());
         let font_id = text_system.resolve_font(&text_style.font());
 
         let cell_width = text_system
@@ -276,9 +277,9 @@ impl Render for TerminalOutput {
 
         canvas(
             // prepaint
-            move |_bounds, _| {},
+            move |_bounds, _, _| {},
             // paint
-            move |bounds, _, cx| {
+            move |bounds, _, window, cx| {
                 for rect in rects {
                     rect.paint(
                         bounds.origin,
@@ -287,7 +288,7 @@ impl Render for TerminalOutput {
                             line_height: text_line_height,
                             size: bounds.size,
                         },
-                        cx,
+                        window,
                     );
                 }
 
@@ -300,6 +301,7 @@ impl Render for TerminalOutput {
                             size: bounds.size,
                         },
                         bounds,
+                        window,
                         cx,
                     );
                 }
@@ -311,19 +313,19 @@ impl Render for TerminalOutput {
 }
 
 impl OutputContent for TerminalOutput {
-    fn clipboard_content(&self, _cx: &WindowContext) -> Option<ClipboardItem> {
+    fn clipboard_content(&self, _window: &Window, _cx: &AppContext) -> Option<ClipboardItem> {
         Some(ClipboardItem::new_string(self.full_text()))
     }
 
-    fn has_clipboard_content(&self, _cx: &WindowContext) -> bool {
+    fn has_clipboard_content(&self, _window: &Window, _cx: &AppContext) -> bool {
         true
     }
 
-    fn has_buffer_content(&self, _cx: &WindowContext) -> bool {
+    fn has_buffer_content(&self, _window: &Window, _cx: &AppContext) -> bool {
         true
     }
 
-    fn buffer_content(&mut self, cx: &mut WindowContext) -> Option<Model<Buffer>> {
+    fn buffer_content(&mut self, _: &mut Window, cx: &mut AppContext) -> Option<Model<Buffer>> {
         if self.full_buffer.as_ref().is_some() {
             return self.full_buffer.clone();
         }

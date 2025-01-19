@@ -18,10 +18,7 @@ use extension::ExtensionHostProxy;
 use fs::{Fs, RealFs};
 use futures::{future, StreamExt};
 use git::GitHostingProviderRegistry;
-use gpui::{
-    Action, App, AppContext, AsyncAppContext, Context, DismissEvent, UpdateGlobal as _,
-    VisualContext,
-};
+use gpui::{Action, App, AppContext, AsyncAppContext, Context, DismissEvent, UpdateGlobal as _};
 use http_client::{read_proxy_from_env, Uri};
 use language::LanguageRegistry;
 use log::LevelFilter;
@@ -102,21 +99,22 @@ fn files_not_created_on_launch(errors: HashMap<io::ErrorKind, Vec<&Path>>) {
 
     eprintln!("{message}: {error_details}");
     App::new().run(move |cx| {
-        if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |cx| {
-            cx.new_view(|_| gpui::Empty)
+        if let Ok(window) = cx.open_window(gpui::WindowOptions::default(), |_, cx| {
+            cx.new_model(|_| gpui::Empty)
         }) {
             window
-                .update(cx, |_, cx| {
-                    let response = cx.prompt(
+                .update(cx, |_, window, cx| {
+                    let response = window.prompt(
                         gpui::PromptLevel::Critical,
                         message,
                         Some(&error_details),
                         &["Exit"],
+                        cx,
                     );
 
-                    cx.spawn(|_, mut cx| async move {
+                    cx.spawn_in(window, |_, mut cx| async move {
                         response.await?;
-                        cx.update(|cx| cx.quit())
+                        cx.update(|_, cx| cx.quit())
                     })
                     .detach_and_log_err(cx);
                 })
@@ -516,8 +514,8 @@ fn main() {
                 for &mut window in cx.windows().iter_mut() {
                     let background_appearance = cx.theme().window_background_appearance();
                     window
-                        .update(cx, |_, cx| {
-                            cx.set_background_appearance(background_appearance)
+                        .update(cx, |_, window, _| {
+                            window.set_background_appearance(background_appearance)
                         })
                         .ok();
                 }
@@ -615,7 +613,7 @@ fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
 
     for workspace in workspace::local_workspace_windows(cx) {
         workspace
-            .update(cx, |workspace, cx| {
+            .update(cx, |workspace, _, cx| {
                 match error.as_ref() {
                     Some(error) => {
                         if let Some(InvalidSettingsError::LocalSettings { .. }) =
@@ -623,18 +621,15 @@ fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
                         {
                             // Local settings will be displayed by the projects
                         } else {
-                            workspace.show_notification(id.clone(), cx, |cx| {
-                                cx.new_view(|_| {
-                                    MessageNotification::new(format!(
-                                        "Invalid user settings file\n{error}"
-                                    ))
-                                    .with_click_message("Open settings file")
-                                    .on_click(|cx| {
-                                        cx.dispatch_action(zed_actions::OpenSettings.boxed_clone());
-                                        cx.emit(DismissEvent);
-                                    })
-                                })
-                            });
+                            MessageNotification::new(format!(
+                                "Invalid user settings file\n{error}"
+                            ))
+                            .with_click_message("Open settings file")
+                            .on_click(|window, cx| {
+                                window.dispatch_action(zed_actions::OpenSettings.boxed_clone(), cx);
+                                cx.emit(DismissEvent);
+                            })
+                            .show(id.clone(), workspace, cx);
                         }
                     }
                     None => workspace.dismiss_notification(&id, cx),
@@ -716,15 +711,16 @@ fn handle_open_request(request: OpenRequest, app_state: Arc<AppState>, cx: &mut 
 
                 let workspace_window =
                     workspace::get_any_active_workspace(app_state, cx.clone()).await?;
-                let workspace = workspace_window.root_view(&cx)?;
+                let workspace = workspace_window.root_model(&cx)?;
 
                 let mut promises = Vec::new();
                 for (channel_id, heading) in request.open_channel_notes {
-                    promises.push(cx.update_window(workspace_window.into(), |_, cx| {
+                    promises.push(cx.update_window(workspace_window.into(), |_, window, cx| {
                         ChannelView::open(
                             client::ChannelId(channel_id),
                             heading,
                             workspace.clone(),
+                            window,
                             cx,
                         )
                         .log_err()
@@ -847,9 +843,14 @@ async fn restore_or_create_workspace(
         cx.update(|cx| show_welcome_view(app_state, cx))?.await?;
     } else {
         cx.update(|cx| {
-            workspace::open_new(Default::default(), app_state, cx, |workspace, cx| {
-                Editor::new_file(workspace, &Default::default(), cx)
-            })
+            workspace::open_new(
+                Default::default(),
+                app_state,
+                cx,
+                |workspace, window, cx| {
+                    Editor::new_file(workspace, &Default::default(), window, cx)
+                },
+            )
         })?
         .await?;
     }

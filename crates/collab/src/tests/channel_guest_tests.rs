@@ -107,7 +107,7 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
     });
     assert!(project_b.read_with(cx_b, |project, cx| project.is_read_only(cx)));
     assert!(editor_b.update(cx_b, |e, cx| e.read_only(cx)));
-    cx_b.update(|cx_b| {
+    cx_b.update(|_window, cx_b| {
         assert!(room_b.read_with(cx_b, |room, _| !room.can_use_microphone()));
     });
     assert!(room_b
@@ -135,7 +135,7 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
     assert!(editor_b.update(cx_b, |editor, cx| !editor.read_only(cx)));
 
     // B sees themselves as muted, and can unmute.
-    cx_b.update(|cx_b| {
+    cx_b.update(|_window, cx_b| {
         assert!(room_b.read_with(cx_b, |room, _| room.can_use_microphone()));
     });
     room_b.read_with(cx_b, |room, _| assert!(room.is_muted()));

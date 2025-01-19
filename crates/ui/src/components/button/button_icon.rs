@@ -80,7 +80,7 @@ impl SelectableButton for ButtonIcon {
 }
 
 impl RenderOnce for ButtonIcon {
-    fn render(self, _cx: &mut WindowContext) -> impl IntoElement {
+    fn render(self, _window: &mut Window, _cx: &mut AppContext) -> impl IntoElement {
         let icon = self
             .selected_icon
             .filter(|_| self.selected)

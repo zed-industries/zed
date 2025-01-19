@@ -17,8 +17,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
         while let Some(incoming_call) = incoming_call.next().await {
             for window in notification_windows.drain(..) {
                 window
-                    .update(&mut cx, |_, cx| {
-                        cx.remove_window();
+                    .update(&mut cx, |_, window, _| {
+                        window.remove_window();
                     })
                     .log_err();
             }
@@ -36,8 +36,8 @@ pub fn init(app_state: &Arc<AppState>, cx: &mut AppContext) {
                         .log_err()
                     {
                         let window = cx
-                            .open_window(options, |cx| {
-                                cx.new_view(|_| {
+                            .open_window(options, |_, cx| {
+                                cx.new_model(|_| {
                                     IncomingCallNotification::new(
                                         incoming_call.clone(),
                                         app_state.clone(),
@@ -111,19 +111,19 @@ impl IncomingCallNotification {
 }
 
 impl Render for IncomingCallNotification {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let ui_font = theme::setup_ui_font(cx);
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+        let ui_font = theme::setup_ui_font(window, cx);
 
         div().size_full().font(ui_font).child(
             CollabNotification::new(
                 self.state.call.calling_user.avatar_uri.clone(),
                 Button::new("accept", "Accept").on_click({
                     let state = self.state.clone();
-                    move |_, cx| state.respond(true, cx)
+                    move |_, _, cx| state.respond(true, cx)
                 }),
                 Button::new("decline", "Decline").on_click({
                     let state = self.state.clone();
-                    move |_, cx| state.respond(false, cx)
+                    move |_, _, cx| state.respond(false, cx)
                 }),
             )
             .child(v_flex().overflow_hidden().child(Label::new(format!(

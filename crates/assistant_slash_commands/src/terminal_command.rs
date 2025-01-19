@@ -6,7 +6,7 @@ use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
-use gpui::{AppContext, Task, View, WeakView};
+use gpui::{AppContext, Model, Task, WeakModel};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use ui::prelude::*;
@@ -53,8 +53,9 @@ impl SlashCommand for TerminalSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut WindowContext,
+        _workspace: Option<WeakModel<Workspace>>,
+        _window: &mut Window,
+        _cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(Vec::new()))
     }
@@ -64,9 +65,10 @@ impl SlashCommand for TerminalSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        workspace: WeakView<Workspace>,
+        workspace: WeakModel<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        _: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         let Some(workspace) = workspace.upgrade() else {
             return Task::ready(Err(anyhow::anyhow!("workspace was dropped")));
@@ -107,9 +109,9 @@ impl SlashCommand for TerminalSlashCommand {
 }
 
 fn resolve_active_terminal(
-    workspace: &View<Workspace>,
-    cx: &WindowContext,
-) -> Option<View<TerminalView>> {
+    workspace: &Model<Workspace>,
+    cx: &mut AppContext,
+) -> Option<Model<TerminalView>> {
     if let Some(terminal_view) = workspace
         .read(cx)
         .active_item(cx)

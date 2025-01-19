@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::{cmp::Ordering, fmt::Debug, ops::Range, sync::Arc};
 use sum_tree::{Bias, SeekTarget, SumTree};
 use text::Point;
-use ui::{IconName, SharedString, WindowContext};
+use ui::{AppContext, IconName, SharedString, Window};
 
 use crate::{BlockStyle, FoldPlaceholder, RenderBlock};
 
@@ -117,12 +117,13 @@ type RenderToggleFn = Arc<
         + Fn(
             MultiBufferRow,
             bool,
-            Arc<dyn Send + Sync + Fn(bool, &mut WindowContext)>,
-            &mut WindowContext,
+            Arc<dyn Send + Sync + Fn(bool, &mut Window, &mut AppContext)>,
+            &mut Window,
+            &mut AppContext,
         ) -> AnyElement,
 >;
 type RenderTrailerFn =
-    Arc<dyn Send + Sync + Fn(MultiBufferRow, bool, &mut WindowContext) -> AnyElement>;
+    Arc<dyn Send + Sync + Fn(MultiBufferRow, bool, &mut Window, &mut AppContext) -> AnyElement>;
 
 #[derive(Clone)]
 pub enum Crease<T> {
@@ -185,26 +186,27 @@ impl<T> Crease<T> {
             + Fn(
                 MultiBufferRow,
                 bool,
-                Arc<dyn Send + Sync + Fn(bool, &mut WindowContext)>,
-                &mut WindowContext,
+                Arc<dyn Send + Sync + Fn(bool, &mut Window, &mut AppContext)>,
+                &mut Window,
+                &mut AppContext,
             ) -> ToggleElement
             + 'static,
         ToggleElement: IntoElement,
         RenderTrailer: 'static
             + Send
             + Sync
-            + Fn(MultiBufferRow, bool, &mut WindowContext) -> TrailerElement
+            + Fn(MultiBufferRow, bool, &mut Window, &mut AppContext) -> TrailerElement
             + 'static,
         TrailerElement: IntoElement,
     {
         Crease::Inline {
             range,
             placeholder,
-            render_toggle: Some(Arc::new(move |row, folded, toggle, cx| {
-                render_toggle(row, folded, toggle, cx).into_any_element()
+            render_toggle: Some(Arc::new(move |row, folded, toggle, window, cx| {
+                render_toggle(row, folded, toggle, window, cx).into_any_element()
             })),
-            render_trailer: Some(Arc::new(move |row, folded, cx| {
-                render_trailer(row, folded, cx).into_any_element()
+            render_trailer: Some(Arc::new(move |row, folded, window, cx| {
+                render_trailer(row, folded, window, cx).into_any_element()
             })),
             metadata: None,
         }
@@ -402,14 +404,14 @@ mod test {
             Crease::inline(
                 snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(1, 5)),
                 FoldPlaceholder::test(),
-                |_row, _folded, _toggle, _cx| div(),
-                |_row, _folded, _cx| div(),
+                |_row, _folded, _toggle, _window, _cx| div(),
+                |_row, _folded, _window, _cx| div(),
             ),
             Crease::inline(
                 snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_after(Point::new(3, 5)),
                 FoldPlaceholder::test(),
-                |_row, _folded, _toggle, _cx| div(),
-                |_row, _folded, _cx| div(),
+                |_row, _folded, _toggle, _window, _cx| div(),
+                |_row, _folded, _window, _cx| div(),
             ),
         ];
         let crease_ids = crease_map.insert(creases, &snapshot);
@@ -448,20 +450,20 @@ mod test {
             Crease::inline(
                 snapshot.anchor_before(Point::new(1, 0))..snapshot.anchor_after(Point::new(1, 5)),
                 FoldPlaceholder::test(),
-                |_row, _folded, _toggle, _cx| div(),
-                |_row, _folded, _cx| div(),
+                |_row, _folded, _toggle, _window, _cx| div(),
+                |_row, _folded, _window, _cx| div(),
             ),
             Crease::inline(
                 snapshot.anchor_before(Point::new(3, 0))..snapshot.anchor_after(Point::new(3, 5)),
                 FoldPlaceholder::test(),
-                |_row, _folded, _toggle, _cx| div(),
-                |_row, _folded, _cx| div(),
+                |_row, _folded, _toggle, _window, _cx| div(),
+                |_row, _folded, _window, _cx| div(),
             ),
             Crease::inline(
                 snapshot.anchor_before(Point::new(5, 0))..snapshot.anchor_after(Point::new(5, 5)),
                 FoldPlaceholder::test(),
-                |_row, _folded, _toggle, _cx| div(),
-                |_row, _folded, _cx| div(),
+                |_row, _folded, _toggle, _window, _cx| div(),
+                |_row, _folded, _window, _cx| div(),
             ),
         ];
         crease_map.insert(creases, &snapshot);

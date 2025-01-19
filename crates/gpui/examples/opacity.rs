@@ -3,7 +3,8 @@ use std::{fs, path::PathBuf, time::Duration};
 use anyhow::Result;
 use gpui::{
     div, hsla, img, point, prelude::*, px, rgb, size, svg, App, AppContext, AssetSource, Bounds,
-    BoxShadow, ClickEvent, SharedString, Task, Timer, ViewContext, WindowBounds, WindowOptions,
+    BoxShadow, ClickEvent, ModelContext, SharedString, Task, Timer, Window, WindowBounds,
+    WindowOptions,
 };
 
 struct Assets {
@@ -39,22 +40,22 @@ struct HelloWorld {
 }
 
 impl HelloWorld {
-    fn new(_: &mut ViewContext<Self>) -> Self {
+    fn new(_window: &mut Window, _: &mut ModelContext<Self>) -> Self {
         Self {
             _task: None,
             opacity: 0.5,
         }
     }
 
-    fn change_opacity(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
+    fn change_opacity(&mut self, _: &ClickEvent, window: &mut Window, cx: &mut ModelContext<Self>) {
         self.opacity = 0.0;
         cx.notify();
 
-        self._task = Some(cx.spawn(|view, mut cx| async move {
+        self._task = Some(cx.spawn_in(window, |view, mut cx| async move {
             loop {
                 Timer::after(Duration::from_secs_f32(0.05)).await;
                 let mut stop = false;
-                let _ = cx.update(|cx| {
+                let _ = cx.update(|_, cx| {
                     view.update(cx, |view, cx| {
                         if view.opacity >= 1.0 {
                             stop = true;
@@ -75,7 +76,7 @@ impl HelloWorld {
 }
 
 impl Render for HelloWorld {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_row()
@@ -168,7 +169,7 @@ fn main() {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |cx| cx.new_view(HelloWorld::new),
+                |window, cx| cx.new_model(|cx| HelloWorld::new(window, cx)),
             )
             .unwrap();
         });

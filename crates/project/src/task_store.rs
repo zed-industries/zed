@@ -311,7 +311,7 @@ impl TaskStore {
                             message: format!("Invalid global tasks file\n{err}"),
                         });
                     }
-                    cx.refresh();
+                    cx.refresh_windows();
                 }) else {
                     break; // App dropped
                 };

@@ -6,7 +6,7 @@
 //!
 
 use editor::{Editor, EditorElement, EditorStyle};
-use gpui::{AppContext, FocusHandle, FocusableView, FontStyle, Hsla, TextStyle, View};
+use gpui::{AppContext, FocusHandle, Focusable, FontStyle, Hsla, Model, TextStyle};
 use settings::Settings;
 use theme::ThemeSettings;
 use ui::prelude::*;
@@ -34,10 +34,10 @@ pub struct TextField {
     label: SharedString,
     /// The placeholder text for the text field.
     placeholder: SharedString,
-    /// Exposes the underlying [`View<Editor>`] to allow for customizing the editor beyond the provided API.
+    /// Exposes the underlying [`Model<Editor>`] to allow for customizing the editor beyond the provided API.
     ///
     /// This likely will only be public in the short term, ideally the API will be expanded to cover necessary use cases.
-    pub editor: View<Editor>,
+    pub editor: Model<Editor>,
     /// An optional icon that is displayed at the start of the text field.
     ///
     /// For example, a magnifying glass icon in a search field.
@@ -48,7 +48,7 @@ pub struct TextField {
     disabled: bool,
 }
 
-impl FocusableView for TextField {
+impl Focusable for TextField {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.editor.focus_handle(cx)
     }
@@ -56,14 +56,15 @@ impl FocusableView for TextField {
 
 impl TextField {
     pub fn new(
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut AppContext,
         label: impl Into<SharedString>,
         placeholder: impl Into<SharedString>,
     ) -> Self {
         let placeholder_text = placeholder.into();
 
-        let editor = cx.new_view(|cx| {
-            let mut input = Editor::single_line(cx);
+        let editor = cx.new_model(|cx| {
+            let mut input = Editor::single_line(window, cx);
             input.set_placeholder_text(placeholder_text.clone(), cx);
             input
         });
@@ -88,19 +89,19 @@ impl TextField {
         self
     }
 
-    pub fn set_disabled(&mut self, disabled: bool, cx: &mut ViewContext<Self>) {
+    pub fn set_disabled(&mut self, disabled: bool, cx: &mut ModelContext<Self>) {
         self.disabled = disabled;
         self.editor
             .update(cx, |editor, _| editor.set_read_only(disabled))
     }
 
-    pub fn editor(&self) -> &View<Editor> {
+    pub fn editor(&self) -> &Model<Editor> {
         &self.editor
     }
 }
 
 impl Render for TextField {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let theme_color = cx.theme().colors();
 

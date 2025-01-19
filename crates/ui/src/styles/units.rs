@@ -1,4 +1,4 @@
-use gpui::{rems, Length, Rems, WindowContext};
+use gpui::{rems, Length, Rems, Window};
 
 /// The base size of a rem, in pixels.
 pub const BASE_REM_SIZE_IN_PX: f32 = 16.;
@@ -17,13 +17,13 @@ pub fn rems_from_px(px: f32) -> Rems {
 /// Returns a [`Length`] corresponding to the specified percentage of the viewport's width.
 ///
 /// `percent` should be a value between `0.0` and `1.0`.
-pub fn vw(percent: f32, cx: &mut WindowContext) -> Length {
-    Length::from(cx.viewport_size().width * percent)
+pub fn vw(percent: f32, window: &mut Window) -> Length {
+    Length::from(window.viewport_size().width * percent)
 }
 
 /// Returns a [`Length`] corresponding to the specified percentage of the viewport's height.
 ///
 /// `percent` should be a value between `0.0` and `1.0`.
-pub fn vh(percent: f32, cx: &mut WindowContext) -> Length {
-    Length::from(cx.viewport_size().height * percent)
+pub fn vh(percent: f32, window: &mut Window) -> Length {
+    Length::from(window.viewport_size().height * percent)
 }

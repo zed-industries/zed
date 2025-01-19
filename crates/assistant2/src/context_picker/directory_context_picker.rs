@@ -3,7 +3,7 @@ use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
 use fuzzy::PathMatch;
-use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakModel, WeakView};
+use gpui::{AppContext, DismissEvent, FocusHandle, Focusable, Model, Task, WeakModel};
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use ui::{prelude::*, ListItem};
@@ -14,16 +14,17 @@ use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::ContextStore;
 
 pub struct DirectoryContextPicker {
-    picker: View<Picker<DirectoryContextPickerDelegate>>,
+    picker: Model<Picker<DirectoryContextPickerDelegate>>,
 }
 
 impl DirectoryContextPicker {
     pub fn new(
-        context_picker: WeakView<ContextPicker>,
-        workspace: WeakView<Workspace>,
+        context_picker: WeakModel<ContextPicker>,
+        workspace: WeakModel<Workspace>,
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
-        cx: &mut ViewContext<Self>,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
     ) -> Self {
         let delegate = DirectoryContextPickerDelegate::new(
             context_picker,
@@ -31,27 +32,27 @@ impl DirectoryContextPicker {
             context_store,
             confirm_behavior,
         );
-        let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
+        let picker = cx.new_model(|cx| Picker::uniform_list(delegate, window, cx));
 
         Self { picker }
     }
 }
 
-impl FocusableView for DirectoryContextPicker {
+impl Focusable for DirectoryContextPicker {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.picker.focus_handle(cx)
     }
 }
 
 impl Render for DirectoryContextPicker {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         self.picker.clone()
     }
 }
 
 pub struct DirectoryContextPickerDelegate {
-    context_picker: WeakView<ContextPicker>,
-    workspace: WeakView<Workspace>,
+    context_picker: WeakModel<ContextPicker>,
+    workspace: WeakModel<Workspace>,
     context_store: WeakModel<ContextStore>,
     confirm_behavior: ConfirmBehavior,
     matches: Vec<PathMatch>,
@@ -60,8 +61,8 @@ pub struct DirectoryContextPickerDelegate {
 
 impl DirectoryContextPickerDelegate {
     pub fn new(
-        context_picker: WeakView<ContextPicker>,
-        workspace: WeakView<Workspace>,
+        context_picker: WeakModel<ContextPicker>,
+        workspace: WeakModel<Workspace>,
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
     ) -> Self {
@@ -79,8 +80,8 @@ impl DirectoryContextPickerDelegate {
         &mut self,
         query: String,
         cancellation_flag: Arc<AtomicBool>,
-        workspace: &View<Workspace>,
-        cx: &mut ViewContext<Picker<Self>>,
+        workspace: &Model<Workspace>,
+        cx: &mut ModelContext<Picker<Self>>,
     ) -> Task<Vec<PathMatch>> {
         if query.is_empty() {
             let workspace = workspace.read(cx);
@@ -146,15 +147,25 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         self.selected_index
     }
 
-    fn set_selected_index(&mut self, ix: usize, _cx: &mut ViewContext<Picker<Self>>) {
+    fn set_selected_index(
+        &mut self,
+        ix: usize,
+        _window: &mut Window,
+        _cx: &mut ModelContext<Picker<Self>>,
+    ) {
         self.selected_index = ix;
     }
 
-    fn placeholder_text(&self, _cx: &mut WindowContext) -> Arc<str> {
+    fn placeholder_text(&self, _window: &mut Window, _cx: &mut AppContext) -> Arc<str> {
         "Search folders…".into()
     }
 
-    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
+    fn update_matches(
+        &mut self,
+        query: String,
+        _window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) -> Task<()> {
         let Some(workspace) = self.workspace.upgrade() else {
             return Task::ready(());
         };
@@ -173,7 +184,12 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         })
     }
 
-    fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+    fn confirm(
+        &mut self,
+        _secondary: bool,
+        window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
+    ) {
         let Some(mat) = self.matches.get(self.selected_index) else {
             return;
         };
@@ -194,19 +210,19 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         };
 
         let confirm_behavior = self.confirm_behavior;
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             match task.await.notify_async_err(&mut cx) {
                 None => anyhow::Ok(()),
-                Some(()) => this.update(&mut cx, |this, cx| match confirm_behavior {
+                Some(()) => this.update_in(&mut cx, |this, window, cx| match confirm_behavior {
                     ConfirmBehavior::KeepOpen => {}
-                    ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                    ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
                 }),
             }
         })
         .detach_and_log_err(cx);
     }
 
-    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         self.context_picker
             .update(cx, |_, cx| {
                 cx.emit(DismissEvent);
@@ -218,7 +234,8 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        _window: &mut Window,
+        cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let path_match = &self.matches[ix];
         let directory_name = path_match.path.to_string_lossy().to_string();

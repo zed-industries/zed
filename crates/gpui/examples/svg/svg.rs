@@ -3,8 +3,8 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use gpui::{
-    div, prelude::*, px, rgb, size, svg, App, AppContext, AssetSource, Bounds, SharedString,
-    ViewContext, WindowBounds, WindowOptions,
+    div, prelude::*, px, rgb, size, svg, App, AppContext, AssetSource, Bounds, ModelContext,
+    SharedString, Window, WindowBounds, WindowOptions,
 };
 
 struct Assets {
@@ -37,7 +37,7 @@ impl AssetSource for Assets {
 struct SvgExample;
 
 impl Render for SvgExample {
-    fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         div()
             .flex()
             .flex_row()
@@ -79,7 +79,7 @@ fn main() {
                     window_bounds: Some(WindowBounds::Windowed(bounds)),
                     ..Default::default()
                 },
-                |cx| cx.new_view(|_cx| SvgExample),
+                |_, cx| cx.new_model(|_| SvgExample),
             )
             .unwrap();
         });

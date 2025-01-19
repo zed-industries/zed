@@ -5,7 +5,7 @@ pub use assistant_slash_command::SlashCommand;
 use assistant_slash_command::SlashCommandWorkingSet;
 use editor::{CompletionProvider, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
-use gpui::{Model, Task, ViewContext, WeakView, WindowContext};
+use gpui::{AppContext, Model, ModelContext, Task, WeakModel, Window};
 use language::{Anchor, Buffer, Documentation, LanguageServerId, ToPoint};
 use parking_lot::Mutex;
 use project::CompletionIntent;
@@ -24,8 +24,8 @@ use workspace::Workspace;
 pub(crate) struct SlashCommandCompletionProvider {
     cancel_flag: Mutex<Arc<AtomicBool>>,
     slash_commands: Arc<SlashCommandWorkingSet>,
-    editor: Option<WeakView<ContextEditor>>,
-    workspace: Option<WeakView<Workspace>>,
+    editor: Option<WeakModel<ContextEditor>>,
+    workspace: Option<WeakModel<Workspace>>,
 }
 
 pub(crate) struct SlashCommandLine {
@@ -38,8 +38,8 @@ pub(crate) struct SlashCommandLine {
 impl SlashCommandCompletionProvider {
     pub fn new(
         slash_commands: Arc<SlashCommandWorkingSet>,
-        editor: Option<WeakView<ContextEditor>>,
-        workspace: Option<WeakView<Workspace>>,
+        editor: Option<WeakModel<ContextEditor>>,
+        workspace: Option<WeakModel<Workspace>>,
     ) -> Self {
         Self {
             cancel_flag: Mutex::new(Arc::new(AtomicBool::new(false))),
@@ -54,7 +54,8 @@ impl SlashCommandCompletionProvider {
         command_name: &str,
         command_range: Range<Anchor>,
         name_range: Range<Anchor>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<project::Completion>>> {
         let slash_commands = self.slash_commands.clone();
         let candidates = slash_commands
@@ -66,7 +67,7 @@ impl SlashCommandCompletionProvider {
         let command_name = command_name.to_string();
         let editor = self.editor.clone();
         let workspace = self.workspace.clone();
-        cx.spawn(|mut cx| async move {
+        window.spawn(cx, |mut cx| async move {
             let matches = match_strings(
                 &candidates,
                 &command_name,
@@ -77,7 +78,7 @@ impl SlashCommandCompletionProvider {
             )
             .await;
 
-            cx.update(|cx| {
+            cx.update(|_, cx| {
                 matches
                     .into_iter()
                     .filter_map(|mat| {
@@ -99,28 +100,31 @@ impl SlashCommandCompletionProvider {
                                     let editor = editor.clone();
                                     let workspace = workspace.clone();
                                     Arc::new(
-                                        move |intent: CompletionIntent, cx: &mut WindowContext| {
-                                            if !requires_argument
-                                                && (!accepts_arguments || intent.is_complete())
-                                            {
-                                                editor
-                                                    .update(cx, |editor, cx| {
-                                                        editor.run_command(
-                                                            command_range.clone(),
-                                                            &command_name,
-                                                            &[],
-                                                            true,
-                                                            workspace.clone(),
-                                                            cx,
-                                                        );
-                                                    })
-                                                    .ok();
-                                                false
-                                            } else {
-                                                requires_argument || accepts_arguments
-                                            }
-                                        },
-                                    ) as Arc<_>
+                                    move |intent: CompletionIntent,
+                                          window: &mut Window,
+                                          cx: &mut AppContext| {
+                                        if !requires_argument
+                                            && (!accepts_arguments || intent.is_complete())
+                                        {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.run_command(
+                                                        command_range.clone(),
+                                                        &command_name,
+                                                        &[],
+                                                        true,
+                                                        workspace.clone(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                            false
+                                        } else {
+                                            requires_argument || accepts_arguments
+                                        }
+                                    },
+                                ) as Arc<_>
                                 });
                         Some(project::Completion {
                             old_range: name_range.clone(),
@@ -138,6 +142,7 @@ impl SlashCommandCompletionProvider {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn complete_command_argument(
         &self,
         command_name: &str,
@@ -145,7 +150,8 @@ impl SlashCommandCompletionProvider {
         command_range: Range<Anchor>,
         argument_range: Range<Anchor>,
         last_argument_range: Range<Anchor>,
-        cx: &mut WindowContext,
+        window: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<project::Completion>>> {
         let new_cancel_flag = Arc::new(AtomicBool::new(false));
         let mut flag = self.cancel_flag.lock();
@@ -156,6 +162,7 @@ impl SlashCommandCompletionProvider {
                 arguments,
                 new_cancel_flag.clone(),
                 self.workspace.clone(),
+                window,
                 cx,
             );
             let command_name: Arc<str> = command_name.into();
@@ -183,27 +190,30 @@ impl SlashCommandCompletionProvider {
 
                                         let command_range = command_range.clone();
                                         let command_name = command_name.clone();
-                                        move |intent: CompletionIntent, cx: &mut WindowContext| {
-                                            if new_argument.after_completion.run()
-                                                || intent.is_complete()
-                                            {
-                                                editor
-                                                    .update(cx, |editor, cx| {
-                                                        editor.run_command(
-                                                            command_range.clone(),
-                                                            &command_name,
-                                                            &completed_arguments,
-                                                            true,
-                                                            workspace.clone(),
-                                                            cx,
-                                                        );
-                                                    })
-                                                    .ok();
-                                                false
-                                            } else {
-                                                !new_argument.after_completion.run()
-                                            }
+                                        move |intent: CompletionIntent,
+                                          window: &mut Window,
+                                          cx: &mut AppContext| {
+                                        if new_argument.after_completion.run()
+                                            || intent.is_complete()
+                                        {
+                                            editor
+                                                .update(cx, |editor, cx| {
+                                                    editor.run_command(
+                                                        command_range.clone(),
+                                                        &command_name,
+                                                        &completed_arguments,
+                                                        true,
+                                                        workspace.clone(),
+                                                        window,
+                                                        cx,
+                                                    );
+                                                })
+                                                .ok();
+                                            false
+                                        } else {
+                                            !new_argument.after_completion.run()
                                         }
+                                    }
                                     }) as Arc<_>
                                 });
 
@@ -241,7 +251,8 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         buffer: &Model<Buffer>,
         buffer_position: Anchor,
         _: editor::CompletionContext,
-        cx: &mut ViewContext<Editor>,
+        window: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) -> Task<Result<Vec<project::Completion>>> {
         let Some((name, arguments, command_range, last_argument_range)) =
             buffer.update(cx, |buffer, _cx| {
@@ -296,10 +307,11 @@ impl CompletionProvider for SlashCommandCompletionProvider {
                 command_range,
                 argument_range,
                 last_argument_range,
+                window,
                 cx,
             )
         } else {
-            self.complete_command_name(&name, command_range, last_argument_range, cx)
+            self.complete_command_name(&name, command_range, last_argument_range, window, cx)
         }
     }
 
@@ -308,7 +320,8 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         _: Model<Buffer>,
         _: Vec<usize>,
         _: Rc<RefCell<Box<[project::Completion]>>>,
-        _: &mut ViewContext<Editor>,
+        _window: &mut Window,
+        _: &mut ModelContext<Editor>,
     ) -> Task<Result<bool>> {
         Task::ready(Ok(true))
     }
@@ -319,7 +332,8 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         position: language::Anchor,
         _text: &str,
         _trigger_in_words: bool,
-        cx: &mut ViewContext<Editor>,
+        _: &mut Window,
+        cx: &mut ModelContext<Editor>,
     ) -> bool {
         let buffer = buffer.read(cx);
         let position = position.to_point(buffer);

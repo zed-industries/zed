@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use anyhow::{anyhow, bail};
 use assistant_tool::Tool;
-use gpui::{Model, Task, WindowContext};
+use gpui::{AppContext, Model, Task, Window};
 
 use crate::manager::ContextServerManager;
 use crate::types;
@@ -51,8 +51,9 @@ impl Tool for ContextServerTool {
     fn run(
         self: std::sync::Arc<Self>,
         input: serde_json::Value,
-        _workspace: gpui::WeakView<workspace::Workspace>,
-        cx: &mut WindowContext,
+        _workspace: gpui::WeakModel<workspace::Workspace>,
+        _: &mut Window,
+        cx: &mut AppContext,
     ) -> gpui::Task<gpui::Result<String>> {
         if let Some(server) = self.server_manager.read(cx).get_server(&self.server_id) {
             cx.foreground_executor().spawn({

@@ -271,7 +271,7 @@ impl Clickable for Button {
     /// Sets the click event handler for the button.
     fn on_click(
         mut self,
-        handler: impl Fn(&gpui::ClickEvent, &mut WindowContext) + 'static,
+        handler: impl Fn(&gpui::ClickEvent, &mut Window, &mut AppContext) + 'static,
     ) -> Self {
         self.base = self.base.on_click(handler);
         self
@@ -359,16 +359,17 @@ impl ButtonCommon for Button {
     /// use ui::Tooltip;
     ///
     /// Button::new("button_id", "Click me!")
-    ///     .tooltip(move |cx| {
-    ///         Tooltip::text("This is a tooltip", cx)
-    ///     })
+    ///     .tooltip(Tooltip::text_f("This is a tooltip", cx))
     ///     .on_click(|event, cx| {
     ///         // Handle click event
     ///     });
     /// ```
     ///
     /// This will create a button with a tooltip that displays "This is a tooltip" when hovered over.
-    fn tooltip(mut self, tooltip: impl Fn(&mut WindowContext) -> AnyView + 'static) -> Self {
+    fn tooltip(
+        mut self,
+        tooltip: impl Fn(&mut Window, &mut AppContext) -> AnyView + 'static,
+    ) -> Self {
         self.base = self.base.tooltip(tooltip);
         self
     }
@@ -381,7 +382,7 @@ impl ButtonCommon for Button {
 
 impl RenderOnce for Button {
     #[allow(refining_impl_trait)]
-    fn render(self, cx: &mut WindowContext) -> ButtonLike {
+    fn render(self, _window: &mut Window, cx: &mut AppContext) -> ButtonLike {
         let is_disabled = self.base.disabled;
         let is_selected = self.base.selected;
 
@@ -445,7 +446,7 @@ impl ComponentPreview for Button {
         "A button allows users to take actions, and make choices, with a single tap."
     }
 
-    fn examples(_: &mut WindowContext) -> Vec<ComponentExampleGroup<Self>> {
+    fn examples(_window: &mut Window, _: &mut AppContext) -> Vec<ComponentExampleGroup<Self>> {
         vec![
             example_group_with_title(
                 "Styles",

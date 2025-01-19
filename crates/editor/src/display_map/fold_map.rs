@@ -2,7 +2,7 @@ use super::{
     inlay_map::{InlayBufferRows, InlayChunks, InlayEdit, InlayOffset, InlayPoint, InlaySnapshot},
     Highlights,
 };
-use gpui::{AnyElement, ElementId, WindowContext};
+use gpui::{AnyElement, AppContext, ElementId, Window};
 use language::{Chunk, ChunkRenderer, Edit, Point, TextSummary};
 use multi_buffer::{Anchor, AnchorRangeExt, MultiBufferRow, MultiBufferSnapshot, ToOffset};
 use std::{
@@ -19,7 +19,9 @@ use util::post_inc;
 #[derive(Clone)]
 pub struct FoldPlaceholder {
     /// Creates an element to represent this fold's placeholder.
-    pub render: Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut WindowContext) -> AnyElement>,
+    pub render: Arc<
+        dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut Window, &mut AppContext) -> AnyElement,
+    >,
     /// If true, the element is constrained to the shaped width of an ellipsis.
     pub constrain_width: bool,
     /// If true, merges the fold with an adjacent one.
@@ -31,7 +33,7 @@ pub struct FoldPlaceholder {
 impl Default for FoldPlaceholder {
     fn default() -> Self {
         Self {
-            render: Arc::new(|_, _, _| gpui::Empty.into_any_element()),
+            render: Arc::new(|_, _, _, _| gpui::Empty.into_any_element()),
             constrain_width: true,
             merge_adjacent: true,
             type_tag: None,
@@ -43,7 +45,7 @@ impl FoldPlaceholder {
     #[cfg(any(test, feature = "test-support"))]
     pub fn test() -> Self {
         Self {
-            render: Arc::new(|_id, _range, _cx| gpui::Empty.into_any_element()),
+            render: Arc::new(|_id, _range, _window, _cx| gpui::Empty.into_any_element()),
             constrain_width: true,
             merge_adjacent: true,
             type_tag: None,
@@ -485,7 +487,8 @@ impl FoldMap {
                                             (fold.placeholder.render)(
                                                 fold_id,
                                                 fold.range.0.clone(),
-                                                cx,
+                                                cx.window,
+                                                cx.context,
                                             )
                                         }),
                                         constrain_width: fold.placeholder.constrain_width,

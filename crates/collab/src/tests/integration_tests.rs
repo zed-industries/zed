@@ -6167,7 +6167,7 @@ async fn test_right_click_menu_behind_collab_panel(cx: &mut TestAppContext) {
     cx.simulate_resize(size(px(300.), px(300.)));
 
     cx.simulate_keystrokes("cmd-n cmd-n cmd-n");
-    cx.update(|cx| cx.refresh());
+    cx.update(|window, _cx| window.refresh());
 
     let tab_bounds = cx.debug_bounds("TAB-2").unwrap();
     let new_tab_button_bounds = cx.debug_bounds("ICON-Plus").unwrap();
@@ -6266,8 +6266,8 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Opening item 3 as a "permanent" tab
     workspace
-        .update(cx, |workspace, cx| {
-            workspace.open_path(path_3.clone(), None, false, cx)
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path(path_3.clone(), None, false, window, cx)
         })
         .await
         .unwrap();
@@ -6283,8 +6283,8 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Open item 1 as preview
     workspace
-        .update(cx, |workspace, cx| {
-            workspace.open_path_preview(path_1.clone(), None, true, true, cx)
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path_preview(path_1.clone(), None, true, true, window, cx)
         })
         .await
         .unwrap();
@@ -6304,8 +6304,8 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Open item 2 as preview
     workspace
-        .update(cx, |workspace, cx| {
-            workspace.open_path_preview(path_2.clone(), None, true, true, cx)
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path_preview(path_2.clone(), None, true, true, window, cx)
         })
         .await
         .unwrap();
@@ -6325,7 +6325,9 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Going back should show item 1 as preview
     workspace
-        .update(cx, |workspace, cx| workspace.go_back(pane.downgrade(), cx))
+        .update_in(cx, |workspace, window, cx| {
+            workspace.go_back(pane.downgrade(), window, cx)
+        })
         .await
         .unwrap();
 
@@ -6343,10 +6345,11 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     });
 
     // Closing item 1
-    pane.update(cx, |pane, cx| {
+    pane.update_in(cx, |pane, window, cx| {
         pane.close_item_by_id(
             pane.active_item().unwrap().item_id(),
             workspace::SaveIntent::Skip,
+            window,
             cx,
         )
     })
@@ -6364,7 +6367,9 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Going back should show item 1 as preview
     workspace
-        .update(cx, |workspace, cx| workspace.go_back(pane.downgrade(), cx))
+        .update_in(cx, |workspace, window, cx| {
+            workspace.go_back(pane.downgrade(), window, cx)
+        })
         .await
         .unwrap();
 
@@ -6382,9 +6387,9 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     });
 
     // Close permanent tab
-    pane.update(cx, |pane, cx| {
+    pane.update_in(cx, |pane, window, cx| {
         let id = pane.items().next().unwrap().item_id();
-        pane.close_item_by_id(id, workspace::SaveIntent::Skip, cx)
+        pane.close_item_by_id(id, workspace::SaveIntent::Skip, window, cx)
     })
     .await
     .unwrap();
@@ -6431,8 +6436,8 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
 
     // Open item 2 as preview in right pane
     workspace
-        .update(cx, |workspace, cx| {
-            workspace.open_path_preview(path_2.clone(), None, true, true, cx)
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path_preview(path_2.clone(), None, true, true, window, cx)
         })
         .await
         .unwrap();
@@ -6463,14 +6468,14 @@ async fn test_preview_tabs(cx: &mut TestAppContext) {
     });
 
     // Focus left pane
-    workspace.update(cx, |workspace, cx| {
-        workspace.activate_pane_in_direction(workspace::SplitDirection::Left, cx)
+    workspace.update_in(cx, |workspace, window, cx| {
+        workspace.activate_pane_in_direction(workspace::SplitDirection::Left, window, cx)
     });
 
     // Open item 2 as preview in left pane
     workspace
-        .update(cx, |workspace, cx| {
-            workspace.open_path_preview(path_2.clone(), None, true, true, cx)
+        .update_in(cx, |workspace, window, cx| {
+            workspace.open_path_preview(path_2.clone(), None, true, true, window, cx)
         })
         .await
         .unwrap();

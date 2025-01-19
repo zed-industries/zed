@@ -8,7 +8,7 @@ use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
     SlashCommandResult,
 };
-use gpui::{AppContext, BackgroundExecutor, Model, Task, WeakView};
+use gpui::{AppContext, BackgroundExecutor, Model, Task, WeakModel};
 use indexed_docs::{
     DocsDotRsProvider, IndexedDocsRegistry, IndexedDocsStore, LocalRustdocProvider, PackageName,
     ProviderId,
@@ -43,7 +43,7 @@ impl DocsSlashCommand {
     /// access the workspace so we can read the project.
     fn ensure_rust_doc_providers_are_registered(
         &self,
-        workspace: Option<WeakView<Workspace>>,
+        workspace: Option<WeakModel<Workspace>>,
         cx: &mut AppContext,
     ) {
         let indexed_docs_registry = IndexedDocsRegistry::global(cx);
@@ -164,8 +164,9 @@ impl SlashCommand for DocsSlashCommand {
         self: Arc<Self>,
         arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        workspace: Option<WeakView<Workspace>>,
-        cx: &mut WindowContext,
+        workspace: Option<WeakModel<Workspace>>,
+        _: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         self.ensure_rust_doc_providers_are_registered(workspace, cx);
 
@@ -272,9 +273,10 @@ impl SlashCommand for DocsSlashCommand {
         arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        _workspace: WeakView<Workspace>,
+        _workspace: WeakModel<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        cx: &mut WindowContext,
+        _: &mut Window,
+        cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         if arguments.is_empty() {
             return Task::ready(Err(anyhow!("missing an argument")));

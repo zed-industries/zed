@@ -4,7 +4,7 @@ use std::sync::Arc;
 use anyhow::{anyhow, bail, Result};
 use collections::{BTreeMap, HashMap, HashSet};
 use futures::{self, future, Future, FutureExt};
-use gpui::{AppContext, AsyncAppContext, Model, ModelContext, SharedString, Task, WeakView};
+use gpui::{AppContext, AsyncAppContext, Model, ModelContext, SharedString, Task, WeakModel};
 use language::Buffer;
 use project::{ProjectPath, Worktree};
 use rope::Rope;
@@ -19,7 +19,7 @@ use crate::context_strip::SuggestedContext;
 use crate::thread::{Thread, ThreadId};
 
 pub struct ContextStore {
-    workspace: WeakView<Workspace>,
+    workspace: WeakModel<Workspace>,
     context: Vec<Context>,
     // TODO: If an EntityId is used for all context types (like BufferId), can remove ContextId.
     next_context_id: ContextId,
@@ -30,7 +30,7 @@ pub struct ContextStore {
 }
 
 impl ContextStore {
-    pub fn new(workspace: WeakView<Workspace>) -> Self {
+    pub fn new(workspace: WeakModel<Workspace>) -> Self {
         Self {
             workspace,
             context: Vec::new(),

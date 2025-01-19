@@ -17,7 +17,7 @@ use collections::{HashMap, HashSet};
 use fs::FakeFs;
 use futures::{channel::oneshot, StreamExt as _};
 use git::GitHostingProviderRegistry;
-use gpui::{BackgroundExecutor, Context, Model, Task, TestAppContext, View, VisualTestContext};
+use gpui::{BackgroundExecutor, Context, Model, Task, TestAppContext, VisualTestContext};
 use http_client::FakeHttpClient;
 use language::LanguageRegistry;
 use node_runtime::NodeRuntime;
@@ -755,17 +755,17 @@ impl TestClient {
 
     pub async fn host_workspace(
         &self,
-        workspace: &View<Workspace>,
+        workspace: &Model<Workspace>,
         channel_id: ChannelId,
         cx: &mut VisualTestContext,
     ) {
-        cx.update(|cx| {
+        cx.update(|_, cx| {
             let active_call = ActiveCall::global(cx);
             active_call.update(cx, |call, cx| call.join_channel(channel_id, cx))
         })
         .await
         .unwrap();
-        cx.update(|cx| {
+        cx.update(|_, cx| {
             let active_call = ActiveCall::global(cx);
             let project = workspace.read(cx).project().clone();
             active_call.update(cx, |call, cx| call.share_project(project, cx))
@@ -779,7 +779,7 @@ impl TestClient {
         &'a self,
         channel_id: ChannelId,
         cx: &'a mut TestAppContext,
-    ) -> (View<Workspace>, &'a mut VisualTestContext) {
+    ) -> (Model<Workspace>, &'a mut VisualTestContext) {
         cx.update(|cx| workspace::join_channel(channel_id, self.app_state.clone(), None, cx))
             .await
             .unwrap();
@@ -825,31 +825,31 @@ impl TestClient {
         &'a self,
         project: &Model<Project>,
         cx: &'a mut TestAppContext,
-    ) -> (View<Workspace>, &'a mut VisualTestContext) {
-        cx.add_window_view(|cx| {
-            cx.activate_window();
-            Workspace::new(None, project.clone(), self.app_state.clone(), cx)
+    ) -> (Model<Workspace>, &'a mut VisualTestContext) {
+        cx.add_window_view(|window, cx| {
+            window.activate_window();
+            Workspace::new(None, project.clone(), self.app_state.clone(), window, cx)
         })
     }
 
     pub async fn build_test_workspace<'a>(
         &'a self,
         cx: &'a mut TestAppContext,
-    ) -> (View<Workspace>, &'a mut VisualTestContext) {
+    ) -> (Model<Workspace>, &'a mut VisualTestContext) {
         let project = self.build_test_project(cx).await;
-        cx.add_window_view(|cx| {
-            cx.activate_window();
-            Workspace::new(None, project.clone(), self.app_state.clone(), cx)
+        cx.add_window_view(|window, cx| {
+            window.activate_window();
+            Workspace::new(None, project.clone(), self.app_state.clone(), window, cx)
         })
     }
 
     pub fn active_workspace<'a>(
         &'a self,
         cx: &'a mut TestAppContext,
-    ) -> (View<Workspace>, &'a mut VisualTestContext) {
+    ) -> (Model<Workspace>, &'a mut VisualTestContext) {
         let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
 
-        let view = window.root_view(cx).unwrap();
+        let view = window.root_model(cx).unwrap();
         let cx = VisualTestContext::from_window(*window.deref(), cx).as_mut();
         // it might be nice to try and cleanup these at the end of each test.
         (view, cx)
@@ -859,11 +859,11 @@ impl TestClient {
 pub fn open_channel_notes(
     channel_id: ChannelId,
     cx: &mut VisualTestContext,
-) -> Task<anyhow::Result<View<ChannelView>>> {
-    let window = cx.update(|cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
-    let view = window.root_view(cx).unwrap();
+) -> Task<anyhow::Result<Model<ChannelView>>> {
+    let window = cx.update(|_, cx| cx.active_window().unwrap().downcast::<Workspace>().unwrap());
+    let view = window.root_model(cx).unwrap();
 
-    cx.update(|cx| ChannelView::open(channel_id, None, view.clone(), cx))
+    cx.update(|window, cx| ChannelView::open(channel_id, None, view.clone(), window, cx))
 }
 
 impl Drop for TestClient {

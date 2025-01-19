@@ -8,6 +8,9 @@ license = "GPL-3.0-or-later"
 [lints]
 workspace = true
 
+[lib]
+path = "src/tasks_ui.rs"
+
 [dependencies]
 anyhow.workspace = true
 editor.workspace = true

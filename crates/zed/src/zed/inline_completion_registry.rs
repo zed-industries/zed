@@ -5,46 +5,50 @@ use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::{Editor, EditorMode};
 use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
-use gpui::{AnyWindowHandle, AppContext, Context, ViewContext, WeakView};
+use gpui::{AnyWindowHandle, AppContext, Context, ModelContext, WeakModel, Window};
 use language::language_settings::{all_language_settings, InlineCompletionProvider};
 use settings::SettingsStore;
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 
 pub fn init(client: Arc<Client>, cx: &mut AppContext) {
-    let editors: Rc<RefCell<HashMap<WeakView<Editor>, AnyWindowHandle>>> = Rc::default();
-    cx.observe_new_views({
+    let editors: Rc<RefCell<HashMap<WeakModel<Editor>, AnyWindowHandle>>> = Rc::default();
+    cx.observe_new_models({
         let editors = editors.clone();
         let client = client.clone();
-        move |editor: &mut Editor, cx: &mut ViewContext<Editor>| {
+        move |editor: &mut Editor, window, cx: &mut ModelContext<Editor>| {
+            let Some(window) = window else {
+                return;
+            };
+
             if editor.mode() != EditorMode::Full {
                 return;
             }
 
             register_backward_compatible_actions(editor, cx);
 
-            let editor_handle = cx.view().downgrade();
+            let editor_handle = cx.model().downgrade();
             cx.on_release({
                 let editor_handle = editor_handle.clone();
                 let editors = editors.clone();
-                move |_, _, _| {
+                move |_, _| {
                     editors.borrow_mut().remove(&editor_handle);
                 }
             })
             .detach();
             editors
                 .borrow_mut()
-                .insert(editor_handle, cx.window_handle());
+                .insert(editor_handle, window.window_handle());
             let provider = all_language_settings(None, cx).inline_completions.provider;
-            assign_inline_completion_provider(editor, provider, &client, cx);
+            assign_inline_completion_provider(editor, provider, &client, window, cx);
         }
     })
     .detach();
 
     let mut provider = all_language_settings(None, cx).inline_completions.provider;
     for (editor, window) in editors.borrow().iter() {
-        _ = window.update(cx, |_window, cx| {
+        _ = window.update(cx, |_window, window, cx| {
             _ = editor.update(cx, |editor, cx| {
-                assign_inline_completion_provider(editor, provider, &client, cx);
+                assign_inline_completion_provider(editor, provider, &client, window, cx);
             })
         });
     }
@@ -87,42 +91,48 @@ fn clear_zeta_edit_history(_: &zeta::ClearHistory, cx: &mut AppContext) {
 }
 
 fn assign_inline_completion_providers(
-    editors: &Rc<RefCell<HashMap<WeakView<Editor>, AnyWindowHandle>>>,
+    editors: &Rc<RefCell<HashMap<WeakModel<Editor>, AnyWindowHandle>>>,
     provider: InlineCompletionProvider,
     client: &Arc<Client>,
     cx: &mut AppContext,
 ) {
     for (editor, window) in editors.borrow().iter() {
-        _ = window.update(cx, |_window, cx| {
+        _ = window.update(cx, |_window, window, cx| {
             _ = editor.update(cx, |editor, cx| {
-                assign_inline_completion_provider(editor, provider, &client, cx);
+                assign_inline_completion_provider(editor, provider, &client, window, cx);
             })
         });
     }
 }
 
-fn register_backward_compatible_actions(editor: &mut Editor, cx: &ViewContext<Editor>) {
+fn register_backward_compatible_actions(editor: &mut Editor, cx: &mut ModelContext<Editor>) {
     // We renamed some of these actions to not be copilot-specific, but that
     // would have not been backwards-compatible. So here we are re-registering
     // the actions with the old names to not break people's keymaps.
     editor
         .register_action(cx.listener(
-            |editor, _: &copilot::Suggest, cx: &mut ViewContext<Editor>| {
-                editor.show_inline_completion(&Default::default(), cx);
+            |editor, _: &copilot::Suggest, window: &mut Window, cx: &mut ModelContext<Editor>| {
+                editor.show_inline_completion(&Default::default(), window, cx);
             },
         ))
         .detach();
     editor
         .register_action(cx.listener(
-            |editor, _: &copilot::NextSuggestion, cx: &mut ViewContext<Editor>| {
-                editor.next_inline_completion(&Default::default(), cx);
+            |editor,
+             _: &copilot::NextSuggestion,
+             window: &mut Window,
+             cx: &mut ModelContext<Editor>| {
+                editor.next_inline_completion(&Default::default(), window, cx);
             },
         ))
         .detach();
     editor
         .register_action(cx.listener(
-            |editor, _: &copilot::PreviousSuggestion, cx: &mut ViewContext<Editor>| {
-                editor.previous_inline_completion(&Default::default(), cx);
+            |editor,
+             _: &copilot::PreviousSuggestion,
+             window: &mut Window,
+             cx: &mut ModelContext<Editor>| {
+                editor.previous_inline_completion(&Default::default(), window, cx);
             },
         ))
         .detach();
@@ -130,8 +140,9 @@ fn register_backward_compatible_actions(editor: &mut Editor, cx: &ViewContext<Ed
         .register_action(cx.listener(
             |editor,
              _: &editor::actions::AcceptPartialCopilotSuggestion,
-             cx: &mut ViewContext<Editor>| {
-                editor.accept_partial_inline_completion(&Default::default(), cx);
+             window: &mut Window,
+             cx: &mut ModelContext<Editor>| {
+                editor.accept_partial_inline_completion(&Default::default(), window, cx);
             },
         ))
         .detach();
@@ -141,7 +152,8 @@ fn assign_inline_completion_provider(
     editor: &mut Editor,
     provider: language::language_settings::InlineCompletionProvider,
     client: &Arc<Client>,
-    cx: &mut ViewContext<Editor>,
+    window: &mut Window,
+    cx: &mut ModelContext<Editor>,
 ) {
     match provider {
         language::language_settings::InlineCompletionProvider::None => {}
@@ -155,13 +167,13 @@ fn assign_inline_completion_provider(
                     }
                 }
                 let provider = cx.new_model(|_| CopilotCompletionProvider::new(copilot));
-                editor.set_inline_completion_provider(Some(provider), cx);
+                editor.set_inline_completion_provider(Some(provider), window, cx);
             }
         }
         language::language_settings::InlineCompletionProvider::Supermaven => {
             if let Some(supermaven) = Supermaven::global(cx) {
                 let provider = cx.new_model(|_| SupermavenCompletionProvider::new(supermaven));
-                editor.set_inline_completion_provider(Some(provider), cx);
+                editor.set_inline_completion_provider(Some(provider), window, cx);
             }
         }
 
@@ -178,7 +190,7 @@ fn assign_inline_completion_provider(
                     }
                 }
                 let provider = cx.new_model(|_| zeta::ZetaInlineCompletionProvider::new(zeta));
-                editor.set_inline_completion_provider(Some(provider), cx);
+                editor.set_inline_completion_provider(Some(provider), window, cx);
             }
         }
     }

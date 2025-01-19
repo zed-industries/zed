@@ -125,9 +125,9 @@ impl LanguageModelProvider for CopilotChatLanguageModelProvider {
         Task::ready(result)
     }
 
-    fn configuration_view(&self, cx: &mut WindowContext) -> AnyView {
+    fn configuration_view(&self, _: &mut Window, cx: &mut AppContext) -> AnyView {
         let state = self.state.clone();
-        cx.new_view(|cx| ConfigurationView::new(state, cx)).into()
+        cx.new_model(|cx| ConfigurationView::new(state, cx)).into()
     }
 
     fn reset_credentials(&self, _cx: &mut AppContext) -> Task<Result<()>> {
@@ -299,7 +299,7 @@ struct ConfigurationView {
 }
 
 impl ConfigurationView {
-    pub fn new(state: Model<State>, cx: &mut ViewContext<Self>) -> Self {
+    pub fn new(state: Model<State>, cx: &mut ModelContext<Self>) -> Self {
         let copilot = Copilot::global(cx);
 
         Self {
@@ -316,7 +316,7 @@ impl ConfigurationView {
 }
 
 impl Render for ConfigurationView {
-    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         if self.state.read(cx).is_authenticated(cx) {
             const LABEL: &str = "Authorized.";
             h_flex()
@@ -327,7 +327,7 @@ impl Render for ConfigurationView {
             let loading_icon = svg()
                 .size_8()
                 .path(IconName::ArrowCircle.path())
-                .text_color(cx.text_style().color)
+                .text_color(window.text_style().color)
                 .with_animation(
                     "icon_circle_arrow",
                     Animation::new(Duration::from_secs(2)).repeat(),
@@ -378,7 +378,9 @@ impl Render for ConfigurationView {
                                         .icon_size(IconSize::Medium)
                                         .style(ui::ButtonStyle::Filled)
                                         .full_width()
-                                        .on_click(|_, cx| copilot::initiate_sign_in(cx)),
+                                        .on_click(|_, window, cx| {
+                                            copilot::initiate_sign_in(window, cx)
+                                        }),
                                 )
                                 .child(
                                     div().flex().w_full().items_center().child(

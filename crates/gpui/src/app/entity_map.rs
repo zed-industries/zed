@@ -1,10 +1,12 @@
-use crate::{seal::Sealed, AppContext, Context, Entity, ModelContext};
+use crate::{seal::Sealed, AppContext, Context, Entity, ModelContext, VisualContext, Window};
 use anyhow::{anyhow, Result};
+use collections::FxHashSet;
 use derive_more::{Deref, DerefMut};
 use parking_lot::{RwLock, RwLockUpgradableReadGuard};
 use slotmap::{KeyData, SecondaryMap, SlotMap};
 use std::{
     any::{type_name, Any, TypeId},
+    cell::RefCell,
     fmt::{self, Display},
     hash::{Hash, Hasher},
     marker::PhantomData,
@@ -51,6 +53,7 @@ impl Display for EntityId {
 
 pub(crate) struct EntityMap {
     entities: SecondaryMap<EntityId, Box<dyn Any>>,
+    pub accessed_entities: RefCell<FxHashSet<EntityId>>,
     ref_counts: Arc<RwLock<EntityRefCounts>>,
 }
 
@@ -65,6 +68,7 @@ impl EntityMap {
     pub fn new() -> Self {
         Self {
             entities: SecondaryMap::new(),
+            accessed_entities: RefCell::new(FxHashSet::default()),
             ref_counts: Arc::new(RwLock::new(EntityRefCounts {
                 counts: SlotMap::with_key(),
                 dropped_entity_ids: Vec::new(),
@@ -88,6 +92,9 @@ impl EntityMap {
     where
         T: 'static,
     {
+        let mut accessed_entities = self.accessed_entities.borrow_mut();
+        accessed_entities.insert(slot.entity_id);
+
         let model = slot.0;
         self.entities.insert(model.entity_id, Box::new(entity));
         model
@@ -97,6 +104,9 @@ impl EntityMap {
     #[track_caller]
     pub fn lease<'a, T>(&mut self, model: &'a Model<T>) -> Lease<'a, T> {
         self.assert_valid_context(model);
+        let mut accessed_entities = self.accessed_entities.borrow_mut();
+        accessed_entities.insert(model.entity_id);
+
         let entity = Some(
             self.entities
                 .remove(model.entity_id)
@@ -130,9 +140,20 @@ impl EntityMap {
         );
     }
 
+    pub fn extend_accessed(&mut self, entities: &FxHashSet<EntityId>) {
+        self.accessed_entities
+            .borrow_mut()
+            .extend(entities.iter().copied());
+    }
+
+    pub fn clear_accessed(&mut self) {
+        self.accessed_entities.borrow_mut().clear();
+    }
+
     pub fn take_dropped(&mut self) -> Vec<(EntityId, Box<dyn Any>)> {
         let mut ref_counts = self.ref_counts.write();
         let dropped_entity_ids = mem::take(&mut ref_counts.dropped_entity_ids);
+        let mut accessed_entities = self.accessed_entities.borrow_mut();
 
         dropped_entity_ids
             .into_iter()
@@ -143,6 +164,7 @@ impl EntityMap {
                     0,
                     "dropped an entity that was referenced"
                 );
+                accessed_entities.remove(&entity_id);
                 // If the EntityId was allocated with `Context::reserve`,
                 // the entity may not have been inserted.
                 Some((entity_id, self.entities.remove(entity_id)?))
@@ -422,6 +444,20 @@ impl<T: 'static> Model<T> {
     {
         cx.update_model(self, update)
     }
+
+    /// Updates the entity referenced by this model with the given function if
+    /// the referenced entity still exists, within a visual context that has a window.
+    /// Returns an error if the entity has been released.
+    pub fn update_in<C, R>(
+        &self,
+        cx: &mut C,
+        update: impl FnOnce(&mut T, &mut Window, &mut ModelContext<'_, T>) -> R,
+    ) -> C::Result<R>
+    where
+        C: VisualContext,
+    {
+        cx.update_window_model(self, update)
+    }
 }
 
 impl<T> Clone for Model<T> {
@@ -617,9 +653,29 @@ impl<T: 'static> WeakModel<T> {
     {
         crate::Flatten::flatten(
             self.upgrade()
-                .ok_or_else(|| anyhow!("entity release"))
+                .ok_or_else(|| anyhow!("entity released"))
                 .map(|this| cx.update_model(&this, update)),
         )
+    }
+
+    /// Updates the entity referenced by this model with the given function if
+    /// the referenced entity still exists, within a visual context that has a window.
+    /// Returns an error if the entity has been released.
+    pub fn update_in<C, R>(
+        &self,
+        cx: &mut C,
+        update: impl FnOnce(&mut T, &mut Window, &mut ModelContext<'_, T>) -> R,
+    ) -> Result<R>
+    where
+        C: VisualContext,
+        Result<C::Result<R>>: crate::Flatten<R>,
+    {
+        let window = cx.window_handle();
+        let this = self.upgrade().ok_or_else(|| anyhow!("entity released"))?;
+
+        crate::Flatten::flatten(window.update(cx, |_, window, cx| {
+            this.update(cx, |model, cx| update(model, window, cx))
+        }))
     }
 
     /// Reads the entity referenced by this model with the given function if

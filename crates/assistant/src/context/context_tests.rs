@@ -16,7 +16,7 @@ use futures::{
     channel::mpsc,
     stream::{self, StreamExt},
 };
-use gpui::{prelude::*, AppContext, Model, SharedString, Task, TestAppContext, WeakView};
+use gpui::{prelude::*, AppContext, Model, SharedString, Task, TestAppContext, WeakModel};
 use language::{Buffer, BufferSnapshot, LanguageRegistry, LspAdapterDelegate};
 use language_model::{LanguageModelCacheConfiguration, LanguageModelRegistry, Role};
 use parking_lot::Mutex;
@@ -35,7 +35,7 @@ use std::{
     sync::{atomic::AtomicBool, Arc},
 };
 use text::{network::Network, OffsetRangeExt as _, ReplicaId, ToOffset};
-use ui::{IconName, WindowContext};
+use ui::{IconName, Window};
 use unindent::Unindent;
 use util::{
     test::{generate_marked_text, marked_text_ranges},
@@ -1642,8 +1642,9 @@ impl SlashCommand for FakeSlashCommand {
         self: Arc<Self>,
         _arguments: &[String],
         _cancel: Arc<AtomicBool>,
-        _workspace: Option<WeakView<Workspace>>,
-        _cx: &mut WindowContext,
+        _workspace: Option<WeakModel<Workspace>>,
+        _window: &mut Window,
+        _cx: &mut AppContext,
     ) -> Task<Result<Vec<ArgumentCompletion>>> {
         Task::ready(Ok(vec![]))
     }
@@ -1657,9 +1658,10 @@ impl SlashCommand for FakeSlashCommand {
         _arguments: &[String],
         _context_slash_command_output_sections: &[SlashCommandOutputSection<language::Anchor>],
         _context_buffer: BufferSnapshot,
-        _workspace: WeakView<Workspace>,
+        _workspace: WeakModel<Workspace>,
         _delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        _cx: &mut WindowContext,
+        _window: &mut Window,
+        _cx: &mut AppContext,
     ) -> Task<SlashCommandResult> {
         Task::ready(Ok(SlashCommandOutput {
             text: format!("Executed fake command: {}", self.0),
