@@ -20,6 +20,7 @@ use std::{
     time::Duration,
 };
 use task::{TaskTemplates, VsCodeTaskFile};
+use util::serde::default_true;
 use util::ResultExt;
 use worktree::{PathChange, UpdatedEntriesSet, Worktree, WorktreeId};
 
@@ -40,6 +41,10 @@ pub struct ProjectSettings {
     /// Default: null
     #[serde(default)]
     pub lsp: HashMap<LanguageServerName, LspSettings>,
+
+    /// Configuration for Diagnostics-related features.
+    #[serde(default)]
+    pub diagnostics: DiagnosticsSettings,
 
     /// Configuration for Git-related features
     #[serde(default)]
@@ -77,6 +82,86 @@ pub enum DirenvSettings {
     /// Load direnv configuration directly using `direnv export json`
     #[default]
     Direct,
+}
+
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct DiagnosticsSettings {
+    /// Whether or not to include warning diagnostics
+    #[serde(default = "default_true")]
+    pub include_warnings: bool,
+
+    /// Settings for showing inline diagnostics
+    pub inline: Option<InlineDiagnosticsSettings>,
+
+    /// Update active diagnostic on cursor movement
+    pub update_with_cursor: Option<bool>,
+
+    /// Whether to show only the primary diagnostic or not
+    pub primary_only: Option<bool>,
+
+    /// Whether to try and use the rendered diagnostic if available
+    pub use_rendered: Option<bool>,
+}
+
+impl DiagnosticsSettings {
+    pub fn inline(&self) -> InlineDiagnosticsSettings {
+        self.inline.unwrap_or_default()
+    }
+
+    pub fn update_with_cursor(&self) -> bool {
+        self.update_with_cursor.unwrap_or(false)
+    }
+
+    pub fn primary_only(&self) -> bool {
+        self.primary_only.unwrap_or(false)
+    }
+
+    pub fn use_rendered(&self) -> bool {
+        self.use_rendered.unwrap_or(false)
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, Serialize, Deserialize, JsonSchema)]
+pub struct InlineDiagnosticsSettings {
+    /// Whether or not to show inline diagnostics
+    ///
+    /// Default: false
+    #[serde(default = "false_value")]
+    pub enabled: bool,
+    /// Whether to only show the inline diaganostics after a delay after the
+    /// last editor event.
+    ///
+    /// Default: 0
+    pub delay_ms: Option<u64>,
+    /// The amount of padding between the end of the source line and the start
+    /// of the inline diagnostic in units of columns.
+    ///
+    /// Default: 6
+    pub padding: Option<u32>,
+    /// The minimum column to display inline diagnostics. This setting can be
+    /// used to horizontally align inline diagnostics at some position. Lines
+    /// longer than this value will still push diagnostics further to the right.
+    ///
+    /// Default: 0
+    pub min_column: Option<u32>,
+}
+
+impl InlineDiagnosticsSettings {
+    pub fn enabled(&self) -> bool {
+        self.enabled
+    }
+
+    pub fn delay(&self) -> u64 {
+        self.delay_ms.unwrap_or(0)
+    }
+
+    pub fn padding(&self) -> u32 {
+        self.padding.unwrap_or(4)
+    }
+
+    pub fn min_column(&self) -> u32 {
+        self.min_column.unwrap_or(0)
+    }
 }
 
 #[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
