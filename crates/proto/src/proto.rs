@@ -395,6 +395,8 @@ messages!(
     (UpdateWorktree, Foreground),
     (UpdateWorktreeSettings, Foreground),
     (UsersResponse, Foreground),
+    (VariablesRequest, Background),
+    (DapVariables, Background),
 );
 
 request_messages!(
@@ -534,6 +536,7 @@ request_messages!(
     (DapRestartRequest, Ack),
     (DapRestartStackFrameRequest, Ack),
     (DapShutdownSession, Ack),
+    (VariablesRequest, DapVariables)
 );
 
 entity_messages!(
@@ -640,6 +643,7 @@ entity_messages!(
     DapRestartStackFrameRequest,
     DapShutdownSession,
     UpdateThreadStatus,
+    VariablesRequest,
 );
 
 entity_messages!(

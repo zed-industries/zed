@@ -329,7 +329,9 @@ message Envelope {
         DapRestartRequest dap_restart_request = 308;
         DapShutdownSession dap_shutdown_session = 309;
         UpdateThreadStatus update_thread_status = 310;
-        DapRestartStackFrameRequest dap_restart_stack_frame_request = 311; // current max
+        VariablesRequest variables_request = 311;
+        DapVariables dap_variables = 312;
+        DapRestartStackFrameRequest dap_restart_stack_frame_request = 313; // current max
     }
 
     reserved 87 to 88;
@@ -2561,14 +2563,6 @@ message DebuggerOpenEntryVariable {
     uint64 depth = 3;
 }
 
-message DebuggerVariableListEntry {
-    oneof entry {
-        DapScope scope = 1;
-        VariableListEntrySetState set_variable_editor = 2;
-        VariableListEntryVariable variable = 3;
-    }
-}
-
 message VariableListEntrySetState {
     uint64 depth = 1;
     DebuggerSetVariableState state = 2;
@@ -2617,11 +2611,6 @@ message VariableListScopes {
     repeated DapScope scopes = 2;
 }
 
-message VariableListEntries {
-    uint64 stack_frame_id = 1;
-    repeated DebuggerVariableListEntry entries = 2;
-}
-
 message VariableListVariables {
     uint64 stack_frame_id = 1;
     uint64 scope_id = 2;
@@ -2629,12 +2618,39 @@ message VariableListVariables {
 }
 
 message DebuggerVariableList {
-    repeated VariableListOpenEntry open_entries = 1;
-    repeated VariableListScopes scopes = 2;
-    // Editor set_variable_editor = 3;
-    DebuggerSetVariableState set_variable_state = 4;
-    repeated VariableListEntries entries = 5;
-    repeated VariableListVariables variables = 6;
+    repeated VariableListScopes scopes = 1;
+    repeated VariableListVariables variables = 2;
+    repeated AddToVariableList added_variables = 3;
+}
+
+enum VariablesArgumentsFilter {
+    Indexed = 0;
+    Named = 1;
+}
+
+message ValueFormat {
+    optional bool hex = 1;
+}
+
+message VariablesRequest {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 thread_id = 3;
+    uint64 session_id = 4;
+    uint64 stack_frame_id = 5;
+    uint64 scope_id = 6;
+    uint64 variables_reference = 7;
+    optional VariablesArgumentsFilter filter = 8;
+    optional uint64 start = 9;
+    optional uint64 count = 10;
+    optional ValueFormat format = 11;
+}
+
+message AddToVariableList {
+    uint64 variable_id = 1;
+    uint64 stack_frame_id = 2;
+    uint64 scope_id = 3;
+    repeated DapVariable variables = 4;
 }
 
 message DebuggerStackFrameList {
@@ -2791,8 +2807,16 @@ message UpdateDebugAdapter {
         DebuggerThreadState thread_state = 5;
         DebuggerStackFrameList stack_frame_list = 6;
         DebuggerVariableList variable_list = 7;
-        DebuggerModuleList modules = 8;
+        AddToVariableList add_to_variable_list = 8;
+        DebuggerModuleList modules = 9;
     }
+}
+
+
+
+message DapVariables {
+    uint64 client_id = 1;
+    repeated DapVariable variables = 2;
 }
 
 // Remote Debugging: Dap Types

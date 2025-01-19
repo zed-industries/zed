@@ -10,8 +10,8 @@ use crate::client::{DebugAdapterClient, DebugAdapterClientId};
 pub struct DebugSessionId(pub usize);
 
 impl DebugSessionId {
-    pub fn from_proto(client_id: u64) -> Self {
-        Self(client_id as usize)
+    pub fn from_proto(session_id: u64) -> Self {
+        Self(session_id as usize)
     }
 
     pub fn to_proto(&self) -> u64 {

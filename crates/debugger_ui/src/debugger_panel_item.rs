@@ -457,6 +457,9 @@ impl DebugPanelItem {
                 proto::update_debug_adapter::Variant::VariableList(variable_list) => self
                     .variable_list
                     .update(cx, |this, cx| this.set_from_proto(variable_list, cx)),
+                proto::update_debug_adapter::Variant::AddToVariableList(variables_to_add) => self
+                    .variable_list
+                    .update(cx, |this, _| this.add_variables(variables_to_add.clone())),
                 proto::update_debug_adapter::Variant::Modules(module_list) => {
                     self.module_list.update(cx, |this, cx| {
                         this.set_from_proto(module_list, cx);

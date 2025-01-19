@@ -1,19 +1,19 @@
 use call::ActiveCall;
+use dap::requests::{Disconnect, Initialize, Launch, Scopes, StackTrace, Variables};
 use dap::{
-    requests::{Disconnect, Initialize, Launch, RestartFrame, SetBreakpoints, StackTrace},
+    requests::{RestartFrame, SetBreakpoints},
     SourceBreakpoint, StackFrame,
 };
-use debugger_ui::debugger_panel::DebugPanel;
+use dap::{Scope, Variable};
+use debugger_ui::{debugger_panel::DebugPanel, variable_list::VariableContainer};
 use editor::Editor;
 use gpui::{TestAppContext, View, VisualTestContext};
 use project::ProjectPath;
 use serde_json::json;
+use std::sync::Arc;
 use std::{
     path::Path,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc,
-    },
+    sync::atomic::{AtomicBool, Ordering},
 };
 use workspace::{dock::Panel, Workspace};
 
@@ -1355,6 +1355,490 @@ async fn test_module_list(
             );
         })
     });
+
+    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
+
+    let shutdown_client = project_a.update(cx_a, |project, cx| {
+        project.dap_store().update(cx, |dap_store, cx| {
+            dap_store.shutdown_session(&session.read(cx).id(), cx)
+        })
+    });
+
+    shutdown_client.await.unwrap();
+}
+
+#[gpui::test]
+async fn test_variable_list(
+    cx_a: &mut TestAppContext,
+    cx_b: &mut TestAppContext,
+    cx_c: &mut TestAppContext,
+) {
+    let executor = cx_a.executor();
+    let mut server = TestServer::start(executor.clone()).await;
+    let client_a = server.create_client(cx_a, "user_a").await;
+    let client_b = server.create_client(cx_b, "user_b").await;
+    let client_c = server.create_client(cx_c, "user_c").await;
+
+    init_test(cx_a);
+    init_test(cx_b);
+    init_test(cx_c);
+
+    server
+        .create_room(&mut [(&client_a, cx_a), (&client_b, cx_b), (&client_c, cx_c)])
+        .await;
+    let active_call_a = cx_a.read(ActiveCall::global);
+    let active_call_b = cx_b.read(ActiveCall::global);
+    let active_call_c = cx_c.read(ActiveCall::global);
+
+    let (project_a, _worktree_id) = client_a.build_local_project("/a", cx_a).await;
+    active_call_a
+        .update(cx_a, |call, cx| call.set_location(Some(&project_a), cx))
+        .await
+        .unwrap();
+
+    let project_id = active_call_a
+        .update(cx_a, |call, cx| call.share_project(project_a.clone(), cx))
+        .await
+        .unwrap();
+    let project_b = client_b.join_remote_project(project_id, cx_b).await;
+    active_call_b
+        .update(cx_b, |call, cx| call.set_location(Some(&project_b), cx))
+        .await
+        .unwrap();
+
+    let (workspace_a, cx_a) = client_a.build_workspace(&project_a, cx_a);
+    let (workspace_b, cx_b) = client_b.build_workspace(&project_b, cx_b);
+
+    add_debugger_panel(&workspace_a, cx_a).await;
+    add_debugger_panel(&workspace_b, cx_b).await;
+
+    let task = project_a.update(cx_a, |project, cx| {
+        project.dap_store().update(cx, |store, cx| {
+            store.start_debug_session(
+                dap::DebugAdapterConfig {
+                    label: "test config".into(),
+                    kind: dap::DebugAdapterKind::Fake,
+                    request: dap::DebugRequestType::Launch,
+                    program: None,
+                    cwd: None,
+                    initialize_args: None,
+                },
+                cx,
+            )
+        })
+    });
+
+    let (session, client) = task.await.unwrap();
+
+    client
+        .on_request::<Initialize, _>(move |_, _| {
+            Ok(dap::Capabilities {
+                supports_step_back: Some(true),
+                ..Default::default()
+            })
+        })
+        .await;
+
+    client.on_request::<Launch, _>(move |_, _| Ok(())).await;
+
+    let stack_frames = vec![dap::StackFrame {
+        id: 1,
+        name: "Stack Frame 1".into(),
+        source: Some(dap::Source {
+            name: Some("test.js".into()),
+            path: Some("/project/src/test.js".into()),
+            source_reference: None,
+            presentation_hint: None,
+            origin: None,
+            sources: None,
+            adapter_data: None,
+            checksums: None,
+        }),
+        line: 1,
+        column: 1,
+        end_line: None,
+        end_column: None,
+        can_restart: None,
+        instruction_pointer_reference: None,
+        module_id: None,
+        presentation_hint: None,
+    }];
+
+    let scopes = vec![Scope {
+        name: "Scope 1".into(),
+        presentation_hint: None,
+        variables_reference: 1,
+        named_variables: None,
+        indexed_variables: None,
+        expensive: false,
+        source: None,
+        line: None,
+        column: None,
+        end_line: None,
+        end_column: None,
+    }];
+
+    let variable_1 = Variable {
+        name: "variable 1".into(),
+        value: "1".into(),
+        type_: None,
+        presentation_hint: None,
+        evaluate_name: None,
+        variables_reference: 2,
+        named_variables: None,
+        indexed_variables: None,
+        memory_reference: None,
+    };
+
+    let variable_2 = Variable {
+        name: "variable 2".into(),
+        value: "2".into(),
+        type_: None,
+        presentation_hint: None,
+        evaluate_name: None,
+        variables_reference: 3,
+        named_variables: None,
+        indexed_variables: None,
+        memory_reference: None,
+    };
+
+    let variable_3 = Variable {
+        name: "variable 3".into(),
+        value: "hello world".into(),
+        type_: None,
+        presentation_hint: None,
+        evaluate_name: None,
+        variables_reference: 4,
+        named_variables: None,
+        indexed_variables: None,
+        memory_reference: None,
+    };
+
+    let variable_4 = Variable {
+        name: "variable 4".into(),
+        value: "hello world this is the final variable".into(),
+        type_: None,
+        presentation_hint: None,
+        evaluate_name: None,
+        variables_reference: 0,
+        named_variables: None,
+        indexed_variables: None,
+        memory_reference: None,
+    };
+
+    client
+        .on_request::<StackTrace, _>({
+            let stack_frames = std::sync::Arc::new(stack_frames.clone());
+            move |_, args| {
+                assert_eq!(1, args.thread_id);
+
+                Ok(dap::StackTraceResponse {
+                    stack_frames: (*stack_frames).clone(),
+                    total_frames: None,
+                })
+            }
+        })
+        .await;
+
+    client
+        .on_request::<Scopes, _>({
+            let scopes = Arc::new(scopes.clone());
+            move |_, args| {
+                assert_eq!(1, args.frame_id);
+
+                Ok(dap::ScopesResponse {
+                    scopes: (*scopes).clone(),
+                })
+            }
+        })
+        .await;
+
+    let first_variable_request = vec![variable_1.clone(), variable_2.clone()];
+
+    client
+        .on_request::<Variables, _>({
+            move |_, args| {
+                assert_eq!(1, args.variables_reference);
+
+                Ok(dap::VariablesResponse {
+                    variables: first_variable_request.clone(),
+                })
+            }
+        })
+        .await;
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+    cx_c.run_until_parked();
+
+    let local_debug_item = workspace_a.update(cx_a, |workspace, cx| {
+        let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+        let active_debug_panel_item = debug_panel
+            .update(cx, |this, cx| this.active_debug_panel_item(cx))
+            .unwrap();
+
+        assert_eq!(
+            1,
+            debug_panel.update(cx, |this, cx| this.pane().unwrap().read(cx).items_len())
+        );
+        assert_eq!(client.id(), active_debug_panel_item.read(cx).client_id());
+        assert_eq!(1, active_debug_panel_item.read(cx).thread_id());
+        active_debug_panel_item
+    });
+
+    let remote_debug_item = workspace_b.update(cx_b, |workspace, cx| {
+        let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+        let active_debug_panel_item = debug_panel
+            .update(cx, |this, cx| this.active_debug_panel_item(cx))
+            .unwrap();
+
+        assert_eq!(
+            1,
+            debug_panel.update(cx, |this, cx| this.pane().unwrap().read(cx).items_len())
+        );
+        assert_eq!(client.id(), active_debug_panel_item.read(cx).client_id());
+        assert_eq!(1, active_debug_panel_item.read(cx).thread_id());
+        active_debug_panel_item
+    });
+
+    let first_visual_entries = vec!["v Scope 1", "    > variable 1", "    > variable 2"];
+    let first_variable_containers = vec![
+        VariableContainer {
+            container_reference: scopes[0].variables_reference,
+            variable: variable_1.clone(),
+            depth: 1,
+        },
+        VariableContainer {
+            container_reference: scopes[0].variables_reference,
+            variable: variable_2.clone(),
+            depth: 1,
+        },
+    ];
+
+    local_debug_item
+        .update(cx_a, |this, _| this.variable_list().clone())
+        .update(cx_a, |variable_list, cx| {
+            assert_eq!(1, variable_list.scopes().len());
+            assert_eq!(scopes, variable_list.scopes().get(&1).unwrap().clone());
+            assert_eq!(&first_variable_containers, &variable_list.variables());
+
+            variable_list.assert_visual_entries(first_visual_entries.clone(), cx);
+        });
+
+    client
+        .on_request::<Variables, _>({
+            let variables = Arc::new(vec![variable_3.clone()]);
+            move |_, args| {
+                assert_eq!(2, args.variables_reference);
+
+                Ok(dap::VariablesResponse {
+                    variables: (*variables).clone(),
+                })
+            }
+        })
+        .await;
+
+    remote_debug_item
+        .update(cx_b, |this, _| this.variable_list().clone())
+        .update(cx_b, |variable_list, cx| {
+            assert_eq!(1, variable_list.scopes().len());
+            assert_eq!(scopes, variable_list.scopes().get(&1).unwrap().clone());
+            assert_eq!(&first_variable_containers, &variable_list.variables());
+
+            variable_list.assert_visual_entries(first_visual_entries.clone(), cx);
+
+            variable_list.toggle_variable_in_test(
+                scopes[0].variables_reference,
+                &variable_1,
+                1,
+                cx,
+            );
+        });
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+    cx_c.run_until_parked();
+
+    let second_req_variable_list = vec![
+        VariableContainer {
+            container_reference: scopes[0].variables_reference,
+            variable: variable_1.clone(),
+            depth: 1,
+        },
+        VariableContainer {
+            container_reference: variable_1.variables_reference,
+            variable: variable_3.clone(),
+            depth: 2,
+        },
+        VariableContainer {
+            container_reference: scopes[0].variables_reference,
+            variable: variable_2.clone(),
+            depth: 1,
+        },
+    ];
+
+    remote_debug_item
+        .update(cx_b, |this, _| this.variable_list().clone())
+        .update(cx_b, |variable_list, cx| {
+            assert_eq!(1, variable_list.scopes().len());
+            assert_eq!(3, variable_list.variables().len());
+            assert_eq!(scopes, variable_list.scopes().get(&1).unwrap().clone());
+            assert_eq!(&second_req_variable_list, &variable_list.variables());
+
+            variable_list.assert_visual_entries(
+                vec![
+                    "v Scope 1",
+                    "    v variable 1",
+                    "        > variable 3",
+                    "    > variable 2",
+                ],
+                cx,
+            );
+        });
+
+    client
+        .on_request::<Variables, _>({
+            let variables = Arc::new(vec![variable_4.clone()]);
+            move |_, args| {
+                assert_eq!(3, args.variables_reference);
+
+                Ok(dap::VariablesResponse {
+                    variables: (*variables).clone(),
+                })
+            }
+        })
+        .await;
+
+    local_debug_item
+        .update(cx_a, |this, _| this.variable_list().clone())
+        .update(cx_a, |variable_list, cx| {
+            assert_eq!(1, variable_list.scopes().len());
+            assert_eq!(3, variable_list.variables().len());
+            assert_eq!(scopes, variable_list.scopes().get(&1).unwrap().clone());
+            assert_eq!(&second_req_variable_list, &variable_list.variables());
+
+            variable_list.assert_visual_entries(first_visual_entries.clone(), cx);
+
+            variable_list.toggle_variable_in_test(
+                scopes[0].variables_reference,
+                &variable_2.clone(),
+                1,
+                cx,
+            );
+        });
+
+    cx_a.run_until_parked();
+    cx_b.run_until_parked();
+    cx_c.run_until_parked();
+
+    let final_variable_containers: Vec<VariableContainer> = vec![
+        VariableContainer {
+            container_reference: scopes[0].variables_reference,
+            variable: variable_1.clone(),
+            depth: 1,
+        },
+        VariableContainer {
+            container_reference: variable_1.variables_reference,
+            variable: variable_3.clone(),
+            depth: 2,
+        },
+        VariableContainer {
+            container_reference: scopes[0].variables_reference,
+            variable: variable_2.clone(),
+            depth: 1,
+        },
+        VariableContainer {
+            container_reference: variable_2.variables_reference,
+            variable: variable_4.clone(),
+            depth: 2,
+        },
+    ];
+
+    remote_debug_item
+        .update(cx_b, |this, _| this.variable_list().clone())
+        .update(cx_b, |variable_list, cx| {
+            assert_eq!(1, variable_list.scopes().len());
+            assert_eq!(4, variable_list.variables().len());
+            assert_eq!(scopes, variable_list.scopes().get(&1).unwrap().clone());
+            assert_eq!(&final_variable_containers, &variable_list.variables());
+
+            variable_list.assert_visual_entries(
+                vec![
+                    "v Scope 1",
+                    "    v variable 1",
+                    "        > variable 3",
+                    "    > variable 2",
+                ],
+                cx,
+            );
+        });
+
+    local_debug_item
+        .update(cx_a, |this, _| this.variable_list().clone())
+        .update(cx_a, |variable_list, cx| {
+            assert_eq!(1, variable_list.scopes().len());
+            assert_eq!(4, variable_list.variables().len());
+            assert_eq!(scopes, variable_list.scopes().get(&1).unwrap().clone());
+            assert_eq!(&final_variable_containers, &variable_list.variables());
+
+            variable_list.assert_visual_entries(
+                vec![
+                    "v Scope 1",
+                    "    > variable 1",
+                    "    v variable 2",
+                    "        > variable 4",
+                ],
+                cx,
+            );
+        });
+
+    let project_c = client_c.join_remote_project(project_id, cx_c).await;
+    active_call_c
+        .update(cx_c, |call, cx| call.set_location(Some(&project_c), cx))
+        .await
+        .unwrap();
+
+    let (workspace_c, cx_c) = client_c.build_workspace(&project_c, cx_c);
+    add_debugger_panel(&workspace_c, cx_c).await;
+    cx_c.run_until_parked();
+
+    let last_join_remote_item = workspace_c.update(cx_c, |workspace, cx| {
+        let debug_panel = workspace.panel::<DebugPanel>(cx).unwrap();
+        let active_debug_panel_item = debug_panel
+            .update(cx, |this, cx| this.active_debug_panel_item(cx))
+            .unwrap();
+
+        assert_eq!(
+            1,
+            debug_panel.update(cx, |this, cx| this.pane().unwrap().read(cx).items_len())
+        );
+        assert_eq!(client.id(), active_debug_panel_item.read(cx).client_id());
+        assert_eq!(1, active_debug_panel_item.read(cx).thread_id());
+        active_debug_panel_item
+    });
+
+    last_join_remote_item
+        .update(cx_c, |this, _| this.variable_list().clone())
+        .update(cx_c, |variable_list, cx| {
+            assert_eq!(1, variable_list.scopes().len());
+            assert_eq!(4, variable_list.variables().len());
+            assert_eq!(scopes, variable_list.scopes().get(&1).unwrap().clone());
+            assert_eq!(final_variable_containers, variable_list.variables());
+
+            variable_list.assert_visual_entries(first_visual_entries, cx);
+        });
 
     client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
 

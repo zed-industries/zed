@@ -1,5 +1,5 @@
 use crate::db::ProjectId;
-use anyhow::{anyhow, Result};
+use anyhow::{anyhow, Context, Result};
 use prost::Message;
 use rpc::{proto, proto::SetDebuggerPanelItem};
 use sea_orm::entity::prelude::*;
@@ -113,6 +113,17 @@ impl Model {
             proto::update_debug_adapter::Variant::VariableList(variable_list) => {
                 let encoded = variable_list.encode_to_vec();
                 self.variable_list = encoded;
+            }
+            proto::update_debug_adapter::Variant::AddToVariableList(added_variables) => {
+                let mut variable_list = proto::DebuggerVariableList::decode(
+                    &self.variable_list[..],
+                )
+                .with_context(|| {
+                    "Failed to decode DebuggerVariableList during AddToVariableList variant update"
+                })?;
+
+                variable_list.added_variables.push(added_variables.clone());
+                self.variable_list = variable_list.encode_to_vec();
             }
             proto::update_debug_adapter::Variant::Modules(module_list) => {
                 let encoded = module_list.encode_to_vec();
