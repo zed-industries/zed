@@ -2182,7 +2182,7 @@ pub mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/a",
+            add_root_for_windows("/a"),
             json!({
                 "main.rs": format!("fn main() {{\n{}\n}}", "let i = 5;\n".repeat(500)),
                 "other.rs": "// Test file",
@@ -2190,7 +2190,7 @@ pub mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/a".as_ref()], cx).await;
+        let project = Project::test(fs, [add_root_for_windows("/a").as_ref()], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(rust_lang());
@@ -2218,7 +2218,10 @@ pub mod tests {
                                 async move {
                                     assert_eq!(
                                         params.text_document.uri,
-                                        lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                                        lsp::Url::from_file_path(add_root_for_windows(
+                                            "/a/main.rs"
+                                        ))
+                                        .unwrap(),
                                     );
 
                                     task_lsp_request_ranges.lock().push(params.range);
@@ -2246,7 +2249,7 @@ pub mod tests {
 
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/a/main.rs", cx)
+                project.open_local_buffer(add_root_for_windows("/a/main.rs"), cx)
             })
             .await
             .unwrap();
