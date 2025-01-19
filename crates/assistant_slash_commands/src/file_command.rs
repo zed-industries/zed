@@ -323,6 +323,8 @@ fn collect_files(
                         )))?;
                         directory_stack.push(entry.path.clone());
                     } else {
+                        // todo(windows)
+                        // Potential bug: this assumes that the path separator is always `\` on Windows
                         let entry_name = format!(
                             "{}{}{}",
                             prefix_paths,
@@ -460,6 +462,7 @@ mod custom_path_matcher {
     use std::{fmt::Debug as _, path::Path};
 
     use globset::{Glob, GlobSet, GlobSetBuilder};
+    use util::paths::SanitizedPath;
 
     #[derive(Clone, Debug, Default)]
     pub struct PathMatcher {
@@ -486,7 +489,7 @@ mod custom_path_matcher {
         pub fn new(globs: &[String]) -> Result<Self, globset::Error> {
             let globs = globs
                 .into_iter()
-                .map(|glob| Glob::new(&glob))
+                .map(|glob| Glob::new(&SanitizedPath::from(glob).to_glob_string()))
                 .collect::<Result<Vec<_>, _>>()?;
             let sources = globs.iter().map(|glob| glob.glob().to_owned()).collect();
             let sources_with_trailing_slash = globs
@@ -512,6 +515,8 @@ mod custom_path_matcher {
                 .zip(self.sources_with_trailing_slash.iter())
                 .any(|(source, with_slash)| {
                     let as_bytes = other_path.as_os_str().as_encoded_bytes();
+                    // todo(windows)
+                    // Potential bug: this assumes that the path separator is always `\` on Windows
                     let with_slash = if source.ends_with(std::path::MAIN_SEPARATOR_STR) {
                         source.as_bytes()
                     } else {
@@ -574,6 +579,7 @@ mod test {
     use serde_json::json;
     use settings::SettingsStore;
     use smol::stream::StreamExt;
+    use util::add_root_for_windows;
 
     use super::collect_files;
 
@@ -601,7 +607,7 @@ mod test {
         let fs = FakeFs::new(cx.executor());
 
         fs.insert_tree(
-            "/root",
+            add_root_for_windows("/root"),
             json!({
                 "dir": {
                     "subdir": {
@@ -616,28 +622,28 @@ mod test {
         )
         .await;
 
-        let project = Project::test(fs, ["/root".as_ref()], cx).await;
+        let project = Project::test(fs, [add_root_for_windows("/root").as_ref()], cx).await;
 
         let result_1 =
-            cx.update(|cx| collect_files(project.clone(), &[to_file_path("root/dir")], cx));
+            cx.update(|cx| collect_files(project.clone(), &["root/dir".to_string()], cx));
         let result_1 = SlashCommandOutput::from_event_stream(result_1.boxed())
             .await
             .unwrap();
 
-        assert!(result_1.text.starts_with(&to_file_path("root/dir",)));
+        assert!(result_1.text.starts_with(&to_file_path("root/dir")));
         // 4 files + 2 directories
         assert_eq!(result_1.sections.len(), 6);
 
         let result_2 =
-            cx.update(|cx| collect_files(project.clone(), &[to_file_path("root/dir/")], cx));
+            cx.update(|cx| collect_files(project.clone(), &["root/dir/".to_string()], cx));
         let result_2 = SlashCommandOutput::from_event_stream(result_2.boxed())
             .await
             .unwrap();
 
         assert_eq!(result_1, result_2);
 
-        let result = cx
-            .update(|cx| collect_files(project.clone(), &[to_file_path("root/dir*")], cx).boxed());
+        let result =
+            cx.update(|cx| collect_files(project.clone(), &["root/dir*".to_string()], cx).boxed());
         let result = SlashCommandOutput::from_event_stream(result).await.unwrap();
 
         assert!(result.text.starts_with(&to_file_path("root/dir",)));

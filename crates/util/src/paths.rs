@@ -115,6 +115,17 @@ impl SanitizedPath {
         self.0.to_string_lossy().to_string()
     }
 
+    pub fn to_glob_string(&self) -> String {
+        #[cfg(target_os = "windows")]
+        {
+            self.0.to_string_lossy().replace("/", "\\")
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            self.0.to_string_lossy().to_string()
+        }
+    }
+
     pub fn join(&self, path: &Self) -> Self {
         self.0.join(&path.0).into()
     }
