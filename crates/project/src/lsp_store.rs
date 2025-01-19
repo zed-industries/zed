@@ -8330,9 +8330,7 @@ impl DiagnosticSummary {
 fn glob_literal_prefix(glob: &Path) -> PathBuf {
     glob.components()
         .take_while(|component| match component {
-            path::Component::Normal(part) => {
-                !part.to_string_lossy().contains(['*', '?', '{', '}'])
-            }
+            path::Component::Normal(part) => !part.to_string_lossy().contains(['*', '?', '{', '}']),
             _ => true,
         })
         .collect()
