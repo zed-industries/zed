@@ -557,6 +557,7 @@ impl Render for MatchTooltip {
 mod tests {
     use std::path::PathBuf;
 
+    use dap::debugger_settings::DebuggerSettings;
     use editor::Editor;
     use gpui::{TestAppContext, UpdateGlobal, WindowHandle};
     use project::{project_settings::ProjectSettings, Project};
@@ -705,6 +706,7 @@ mod tests {
             crate::init(cx);
             editor::init(cx);
             workspace::init_settings(cx);
+            DebuggerSettings::register(cx);
             Project::init_settings(cx);
             state
         })
