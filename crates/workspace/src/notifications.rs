@@ -284,6 +284,7 @@ impl Render for LanguageServerPrompt {
                     .child(
                         h_flex()
                             .justify_between()
+                            .items_start()
                             .child(
                                 h_flex()
                                     .gap_2()
@@ -396,7 +397,7 @@ impl Render for ErrorMessagePrompt {
                     .child(
                         div()
                             .id("error_message")
-                            .max_w_80()
+                            .max_w_96()
                             .max_h_40()
                             .overflow_y_scroll()
                             .child(Label::new(self.message.clone()).size(LabelSize::Small)),
@@ -503,7 +504,8 @@ pub mod simple_message_notification {
                     h_flex()
                         .gap_4()
                         .justify_between()
-                        .child(div().max_w_80().child((self.content)(cx)))
+                        .items_start()
+                        .child(div().max_w_96().child((self.content)(cx)))
                         .child(
                             IconButton::new("close", IconName::Close)
                                 .on_click(cx.listener(|this, _, cx| this.dismiss(cx))),

@@ -1,4 +1,3 @@
-use crate::prompt_library::PromptStore;
 use anyhow::{anyhow, Context, Result};
 use assistant_slash_command::{
     ArgumentCompletion, SlashCommand, SlashCommandOutput, SlashCommandOutputSection,
@@ -6,11 +5,12 @@ use assistant_slash_command::{
 };
 use gpui::{Task, WeakView};
 use language::{BufferSnapshot, LspAdapterDelegate};
+use prompt_library::PromptStore;
 use std::sync::{atomic::AtomicBool, Arc};
 use ui::prelude::*;
 use workspace::Workspace;
 
-pub(crate) struct PromptSlashCommand;
+pub struct PromptSlashCommand;
 
 impl SlashCommand for PromptSlashCommand {
     fn name(&self) -> String {

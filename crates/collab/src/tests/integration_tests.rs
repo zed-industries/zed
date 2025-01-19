@@ -6,13 +6,15 @@ use crate::{
     },
 };
 use anyhow::{anyhow, Result};
-use assistant::{ContextStore, PromptBuilder, SlashCommandWorkingSet};
+use assistant::ContextStore;
+use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 use call::{room, ActiveCall, ParticipantLocation, Room};
 use client::{User, RECEIVE_TIMEOUT};
 use collections::{HashMap, HashSet};
 use fs::{FakeFs, Fs as _, RemoveOptions};
 use futures::{channel::mpsc, StreamExt as _};
+use prompt_library::PromptBuilder;
 
 use git::status::{FileStatus, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode};
 use gpui::{
@@ -1838,6 +1840,8 @@ async fn test_active_call_events(
                 id: client_a.user_id().unwrap(),
                 github_login: "user_a".to_string(),
                 avatar_uri: "avatar_a".into(),
+                name: None,
+                email: None,
             }),
             project_id: project_a_id,
             worktree_root_names: vec!["a".to_string()],
@@ -1856,6 +1860,8 @@ async fn test_active_call_events(
                 id: client_b.user_id().unwrap(),
                 github_login: "user_b".to_string(),
                 avatar_uri: "avatar_b".into(),
+                name: None,
+                email: None,
             }),
             project_id: project_b_id,
             worktree_root_names: vec!["b".to_string()]
@@ -4195,7 +4201,6 @@ async fn test_collaborating_with_lsp_progress_updates_and_diagnostics_ordering(
                 }],
             },
         );
-        executor.run_until_parked();
     }
     fake_language_server.notify::<lsp::notification::Progress>(&lsp::ProgressParams {
         token: lsp::NumberOrString::String("the-disk-based-token".to_string()),

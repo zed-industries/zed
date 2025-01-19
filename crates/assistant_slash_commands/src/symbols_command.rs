@@ -11,7 +11,7 @@ use std::{path::Path, sync::atomic::AtomicBool};
 use ui::{IconName, WindowContext};
 use workspace::Workspace;
 
-pub(crate) struct OutlineSlashCommand;
+pub struct OutlineSlashCommand;
 
 impl SlashCommand for OutlineSlashCommand {
     fn name(&self) -> String {

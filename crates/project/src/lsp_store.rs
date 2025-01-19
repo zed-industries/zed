@@ -1826,8 +1826,6 @@ impl LocalLspStore {
                 .then_with(|| a.message.cmp(&b.message))
         }
 
-        let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx)?;
-
         diagnostics.sort_unstable_by(|a, b| {
             Ordering::Equal
                 .then_with(|| a.range.start.cmp(&b.range.start))
@@ -1835,12 +1833,18 @@ impl LocalLspStore {
                 .then_with(|| compare_diagnostics(&a.diagnostic, &b.diagnostic))
         });
 
+        let snapshot = self.buffer_snapshot_for_lsp_version(buffer, server_id, version, cx)?;
+
+        let edits_since_save = std::cell::LazyCell::new(|| {
+            let saved_version = buffer.read(cx).saved_version();
+            Patch::new(
+                snapshot
+                    .edits_since::<Unclipped<PointUtf16>>(saved_version)
+                    .collect(),
+            )
+        });
+
         let mut sanitized_diagnostics = Vec::new();
-        let edits_since_save = Patch::new(
-            snapshot
-                .edits_since::<Unclipped<PointUtf16>>(buffer.read(cx).saved_version())
-                .collect(),
-        );
         for entry in diagnostics {
             let start;
             let end;
@@ -1848,8 +1852,8 @@ impl LocalLspStore {
                 // Some diagnostics are based on files on disk instead of buffers'
                 // current contents. Adjust these diagnostics' ranges to reflect
                 // any unsaved edits.
-                start = edits_since_save.old_to_new(entry.range.start);
-                end = edits_since_save.old_to_new(entry.range.end);
+                start = (*edits_since_save).old_to_new(entry.range.start);
+                end = (*edits_since_save).old_to_new(entry.range.end);
             } else {
                 start = entry.range.start;
                 end = entry.range.end;

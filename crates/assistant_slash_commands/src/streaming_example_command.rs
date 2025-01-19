@@ -22,7 +22,7 @@ impl FeatureFlag for StreamingExampleSlashCommandFeatureFlag {
     const NAME: &'static str = "streaming-example-slash-command";
 }
 
-pub(crate) struct StreamingExampleSlashCommand;
+pub struct StreamingExampleSlashCommand;
 
 impl SlashCommand for StreamingExampleSlashCommand {
     fn name(&self) -> String {

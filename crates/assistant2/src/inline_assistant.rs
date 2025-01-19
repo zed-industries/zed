@@ -29,6 +29,7 @@ use language_models::report_assistant_event;
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, ProjectTransaction};
+use prompt_library::PromptBuilder;
 use settings::{Settings, SettingsStore};
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
@@ -42,9 +43,9 @@ use workspace::{notifications::NotificationId, ItemHandle, Toast, Workspace};
 use crate::buffer_codegen::{BufferCodegen, CodegenAlternative, CodegenEvent};
 use crate::context_store::ContextStore;
 use crate::inline_prompt_editor::{CodegenStatus, InlineAssistId, PromptEditor, PromptEditorEvent};
+use crate::terminal_inline_assistant::TerminalInlineAssistant;
 use crate::thread_store::ThreadStore;
 use crate::AssistantPanel;
-use crate::{prompts::PromptBuilder, terminal_inline_assistant::TerminalInlineAssistant};
 
 pub fn init(
     fs: Arc<dyn Fs>,
@@ -1279,6 +1280,7 @@ impl InlineAssistant {
                     editor.set_show_wrap_guides(false, cx);
                     editor.set_show_gutter(false, cx);
                     editor.scroll_manager.set_forbid_vertical_scroll(true);
+                    editor.set_show_scrollbars(false, cx);
                     editor.set_read_only(true);
                     editor.set_show_inline_completions(Some(false), cx);
                     editor.highlight_rows::<DeletedLines>(

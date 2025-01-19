@@ -4085,7 +4085,7 @@ impl Workspace {
         }
     }
 
-    fn active_call(&self) -> Option<&Model<ActiveCall>> {
+    pub fn active_call(&self) -> Option<&Model<ActiveCall>> {
         self.active_call.as_ref().map(|(call, _)| call)
     }
 

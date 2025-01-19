@@ -7,6 +7,7 @@ pub mod repository;
 pub mod status;
 
 use anyhow::{anyhow, Context, Result};
+use gpui::actions;
 use serde::{Deserialize, Serialize};
 use std::ffi::OsStr;
 use std::fmt;
@@ -23,6 +24,24 @@ pub static COOKIES: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new("cook
 pub static FSMONITOR_DAEMON: LazyLock<&'static OsStr> =
     LazyLock::new(|| OsStr::new("fsmonitor--daemon"));
 pub static GITIGNORE: LazyLock<&'static OsStr> = LazyLock::new(|| OsStr::new(".gitignore"));
+
+actions!(
+    git,
+    [
+        StageFile,
+        UnstageFile,
+        ToggleStaged,
+        // Revert actions are currently in the editor crate:
+        // editor::RevertFile,
+        // editor::RevertSelectedHunks
+        StageAll,
+        UnstageAll,
+        RevertAll,
+        CommitChanges,
+        CommitAllChanges,
+        ClearCommitMessage
+    ]
+);
 
 #[derive(Clone, Copy, Eq, Hash, PartialEq)]
 pub struct Oid(libgit::Oid);

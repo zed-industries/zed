@@ -28,7 +28,7 @@ use editor::{
 };
 use gpui::{
     actions, impl_actions, Action, AppContext, Axis, Entity, EventEmitter, KeyContext,
-    KeystrokeEvent, Render, Subscription, View, ViewContext, WeakView,
+    KeystrokeEvent, Render, Subscription, Task, View, ViewContext, WeakView,
 };
 use insert::{NormalBefore, TemporaryNormal};
 use language::{CursorShape, Point, Selection, SelectionGoal, TransactionId};
@@ -87,7 +87,6 @@ actions!(
         ClearOperators,
         Tab,
         Enter,
-        Object,
         InnerObject,
         FindForward,
         FindBackward,
@@ -151,7 +150,7 @@ pub fn init(cx: &mut AppContext) {
             };
 
             let theme = ThemeSettings::get_global(cx);
-            let height = theme.buffer_font_size(cx) * theme.buffer_line_height.value();
+            let height = theme.buffer_font_size() * theme.buffer_line_height.value();
 
             let desired_size = if let Some(count) = Vim::take_count(cx) {
                 height * count
@@ -169,11 +168,11 @@ pub fn init(cx: &mut AppContext) {
             };
             let Ok(width) = cx
                 .text_system()
-                .advance(font_id, theme.buffer_font_size(cx), 'm')
+                .advance(font_id, theme.buffer_font_size(), 'm')
             else {
                 return;
             };
-            let height = theme.buffer_font_size(cx) * theme.buffer_line_height.value();
+            let height = theme.buffer_font_size() * theme.buffer_line_height.value();
 
             let (axis, amount) = match action.0 {
                 ResizeIntent::Lengthen => (Axis::Vertical, height),
@@ -259,6 +258,8 @@ pub(crate) struct Vim {
 
     editor: WeakView<Editor>,
 
+    last_command: Option<String>,
+    running_command: Option<Task<()>>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -301,6 +302,9 @@ impl Vim {
 
             selected_register: None,
             search: SearchState::default(),
+
+            last_command: None,
+            running_command: None,
 
             editor: editor.downgrade(),
             _subscriptions: vec![
@@ -557,6 +561,7 @@ impl Vim {
         self.mode = mode;
         self.operator_stack.clear();
         self.selected_register.take();
+        self.cancel_running_command(cx);
         if mode == Mode::Normal || mode != last_mode {
             self.current_tx.take();
             self.current_anchor.take();

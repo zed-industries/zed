@@ -23,7 +23,7 @@ enum ContentType {
     Json,
 }
 
-pub(crate) struct FetchSlashCommand;
+pub struct FetchSlashCommand;
 
 impl FetchSlashCommand {
     async fn build_message(http_client: Arc<HttpClientWithUrl>, url: &str) -> Result<String> {

@@ -171,7 +171,13 @@ impl FileStatus {
             FileStatus::Tracked(TrackedStatus {
                 index_status,
                 worktree_status,
-            }) => index_status.summary() + worktree_status.summary(),
+            }) => GitSummary {
+                index: index_status.to_summary(),
+                worktree: worktree_status.to_summary(),
+                conflict: 0,
+                untracked: 0,
+                count: 1,
+            },
         }
     }
 }
@@ -190,15 +196,38 @@ impl StatusCode {
         }
     }
 
-    fn summary(self) -> GitSummary {
+    fn to_summary(self) -> TrackedSummary {
         match self {
-            StatusCode::Modified | StatusCode::TypeChanged => GitSummary::MODIFIED,
-            StatusCode::Added => GitSummary::ADDED,
-            StatusCode::Deleted => GitSummary::DELETED,
+            StatusCode::Modified | StatusCode::TypeChanged => TrackedSummary {
+                modified: 1,
+                ..TrackedSummary::UNCHANGED
+            },
+            StatusCode::Added => TrackedSummary {
+                added: 1,
+                ..TrackedSummary::UNCHANGED
+            },
+            StatusCode::Deleted => TrackedSummary {
+                deleted: 1,
+                ..TrackedSummary::UNCHANGED
+            },
             StatusCode::Renamed | StatusCode::Copied | StatusCode::Unmodified => {
-                GitSummary::UNCHANGED
+                TrackedSummary::UNCHANGED
             }
         }
+    }
+
+    pub fn index(self) -> FileStatus {
+        FileStatus::Tracked(TrackedStatus {
+            index_status: self,
+            worktree_status: StatusCode::Unmodified,
+        })
+    }
+
+    pub fn worktree(self) -> FileStatus {
+        FileStatus::Tracked(TrackedStatus {
+            index_status: StatusCode::Unmodified,
+            worktree_status: self,
+        })
     }
 }
 
@@ -214,46 +243,98 @@ impl UnmergedStatusCode {
 }
 
 #[derive(Clone, Debug, Default, Copy, PartialEq, Eq)]
-pub struct GitSummary {
+pub struct TrackedSummary {
     pub added: usize,
     pub modified: usize,
-    pub conflict: usize,
-    pub untracked: usize,
     pub deleted: usize,
 }
 
-impl GitSummary {
+impl TrackedSummary {
+    pub const UNCHANGED: Self = Self {
+        added: 0,
+        modified: 0,
+        deleted: 0,
+    };
+
     pub const ADDED: Self = Self {
         added: 1,
-        ..Self::UNCHANGED
+        modified: 0,
+        deleted: 0,
     };
 
     pub const MODIFIED: Self = Self {
+        added: 0,
         modified: 1,
-        ..Self::UNCHANGED
-    };
-
-    pub const CONFLICT: Self = Self {
-        conflict: 1,
-        ..Self::UNCHANGED
+        deleted: 0,
     };
 
     pub const DELETED: Self = Self {
+        added: 0,
+        modified: 0,
         deleted: 1,
+    };
+}
+
+impl std::ops::AddAssign for TrackedSummary {
+    fn add_assign(&mut self, rhs: Self) {
+        self.added += rhs.added;
+        self.modified += rhs.modified;
+        self.deleted += rhs.deleted;
+    }
+}
+
+impl std::ops::Add for TrackedSummary {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        TrackedSummary {
+            added: self.added + rhs.added,
+            modified: self.modified + rhs.modified,
+            deleted: self.deleted + rhs.deleted,
+        }
+    }
+}
+
+impl std::ops::Sub for TrackedSummary {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        TrackedSummary {
+            added: self.added - rhs.added,
+            modified: self.modified - rhs.modified,
+            deleted: self.deleted - rhs.deleted,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default, Copy, PartialEq, Eq)]
+pub struct GitSummary {
+    pub index: TrackedSummary,
+    pub worktree: TrackedSummary,
+    pub conflict: usize,
+    pub untracked: usize,
+    pub count: usize,
+}
+
+impl GitSummary {
+    pub const CONFLICT: Self = Self {
+        conflict: 1,
+        count: 1,
         ..Self::UNCHANGED
     };
 
     pub const UNTRACKED: Self = Self {
         untracked: 1,
+        count: 1,
         ..Self::UNCHANGED
     };
 
     pub const UNCHANGED: Self = Self {
-        added: 0,
-        modified: 0,
+        index: TrackedSummary::UNCHANGED,
+        worktree: TrackedSummary::UNCHANGED,
         conflict: 0,
         untracked: 0,
-        deleted: 0,
+        count: 0,
     };
 }
 
@@ -286,11 +367,11 @@ impl std::ops::Add<Self> for GitSummary {
 
 impl std::ops::AddAssign for GitSummary {
     fn add_assign(&mut self, rhs: Self) {
-        self.added += rhs.added;
-        self.modified += rhs.modified;
+        self.index += rhs.index;
+        self.worktree += rhs.worktree;
         self.conflict += rhs.conflict;
         self.untracked += rhs.untracked;
-        self.deleted += rhs.deleted;
+        self.count += rhs.count;
     }
 }
 
@@ -299,11 +380,11 @@ impl std::ops::Sub for GitSummary {
 
     fn sub(self, rhs: Self) -> Self::Output {
         GitSummary {
-            added: self.added - rhs.added,
-            modified: self.modified - rhs.modified,
+            index: self.index - rhs.index,
+            worktree: self.worktree - rhs.worktree,
             conflict: self.conflict - rhs.conflict,
             untracked: self.untracked - rhs.untracked,
-            deleted: self.deleted - rhs.deleted,
+            count: self.count - rhs.count,
         }
     }
 }

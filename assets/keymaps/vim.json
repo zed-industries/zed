@@ -221,6 +221,7 @@
       ">": ["vim::PushOperator", "Indent"],
       "<": ["vim::PushOperator", "Outdent"],
       "=": ["vim::PushOperator", "AutoIndent"],
+      "!": ["vim::PushOperator", "ShellCommand"],
       "g u": ["vim::PushOperator", "Lowercase"],
       "g shift-u": ["vim::PushOperator", "Uppercase"],
       "g ~": ["vim::PushOperator", "OppositeCase"],
@@ -287,6 +288,7 @@
       ">": "vim::Indent",
       "<": "vim::Outdent",
       "=": "vim::AutoIndent",
+      "!": "vim::ShellCommand",
       "i": ["vim::PushOperator", { "Object": { "around": false } }],
       "a": ["vim::PushOperator", { "Object": { "around": true } }],
       "g c": "vim::ToggleComments",
@@ -496,6 +498,12 @@
     "context": "vim_operator == eq",
     "bindings": {
       "=": "vim::CurrentLine"
+    }
+  },
+  {
+    "context": "vim_operator == sh",
+    "bindings": {
+      "!": "vim::CurrentLine"
     }
   },
   {
