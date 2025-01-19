@@ -374,6 +374,9 @@ messages!(
     (SyncExtensionsResponse, Background),
     (InstallExtension, Background),
     (RegisterBufferWithLanguageServers, Background),
+    (GetDocumentDiagnostics, Background),
+    (GetDocumentDiagnosticsResponse, Background),
+    (RefreshDocumentsDiagnostics, Background)
 );
 
 request_messages!(
@@ -501,6 +504,8 @@ request_messages!(
     (SyncExtensions, SyncExtensionsResponse),
     (InstallExtension, Ack),
     (RegisterBufferWithLanguageServers, Ack),
+    (GetDocumentDiagnostics, GetDocumentDiagnosticsResponse),
+    (RefreshDocumentsDiagnostics, Ack)
 );
 
 entity_messages!(
@@ -587,6 +592,8 @@ entity_messages!(
     GetPathMetadata,
     CancelLanguageServerWork,
     RegisterBufferWithLanguageServers,
+    GetDocumentDiagnostics,
+    RefreshDocumentsDiagnostics
 );
 
 entity_messages!(

@@ -10,8 +10,8 @@ use crate::{
     toolchain_store::{EmptyToolchainStore, ToolchainStoreEvent},
     worktree_store::{WorktreeStore, WorktreeStoreEvent},
     yarn::YarnPathStore,
-    CodeAction, Completion, CoreCompletion, Hover, InlayHint, ProjectItem as _, ProjectPath,
-    ProjectTransaction, ResolveState, Symbol, ToolchainStore,
+    CodeAction, Completion, CoreCompletion, Hover, InlayHint, LspDiagnostics, ProjectItem as _,
+    ProjectPath, ProjectTransaction, ResolveState, Symbol, ToolchainStore,
 };
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
@@ -804,6 +804,27 @@ impl LocalLspStore {
                             cx.emit(LspStoreEvent::RefreshInlayHints);
                             this.downstream_client.as_ref().map(|(client, project_id)| {
                                 client.send(proto::RefreshInlayHints {
+                                    project_id: *project_id,
+                                })
+                            })
+                        })?
+                        .transpose()?;
+                        Ok(())
+                    }
+                }
+            })
+            .detach();
+
+        language_server
+            .on_request::<lsp::request::WorkspaceDiagnosticRefresh, _, _>({
+                let this = this.clone();
+                move |(), mut cx| {
+                    let this = this.clone();
+                    async move {
+                        this.update(&mut cx, |this, cx| {
+                            cx.emit(LspStoreEvent::RefreshDocumentsDiagnostics);
+                            this.downstream_client.as_ref().map(|(client, project_id)| {
+                                client.send(proto::RefreshDocumentsDiagnostics {
                                     project_id: *project_id,
                                 })
                             })
@@ -2823,6 +2844,7 @@ pub enum LspStoreEvent {
         edits: Vec<(lsp::Range, Snippet)>,
         most_recent_edit: clock::Lamport,
     },
+    RefreshDocumentsDiagnostics,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -2864,6 +2886,7 @@ impl LspStore {
         client.add_model_request_handler(Self::handle_on_type_formatting);
         client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_model_request_handler(Self::handle_register_buffer_with_language_servers);
+        client.add_model_request_handler(Self::handle_refresh_documents_diagnostics);
         client.add_model_request_handler(Self::handle_lsp_command::<GetCodeActions>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetCompletions>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetHover>);
@@ -2876,6 +2899,7 @@ impl LspStore {
         client.add_model_request_handler(Self::handle_lsp_command::<PerformRename>);
         client.add_model_request_handler(Self::handle_lsp_command::<lsp_ext_command::ExpandMacro>);
         client.add_model_request_handler(Self::handle_lsp_command::<LinkedEditingRange>);
+        client.add_model_request_handler(Self::handle_lsp_command::<GetDocumentDiagnostics>);
     }
 
     pub fn as_remote(&self) -> Option<&RemoteLspStore> {
@@ -4567,6 +4591,72 @@ impl LspStore {
         }
     }
 
+    pub fn document_diagnostic(
+        &mut self,
+        buffer_handle: Model<Buffer>,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Vec<Option<LspDiagnostics>>>> {
+        let buffer = buffer_handle.read(cx);
+        let buffer_id = buffer.remote_id();
+
+        if let Some((client, upstream_project_id)) = self.upstream_client() {
+            let request_task = client.request(proto::MultiLspQuery {
+                buffer_id: buffer_id.into(),
+                version: serialize_version(&buffer_handle.read(cx).version()),
+                project_id: upstream_project_id,
+                strategy: Some(proto::multi_lsp_query::Strategy::All(
+                    proto::AllLanguageServers {},
+                )),
+                request: Some(proto::multi_lsp_query::Request::GetDocumentDiagnostics(
+                    GetDocumentDiagnostics {}.to_proto(upstream_project_id, buffer_handle.read(cx)),
+                )),
+            });
+            let buffer = buffer_handle.clone();
+            cx.spawn(|weak_project, cx| async move {
+                let Some(project) = weak_project.upgrade() else {
+                    return Ok(Vec::new());
+                };
+                let responses = request_task.await?.responses;
+                let diagnostics = join_all(
+                    responses
+                        .into_iter()
+                        .filter_map(|lsp_response| match lsp_response.response? {
+                            proto::lsp_response::Response::GetDocumentDiagnosticsResponse(
+                                response,
+                            ) => Some(response),
+                            unexpected => {
+                                debug_panic!("Unexpected response: {unexpected:?}");
+                                None
+                            }
+                        })
+                        .map(|diagnostics_response| {
+                            GetDocumentDiagnostics {}.response_from_proto(
+                                diagnostics_response,
+                                project.clone(),
+                                buffer.clone(),
+                                cx.clone(),
+                            )
+                        }),
+                )
+                .await;
+
+                Ok(diagnostics
+                    .into_iter()
+                    .collect::<Result<Vec<_>>>()?
+                    .into_iter()
+                    .collect())
+            })
+        } else {
+            let all_actions_task = self.request_multiple_lsp_locally(
+                &buffer_handle,
+                Some(0),
+                GetDocumentDiagnostics {},
+                cx,
+            );
+            cx.spawn(|_, _| async move { Ok(all_actions_task.await.into_iter().collect()) })
+        }
+    }
+
     pub fn inlay_hints(
         &mut self,
         buffer_handle: Model<Buffer>,
@@ -5854,6 +5944,47 @@ impl LspStore {
                         .collect(),
                 })
             }
+            Some(proto::multi_lsp_query::Request::GetDocumentDiagnostics(
+                get_document_diagnostics,
+            )) => {
+                let get_document_diagnostics = GetDocumentDiagnostics::from_proto(
+                    get_document_diagnostics,
+                    this.clone(),
+                    buffer.clone(),
+                    cx.clone(),
+                )
+                .await?;
+
+                let all_diagnostics = this
+                    .update(&mut cx, |project, cx| {
+                        project.request_multiple_lsp_locally(
+                            &buffer,
+                            Some(0),
+                            get_document_diagnostics,
+                            cx,
+                        )
+                    })?
+                    .await
+                    .into_iter();
+
+                this.update(&mut cx, |project, cx| proto::MultiLspQueryResponse {
+                    responses: all_diagnostics
+                        .map(|lsp_diagnostic| proto::LspResponse {
+                            response: Some(
+                                proto::lsp_response::Response::GetDocumentDiagnosticsResponse(
+                                    GetDocumentDiagnostics::response_to_proto(
+                                        lsp_diagnostic,
+                                        project,
+                                        sender_id,
+                                        &buffer_version,
+                                        cx,
+                                    ),
+                                ),
+                            ),
+                        })
+                        .collect(),
+                })
+            }
             None => anyhow::bail!("empty multi lsp query request"),
         }
     }
@@ -6641,6 +6772,17 @@ impl LspStore {
     ) -> Result<proto::Ack> {
         this.update(&mut cx, |_, cx| {
             cx.emit(LspStoreEvent::RefreshInlayHints);
+        })?;
+        Ok(proto::Ack {})
+    }
+
+    async fn handle_refresh_documents_diagnostics(
+        this: Model<Self>,
+        _: TypedEnvelope<proto::RefreshDocumentsDiagnostics>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::Ack> {
+        this.update(&mut cx, |_, cx| {
+            cx.emit(LspStoreEvent::RefreshDocumentsDiagnostics);
         })?;
         Ok(proto::Ack {})
     }
