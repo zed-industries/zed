@@ -2,6 +2,7 @@ use crate::git_panel_settings::StatusStyle;
 use crate::{git_panel_settings::GitPanelSettings, git_status_icon};
 use anyhow::{Context as _, Result};
 use db::kvp::KEY_VALUE_STORE;
+use editor::actions::MoveToEnd;
 use editor::scroll::ScrollbarAutoHide;
 use editor::{Editor, EditorSettings, ShowScrollbar};
 use futures::channel::mpsc;
@@ -39,7 +40,8 @@ actions!(
         OpenMenu,
         OpenSelected,
         FocusEditor,
-        FocusChanges
+        FocusChanges,
+        FillCoAuthors,
     ]
 );
 
@@ -85,6 +87,7 @@ pub struct GitPanel {
     fs: Arc<dyn Fs>,
     hide_scrollbar_task: Option<Task<()>>,
     pending_serialization: Task<Option<()>>,
+    workspace: WeakView<Workspace>,
     project: Model<Project>,
     scroll_handle: UniformListScrollHandle,
     scrollbar_state: ScrollbarState,
@@ -154,8 +157,8 @@ impl GitPanel {
         let current_commit_message = git_state
             .as_ref()
             .map(|git_state| git_state.read(cx).commit_message.clone());
-
         let (err_sender, mut err_receiver) = mpsc::channel(1);
+        let workspace = cx.view().downgrade();
 
         let git_panel = cx.new_view(|cx: &mut ViewContext<Self>| {
             let focus_handle = cx.focus_handle();
@@ -345,6 +348,7 @@ impl GitPanel {
                 project,
                 reveal_in_editor: Task::ready(()),
                 err_sender,
+                workspace,
             };
             git_panel.schedule_update();
             git_panel.show_scrollbar = git_panel.should_show_scrollbar(cx);
@@ -730,6 +734,70 @@ impl GitPanel {
         };
         self.commit_editor
             .update(cx, |editor, cx| editor.set_text("", cx));
+    }
+
+    fn fill_co_authors(&mut self, _: &FillCoAuthors, cx: &mut ViewContext<Self>) {
+        const CO_AUTHOR_PREFIX: &str = "co-authored-by: ";
+
+        let Some(room) = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| workspace.read(cx).active_call()?.read(cx).room().cloned())
+        else {
+            return;
+        };
+
+        let mut existing_text = self.commit_editor.read(cx).text(cx);
+        existing_text.make_ascii_lowercase();
+        let mut ends_with_co_authors = false;
+        let existing_co_authors = existing_text
+            .lines()
+            .filter_map(|line| {
+                let line = line.trim();
+                if line.starts_with(CO_AUTHOR_PREFIX) {
+                    ends_with_co_authors = true;
+                    Some(line)
+                } else {
+                    ends_with_co_authors = false;
+                    None
+                }
+            })
+            .collect::<HashSet<_>>();
+
+        let new_co_authors = room
+            .read(cx)
+            .remote_participants()
+            .values()
+            .filter(|participant| participant.can_write())
+            .map(|participant| participant.user.clone())
+            .filter_map(|user| {
+                let email = user.email.as_deref()?;
+                let name = user.name.as_deref().unwrap_or(&user.github_login);
+                Some(format!("{CO_AUTHOR_PREFIX}{name} <{email}>"))
+            })
+            .filter(|co_author| {
+                !existing_co_authors.contains(co_author.to_ascii_lowercase().as_str())
+            })
+            .collect::<Vec<_>>();
+        if new_co_authors.is_empty() {
+            return;
+        }
+
+        self.commit_editor.update(cx, |editor, cx| {
+            let editor_end = editor.buffer().read(cx).read(cx).len();
+            let mut edit = String::new();
+            if !ends_with_co_authors {
+                edit.push('\n');
+            }
+            for co_author in new_co_authors {
+                edit.push('\n');
+                edit.push_str(&co_author);
+            }
+
+            editor.edit(Some((editor_end..editor_end, edit)), cx);
+            editor.move_to_end(&MoveToEnd, cx);
+            editor.focus(cx);
+        });
     }
 
     fn no_entries(&self, cx: &mut ViewContext<Self>) -> bool {
@@ -1332,6 +1400,19 @@ impl GitPanel {
 impl Render for GitPanel {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let project = self.project.read(cx);
+        let has_co_authors = self
+            .workspace
+            .upgrade()
+            .and_then(|workspace| workspace.read(cx).active_call()?.read(cx).room().cloned())
+            .map(|room| {
+                let room = room.read(cx);
+                room.local_participant().can_write()
+                    && room
+                        .remote_participants()
+                        .values()
+                        .any(|remote_participant| remote_participant.can_write())
+            })
+            .unwrap_or(false);
 
         v_flex()
             .id("git_panel")
@@ -1363,6 +1444,9 @@ impl Render for GitPanel {
             .on_action(cx.listener(Self::focus_changes_list))
             .on_action(cx.listener(Self::focus_editor))
             .on_action(cx.listener(Self::toggle_staged_for_selected))
+            .when(has_co_authors, |git_panel| {
+                git_panel.on_action(cx.listener(Self::fill_co_authors))
+            })
             // .on_action(cx.listener(|this, &OpenSelected, cx| this.open_selected(&OpenSelected, cx)))
             .on_hover(cx.listener(|this, hovered, cx| {
                 if *hovered {

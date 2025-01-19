@@ -291,7 +291,7 @@ fn main() {
         }
         settings::init(cx);
         handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
-        handle_keymap_file_changes(user_keymap_file_rx, cx, handle_keymap_changed);
+        handle_keymap_file_changes(user_keymap_file_rx, cx);
         client::init_settings(cx);
         let user_agent = format!(
             "Zed/{} ({}; {})",
@@ -607,31 +607,6 @@ fn main() {
         })
         .detach();
     });
-}
-
-fn handle_keymap_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
-    struct KeymapParseErrorNotification;
-    let id = NotificationId::unique::<KeymapParseErrorNotification>();
-
-    for workspace in workspace::local_workspace_windows(cx) {
-        workspace
-            .update(cx, |workspace, cx| match &error {
-                Some(error) => {
-                    workspace.show_notification(id.clone(), cx, |cx| {
-                        cx.new_view(|_| {
-                            MessageNotification::new(format!("Invalid keymap file\n{error}"))
-                                .with_click_message("Open keymap file")
-                                .on_click(|cx| {
-                                    cx.dispatch_action(zed_actions::OpenKeymap.boxed_clone());
-                                    cx.emit(DismissEvent);
-                                })
-                        })
-                    });
-                }
-                None => workspace.dismiss_notification(&id, cx),
-            })
-            .log_err();
-    }
 }
 
 fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {

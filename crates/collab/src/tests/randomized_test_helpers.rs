@@ -220,6 +220,7 @@ impl<T: RandomizedTest> TestPlan<T> {
                 .db
                 .create_user(
                     &format!("{username}@example.com"),
+                    None,
                     false,
                     NewUserParams {
                         github_login: username.clone(),

@@ -1206,6 +1206,7 @@ impl InlineAssistant {
                     editor.set_show_wrap_guides(false, cx);
                     editor.set_show_gutter(false, cx);
                     editor.scroll_manager.set_forbid_vertical_scroll(true);
+                    editor.set_show_scrollbars(false, cx);
                     editor.set_read_only(true);
                     editor.set_show_inline_completions(Some(false), cx);
                     editor.highlight_rows::<DeletedLines>(
