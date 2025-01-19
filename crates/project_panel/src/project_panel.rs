@@ -3481,6 +3481,7 @@ impl ProjectPanel {
                         .px(px(8.))
                         .flex()
                         .justify_start()
+                        .w(px(40.))
                         .child(Label::new(format!("{}", file_number)).color(file_number_color)),
                 )
             })
