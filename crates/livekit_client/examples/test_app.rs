@@ -8,8 +8,8 @@ use gpui::{
     prelude::{FluentBuilder as _, IntoElement},
     px, rgb, size, AsyncAppContext, Bounds, Context, InteractiveElement, KeyBinding, Menu,
     MenuItem, Model, ModelContext, ParentElement, Pixels, Render, ScreenCaptureStream,
-    SharedString, StatefulInteractiveElement as _, Styled, Task, VisualContext, Window,
-    WindowBounds, WindowHandle, WindowOptions,
+    SharedString, StatefulInteractiveElement as _, Styled, Task, Window, WindowBounds,
+    WindowHandle, WindowOptions,
 };
 #[cfg(not(target_os = "windows"))]
 use livekit_client::{

@@ -736,9 +736,10 @@ impl EditorElement {
                             add: false,
                             click_count: 1,
                         },
+                        window,
                         cx,
                     );
-                    editor.insert(&text, cx);
+                    editor.insert(&text, window, cx);
                 }
                 cx.stop_propagation()
             }
