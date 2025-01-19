@@ -560,7 +560,7 @@ mod tests {
     use settings::SettingsStore;
     use std::{cmp, env, ops::Range, path::Path};
     use unindent::Unindent as _;
-    use util::RandomCharIter;
+    use util::{add_root_for_windows, RandomCharIter};
 
     // macro_rules! assert_blame_rows {
     //     ($blame:expr, $rows:expr, $expected:expr, $cx:expr) => {
@@ -789,19 +789,13 @@ mod tests {
 
     #[gpui::test]
     async fn test_blame_for_rows_with_edits(cx: &mut gpui::TestAppContext) {
-        init_test(cx);
+        use util::add_root_for_windows;
 
-        fn to_path_string(path: &str) -> String {
-            if cfg!(target_os = "windows") {
-                path.replace("/my-repo", "C:/my-repo")
-            } else {
-                path.to_string()
-            }
-        }
+        init_test(cx);
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            to_path_string("/my-repo"),
+            add_root_for_windows("/my-repo"),
             json!({
                 ".git": {},
                 "file.txt": r#"
@@ -815,7 +809,7 @@ mod tests {
         .await;
 
         fs.set_blame_for_repo(
-            Path::new(&to_path_string("/my-repo/.git")),
+            Path::new(&add_root_for_windows("/my-repo/.git")),
             vec![(
                 "file.txt".into(),
                 Blame {
@@ -825,10 +819,10 @@ mod tests {
             )],
         );
 
-        let project = Project::test(fs, [to_path_string("/my-repo").as_ref()], cx).await;
+        let project = Project::test(fs, [add_root_for_windows("/my-repo").as_ref()], cx).await;
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer(to_path_string("/my-repo/file.txt"), cx)
+                project.open_local_buffer(add_root_for_windows("/my-repo/file.txt"), cx)
             })
             .await
             .unwrap();
@@ -952,16 +946,8 @@ mod tests {
         }
         log::info!("initial buffer text: {:?}", buffer_initial_text);
 
-        fn to_path_string(path: &str) -> String {
-            if cfg!(target_os = "windows") {
-                path.replace("/my-repo", "C:/my-repo")
-            } else {
-                path.to_string()
-            }
-        }
-
         fs.insert_tree(
-            to_path_string("/my-repo"),
+            add_root_for_windows("/my-repo"),
             json!({
                 ".git": {},
                 "file.txt": buffer_initial_text.to_string()
@@ -972,7 +958,7 @@ mod tests {
         let blame_entries = gen_blame_entries(buffer_initial_text.max_point().row, &mut rng);
         log::info!("initial blame entries: {:?}", blame_entries);
         fs.set_blame_for_repo(
-            Path::new(&to_path_string("/my-repo/.git")),
+            Path::new(&add_root_for_windows("/my-repo/.git")),
             vec![(
                 "file.txt".into(),
                 Blame {
@@ -982,10 +968,11 @@ mod tests {
             )],
         );
 
-        let project = Project::test(fs.clone(), [to_path_string("/my-repo").as_ref()], cx).await;
+        let project =
+            Project::test(fs.clone(), [add_root_for_windows("/my-repo").as_ref()], cx).await;
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer(to_path_string("/my-repo/file.txt"), cx)
+                project.open_local_buffer(add_root_for_windows("/my-repo/file.txt"), cx)
             })
             .await
             .unwrap();
@@ -1014,7 +1001,7 @@ mod tests {
                     log::info!("regenerating blame entries: {:?}", blame_entries);
 
                     fs.set_blame_for_repo(
-                        Path::new(&to_path_string("/my-repo/.git")),
+                        Path::new(&add_root_for_windows("/my-repo/.git")),
                         vec![(
                             "file.txt".into(),
                             Blame {

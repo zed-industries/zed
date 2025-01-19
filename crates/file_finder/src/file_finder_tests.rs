@@ -6,15 +6,8 @@ use gpui::{Entity, TestAppContext, VisualTestContext};
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{RemoveOptions, FS_WATCH_LATENCY};
 use serde_json::json;
+use util::add_root_for_windows;
 use workspace::{AppState, ToggleFileFinder, Workspace};
-
-fn to_path_string(path: &str, pattern: &str) -> String {
-    if cfg!(target_os = "windows") {
-        path.replace(pattern, &format!("C:{}", pattern))
-    } else {
-        path.to_string()
-    }
-}
 
 #[ctor::ctor]
 fn init_logger() {
@@ -93,13 +86,12 @@ async fn test_matching_paths(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_absolute_paths(cx: &mut TestAppContext) {
-    const PATTERN: &str = "/root";
     let app_state = init_test(cx);
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            to_path_string("/root", PATTERN),
+            add_root_for_windows("/root"),
             json!({
                 "a": {
                     "file1.txt": "",
@@ -113,14 +105,14 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
 
     let project = Project::test(
         app_state.fs.clone(),
-        [to_path_string("/root", PATTERN).as_ref()],
+        [add_root_for_windows("/root").as_ref()],
         cx,
     )
     .await;
 
     let (picker, workspace, cx) = build_find_picker(project, cx);
 
-    let matching_abs_path = to_path_string("/root/a/b/file2.txt", PATTERN);
+    let matching_abs_path = add_root_for_windows("/root/a/b/file2.txt");
     picker
         .update_in(cx, |picker, window, cx| {
             picker.delegate.update_matches(matching_abs_path, window, cx)
@@ -140,7 +132,7 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
         assert_eq!(active_editor.read(cx).title(cx), "file2.txt");
     });
 
-    let mismatching_abs_path = to_path_string("/root/a/b/file1.txt", PATTERN);
+    let mismatching_abs_path = add_root_for_windows("/root/a/b/file1.txt");
     picker
         .update_in(cx, |picker, window, cx| {
             picker.delegate.update_matches(mismatching_abs_path, window, cx)
@@ -523,14 +515,12 @@ async fn test_single_file_worktrees(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_path_distance_ordering(cx: &mut TestAppContext) {
-    const PATTERN: &str = "/root";
-
     let app_state = init_test(cx);
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            to_path_string("/root", PATTERN),
+            add_root_for_windows("/root"),
             json!({
                 "dir1": { "a.txt": "" },
                 "dir2": {
@@ -543,7 +533,7 @@ async fn test_path_distance_ordering(cx: &mut TestAppContext) {
 
     let project = Project::test(
         app_state.fs.clone(),
-        [to_path_string("/root", PATTERN).as_ref()],
+        [add_root_for_windows("/root").as_ref()],
         cx,
     )
     .await;
@@ -617,15 +607,13 @@ async fn test_search_worktree_without_files(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_query_history(cx: &mut gpui::TestAppContext) {
-    const PATTERN: &str = "/src";
-
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            to_path_string("/src", PATTERN),
+            add_root_for_windows("/src"),
             json!({
                 "test": {
                     "first.rs": "// First Rust file",
@@ -638,7 +626,7 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(
         app_state.fs.clone(),
-        [to_path_string("/src", PATTERN).as_ref()],
+        [add_root_for_windows("/src").as_ref()],
         cx,
     )
     .await;
@@ -672,7 +660,7 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
                 worktree_id,
                 path: Arc::from(Path::new("test/first.rs")),
             },
-            Some(PathBuf::from(to_path_string("/src/test/first.rs", PATTERN)))
+            Some(PathBuf::from(add_root_for_windows("/src/test/first.rs")))
         )],
         "Should show 1st opened item in the history when opening the 2nd item"
     );
@@ -687,17 +675,14 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
                     worktree_id,
                     path: Arc::from(Path::new("test/second.rs")),
                 },
-                Some(PathBuf::from(to_path_string(
-                    "/src/test/second.rs",
-                    PATTERN
-                )))
+                Some(PathBuf::from(add_root_for_windows("/src/test/second.rs")))
             ),
             FoundPath::new(
                 ProjectPath {
                     worktree_id,
                     path: Arc::from(Path::new("test/first.rs")),
                 },
-                Some(PathBuf::from(to_path_string("/src/test/first.rs", PATTERN)))
+                Some(PathBuf::from(add_root_for_windows("/src/test/first.rs")))
             ),
         ],
         "Should show 1st and 2nd opened items in the history when opening the 3rd item. \
@@ -714,21 +699,21 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
                             worktree_id,
                             path: Arc::from(Path::new("test/third.rs")),
                         },
-                        Some(PathBuf::from(to_path_string("/src/test/third.rs", PATTERN)))
+                        Some(PathBuf::from(add_root_for_windows("/src/test/third.rs")))
                     ),
                     FoundPath::new(
                         ProjectPath {
                             worktree_id,
                             path: Arc::from(Path::new("test/second.rs")),
                         },
-                        Some(PathBuf::from(to_path_string("/src/test/second.rs", PATTERN)))
+                        Some(PathBuf::from(add_root_for_windows("/src/test/second.rs")))
                     ),
                     FoundPath::new(
                         ProjectPath {
                             worktree_id,
                             path: Arc::from(Path::new("test/first.rs")),
                         },
-                        Some(PathBuf::from(to_path_string("/src/test/first.rs", PATTERN)))
+                        Some(PathBuf::from(add_root_for_windows("/src/test/first.rs")))
                     ),
                 ],
                 "Should show 1st, 2nd and 3rd opened items in the history when opening the 2nd item again. \
@@ -745,21 +730,21 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
                             worktree_id,
                             path: Arc::from(Path::new("test/second.rs")),
                         },
-                        Some(PathBuf::from(to_path_string("/src/test/second.rs", PATTERN)))
+                        Some(PathBuf::from(add_root_for_windows("/src/test/second.rs")))
                     ),
                     FoundPath::new(
                         ProjectPath {
                             worktree_id,
                             path: Arc::from(Path::new("test/third.rs")),
                         },
-                        Some(PathBuf::from(to_path_string("/src/test/third.rs", PATTERN)))
+                        Some(PathBuf::from(add_root_for_windows("/src/test/third.rs")))
                     ),
                     FoundPath::new(
                         ProjectPath {
                             worktree_id,
                             path: Arc::from(Path::new("test/first.rs")),
                         },
-                        Some(PathBuf::from(to_path_string("/src/test/first.rs", PATTERN)))
+                        Some(PathBuf::from(add_root_for_windows("/src/test/first.rs")))
                     ),
                 ],
                 "Should show 1st, 2nd and 3rd opened items in the history when opening the 3rd item again. \
@@ -769,16 +754,13 @@ async fn test_query_history(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
-    const PATTERN: &str = "/src";
-    const PATTERN_EXTRA: &str = "/external-src";
-
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            to_path_string("/src", PATTERN),
+            add_root_for_windows("/src"),
             json!({
                 "test": {
                     "first.rs": "// First Rust file",
@@ -792,7 +774,7 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
         .fs
         .as_fake()
         .insert_tree(
-            to_path_string("/external-src", PATTERN_EXTRA),
+            add_root_for_windows("/external-src"),
             json!({
                 "test": {
                     "third.rs": "// Third Rust file",
@@ -804,17 +786,13 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(
         app_state.fs.clone(),
-        [to_path_string("/src", PATTERN).as_ref()],
+        [add_root_for_windows("/src").as_ref()],
         cx,
     )
     .await;
     cx.update(|cx| {
         project.update(cx, |project, cx| {
-            project.find_or_create_worktree(
-                to_path_string("/external-src", PATTERN_EXTRA),
-                false,
-                cx,
-            )
+            project.find_or_create_worktree(add_root_for_windows("/external-src"), false, cx)
         })
     })
     .detach();
@@ -831,7 +809,7 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
         .update_in(cx, |workspace, window, cx| {
             workspace.open_abs_path(
                 
-                PathBuf::from(to_path_string("/external-src/test/third.rs", PATTERN_EXTRA)),
+                PathBuf::from(add_root_for_windows("/external-src/test/third.rs")),
                
                 false,
                 window,
@@ -870,9 +848,8 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
                 worktree_id: external_worktree_id,
                 path: Arc::from(Path::new("")),
             },
-            Some(PathBuf::from(to_path_string(
-                "/external-src/test/third.rs",
-                PATTERN_EXTRA
+            Some(PathBuf::from(add_root_for_windows(
+                "/external-src/test/third.rs"
             )))
         )],
         "Should show external file with its full path in the history after it was open"
@@ -888,19 +865,15 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
                     worktree_id,
                     path: Arc::from(Path::new("test/second.rs")),
                 },
-                Some(PathBuf::from(to_path_string(
-                    "/src/test/second.rs",
-                    PATTERN
-                )))
+                Some(PathBuf::from(add_root_for_windows("/src/test/second.rs")))
             ),
             FoundPath::new(
                 ProjectPath {
                     worktree_id: external_worktree_id,
                     path: Arc::from(Path::new("")),
                 },
-                Some(PathBuf::from(to_path_string(
-                    "/external-src/test/third.rs",
-                    PATTERN_EXTRA
+                Some(PathBuf::from(add_root_for_windows(
+                    "/external-src/test/third.rs"
                 )))
             ),
         ],
@@ -910,15 +883,13 @@ async fn test_external_files_history(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_toggle_panel_new_selections(cx: &mut gpui::TestAppContext) {
-    const PATTERN: &str = "/src";
-
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            to_path_string("/src", PATTERN),
+            add_root_for_windows("/src"),
             json!({
                 "test": {
                     "first.rs": "// First Rust file",
@@ -931,7 +902,7 @@ async fn test_toggle_panel_new_selections(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(
         app_state.fs.clone(),
-        [to_path_string("/src", PATTERN).as_ref()],
+        [add_root_for_windows("/src").as_ref()],
         cx,
     )
     .await;
@@ -972,15 +943,13 @@ async fn test_toggle_panel_new_selections(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
-    const PATTERN: &str = "/src";
-
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            to_path_string("/src", PATTERN),
+            add_root_for_windows("/src"),
             json!({
                 "test": {
                     "first.rs": "// First Rust file",
@@ -994,7 +963,7 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(
         app_state.fs.clone(),
-        [to_path_string("/src", PATTERN).as_ref()],
+        [add_root_for_windows("/src").as_ref()],
         cx,
     )
     .await;
@@ -1030,7 +999,7 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
                     worktree_id,
                     path: Arc::from(Path::new("test/first.rs")),
                 },
-                Some(PathBuf::from(to_path_string("/src/test/first.rs", PATTERN)))
+                Some(PathBuf::from(add_root_for_windows("/src/test/first.rs")))
             ));
             assert_eq!(matches.search.len(), 1, "Only one non-history item contains {first_query}, it should be present");
             assert_eq!(matches.search.first().unwrap(), Path::new("test/fourth.rs"));
@@ -1073,7 +1042,7 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
                     worktree_id,
                     path: Arc::from(Path::new("test/first.rs")),
                 },
-                Some(PathBuf::from(to_path_string("/src/test/first.rs", PATTERN)))
+                Some(PathBuf::from(add_root_for_windows("/src/test/first.rs")))
             ));
             assert_eq!(matches.search.len(), 1, "Only one non-history item contains {first_query_again}, it should be present, even after non-matching query");
             assert_eq!(matches.search.first().unwrap(), Path::new("test/fourth.rs"));
@@ -1082,15 +1051,13 @@ async fn test_search_preserves_history_items(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_search_sorts_history_items(cx: &mut gpui::TestAppContext) {
-    const PATTERN: &str = "/root";
-
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            to_path_string("/root", PATTERN),
+            add_root_for_windows("/root"),
             json!({
                 "test": {
                     "1_qw": "// First file that matches the query",
@@ -1107,7 +1074,7 @@ async fn test_search_sorts_history_items(cx: &mut gpui::TestAppContext) {
 
     let project = Project::test(
         app_state.fs.clone(),
-        [to_path_string("/root", PATTERN).as_ref()],
+        [add_root_for_windows("/root").as_ref()],
         cx,
     )
     .await;
@@ -1146,15 +1113,13 @@ async fn test_search_sorts_history_items(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_select_current_open_file_when_no_history(cx: &mut gpui::TestAppContext) {
-    const PATTERN: &str = "/root";
-
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            to_path_string("/root", PATTERN),
+            add_root_for_windows("/root"),
             json!({
                 "test": {
                     "1_qw": "",
@@ -1165,7 +1130,7 @@ async fn test_select_current_open_file_when_no_history(cx: &mut gpui::TestAppCon
 
     let project = Project::test(
         app_state.fs.clone(),
-        [to_path_string("/root", PATTERN).as_ref()],
+        [add_root_for_windows("/root").as_ref()],
         cx,
     )
     .await;
@@ -1183,15 +1148,13 @@ async fn test_select_current_open_file_when_no_history(cx: &mut gpui::TestAppCon
 async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
     cx: &mut TestAppContext,
 ) {
-    const PATTERN: &str = "/src";
-
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            to_path_string("/src", PATTERN),
+            add_root_for_windows("/src"),
             json!({
                 "test": {
                     "bar.rs": "// Bar file",
@@ -1206,7 +1169,7 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
 
     let project = Project::test(
         app_state.fs.clone(),
-        [to_path_string("/src", PATTERN).as_ref()],
+        [add_root_for_windows("/src").as_ref()],
         cx,
     )
     .await;
@@ -1283,15 +1246,13 @@ async fn test_keep_opened_file_on_top_of_search_results_and_select_next_one(
 
 #[gpui::test]
 async fn test_non_separate_history_items(cx: &mut TestAppContext) {
-    const PATTERN: &str = "/src";
-
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            to_path_string("/src", PATTERN),
+            add_root_for_windows("/src"),
             json!({
                 "test": {
                     "bar.rs": "// Bar file",
@@ -1306,7 +1267,7 @@ async fn test_non_separate_history_items(cx: &mut TestAppContext) {
 
     let project = Project::test(
         app_state.fs.clone(),
-        [to_path_string("/src", PATTERN).as_ref()],
+        [add_root_for_windows("/src").as_ref()],
         cx,
     )
     .await;
@@ -1384,15 +1345,13 @@ async fn test_non_separate_history_items(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_history_items_shown_in_order_of_open(cx: &mut TestAppContext) {
-    const PATTERN: &str = "/test";
-
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            to_path_string("/test", PATTERN),
+            add_root_for_windows("/test"),
             json!({
                 "test": {
                     "1.txt": "// One",
@@ -1405,7 +1364,7 @@ async fn test_history_items_shown_in_order_of_open(cx: &mut TestAppContext) {
 
     let project = Project::test(
         app_state.fs.clone(),
-        [to_path_string("/test", PATTERN).as_ref()],
+        [add_root_for_windows("/test").as_ref()],
         cx,
     )
     .await;
@@ -1449,15 +1408,13 @@ async fn test_history_items_shown_in_order_of_open(cx: &mut TestAppContext) {
 
 #[gpui::test]
 async fn test_selected_history_item_stays_selected_on_worktree_updated(cx: &mut TestAppContext) {
-    const PATTERN: &str = "/test";
-
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            to_path_string("/test", PATTERN),
+            add_root_for_windows("/test"),
             json!({
                 "test": {
                     "1.txt": "// One",
@@ -1470,7 +1427,7 @@ async fn test_selected_history_item_stays_selected_on_worktree_updated(cx: &mut 
 
     let project = Project::test(
         app_state.fs.clone(),
-        [to_path_string("/test", PATTERN).as_ref()],
+        [add_root_for_windows("/test").as_ref()],
         cx,
     )
     .await;
@@ -1492,7 +1449,7 @@ async fn test_selected_history_item_stays_selected_on_worktree_updated(cx: &mut 
 
     // Add more files to the worktree to trigger update matches
     for i in 0..5 {
-        let filename = to_path_string(&format!("/test/{}.txt", 4 + i), PATTERN);
+        let filename = add_root_for_windows(&format!("/test/{}.txt", 4 + i));
         app_state
             .fs
             .create_file(Path::new(&filename), Default::default())
@@ -1512,19 +1469,13 @@ async fn test_selected_history_item_stays_selected_on_worktree_updated(cx: &mut 
 
 #[gpui::test]
 async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppContext) {
-    const ROOT_PATH: &str = if cfg!(target_os = "windows") {
-        "C:/src"
-    } else {
-        "/src"
-    };
-
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            ROOT_PATH,
+            add_root_for_windows("/src"),
             json!({
                 "collab_ui": {
                     "first.rs": "// First Rust file",
@@ -1536,7 +1487,12 @@ async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppCo
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), [ROOT_PATH.as_ref()], cx).await;
+    let project = Project::test(
+        app_state.fs.clone(),
+        [add_root_for_windows("/src").as_ref()],
+        cx,
+    )
+    .await;
     let (workspace, cx) = cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
     // generate some history to select from
     open_close_queried_buffer("fir", 1, "first.rs", &workspace, cx).await;
@@ -1564,15 +1520,13 @@ async fn test_history_items_vs_very_good_external_match(cx: &mut gpui::TestAppCo
 
 #[gpui::test]
 async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext) {
-    const PATTERN: &str = "/src";
-
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            to_path_string("/src", PATTERN),
+            add_root_for_windows("/src"),
             json!({
                 "test": {
                     "first.rs": "// First Rust file",
@@ -1585,7 +1539,7 @@ async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext)
 
     let project = Project::test(
         app_state.fs.clone(),
-        [to_path_string("/src", PATTERN).as_ref()],
+        [add_root_for_windows("/src").as_ref()],
         cx,
     )
     .await;
@@ -1597,7 +1551,7 @@ async fn test_nonexistent_history_items_not_shown(cx: &mut gpui::TestAppContext)
     app_state
         .fs
         .remove_file(
-            Path::new(&to_path_string("/src/test/nonexistent.rs", PATTERN)),
+            Path::new(&add_root_for_windows("/src/test/nonexistent.rs")),
             RemoveOptions::default(),
         )
         .await
@@ -1857,15 +1811,13 @@ async fn test_first_match_selected_if_previous_one_is_not_in_the_match_list(
 
 #[gpui::test]
 async fn test_keeps_file_finder_open_after_modifier_keys_release(cx: &mut gpui::TestAppContext) {
-    const PATTERN: &str = "/test";
-
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            to_path_string("/test", PATTERN),
+            add_root_for_windows("/test"),
             json!({
                 "1.txt": "// One",
             }),
@@ -1874,7 +1826,7 @@ async fn test_keeps_file_finder_open_after_modifier_keys_release(cx: &mut gpui::
 
     let project = Project::test(
         app_state.fs.clone(),
-        [to_path_string("/test", PATTERN).as_ref()],
+        [add_root_for_windows("/test").as_ref()],
         cx,
     )
     .await;
@@ -1931,15 +1883,13 @@ async fn test_opens_file_on_modifier_keys_release(cx: &mut gpui::TestAppContext)
 async fn test_switches_between_release_norelease_modes_on_forward_nav(
     cx: &mut gpui::TestAppContext,
 ) {
-    const PATTERN: &str = "/test";
-
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            to_path_string("/test", PATTERN),
+            add_root_for_windows("/test"),
             json!({
                 "1.txt": "// One",
                 "2.txt": "// Two",
@@ -1949,7 +1899,7 @@ async fn test_switches_between_release_norelease_modes_on_forward_nav(
 
     let project = Project::test(
         app_state.fs.clone(),
-        [to_path_string("/test", PATTERN).as_ref()],
+        [add_root_for_windows("/test").as_ref()],
         cx,
     )
     .await;
@@ -1993,15 +1943,13 @@ async fn test_switches_between_release_norelease_modes_on_forward_nav(
 async fn test_switches_between_release_norelease_modes_on_backward_nav(
     cx: &mut gpui::TestAppContext,
 ) {
-    const PATTERN: &str = "/test";
-
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            to_path_string("/test", PATTERN),
+            add_root_for_windows("/test"),
             json!({
                 "1.txt": "// One",
                 "2.txt": "// Two",
@@ -2012,7 +1960,7 @@ async fn test_switches_between_release_norelease_modes_on_backward_nav(
 
     let project = Project::test(
         app_state.fs.clone(),
-        [to_path_string("/test", PATTERN).as_ref()],
+        [add_root_for_windows("/test").as_ref()],
         cx,
     )
     .await;
@@ -2057,15 +2005,13 @@ async fn test_switches_between_release_norelease_modes_on_backward_nav(
 
 #[gpui::test]
 async fn test_extending_modifiers_does_not_confirm_selection(cx: &mut gpui::TestAppContext) {
-    const PATTERN: &str = "/test";
-
     let app_state = init_test(cx);
 
     app_state
         .fs
         .as_fake()
         .insert_tree(
-            to_path_string("/test", PATTERN),
+            add_root_for_windows("/test"),
             json!({
                 "1.txt": "// One",
             }),
@@ -2074,7 +2020,7 @@ async fn test_extending_modifiers_does_not_confirm_selection(cx: &mut gpui::Test
 
     let project = Project::test(
         app_state.fs.clone(),
-        [to_path_string("/test", PATTERN).as_ref()],
+        [add_root_for_windows("/test").as_ref()],
         cx,
     )
     .await;

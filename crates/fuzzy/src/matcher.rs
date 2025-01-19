@@ -9,6 +9,8 @@ const BASE_DISTANCE_PENALTY: f64 = 0.6;
 const ADDITIONAL_DISTANCE_PENALTY: f64 = 0.05;
 const MIN_DISTANCE_PENALTY: f64 = 0.2;
 
+// TODO:
+// Use `Path` instead of `&str` for paths.
 pub struct Matcher<'a> {
     query: &'a [char],
     lowercase_query: &'a [char],

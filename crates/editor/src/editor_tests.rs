@@ -7460,6 +7460,8 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
+    use util::add_root_for_windows;
+
     init_test(cx, |_| {});
 
     let fs = FakeFs::new(cx.executor());
@@ -7481,7 +7483,9 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
     );
 
     let buffer = project
-        .update(cx, |project, cx| project.open_local_buffer("/file.rs", cx))
+        .update(cx, |project, cx| {
+            project.open_local_buffer(add_root_for_windows("/file.rs"), cx)
+        })
         .await
         .unwrap();
 
@@ -7506,7 +7510,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Url::from_file_path(add_root_for_windows("/file.rs")).unwrap()
             );
             assert_eq!(params.options.tab_size, 4);
             Ok(Some(vec![lsp::TextEdit::new(
@@ -7534,7 +7538,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Url::from_file_path(add_root_for_windows("/file.rs")).unwrap()
             );
             futures::future::pending::<()>().await;
             unreachable!()
@@ -7592,7 +7596,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::RangeFormatting, _, _>(move |params, _| async move {
             assert_eq!(
                 params.text_document.uri,
-                lsp::Url::from_file_path("/file.rs").unwrap()
+                lsp::Url::from_file_path(add_root_for_windows("/file.rs")).unwrap()
             );
             assert_eq!(params.options.tab_size, 8);
             Ok(Some(vec![]))
@@ -10941,32 +10945,20 @@ async fn test_move_to_enclosing_bracket(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
+    use util::add_root_for_windows;
+
     init_test(cx, |_| {});
-
-    const ROOT_PATH: &str = if cfg!(target_os = "windows") {
-        "C:/a"
-    } else {
-        "/a"
-    };
-
-    fn to_path_buf(path: &str) -> PathBuf {
-        if cfg!(target_os = "windows") {
-            PathBuf::from(format!("C:{}", path))
-        } else {
-            PathBuf::from(path)
-        }
-    }
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        ROOT_PATH,
+        add_root_for_windows("/a"),
         json!({
             "main.rs": "fn main() { let a = 5; }",
             "other.rs": "// Test file",
         }),
     )
     .await;
-    let project = Project::test(fs, [ROOT_PATH.as_ref()], cx).await;
+    let project = Project::test(fs, [add_root_for_windows("/a").as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(Arc::new(Language::new(
@@ -11018,7 +11010,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
 
     let buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer(to_path_buf("/a/main.rs"), cx)
+            project.open_local_buffer(add_root_for_windows("/a/main.rs"), cx)
         })
         .await
         .unwrap();
@@ -11038,7 +11030,7 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
     fake_server.handle_request::<lsp::request::OnTypeFormatting, _, _>(|params, _| async move {
         assert_eq!(
             params.text_document_position.text_document.uri,
-            lsp::Url::from_file_path(to_path_buf("/a/main.rs")).unwrap(),
+            lsp::Url::from_file_path(add_root_for_windows("/a/main.rs")).unwrap(),
         );
         assert_eq!(
             params.text_document_position.position,

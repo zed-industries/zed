@@ -921,7 +921,7 @@ mod tests {
     use indoc::indoc;
     use language::language_settings::InlayHintSettings;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
-    use util::assert_set_eq;
+    use util::{add_root_for_windows, assert_set_eq};
     use workspace::item::Item;
 
     #[gpui::test]
@@ -1562,14 +1562,6 @@ mod tests {
 
     #[gpui::test]
     async fn test_hover_filenames(cx: &mut gpui::TestAppContext) {
-        fn to_path_string(path: &str) -> String {
-            if cfg!(target_os = "windows") {
-                path.replace("/root", "C:/root")
-            } else {
-                path.to_string()
-            }
-        }
-
         init_test(cx, |_| {});
         let mut cx = EditorLspTestContext::new_rust(
             lsp::ServerCapabilities {
@@ -1583,7 +1575,7 @@ mod tests {
         let fs = cx.update_workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
         fs.as_fake()
             .insert_file(
-                to_path_string("/root/dir/file2.rs"),
+                add_root_for_windows("/root/dir/file2.rs"),
                 "This is file2.rs".as_bytes().to_vec(),
             )
             .await;
@@ -1795,8 +1787,8 @@ mod tests {
             let file_path = file.as_local().unwrap().abs_path(cx);
 
             assert_eq!(
-                file_path.to_str().unwrap().replace("\\", "/"),
-                to_path_string("/root/dir/file2.rs")
+                file_path,
+                std::path::PathBuf::from(add_root_for_windows("/root/dir/file2.rs"))
             );
         });
     }
