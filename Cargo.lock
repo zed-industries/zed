@@ -15108,6 +15108,7 @@ dependencies = [
  "schemars",
  "serde",
  "settings",
+ "smol",
  "telemetry",
  "ui",
  "util",
