@@ -421,28 +421,30 @@ impl Vim {
             cx.spawn(|_, mut cx| async move {
                 search.await?;
                 search_bar.update(&mut cx, |search_bar, cx| {
+                    search_bar.select_last_match(cx);
                     if replacement.should_replace_all {
-                        search_bar.select_last_match(cx);
                         search_bar.replace_all(&Default::default(), cx);
-                        cx.spawn(|_, mut cx| async move {
-                            cx.background_executor()
-                                .timer(Duration::from_millis(200))
-                                .await;
-                            editor
-                                .update(&mut cx, |editor, cx| editor.clear_search_within_ranges(cx))
-                                .ok();
-                        })
-                        .detach();
-                        vim.update(cx, |vim, cx| {
-                            vim.move_cursor(
-                                Motion::StartOfLine {
-                                    display_lines: false,
-                                },
-                                None,
-                                cx,
-                            )
-                        });
+                    } else {
+                        search_bar.replace_next(&Default::default(), cx);
                     }
+                    cx.spawn(|_, mut cx| async move {
+                        cx.background_executor()
+                            .timer(Duration::from_millis(200))
+                            .await;
+                        editor
+                            .update(&mut cx, |editor, cx| editor.clear_search_within_ranges(cx))
+                            .ok();
+                    })
+                    .detach();
+                    vim.update(cx, |vim, cx| {
+                        vim.move_cursor(
+                            Motion::StartOfLine {
+                                display_lines: false,
+                            },
+                            None,
+                            cx,
+                        )
+                    });
                 })?;
                 anyhow::Ok(())
             })
