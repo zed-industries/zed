@@ -1508,7 +1508,7 @@ pub mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/a",
+            add_root_for_windows("/a"),
             json!({
                 "main.rs": "fn main() { a } // and some long comment to ensure inlays are not trimmed out",
                 "other.md": "Test md file with some text",
@@ -1516,7 +1516,7 @@ pub mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/a".as_ref()], cx).await;
+        let project = Project::test(fs, [add_root_for_windows("/a").as_ref()], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         let mut rs_fake_servers = None;
@@ -1551,14 +1551,20 @@ pub mod tests {
                                         "Rust" => {
                                             assert_eq!(
                                                 params.text_document.uri,
-                                                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                                                lsp::Url::from_file_path(add_root_for_windows(
+                                                    "/a/main.rs"
+                                                ))
+                                                .unwrap(),
                                             );
                                             rs_lsp_request_count.fetch_add(1, Ordering::Release) + 1
                                         }
                                         "Markdown" => {
                                             assert_eq!(
                                                 params.text_document.uri,
-                                                lsp::Url::from_file_path("/a/other.md").unwrap(),
+                                                lsp::Url::from_file_path(add_root_for_windows(
+                                                    "/a/other.md"
+                                                ))
+                                                .unwrap(),
                                             );
                                             md_lsp_request_count.fetch_add(1, Ordering::Release) + 1
                                         }
@@ -1594,7 +1600,7 @@ pub mod tests {
 
         let rs_buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/a/main.rs", cx)
+                project.open_local_buffer(add_root_for_windows("/a/main.rs"), cx)
             })
             .await
             .unwrap();
@@ -1620,7 +1626,7 @@ pub mod tests {
         cx.executor().run_until_parked();
         let md_buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/a/other.md", cx)
+                project.open_local_buffer(add_root_for_windows("/a/other.md"), cx)
             })
             .await
             .unwrap();
