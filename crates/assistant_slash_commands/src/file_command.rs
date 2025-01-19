@@ -660,7 +660,7 @@ mod test {
         let fs = FakeFs::new(cx.executor());
 
         fs.insert_tree(
-            "/zed",
+            add_root_for_windows("/zed"),
             json!({
                 "assets": {
                     "dir1": {
@@ -685,10 +685,10 @@ mod test {
         )
         .await;
 
-        let project = Project::test(fs, ["/zed".as_ref()], cx).await;
+        let project = Project::test(fs, [add_root_for_windows("/zed").as_ref()], cx).await;
 
-        let result = cx
-            .update(|cx| collect_files(project.clone(), &[to_file_path("zed/assets/themes")], cx));
+        let result =
+            cx.update(|cx| collect_files(project.clone(), &["zed/assets/themes".to_string()], cx));
         let result = SlashCommandOutput::from_event_stream(result.boxed())
             .await
             .unwrap();
@@ -738,7 +738,7 @@ mod test {
         let fs = FakeFs::new(cx.executor());
 
         fs.insert_tree(
-            "/zed",
+            add_root_for_windows("/zed"),
             json!({
                 "assets": {
                     "themes": {
@@ -758,10 +758,10 @@ mod test {
         )
         .await;
 
-        let project = Project::test(fs, ["/zed".as_ref()], cx).await;
+        let project = Project::test(fs, [add_root_for_windows("/zed").as_ref()], cx).await;
 
-        let result = cx
-            .update(|cx| collect_files(project.clone(), &[to_file_path("zed/assets/themes")], cx));
+        let result =
+            cx.update(|cx| collect_files(project.clone(), &["zed/assets/themes".to_string()], cx));
         let result = SlashCommandOutput::from_event_stream(result.boxed())
             .await
             .unwrap();
