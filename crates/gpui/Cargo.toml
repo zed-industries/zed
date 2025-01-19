@@ -108,6 +108,7 @@ thiserror.workspace = true
 util.workspace = true
 uuid.workspace = true
 waker-fn = "1.2.0"
+lyon = "1.0"
 
 [dev-dependencies]
 backtrace = "0.3"
@@ -117,6 +118,7 @@ rand.workspace = true
 util = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 unicode-segmentation.workspace = true
+lyon = { version = "1.0", features = ["extra"] }
 
 [target.'cfg(target_os = "windows")'.build-dependencies]
 embed-resource = "3.0"
