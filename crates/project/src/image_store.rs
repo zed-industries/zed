@@ -6,9 +6,10 @@ use anyhow::{Context as _, Result};
 use collections::{hash_map, HashMap, HashSet};
 use futures::{channel::oneshot, StreamExt};
 use gpui::{
-    hash, prelude::*, AppContext, EventEmitter, Img, Model, ModelContext, Subscription, Task,
-    WeakModel,
+    hash, prelude::*, AppContext, AsyncAppContext, EventEmitter, Img, Model, ModelContext,
+    Subscription, Task, WeakModel,
 };
+use image::{ColorType, GenericImageView};
 use language::{DiskState, File};
 use rpc::{AnyProtoClient, ErrorExt as _};
 use std::ffi::OsStr;
@@ -47,14 +48,107 @@ pub enum ImageStoreEvent {
 
 impl EventEmitter<ImageStoreEvent> for ImageStore {}
 
+#[derive(Clone)]
+pub struct ImageItemMeta {
+    pub width: u32,
+    pub height: u32,
+    pub file_size: u64,
+    pub color_type: &'static str,
+}
+
 pub struct ImageItem {
     pub id: ImageId,
     pub file: Arc<dyn File>,
     pub image: Arc<gpui::Image>,
     reload_task: Option<Task<()>>,
+    pub image_meta: Option<ImageItemMeta>,
+}
+
+fn image_color_type_description(color_type: ColorType) -> &'static str {
+    match color_type {
+        ColorType::L8 => "Grayscale (8-bit)",
+        ColorType::La8 => "Grayscale with Alpha (8-bit)",
+        ColorType::Rgba8 => "PNG (32-bit color)",
+        ColorType::Rgb8 => "RGB (24-bit color)",
+        ColorType::Rgb16 => "RGB (48-bit color)",
+        ColorType::Rgba16 => "PNG (64-bit color)",
+        ColorType::L16 => "Grayscale (16-bit)",
+        ColorType::La16 => "Grayscale with Alpha (16-bit)",
+
+        _ => "unknown color type",
+    }
 }
 
 impl ImageItem {
+    async fn image_info(
+        image: Model<ImageItem>,
+        project: Model<Project>,
+        cx: &mut AsyncAppContext,
+    ) -> Result<ImageItemMeta> {
+        let project_path = cx
+            .update(|cx| image.read(cx).project_path(cx))
+            .context("Failed to get project path")?;
+
+        let worktree = cx
+            .update(|cx| {
+                project
+                    .read(cx)
+                    .worktree_for_id(project_path.worktree_id, cx)
+            })
+            .context("Failed to get worktree")?
+            .ok_or_else(|| anyhow::anyhow!("Worktree not found"))?;
+
+        let worktree_root = cx
+            .update(|cx| worktree.read(cx).abs_path())
+            .context("Failed to get worktree root path")?;
+
+        let image_path = cx
+            .update(|cx| image.read(cx).path().clone())
+            .context("Failed to get image path")?;
+
+        let path = if image_path.is_absolute() {
+            image_path.to_path_buf()
+        } else {
+            worktree_root.join(image_path)
+        };
+
+        if !path.exists() {
+            anyhow::bail!("File does not exist at path: {:?}", path);
+        }
+
+        let path_clone = path.clone();
+        let image_result =
+            smol::unblock(move || image::open(&path_clone).context("Failed to open image")).await?;
+
+        let img = image_result;
+        let dimensions_result = smol::unblock(move || {
+            let dimensions = img.dimensions();
+            let img_color_type = image_color_type_description(img.color());
+            Ok::<_, anyhow::Error>((dimensions.0, dimensions.1, img_color_type))
+        })
+        .await?;
+
+        let (width, height, color_type) = dimensions_result;
+
+        let fs = project
+            .update(cx, move |project, _| project.fs().clone())
+            .context("Failed to get filesystem")?;
+
+        let file_metadata = fs
+            .metadata(path.as_path())
+            .await
+            .context("Failed to access image data")?
+            .ok_or_else(|| anyhow::anyhow!("No metadata found"))?;
+        let file_size = file_metadata.len;
+
+        Ok(ImageItemMeta {
+            width,
+            height,
+            file_size,
+            color_type,
+        })
+    }
+
     pub fn project_path(&self, cx: &AppContext) -> ProjectPath {
         ProjectPath {
             worktree_id: self.file.worktree_id(cx),
@@ -143,9 +237,17 @@ impl ProjectItem for ImageItem {
         // Since we do not have a way to toggle to an editor
         if Img::extensions().contains(&ext) && !ext.contains("svg") {
             Some(cx.spawn(|mut cx| async move {
-                project
+                let image_model = project
                     .update(&mut cx, |project, cx| project.open_image(path, cx))?
-                    .await
+                    .await?;
+                let image_metadata =
+                    Self::image_info(image_model.clone(), project, &mut cx).await?;
+
+                image_model.update(&mut cx, |image_model, _| {
+                    image_model.image_meta = Some(image_metadata);
+                })?;
+
+                Ok(image_model)
             }))
         } else {
             None
@@ -396,6 +498,11 @@ impl ImageStoreImpl for Model<LocalImageStore> {
                 id: cx.entity_id().as_non_zero_u64().into(),
                 file: file.clone(),
                 image,
+                // width: None,
+                // file_size: None,
+                // height: None,
+                // color_type: None,
+                image_meta: None,
                 reload_task: None,
             })?;
 
