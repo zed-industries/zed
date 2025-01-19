@@ -1274,6 +1274,7 @@ pub mod tests {
     use settings::SettingsStore;
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
     use text::Point;
+    use util::add_root_for_windows;
 
     use super::*;
 
@@ -3258,7 +3259,7 @@ pub mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/a",
+            add_root_for_windows("/a"),
             json!({
                 "main.rs": "fn main() {
                     let x = 42;
@@ -3273,7 +3274,7 @@ pub mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/a".as_ref()], cx).await;
+        let project = Project::test(fs, [add_root_for_windows("/a").as_ref()], cx).await;
 
         let language_registry = project.read_with(cx, |project, _| project.languages().clone());
         language_registry.add(rust_lang());
@@ -3289,7 +3290,8 @@ pub mod tests {
                         move |params, _| async move {
                             assert_eq!(
                                 params.text_document.uri,
-                                lsp::Url::from_file_path("/a/main.rs").unwrap(),
+                                lsp::Url::from_file_path(add_root_for_windows("/a/main.rs"))
+                                    .unwrap(),
                             );
                             Ok(Some(
                                 serde_json::from_value(json!([
@@ -3359,7 +3361,7 @@ pub mod tests {
 
         let buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer("/a/main.rs", cx)
+                project.open_local_buffer(add_root_for_windows("/a/main.rs"), cx)
             })
             .await
             .unwrap();

@@ -760,6 +760,15 @@ pub fn word_consists_of_emojis(s: &str) -> bool {
     prev_end == s.len()
 }
 
+#[cfg(any(test, feature = "test-support"))]
+pub fn add_root_for_windows(path: &str) -> String {
+    if cfg!(windows) {
+        format!("C:{}", path)
+    } else {
+        path.to_string()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
