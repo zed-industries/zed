@@ -2566,12 +2566,13 @@ impl LocalLspStore {
                                     let pattern = watcher_path
                                         .as_path()
                                         .strip_prefix(&path)
-                                        .context("Failed to strip prefix for string pattern")
-                                        .log_err()
                                         .map(|p| p.to_string_lossy().to_string())
-                                        .unwrap_or_else(|| {
+                                        .unwrap_or_else(|e| {
                                             debug_panic!(
-                                                "Failed to strip prefix for string pattern"
+                                                "Failed to strip prefix for string pattern: {}, with prefix: {}, with error: {}",
+                                                s,
+                                                path.display(),
+                                                e
                                             );
                                             watcher_path.as_path().to_string_lossy().to_string()
                                         });
@@ -2609,20 +2610,20 @@ impl LocalLspStore {
                                     let path = glob_literal_prefix(Path::new(&rp.pattern));
                                     let pattern = Path::new(&rp.pattern)
                                         .strip_prefix(&path)
-                                        .context("Failed to strip prefix for relative pattern")
-                                        .log_err()
                                         .map(|p| p.to_string_lossy().to_string())
-                                        .unwrap_or_else(|| {
+                                        .unwrap_or_else(|e| {
                                             debug_panic!(
-                                                "Failed to strip prefix for relative pattern"
+                                                "Failed to strip prefix for relative pattern: {}, with prefix: {}, with error: {}",
+                                                rp.pattern,
+                                                path.display(),
+                                                e
                                             );
                                             rp.pattern.clone()
                                         });
                                     base_uri.push(path);
 
                                     let path = if base_uri.components().next().is_none() {
-                                        debug_panic!("base_uri is empty!");
-                                        log::error!("base_uri is empty!");
+                                        debug_panic!("base_uri is empty, {}", base_uri.display());
                                         worktree_root_path.clone()
                                     } else {
                                         base_uri.into()
