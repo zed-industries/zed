@@ -1,11 +1,12 @@
 use crate::{Toast, Workspace};
+use anyhow::Context;
+use anyhow::{anyhow, Result};
 use collections::HashMap;
 use gpui::{
     svg, AnyView, AppContext, AsyncWindowContext, ClipboardItem, DismissEvent, Entity, EntityId,
     EventEmitter, Global, PromptLevel, Render, ScrollHandle, Task, View, ViewContext,
     VisualContext, WindowContext,
 };
-
 use std::{any::TypeId, ops::DerefMut, time::Duration};
 use ui::{prelude::*, Tooltip};
 use util::ResultExt;
@@ -151,13 +152,9 @@ impl Workspace {
     where
         E: std::fmt::Debug + std::fmt::Display,
     {
-        struct WorkspaceErrorNotification;
-
-        self.show_notification(
-            NotificationId::unique::<WorkspaceErrorNotification>(),
-            cx,
-            |cx| cx.new_view(|_cx| ErrorMessagePrompt::new(format!("Error: {err:#}"))),
-        );
+        self.show_notification(workspace_error_notification_id(), cx, |cx| {
+            cx.new_view(|_cx| ErrorMessagePrompt::new(format!("Error: {err}")))
+        });
     }
 
     pub fn show_portal_error(&mut self, err: String, cx: &mut ViewContext<Self>) {
@@ -287,6 +284,7 @@ impl Render for LanguageServerPrompt {
                     .child(
                         h_flex()
                             .justify_between()
+                            .items_start()
                             .child(
                                 h_flex()
                                     .gap_2()
@@ -331,6 +329,12 @@ impl Render for LanguageServerPrompt {
 
 impl EventEmitter<DismissEvent> for LanguageServerPrompt {}
 
+fn workspace_error_notification_id() -> NotificationId {
+    struct WorkspaceErrorNotification;
+    NotificationId::unique::<WorkspaceErrorNotification>()
+}
+
+#[derive(Debug, Clone)]
 pub struct ErrorMessagePrompt {
     message: SharedString,
     label_and_url_button: Option<(SharedString, SharedString)>,
@@ -393,7 +397,7 @@ impl Render for ErrorMessagePrompt {
                     .child(
                         div()
                             .id("error_message")
-                            .max_w_80()
+                            .max_w_96()
                             .max_h_40()
                             .overflow_y_scroll()
                             .child(Label::new(self.message.clone()).size(LabelSize::Small)),
@@ -413,14 +417,16 @@ impl Render for ErrorMessagePrompt {
 impl EventEmitter<DismissEvent> for ErrorMessagePrompt {}
 
 pub mod simple_message_notification {
-    use gpui::{
-        div, DismissEvent, EventEmitter, ParentElement, Render, SharedString, Styled, ViewContext,
-    };
     use std::sync::Arc;
+
+    use gpui::{
+        div, AnyElement, DismissEvent, EventEmitter, ParentElement, Render, SharedString, Styled,
+        ViewContext,
+    };
     use ui::prelude::*;
 
     pub struct MessageNotification {
-        message: SharedString,
+        content: Box<dyn Fn(&mut ViewContext<Self>) -> AnyElement>,
         on_click: Option<Arc<dyn Fn(&mut ViewContext<Self>)>>,
         click_message: Option<SharedString>,
         secondary_click_message: Option<SharedString>,
@@ -434,8 +440,16 @@ pub mod simple_message_notification {
         where
             S: Into<SharedString>,
         {
+            let message = message.into();
+            Self::new_from_builder(move |_| Label::new(message.clone()).into_any_element())
+        }
+
+        pub fn new_from_builder<F>(content: F) -> MessageNotification
+        where
+            F: 'static + Fn(&mut ViewContext<Self>) -> AnyElement,
+        {
             Self {
-                message: message.into(),
+                content: Box::new(content),
                 on_click: None,
                 click_message: None,
                 secondary_on_click: None,
@@ -490,7 +504,8 @@ pub mod simple_message_notification {
                     h_flex()
                         .gap_4()
                         .justify_between()
-                        .child(div().max_w_80().child(Label::new(self.message.clone())))
+                        .items_start()
+                        .child(div().max_w_96().child((self.content)(cx)))
                         .child(
                             IconButton::new("close", IconName::Close)
                                 .on_click(cx.listener(|this, _, cx| this.dismiss(cx))),
@@ -532,6 +547,70 @@ pub mod simple_message_notification {
     }
 }
 
+/// Shows a notification in the active workspace if there is one, otherwise shows it in all workspaces.
+pub fn show_app_notification<V: Notification>(
+    id: NotificationId,
+    cx: &mut AppContext,
+    build_notification: impl Fn(&mut ViewContext<Workspace>) -> View<V>,
+) -> Result<()> {
+    let workspaces_to_notify = if let Some(active_workspace_window) = cx
+        .active_window()
+        .and_then(|window| window.downcast::<Workspace>())
+    {
+        vec![active_workspace_window]
+    } else {
+        let mut workspaces_to_notify = Vec::new();
+        for window in cx.windows() {
+            if let Some(workspace_window) = window.downcast::<Workspace>() {
+                workspaces_to_notify.push(workspace_window);
+            }
+        }
+        workspaces_to_notify
+    };
+
+    let mut notified = false;
+    let mut notify_errors = Vec::new();
+
+    for workspace_window in workspaces_to_notify {
+        let notify_result = workspace_window.update(cx, |workspace, cx| {
+            workspace.show_notification(id.clone(), cx, &build_notification);
+        });
+        match notify_result {
+            Ok(()) => notified = true,
+            Err(notify_err) => notify_errors.push(notify_err),
+        }
+    }
+
+    if notified {
+        Ok(())
+    } else {
+        if notify_errors.is_empty() {
+            Err(anyhow!("Found no workspaces to show notification."))
+        } else {
+            Err(anyhow!(
+                "No workspaces were able to show notification. Errors:\n\n{}",
+                notify_errors
+                    .iter()
+                    .map(|e| e.to_string())
+                    .collect::<Vec<_>>()
+                    .join("\n\n")
+            ))
+        }
+    }
+}
+
+pub fn dismiss_app_notification(id: &NotificationId, cx: &mut AppContext) {
+    for window in cx.windows() {
+        if let Some(workspace_window) = window.downcast::<Workspace>() {
+            workspace_window
+                .update(cx, |workspace, cx| {
+                    workspace.dismiss_notification(&id, cx);
+                })
+                .ok();
+        }
+    }
+}
+
 pub trait NotifyResultExt {
     type Ok;
 
@@ -542,9 +621,12 @@ pub trait NotifyResultExt {
     ) -> Option<Self::Ok>;
 
     fn notify_async_err(self, cx: &mut AsyncWindowContext) -> Option<Self::Ok>;
+
+    /// Notifies the active workspace if there is one, otherwise notifies all workspaces.
+    fn notify_app_err(self, cx: &mut AppContext) -> Option<Self::Ok>;
 }
 
-impl<T, E> NotifyResultExt for Result<T, E>
+impl<T, E> NotifyResultExt for std::result::Result<T, E>
 where
     E: std::fmt::Debug + std::fmt::Display,
 {
@@ -576,13 +658,28 @@ where
             }
         }
     }
+
+    fn notify_app_err(self, cx: &mut AppContext) -> Option<T> {
+        match self {
+            Ok(value) => Some(value),
+            Err(err) => {
+                let message: SharedString = format!("Error: {err}").into();
+                show_app_notification(workspace_error_notification_id(), cx, |cx| {
+                    cx.new_view(|_cx| ErrorMessagePrompt::new(message.clone()))
+                })
+                .with_context(|| format!("Showing error notification: {message}"))
+                .log_err();
+                None
+            }
+        }
+    }
 }
 
 pub trait NotifyTaskExt {
     fn detach_and_notify_err(self, cx: &mut WindowContext);
 }
 
-impl<R, E> NotifyTaskExt for Task<Result<R, E>>
+impl<R, E> NotifyTaskExt for Task<std::result::Result<R, E>>
 where
     E: std::fmt::Debug + std::fmt::Display + Sized + 'static,
     R: 'static,

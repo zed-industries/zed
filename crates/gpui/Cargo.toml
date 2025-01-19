@@ -1,10 +1,10 @@
 [package]
 name = "gpui"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 authors = ["Nathan Sobo <nathan@zed.dev>"]
 description = "Zed's GPU-accelerated UI framework"
-publish = false
+publish.workspace = true
 license = "Apache-2.0"
 
 [lints]
@@ -123,7 +123,7 @@ embed-resource = "3.0"
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
 bindgen = "0.70.0"
-cbindgen = { version = "0.27.0", default-features = false }
+cbindgen = { version = "0.28.0", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"

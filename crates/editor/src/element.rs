@@ -76,7 +76,7 @@ use ui::{
 };
 use unicode_segmentation::UnicodeSegmentation;
 use util::{RangeExt, ResultExt};
-use workspace::{item::Item, Workspace};
+use workspace::{item::Item, notifications::NotifyTaskExt, Workspace};
 
 struct SelectionLayout {
     head: DisplayPoint,
@@ -385,14 +385,14 @@ impl EditorElement {
         register_action(view, cx, Editor::expand_all_hunk_diffs);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.format(action, cx) {
-                task.detach_and_log_err(cx);
+                task.detach_and_notify_err(cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.format_selections(action, cx) {
-                task.detach_and_log_err(cx);
+                task.detach_and_notify_err(cx);
             } else {
                 cx.propagate();
             }
@@ -402,35 +402,35 @@ impl EditorElement {
         register_action(view, cx, Editor::show_character_palette);
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.confirm_completion(action, cx) {
-                task.detach_and_log_err(cx);
+                task.detach_and_notify_err(cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.compose_completion(action, cx) {
-                task.detach_and_log_err(cx);
+                task.detach_and_notify_err(cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.confirm_code_action(action, cx) {
-                task.detach_and_log_err(cx);
+                task.detach_and_notify_err(cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.rename(action, cx) {
-                task.detach_and_log_err(cx);
+                task.detach_and_notify_err(cx);
             } else {
                 cx.propagate();
             }
         });
         register_action(view, cx, |editor, action, cx| {
             if let Some(task) = editor.confirm_rename(action, cx) {
-                task.detach_and_log_err(cx);
+                task.detach_and_notify_err(cx);
             } else {
                 cx.propagate();
             }
@@ -515,7 +515,7 @@ impl EditorElement {
         position_map: &PositionMap,
         text_hitbox: &Hitbox,
         gutter_hitbox: &Hitbox,
-        line_numbers: &HashMap<MultiBufferRow, (ShapedLine, Option<Hitbox>)>,
+        line_numbers: &HashMap<MultiBufferRow, LineNumberLayout>,
         cx: &mut ViewContext<Editor>,
     ) {
         if cx.default_prevented() {
@@ -548,8 +548,29 @@ impl EditorElement {
                         // and run the selection logic.
                         modifiers.alt = false;
                     } else {
+                        let scroll_position_row =
+                            position_map.scroll_pixel_position.y / position_map.line_height;
+                        let display_row = (((event.position - gutter_hitbox.bounds.origin).y
+                            + position_map.scroll_pixel_position.y)
+                            / position_map.line_height)
+                            as u32;
+                        let multi_buffer_row = position_map
+                            .snapshot
+                            .display_point_to_point(
+                                DisplayPoint::new(DisplayRow(display_row), 0),
+                                Bias::Right,
+                            )
+                            .row;
+                        let line_offset_from_top = display_row - scroll_position_row as u32;
                         // if double click is made without alt, open the corresponding excerp
-                        editor.open_excerpts(&OpenExcerpts, cx);
+                        editor.open_excerpts_common(
+                            Some(JumpData::MultiBufferRow {
+                                row: MultiBufferRow(multi_buffer_row),
+                                line_offset_from_top,
+                            }),
+                            false,
+                            cx,
+                        );
                         return;
                     }
                 }
@@ -602,22 +623,24 @@ impl EditorElement {
                 .snapshot
                 .display_point_to_point(DisplayPoint::new(DisplayRow(display_row), 0), Bias::Right)
                 .row;
-            if let Some((_, Some(hitbox))) = line_numbers.get(&MultiBufferRow(multi_buffer_row)) {
-                if hitbox.contains(&event.position) {
-                    let scroll_position_row =
-                        position_map.scroll_pixel_position.y / position_map.line_height;
-                    let line_offset_from_top = display_row - scroll_position_row as u32;
+            if line_numbers
+                .get(&MultiBufferRow(multi_buffer_row))
+                .and_then(|line_number| line_number.hitbox.as_ref())
+                .is_some_and(|hitbox| hitbox.contains(&event.position))
+            {
+                let scroll_position_row =
+                    position_map.scroll_pixel_position.y / position_map.line_height;
+                let line_offset_from_top = display_row - scroll_position_row as u32;
 
-                    editor.open_excerpts_common(
-                        Some(JumpData::MultiBufferRow {
-                            row: MultiBufferRow(multi_buffer_row),
-                            line_offset_from_top,
-                        }),
-                        modifiers.alt,
-                        cx,
-                    );
-                    cx.stop_propagation();
-                }
+                editor.open_excerpts_common(
+                    Some(JumpData::MultiBufferRow {
+                        row: MultiBufferRow(multi_buffer_row),
+                        line_offset_from_top,
+                    }),
+                    modifiers.alt,
+                    cx,
+                );
+                cx.stop_propagation();
             }
         }
     }
@@ -1328,11 +1351,15 @@ impl EditorElement {
             total_text_units
                 .horizontal
                 .zip(track_bounds.horizontal)
-                .map(|(total_text_units_x, track_bounds_x)| {
+                .and_then(|(total_text_units_x, track_bounds_x)| {
+                    if text_units_per_page.horizontal >= total_text_units_x {
+                        return None;
+                    }
+
                     let thumb_percent =
                         (text_units_per_page.horizontal / total_text_units_x).min(1.);
 
-                    track_bounds_x.size.width * thumb_percent
+                    Some(track_bounds_x.size.width * thumb_percent)
                 }),
             total_text_units.vertical.zip(track_bounds.vertical).map(
                 |(total_text_units_y, track_bounds_y)| {
@@ -2100,7 +2127,7 @@ impl EditorElement {
         snapshot: &EditorSnapshot,
         breakpoint_rows: &HashMap<DisplayRow, Breakpoint>,
         cx: &mut WindowContext,
-    ) -> Arc<HashMap<MultiBufferRow, (ShapedLine, Option<Hitbox>)>> {
+    ) -> Arc<HashMap<MultiBufferRow, LineNumberLayout>> {
         let include_line_numbers = snapshot.show_line_numbers.unwrap_or_else(|| {
             EditorSettings::get_global(cx).gutter.line_numbers && snapshot.mode == EditorMode::Full
         });
@@ -2138,7 +2165,15 @@ impl EditorElement {
             .enumerate()
             .flat_map(|(ix, buffer_row)| {
                 let buffer_row = buffer_row?;
+
+                line_number.clear();
                 let display_row = DisplayRow(rows.start.0 + ix as u32);
+                let non_relative_number = buffer_row.0 + 1;
+                let number = relative_rows
+                    .get(&display_row)
+                    .unwrap_or(&non_relative_number);
+                write!(&mut line_number, "{number}").unwrap();
+
                 let color = if breakpoint_rows.contains_key(&display_row) {
                     cx.theme().colors().debugger_accent
                 } else if active_rows.contains_key(&display_row) {
@@ -2146,13 +2181,6 @@ impl EditorElement {
                 } else {
                     cx.theme().colors().editor_line_number
                 };
-                line_number.clear();
-                let default_number = buffer_row.0 + 1;
-                let number = relative_rows
-                    .get(&DisplayRow(ix as u32 + rows.start.0))
-                    .unwrap_or(&default_number);
-                write!(&mut line_number, "{number}").unwrap();
-
                 let shaped_line = self
                     .shape_line_number(SharedString::from(&line_number), color, cx)
                     .log_err()?;
@@ -2180,7 +2208,12 @@ impl EditorElement {
 
                 let multi_buffer_row = DisplayPoint::new(display_row, 0).to_point(snapshot).row;
                 let multi_buffer_row = MultiBufferRow(multi_buffer_row);
-                Some((multi_buffer_row, (shaped_line, hitbox)))
+                let line_number = LineNumberLayout {
+                    shaped_line,
+                    hitbox,
+                    display_row,
+                };
+                Some((multi_buffer_row, line_number))
             })
             .collect();
         Arc::new(line_numbers)
@@ -4026,17 +4059,28 @@ impl EditorElement {
         let line_height = layout.position_map.line_height;
         cx.set_cursor_style(CursorStyle::Arrow, &layout.gutter_hitbox);
 
-        for (_, (line, hitbox)) in layout.line_numbers.iter() {
+        for LineNumberLayout {
+            shaped_line,
+            hitbox,
+            display_row,
+        } in layout.line_numbers.values()
+        {
             let Some(hitbox) = hitbox else {
                 continue;
             };
-            let color = if !is_singleton && hitbox.is_hovered(cx) {
+
+            let is_active = layout.active_rows.contains_key(&display_row);
+
+            let color = if is_active {
                 cx.theme().colors().editor_active_line_number
+            } else if !is_singleton && hitbox.is_hovered(cx) {
+                cx.theme().colors().editor_hover_line_number
             } else {
                 cx.theme().colors().editor_line_number
             };
+
             let Some(line) = self
-                .shape_line_number(line.text.clone(), color, cx)
+                .shape_line_number(shaped_line.text.clone(), color, cx)
                 .log_err()
             else {
                 continue;
@@ -7099,7 +7143,7 @@ pub struct EditorLayout {
     active_rows: BTreeMap<DisplayRow, bool>,
     highlighted_rows: BTreeMap<DisplayRow, Hsla>,
     line_elements: SmallVec<[AnyElement; 1]>,
-    line_numbers: Arc<HashMap<MultiBufferRow, (ShapedLine, Option<Hitbox>)>>,
+    line_numbers: Arc<HashMap<MultiBufferRow, LineNumberLayout>>,
     display_hunks: Vec<(DisplayDiffHunk, Option<Hitbox>)>,
     blamed_display_rows: Option<Vec<AnyElement>>,
     inline_blame: Option<AnyElement>,
@@ -7126,6 +7170,12 @@ impl EditorLayout {
     fn line_end_overshoot(&self) -> Pixels {
         0.15 * self.position_map.line_height
     }
+}
+
+struct LineNumberLayout {
+    shaped_line: ShapedLine,
+    hitbox: Option<Hitbox>,
+    display_row: DisplayRow,
 }
 
 struct ColoredRange<T> {
@@ -8022,7 +8072,7 @@ mod tests {
             state
                 .line_numbers
                 .get(&MultiBufferRow(0))
-                .and_then(|(line, _)| line.text.as_str()),
+                .and_then(|line_number| line_number.shaped_line.text.as_str()),
             Some("1")
         );
     }

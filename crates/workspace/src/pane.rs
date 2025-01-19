@@ -25,6 +25,7 @@ use itertools::Itertools;
 use language::DiagnosticSeverity;
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
+use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
 use std::{
@@ -71,7 +72,7 @@ impl DraggedSelection {
     }
 }
 
-#[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum SaveIntent {
     /// write all files (even if unchanged)
@@ -92,16 +93,16 @@ pub enum SaveIntent {
     Skip,
 }
 
-#[derive(Clone, Deserialize, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 pub struct ActivateItem(pub usize);
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseActiveItem {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseInactiveItems {
     pub save_intent: Option<SaveIntent>,
@@ -109,7 +110,7 @@ pub struct CloseInactiveItems {
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseAllItems {
     pub save_intent: Option<SaveIntent>,
@@ -117,34 +118,35 @@ pub struct CloseAllItems {
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseCleanItems {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseItemsToTheRight {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseItemsToTheLeft {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct RevealInProjectPanel {
+    #[serde(skip)]
     pub entry_id: Option<u64>,
 }
 
-#[derive(Default, PartialEq, Clone, Deserialize)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 pub struct DeploySearch {
     #[serde(default)]
     pub replace_enabled: bool,

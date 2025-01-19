@@ -7,6 +7,7 @@ use gpui::{
     ViewContext, WindowContext,
 };
 use head::Head;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use std::{sync::Arc, time::Duration};
 use ui::{prelude::*, v_flex, Color, Divider, Label, ListItem, ListItemSpacing};
@@ -24,7 +25,7 @@ actions!(picker, [ConfirmCompletion]);
 
 /// ConfirmInput is an alternative editor action which - instead of selecting active picker entry - treats pickers editor input literally,
 /// performing some kind of action on it.
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(Clone, PartialEq, Deserialize, JsonSchema, Default)]
 pub struct ConfirmInput {
     pub secondary: bool,
 }

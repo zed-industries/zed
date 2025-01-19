@@ -80,6 +80,12 @@ impl ActiveThread {
         self.thread.read(cx).summary_or_default()
     }
 
+    pub fn cancel_last_completion(&mut self, cx: &mut AppContext) -> bool {
+        self.last_error.take();
+        self.thread
+            .update(cx, |thread, _cx| thread.cancel_last_completion())
+    }
+
     pub fn last_error(&self) -> Option<ThreadError> {
         self.last_error.clone()
     }
@@ -112,10 +118,10 @@ impl ActiveThread {
             selection_background_color: cx.theme().players().local().selection,
             code_block: StyleRefinement {
                 margin: EdgesRefinement {
-                    top: Some(Length::Definite(rems(1.0).into())),
+                    top: Some(Length::Definite(rems(0.).into())),
                     left: Some(Length::Definite(rems(0.).into())),
                     right: Some(Length::Definite(rems(0.).into())),
-                    bottom: Some(Length::Definite(rems(1.).into())),
+                    bottom: Some(Length::Definite(rems(0.5).into())),
                 },
                 padding: EdgesRefinement {
                     top: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
@@ -123,10 +129,10 @@ impl ActiveThread {
                     right: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
                     bottom: Some(DefiniteLength::Absolute(AbsoluteLength::Pixels(Pixels(8.)))),
                 },
-                background: Some(colors.editor_foreground.opacity(0.01).into()),
-                border_color: Some(colors.border_variant.opacity(0.3)),
+                background: Some(colors.editor_background.into()),
+                border_color: Some(colors.border_variant),
                 border_widths: EdgesRefinement {
-                    top: Some(AbsoluteLength::Pixels(Pixels(1.0))),
+                    top: Some(AbsoluteLength::Pixels(Pixels(1.))),
                     left: Some(AbsoluteLength::Pixels(Pixels(1.))),
                     right: Some(AbsoluteLength::Pixels(Pixels(1.))),
                     bottom: Some(AbsoluteLength::Pixels(Pixels(1.))),
@@ -245,65 +251,78 @@ impl ActiveThread {
         let context = self.thread.read(cx).context_for_message(message_id);
         let colors = cx.theme().colors();
 
-        let (role_icon, role_name, role_color) = match message.role {
-            Role::User => (IconName::Person, "You", Color::Muted),
-            Role::Assistant => (IconName::ZedAssistant, "Assistant", Color::Accent),
-            Role::System => (IconName::Settings, "System", Color::Default),
-        };
+        let message_content = v_flex()
+            .child(div().p_2p5().text_ui(cx).child(markdown.clone()))
+            .when_some(context, |parent, context| {
+                if !context.is_empty() {
+                    parent.child(
+                        h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
+                            context
+                                .into_iter()
+                                .map(|context| ContextPill::new_added(context, false, false, None)),
+                        ),
+                    )
+                } else {
+                    parent
+                }
+            });
 
-        div()
-            .id(("message-container", ix))
-            .py_1()
-            .px_2()
-            .child(
+        let styled_message = match message.role {
+            Role::User => v_flex()
+                .id(("message-container", ix))
+                .py_1()
+                .px_2p5()
+                .child(
+                    v_flex()
+                        .bg(colors.editor_background)
+                        .rounded_lg()
+                        .border_1()
+                        .border_color(colors.border)
+                        .shadow_sm()
+                        .child(
+                            h_flex()
+                                .py_1()
+                                .px_2()
+                                .bg(colors.editor_foreground.opacity(0.05))
+                                .border_b_1()
+                                .border_color(colors.border)
+                                .justify_between()
+                                .rounded_t(px(6.))
+                                .child(
+                                    h_flex()
+                                        .gap_1p5()
+                                        .child(
+                                            Icon::new(IconName::PersonCircle)
+                                                .size(IconSize::XSmall)
+                                                .color(Color::Muted),
+                                        )
+                                        .child(
+                                            Label::new("You")
+                                                .size(LabelSize::Small)
+                                                .color(Color::Muted),
+                                        ),
+                                ),
+                        )
+                        .child(message_content),
+                ),
+            Role::Assistant => div().id(("message-container", ix)).child(message_content),
+            Role::System => div().id(("message-container", ix)).py_1().px_2().child(
                 v_flex()
-                    .border_1()
-                    .border_color(colors.border_variant)
                     .bg(colors.editor_background)
                     .rounded_md()
-                    .child(
-                        h_flex()
-                            .py_1p5()
-                            .px_2p5()
-                            .border_b_1()
-                            .border_color(colors.border_variant)
-                            .justify_between()
-                            .child(
-                                h_flex()
-                                    .gap_1p5()
-                                    .child(
-                                        Icon::new(role_icon)
-                                            .size(IconSize::XSmall)
-                                            .color(role_color),
-                                    )
-                                    .child(
-                                        Label::new(role_name)
-                                            .size(LabelSize::XSmall)
-                                            .color(role_color),
-                                    ),
-                            ),
-                    )
-                    .child(div().p_2p5().text_ui(cx).child(markdown.clone()))
-                    .when_some(context, |parent, context| {
-                        if !context.is_empty() {
-                            parent.child(
-                                h_flex().flex_wrap().gap_1().px_1p5().pb_1p5().children(
-                                    context.into_iter().map(|context| {
-                                        ContextPill::new_added(context, false, None)
-                                    }),
-                                ),
-                            )
-                        } else {
-                            parent
-                        }
-                    }),
-            )
-            .into_any()
+                    .child(message_content),
+            ),
+        };
+
+        styled_message.into_any()
     }
 }
 
 impl Render for ActiveThread {
     fn render(&mut self, _cx: &mut ViewContext<Self>) -> impl IntoElement {
-        list(self.list_state.clone()).flex_1().py_1()
+        v_flex()
+            .size_full()
+            .pt_1p5()
+            .child(list(self.list_state.clone()).flex_grow())
     }
 }

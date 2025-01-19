@@ -1,10 +1,10 @@
 [package]
 authors = ["Nathan Sobo <nathan@zed.dev>"]
 default-run = "collab"
-edition = "2021"
+edition.workspace = true
 name = "collab"
 version = "0.44.0"
-publish = false
+publish.workspace = true
 license = "AGPL-3.0-or-later"
 
 [lints]
@@ -79,6 +79,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 assistant = { workspace = true, features = ["test-support"] }
+assistant_slash_command.workspace = true
 assistant_tool.workspace = true
 async-trait.workspace = true
 audio.workspace = true
@@ -111,6 +112,7 @@ node_runtime.workspace = true
 notifications = { workspace = true, features = ["test-support"] }
 pretty_assertions.workspace = true
 project = { workspace = true, features = ["test-support"] }
+prompt_library.workspace = true
 recent_projects = { workspace = true }
 release_channel.workspace = true
 remote = { workspace = true, features = ["test-support"] }

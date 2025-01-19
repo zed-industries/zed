@@ -97,6 +97,7 @@ pub(crate) fn zed_default_dark() -> Theme {
                 ),
                 editor_line_number: hsla(222.0 / 360., 11.5 / 100., 34.1 / 100., 1.0),
                 editor_active_line_number: hsla(216.0 / 360., 5.9 / 100., 49.6 / 100., 1.0),
+                editor_hover_line_number: hsla(216.0 / 360., 5.9 / 100., 56.7 / 100., 1.0),
                 editor_invisible: hsla(222.0 / 360., 11.5 / 100., 34.1 / 100., 1.0),
                 editor_wrap_guide: hsla(228. / 360., 8. / 100., 25. / 100., 1.),
                 editor_active_wrap_guide: hsla(228. / 360., 8. / 100., 25. / 100., 1.),

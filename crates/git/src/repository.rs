@@ -1,12 +1,12 @@
+use crate::status::FileStatus;
 use crate::GitHostingProviderRegistry;
 use crate::{blame::Blame, status::GitStatus};
-use anyhow::{Context, Result};
+use anyhow::{anyhow, Context, Result};
 use collections::{HashMap, HashSet};
 use git2::BranchType;
 use gpui::SharedString;
 use parking_lot::Mutex;
 use rope::Rope;
-use serde::{Deserialize, Serialize};
 use std::borrow::Borrow;
 use std::sync::LazyLock;
 use std::{
@@ -15,6 +15,7 @@ use std::{
     sync::Arc,
 };
 use sum_tree::MapSeekTarget;
+use util::command::new_std_command;
 use util::ResultExt;
 
 #[derive(Clone, Debug, Hash, PartialEq)]
@@ -51,6 +52,17 @@ pub trait GitRepository: Send + Sync {
 
     /// Returns the path to the repository, typically the `.git` folder.
     fn dot_git_dir(&self) -> PathBuf;
+
+    /// Updates the index to match the worktree at the given paths.
+    ///
+    /// If any of the paths have been deleted from the worktree, they will be removed from the index if found there.
+    fn stage_paths(&self, paths: &[RepoPath]) -> Result<()>;
+    /// Updates the index to match HEAD at the given paths.
+    ///
+    /// If any of the paths were previously staged but do not exist in HEAD, they will be removed from the index.
+    fn unstage_paths(&self, paths: &[RepoPath]) -> Result<()>;
+
+    fn commit(&self, message: &str) -> Result<()>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -152,7 +164,7 @@ impl GitRepository for RealGitRepository {
             Ok(_) => Ok(true),
             Err(e) => match e.code() {
                 git2::ErrorCode::NotFound => Ok(false),
-                _ => Err(anyhow::anyhow!(e)),
+                _ => Err(anyhow!(e)),
             },
         }
     }
@@ -196,7 +208,7 @@ impl GitRepository for RealGitRepository {
         repo.set_head(
             revision
                 .name()
-                .ok_or_else(|| anyhow::anyhow!("Branch name could not be retrieved"))?,
+                .ok_or_else(|| anyhow!("Branch name could not be retrieved"))?,
         )?;
         Ok(())
     }
@@ -228,6 +240,66 @@ impl GitRepository for RealGitRepository {
             self.hosting_provider_registry.clone(),
         )
     }
+
+    fn stage_paths(&self, paths: &[RepoPath]) -> Result<()> {
+        let working_directory = self
+            .repository
+            .lock()
+            .workdir()
+            .context("failed to read git work directory")?
+            .to_path_buf();
+
+        if !paths.is_empty() {
+            let cmd = new_std_command(&self.git_binary_path)
+                .current_dir(&working_directory)
+                .args(["update-index", "--add", "--remove", "--"])
+                .args(paths.iter().map(|p| p.as_ref()))
+                .status()?;
+            if !cmd.success() {
+                return Err(anyhow!("Failed to stage paths: {cmd}"));
+            }
+        }
+        Ok(())
+    }
+
+    fn unstage_paths(&self, paths: &[RepoPath]) -> Result<()> {
+        let working_directory = self
+            .repository
+            .lock()
+            .workdir()
+            .context("failed to read git work directory")?
+            .to_path_buf();
+
+        if !paths.is_empty() {
+            let cmd = new_std_command(&self.git_binary_path)
+                .current_dir(&working_directory)
+                .args(["reset", "--quiet", "--"])
+                .args(paths.iter().map(|p| p.as_ref()))
+                .status()?;
+            if !cmd.success() {
+                return Err(anyhow!("Failed to unstage paths: {cmd}"));
+            }
+        }
+        Ok(())
+    }
+
+    fn commit(&self, message: &str) -> Result<()> {
+        let working_directory = self
+            .repository
+            .lock()
+            .workdir()
+            .context("failed to read git work directory")?
+            .to_path_buf();
+
+        let cmd = new_std_command(&self.git_binary_path)
+            .current_dir(&working_directory)
+            .args(["commit", "--quiet", "-m", message])
+            .status()?;
+        if !cmd.success() {
+            return Err(anyhow!("Failed to commit: {cmd}"));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -241,7 +313,7 @@ pub struct FakeGitRepositoryState {
     pub event_emitter: smol::channel::Sender<PathBuf>,
     pub index_contents: HashMap<PathBuf, String>,
     pub blames: HashMap<PathBuf, Blame>,
-    pub worktree_statuses: HashMap<RepoPath, GitFileStatus>,
+    pub statuses: HashMap<RepoPath, FileStatus>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
 }
@@ -259,7 +331,7 @@ impl FakeGitRepositoryState {
             event_emitter,
             index_contents: Default::default(),
             blames: Default::default(),
-            worktree_statuses: Default::default(),
+            statuses: Default::default(),
             current_branch_name: Default::default(),
             branches: Default::default(),
         }
@@ -296,7 +368,7 @@ impl GitRepository for FakeGitRepository {
         let state = self.state.lock();
 
         let mut entries = state
-            .worktree_statuses
+            .statuses
             .iter()
             .filter_map(|(repo_path, status)| {
                 if path_prefixes
@@ -309,7 +381,7 @@ impl GitRepository for FakeGitRepository {
                 }
             })
             .collect::<Vec<_>>();
-        entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+        entries.sort_unstable_by(|(a, _), (b, _)| a.cmp(&b));
 
         Ok(GitStatus {
             entries: entries.into(),
@@ -363,6 +435,18 @@ impl GitRepository for FakeGitRepository {
             .with_context(|| format!("failed to get blame for {:?}", path))
             .cloned()
     }
+
+    fn stage_paths(&self, _paths: &[RepoPath]) -> Result<()> {
+        unimplemented!()
+    }
+
+    fn unstage_paths(&self, _paths: &[RepoPath]) -> Result<()> {
+        unimplemented!()
+    }
+
+    fn commit(&self, _message: &str) -> Result<()> {
+        unimplemented!()
+    }
 }
 
 fn check_path_to_repo_path_errors(relative_file_path: &Path) -> Result<()> {
@@ -394,40 +478,6 @@ fn check_path_to_repo_path_errors(relative_file_path: &Path) -> Result<()> {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum GitFileStatus {
-    Added,
-    Modified,
-    Conflict,
-    Deleted,
-    Untracked,
-}
-
-impl GitFileStatus {
-    pub fn merge(
-        this: Option<GitFileStatus>,
-        other: Option<GitFileStatus>,
-        prefer_other: bool,
-    ) -> Option<GitFileStatus> {
-        if prefer_other {
-            return other;
-        }
-
-        match (this, other) {
-            (Some(GitFileStatus::Conflict), _) | (_, Some(GitFileStatus::Conflict)) => {
-                Some(GitFileStatus::Conflict)
-            }
-            (Some(GitFileStatus::Modified), _) | (_, Some(GitFileStatus::Modified)) => {
-                Some(GitFileStatus::Modified)
-            }
-            (Some(GitFileStatus::Added), _) | (_, Some(GitFileStatus::Added)) => {
-                Some(GitFileStatus::Added)
-            }
-            _ => None,
-        }
-    }
-}
-
 pub static WORK_DIRECTORY_REPO_PATH: LazyLock<RepoPath> =
     LazyLock::new(|| RepoPath(Path::new("").into()));
 
@@ -450,6 +500,12 @@ impl RepoPath {
 
     pub fn to_proto(&self) -> String {
         self.0.to_string_lossy().to_string()
+    }
+}
+
+impl std::fmt::Display for RepoPath {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.to_string_lossy().fmt(f)
     }
 }
 

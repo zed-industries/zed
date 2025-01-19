@@ -1,9 +1,9 @@
 use crate::{
-    assistant_settings::AssistantSettings, humanize_token_count, prompts::PromptBuilder,
-    AssistantPanel, AssistantPanelEvent, CharOperation, CycleNextInlineAssist,
-    CyclePreviousInlineAssist, LineDiff, LineOperation, RequestType, StreamingDiff,
+    humanize_token_count, AssistantPanel, AssistantPanelEvent, CycleNextInlineAssist,
+    CyclePreviousInlineAssist, RequestType,
 };
 use anyhow::{anyhow, Context as _, Result};
+use assistant_settings::AssistantSettings;
 use client::{telemetry::Telemetry, ErrorExt};
 use collections::{hash_map, HashMap, HashSet, VecDeque};
 use editor::{
@@ -40,6 +40,7 @@ use language_models::report_assistant_event;
 use multi_buffer::MultiBufferRow;
 use parking_lot::Mutex;
 use project::{CodeAction, ProjectTransaction};
+use prompt_library::PromptBuilder;
 use rope::Rope;
 use settings::{update_settings_file, Settings, SettingsStore};
 use smol::future::FutureExt;
@@ -54,6 +55,7 @@ use std::{
     task::{self, Poll},
     time::{Duration, Instant},
 };
+use streaming_diff::{CharOperation, LineDiff, LineOperation, StreamingDiff};
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::terminal_panel::TerminalPanel;
 use text::{OffsetRangeExt, ToPoint as _};
@@ -72,16 +74,16 @@ pub fn init(
 ) {
     cx.set_global(InlineAssistant::new(fs, prompt_builder, telemetry));
     cx.observe_new_views(|_, cx| {
+        let workspace = cx.view().clone();
+        InlineAssistant::update_global(cx, |inline_assistant, cx| {
+            inline_assistant.register_workspace(&workspace, cx)
+        });
+
         cx.observe_flag::<Assistant2FeatureFlag, _>({
             |is_assistant2_enabled, _view, cx| {
-                if is_assistant2_enabled {
-                    // Assistant2 enabled, nothing to do for Assistant1.
-                } else {
-                    let workspace = cx.view().clone();
-                    InlineAssistant::update_global(cx, |inline_assistant, cx| {
-                        inline_assistant.register_workspace(&workspace, cx)
-                    })
-                }
+                InlineAssistant::update_global(cx, |inline_assistant, _cx| {
+                    inline_assistant.is_assistant2_enabled = is_assistant2_enabled;
+                });
             }
         })
         .detach();
@@ -102,6 +104,7 @@ pub struct InlineAssistant {
     prompt_builder: Arc<PromptBuilder>,
     telemetry: Arc<Telemetry>,
     fs: Arc<dyn Fs>,
+    is_assistant2_enabled: bool,
 }
 
 impl Global for InlineAssistant {}
@@ -123,6 +126,7 @@ impl InlineAssistant {
             prompt_builder,
             telemetry,
             fs,
+            is_assistant2_enabled: false,
         }
     }
 
@@ -183,15 +187,22 @@ impl InlineAssistant {
         item: &dyn ItemHandle,
         cx: &mut WindowContext,
     ) {
+        let is_assistant2_enabled = self.is_assistant2_enabled;
+
         if let Some(editor) = item.act_as::<Editor>(cx) {
             editor.update(cx, |editor, cx| {
-                editor.push_code_action_provider(
-                    Rc::new(AssistantCodeActionProvider {
-                        editor: cx.view().downgrade(),
-                        workspace: workspace.downgrade(),
-                    }),
-                    cx,
-                );
+                if is_assistant2_enabled {
+                    editor
+                        .remove_code_action_provider(ASSISTANT_CODE_ACTION_PROVIDER_ID.into(), cx);
+                } else {
+                    editor.add_code_action_provider(
+                        Rc::new(AssistantCodeActionProvider {
+                            editor: cx.view().downgrade(),
+                            workspace: workspace.downgrade(),
+                        }),
+                        cx,
+                    );
+                }
             });
         }
     }
@@ -1195,6 +1206,7 @@ impl InlineAssistant {
                     editor.set_show_wrap_guides(false, cx);
                     editor.set_show_gutter(false, cx);
                     editor.scroll_manager.set_forbid_vertical_scroll(true);
+                    editor.set_show_scrollbars(false, cx);
                     editor.set_read_only(true);
                     editor.set_show_inline_completions(Some(false), cx);
                     editor.highlight_rows::<DeletedLines>(
@@ -3437,7 +3449,13 @@ struct AssistantCodeActionProvider {
     workspace: WeakView<Workspace>,
 }
 
+const ASSISTANT_CODE_ACTION_PROVIDER_ID: &str = "assistant";
+
 impl CodeActionProvider for AssistantCodeActionProvider {
+    fn id(&self) -> Arc<str> {
+        ASSISTANT_CODE_ACTION_PROVIDER_ID.into()
+    }
+
     fn code_actions(
         &self,
         buffer: &Model<Buffer>,

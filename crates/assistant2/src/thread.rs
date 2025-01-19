@@ -132,6 +132,10 @@ impl Thread {
         self.messages.iter()
     }
 
+    pub fn is_streaming(&self) -> bool {
+        !self.pending_completions.is_empty()
+    }
+
     pub fn tools(&self) -> &Arc<ToolWorkingSet> {
         &self.tools
     }
@@ -357,7 +361,7 @@ impl Thread {
             let result = stream_completion.await;
 
             thread
-                .update(&mut cx, |_thread, cx| match result.as_ref() {
+                .update(&mut cx, |thread, cx| match result.as_ref() {
                     Ok(stop_reason) => match stop_reason {
                         StopReason::ToolUse => {
                             cx.emit(ThreadEvent::UsePendingTools);
@@ -380,6 +384,8 @@ impl Thread {
                                 SharedString::from(error_message.clone()),
                             )));
                         }
+
+                        thread.cancel_last_completion();
                     }
                 })
                 .ok();
@@ -500,6 +506,17 @@ impl Thread {
             tool_use.status = PendingToolUseStatus::Running {
                 _task: insert_output_task.shared(),
             };
+        }
+    }
+
+    /// Cancels the last pending completion, if there are any pending.
+    ///
+    /// Returns whether a completion was canceled.
+    pub fn cancel_last_completion(&mut self) -> bool {
+        if let Some(_last_completion) = self.pending_completions.pop() {
+            true
+        } else {
+            false
         }
     }
 }

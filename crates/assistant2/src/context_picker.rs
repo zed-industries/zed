@@ -14,7 +14,7 @@ use gpui::{
 use project::ProjectPath;
 use thread_context_picker::{render_thread_context_entry, ThreadContextEntry};
 use ui::{prelude::*, ContextMenu, ContextMenuEntry, ContextMenuItem};
-use workspace::Workspace;
+use workspace::{notifications::NotifyResultExt, Workspace};
 
 use crate::context::ContextKind;
 use crate::context_picker::directory_context_picker::DirectoryContextPicker;
@@ -65,14 +65,15 @@ impl ContextPicker {
         }
     }
 
-    pub fn reset_mode(&mut self, cx: &mut ViewContext<Self>) {
-        self.mode = ContextPickerMode::Default(self.build(cx));
+    pub fn init(&mut self, cx: &mut ViewContext<Self>) {
+        self.mode = ContextPickerMode::Default(self.build_menu(cx));
+        cx.notify();
     }
 
-    fn build(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
+    fn build_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
         let context_picker = cx.view().clone();
 
-        ContextMenu::build(cx, move |menu, cx| {
+        let menu = ContextMenu::build(cx, move |menu, cx| {
             let kind_entry = |kind: &'static ContextKind| {
                 let context_picker = context_picker.clone();
 
@@ -90,11 +91,24 @@ impl ContextPicker {
                 .enumerate()
                 .map(|(ix, entry)| self.recent_menu_item(context_picker.clone(), ix, entry));
 
-            menu.when(has_recent, |menu| menu.label("Recent"))
+            let menu = menu
+                .when(has_recent, |menu| menu.label("Recent"))
                 .extend(recent_entries)
                 .when(has_recent, |menu| menu.separator())
-                .extend(ContextKind::all().into_iter().map(kind_entry))
+                .extend(ContextKind::all().into_iter().map(kind_entry));
+
+            match self.confirm_behavior {
+                ConfirmBehavior::KeepOpen => menu.keep_open_on_confirm(),
+                ConfirmBehavior::Close => menu,
+            }
+        });
+
+        cx.subscribe(&menu, move |_, _, _: &DismissEvent, cx| {
+            cx.emit(DismissEvent);
         })
+        .detach();
+
+        menu
     }
 
     fn select_kind(&mut self, kind: ContextKind, cx: &mut ViewContext<Self>) {
@@ -213,25 +227,8 @@ impl ContextPicker {
             context_store.add_file_from_path(project_path.clone(), cx)
         });
 
-        let workspace = self.workspace.clone();
-
-        cx.spawn(|_, mut cx| async move {
-            match task.await {
-                Ok(_) => {
-                    return anyhow::Ok(());
-                }
-                Err(err) => {
-                    let Some(workspace) = workspace.upgrade() else {
-                        return anyhow::Ok(());
-                    };
-
-                    workspace.update(&mut cx, |workspace, cx| {
-                        workspace.show_error(&err, cx);
-                    })
-                }
-            }
-        })
-        .detach_and_log_err(cx);
+        cx.spawn(|_, mut cx| async move { task.await.notify_async_err(&mut cx) })
+            .detach();
 
         cx.notify();
     }

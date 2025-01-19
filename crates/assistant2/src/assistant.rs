@@ -1,7 +1,6 @@
 mod active_thread;
 mod assistant_model_selector;
 mod assistant_panel;
-mod assistant_settings;
 mod buffer_codegen;
 mod context;
 mod context_picker;
@@ -10,8 +9,6 @@ mod context_strip;
 mod inline_assistant;
 mod inline_prompt_editor;
 mod message_editor;
-mod prompts;
-mod streaming_diff;
 mod terminal_codegen;
 mod terminal_inline_assistant;
 mod thread;
@@ -21,17 +18,17 @@ mod ui;
 
 use std::sync::Arc;
 
+use assistant_settings::AssistantSettings;
 use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
 use gpui::{actions, AppContext};
-use prompts::PromptLoadingParams;
+use prompt_library::{PromptBuilder, PromptLoadingParams};
 use settings::Settings as _;
 use util::ResultExt;
 
 pub use crate::assistant_panel::AssistantPanel;
-use crate::assistant_settings::AssistantSettings;
 pub use crate::inline_assistant::InlineAssistant;
 
 actions!(
@@ -43,9 +40,17 @@ actions!(
         ToggleModelSelector,
         RemoveAllContext,
         OpenHistory,
+        RemoveSelectedThread,
         Chat,
+        ChatMode,
         CycleNextInlineAssist,
-        CyclePreviousInlineAssist
+        CyclePreviousInlineAssist,
+        FocusUp,
+        FocusDown,
+        FocusLeft,
+        FocusRight,
+        RemoveFocusedContext,
+        AcceptSuggestedContext
     ]
 );
 
@@ -56,7 +61,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, stdout_is_a_pty: bool, cx: &mu
     AssistantSettings::register(cx);
     assistant_panel::init(cx);
 
-    let prompt_builder = prompts::PromptBuilder::new(Some(PromptLoadingParams {
+    let prompt_builder = PromptBuilder::new(Some(PromptLoadingParams {
         fs: fs.clone(),
         repo_path: stdout_is_a_pty
             .then(|| std::env::current_dir().log_err())
@@ -65,7 +70,7 @@ pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, stdout_is_a_pty: bool, cx: &mu
     }))
     .log_err()
     .map(Arc::new)
-    .unwrap_or_else(|| Arc::new(prompts::PromptBuilder::new(None).unwrap()));
+    .unwrap_or_else(|| Arc::new(PromptBuilder::new(None).unwrap()));
     inline_assistant::init(
         fs.clone(),
         prompt_builder.clone(),

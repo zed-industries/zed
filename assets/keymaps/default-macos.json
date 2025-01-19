@@ -37,6 +37,7 @@
       "cmd-h": "zed::Hide",
       "alt-cmd-h": "zed::HideOthers",
       "cmd-m": "zed::Minimize",
+      "fn-f": "zed::ToggleFullScreen",
       "ctrl-cmd-f": "zed::ToggleFullScreen"
     }
   },
@@ -228,6 +229,7 @@
       "cmd-shift-h": "assistant2::OpenHistory",
       "cmd-alt-/": "assistant2::ToggleModelSelector",
       "cmd-shift-a": "assistant2::ToggleContextPicker",
+      "cmd-e": "assistant2::ChatMode",
       "cmd-alt-e": "assistant2::RemoveAllContext"
     }
   },
@@ -236,6 +238,24 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "assistant2::Chat"
+    }
+  },
+  {
+    "context": "ContextStrip",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "assistant2::FocusUp",
+      "right": "assistant2::FocusRight",
+      "left": "assistant2::FocusLeft",
+      "down": "assistant2::FocusDown",
+      "backspace": "assistant2::RemoveFocusedContext",
+      "enter": "assistant2::AcceptSuggestedContext"
+    }
+  },
+  {
+    "context": "ThreadHistory",
+    "bindings": {
+      "backspace": "assistant2::RemoveSelectedThread"
     }
   },
   {
@@ -401,6 +421,8 @@
       "cmd-k cmd-9": ["editor::FoldAtLevel", { "level": 9 }],
       "cmd-k cmd-0": "editor::FoldAll",
       "cmd-k cmd-j": "editor::UnfoldAll",
+      // Using `ctrl-space` in Zed requires disabling the macOS global shortcut.
+      // System Preferences->Keyboard->Keyboard Shortcuts->Input Sources->Select the previous input source (uncheck)
       "ctrl-space": "editor::ShowCompletions",
       "cmd-.": "editor::ToggleCodeActions",
       "cmd-k r": "editor::RevealInFileManager",
@@ -435,7 +457,6 @@
       "ctrl-0": "pane::ActivateLastItem",
       "ctrl--": "pane::GoBack",
       "ctrl-shift--": "pane::GoForward",
-      "cmd-shift-t": "pane::ReopenClosedItem",
       "cmd-shift-f": "pane::DeploySearch"
     }
   },
@@ -469,6 +490,7 @@
       "alt-cmd-y": "workspace::CloseAllDocks",
       "cmd-shift-f": "pane::DeploySearch",
       "cmd-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
+      "cmd-shift-t": "pane::ReopenClosedItem",
       "cmd-k cmd-s": "zed::OpenKeymap",
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-t": "project_symbols::Toggle",
@@ -503,7 +525,7 @@
       "cmd-alt-r": "task::Rerun",
       "ctrl-alt-shift-r": ["task::Spawn", { "reveal_target": "center" }]
       // also possible to spawn tasks by name:
-      // "foo-bar": ["task_name::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
+      // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
     }
   },
   // Bindings from Sublime Text
@@ -688,6 +710,38 @@
     "bindings": {
       "left": "variable_list::CollapseSelectedEntry",
       "right": "variable_list::ExpandSelectedEntry"
+    }
+  },
+  {
+    "context": "GitPanel && !CommitEditor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "git_panel::Close"
+    }
+  },
+  {
+    "context": "GitPanel && ChangesList",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "menu::SelectPrev",
+      "down": "menu::SelectNext",
+      "cmd-up": "menu::SelectFirst",
+      "cmd-down": "menu::SelectLast",
+      "enter": "menu::Confirm",
+      "space": "git::ToggleStaged",
+      "cmd-shift-space": "git::StageAll",
+      "ctrl-shift-space": "git::UnstageAll",
+      "alt-down": "git_panel::FocusEditor"
+    }
+  },
+  {
+    "context": "GitPanel && CommitEditor > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "alt-up": "git_panel::FocusChanges",
+      "escape": "git_panel::FocusChanges",
+      "cmd-enter": "git::CommitChanges",
+      "cmd-alt-enter": "git::CommitAllChanges"
     }
   },
   {

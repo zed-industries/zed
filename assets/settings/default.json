@@ -503,7 +503,17 @@
     // Where to the git panel. Can be 'left' or 'right'.
     "dock": "left",
     // Default width of the git panel.
-    "default_width": 360
+    "default_width": 360,
+    // Style of the git status indicator in the panel.
+    //
+    // Default: icon
+    "status_style": "icon",
+    "scrollbar": {
+      // When to show the scrollbar in the git panel.
+      //
+      // Default: inherits editor scrollbar settings
+      "show": null
+    }
   },
   "message_editor": {
     // Whether to automatically replace emoji shortcodes with emoji characters.
@@ -898,6 +908,23 @@
       // The shell running in the terminal needs to be configured to emit the title.
       // Example: `echo -e "\e]2;New Title\007";`
       "breadcrumbs": true
+    },
+    /// Scrollbar-related settings
+    "scrollbar": {
+      /// When to show the scrollbar in the terminal.
+      /// This setting can take four values:
+      ///
+      /// 1. null (default): Inherit editor settings
+      /// 2. Show the scrollbar if there's important information or
+      ///    follow the system's configured behavior (default):
+      ///   "auto"
+      /// 3. Match the system's configured behavior:
+      ///    "system"
+      /// 4. Always show the scrollbar:
+      ///    "always"
+      /// 5. Never show the scrollbar:
+      ///    "never"
+      "show": null
     }
     // Set the terminal's font size. If this option is not included,
     // the terminal will default to matching the buffer's font size.
@@ -974,11 +1001,17 @@
     },
     "C": {
       "format_on_save": "off",
-      "use_on_type_format": false
+      "use_on_type_format": false,
+      "prettier": {
+        "allowed": false
+      }
     },
     "C++": {
       "format_on_save": "off",
-      "use_on_type_format": false
+      "use_on_type_format": false,
+      "prettier": {
+        "allowed": false
+      }
     },
     "CSS": {
       "prettier": {
@@ -1130,6 +1163,9 @@
     "openai": {
       "version": "1",
       "api_url": "https://api.openai.com/v1"
+    },
+    "lmstudio": {
+      "api_url": "http://localhost:1234/api/v0"
     }
   },
   // Zed's Prettier integration settings.

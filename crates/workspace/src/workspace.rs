@@ -61,10 +61,9 @@ use persistence::{
     SerializedWindowBounds, DB,
 };
 use postage::stream::Stream;
-use project::{
-    DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
-};
+use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree};
 use remote::{ssh_session::ConnectionIdentifier, SshClientDelegate, SshConnectionOptions};
+use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
 use settings::Settings;
@@ -118,9 +117,6 @@ static ZED_WINDOW_POSITION: LazyLock<Option<Point<Pixels>>> = LazyLock::new(|| {
         .as_deref()
         .and_then(parse_pixel_position_env_var)
 });
-
-#[derive(Clone, PartialEq)]
-pub struct RemoveWorktreeFromProject(pub WorktreeId);
 
 actions!(assistant, [ShowConfiguration]);
 
@@ -183,64 +179,64 @@ pub struct OpenPaths {
     pub paths: Vec<PathBuf>,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct ActivatePane(pub usize);
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct ActivatePaneInDirection(pub SplitDirection);
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct SwapPaneInDirection(pub SplitDirection);
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct MoveItemToPane {
     pub destination: usize,
     #[serde(default = "default_true")]
     pub focus: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct MoveItemToPaneInDirection {
     pub direction: SplitDirection,
     #[serde(default = "default_true")]
     pub focus: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveAll {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Save {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseAllItemsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseInactiveTabsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct SendKeystrokes(pub String);
 
-#[derive(Clone, Deserialize, PartialEq, Default)]
+#[derive(Clone, Deserialize, PartialEq, Default, JsonSchema)]
 pub struct Reload {
     pub binary_path: Option<PathBuf>,
 }
 
 action_as!(project_symbols, ToggleProjectSymbols as Toggle);
 
-#[derive(Default, PartialEq, Eq, Clone, serde::Deserialize)]
+#[derive(Default, PartialEq, Eq, Clone, Deserialize, JsonSchema)]
 pub struct ToggleFileFinder {
     #[serde(default)]
     pub separate_history: bool,
@@ -317,7 +313,7 @@ impl PartialEq for Toast {
     }
 }
 
-#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Default, Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct OpenTerminal {
     pub working_directory: PathBuf,
 }
@@ -2321,6 +2317,19 @@ impl Workspace {
         }
     }
 
+    pub fn is_dock_at_position_open(
+        &self,
+        position: DockPosition,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        let dock = match position {
+            DockPosition::Left => &self.left_dock,
+            DockPosition::Bottom => &self.bottom_dock,
+            DockPosition::Right => &self.right_dock,
+        };
+        dock.read(cx).is_open()
+    }
+
     pub fn toggle_dock(&mut self, dock_side: DockPosition, cx: &mut ViewContext<Self>) {
         let dock = match dock_side {
             DockPosition::Left => &self.left_dock,
@@ -4094,7 +4103,7 @@ impl Workspace {
         }
     }
 
-    fn active_call(&self) -> Option<&Model<ActiveCall>> {
+    pub fn active_call(&self) -> Option<&Model<ActiveCall>> {
         self.active_call.as_ref().map(|(call, _)| call)
     }
 

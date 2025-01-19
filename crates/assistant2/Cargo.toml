@@ -1,8 +1,8 @@
 [package]
 name = "assistant2"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -12,10 +12,15 @@ workspace = true
 path = "src/assistant.rs"
 doctest = false
 
+[features]
+test-support = [
+    "gpui/test-support",
+    "language/test-support",
+]
+
 [dependencies]
-anthropic = { workspace = true, features = ["schemars"] }
 anyhow.workspace = true
-assets.workspace = true
+assistant_settings.workspace = true
 assistant_tool.workspace = true
 async-watch.workspace = true
 chrono.workspace = true
@@ -32,7 +37,6 @@ fs.workspace = true
 futures.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
-handlebars.workspace = true
 html_to_markdown.workspace = true
 http_client.workspace = true
 itertools.workspace = true
@@ -45,22 +49,18 @@ lsp.workspace = true
 markdown.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
-ollama = { workspace = true, features = ["schemars"] }
-open_ai = { workspace = true, features = ["schemars"] }
-ordered-float.workspace = true
 parking_lot.workspace = true
-paths.workspace = true
 picker.workspace = true
 project.workspace = true
+prompt_library.workspace = true
 proto.workspace = true
 rope.workspace = true
-schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-serde_json_lenient.workspace = true
 settings.workspace = true
 similar.workspace = true
 smol.workspace = true
+streaming_diff.workspace = true
 telemetry_events.workspace = true
 terminal.workspace = true
 terminal_view.workspace = true

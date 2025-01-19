@@ -112,6 +112,7 @@ pub struct ContextMenu {
     delayed: bool,
     clicked: bool,
     _on_blur_subscription: Subscription,
+    keep_open_on_confirm: bool,
 }
 
 impl FocusableView for ContextMenu {
@@ -144,6 +145,7 @@ impl ContextMenu {
                     delayed: false,
                     clicked: false,
                     _on_blur_subscription,
+                    keep_open_on_confirm: true,
                 },
                 cx,
             )
@@ -304,6 +306,11 @@ impl ContextMenu {
         self
     }
 
+    pub fn keep_open_on_confirm(mut self) -> Self {
+        self.keep_open_on_confirm = true;
+        self
+    }
+
     pub fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
         let context = self.action_context.as_ref();
         if let Some(
@@ -318,7 +325,9 @@ impl ContextMenu {
             (handler)(context, cx)
         }
 
-        cx.emit(DismissEvent);
+        if !self.keep_open_on_confirm {
+            cx.emit(DismissEvent);
+        }
     }
 
     pub fn cancel(&mut self, _: &menu::Cancel, cx: &mut ViewContext<Self>) {

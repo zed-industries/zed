@@ -212,9 +212,18 @@ impl LspAdapter for TypeScriptLspAdapter {
             _ => None,
         }?;
 
-        let text = match &item.detail {
-            Some(detail) => format!("{} {}", item.label, detail),
-            None => item.label.clone(),
+        let one_line = |s: &str| s.replace("    ", "").replace('\n', " ");
+
+        let text = if let Some(description) = item
+            .label_details
+            .as_ref()
+            .and_then(|label_details| label_details.description.as_ref())
+        {
+            format!("{} {}", item.label, one_line(description))
+        } else if let Some(detail) = &item.detail {
+            format!("{} {}", item.label, one_line(detail))
+        } else {
+            item.label.clone()
         };
 
         Some(language::CodeLabel {

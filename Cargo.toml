@@ -6,7 +6,9 @@ members = [
     "crates/assets",
     "crates/assistant",
     "crates/assistant2",
+    "crates/assistant_settings",
     "crates/assistant_slash_command",
+    "crates/assistant_slash_commands",
     "crates/assistant_tool",
     "crates/assistant_tools",
     "crates/audio",
@@ -72,6 +74,7 @@ members = [
     "crates/livekit_client",
     "crates/livekit_client_macos",
     "crates/livekit_server",
+    "crates/lmstudio",
     "crates/lsp",
     "crates/markdown",
     "crates/markdown_preview",
@@ -90,6 +93,7 @@ members = [
     "crates/project",
     "crates/project_panel",
     "crates/project_symbols",
+    "crates/prompt_library",
     "crates/proto",
     "crates/recent_projects",
     "crates/refineable",
@@ -115,6 +119,7 @@ members = [
     "crates/sqlez_macros",
     "crates/story",
     "crates/storybook",
+    "crates/streaming_diff",
     "crates/sum_tree",
     "crates/supermaven",
     "crates/supermaven_api",
@@ -185,6 +190,10 @@ members = [
 ]
 default-members = ["crates/zed"]
 
+[workspace.package]
+publish = false
+edition = "2021"
+
 [workspace.dependencies]
 
 #
@@ -197,7 +206,9 @@ anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 assistant2 = { path = "crates/assistant2" }
+assistant_settings = { path = "crates/assistant_settings" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
+assistant_slash_commands = { path = "crates/assistant_slash_commands" }
 assistant_tool = { path = "crates/assistant_tool" }
 assistant_tools = { path = "crates/assistant_tools" }
 audio = { path = "crates/audio" }
@@ -263,6 +274,7 @@ languages = { path = "crates/languages" }
 livekit_client = { path = "crates/livekit_client" }
 livekit_client_macos = { path = "crates/livekit_client_macos" }
 livekit_server = { path = "crates/livekit_server" }
+lmstudio = { path = "crates/lmstudio" }
 lsp = { path = "crates/lsp" }
 markdown = { path = "crates/markdown" }
 markdown_preview = { path = "crates/markdown_preview" }
@@ -283,6 +295,7 @@ prettier = { path = "crates/prettier" }
 project = { path = "crates/project" }
 project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }
+prompt_library = { path = "crates/prompt_library" }
 proto = { path = "crates/proto" }
 recent_projects = { path = "crates/recent_projects" }
 refineable = { path = "crates/refineable" }
@@ -307,6 +320,7 @@ sqlez = { path = "crates/sqlez" }
 sqlez_macros = { path = "crates/sqlez_macros" }
 story = { path = "crates/story" }
 storybook = { path = "crates/storybook" }
+streaming_diff = { path = "crates/streaming_diff" }
 sum_tree = { path = "crates/sum_tree" }
 supermaven = { path = "crates/supermaven" }
 supermaven_api = { path = "crates/supermaven_api" }
@@ -344,7 +358,8 @@ zeta = { path = "crates/zeta" }
 #
 
 aho-corasick = "1.1"
-alacritty_terminal = "0.24"
+# TODO(#18342): Update to version 0.25 from crates.io when it is released.
+alacritty_terminal = { git = "https://github.com/alacritty/alacritty.git", rev = "5e78d20c709cb1ab8d44ca7a8702cc26d779227c" }
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
@@ -500,7 +515,7 @@ tree-sitter-css = "0.23"
 tree-sitter-elixir = "0.3"
 tree-sitter-embedded-template = "0.23.0"
 tree-sitter-go = "0.23"
-tree-sitter-go-mod = { git = "https://github.com/zed-industries/tree-sitter-go-mod", rev = "a9aea5e358cde4d0f8ff20b7bc4fa311e359c7ca", package = "tree-sitter-gomod" }
+tree-sitter-go-mod = { git = "https://github.com/camdencheek/tree-sitter-go-mod", rev = "6efb59652d30e0e9cd5f3b3a669afd6f1a926d3c", package = "tree-sitter-gomod" }
 tree-sitter-gowork = { git = "https://github.com/zed-industries/tree-sitter-go-work", rev = "acb0617bf7f4fda02c6217676cc64acb89536dc7" }
 tree-sitter-heex = { git = "https://github.com/zed-industries/tree-sitter-heex", rev = "1dd45142fbb05562e35b2040c6129c9bca346592" }
 tree-sitter-diff = "0.1.0"
@@ -622,6 +637,7 @@ image_viewer = { codegen-units = 1 }
 inline_completion_button = { codegen-units = 1 }
 install_cli = { codegen-units = 1 }
 journal = { codegen-units = 1 }
+lmstudio = { codegen-units = 1 }
 menu = { codegen-units = 1 }
 notifications = { codegen-units = 1 }
 ollama = { codegen-units = 1 }

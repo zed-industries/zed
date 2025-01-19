@@ -1,8 +1,9 @@
 use crate::{
-    ActiveTooltip, AnyTooltip, AnyView, Bounds, DispatchPhase, Element, ElementId, GlobalElementId,
-    HighlightStyle, Hitbox, IntoElement, LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    Pixels, Point, SharedString, Size, TextRun, TextStyle, Truncate, WhiteSpace, WindowContext,
-    WrappedLine, TOOLTIP_DELAY,
+    register_tooltip_mouse_handlers, set_tooltip_on_window, ActiveTooltip, AnyView, Bounds,
+    DispatchPhase, Element, ElementId, GlobalElementId, HighlightStyle, Hitbox, IntoElement,
+    LayoutId, MouseDownEvent, MouseMoveEvent, MouseUpEvent, Pixels, Point, SharedString, Size,
+    TextRun, TextStyle, TooltipId, Truncate, WhiteSpace, WindowContext, WrappedLine,
+    WrappedLineLayout,
 };
 use anyhow::anyhow;
 use parking_lot::{Mutex, MutexGuard};
@@ -443,6 +444,36 @@ impl TextLayout {
         None
     }
 
+    /// Retrieve the layout for the line containing the given byte index.
+    pub fn line_layout_for_index(&self, index: usize) -> Option<Arc<WrappedLineLayout>> {
+        let element_state = self.lock();
+        let element_state = element_state
+            .as_ref()
+            .expect("measurement has not been performed");
+        let bounds = element_state
+            .bounds
+            .expect("prepaint has not been performed");
+        let line_height = element_state.line_height;
+
+        let mut line_origin = bounds.origin;
+        let mut line_start_ix = 0;
+
+        for line in &element_state.lines {
+            let line_end_ix = line_start_ix + line.len();
+            if index < line_start_ix {
+                break;
+            } else if index > line_end_ix {
+                line_origin.y += line.size(line_height).height;
+                line_start_ix = line_end_ix + 1;
+                continue;
+            } else {
+                return Some(line.layout.clone());
+            }
+        }
+
+        None
+    }
+
     /// The bounds of this layout.
     pub fn bounds(&self) -> Bounds<Pixels> {
         self.0.lock().as_ref().unwrap().bounds.unwrap()
@@ -475,6 +506,7 @@ pub struct InteractiveText {
         Option<Box<dyn Fn(&[Range<usize>], InteractiveTextClickEvent, &mut WindowContext)>>,
     hover_listener: Option<Box<dyn Fn(Option<usize>, MouseMoveEvent, &mut WindowContext)>>,
     tooltip_builder: Option<Rc<dyn Fn(usize, &mut WindowContext) -> Option<AnyView>>>,
+    tooltip_id: Option<TooltipId>,
     clickable_ranges: Vec<Range<usize>>,
 }
 
@@ -501,6 +533,7 @@ impl InteractiveText {
             click_listener: None,
             hover_listener: None,
             tooltip_builder: None,
+            tooltip_id: None,
             clickable_ranges: Vec::new(),
         }
     }
@@ -570,15 +603,16 @@ impl Element for InteractiveText {
         cx.with_optional_element_state::<InteractiveTextState, _>(
             global_id,
             |interactive_state, cx| {
-                let interactive_state = interactive_state
+                let mut interactive_state = interactive_state
                     .map(|interactive_state| interactive_state.unwrap_or_default());
 
-                if let Some(interactive_state) = interactive_state.as_ref() {
-                    if let Some(active_tooltip) = interactive_state.active_tooltip.borrow().as_ref()
-                    {
-                        if let Some(tooltip) = active_tooltip.tooltip.clone() {
-                            cx.set_tooltip(tooltip);
-                        }
+                if let Some(interactive_state) = interactive_state.as_mut() {
+                    if self.tooltip_builder.is_some() {
+                        self.tooltip_id =
+                            set_tooltip_on_window(&interactive_state.active_tooltip, cx);
+                    } else {
+                        // If there is no longer a tooltip builder, remove the active tooltip.
+                        interactive_state.active_tooltip.take();
                     }
                 }
 
@@ -674,64 +708,37 @@ impl Element for InteractiveText {
                 });
 
                 if let Some(tooltip_builder) = self.tooltip_builder.clone() {
-                    let hitbox = hitbox.clone();
-                    let source_bounds = hitbox.bounds;
                     let active_tooltip = interactive_state.active_tooltip.clone();
                     let pending_mouse_down = interactive_state.mouse_down_index.clone();
-                    let text_layout = text_layout.clone();
-
-                    cx.on_mouse_event(move |event: &MouseMoveEvent, phase, cx| {
-                        let position = text_layout.index_for_position(event.position).ok();
-                        let is_hovered = position.is_some()
-                            && hitbox.is_hovered(cx)
-                            && pending_mouse_down.get().is_none();
-                        if !is_hovered {
-                            active_tooltip.take();
-                            return;
-                        }
-                        let position = position.unwrap();
-
-                        if phase != DispatchPhase::Bubble {
-                            return;
-                        }
-
-                        if active_tooltip.borrow().is_none() {
-                            let task = cx.spawn({
-                                let active_tooltip = active_tooltip.clone();
-                                let tooltip_builder = tooltip_builder.clone();
-
-                                move |mut cx| async move {
-                                    cx.background_executor().timer(TOOLTIP_DELAY).await;
-                                    cx.update(|cx| {
-                                        let new_tooltip =
-                                            tooltip_builder(position, cx).map(|tooltip| {
-                                                ActiveTooltip {
-                                                    tooltip: Some(AnyTooltip {
-                                                        view: tooltip,
-                                                        mouse_position: cx.mouse_position(),
-                                                        hoverable: true,
-                                                        origin_bounds: source_bounds,
-                                                    }),
-                                                    _task: None,
-                                                }
-                                            });
-                                        *active_tooltip.borrow_mut() = new_tooltip;
-                                        cx.refresh();
-                                    })
-                                    .ok();
-                                }
-                            });
-                            *active_tooltip.borrow_mut() = Some(ActiveTooltip {
-                                tooltip: None,
-                                _task: Some(task),
-                            });
+                    let build_tooltip = Rc::new({
+                        let tooltip_is_hoverable = false;
+                        let text_layout = text_layout.clone();
+                        move |cx: &mut WindowContext| {
+                            text_layout
+                                .index_for_position(cx.mouse_position())
+                                .ok()
+                                .and_then(|position| tooltip_builder(position, cx))
+                                .map(|view| (view, tooltip_is_hoverable))
                         }
                     });
-
-                    let active_tooltip = interactive_state.active_tooltip.clone();
-                    cx.on_mouse_event(move |_: &MouseDownEvent, _, _| {
-                        active_tooltip.take();
+                    // Use bounds instead of testing hitbox since check_is_hovered is also
+                    // called during prepaint.
+                    let source_bounds = hitbox.bounds;
+                    let check_is_hovered = Rc::new({
+                        let text_layout = text_layout.clone();
+                        move |cx: &WindowContext| {
+                            text_layout.index_for_position(cx.mouse_position()).is_ok()
+                                && source_bounds.contains(&cx.mouse_position())
+                                && pending_mouse_down.get().is_none()
+                        }
                     });
+                    register_tooltip_mouse_handlers(
+                        &active_tooltip,
+                        self.tooltip_id,
+                        build_tooltip,
+                        check_is_hovered,
+                        cx,
+                    );
                 }
 
                 self.text.paint(None, bounds, &mut (), &mut (), cx);

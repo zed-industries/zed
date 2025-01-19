@@ -203,7 +203,7 @@ pub enum InlineCompletionProvider {
     #[default]
     Copilot,
     Supermaven,
-    Zeta,
+    Zed,
 }
 
 /// The settings for inline completions, such as [GitHub Copilot](https://github.com/features/copilot)

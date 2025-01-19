@@ -2,6 +2,7 @@
   "core_labels": [
     "bug",
     "design",
+    "discussion",
     "documentation",
     "duplicate",
     "enhancement",
