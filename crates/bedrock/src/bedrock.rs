@@ -11,6 +11,9 @@ use thiserror::Error;
 
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
+use aws_sdk_bedrockruntime::types::{ContentBlockStopEvent, ConverseStreamOutput};
+use aws_sdk_bedrockruntime::types::ConverseStreamOutput::ContentBlockStop;
+use aws_sdk_bedrockruntime::types::error::ConverseStreamOutputError;
 pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStreamingRequest;
 pub use bedrock::types::ContentBlock as BedrockRequestContent;
 pub use bedrock::types::ConversationRole as BedrockRole;
@@ -45,7 +48,7 @@ pub async fn complete(
 pub async fn stream_completion(
     client: &bedrock::Client,
     request: Request,
-) -> Result<BoxStream<'static, Result<Option<BedrockStreamingResponse>, BedrockError>>, BedrockError> {
+) -> Result<BoxStream<'static, BedrockStreamingResponse>, BedrockError> {
     let response = bedrock::Client::converse_stream(client)
         .model_id(request.model)
         .set_messages(request.messages.into())
@@ -55,15 +58,13 @@ pub async fn stream_completion(
     match response {
         Ok(mut output) => {
             let stream = stream::unfold(output.stream, |mut stream| async move {
+                // stream unfold expects Option<(_, EventReceiver)>
                 match stream.recv().await {
-                    Ok(Some(output)) => Some((Ok(Some(output)), stream)),
-                    Ok(None) => Some((Ok(None), stream)),
-                    Err(e) => Some((
-                        Err(BedrockError::ClientError(anyhow!(
-                            "Failed to receive response from Bedrock"
-                        ))),
-                        stream,
-                    )),
+                    Ok(Some(output)) => Some((output, stream)),
+                    Ok(None) => Some((ContentBlockStop(ContentBlockStopEvent::builder().build().unwrap()), stream)),
+                    _ => {
+                        todo!()
+                    }
                 }
             })
             .boxed();

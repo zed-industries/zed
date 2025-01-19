@@ -1,3 +1,4 @@
+use std::os::macos::raw::stat;
 use crate::AllLanguageModelSettings;
 use anyhow::{anyhow, Context as _, Result};
 use aws_config::Region;
@@ -256,10 +257,11 @@ impl BedrockModel {
         _: &AsyncAppContext,
     ) -> BoxFuture<
         'static,
-        Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>,
+        Result<BoxStream<'static, BedrockStreamingResponse>, BedrockError>,
     > {
         async move {
-            todo!()
+            let request = bedrock::stream_completion(&self.runtime_client, request);
+            request.await.map_err(|err| err)
         }
         .boxed()
     }
@@ -315,7 +317,7 @@ impl LanguageModel for BedrockModel {
 
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request.await.map_err(|err| anyhow!(err))?;
+            let response = request.await.map_err(|e| anyhow!(e));
             Ok(map_to_language_model_completion_events(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()
@@ -329,7 +331,7 @@ impl LanguageModel for BedrockModel {
         schema: Value,
         cx: &AsyncAppContext,
     ) -> BoxFuture<'static, Result<BoxStream<'static, Result<String>>>> {
-        Ok(BoxStream::new(Ok("unimplemented".to_string()).boxed())).boxed()
+        todo!()
     }
 
     fn cache_configuration(&self) -> Option<LanguageModelCacheConfiguration> {
@@ -449,10 +451,7 @@ pub fn map_to_language_model_completion_events(
                     },
                     Err(err) => return Some((Some(Err(anyhow!(err))), state)),
                 }
-
-
             }
-
             None
         }
     ).filter_map(|event| async move { event })
