@@ -765,6 +765,7 @@ message Symbol {
     PointUtf16 start = 7;
     PointUtf16 end = 8;
     bytes signature = 9;
+    uint64 language_server_id = 10;
 }
 
 message OpenBufferForSymbol {
