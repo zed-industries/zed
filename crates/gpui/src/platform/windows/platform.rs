@@ -184,6 +184,7 @@ impl WindowsPlatform {
         }
     }
 
+    // Returns true if the app should quit.
     fn handle_events(&self) -> bool {
         let mut msg = MSG::default();
         unsafe {
@@ -191,7 +192,7 @@ impl WindowsPlatform {
                 match msg.message {
                     WM_QUIT => return true,
                     WM_GPUI_CLOSE_ONE_WINDOW | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => {
-                        if self.handle_zed_evnets(msg.message, msg.wParam, msg.lParam, &msg) {
+                        if self.handle_gpui_evnets(msg.message, msg.wParam, msg.lParam, &msg) {
                             return true;
                         }
                     }
@@ -207,7 +208,8 @@ impl WindowsPlatform {
         false
     }
 
-    fn handle_zed_evnets(
+    // Returns true if the app should quit.
+    fn handle_gpui_evnets(
         &self,
         message: u32,
         wparam: WPARAM,
