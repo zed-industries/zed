@@ -79,7 +79,8 @@ use std::{
 };
 use text::{Anchor, BufferId, LineEnding, OffsetRangeExt};
 use util::{
-    debug_panic, defer, maybe, merge_json_value_into, post_inc, ResultExt, TryFutureExt as _,
+    debug_panic, defer, maybe, merge_json_value_into, paths::SanitizedPath, post_inc, ResultExt,
+    TryFutureExt as _,
 };
 
 pub use fs::*;
@@ -2546,112 +2547,119 @@ impl LocalLspStore {
             let mut found_host = false;
             for worktree in &worktrees {
                 let glob_is_inside_worktree = worktree.update(cx, |tree, _| {
-                    if let Some(worktree_root_path) = tree.abs_path().to_str() {
-                        let path_to_watch = match &watcher.glob_pattern {
-                            lsp::GlobPattern::String(s) => {
-                                match s.strip_prefix(worktree_root_path) {
-                                    Some(relative) => {
-                                        let pattern = relative
-                                            .strip_prefix(std::path::MAIN_SEPARATOR)
-                                            .unwrap_or(relative)
-                                            .to_owned();
-                                        let literal_prefix = glob_literal_prefix(&pattern);
+                    let worktree_root_path = tree.abs_path();
+                    let path_to_watch = match &watcher.glob_pattern {
+                        lsp::GlobPattern::String(s) => {
+                            let watcher_path = SanitizedPath::from(s);
+                            match watcher_path.as_path().strip_prefix(&worktree_root_path) {
+                                Ok(relative) => {
+                                    let pattern = relative.to_string_lossy().to_string();
+                                    let literal_prefix = glob_literal_prefix(relative).into();
 
-                                        let literal_prefix = Arc::from(PathBuf::from(
-                                            literal_prefix
-                                                .strip_prefix(std::path::MAIN_SEPARATOR)
-                                                .unwrap_or(literal_prefix),
-                                        ));
-                                        PathToWatch::Worktree {
-                                            literal_prefix,
-                                            pattern,
-                                        }
-                                    }
-                                    None => {
-                                        let path = glob_literal_prefix(s);
-                                        let glob = &s[path.len()..];
-                                        let pattern = glob
-                                            .strip_prefix(std::path::MAIN_SEPARATOR)
-                                            .unwrap_or(glob)
-                                            .to_owned();
-                                        let path = if Path::new(path).components().next().is_none()
-                                        {
-                                            Arc::from(Path::new(worktree_root_path))
-                                        } else {
-                                            PathBuf::from(path).into()
-                                        };
-
-                                        PathToWatch::Absolute { path, pattern }
+                                    PathToWatch::Worktree {
+                                        literal_prefix,
+                                        pattern,
                                     }
                                 }
-                            }
-                            lsp::GlobPattern::Relative(rp) => {
-                                let Ok(mut base_uri) = match &rp.base_uri {
-                                    lsp::OneOf::Left(workspace_folder) => &workspace_folder.uri,
-                                    lsp::OneOf::Right(base_uri) => base_uri,
-                                }
-                                .to_file_path() else {
-                                    return false;
-                                };
+                                Err(_) => {
+                                    let path = glob_literal_prefix(watcher_path.as_path());
+                                    let pattern = watcher_path
+                                        .as_path()
+                                        .strip_prefix(&path)
+                                        .map(|p| p.to_string_lossy().to_string())
+                                        .unwrap_or_else(|e| {
+                                            debug_panic!(
+                                                "Failed to strip prefix for string pattern: {}, with prefix: {}, with error: {}",
+                                                s,
+                                                path.display(),
+                                                e
+                                            );
+                                            watcher_path.as_path().to_string_lossy().to_string()
+                                        });
+                                    let path = if path.components().next().is_none() {
+                                        worktree_root_path.clone()
+                                    } else {
+                                        path.into()
+                                    };
 
-                                match base_uri.strip_prefix(worktree_root_path) {
-                                    Ok(relative) => {
-                                        let mut literal_prefix = relative.to_owned();
-                                        literal_prefix.push(glob_literal_prefix(&rp.pattern));
-
-                                        PathToWatch::Worktree {
-                                            literal_prefix: literal_prefix.into(),
-                                            pattern: rp.pattern.clone(),
-                                        }
-                                    }
-                                    Err(_) => {
-                                        let path = glob_literal_prefix(&rp.pattern);
-                                        let glob = &rp.pattern[path.len()..];
-                                        let pattern = glob
-                                            .strip_prefix(std::path::MAIN_SEPARATOR)
-                                            .unwrap_or(glob)
-                                            .to_owned();
-                                        base_uri.push(path);
-
-                                        let path = if base_uri.components().next().is_none() {
-                                            Arc::from(Path::new("/"))
-                                        } else {
-                                            base_uri.into()
-                                        };
-                                        PathToWatch::Absolute { path, pattern }
-                                    }
-                                }
-                            }
-                        };
-                        match path_to_watch {
-                            PathToWatch::Worktree {
-                                literal_prefix,
-                                pattern,
-                            } => {
-                                if let Some((tree, glob)) =
-                                    tree.as_local_mut().zip(Glob::new(&pattern).log_err())
-                                {
-                                    tree.add_path_prefix_to_scan(literal_prefix);
-                                    worktree_globs
-                                        .entry(tree.id())
-                                        .or_insert_with(GlobSetBuilder::new)
-                                        .add(glob);
-                                } else {
-                                    return false;
-                                }
-                            }
-                            PathToWatch::Absolute { path, pattern } => {
-                                if let Some(glob) = Glob::new(&pattern).log_err() {
-                                    abs_globs
-                                        .entry(path)
-                                        .or_insert_with(GlobSetBuilder::new)
-                                        .add(glob);
+                                    PathToWatch::Absolute { path, pattern }
                                 }
                             }
                         }
-                        return true;
+                        lsp::GlobPattern::Relative(rp) => {
+                            let Ok(mut base_uri) = match &rp.base_uri {
+                                lsp::OneOf::Left(workspace_folder) => &workspace_folder.uri,
+                                lsp::OneOf::Right(base_uri) => base_uri,
+                            }
+                            .to_file_path() else {
+                                return false;
+                            };
+
+                            match base_uri.strip_prefix(&worktree_root_path) {
+                                Ok(relative) => {
+                                    let mut literal_prefix = relative.to_owned();
+                                    literal_prefix
+                                        .push(glob_literal_prefix(Path::new(&rp.pattern)));
+
+                                    PathToWatch::Worktree {
+                                        literal_prefix: literal_prefix.into(),
+                                        pattern: rp.pattern.clone(),
+                                    }
+                                }
+                                Err(_) => {
+                                    let path = glob_literal_prefix(Path::new(&rp.pattern));
+                                    let pattern = Path::new(&rp.pattern)
+                                        .strip_prefix(&path)
+                                        .map(|p| p.to_string_lossy().to_string())
+                                        .unwrap_or_else(|e| {
+                                            debug_panic!(
+                                                "Failed to strip prefix for relative pattern: {}, with prefix: {}, with error: {}",
+                                                rp.pattern,
+                                                path.display(),
+                                                e
+                                            );
+                                            rp.pattern.clone()
+                                        });
+                                    base_uri.push(path);
+
+                                    let path = if base_uri.components().next().is_none() {
+                                        debug_panic!("base_uri is empty, {}", base_uri.display());
+                                        worktree_root_path.clone()
+                                    } else {
+                                        base_uri.into()
+                                    };
+                                    PathToWatch::Absolute { path, pattern }
+                                }
+                            }
+                        }
+                    };
+                    match path_to_watch {
+                        PathToWatch::Worktree {
+                            literal_prefix,
+                            pattern,
+                        } => {
+                            if let Some((tree, glob)) =
+                                tree.as_local_mut().zip(Glob::new(&pattern).log_err())
+                            {
+                                tree.add_path_prefix_to_scan(literal_prefix);
+                                worktree_globs
+                                    .entry(tree.id())
+                                    .or_insert_with(GlobSetBuilder::new)
+                                    .add(glob);
+                            } else {
+                                return false;
+                            }
+                        }
+                        PathToWatch::Absolute { path, pattern } => {
+                            if let Some(glob) = Glob::new(&pattern).log_err() {
+                                abs_globs
+                                    .entry(path)
+                                    .or_insert_with(GlobSetBuilder::new)
+                                    .add(glob);
+                            }
+                        }
                     }
-                    false
+                    true
                 });
                 if glob_is_inside_worktree {
                     log::trace!(
@@ -8319,23 +8327,13 @@ impl DiagnosticSummary {
     }
 }
 
-fn glob_literal_prefix(glob: &str) -> &str {
-    let is_absolute = glob.starts_with(path::MAIN_SEPARATOR);
-
-    let mut literal_end = is_absolute as usize;
-    for (i, part) in glob.split(path::MAIN_SEPARATOR).enumerate() {
-        if part.contains(['*', '?', '{', '}']) {
-            break;
-        } else {
-            if i > 0 {
-                // Account for separator prior to this part
-                literal_end += path::MAIN_SEPARATOR.len_utf8();
-            }
-            literal_end += part.len();
-        }
-    }
-    let literal_end = literal_end.min(glob.len());
-    &glob[..literal_end]
+fn glob_literal_prefix(glob: &Path) -> PathBuf {
+    glob.components()
+        .take_while(|component| match component {
+            path::Component::Normal(part) => !part.to_string_lossy().contains(['*', '?', '{', '}']),
+            _ => true,
+        })
+        .collect()
 }
 
 pub struct SshLspAdapter {
@@ -8715,8 +8713,34 @@ fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
 #[cfg(test)]
 #[test]
 fn test_glob_literal_prefix() {
-    assert_eq!(glob_literal_prefix("**/*.js"), "");
-    assert_eq!(glob_literal_prefix("node_modules/**/*.js"), "node_modules");
-    assert_eq!(glob_literal_prefix("foo/{bar,baz}.js"), "foo");
-    assert_eq!(glob_literal_prefix("foo/bar/baz.js"), "foo/bar/baz.js");
+    assert_eq!(glob_literal_prefix(Path::new("**/*.js")), Path::new(""));
+    assert_eq!(
+        glob_literal_prefix(Path::new("node_modules/**/*.js")),
+        Path::new("node_modules")
+    );
+    assert_eq!(
+        glob_literal_prefix(Path::new("foo/{bar,baz}.js")),
+        Path::new("foo")
+    );
+    assert_eq!(
+        glob_literal_prefix(Path::new("foo/bar/baz.js")),
+        Path::new("foo/bar/baz.js")
+    );
+
+    #[cfg(target_os = "windows")]
+    {
+        assert_eq!(glob_literal_prefix(Path::new("**\\*.js")), Path::new(""));
+        assert_eq!(
+            glob_literal_prefix(Path::new("node_modules\\**/*.js")),
+            Path::new("node_modules")
+        );
+        assert_eq!(
+            glob_literal_prefix(Path::new("foo/{bar,baz}.js")),
+            Path::new("foo")
+        );
+        assert_eq!(
+            glob_literal_prefix(Path::new("foo\\bar\\baz.js")),
+            Path::new("foo/bar/baz.js")
+        );
+    }
 }
