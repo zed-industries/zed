@@ -14,6 +14,7 @@ pub enum LanguageModelProvider {
     Anthropic,
     OpenAi,
     Google,
+    Bedrock
 }
 
 #[derive(Debug, Serialize, Deserialize)]

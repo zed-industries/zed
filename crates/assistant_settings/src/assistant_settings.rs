@@ -4,7 +4,7 @@ use ::open_ai::Model as OpenAiModel;
 use anthropic::Model as AnthropicModel;
 use feature_flags::FeatureFlagAppExt;
 use gpui::{AppContext, Pixels};
-use language_model::{CloudModel, LanguageModel};
+use language_model::{BedrockModel, CloudModel, LanguageModel};
 use lmstudio::Model as LmStudioModel;
 use ollama::Model as OllamaModel;
 use schemars::{schema::Schema, JsonSchema};
@@ -334,6 +334,7 @@ pub struct LanguageModelSelection {
 fn providers_schema(_: &mut schemars::gen::SchemaGenerator) -> schemars::schema::Schema {
     schemars::schema::SchemaObject {
         enum_values: Some(vec![
+            "bedrock".into(),
             "anthropic".into(),
             "google".into(),
             "lmstudio".into(),

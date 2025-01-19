@@ -8,6 +8,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use settings::{update_settings_file, Settings, SettingsSources};
 
+use crate::provider::bedrock::{AmazonBedrockCredentials, AmazonBedrockSettings};
 use crate::provider::{
     self,
     anthropic::AnthropicSettings,
@@ -55,6 +56,7 @@ pub fn init(fs: Arc<dyn Fs>, cx: &mut AppContext) {
 #[derive(Default)]
 pub struct AllLanguageModelSettings {
     pub anthropic: AnthropicSettings,
+    pub bedrock: AmazonBedrockSettings,
     pub ollama: OllamaSettings,
     pub openai: OpenAiSettings,
     pub zed_dot_dev: ZedDotDevSettings,
@@ -65,6 +67,7 @@ pub struct AllLanguageModelSettings {
 
 #[derive(Default, Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
 pub struct AllLanguageModelSettingsContent {
+    pub bedrock: Option<BedrockSettingsContent>,
     pub anthropic: Option<AnthropicSettingsContent>,
     pub ollama: Option<OllamaSettingsContent>,
     pub lmstudio: Option<LmStudioSettingsContent>,
@@ -73,6 +76,14 @@ pub struct AllLanguageModelSettingsContent {
     pub zed_dot_dev: Option<ZedDotDevSettingsContent>,
     pub google: Option<GoogleSettingsContent>,
     pub copilot_chat: Option<CopilotChatSettingsContent>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
+pub struct BedrockSettingsContent {
+    pub region: Option<String>,
+    pub access_key_id: Option<String>,
+    pub secret_access_key: Option<String>,
+    pub available_models: Option<Vec<provider::bedrock::AvailableModel>>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, JsonSchema)]
