@@ -13,6 +13,7 @@ use collections::{HashMap, HashSet, VecDeque};
 use gpui::{AppContext, Context as _, Model, Task};
 use itertools::Itertools;
 use language::{ContextProvider, File, Language, LanguageToolchainStore, Location};
+use nohash_hasher::BuildNoHashHasher;
 use settings::{parse_json_with_comments, SettingsLocation};
 use task::{
     ResolvedTask, TaskContext, TaskId, TaskTemplate, TaskTemplates, TaskVariables, VariableName,
@@ -21,7 +22,7 @@ use text::{Point, ToPoint};
 use util::{post_inc, NumericPrefixWithSuffix, ResultExt as _};
 use worktree::WorktreeId;
 
-use crate::worktree_store::WorktreeStore;
+use crate::{graph::Graph, worktree_store::WorktreeStore};
 
 /// Inventory tracks available tasks for a given project.
 #[derive(Debug, Default)]
@@ -57,6 +58,21 @@ pub enum TaskSourceKind {
 }
 
 impl TaskSourceKind {
+    pub fn friendly_path(&self) -> Cow<'_, str> {
+        match self {
+            Self::UserInput => Cow::Borrowed("custom-task"),
+            Self::Language { name } => format!("{name}-language-tasks").into(),
+            Self::AbsPath {
+                abs_path,
+                ..
+            } => abs_path.to_string_lossy(),
+            Self::Worktree {
+                directory_in_worktree,
+                ..
+            } => format!("{}", directory_in_worktree.join("tasks.json").display()).into()
+        }
+    }
+
     pub fn to_id_base(&self) -> String {
         match self {
             TaskSourceKind::UserInput => "oneshot".to_string(),
@@ -104,6 +120,86 @@ impl Inventory {
         self.worktree_templates_from_settings(worktree)
             .chain(language_tasks)
             .collect()
+    }
+
+    /// Topological sort of the dependency graph of `task`
+    pub fn build_pre_task_list(
+        &self,
+        base_task: &ResolvedTask,
+        worktree: Option<WorktreeId>,
+        task_context: &TaskContext,
+    ) -> anyhow::Result<Vec<(TaskSourceKind, ResolvedTask)>> {
+        let tasks_in_scope = self
+            .worktree_templates_from_settings(worktree)
+            .chain(self.global_templates_from_settings())
+            .filter_map(|(kind, task)| {
+                let base_id = kind.to_id_base();
+                task
+                    .resolve_task(&base_id, task_context)
+                    .map(|task| (kind, task))
+            })
+            .unique_by(|(_, task)| task.resolved_label.clone())
+            .collect_vec();
+
+        if let None = tasks_in_scope
+            .iter()
+            .find(|(_, task)| task.resolved_label == base_task.resolved_label)
+        {
+            return Err(anyhow::anyhow!("couldn't find with label {} in available tasks", base_task.resolved_label));
+        }
+
+        // map task labels to their dep graph node idx, source, and dependencies
+        let nodes = tasks_in_scope
+            .iter()
+            .enumerate()
+            .map(|(idx, (source, task))| (
+                task.resolved_label,
+                (
+                    idx as u32,
+                    source,
+                    task
+                        .resolved_pre_labels
+                        .iter()
+                        .map(|s| s.as_str())
+                        .unique()
+                        .collect_vec(),
+                    task
+                )
+            ))
+            .collect::<HashMap<_, _>>();
+
+        // map node idxs to task labels for retreival if a cycle is found
+        let indexes = nodes
+            .iter()
+            .map(|(label, (idx, _, _, _))| (*idx, *label))
+            .collect::<std::collections::HashMap<_, _, BuildNoHashHasher<u32>>>();
+
+        let mut dep_graph = Graph::new();
+
+        for (_, (node_idx, _, pre, _)) in &nodes {
+            dep_graph.add_node(*node_idx);
+
+            for pre_label in pre {
+                if let Some((pre_node_idx, _, _, _)) = nodes.get(pre_label) {
+                    dep_graph.add_edge(*node_idx, *pre_node_idx);
+                }
+            }
+        }
+
+        dep_graph
+            .subgraph(nodes.get(base_task.resolved_label.as_str()).unwrap().0)
+            .topo_sort()
+            .map(|tasks| {
+                tasks
+                    .iter()
+                    .rev()
+                    .filter_map(|idx| {
+                        let task = nodes.get(indexes.get(idx)?)?;
+                        Some((task.1.clone(), task.3.clone()))
+                    })
+                    .collect_vec()
+            })
+            .anyhow()
     }
 
     /// Pulls its task sources relevant to the worktree and the language given and resolves them with the [`TaskContext`] given.
@@ -324,6 +420,7 @@ impl Inventory {
             }
             None => parsed_templates.global = new_templates.collect(),
         }
+
         Ok(())
     }
 }

@@ -78,6 +78,8 @@ pub struct ResolvedTask {
     /// Further actions that need to take place after the resolved task is spawned,
     /// with all task variables resolved.
     pub resolved: Option<SpawnInTerminal>,
+    /// Pretasks with their variables expanded
+    pub resolved_pre_labels: Vec<String>
 }
 
 impl ResolvedTask {
