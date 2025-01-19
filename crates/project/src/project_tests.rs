@@ -4936,7 +4936,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 if cfg!(target_os = "windows") {
                     "worktree-a\\haystack.ts".to_string()
                 } else {
-                    "worktree-a/haystack.rs".to_string()
+                    "worktree-a/haystack.ts".to_string()
                 },
                 vec![3..9]
             ),
@@ -4944,7 +4944,7 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
                 if cfg!(target_os = "windows") {
                     "worktree-b\\haystack.ts".to_string()
                 } else {
-                    "worktree-b/haystack.rs".to_string()
+                    "worktree-b/haystack.ts".to_string()
                 },
                 vec![3..9]
             )
