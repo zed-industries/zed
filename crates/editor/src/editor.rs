@@ -3646,7 +3646,7 @@ impl Editor {
         }
     }
 
-    fn visible_inlay_hints(&self, cx: &mut ModelContext<Editor>) -> Vec<Inlay> {
+    fn visible_inlay_hints(&self, cx: &ModelContext<Editor>) -> Vec<Inlay> {
         self.display_map
             .read(cx)
             .current_inlays()

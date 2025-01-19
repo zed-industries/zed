@@ -249,7 +249,7 @@ impl PickerDelegate for FetchContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        window: &mut Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let added = self.context_store.upgrade().map_or(false, |context_store| {

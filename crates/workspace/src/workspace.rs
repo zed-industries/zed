@@ -6725,8 +6725,8 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         // Adding an item with no ambiguity renders the tab without detail.
-        let item1 = cx.new_window_model(|window, cx| {
-            let mut item = TestItem::new(window, cx);
+        let item1 = cx.new_model(|cx| {
+            let mut item = TestItem::new(cx);
             item.tab_descriptions = Some(vec!["c", "b1/c", "a/b1/c"]);
             item
         });
@@ -6737,8 +6737,8 @@ mod tests {
 
         // Adding an item that creates ambiguity increases the level of detail on
         // both tabs.
-        let item2 = cx.new_window_model(|window, cx| {
-            let mut item = TestItem::new(window, cx);
+        let item2 = cx.new_window_model(|_window, cx| {
+            let mut item = TestItem::new(cx);
             item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
             item
         });
@@ -6751,8 +6751,8 @@ mod tests {
         // Adding an item that creates ambiguity increases the level of detail only
         // on the ambiguous tabs. In this case, the ambiguity can't be resolved so
         // we stop at the highest detail available.
-        let item3 = cx.new_window_model(|window, cx| {
-            let mut item = TestItem::new(window, cx);
+        let item3 = cx.new_model(|cx| {
+            let mut item = TestItem::new(cx);
             item.tab_descriptions = Some(vec!["c", "b2/c", "a/b2/c"]);
             item
         });
@@ -6793,11 +6793,11 @@ mod tests {
             project.worktrees(cx).next().unwrap().read(cx).id()
         });
 
-        let item1 = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx).with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
+        let item1 = cx.new_model(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
         });
-        let item2 = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx).with_project_items(&[TestProjectItem::new(2, "two.txt", cx)])
+        let item2 = cx.new_model(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(2, "two.txt", cx)])
         });
 
         // Add an item to an empty pane
@@ -6871,7 +6871,7 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         // When there are no dirty items, there's nothing to do.
-        let item1 = cx.new_window_model(TestItem::new);
+        let item1 = cx.new_model(TestItem::new);
         workspace.update_in(cx, |w, window, cx| {
             w.add_item_to_active_pane(Box::new(item1.clone()), None, true, window, cx)
         });
@@ -6882,9 +6882,9 @@ mod tests {
 
         // When there are dirty untitled items, prompt to save each one. If the user
         // cancels any prompt, then abort.
-        let item2 = cx.new_window_model(|window, cx| TestItem::new(window, cx).with_dirty(true));
-        let item3 = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let item2 = cx.new_model(|cx| TestItem::new(cx).with_dirty(true));
+        let item3 = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_dirty(true)
                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
@@ -6921,13 +6921,13 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
         // When there are dirty untitled items, but they can serialize, then there is no prompt.
-        let item1 = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let item1 = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_dirty(true)
                 .with_serialize(|| Some(Task::ready(Ok(()))))
         });
-        let item2 = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let item2 = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_dirty(true)
                 .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
                 .with_serialize(|| Some(Task::ready(Ok(()))))
@@ -6952,31 +6952,29 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
-        let item1 = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let item1 = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_dirty(true)
                 .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
         });
-        let item2 = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let item2 = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_dirty(true)
                 .with_conflict(true)
                 .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
         });
-        let item3 = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let item3 = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_dirty(true)
                 .with_conflict(true)
                 .with_project_items(&[dirty_project_item(3, "3.txt", cx)])
         });
-        let item4 = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
-                .with_dirty(true)
-                .with_project_items(&[{
-                    let project_item = TestProjectItem::new_untitled(cx);
-                    project_item.update(cx, |project_item, _| project_item.is_dirty = true);
-                    project_item
-                }])
+        let item4 = cx.new_model(|cx| {
+            TestItem::new(cx).with_dirty(true).with_project_items(&[{
+                let project_item = TestProjectItem::new_untitled(cx);
+                project_item.update(cx, |project_item, _| project_item.is_dirty = true);
+                project_item
+            }])
         });
         let pane = workspace.update_in(cx, |workspace, window, cx| {
             workspace.add_item_to_active_pane(Box::new(item1.clone()), None, true, window, cx);
@@ -7066,8 +7064,8 @@ mod tests {
         // workspace items with multiple project entries.
         let single_entry_items = (0..=4)
             .map(|project_entry_id| {
-                cx.new_window_model(|window, cx| {
-                    TestItem::new(window, cx)
+                cx.new_model(|cx| {
+                    TestItem::new(cx)
                         .with_dirty(true)
                         .with_project_items(&[dirty_project_item(
                             project_entry_id,
@@ -7077,8 +7075,8 @@ mod tests {
                 })
             })
             .collect::<Vec<_>>();
-        let item_2_3 = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let item_2_3 = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_dirty(true)
                 .with_singleton(false)
                 .with_project_items(&[
@@ -7086,8 +7084,8 @@ mod tests {
                     single_entry_items[3].read(cx).project_items[0].clone(),
                 ])
         });
-        let item_3_4 = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let item_3_4 = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_dirty(true)
                 .with_singleton(false)
                 .with_project_items(&[
@@ -7175,8 +7173,8 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
-        let item = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+        let item = cx.new_model(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
         let item_id = item.entity_id();
         workspace.update_in(cx, |workspace, window, cx| {
@@ -7299,8 +7297,8 @@ mod tests {
         let (workspace, cx) =
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
 
-        let item = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
+        let item = cx.new_model(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
         });
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
         let toolbar = pane.update(cx, |pane, _| pane.toolbar().clone());
@@ -7368,7 +7366,7 @@ mod tests {
 
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
         pane.update_in(cx, |pane, window, cx| {
-            let item = cx.new_model(|cx| TestItem::new(window, cx));
+            let item = cx.new_model(|cx| TestItem::new(cx));
             pane.add_item(Box::new(item), true, true, None, window, cx);
         });
 
@@ -7516,32 +7514,20 @@ mod tests {
         // |        bottom         |
         // +-----------------------+
 
-        let top_item = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx).with_project_items(&[TestProjectItem::new(1, "top.txt", cx)])
+        let top_item = cx.new_model(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(1, "top.txt", cx)])
         });
-        let bottom_item = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx).with_project_items(&[TestProjectItem::new(
-                2,
-                "bottom.txt",
-                cx,
-            )])
+        let bottom_item = cx.new_model(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(2, "bottom.txt", cx)])
         });
-        let left_item = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx).with_project_items(&[TestProjectItem::new(3, "left.txt", cx)])
+        let left_item = cx.new_model(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(3, "left.txt", cx)])
         });
-        let right_item = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx).with_project_items(&[TestProjectItem::new(
-                4,
-                "right.txt",
-                cx,
-            )])
+        let right_item = cx.new_model(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(4, "right.txt", cx)])
         });
-        let center_item = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx).with_project_items(&[TestProjectItem::new(
-                5,
-                "center.txt",
-                cx,
-            )])
+        let center_item = cx.new_model(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(5, "center.txt", cx)])
         });
 
         let top_pane_id = workspace.update_in(cx, |workspace, window, cx| {
@@ -7689,8 +7675,8 @@ mod tests {
         workspace: &Model<Workspace>,
         item_id: u64,
     ) -> Model<TestItem> {
-        let item = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx).with_project_items(&[TestProjectItem::new(
+        let item = cx.new_model(|cx| {
+            TestItem::new(cx).with_project_items(&[TestProjectItem::new(
                 item_id,
                 "item{item_id}.txt",
                 cx,
@@ -8036,20 +8022,20 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
-        let dirty_regular_buffer = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let dirty_regular_buffer = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_dirty(true)
                 .with_label("1.txt")
                 .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
         });
-        let dirty_regular_buffer_2 = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let dirty_regular_buffer_2 = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_dirty(true)
                 .with_label("2.txt")
                 .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
         });
-        let dirty_multi_buffer_with_both = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let dirty_multi_buffer_with_both = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_dirty(true)
                 .with_singleton(false)
                 .with_label("Fake Project Search")
@@ -8182,26 +8168,26 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
-        let dirty_regular_buffer = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let dirty_regular_buffer = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_dirty(true)
                 .with_label("1.txt")
                 .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
         });
-        let dirty_regular_buffer_2 = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let dirty_regular_buffer_2 = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_dirty(true)
                 .with_label("2.txt")
                 .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
         });
-        let clear_regular_buffer = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let clear_regular_buffer = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_label("3.txt")
                 .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
         });
 
-        let dirty_multi_buffer_with_both = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let dirty_multi_buffer_with_both = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_dirty(true)
                 .with_singleton(false)
                 .with_label("Fake Project Search")
@@ -8287,26 +8273,26 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
-        let dirty_regular_buffer = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let dirty_regular_buffer = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_dirty(true)
                 .with_label("1.txt")
                 .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
         });
-        let dirty_regular_buffer_2 = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let dirty_regular_buffer_2 = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_dirty(true)
                 .with_label("2.txt")
                 .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
         });
-        let clear_regular_buffer = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let clear_regular_buffer = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_label("3.txt")
                 .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
         });
 
-        let dirty_multi_buffer_with_both = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let dirty_multi_buffer_with_both = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_dirty(true)
                 .with_singleton(false)
                 .with_label("Fake Project Search")
@@ -8370,26 +8356,26 @@ mod tests {
             cx.add_window_view(|window, cx| Workspace::test_new(project, window, cx));
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
 
-        let dirty_regular_buffer = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let dirty_regular_buffer = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_dirty(true)
                 .with_label("1.txt")
                 .with_project_items(&[dirty_project_item(1, "1.txt", cx)])
         });
-        let dirty_regular_buffer_2 = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let dirty_regular_buffer_2 = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_dirty(true)
                 .with_label("2.txt")
                 .with_project_items(&[dirty_project_item(2, "2.txt", cx)])
         });
-        let clear_regular_buffer = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let clear_regular_buffer = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_label("3.txt")
                 .with_project_items(&[TestProjectItem::new(3, "3.txt", cx)])
         });
 
-        let dirty_multi_buffer = cx.new_window_model(|window, cx| {
-            TestItem::new(window, cx)
+        let dirty_multi_buffer = cx.new_model(|cx| {
+            TestItem::new(cx)
                 .with_dirty(true)
                 .with_singleton(false)
                 .with_label("Fake Project Search")

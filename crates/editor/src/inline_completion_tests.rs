@@ -154,7 +154,7 @@ async fn test_indentation(cx: &mut gpui::TestAppContext) {
         vec![(Point::new(1, 0)..Point::new(1, 0), "    const function()")],
         &mut cx,
     );
-    cx.update_editor(|editor, cx| editor.update_visible_inline_completion(cx));
+    cx.update_editor(|editor, window, cx| editor.update_visible_inline_completion(window, cx));
 
     assert_editor_active_edit_completion(&mut cx, |_, edits| {
         assert_eq!(edits.len(), 1);

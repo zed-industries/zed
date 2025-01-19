@@ -23,8 +23,9 @@ use futures::FutureExt;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
     actions, point, px, Action, AppContext, AsyncAppContext, Context, DismissEvent, Element,
-    Focusable, KeyBinding, MenuItem, ParentElement, PathPromptOptions, PromptLevel, ReadGlobal,
-    SharedString, Styled, Task, TitlebarOptions, VisualContext, WindowKind, WindowOptions,
+    Focusable, KeyBinding, MenuItem, Model, ModelContext, ParentElement, PathPromptOptions,
+    PromptLevel, ReadGlobal, SharedString, Styled, Task, TitlebarOptions, Window, WindowKind,
+    WindowOptions,
 };
 pub use open_listener::*;
 use outline_panel::OutlinePanel;
@@ -256,13 +257,13 @@ fn initialize_file_watcher(window: &mut Window, cx: &mut ModelContext<Workspace>
             e
         );
         let prompt = window.prompt(
-            cx,
             PromptLevel::Critical,
             "Could not start inotify",
             Some(&message),
             &["Troubleshoot and Quit"],
+            cx,
         );
-        cx.spawn(|_, mut cx| async move {
+        cx.spawn(|_, cx| async move {
             if prompt.await == Ok(0) {
                 cx.update(|cx| {
                     cx.open_url("https://zed.dev/docs/linux#could-not-start-inotify");
@@ -472,8 +473,8 @@ fn register_actions(
         .register_action(|_, action: &OpenZedUrl, _, cx| {
             OpenListener::global(cx).open_urls(vec![action.url.clone()])
         })
-        .register_action(|_, action: &OpenBrowser, cx| cx.open_url(&action.url))
-        .register_action(|workspace, _: &workspace::Open, cx| {
+        .register_action(|_, action: &OpenBrowser, _window, cx| cx.open_url(&action.url))
+        .register_action(|workspace, _: &workspace::Open, window, cx| {
             workspace
                 .client()
                 .telemetry()
@@ -511,7 +512,7 @@ fn register_actions(
         })
         .register_action({
             let fs = app_state.fs.clone();
-            move |_, _: &zed_actions::IncreaseUiFontSize, cx| {
+            move |_, _: &zed_actions::IncreaseUiFontSize, _window, cx| {
                 update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
                     let buffer_font_size = ThemeSettings::clamp_font_size(
                         ThemeSettings::get_global(cx).ui_font_size + px(1.),
@@ -523,7 +524,7 @@ fn register_actions(
         })
         .register_action({
             let fs = app_state.fs.clone();
-            move |_, _: &zed_actions::DecreaseUiFontSize, cx| {
+            move |_, _: &zed_actions::DecreaseUiFontSize, _window, cx| {
                 update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
                     let buffer_font_size = ThemeSettings::clamp_font_size(
                         ThemeSettings::get_global(cx).ui_font_size - px(1.),
@@ -535,7 +536,7 @@ fn register_actions(
         })
         .register_action({
             let fs = app_state.fs.clone();
-            move |_, _: &zed_actions::ResetUiFontSize, cx| {
+            move |_, _: &zed_actions::ResetUiFontSize, _window, cx| {
                 update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, _| {
                     let _ = settings.ui_font_size.take();
                 });
@@ -543,7 +544,7 @@ fn register_actions(
         })
         .register_action({
             let fs = app_state.fs.clone();
-            move |_, _: &zed_actions::IncreaseBufferFontSize, cx| {
+            move |_, _: &zed_actions::IncreaseBufferFontSize, _window, cx| {
                 update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
                     let buffer_font_size = ThemeSettings::clamp_font_size(
                         ThemeSettings::get_global(cx).buffer_font_size() + px(1.),
@@ -555,7 +556,7 @@ fn register_actions(
         })
         .register_action({
             let fs = app_state.fs.clone();
-            move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
+            move |_, _: &zed_actions::DecreaseBufferFontSize, _window, cx| {
                 update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
                     let buffer_font_size = ThemeSettings::clamp_font_size(
                         ThemeSettings::get_global(cx).buffer_font_size() - px(1.),
@@ -566,7 +567,7 @@ fn register_actions(
         })
         .register_action({
             let fs = app_state.fs.clone();
-            move |_, _: &zed_actions::ResetBufferFontSize, cx| {
+            move |_, _: &zed_actions::ResetBufferFontSize, _window, cx| {
                 update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, _| {
                     let _ = settings.buffer_font_size.take();
                 });
@@ -880,8 +881,7 @@ fn install_cli(
 
     cx.spawn_in(window, |workspace, mut cx| async move {
         if cfg!(any(target_os = "linux", target_os = "freebsd")) {
-            let prompt = window.prompt(
-                cx,
+            let prompt = cx.prompt(
                 PromptLevel::Warning,
                 "CLI should already be installed",
                 Some(LINUX_PROMPT_DETAIL),
@@ -1150,8 +1150,8 @@ fn show_keymap_file_json_error(
         cx.new_model(|_cx| {
             MessageNotification::new(message.clone())
                 .with_click_message("Open keymap file")
-                .on_click(|cx| {
-                    cx.dispatch_action(zed_actions::OpenKeymap.boxed_clone());
+                .on_click(|window, cx| {
+                    window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
                     cx.emit(DismissEvent);
                 })
         })
@@ -1182,7 +1182,7 @@ fn show_keymap_file_load_error(
                 let workspace_handle = cx.model().downgrade();
                 let parsed_markdown = parsed_markdown.clone();
                 cx.new_model(move |_cx| {
-                    MessageNotification::new_from_builder(move |cx| {
+                    MessageNotification::new_from_builder(move |window, cx| {
                         gpui::div()
                             .text_xs()
                             .child(markdown_preview::markdown_renderer::render_parsed_markdown(
@@ -1194,8 +1194,8 @@ fn show_keymap_file_load_error(
                             .into_any()
                     })
                     .with_click_message("Open keymap file")
-                    .on_click(|cx| {
-                        cx.dispatch_action(zed_actions::OpenKeymap.boxed_clone());
+                    .on_click(|window, cx| {
+                        window.dispatch_action(zed_actions::OpenKeymap.boxed_clone(), cx);
                         cx.emit(DismissEvent);
                     })
                 })

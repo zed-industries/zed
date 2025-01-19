@@ -255,7 +255,7 @@ impl MessageEditor {
 
     fn handle_context_strip_event(
         &mut self,
-        _context_strip: Model<ContextStrip>,
+        _context_strip: &Model<ContextStrip>,
         event: &ContextStripEvent,
         window: &mut Window,
         cx: &mut ModelContext<Self>,

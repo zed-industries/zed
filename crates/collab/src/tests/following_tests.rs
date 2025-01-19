@@ -9,7 +9,7 @@ use collab_ui::{
 use editor::{Editor, ExcerptRange, MultiBuffer};
 use gpui::{
     point, BackgroundExecutor, BorrowAppContext, Context, Entity, Model, SharedString,
-    TestAppContext, VisualTestContext,
+    TestAppContext, VisualContext, VisualTestContext,
 };
 use language::Capability;
 use project::WorktreeSettings;
@@ -485,7 +485,7 @@ async fn test_basic_following(
         });
 
         // Client B activates a multibuffer that was created by following client A. Client A returns to that multibuffer.
-        workspace_b.update(cx_b, |workspace, window, cx| {
+        workspace_b.update_in(cx_b, |workspace, window, cx| {
             workspace.activate_item(&multibuffer_editor_b, true, true, window, cx)
         });
         executor.run_until_parked();
@@ -497,8 +497,9 @@ async fn test_basic_following(
         });
 
         // Client B activates a panel, and the previously-opened screen-sharing item gets activated.
-        let panel = cx_b.new_model(|cx| TestPanel::new(DockPosition::Left, window, cx));
-        workspace_b.update(cx_b, |workspace, window, cx| {
+        let panel =
+            cx_b.new_window_model(|window, cx| TestPanel::new(DockPosition::Left, window, cx));
+        workspace_b.update_in(cx_b, |workspace, window, cx| {
             workspace.add_panel(panel, window, cx);
             workspace.toggle_panel_focus::<TestPanel>(window, cx);
         });
@@ -512,7 +513,7 @@ async fn test_basic_following(
         );
 
         // Toggling the focus back to the pane causes client A to return to the multibuffer.
-        workspace_b.update(cx_b, |workspace, window, cx| {
+        workspace_b.update_in(cx_b, |workspace, window, cx| {
             workspace.toggle_panel_focus::<TestPanel>(window, cx);
         });
         executor.run_until_parked();
@@ -526,9 +527,9 @@ async fn test_basic_following(
         // Client B activates an item that doesn't implement following,
         // so the previously-opened screen-sharing item gets activated.
         let unfollowable_item = cx_b.new_model(TestItem::new);
-        workspace_b.update(cx_b, |workspace, cx| {
-            workspace.active_pane().update(cx, |pane, window, cx| {
-                pane.add_item(window, Box::new(unfollowable_item), true, true, None, cx)
+        workspace_b.update_in(cx_b, |workspace, window, cx| {
+            workspace.active_pane().update(cx, |pane, cx| {
+                pane.add_item(Box::new(unfollowable_item), true, true, None, window, cx)
             })
         });
         executor.run_until_parked();

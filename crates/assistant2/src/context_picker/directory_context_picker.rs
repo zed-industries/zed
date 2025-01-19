@@ -163,7 +163,7 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
     fn update_matches(
         &mut self,
         query: String,
-        _window: &Window,
+        _window: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Task<()> {
         let Some(workspace) = self.workspace.upgrade() else {
@@ -210,10 +210,10 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         };
 
         let confirm_behavior = self.confirm_behavior;
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             match task.await.notify_async_err(&mut cx) {
                 None => anyhow::Ok(()),
-                Some(()) => this.update(&mut cx, |this, cx| match confirm_behavior {
+                Some(()) => this.update_in(&mut cx, |this, window, cx| match confirm_behavior {
                     ConfirmBehavior::KeepOpen => {}
                     ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
                 }),
@@ -222,7 +222,7 @@ impl PickerDelegate for DirectoryContextPickerDelegate {
         .detach_and_log_err(cx);
     }
 
-    fn dismissed(&mut self, window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
+    fn dismissed(&mut self, _window: &mut Window, cx: &mut ModelContext<Picker<Self>>) {
         self.context_picker
             .update(cx, |_, cx| {
                 cx.emit(DismissEvent);

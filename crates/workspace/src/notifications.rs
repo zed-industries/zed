@@ -431,7 +431,7 @@ pub mod simple_message_notification {
     use super::NotificationId;
 
     pub struct MessageNotification {
-        content: Box<dyn Fn(&mut ModelContext<Self>) -> AnyElement>,
+        build_content: Box<dyn Fn(&mut Window, &mut ModelContext<Self>) -> AnyElement>,
         on_click: Option<Arc<dyn Fn(&mut Window, &mut ModelContext<Self>)>>,
         click_message: Option<SharedString>,
         secondary_click_message: Option<SharedString>,
@@ -446,15 +446,15 @@ pub mod simple_message_notification {
             S: Into<SharedString>,
         {
             let message = message.into();
-            Self::new_from_builder(move |_| Label::new(message.clone()).into_any_element())
+            Self::new_from_builder(move |_, _| Label::new(message.clone()).into_any_element())
         }
 
         pub fn new_from_builder<F>(content: F) -> MessageNotification
         where
-            F: 'static + Fn(&mut ModelContext<Self>) -> AnyElement,
+            F: 'static + Fn(&mut Window, &mut ModelContext<Self>) -> AnyElement,
         {
             Self {
-                content: Box::new(content),
+                build_content: Box::new(content),
                 on_click: None,
                 click_message: None,
                 secondary_on_click: None,
@@ -509,7 +509,7 @@ pub mod simple_message_notification {
     }
 
     impl Render for MessageNotification {
-        fn render(&mut self, _: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+        fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
             v_flex()
                 .p_3()
                 .gap_2()
@@ -519,7 +519,7 @@ pub mod simple_message_notification {
                         .gap_4()
                         .justify_between()
                         .items_start()
-                        .child(div().max_w_96().child((self.content)(cx)))
+                        .child(div().max_w_96().child((self.build_content)(window, cx)))
                         .child(
                             IconButton::new("close", IconName::Close)
                                 .on_click(cx.listener(|this, _, _, cx| this.dismiss(cx))),

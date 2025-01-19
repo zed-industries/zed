@@ -314,17 +314,22 @@ impl ContextStrip {
             let context_store = self.context_store.read(cx);
 
             if self.is_suggested_focused(context_store.context()) {
-                self.add_suggested_context(&suggested, cx);
+                self.add_suggested_context(&suggested, window, cx);
             }
         }
     }
 
-    fn add_suggested_context(&mut self, suggested: &SuggestedContext, cx: &mut ModelContext<Self>) {
+    fn add_suggested_context(
+        &mut self,
+        suggested: &SuggestedContext,
+        window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         let task = self.context_store.update(cx, |context_store, cx| {
             context_store.accept_suggested_context(&suggested, cx)
         });
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             match task.await.notify_async_err(&mut cx) {
                 None => {}
                 Some(()) => {
@@ -382,7 +387,7 @@ impl Render for ContextStrip {
             .on_action(cx.listener(Self::accept_suggested_context))
             .on_children_prepainted({
                 let view = cx.model().downgrade();
-                move |children_bounds, cx| {
+                move |children_bounds, _window, cx| {
                     view.update(cx, |this, _| {
                         this.children_bounds = Some(children_bounds);
                     })
@@ -391,7 +396,7 @@ impl Render for ContextStrip {
             })
             .child(
                 PopoverMenu::new("context-picker")
-                    .menu(move |cx| {
+                    .menu(move |window, cx| {
                         context_picker.update(cx, |this, cx| {
                             this.init(window, cx);
                         });
@@ -404,8 +409,7 @@ impl Render for ContextStrip {
                             .style(ui::ButtonStyle::Filled)
                             .tooltip({
                                 let focus_handle = focus_handle.clone();
-
-                                move |cx| {
+                                move |window, cx| {
                                     Tooltip::for_action_in(
                                         "Add Context",
                                         &ToggleContextPicker,
@@ -437,8 +441,12 @@ impl Render for ContextStrip {
                             )
                             .opacity(0.5)
                             .children(
-                                KeyBinding::for_action_in(&ToggleContextPicker, &focus_handle, cx)
-                                    .map(|binding| binding.into_any_element()),
+                                KeyBinding::for_action_in(
+                                    &ToggleContextPicker,
+                                    &focus_handle,
+                                    window,
+                                )
+                                .map(|binding| binding.into_any_element()),
                             ),
                     )
                 }
@@ -451,7 +459,7 @@ impl Render for ContextStrip {
                     Some({
                         let id = context.id;
                         let context_store = self.context_store.clone();
-                        Rc::new(cx.listener(move |_this, _event, cx| {
+                        Rc::new(cx.listener(move |_this, _event, _window, cx| {
                             context_store.update(cx, |this, _cx| {
                                 this.remove_context(id);
                             });
@@ -459,7 +467,7 @@ impl Render for ContextStrip {
                         }))
                     }),
                 )
-                .on_click(Rc::new(cx.listener(move |this, _, window, cx| {
+                .on_click(Rc::new(cx.listener(move |this, _, _window, cx| {
                     this.focused_index = Some(i);
                     cx.notify();
                 })))
@@ -472,9 +480,11 @@ impl Render for ContextStrip {
                         suggested.kind(),
                         self.is_suggested_focused(&context),
                     )
-                    .on_click(Rc::new(cx.listener(move |this, _event, cx| {
-                        this.add_suggested_context(&suggested, cx);
-                    }))),
+                    .on_click(Rc::new(cx.listener(
+                        move |this, _event, window, cx| {
+                            this.add_suggested_context(&suggested, window, cx);
+                        },
+                    ))),
                 )
             })
             .when(!context.is_empty(), {
@@ -484,7 +494,7 @@ impl Render for ContextStrip {
                             .icon_size(IconSize::Small)
                             .tooltip({
                                 let focus_handle = focus_handle.clone();
-                                move |cx| {
+                                move |window, cx| {
                                     Tooltip::for_action_in(
                                         "Remove All Context",
                                         &RemoveAllContext,
@@ -496,7 +506,7 @@ impl Render for ContextStrip {
                             })
                             .on_click(cx.listener({
                                 let focus_handle = focus_handle.clone();
-                                move |_this, _event, cx| {
+                                move |_this, _event, window, cx| {
                                     focus_handle.dispatch_action(&RemoveAllContext, window, cx);
                                 }
                             })),

@@ -1,8 +1,7 @@
 use gpui::{
-    div, AppContext, EventEmitter, FocusHandle, Focusable, FontWeight, InteractiveElement,
-    IntoElement, ParentElement, PromptHandle, PromptLevel, PromptResponse, Refineable, Render,
-    RenderablePromptHandle, Styled, TextStyleRefinement, VisualContext,
-   
+    div, AppContext, Context, EventEmitter, FocusHandle, Focusable, FontWeight, InteractiveElement,
+    IntoElement, Model, ModelContext, ParentElement, PromptHandle, PromptLevel, PromptResponse,
+    Refineable, Render, RenderablePromptHandle, Styled, TextStyleRefinement, Window,
 };
 use markdown::{Markdown, MarkdownStyle};
 use settings::Settings;
@@ -24,7 +23,8 @@ pub fn fallback_prompt_renderer(
     detail: Option<&str>,
     actions: &[&str],
     handle: PromptHandle,
-    window: &mut Window, cx: &mut AppContext,
+    window: &mut Window,
+    cx: &mut AppContext,
 ) -> RenderablePromptHandle {
     let renderer = cx.new_model({
         |cx| FallbackPromptRenderer {
@@ -48,13 +48,13 @@ pub fn fallback_prompt_renderer(
                         selection_background_color: { cx.theme().players().local().selection },
                         ..Default::default()
                     };
-                    Markdown::new(text.to_string(), markdown_style, None, None, cx)
+                    Markdown::new(text.to_string(), markdown_style, None, None, window, cx)
                 })
             }),
         }
     });
 
-    handle.with_view(renderer, cx)
+    handle.with_view(renderer, window, cx)
 }
 
 /// The default GPUI fallback for rendering prompts, when the platform doesn't support it.
@@ -68,27 +68,42 @@ pub struct FallbackPromptRenderer {
 }
 
 impl FallbackPromptRenderer {
-    fn confirm(&mut self, _: &menu::Confirm, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn confirm(&mut self, _: &menu::Confirm, _window: &mut Window, cx: &mut ModelContext<Self>) {
         cx.emit(PromptResponse(self.active_action_id));
     }
 
-    fn cancel(&mut self, _: &menu::Cancel, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn cancel(&mut self, _: &menu::Cancel, _window: &mut Window, cx: &mut ModelContext<Self>) {
         if let Some(ix) = self.actions.iter().position(|a| a == "Cancel") {
             cx.emit(PromptResponse(ix));
         }
     }
 
-    fn select_first(&mut self, _: &menu::SelectFirst, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_first(
+        &mut self,
+        _: &menu::SelectFirst,
+        _window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.active_action_id = self.actions.len().saturating_sub(1);
         cx.notify();
     }
 
-    fn select_last(&mut self, _: &menu::SelectLast, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_last(
+        &mut self,
+        _: &menu::SelectLast,
+        _window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.active_action_id = 0;
         cx.notify();
     }
 
-    fn select_next(&mut self, _: &menu::SelectNext, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_next(
+        &mut self,
+        _: &menu::SelectNext,
+        _window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         if self.active_action_id > 0 {
             self.active_action_id -= 1;
         } else {
@@ -97,14 +112,19 @@ impl FallbackPromptRenderer {
         cx.notify();
     }
 
-    fn select_prev(&mut self, _: &menu::SelectPrev, window: &mut Window, cx: &mut ModelContext<Self>) {
+    fn select_prev(
+        &mut self,
+        _: &menu::SelectPrev,
+        _window: &mut Window,
+        cx: &mut ModelContext<Self>,
+    ) {
         self.active_action_id = (self.active_action_id + 1) % self.actions.len();
         cx.notify();
     }
 }
 
 impl Render for FallbackPromptRenderer {
-    fn render(&mut self, window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, cx: &mut ModelContext<Self>) -> impl IntoElement {
         let settings = ThemeSettings::get_global(cx);
         let font_family = settings.ui_font.family.clone();
         let prompt = v_flex()
@@ -144,7 +164,7 @@ impl Render for FallbackPromptRenderer {
                             el.style(ButtonStyle::Tinted(TintColor::Accent))
                         })
                         .layer(ElevationIndex::ModalSurface)
-                        .on_click(cx.listener(move |_, _, window, cx| {
+                        .on_click(cx.listener(move |_, _, _window, cx| {
                             cx.emit(PromptResponse(ix));
                         }))
                 }),

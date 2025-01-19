@@ -15,7 +15,7 @@ use gpui::{
     anchored, deferred, div, impl_actions, AnyElement, AppContext, DismissEvent, EventEmitter,
     FocusHandle, Focusable, KeyContext, KeyDownEvent, Keystroke, Model, MouseButton,
     MouseDownEvent, Pixels, Render, ScrollWheelEvent, Stateful, Styled, Subscription, Task,
-    VisualContext, WeakModel,
+    WeakModel,
 };
 use language::Bias;
 use persistence::TERMINAL_DB;
@@ -765,11 +765,7 @@ impl TerminalView {
         }))
     }
 
-    fn render_scrollbar(
-        &self,
-        window: &mut Window,
-        cx: &mut ModelContext<Self>,
-    ) -> Option<Stateful<Div>> {
+    fn render_scrollbar(&self, cx: &mut ModelContext<Self>) -> Option<Stateful<Div>> {
         if !Self::should_show_scrollbar(cx)
             || !(self.show_scrollbar || self.scrollbar_state.is_dragging())
         {
@@ -797,21 +793,21 @@ impl TerminalView {
             div()
                 .occlude()
                 .id("terminal-view-scroll")
-                .on_mouse_move(cx.listener(|_, _, window, cx| {
+                .on_mouse_move(cx.listener(|_, _, _window, cx| {
                     cx.notify();
                     cx.stop_propagation()
                 }))
-                .on_hover(|_, cx| {
+                .on_hover(|_, _window, cx| {
                     cx.stop_propagation();
                 })
-                .on_any_mouse_down(|_, cx| {
+                .on_any_mouse_down(|_, _window, cx| {
                     cx.stop_propagation();
                 })
                 .on_mouse_up(
                     MouseButton::Left,
-                    cx.listener(|terminal_view, _, cx| {
+                    cx.listener(|terminal_view, _, window, cx| {
                         if !terminal_view.scrollbar_state.is_dragging()
-                            && !terminal_view.focus_handle.contains_focused(cx)
+                            && !terminal_view.focus_handle.contains_focused(window, cx)
                         {
                             terminal_view.hide_scrollbar(cx);
                             cx.notify();
@@ -819,7 +815,7 @@ impl TerminalView {
                         cx.stop_propagation();
                     }),
                 )
-                .on_scroll_wheel(cx.listener(|_, _, window, cx| {
+                .on_scroll_wheel(cx.listener(|_, _, _window, cx| {
                     cx.notify();
                 }))
                 .h_full()
@@ -1197,12 +1193,12 @@ impl Render for TerminalView {
                     }
                 }),
             )
-            .on_hover(cx.listener(|this, hovered, cx| {
+            .on_hover(cx.listener(|this, hovered, window, cx| {
                 if *hovered {
                     this.show_scrollbar = true;
                     this.hide_scrollbar_task.take();
                     cx.notify();
-                } else if !this.focus_handle.contains_focused(cx) {
+                } else if !this.focus_handle.contains_focused(window, cx) {
                     this.hide_scrollbar(cx);
                 }
             }))
@@ -1220,7 +1216,7 @@ impl Render for TerminalView {
                         self.can_navigate_to_selected_word,
                         self.block_below_cursor.clone(),
                     ))
-                    .when_some(self.render_scrollbar(window, cx), |div, scrollbar| {
+                    .when_some(self.render_scrollbar(cx), |div, scrollbar| {
                         div.child(scrollbar)
                     }),
             )

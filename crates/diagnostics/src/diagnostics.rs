@@ -903,7 +903,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
         h_flex()
             .id(DIAGNOSTIC_HEADER)
             .block_mouse_down()
-            .h(2. * window.line_height())
+            .h(2. * cx.window.line_height())
             .w_full()
             .px_9()
             .justify_between()
@@ -917,7 +917,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                     .map(|stack| {
                         stack.child(
                             svg()
-                                .size(window.text_style().font_size)
+                                .size(cx.window.text_style().font_size)
                                 .flex_none()
                                 .map(|icon| {
                                     if diagnostic.severity == DiagnosticSeverity::ERROR {
@@ -935,7 +935,7 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                             .gap_1()
                             .child(
                                 StyledText::new(message.clone()).with_highlights(
-                                    &window.text_style(),
+                                    &cx.window.text_style(),
                                     code_ranges
                                         .iter()
                                         .map(|range| (range.clone(), highlight_style)),

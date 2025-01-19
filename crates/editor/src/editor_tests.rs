@@ -15047,7 +15047,7 @@ async fn test_rename_with_duplicate_edits(cx: &mut gpui::TestAppContext) {
             )))
         });
     let rename_task = cx
-        .update_editor(|e, cx| e.confirm_rename(&ConfirmRename, cx))
+        .update_editor(|e, window, cx| e.confirm_rename(&ConfirmRename, window, cx))
         .expect("Confirm rename was not started");
     rename_handler.next().await.unwrap();
     rename_task.await.expect("Confirm rename failed");
@@ -15073,7 +15073,7 @@ async fn test_rename_without_prepare(cx: &mut gpui::TestAppContext) {
         struct Fˇoo {}
     "});
 
-    cx.update_editor(|editor, cx| {
+    cx.update_editor(|editor, _window, cx| {
         let highlight_range = Point::new(0, 7)..Point::new(0, 10);
         let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
         editor.highlight_background::<DocumentHighlightRead>(
@@ -15083,7 +15083,7 @@ async fn test_rename_without_prepare(cx: &mut gpui::TestAppContext) {
         );
     });
 
-    cx.update_editor(|e, cx| e.rename(&Rename, cx))
+    cx.update_editor(|e, window, cx| e.rename(&Rename, window, cx))
         .expect("Prepare rename was not started")
         .await
         .expect("Prepare rename failed");
@@ -15108,7 +15108,7 @@ async fn test_rename_without_prepare(cx: &mut gpui::TestAppContext) {
             )))
         });
     let rename_task = cx
-        .update_editor(|e, cx| e.confirm_rename(&ConfirmRename, cx))
+        .update_editor(|e, window, cx| e.confirm_rename(&ConfirmRename, window, cx))
         .expect("Confirm rename was not started");
     rename_handler.next().await.unwrap();
     rename_task.await.expect("Confirm rename failed");

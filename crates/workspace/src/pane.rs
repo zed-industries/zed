@@ -3648,7 +3648,7 @@ mod tests {
         set_labeled_items(&pane, ["A", "B*", "C"], cx);
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(cx.new_model(|cx| TestItem::new(window, cx).with_label("D"))),
+                Box::new(cx.new_model(|cx| TestItem::new(cx).with_label("D"))),
                 false,
                 false,
                 Some(0),
@@ -3662,7 +3662,7 @@ mod tests {
         set_labeled_items(&pane, ["A", "B*", "C"], cx);
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(cx.new_model(|cx| TestItem::new(window, cx).with_label("D"))),
+                Box::new(cx.new_model(|cx| TestItem::new(cx).with_label("D"))),
                 false,
                 false,
                 Some(2),
@@ -3676,7 +3676,7 @@ mod tests {
         set_labeled_items(&pane, ["A", "B*", "C"], cx);
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(cx.new_model(|cx| TestItem::new(window, cx).with_label("D"))),
+                Box::new(cx.new_model(|cx| TestItem::new(cx).with_label("D"))),
                 false,
                 false,
                 Some(5),
@@ -3691,7 +3691,7 @@ mod tests {
         set_labeled_items(&pane, ["A*", "B", "C"], cx);
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(cx.new_model(|cx| TestItem::new(window, cx).with_label("D"))),
+                Box::new(cx.new_model(|cx| TestItem::new(cx).with_label("D"))),
                 false,
                 false,
                 None,
@@ -3705,7 +3705,7 @@ mod tests {
         set_labeled_items(&pane, ["A", "B", "C*"], cx);
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
-                Box::new(cx.new_model(|cx| TestItem::new(window, cx).with_label("D"))),
+                Box::new(cx.new_model(|cx| TestItem::new(cx).with_label("D"))),
                 false,
                 false,
                 None,
@@ -3806,7 +3806,7 @@ mod tests {
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
                 Box::new(cx.new_model(|cx| {
-                    TestItem::new(window, cx)
+                    TestItem::new(cx)
                         .with_singleton(true)
                         .with_label("buffer 1")
                         .with_project_items(&[TestProjectItem::new(1, "one.txt", cx)])
@@ -3824,7 +3824,7 @@ mod tests {
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
                 Box::new(cx.new_model(|cx| {
-                    TestItem::new(window, cx)
+                    TestItem::new(cx)
                         .with_singleton(true)
                         .with_label("buffer 1")
                         .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
@@ -3842,7 +3842,7 @@ mod tests {
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
                 Box::new(cx.new_model(|cx| {
-                    TestItem::new(window, cx)
+                    TestItem::new(cx)
                         .with_singleton(true)
                         .with_label("buffer 2")
                         .with_project_items(&[TestProjectItem::new(2, "2.txt", cx)])
@@ -3860,7 +3860,7 @@ mod tests {
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
                 Box::new(cx.new_model(|cx| {
-                    TestItem::new(window, cx)
+                    TestItem::new(cx)
                         .with_singleton(false)
                         .with_label("multibuffer 1")
                         .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
@@ -3878,7 +3878,7 @@ mod tests {
         pane.update_in(cx, |pane, window, cx| {
             pane.add_item(
                 Box::new(cx.new_model(|cx| {
-                    TestItem::new(window, cx)
+                    TestItem::new(cx)
                         .with_singleton(false)
                         .with_label("multibuffer 1b")
                         .with_project_items(&[TestProjectItem::new(1, "1.txt", cx)])
@@ -4369,11 +4369,9 @@ mod tests {
         cx: &mut VisualTestContext,
     ) -> Box<Model<TestItem>> {
         pane.update_in(cx, |pane, window, cx| {
-            let labeled_item = Box::new(cx.new_model(|cx| {
-                TestItem::new(window, cx)
-                    .with_label(label)
-                    .with_dirty(is_dirty)
-            }));
+            let labeled_item = Box::new(
+                cx.new_model(|cx| TestItem::new(cx).with_label(label).with_dirty(is_dirty)),
+            );
             pane.add_item(labeled_item.clone(), false, false, None, window, cx);
             labeled_item
         })
@@ -4395,8 +4393,7 @@ mod tests {
                     active_item_index = index;
                 }
 
-                let labeled_item =
-                    Box::new(cx.new_model(|cx| TestItem::new(window, cx).with_label(label)));
+                let labeled_item = Box::new(cx.new_model(|cx| TestItem::new(cx).with_label(label)));
                 pane.add_item(labeled_item.clone(), false, false, None, window, cx);
                 index += 1;
                 labeled_item

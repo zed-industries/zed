@@ -447,7 +447,7 @@ impl<T: 'static> PromptEditor<T> {
                 });
             }
         } else {
-            window.focus_view(cx, &self.context_strip, window);
+            self.context_strip.focus_handle(cx).focus(window);
         }
     }
 
@@ -788,7 +788,7 @@ impl<T: 'static> PromptEditor<T> {
 
     fn handle_context_strip_event(
         &mut self,
-        _context_strip: Model<ContextStrip>,
+        _context_strip: &Model<ContextStrip>,
         event: &ContextStripEvent,
         window: &mut Window,
         cx: &mut ModelContext<Self>,
@@ -796,10 +796,7 @@ impl<T: 'static> PromptEditor<T> {
         match event {
             ContextStripEvent::PickerDismissed
             | ContextStripEvent::BlurredEmpty
-            | ContextStripEvent::BlurredUp => {
-                let editor_focus_handle = self.editor.focus_handle(cx);
-                cx.focus(&editor_focus_handle);
-            }
+            | ContextStripEvent::BlurredUp => self.editor.focus_handle(cx).focus(window),
             ContextStripEvent::BlurredDown => {}
         }
     }
@@ -895,7 +892,7 @@ impl PromptEditor<BufferCodegen> {
         });
 
         let context_strip_subscription =
-            cx.subscribe(&context_strip, Self::handle_context_strip_event);
+            cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event);
 
         let mut this: PromptEditor<BufferCodegen> = PromptEditor {
             editor: prompt_editor.clone(),
@@ -907,6 +904,7 @@ impl PromptEditor<BufferCodegen> {
                     fs,
                     model_selector_menu_handle.clone(),
                     prompt_editor.focus_handle(cx),
+                    window,
                     cx,
                 )
             }),
@@ -1043,12 +1041,13 @@ impl PromptEditor<TerminalCodegen> {
                 thread_store.clone(),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
+                window,
                 cx,
             )
         });
 
         let context_strip_subscription =
-            cx.subscribe(&context_strip, Self::handle_context_strip_event);
+            cx.subscribe_in(&context_strip, window, Self::handle_context_strip_event);
 
         let mut this = Self {
             editor: prompt_editor.clone(),
@@ -1060,6 +1059,7 @@ impl PromptEditor<TerminalCodegen> {
                     fs,
                     model_selector_menu_handle.clone(),
                     prompt_editor.focus_handle(cx),
+                    window,
                     cx,
                 )
             }),

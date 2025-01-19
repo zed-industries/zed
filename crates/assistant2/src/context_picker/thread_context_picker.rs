@@ -202,6 +202,7 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
+        _window: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let thread = &self.matches[ix];
@@ -215,7 +216,6 @@ impl PickerDelegate for ThreadContextPickerDelegate {
 pub fn render_thread_context_entry(
     thread: &ThreadContextEntry,
     context_store: WeakModel<ContextStore>,
-    window: &mut Window,
     cx: &mut AppContext,
 ) -> Div {
     let added = context_store.upgrade().map_or(false, |ctx_store| {

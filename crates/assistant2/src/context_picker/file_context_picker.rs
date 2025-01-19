@@ -33,7 +33,7 @@ impl FileContextPicker {
             context_store,
             confirm_behavior,
         );
-        let picker = cx.new_model(|window, cx| Picker::uniform_list(delegate, window, cx));
+        let picker = cx.new_model(|cx| Picker::uniform_list(delegate, window, cx));
 
         Self { picker }
     }
@@ -227,10 +227,10 @@ impl PickerDelegate for FileContextPickerDelegate {
         };
 
         let confirm_behavior = self.confirm_behavior;
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn_in(window, |this, mut cx| async move {
             match task.await.notify_async_err(&mut cx) {
                 None => anyhow::Ok(()),
-                Some(()) => this.update(&mut cx, |this, cx| match confirm_behavior {
+                Some(()) => this.update_in(&mut cx, |this, window, cx| match confirm_behavior {
                     ConfirmBehavior::KeepOpen => {}
                     ConfirmBehavior::Close => this.delegate.dismissed(window, cx),
                 }),
@@ -251,6 +251,7 @@ impl PickerDelegate for FileContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
+        _window: &mut Window,
         cx: &mut ModelContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let path_match = &self.matches[ix];
@@ -264,7 +265,6 @@ impl PickerDelegate for FileContextPickerDelegate {
                     &path_match.path,
                     &path_match.path_prefix,
                     self.context_store.clone(),
-                    window,
                     cx,
                 )),
         )
@@ -276,7 +276,6 @@ pub fn render_file_context_entry(
     path: &Path,
     path_prefix: &Arc<str>,
     context_store: WeakModel<ContextStore>,
-    window: &Window,
     cx: &AppContext,
 ) -> Stateful<Div> {
     let (file_name, directory) = if path == Path::new("") {
@@ -347,7 +346,7 @@ pub fn render_file_context_entry(
                         )
                         .child(Label::new("Included").size(LabelSize::Small)),
                 )
-                .tooltip(move |cx| Tooltip::text(format!("in {dir_name}")))
+                .tooltip(Tooltip::text(format!("in {dir_name}")))
             }
         })
 }

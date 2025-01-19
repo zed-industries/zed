@@ -1335,10 +1335,10 @@ mod tests {
             .next()
             .await;
         cx.background_executor.run_until_parked();
-        cx.update_editor(|editor, _, cx| {
+        cx.update_editor(|editor, _window, cx| {
             let expected_layers = vec![hint_label.to_string()];
             assert_eq!(expected_layers, cached_hint_labels(editor));
-            assert_eq!(expected_layers, visible_hint_labels(editor, window, cx));
+            assert_eq!(expected_layers, visible_hint_labels(editor, cx));
         });
 
         let inlay_range = cx

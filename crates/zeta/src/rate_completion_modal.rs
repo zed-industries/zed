@@ -66,9 +66,7 @@ impl RateCompletionModal {
         cx: &mut ModelContext<Workspace>,
     ) {
         if let Some(zeta) = Zeta::global(cx) {
-            workspace.toggle_modal(window, cx, |window, cx| {
-                RateCompletionModal::new(zeta, window, cx)
-            });
+            workspace.toggle_modal(window, cx, |_window, cx| RateCompletionModal::new(zeta, cx));
         }
     }
 
@@ -324,7 +322,7 @@ impl RateCompletionModal {
                     RateCompletionView::SuggestedEdits.name(),
                 )
                 .label_size(LabelSize::Small)
-                .on_click(cx.listener(move |this, _, window, cx| {
+                .on_click(cx.listener(move |this, _, _window, cx| {
                     this.current_view = RateCompletionView::SuggestedEdits;
                     cx.notify();
                 }))
@@ -336,7 +334,7 @@ impl RateCompletionModal {
                     RateCompletionView::RawInput.name(),
                 )
                 .label_size(LabelSize::Small)
-                .on_click(cx.listener(move |this, _, window, cx| {
+                .on_click(cx.listener(move |this, _, _window, cx| {
                     this.current_view = RateCompletionView::RawInput;
                     cx.notify();
                 }))
@@ -509,7 +507,7 @@ impl RateCompletionModal {
                                         .key_binding(KeyBinding::for_action_in(
                                             &ThumbsDownActiveCompletion,
                                             focus_handle,
-                                            cx,
+                                            window,
                                         ))
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             this.thumbs_down_active(
@@ -527,7 +525,7 @@ impl RateCompletionModal {
                                         .key_binding(KeyBinding::for_action_in(
                                             &ThumbsUpActiveCompletion,
                                             focus_handle,
-                                            cx,
+                                            window,
                                         ))
                                         .on_click(cx.listener(move |this, _, window, cx| {
                                             this.thumbs_up_active(&ThumbsUpActiveCompletion, window, cx);

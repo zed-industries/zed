@@ -1319,7 +1319,7 @@ pub mod test {
     }
 
     impl TestItem {
-        pub fn new(_window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
+        pub fn new(cx: &mut ModelContext<Self>) -> Self {
             Self {
                 state: String::new(),
                 label: String::new(),
@@ -1339,12 +1339,8 @@ pub mod test {
             }
         }
 
-        pub fn new_deserialized(
-            id: WorkspaceId,
-            window: &mut Window,
-            cx: &mut ModelContext<Self>,
-        ) -> Self {
-            let mut this = Self::new(window, cx);
+        pub fn new_deserialized(id: WorkspaceId, cx: &mut ModelContext<Self>) -> Self {
+            let mut this = Self::new(cx);
             this.workspace_id = Some(id);
             this
         }
@@ -1573,10 +1569,10 @@ pub mod test {
             _workspace: WeakModel<Workspace>,
             workspace_id: WorkspaceId,
             _item_id: ItemId,
-            window: &mut Window,
+            _window: &mut Window,
             cx: &mut AppContext,
         ) -> Task<anyhow::Result<Model<Self>>> {
-            let view = cx.new_model(|cx| Self::new_deserialized(workspace_id, window, cx));
+            let view = cx.new_model(|cx| Self::new_deserialized(workspace_id, cx));
             Task::ready(Ok(view))
         }
 

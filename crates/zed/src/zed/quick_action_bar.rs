@@ -302,11 +302,12 @@ impl Render for QuickActionBar {
                             Some(editor::actions::ToggleInlineCompletions.boxed_clone()),
                             {
                                 let editor = editor.clone();
-                                move |cx| {
+                                move |window, cx| {
                                     editor
                                         .update(cx, |editor, cx| {
                                             editor.toggle_inline_completions(
                                                 &editor::actions::ToggleInlineCompletions,
+                                                window,
                                                 cx,
                                             );
                                         })

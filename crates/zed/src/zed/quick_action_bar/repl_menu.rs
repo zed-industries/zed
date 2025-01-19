@@ -365,8 +365,8 @@ impl QuickActionBar {
                         .shape(ui::IconButtonShape::Square)
                         .icon_size(ui::IconSize::Small)
                         .icon_color(Color::Muted)
-                        .tooltip(move |cx| Tooltip::text(tooltip.clone(), cx))
-                        .on_click(|_, window, cx| {
+                        .tooltip(Tooltip::text(tooltip.clone()))
+                        .on_click(|_, _window, cx| {
                             cx.open_url(&format!("{}#installation", ZED_REPL_DOCUMENTATION))
                         }),
                 )
