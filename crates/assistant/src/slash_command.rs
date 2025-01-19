@@ -142,6 +142,7 @@ impl SlashCommandCompletionProvider {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn complete_command_argument(
         &self,
         command_name: &str,

@@ -35,7 +35,7 @@ impl Head {
         window: &mut Window,
         cx: &mut ModelContext<V>,
     ) -> Self {
-        let head = cx.new_model(|cx| EmptyHead::new(cx));
+        let head = cx.new_model(EmptyHead::new);
         cx.on_blur(&head.focus_handle(cx), window, blur_handler)
             .detach();
         Self::Empty(head)

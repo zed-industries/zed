@@ -85,6 +85,7 @@ impl ToolchainSelector {
         Some(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn new(
         workspace: WeakModel<Workspace>,
         project: Model<Project>,

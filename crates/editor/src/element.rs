@@ -1509,6 +1509,7 @@ impl EditorElement {
 
     // Folds contained in a hunk are ignored apart from shrinking visual size
     // If a fold contains any hunks then that fold line is marked as modified
+    #[allow(clippy::too_many_arguments)]
     fn layout_gutter_git_hunks(
         &self,
         line_height: Pixels,
@@ -2279,6 +2280,7 @@ impl EditorElement {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn prepaint_lines(
         &self,
         start_row: DisplayRow,
@@ -3001,6 +3003,7 @@ impl EditorElement {
 
     /// Returns true if any of the blocks changed size since the previous frame. This will trigger
     /// a restart of rendering for the editor based on the new sizes.
+    #[allow(clippy::too_many_arguments)]
     fn layout_blocks(
         &self,
         blocks: &mut Vec<BlockLayout>,
@@ -5833,6 +5836,7 @@ impl LineWithInvisibles {
         layouts
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn prepaint(
         &mut self,
         line_height: Pixels,
@@ -5867,6 +5871,7 @@ impl LineWithInvisibles {
         }
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn draw(
         &self,
         layout: &EditorLayout,

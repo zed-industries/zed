@@ -69,6 +69,7 @@ pub fn init(cx: &mut AppContext) {
                         Some(&specs),
                         &["OK"],
                     )
+                    .await
                 })
                 .detach();
             })

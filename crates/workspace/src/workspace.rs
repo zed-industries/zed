@@ -7366,7 +7366,7 @@ mod tests {
 
         let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
         pane.update_in(cx, |pane, window, cx| {
-            let item = cx.new_model(|cx| TestItem::new(cx));
+            let item = cx.new_model(TestItem::new);
             pane.add_item(Box::new(item), true, true, None, window, cx);
         });
 

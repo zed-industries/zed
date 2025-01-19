@@ -1668,6 +1668,7 @@ const DEFAULT_TAB_TITLE: &str = "New Chat";
 const MAX_TAB_TITLE_LEN: usize = 16;
 
 impl ContextEditor {
+    #[allow(clippy::too_many_arguments)]
     fn for_context(
         context: Model<Context>,
         fs: Arc<dyn Fs>,
@@ -3651,6 +3652,7 @@ impl ContextEditor {
             .unwrap_or_else(|| Cow::Borrowed(DEFAULT_TAB_TITLE))
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn render_patch_block(
         &mut self,
         range: Range<text::Anchor>,
