@@ -377,6 +377,8 @@ gpui::actions!(
         ToggleInlayHints,
         ToggleInlineCompletions,
         ToggleLineNumbers,
+        ExchangeMark,
+        SetMark,
         ToggleRelativeLineNumbers,
         ToggleSelectionMenu,
         ToggleSoftWrap,
