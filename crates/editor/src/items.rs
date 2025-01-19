@@ -1633,6 +1633,7 @@ mod tests {
     use language::{LanguageMatcher, TestFile};
     use project::FakeFs;
     use std::path::{Path, PathBuf};
+    use util::add_root_for_windows;
 
     #[gpui::test]
     fn test_path_for_file(cx: &mut AppContext) {
@@ -1683,36 +1684,28 @@ mod tests {
 
     #[gpui::test]
     async fn test_deserialize(cx: &mut gpui::TestAppContext) {
-        fn to_path_string(path: &str) -> String {
-            if cfg!(target_os = "windows") {
-                format!("C:{}", path)
-            } else {
-                path.to_string()
-            }
-        }
-
         init_test(cx, |_| {});
 
         let fs = FakeFs::new(cx.executor());
-        fs.insert_file(to_path_string("/file.rs"), Default::default())
+        fs.insert_file(add_root_for_windows("/file.rs"), Default::default())
             .await;
 
         // Test case 1: Deserialize with path and contents
         {
             let project =
-                Project::test(fs.clone(), [to_path_string("/file.rs").as_ref()], cx).await;
+                Project::test(fs.clone(), [add_root_for_windows("/file.rs").as_ref()], cx).await;
             let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
             let item_id = 1234 as ItemId;
             let mtime = fs
-                .metadata(Path::new(&to_path_string("/file.rs")))
+                .metadata(Path::new(&add_root_for_windows("/file.rs")))
                 .await
                 .unwrap()
                 .unwrap()
                 .mtime;
 
             let serialized_editor = SerializedEditor {
-                abs_path: Some(PathBuf::from(to_path_string("/file.rs"))),
+                abs_path: Some(PathBuf::from(add_root_for_windows("/file.rs"))),
                 contents: Some("fn main() {}".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(mtime),
@@ -1737,14 +1730,14 @@ mod tests {
         // Test case 2: Deserialize with only path
         {
             let project =
-                Project::test(fs.clone(), [to_path_string("/file.rs").as_ref()], cx).await;
+                Project::test(fs.clone(), [add_root_for_windows("/file.rs").as_ref()], cx).await;
             let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
 
             let item_id = 5678 as ItemId;
             let serialized_editor = SerializedEditor {
-                abs_path: Some(PathBuf::from(to_path_string("/file.rs"))),
+                abs_path: Some(PathBuf::from(add_root_for_windows("/file.rs"))),
                 contents: None,
                 language: None,
                 mtime: None,
@@ -1770,7 +1763,7 @@ mod tests {
         // Test case 3: Deserialize with no path (untitled buffer, with content and language)
         {
             let project =
-                Project::test(fs.clone(), [to_path_string("/file.rs").as_ref()], cx).await;
+                Project::test(fs.clone(), [add_root_for_windows("/file.rs").as_ref()], cx).await;
             // Add Rust to the language, so that we can restore the language of the buffer
             project.update(cx, |project, _| project.languages().add(rust_language()));
 
@@ -1809,7 +1802,7 @@ mod tests {
         // Test case 4: Deserialize with path, content, and old mtime
         {
             let project =
-                Project::test(fs.clone(), [to_path_string("/file.rs").as_ref()], cx).await;
+                Project::test(fs.clone(), [add_root_for_windows("/file.rs").as_ref()], cx).await;
             let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
 
             let workspace_id = workspace::WORKSPACE_DB.next_id().await.unwrap();
@@ -1817,7 +1810,7 @@ mod tests {
             let item_id = 9345 as ItemId;
             let old_mtime = MTime::from_seconds_and_nanos(0, 50);
             let serialized_editor = SerializedEditor {
-                abs_path: Some(PathBuf::from(to_path_string("/file.rs"))),
+                abs_path: Some(PathBuf::from(add_root_for_windows("/file.rs"))),
                 contents: Some("fn main() {}".to_string()),
                 language: Some("Rust".to_string()),
                 mtime: Some(old_mtime),

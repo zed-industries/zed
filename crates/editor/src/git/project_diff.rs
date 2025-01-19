@@ -1104,6 +1104,7 @@ mod tests {
         ops::Deref as _,
         path::{Path, PathBuf},
     };
+    use util::add_root_for_windows;
 
     use super::*;
 
@@ -1123,20 +1124,12 @@ mod tests {
 
     #[gpui::test(iterations = 30)]
     async fn simple_edit_test(cx: &mut TestAppContext) {
-        fn to_path_string(path: &str) -> String {
-            if cfg!(target_os = "windows") {
-                path.replace("/root", "C:/root")
-            } else {
-                path.to_string()
-            }
-        }
-
         cx.executor().allow_parking();
         init_test(cx);
 
         let fs = fs::FakeFs::new(cx.executor().clone());
         fs.insert_tree(
-            to_path_string("/root"),
+            add_root_for_windows("/root"),
             json!({
                 ".git": {},
                 "file_a": "This is file_a",
@@ -1145,14 +1138,15 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), [Path::new(&to_path_string("/root"))], cx).await;
+        let project =
+            Project::test(fs.clone(), [Path::new(&add_root_for_windows("/root"))], cx).await;
         let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
         let cx = &mut VisualTestContext::from_window(*workspace.deref(), cx);
 
         let file_a_editor = workspace
             .update(cx, |workspace, cx| {
                 let file_a_editor = workspace.open_abs_path(
-                    PathBuf::from(to_path_string("/root/file_a")),
+                    PathBuf::from(add_root_for_windows("/root/file_a")),
                     true,
                     cx,
                 );
@@ -1223,7 +1217,7 @@ mod tests {
             });
         });
         fs.set_status_for_repo_via_git_operation(
-            Path::new(&to_path_string("/root/.git")),
+            Path::new(&add_root_for_windows("/root/.git")),
             &[(
                 Path::new("file_a"),
                 TrackedStatus {
