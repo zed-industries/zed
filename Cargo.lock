@@ -3959,6 +3959,7 @@ dependencies = [
  "util",
  "uuid",
  "workspace",
+ "zed_predict_tos",
 ]
 
 [[package]]
@@ -6304,6 +6305,7 @@ name = "inline_completion_button"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "client",
  "copilot",
  "editor",
  "feature_flags",
@@ -6323,6 +6325,7 @@ dependencies = [
  "ui",
  "workspace",
  "zed_actions",
+ "zed_predict_tos",
  "zeta",
 ]
 
@@ -16337,6 +16340,7 @@ dependencies = [
  "winresource",
  "workspace",
  "zed_actions",
+ "zed_predict_tos",
  "zeta",
 ]
 
@@ -16448,6 +16452,17 @@ name = "zed_php"
 version = "0.2.3"
 dependencies = [
  "zed_extension_api 0.1.0",
+]
+
+[[package]]
+name = "zed_predict_tos"
+version = "0.1.0"
+dependencies = [
+ "client",
+ "gpui",
+ "menu",
+ "ui",
+ "workspace",
 ]
 
 [[package]]

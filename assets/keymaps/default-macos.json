@@ -875,5 +875,12 @@
       "cmd-shift-enter": "zeta::ThumbsUpActiveCompletion",
       "cmd-shift-backspace": "zeta::ThumbsDownActiveCompletion"
     }
+  },
+  {
+    "context": "ZedPredictTos",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "menu::Cancel"
+    }
   }
 ]

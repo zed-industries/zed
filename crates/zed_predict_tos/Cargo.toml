@@ -1,0 +1,23 @@
+[package]
+name = "zed_predict_tos"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "GPL-3.0-or-later"
+
+[lints]
+workspace = true
+
+[lib]
+path = "src/zed_predict_tos.rs"
+doctest = false
+
+[features]
+test-support = []
+
+[dependencies]
+client.workspace = true
+gpui.workspace = true
+ui.workspace = true
+workspace.workspace = true
+menu.workspace = true
