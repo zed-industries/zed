@@ -155,6 +155,12 @@ pub fn deploy_context_menu(
             .all::<PointUtf16>(cx)
             .into_iter()
             .any(|s| !s.is_empty());
+        let mut has_git_repo = false;
+        if let Some(project) = editor.project.clone() {
+            project.update(cx, |project, cx| {
+                has_git_repo = project.get_first_worktree_root_repo(cx).is_some()
+            });
+        };
 
         ui::ContextMenu::build(cx, |menu, _cx| {
             let builder = menu
@@ -190,7 +196,22 @@ pub fn deploy_context_menu(
                     }
                 })
                 .action("Open in Terminal", Box::new(OpenInTerminal))
-                .action("Copy Permalink", Box::new(CopyPermalinkToLine));
+                // alternative to removing the permalink option - is to disable the option with the reason shown instead?
+                /*
+                .map(|builder| {
+                    if has_git_repo {
+                        builder.action("Copy Permalink", Box::new(CopyPermalinkToLine))
+                    } else {
+                        builder.disabled_action(
+                            "Copy Permalink (requires a git repo)",
+                            Box::new(CopyPermalinkToLine),
+                        )
+                    }
+                })
+                */
+                .when(has_git_repo, |cx| {
+                    cx.action("Copy Permalink", Box::new(CopyPermalinkToLine))
+                });
             match focus {
                 Some(focus) => builder.context(focus),
                 None => builder,
