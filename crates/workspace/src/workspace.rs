@@ -744,7 +744,7 @@ pub enum Event {
     ContactRequestedJoin(u64),
     WorkspaceCreated(WeakEntity<Workspace>),
     SpawnTask {
-        action: Box<SpawnInTerminal>,
+        action: Vec<SpawnInTerminal>,
     },
     OpenBundledFile {
         text: Cow<'static, str>,

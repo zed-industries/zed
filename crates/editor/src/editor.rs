@@ -4353,9 +4353,10 @@ impl Editor {
         match action {
             CodeActionsItem::Task(task_source_kind, resolved_task) => {
                 workspace.update(cx, |workspace, cx| {
-                    workspace::tasks::schedule_resolved_task(
+                    workspace::tasks::schedule_resolved_tasks(
                         workspace,
                         task_source_kind,
+                        vec![],
                         resolved_task,
                         false,
                         cx,
@@ -5325,9 +5326,35 @@ impl Editor {
 
             workspace
                 .update(&mut cx, |workspace, cx| {
-                    workspace::tasks::schedule_resolved_task(
+                    let worktree = match task_source_kind {
+                        TaskSourceKind::Worktree { id, .. } => Some(id),
+                        _ => None
+                    };
+
+                    let pre_tasks = workspace
+                        .project()
+                        .read(cx)
+                        .task_store()
+                        .read(cx)
+                        .task_inventory()
+                        .map_or(vec![], |inventory| {
+                            inventory
+                                .read(cx)
+                                .build_pre_task_list(
+                                    &resolved_task,
+                                    worktree,
+                                    &context
+                                )
+                                .unwrap_or(vec![])
+                                .into_iter()
+                                .map(|(_, task)| task)
+                                .collect_vec()
+                        });
+
+                    workspace::tasks::schedule_resolved_tasks(
                         workspace,
                         task_source_kind,
+                        pre_tasks,
                         resolved_task,
                         false,
                         cx,

@@ -256,7 +256,7 @@ impl TerminalPanel {
                             action: spawn_in_terminal,
                         } = e
                         {
-                            terminal_panel.spawn_task(spawn_in_terminal, window, cx);
+                            terminal_panel.spawn_task_queue(spawn_in_terminal, window, cx);
                         };
                     })
                     .detach();
@@ -456,78 +456,72 @@ impl TerminalPanel {
             .detach_and_log_err(cx);
     }
 
-    fn spawn_task(&mut self, task: &SpawnInTerminal, window: &mut Window, cx: &mut Context<Self>) {
-        let Ok(is_local) = self
-            .workspace
-            .update(cx, |workspace, cx| workspace.project().read(cx).is_local())
-        else {
-            return;
-        };
+    fn spawn_task_queue(&mut self, task: &SpawnInTerminal, window: &mut Window, cx: &mut Context<Self>) {
+        todo!("implement task synchronization");
+        for task in tasks {
+            let Ok(is_local) = self
+                .workspace
+                .update(cx, |workspace, cx| workspace.project().read(cx).is_local())
+            else {
+                return;
+            };
 
-        let builder = ShellBuilder::new(is_local, &task.shell);
-        let command_label = builder.command_label(&task.command_label);
-        let (command, args) = builder.build(task.command.clone(), &task.args);
+            let builder = ShellBuilder::new(is_local, &task.shell);
+            let command_label = builder.command_label(&task.command_label);
+            let (command, args) = builder.build(task.command.clone(), &task.args);
 
-        let task = SpawnInTerminal {
-            command_label,
-            command,
-            args,
-            ..task.clone()
-        };
+            let task = SpawnInTerminal {
+                command_label,
+                command,
+                args,
+                ..task.clone()
+            };
 
-        if task.allow_concurrent_runs && task.use_new_terminal {
-            self.spawn_in_new_terminal(task, window, cx)
-                .detach_and_log_err(cx);
-            return;
-        }
+            if task.allow_concurrent_runs && task.use_new_terminal {
+                self.spawn_in_new_terminal(task, window, cx).detach_and_log_err(cx);
+                return;
+            }
 
-        let mut terminals_for_task = self.terminals_for_task(&task.full_label, cx);
-        let Some(existing) = terminals_for_task.pop() else {
-            self.spawn_in_new_terminal(task, window, cx)
-                .detach_and_log_err(cx);
-            return;
-        };
+            let mut terminals_for_task = self.terminals_for_task(&task.full_label, cx);
+            let Some(existing) = terminals_for_task.pop() else {
+                self.spawn_in_new_terminal(task, window, cx).detach_and_log_err(cx);
+                return;
+            };
 
-        let (existing_item_index, task_pane, existing_terminal) = existing;
-        if task.allow_concurrent_runs {
-            self.replace_terminal(
-                task,
-                task_pane,
-                existing_item_index,
-                existing_terminal,
-                window,
-                cx,
-            )
-            .detach();
-            return;
-        }
+            let (existing_item_index, task_pane, existing_terminal) = existing;
+            if task.allow_concurrent_runs {
+                self.replace_terminal(task, task_pane, existing_item_index, existing_terminal, window, cx)
+                    .detach();
+                return;
+            }
 
-        self.deferred_tasks.insert(
-            task.id.clone(),
-            cx.spawn_in(window, |terminal_panel, mut cx| async move {
-                wait_for_terminals_tasks(terminals_for_task, &mut cx).await;
-                let task = terminal_panel.update_in(&mut cx, |terminal_panel, window, cx| {
-                    if task.use_new_terminal {
-                        terminal_panel
-                            .spawn_in_new_terminal(task, window, cx)
-                            .detach_and_log_err(cx);
-                        None
-                    } else {
-                        Some(terminal_panel.replace_terminal(
-                            task,
-                            task_pane,
-                            existing_item_index,
-                            existing_terminal,
-                            window,
-                            cx,
-                        ))
+            self.deferred_tasks.insert(
+                task.id.clone(),
+                cx.spawn(|terminal_panel, mut cx| async move {
+                    wait_for_terminals_tasks(terminals_for_task, &mut cx).await;
+                    let task = terminal_panel.update(&mut cx, |terminal_panel, cx| {
+                        if task.use_new_terminal {
+                            terminal_panel
+                                .spawn_in_new_terminal(task, window, cx)
+                                .detach_and_log_err(cx);
+                            None
+                        } else {
+                            Some(terminal_panel.replace_terminal(
+                                task,
+                                task_pane,
+                                existing_item_index,
+                                existing_terminal,
+                                window,
+                                cx,
+                            ))
+                        }
+                    });
+                    if let Ok(Some(task)) = task {
+                        task.await;
                     }
-                });
-                if let Ok(Some(task)) = task {
-                    task.await;
-                }
-            }),
-        );
+                }),
+            );
+        }
     }
 
     pub fn spawn_in_new_terminal(

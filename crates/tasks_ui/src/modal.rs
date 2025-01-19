@@ -7,6 +7,7 @@ use gpui::{
     Focusable, InteractiveElement, ParentElement, Render, SharedString, Styled, Subscription, Task,
     WeakEntity, Window,
 };
+use itertools::Itertools;
 use picker::{highlighted_match_with_paths::HighlightedText, Picker, PickerDelegate};
 use project::{task_store::TaskStore, TaskSourceKind};
 use task::{ResolvedTask, RevealTarget, TaskContext, TaskTemplate};
@@ -16,7 +17,7 @@ use ui::{
     KeyBinding, LabelSize, ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip,
 };
 use util::ResultExt;
-use workspace::{tasks::schedule_resolved_task, ModalView, Workspace};
+use workspace::{tasks::schedule_resolved_tasks, ModalView, Workspace};
 pub use zed_actions::{Rerun, Spawn};
 
 /// A modal used to spawn new tasks.
@@ -312,7 +313,39 @@ impl PickerDelegate for TasksModalDelegate {
 
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, cx);
+                let worktree = match task_source_kind {
+                    TaskSourceKind::Worktree { id, .. } => Some(id),
+                    _ => None
+                };
+
+                let pre_tasks = workspace
+                    .project()
+                    .read(cx)
+                    .task_store()
+                    .read(cx)
+                    .task_inventory()
+                    .map_or(vec![], |inventory| {
+                        inventory
+                            .read(cx)
+                            .build_pre_task_list(
+                                &task,
+                                worktree,
+                                &self.task_context
+                            )
+                            .unwrap_or(vec![])
+                            .into_iter()
+                            .map(|(_, task)| task)
+                            .collect_vec()
+                    });
+
+                schedule_resolved_tasks(
+                    workspace,
+                    task_source_kind,
+                    pre_tasks,
+                    task,
+                    omit_history_entry,
+                    cx
+                );
             })
             .ok();
         cx.emit(DismissEvent);
@@ -466,7 +499,14 @@ impl PickerDelegate for TasksModalDelegate {
         }
         self.workspace
             .update(cx, |workspace, cx| {
-                schedule_resolved_task(workspace, task_source_kind, task, omit_history_entry, cx);
+                schedule_resolved_tasks(
+                    workspace,
+                    task_source_kind,
+                    vec![],
+                    task,
+                    omit_history_entry,
+                    cx
+                );
             })
             .ok();
         cx.emit(DismissEvent);

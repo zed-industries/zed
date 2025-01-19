@@ -1,4 +1,5 @@
 use gpui::Context;
+use itertools::Itertools as _;
 use project::TaskSourceKind;
 use remote::ConnectionState;
 use task::{ResolvedTask, TaskContext, TaskTemplate};
@@ -29,9 +30,35 @@ pub fn schedule_task(
     if let Some(spawn_in_terminal) =
         task_to_resolve.resolve_task(&task_source_kind.to_id_base(), task_cx)
     {
-        schedule_resolved_task(
+        let worktree = match task_source_kind {
+            TaskSourceKind::Worktree { id, .. } => Some(id),
+            _ => None
+        };
+
+        let pre_tasks = workspace
+            .project()
+            .read(cx)
+            .task_store()
+            .read(cx)
+            .task_inventory()
+            .map_or(vec![], |inventory| {
+                inventory
+                    .read(cx)
+                    .build_pre_task_list(
+                        &spawn_in_terminal,
+                        worktree,
+                        task_cx
+                    )
+                    .unwrap_or(vec![])
+                    .into_iter()
+                    .map(|(_, task)| task)
+                    .collect_vec()
+            });
+
+        schedule_resolved_tasks(
             workspace,
             task_source_kind,
+            pre_tasks,
             spawn_in_terminal,
             omit_history,
             cx,
@@ -39,9 +66,10 @@ pub fn schedule_task(
     }
 }
 
-pub fn schedule_resolved_task(
+pub fn schedule_resolved_tasks(
     workspace: &mut Workspace,
     task_source_kind: TaskSourceKind,
+    pre_tasks: Vec<ResolvedTask>,
     mut resolved_task: ResolvedTask,
     omit_history: bool,
     cx: &mut Context<Workspace>,
@@ -60,8 +88,15 @@ pub fn schedule_resolved_task(
             });
         }
 
+        let mut all_tasks = pre_tasks
+            .into_iter()
+            .filter_map(|mut task| task.resolved.take())
+            .collect_vec();
+
+        all_tasks.push(spawn_in_terminal);
+
         cx.emit(crate::Event::SpawnTask {
-            action: Box::new(spawn_in_terminal),
+            action: all_tasks,
         });
     }
 }

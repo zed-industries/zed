@@ -123,37 +123,42 @@ impl Inventory {
     }
 
     /// Topological sort of the dependency graph of `task`
-    pub fn build_pre_task_list(&self, task: &TaskTemplate) -> anyhow::Result<Vec<(TaskSourceKind, TaskTemplate)>> {
-        // collect all tasks from all available worktrees
-        let tasks = self
-            .templates_from_settings
-            .worktree
-            .iter()
-            .flat_map(|leaf| {
-                self.worktree_templates_from_settings(Some(*leaf.0))
-                    .chain(self.global_templates_from_settings())
-                    .collect_vec()
+    pub fn build_pre_task_list(
+        &self,
+        base_task: &ResolvedTask,
+        worktree: Option<WorktreeId>,
+        task_context: &TaskContext,
+    ) -> anyhow::Result<Vec<(TaskSourceKind, ResolvedTask)>> {
+        let tasks_in_scope = self
+            .worktree_templates_from_settings(worktree)
+            .chain(self.global_templates_from_settings())
+            .filter_map(|(kind, task)| {
+                let base_id = kind.to_id_base();
+                task
+                    .resolve_task(&base_id, task_context)
+                    .map(|task| (kind, task))
             })
-            .unique_by(|(_, task)| task.label.clone())
+            .unique_by(|(_, task)| task.resolved_label.clone())
             .collect_vec();
 
-        if let None = tasks
+        if let None = tasks_in_scope
             .iter()
-            .find(|(_, TaskTemplate { label, .. })| task.label.as_str() == label.as_str())
+            .find(|(_, task)| task.resolved_label == base_task.resolved_label)
         {
-            return Err(anyhow::anyhow!("couldn't find with label {} in available tasks", &task.label));
+            return Err(anyhow::anyhow!("couldn't find with label {} in available tasks", base_task.resolved_label));
         }
 
         // map task labels to their dep graph node idx, source, and dependencies
-        let nodes = tasks
+        let nodes = tasks_in_scope
             .iter()
             .enumerate()
             .map(|(idx, (source, task))| (
-                task.label.as_str(),
+                task.resolved_label,
                 (
                     idx as u32,
                     source,
-                    task.pre
+                    task
+                        .resolved_pre_labels
                         .iter()
                         .map(|s| s.as_str())
                         .unique()
@@ -181,9 +186,8 @@ impl Inventory {
             }
         }
 
-
         dep_graph
-            .subgraph(nodes.get(task.label.as_str()).unwrap().0)
+            .subgraph(nodes.get(base_task.resolved_label.as_str()).unwrap().0)
             .topo_sort()
             .map(|tasks| {
                 tasks

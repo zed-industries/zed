@@ -1,4 +1,5 @@
 use std::path::PathBuf;
+use itertools::Itertools as _;
 use util::serde::default_true;
 
 use anyhow::{bail, Context};
@@ -160,6 +161,7 @@ impl TaskTemplate {
             None => None,
         }
         .or(cx.cwd.clone());
+
         let full_label = substitute_all_template_variables_in_str(
             &self.label,
             &task_variables,
@@ -191,12 +193,24 @@ impl TaskTemplate {
             string
         });
 
+        let pre_labels = self
+            .pre
+            .iter()
+            .filter_map(|pre_label| substitute_all_template_variables_in_str(
+                pre_label,
+                &truncated_variables,
+                &variable_names,
+                &mut substituted_variables
+            ))
+            .collect_vec();
+
         let command = substitute_all_template_variables_in_str(
             &self.command,
             &task_variables,
             &variable_names,
             &mut substituted_variables,
         )?;
+
         let args_with_substitutions = substitute_all_template_variables_in_vec(
             &self.args,
             &task_variables,
@@ -237,6 +251,7 @@ impl TaskTemplate {
             substituted_variables,
             original_task: self.clone(),
             resolved_label: full_label.clone(),
+            resolved_pre_labels: pre_labels,
             resolved: Some(SpawnInTerminal {
                 id,
                 cwd,
