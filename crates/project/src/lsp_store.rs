@@ -8331,7 +8331,7 @@ fn glob_literal_prefix(glob: &Path) -> PathBuf {
     glob.components()
         .take_while(|component| match component {
             path::Component::Normal(part) => {
-                !part.to_str().unwrap_or("").contains(['*', '?', '{', '}'])
+                !part.to_string_lossy().contains(['*', '?', '{', '}'])
             }
             _ => true,
         })
