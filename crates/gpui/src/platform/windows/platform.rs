@@ -190,7 +190,7 @@ impl WindowsPlatform {
             while PeekMessageW(&mut msg, None, 0, 0, PM_REMOVE).as_bool() {
                 match msg.message {
                     WM_QUIT => return true,
-                    WM_ZED_CLOSE_ONE_WINDOW | WM_ZED_EVENT_DISPATCHED_ON_MAIN_THREAD => {
+                    WM_GPUI_CLOSE_ONE_WINDOW | WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => {
                         if self.handle_zed_evnets(msg.message, msg.wParam, msg.lParam, &msg) {
                             return true;
                         }
@@ -219,12 +219,12 @@ impl WindowsPlatform {
             return false;
         }
         match message {
-            WM_ZED_CLOSE_ONE_WINDOW => {
+            WM_GPUI_CLOSE_ONE_WINDOW => {
                 if self.close_one_window(HWND(lparam.0 as _)) {
                     return true;
                 }
             }
-            WM_ZED_EVENT_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
+            WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD => self.run_foreground_task(),
             _ => unreachable!(),
         }
         false
@@ -506,7 +506,7 @@ impl Platform for WindowsPlatform {
         let mut lock = self.state.borrow_mut();
         if lock.current_cursor.0 != hcursor.0 {
             self.post_message(
-                WM_ZED_CURSOR_STYLE_CHANGED,
+                WM_GPUI_CURSOR_STYLE_CHANGED,
                 WPARAM(0),
                 LPARAM(hcursor.0 as isize),
             );
