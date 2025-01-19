@@ -242,7 +242,6 @@ impl VimGlobals {
         register: Option<char>,
         is_yank: bool,
         linewise: bool,
-
         cx: &mut ModelContext<Editor>,
     ) {
         if let Some(register) = register {

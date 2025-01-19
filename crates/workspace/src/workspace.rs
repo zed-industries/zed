@@ -5288,10 +5288,10 @@ impl Render for Workspace {
                                 })
                                 .when(self.zoomed.is_none(), |this| {
                                     this.on_drag_move(cx.listener(
-                                        move |workspace: &mut Workspace,
+                                        move |workspace,
                                               e: &DragMoveEvent<DraggedDock>,
-                                              window: &mut Window,
-                                              cx: &mut ModelContext<Workspace>| {
+                                              window,
+                                              cx| {
                                             if workspace.previous_dock_drag_coordinates
                                                 != Some(e.event.position)
                                             {
