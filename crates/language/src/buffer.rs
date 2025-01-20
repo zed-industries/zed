@@ -630,26 +630,24 @@ impl EditPreview {
         };
         let mut offset = range.start;
 
-        dbg!(&range, &text);
         for (old_range, new_text) in edits {
             let old_edit_range = old_range.to_offset(&self.old_snapshot);
-            let new_edit_start = old_range.start.to_offset(&self.new_snapshot);
-
-            dbg!(&old_edit_range, &new_edit_start);
+            let new_edit_start = old_range
+                .start
+                .bias_left(&self.old_snapshot)
+                .to_offset(&self.new_snapshot);
 
             let prev_range = offset..new_edit_start;
             if !prev_range.is_empty() {
                 let start = text.len();
                 self.highlight_text(prev_range, &mut text, &mut highlights, None, cx);
                 offset += text.len() - start;
-                dbg!(&text);
             }
 
             if include_deletions && !old_edit_range.is_empty() {
                 let start = text.len();
                 text.extend(self.old_snapshot.text_for_range(old_edit_range.clone()));
                 let end = text.len();
-                dbg!(&text);
 
                 highlights.push((
                     start..end,
@@ -661,9 +659,8 @@ impl EditPreview {
             }
 
             if !new_text.is_empty() {
-                let start = old_range.start.to_offset(&self.new_snapshot);
                 self.highlight_text(
-                    start..start + new_text.len(),
+                    new_edit_start..new_edit_start + new_text.len(),
                     &mut text,
                     &mut highlights,
                     Some(HighlightStyle {
@@ -673,12 +670,10 @@ impl EditPreview {
                     cx,
                 );
                 offset += new_text.len();
-                dbg!(&text);
             }
         }
 
         self.highlight_text(offset..range.end, &mut text, &mut highlights, None, cx);
-        dbg!(&text);
 
         HighlightedEdits {
             text: text.into(),

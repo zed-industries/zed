@@ -14568,7 +14568,7 @@ async fn test_inline_completion_text(cx: &mut TestAppContext) {
             ),
             (Point::new(3, 6)..Point::new(3, 6), " updated".to_string()),
         ],
-        true,
+        false,
         cx,
         |highlighted_edits, cx| {
             assert_eq!(
