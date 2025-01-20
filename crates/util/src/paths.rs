@@ -113,6 +113,10 @@ impl SanitizedPath {
     pub fn to_string(&self) -> String {
         self.0.to_string_lossy().to_string()
     }
+
+    pub fn join(&self, path: &Self) -> Self {
+        self.0.join(&path.0).into()
+    }
 }
 
 impl From<SanitizedPath> for Arc<Path> {
@@ -437,6 +441,14 @@ pub fn compare_paths(
             (None, None) => break cmp::Ordering::Equal,
         }
     }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+pub fn replace_path_separator(path: &str) -> String {
+    #[cfg(target_os = "windows")]
+    return path.replace("/", std::path::MAIN_SEPARATOR_STR);
+    #[cfg(not(target_os = "windows"))]
+    return path.to_string();
 }
 
 #[cfg(test)]

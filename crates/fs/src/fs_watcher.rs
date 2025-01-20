@@ -1,7 +1,7 @@
 use notify::EventKind;
 use parking_lot::Mutex;
 use std::sync::{Arc, OnceLock};
-use util::ResultExt;
+use util::{paths::SanitizedPath, ResultExt};
 
 use crate::{PathEvent, PathEventKind, Watcher};
 
@@ -24,7 +24,7 @@ impl FsWatcher {
 
 impl Watcher for FsWatcher {
     fn add(&self, path: &std::path::Path) -> gpui::Result<()> {
-        let root_path = path.to_path_buf();
+        let root_path = SanitizedPath::from(path);
 
         let tx = self.tx.clone();
         let pending_paths = self.pending_path_events.clone();
@@ -44,10 +44,19 @@ impl Watcher for FsWatcher {
                         .paths
                         .iter()
                         .filter_map(|event_path| {
-                            event_path.starts_with(&root_path).then(|| PathEvent {
-                                path: event_path.clone(),
-                                kind,
-                            })
+                            let event_p = SanitizedPath::from(event_path);
+                            // event_p.starts_with(&root_path).then(|| PathEvent {
+                            //     path: event_p.as_path().to_path_buf(),
+                            //     kind,
+                            // })
+                            if event_p.starts_with(&root_path) {
+                                Some(PathEvent {
+                                    path: event_p.as_path().to_path_buf(),
+                                    kind,
+                                })
+                            } else {
+                                None
+                            }
                         })
                         .collect::<Vec<_>>();
 
