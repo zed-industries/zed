@@ -75,6 +75,8 @@ use unicode_segmentation::UnicodeSegmentation;
 use util::{RangeExt, ResultExt};
 use workspace::{item::Item, notifications::NotifyTaskExt, Workspace};
 
+const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 7.;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DisplayDiffHunk {
     Folded {
@@ -6623,7 +6625,6 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let mut max_visible_line_width = Pixels::ZERO;
                     let mut line_layouts = Self::layout_lines(
                         start_row..end_row,
                         &snapshot,
@@ -6633,11 +6634,38 @@ impl Element for EditorElement {
                         window,
                         cx,
                     );
-                    for line_with_invisibles in &line_layouts {
-                        if line_with_invisibles.width > max_visible_line_width {
-                            max_visible_line_width = line_with_invisibles.width;
+
+                    let longest_line_blame_width = self.editor.update(cx, |editor, cx| {
+                        if !editor.show_git_blame_inline {
+                            return None;
                         }
-                    }
+                        let Some(blame) = editor.blame.as_ref() else {
+                            return None;
+                        };
+                        let Some(blame_entry) = blame
+                            .update(cx, |blame, cx| {
+                                let Some(buffer_row) = snapshot
+                                    .buffer_rows(snapshot.longest_row())
+                                    .next()
+                                    .flatten()
+                                else {
+                                    return None;
+                                };
+                                blame.blame_for_rows([Some(buffer_row)], cx).next()
+                            })
+                            .flatten()
+                        else {
+                            return None;
+                        };
+                        let workspace = editor.workspace.as_ref().map(|(w, _)| w.to_owned());
+                        let mut element =
+                            render_inline_blame_entry(blame, blame_entry, &style, workspace, cx);
+                        let inline_blame_padding = INLINE_BLAME_PADDING_EM_WIDTHS * em_advance;
+                        Some(
+                            element.layout_as_root(AvailableSpace::min_size(), cx).width
+                                + inline_blame_padding,
+                        )
+                    });
 
                     let longest_line_width = layout_line(
                         snapshot.longest_row(),
@@ -6648,7 +6676,8 @@ impl Element for EditorElement {
                         window,
                         cx,
                     )
-                    .width;
+                    .width
+                        + longest_line_blame_width.unwrap_or(Pixels::ZERO);
 
                     let scrollbar_range_data = ScrollbarRangeData::new(
                         scrollbar_bounds,
