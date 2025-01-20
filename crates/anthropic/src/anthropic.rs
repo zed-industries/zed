@@ -77,8 +77,8 @@ impl Model {
             Model::Claude3_5Sonnet => "claude-3-5-sonnet-latest",
             Model::Claude3_5Haiku => "claude-3-5-haiku-latest",
             Model::Claude3Opus => "claude-3-opus-latest",
-            Model::Claude3Sonnet => "claude-3-sonnet-latest",
-            Model::Claude3Haiku => "claude-3-haiku-latest",
+            Model::Claude3Sonnet => "claude-3-sonnet-20240229",
+            Model::Claude3Haiku => "claude-3-haiku-20240307",
             Self::Custom { name, .. } => name,
         }
     }
