@@ -12,6 +12,13 @@ use std::sync::Arc;
 use text::Rope;
 use worktree::RepositoryEntry;
 
+// project
+// > worktree
+//   > sumtree<repositoryentry>
+//
+// gitstate has a list of all repositories
+// that gets updated in response to worktree events that we are already handling
+
 pub struct GitState {
     pub commit_message: Model<Buffer>,
 

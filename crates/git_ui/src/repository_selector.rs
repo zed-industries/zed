@@ -7,6 +7,23 @@ use gpui::{
 use picker::{Picker, PickerDelegate};
 use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
 
+// get all the repos
+//  - Shared String + an id or something
+// which is active
+// handle when things change
+// (later?) harmonize with vcs_menu
+
+// foo repo
+// bar repo
+// baz repo
+
+// worktree a -> foo repo
+// - foo repo
+// - bar repo
+//
+// worktree b
+// - baz repo
+
 pub struct RepositorySelector {
     picker: View<Picker<RepositorySelectorDelegate>>,
     /// The task used to update the picker's matches when there is a change to
