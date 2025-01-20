@@ -1,9 +1,12 @@
 use crate::SharedString;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use collections::HashMap;
 pub use no_action::{is_no_action, NoAction};
 use serde_json::json;
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    fmt::Display,
+};
 
 /// Actions are used to implement keyboard-driven UI.
 /// When you declare an action, you can bind keys to the action in the keymap and
@@ -94,6 +97,47 @@ impl dyn Action {
     /// Get the type id of this action
     pub fn type_id(&self) -> TypeId {
         self.as_any().type_id()
+    }
+}
+
+/// Error type for `Keystroke::parse`. This is used instead of `anyhow::Error` so that Zed can use
+/// markdown to display it.
+#[derive(Debug)]
+pub enum ActionBuildError {
+    /// Indicates that an action with this name has not been registered.
+    NotFound {
+        /// Name of the action that was not found.
+        name: String,
+    },
+    /// Indicates that an error occurred while building the action, typically a JSON deserialization
+    /// error.
+    BuildError {
+        /// Name of the action that was attempting to be built.
+        name: String,
+        /// Error that occurred while building the action.
+        error: anyhow::Error,
+    },
+}
+
+impl std::error::Error for ActionBuildError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ActionBuildError::NotFound { .. } => None,
+            ActionBuildError::BuildError { error, .. } => error.source(),
+        }
+    }
+}
+
+impl Display for ActionBuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ActionBuildError::NotFound { name } => {
+                write!(f, "Didn't find an action named \"{name}\"")
+            }
+            ActionBuildError::BuildError { name, error } => {
+                write!(f, "Error while building action \"{name}\": {error}")
+            }
+        }
     }
 }
 
@@ -201,7 +245,7 @@ impl ActionRegistry {
             .ok_or_else(|| anyhow!("no action type registered for {:?}", type_id))?
             .clone();
 
-        self.build_action(&name, None)
+        Ok(self.build_action(&name, None)?)
     }
 
     /// Construct an action based on its name and optional JSON parameters sourced from the keymap.
@@ -209,14 +253,20 @@ impl ActionRegistry {
         &self,
         name: &str,
         params: Option<serde_json::Value>,
-    ) -> Result<Box<dyn Action>> {
+    ) -> std::result::Result<Box<dyn Action>, ActionBuildError> {
         let build_action = self
             .by_name
             .get(name)
-            .ok_or_else(|| anyhow!("No action type registered for {}", name))?
+            .ok_or_else(|| ActionBuildError::NotFound {
+                name: name.to_owned(),
+            })?
             .build;
-        (build_action)(params.unwrap_or_else(|| json!({})))
-            .with_context(|| format!("Attempting to build action {}", name))
+        (build_action)(params.unwrap_or_else(|| json!({}))).map_err(|e| {
+            ActionBuildError::BuildError {
+                name: name.to_owned(),
+                error: e,
+            }
+        })
     }
 
     pub fn all_action_names(&self) -> &[SharedString] {

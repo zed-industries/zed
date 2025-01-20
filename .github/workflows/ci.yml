@@ -7,10 +7,16 @@ on:
       - "v[0-9]+.[0-9]+.x"
     tags:
       - "v*"
+    paths-ignore:
+      - "docs/**/*"
+      - ".github/workflows/community_*"
+
   pull_request:
     branches:
       - "**"
-  merge_group:
+    paths-ignore:
+      - "docs/**/*"
+      - ".github/workflows/community_*"
 
 concurrency:
   # Allow only one workflow per any non-`main` branch.
@@ -21,34 +27,8 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
-  RUSTFLAGS: "-D warnings"
 
 jobs:
-  check_docs_only:
-    runs-on: ubuntu-latest
-    outputs:
-      docs_only: ${{ steps.check_changes.outputs.docs_only }}
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
-        with:
-          fetch-depth: 0
-      - name: Check for non-docs changes
-        id: check_changes
-        run: |
-          if [ "${{ github.event_name }}" == "merge_group" ]; then
-            # When we're running in a merge queue, never assume that the changes
-            # are docs-only, as there could be other PRs in the group that
-            # contain non-docs changes.
-            echo "Running in the merge queue"
-            echo "docs_only=false" >> $GITHUB_OUTPUT
-          elif git diff --name-only ${{ github.event.pull_request.base.sha }} ${{ github.sha }} | grep -qvE '^docs/'; then
-            echo "Detected non-docs changes"
-            echo "docs_only=false" >> $GITHUB_OUTPUT
-          else
-            echo "Docs-only change"
-            echo "docs_only=true" >> $GITHUB_OUTPUT
-          fi
-
   migration_checks:
     name: Check Postgres and Protobuf migrations, mergability
     if: github.repository_owner == 'zed-industries'
@@ -103,7 +83,7 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
       # To support writing comments that they will certainly be revisited.
-      - name: Check for todo​! and FIX​ME comments
+      - name: Check for todo! and FIXME comments
         run: script/check-todos
 
       - name: Run style checks
@@ -121,43 +101,41 @@ jobs:
     runs-on:
       - self-hosted
       - test
-    needs: check_docs_only
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
 
+      - name: Configure CI
+        run: |
+          mkdir -p ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+
       - name: cargo clippy
-        if: needs.check_docs_only.outputs.docs_only == 'false'
         run: ./script/clippy
 
       - name: Check unused dependencies
-        if: needs.check_docs_only.outputs.docs_only == 'false'
         uses: bnjbvr/cargo-machete@main
 
       - name: Check licenses
-        if: needs.check_docs_only.outputs.docs_only == 'false'
         run: |
           script/check-licenses
           script/generate-licenses /tmp/zed_licenses_output
 
       - name: Check for new vulnerable dependencies
-        if: github.event_name == 'pull_request' && needs.check_docs_only.outputs.docs_only == 'false'
+        if: github.event_name == 'pull_request'
         uses: actions/dependency-review-action@3b139cfc5fae8b618d3eae3675e383bb1769c019 # v4
         with:
           license-check: false
 
       - name: Run tests
-        if: needs.check_docs_only.outputs.docs_only == 'false'
         uses: ./.github/actions/run_tests
 
       - name: Build collab
-        if: needs.check_docs_only.outputs.docs_only == 'false'
         run: cargo build -p collab
 
       - name: Build other binaries and features
-        if: needs.check_docs_only.outputs.docs_only == 'false'
         run: |
           cargo build --workspace --bins --all-features
           cargo check -p gpui --features "macos-blade"
@@ -165,13 +143,17 @@ jobs:
           cargo build -p remote_server
           script/check-rust-livekit-macos
 
+      # Since the macOS runners are stateful, so we need to remove the config file to prevent potential bug.
+      - name: Clean CI config file
+        if: always()
+        run: rm -rf ./../.cargo
+
   linux_tests:
     timeout-minutes: 60
     name: (Linux) Run Clippy and tests
     if: github.repository_owner == 'zed-industries'
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
-    needs: check_docs_only
     steps:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
@@ -182,29 +164,37 @@ jobs:
           clean: false
 
       - name: Cache dependencies
-        if: needs.check_docs_only.outputs.docs_only == 'false'
         uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-provider: "buildjet"
 
       - name: Install Linux dependencies
-        if: needs.check_docs_only.outputs.docs_only == 'false'
         run: ./script/linux
 
+      - name: Configure CI
+        run: |
+          mkdir -p ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+
       - name: cargo clippy
-        if: needs.check_docs_only.outputs.docs_only == 'false'
         run: ./script/clippy
 
       - name: Run tests
-        if: needs.check_docs_only.outputs.docs_only == 'false'
         uses: ./.github/actions/run_tests
 
       - name: Build other binaries and features
-        if: needs.check_docs_only.outputs.docs_only == 'false'
         run: |
           cargo build -p zed
           cargo check -p workspace
+
+      # Even the Linux runner is not stateful, in theory there is no need to do this cleanup.
+      # But, to avoid potential issues in the future if we choose to use a stateful Linux runner and forget to add code
+      # to clean up the config file, I’ve included the cleanup code here as a precaution.
+      # While it’s not strictly necessary at this moment, I believe it’s better to err on the side of caution.
+      - name: Clean CI config file
+        if: always()
+        run: rm -rf ./../.cargo
 
   build_remote_server:
     timeout-minutes: 60
@@ -212,7 +202,6 @@ jobs:
     if: github.repository_owner == 'zed-industries'
     runs-on:
       - buildjet-16vcpu-ubuntu-2204
-    needs: check_docs_only
     steps:
       - name: Add Rust to the PATH
         run: echo "$HOME/.cargo/bin" >> $GITHUB_PATH
@@ -223,19 +212,25 @@ jobs:
           clean: false
 
       - name: Cache dependencies
-        if: needs.check_docs_only.outputs.docs_only == 'false'
         uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-provider: "buildjet"
 
       - name: Install Clang & Mold
-        if: needs.check_docs_only.outputs.docs_only == 'false'
         run: ./script/remote-server && ./script/install-mold 2.34.0
 
+      - name: Configure CI
+        run: |
+          mkdir -p ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+
       - name: Build Remote Server
-        if: needs.check_docs_only.outputs.docs_only == 'false'
         run: cargo build -p remote_server
+
+      - name: Clean CI config file
+        if: always()
+        run: rm -rf ./../.cargo
 
   # todo(windows): Actually run the tests
   windows_tests:
@@ -243,7 +238,6 @@ jobs:
     name: (Windows) Run Clippy and tests
     if: github.repository_owner == 'zed-industries'
     runs-on: hosted-windows-1
-    needs: check_docs_only
     steps:
       # more info here:- https://github.com/rust-lang/cargo/issues/13020
       - name: Enable longer pathnames for git
@@ -254,23 +248,30 @@ jobs:
           clean: false
 
       - name: Cache dependencies
-        if: needs.check_docs_only.outputs.docs_only == 'false'
         uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-provider: "github"
 
+      - name: Configure CI
+        run: |
+          mkdir -p ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+
       - name: cargo clippy
-        if: needs.check_docs_only.outputs.docs_only == 'false'
         # Windows can't run shell scripts, so we need to use `cargo xtask`.
         run: cargo xtask clippy
 
       - name: Build Zed
-        if: needs.check_docs_only.outputs.docs_only == 'false'
         run: cargo build
 
+      # Since the Windows runners are stateful, so we need to remove the config file to prevent potential bug.
+      - name: Clean CI config file
+        if: always()
+        run: Remove-Item -Path "./../.cargo" -Recurse -Force
+
   bundle-mac:
-    timeout-minutes: 60
+    timeout-minutes: 120
     name: Create a macOS bundle
     runs-on:
       - self-hosted
@@ -332,14 +333,14 @@ jobs:
           mv target/x86_64-apple-darwin/release/Zed.dmg target/x86_64-apple-darwin/release/Zed-x86_64.dmg
 
       - name: Upload app bundle (aarch64) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg
           path: target/aarch64-apple-darwin/release/Zed-aarch64.dmg
 
       - name: Upload app bundle (x86_64) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
@@ -359,9 +360,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  bundle-linux:
+  bundle-linux-x86_x64:
     timeout-minutes: 60
-    name: Create a Linux bundle
+    name: Linux x86_x64 release bundle
     runs-on:
       - buildjet-16vcpu-ubuntu-2004
     if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
@@ -390,7 +391,7 @@ jobs:
         run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
-        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
@@ -409,7 +410,7 @@ jobs:
 
   bundle-linux-aarch64: # this runs on ubuntu22.04
     timeout-minutes: 60
-    name: Create arm64 Linux bundle
+    name: Linux arm64 release bundle
     runs-on:
       - buildjet-16vcpu-ubuntu-2204-arm
     if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
@@ -438,7 +439,7 @@ jobs:
         run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
-        uses: actions/upload-artifact@6f51ac03b9356f520e9adb1b1b7802705f340c2b # v4
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
@@ -458,7 +459,7 @@ jobs:
   auto-release-preview:
     name: Auto release preview
     if: ${{ startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre') }}
-    needs: [bundle-mac, bundle-linux, bundle-linux-aarch64]
+    needs: [bundle-mac, bundle-linux-x86_x64, bundle-linux-aarch64]
     runs-on:
       - self-hosted
       - bundle

@@ -1550,62 +1550,71 @@ impl<'a> WindowContext<'a> {
     }
 
     fn prepaint_tooltip(&mut self) -> Option<AnyElement> {
-        let tooltip_request = self.window.next_frame.tooltip_requests.last().cloned()?;
-        let tooltip_request = tooltip_request.unwrap();
-        let mut element = tooltip_request.tooltip.view.clone().into_any();
-        let mouse_position = tooltip_request.tooltip.mouse_position;
-        let tooltip_size = element.layout_as_root(AvailableSpace::min_size(), self);
+        // Use indexing instead of iteration to avoid borrowing self for the duration of the loop.
+        for tooltip_request_index in (0..self.window.next_frame.tooltip_requests.len()).rev() {
+            let Some(Some(tooltip_request)) = self
+                .window
+                .next_frame
+                .tooltip_requests
+                .get(tooltip_request_index)
+                .cloned()
+            else {
+                log::error!("Unexpectedly absent TooltipRequest");
+                continue;
+            };
+            let mut element = tooltip_request.tooltip.view.clone().into_any();
+            let mouse_position = tooltip_request.tooltip.mouse_position;
+            let tooltip_size = element.layout_as_root(AvailableSpace::min_size(), self);
 
-        let mut tooltip_bounds = Bounds::new(mouse_position + point(px(1.), px(1.)), tooltip_size);
-        let window_bounds = Bounds {
-            origin: Point::default(),
-            size: self.viewport_size(),
-        };
+            let mut tooltip_bounds =
+                Bounds::new(mouse_position + point(px(1.), px(1.)), tooltip_size);
+            let window_bounds = Bounds {
+                origin: Point::default(),
+                size: self.viewport_size(),
+            };
 
-        if tooltip_bounds.right() > window_bounds.right() {
-            let new_x = mouse_position.x - tooltip_bounds.size.width - px(1.);
-            if new_x >= Pixels::ZERO {
-                tooltip_bounds.origin.x = new_x;
-            } else {
-                tooltip_bounds.origin.x = cmp::max(
-                    Pixels::ZERO,
-                    tooltip_bounds.origin.x - tooltip_bounds.right() - window_bounds.right(),
-                );
+            if tooltip_bounds.right() > window_bounds.right() {
+                let new_x = mouse_position.x - tooltip_bounds.size.width - px(1.);
+                if new_x >= Pixels::ZERO {
+                    tooltip_bounds.origin.x = new_x;
+                } else {
+                    tooltip_bounds.origin.x = cmp::max(
+                        Pixels::ZERO,
+                        tooltip_bounds.origin.x - tooltip_bounds.right() - window_bounds.right(),
+                    );
+                }
             }
-        }
 
-        if tooltip_bounds.bottom() > window_bounds.bottom() {
-            let new_y = mouse_position.y - tooltip_bounds.size.height - px(1.);
-            if new_y >= Pixels::ZERO {
-                tooltip_bounds.origin.y = new_y;
-            } else {
-                tooltip_bounds.origin.y = cmp::max(
-                    Pixels::ZERO,
-                    tooltip_bounds.origin.y - tooltip_bounds.bottom() - window_bounds.bottom(),
-                );
+            if tooltip_bounds.bottom() > window_bounds.bottom() {
+                let new_y = mouse_position.y - tooltip_bounds.size.height - px(1.);
+                if new_y >= Pixels::ZERO {
+                    tooltip_bounds.origin.y = new_y;
+                } else {
+                    tooltip_bounds.origin.y = cmp::max(
+                        Pixels::ZERO,
+                        tooltip_bounds.origin.y - tooltip_bounds.bottom() - window_bounds.bottom(),
+                    );
+                }
             }
+
+            // It's possible for an element to have an active tooltip while not being painted (e.g.
+            // via the `visible_on_hover` method). Since mouse listeners are not active in this
+            // case, instead update the tooltip's visibility here.
+            let is_visible =
+                (tooltip_request.tooltip.check_visible_and_update)(tooltip_bounds, self);
+            if !is_visible {
+                continue;
+            }
+
+            self.with_absolute_element_offset(tooltip_bounds.origin, |cx| element.prepaint(cx));
+
+            self.window.tooltip_bounds = Some(TooltipBounds {
+                id: tooltip_request.id,
+                bounds: tooltip_bounds,
+            });
+            return Some(element);
         }
-
-        // Element's parent can get hidden (e.g. via the `visible_on_hover` method),
-        // and element's `paint` won't be called (ergo, mouse listeners also won't be active) to detect that the tooltip has to be removed.
-        // Ensure it's not stuck around in such cases.
-        let invalidate_tooltip = !tooltip_request
-            .tooltip
-            .origin_bounds
-            .contains(&self.mouse_position())
-            && (!tooltip_request.tooltip.hoverable
-                || !tooltip_bounds.contains(&self.mouse_position()));
-        if invalidate_tooltip {
-            return None;
-        }
-
-        self.with_absolute_element_offset(tooltip_bounds.origin, |cx| element.prepaint(cx));
-
-        self.window.tooltip_bounds = Some(TooltipBounds {
-            id: tooltip_request.id,
-            bounds: tooltip_bounds,
-        });
-        Some(element)
+        None
     }
 
     fn prepaint_deferred_draws(&mut self, deferred_draw_indices: &[usize]) {

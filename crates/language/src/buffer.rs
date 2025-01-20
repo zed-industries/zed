@@ -256,7 +256,7 @@ pub async fn prepare_completion_documentation(
             }
 
             lsp::MarkupKind::Markdown => {
-                let parsed = parse_markdown(value, language_registry, language).await;
+                let parsed = parse_markdown(value, Some(language_registry), language).await;
                 Documentation::MultiLineMarkdown(parsed)
             }
         },

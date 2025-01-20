@@ -6,7 +6,7 @@ pub use rate_completion_modal::*;
 
 use anyhow::{anyhow, Context as _, Result};
 use arrayvec::ArrayVec;
-use client::Client;
+use client::{Client, UserStore};
 use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
 use gpui::{
@@ -163,6 +163,8 @@ pub struct Zeta {
     rated_completions: HashSet<InlineCompletionId>,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
+    tos_accepted: bool, // Terms of service accepted
+    _user_store_subscription: Subscription,
 }
 
 impl Zeta {
@@ -170,9 +172,13 @@ impl Zeta {
         cx.try_global::<ZetaGlobal>().map(|global| global.0.clone())
     }
 
-    pub fn register(client: Arc<Client>, cx: &mut AppContext) -> Model<Self> {
+    pub fn register(
+        client: Arc<Client>,
+        user_store: Model<UserStore>,
+        cx: &mut AppContext,
+    ) -> Model<Self> {
         Self::global(cx).unwrap_or_else(|| {
-            let model = cx.new_model(|cx| Self::new(client, cx));
+            let model = cx.new_model(|cx| Self::new(client, user_store, cx));
             cx.set_global(ZetaGlobal(model.clone()));
             model
         })
@@ -182,7 +188,7 @@ impl Zeta {
         self.events.clear();
     }
 
-    fn new(client: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
+    fn new(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut ModelContext<Self>) -> Self {
         let refresh_llm_token_listener = language_models::RefreshLlmTokenListener::global(cx);
 
         Self {
@@ -204,6 +210,16 @@ impl Zeta {
                     .detach_and_log_err(cx);
                 },
             ),
+            tos_accepted: user_store
+                .read(cx)
+                .current_user_has_accepted_terms()
+                .unwrap_or(false),
+            _user_store_subscription: cx.subscribe(&user_store, |this, _, event, _| match event {
+                client::user::Event::TermsStatusUpdated { accepted } => {
+                    this.tos_accepted = *accepted;
+                }
+                _ => {}
+            }),
         }
     }
 
@@ -1028,11 +1044,11 @@ impl ZetaInlineCompletionProvider {
 
 impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvider {
     fn name() -> &'static str {
-        "zeta"
+        "zed-predict"
     }
 
     fn display_name() -> &'static str {
-        "Zeta"
+        "Zed Predict"
     }
 
     fn show_completions_in_menu() -> bool {
@@ -1056,6 +1072,10 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()), cx)
     }
 
+    fn needs_terms_acceptance(&self, cx: &AppContext) -> bool {
+        !self.zeta.read(cx).tos_accepted
+    }
+
     fn is_refreshing(&self) -> bool {
         !self.pending_completions.is_empty()
     }
@@ -1067,6 +1087,10 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         debounce: bool,
         cx: &mut ModelContext<Self>,
     ) {
+        if !self.zeta.read(cx).tos_accepted {
+            return;
+        }
+
         let pending_completion_id = self.next_pending_completion_id;
         self.next_pending_completion_id += 1;
 
@@ -1373,8 +1397,9 @@ mod tests {
             RefreshLlmTokenListener::register(client.clone(), cx);
         });
         let server = FakeServer::for_client(42, &client, cx).await;
+        let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
+        let zeta = cx.new_model(|cx| Zeta::new(client, user_store, cx));
 
-        let zeta = cx.new_model(|cx| Zeta::new(client, cx));
         let buffer = cx.new_model(|cx| Buffer::local(buffer_content, cx));
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
         let completion_task =

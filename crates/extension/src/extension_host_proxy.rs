@@ -103,6 +103,21 @@ pub trait ExtensionThemeProxy: Send + Sync + 'static {
     fn load_user_theme(&self, theme_path: PathBuf, fs: Arc<dyn Fs>) -> Task<Result<()>>;
 
     fn reload_current_theme(&self, cx: &mut AppContext);
+
+    fn list_icon_theme_names(
+        &self,
+        icon_theme_path: PathBuf,
+        fs: Arc<dyn Fs>,
+    ) -> Task<Result<Vec<String>>>;
+
+    fn remove_icon_themes(&self, icon_themes: Vec<SharedString>);
+
+    fn load_icon_theme(
+        &self,
+        icon_theme_path: PathBuf,
+        icons_root_dir: PathBuf,
+        fs: Arc<dyn Fs>,
+    ) -> Task<Result<()>>;
 }
 
 impl ExtensionThemeProxy for ExtensionHostProxy {
@@ -136,6 +151,39 @@ impl ExtensionThemeProxy for ExtensionHostProxy {
         };
 
         proxy.reload_current_theme(cx)
+    }
+
+    fn list_icon_theme_names(
+        &self,
+        icon_theme_path: PathBuf,
+        fs: Arc<dyn Fs>,
+    ) -> Task<Result<Vec<String>>> {
+        let Some(proxy) = self.theme_proxy.read().clone() else {
+            return Task::ready(Ok(Vec::new()));
+        };
+
+        proxy.list_icon_theme_names(icon_theme_path, fs)
+    }
+
+    fn remove_icon_themes(&self, icon_themes: Vec<SharedString>) {
+        let Some(proxy) = self.theme_proxy.read().clone() else {
+            return;
+        };
+
+        proxy.remove_icon_themes(icon_themes)
+    }
+
+    fn load_icon_theme(
+        &self,
+        icon_theme_path: PathBuf,
+        icons_root_dir: PathBuf,
+        fs: Arc<dyn Fs>,
+    ) -> Task<Result<()>> {
+        let Some(proxy) = self.theme_proxy.read().clone() else {
+            return Task::ready(Ok(()));
+        };
+
+        proxy.load_icon_theme(icon_theme_path, icons_root_dir, fs)
     }
 }
 

@@ -3,8 +3,11 @@
 mod decorated_icon;
 mod icon_decoration;
 
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
 pub use decorated_icon::*;
-use gpui::{svg, AnimationElement, Hsla, IntoElement, Rems, Transformation};
+use gpui::{img, svg, AnimationElement, Hsla, IntoElement, Rems, Transformation};
 pub use icon_decoration::*;
 use serde::{Deserialize, Serialize};
 use strum::{EnumIter, EnumString, IntoStaticStr};
@@ -65,6 +68,8 @@ pub enum IconSize {
     #[default]
     /// 16px
     Medium,
+    /// 48px
+    XLarge,
 }
 
 impl IconSize {
@@ -74,6 +79,7 @@ impl IconSize {
             IconSize::XSmall => rems_from_px(12.),
             IconSize::Small => rems_from_px(14.),
             IconSize::Medium => rems_from_px(16.),
+            IconSize::XLarge => rems_from_px(48.),
         }
     }
 
@@ -89,6 +95,7 @@ impl IconSize {
             IconSize::XSmall => DynamicSpacing::Base02.px(cx),
             IconSize::Small => DynamicSpacing::Base02.px(cx),
             IconSize::Medium => DynamicSpacing::Base02.px(cx),
+            IconSize::XLarge => DynamicSpacing::Base02.px(cx),
         };
 
         (icon_size, padding)
@@ -324,9 +331,34 @@ impl From<IconName> for Icon {
     }
 }
 
+/// The source of an icon.
+enum IconSource {
+    /// An SVG embedded in the Zed binary.
+    Svg(SharedString),
+    /// An image file located at the specified path.
+    ///
+    /// Currently our SVG renderer is missing support for the following features:
+    /// 1. Loading SVGs from external files.
+    /// 2. Rendering polychrome SVGs.
+    ///
+    /// In order to support icon themes, we render the icons as images instead.
+    Image(Arc<Path>),
+}
+
+impl IconSource {
+    fn from_path(path: impl Into<SharedString>) -> Self {
+        let path = path.into();
+        if path.starts_with("icons/file_icons") {
+            Self::Svg(path)
+        } else {
+            Self::Image(Arc::from(PathBuf::from(path.as_ref())))
+        }
+    }
+}
+
 #[derive(IntoElement)]
 pub struct Icon {
-    path: SharedString,
+    source: IconSource,
     color: Color,
     size: Rems,
     transformation: Transformation,
@@ -335,7 +367,7 @@ pub struct Icon {
 impl Icon {
     pub fn new(icon: IconName) -> Self {
         Self {
-            path: icon.path().into(),
+            source: IconSource::Svg(icon.path().into()),
             color: Color::default(),
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
@@ -344,7 +376,7 @@ impl Icon {
 
     pub fn from_path(path: impl Into<SharedString>) -> Self {
         Self {
-            path: path.into(),
+            source: IconSource::from_path(path),
             color: Color::default(),
             size: IconSize::default().rems(),
             transformation: Transformation::default(),
@@ -377,12 +409,20 @@ impl Icon {
 
 impl RenderOnce for Icon {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        svg()
-            .with_transformation(self.transformation)
-            .size(self.size)
-            .flex_none()
-            .path(self.path)
-            .text_color(self.color.color(cx))
+        match self.source {
+            IconSource::Svg(path) => svg()
+                .with_transformation(self.transformation)
+                .size(self.size)
+                .flex_none()
+                .path(path)
+                .text_color(self.color.color(cx))
+                .into_any_element(),
+            IconSource::Image(path) => img(path)
+                .size(self.size)
+                .flex_none()
+                .text_color(self.color.color(cx))
+                .into_any_element(),
+        }
     }
 }
 

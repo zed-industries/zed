@@ -1,9 +1,9 @@
 [package]
 description = "The fast, collaborative code editor."
-edition = "2021"
+edition.workspace = true
 name = "zed"
-version = "0.170.0"
-publish = false
+version = "0.171.0"
+publish.workspace = true
 license = "GPL-3.0-or-later"
 authors = ["Zed Team <hi@zed.dev>"]
 
@@ -16,10 +16,12 @@ path = "src/main.rs"
 
 [dependencies]
 activity_indicator.workspace = true
+zed_predict_tos.workspace = true
 anyhow.workspace = true
 assets.workspace = true
 assistant.workspace = true
 assistant2.workspace = true
+assistant_settings.workspace = true
 assistant_tools.workspace = true
 async-watch.workspace = true
 audio.workspace = true
@@ -86,6 +88,7 @@ profiling.workspace = true
 project.workspace = true
 project_panel.workspace = true
 project_symbols.workspace = true
+prompt_library.workspace = true
 proto.workspace = true
 recent_projects.workspace = true
 release_channel.workspace = true

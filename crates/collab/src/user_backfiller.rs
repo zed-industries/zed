@@ -86,6 +86,7 @@ impl UserBackfiller {
                             &user.github_login,
                             github_user.id,
                             user.email_address.as_deref(),
+                            user.name.as_deref(),
                             github_user.created_at,
                             initial_channel_id,
                         )
@@ -159,4 +160,5 @@ impl UserBackfiller {
 struct GithubUser {
     id: i32,
     created_at: DateTime<Utc>,
+    name: Option<String>,
 }

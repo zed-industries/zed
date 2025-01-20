@@ -39,6 +39,15 @@ pub struct LocalParticipant {
     pub role: proto::ChannelRole,
 }
 
+impl LocalParticipant {
+    pub fn can_write(&self) -> bool {
+        matches!(
+            self.role,
+            proto::ChannelRole::Admin | proto::ChannelRole::Member
+        )
+    }
+}
+
 #[derive(Clone, Debug)]
 pub struct RemoteParticipant {
     pub user: Arc<User>,
@@ -56,5 +65,12 @@ pub struct RemoteParticipant {
 impl RemoteParticipant {
     pub fn has_video_tracks(&self) -> bool {
         !self.video_tracks.is_empty()
+    }
+
+    pub fn can_write(&self) -> bool {
+        matches!(
+            self.role,
+            proto::ChannelRole::Admin | proto::ChannelRole::Member
+        )
     }
 }
