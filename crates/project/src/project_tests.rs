@@ -3173,16 +3173,23 @@ async fn test_save_in_single_file_worktree(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/dir",
+        add_root_for_windows("/dir"),
         json!({
             "file1": "the old contents",
         }),
     )
     .await;
 
-    let project = Project::test(fs.clone(), ["/dir/file1".as_ref()], cx).await;
+    let project = Project::test(
+        fs.clone(),
+        [add_root_for_windows("/dir/file1").as_ref()],
+        cx,
+    )
+    .await;
     let buffer = project
-        .update(cx, |p, cx| p.open_local_buffer("/dir/file1", cx))
+        .update(cx, |p, cx| {
+            p.open_local_buffer(add_root_for_windows("/dir/file1"), cx)
+        })
         .await
         .unwrap();
     buffer.update(cx, |buffer, cx| {
@@ -3194,7 +3201,11 @@ async fn test_save_in_single_file_worktree(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap();
 
-    let new_text = fs.load(Path::new("/dir/file1")).await.unwrap();
+    let new_text = fs
+        .load(Path::new(&add_root_for_windows("/dir/file1")))
+        .await
+        .unwrap()
+        .replace("\r\n", "\n");
     assert_eq!(new_text, buffer.update(cx, |buffer, _| buffer.text()));
 }
 
