@@ -97,7 +97,6 @@ pub struct GitPanel {
     visible_entries: Vec<GitListEntry>,
     all_staged: Option<bool>,
     width: Option<Pixels>,
-    reveal_in_editor: Task<()>,
     err_sender: mpsc::Sender<anyhow::Error>,
 }
 
@@ -120,23 +119,6 @@ fn first_worktree_repository(
                 .clone();
             Some((repo, git_repo))
         })
-}
-
-fn first_repository_in_project(
-    project: &Model<Project>,
-    cx: &mut AppContext,
-) -> Option<(WorktreeId, RepositoryEntry, Arc<dyn GitRepository>)> {
-    project.read(cx).worktrees(cx).next().and_then(|worktree| {
-        let snapshot = worktree.read(cx).snapshot();
-        let repo = snapshot.repositories().iter().next()?.clone();
-        let git_repo = worktree
-            .read(cx)
-            .as_local()?
-            .get_local_repo(&repo)?
-            .repo()
-            .clone();
-        Some((snapshot.id(), repo, git_repo))
-    })
 }
 
 impl GitPanel {
@@ -254,7 +236,6 @@ impl GitPanel {
                 rebuild_requested,
                 commit_editor,
                 project,
-                reveal_in_editor: Task::ready(()),
                 err_sender,
                 workspace,
             };
