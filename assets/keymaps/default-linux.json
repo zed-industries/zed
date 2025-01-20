@@ -30,7 +30,9 @@
       "ctrl-0": "zed::ResetBufferFontSize",
       "ctrl-,": "zed::OpenSettings",
       "ctrl-q": "zed::Quit",
-      "f11": "zed::ToggleFullScreen"
+      "f11": "zed::ToggleFullScreen",
+      "ctrl-alt-z": "zeta::RateCompletions",
+      "ctrl-shift-i": "inline_completion::ToggleMenu"
     }
   },
   {

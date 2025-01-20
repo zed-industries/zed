@@ -48,6 +48,7 @@ use std::rc::Rc;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
 use theme::{ActiveTheme, ThemeSettings};
+use ui::PopoverMenuHandle;
 use util::markdown::MarkdownString;
 use util::{asset_str, ResultExt};
 use uuid::Uuid;
@@ -164,13 +165,22 @@ pub fn initialize_workspace(
             show_software_emulation_warning_if_needed(specs, cx);
         }
 
+        let popover_menu_handle = PopoverMenuHandle::default();
+
         let inline_completion_button = cx.new_view(|cx| {
             inline_completion_button::InlineCompletionButton::new(
                 workspace.weak_handle(),
                 app_state.fs.clone(),
                 app_state.user_store.clone(),
+                popover_menu_handle.clone(),
                 cx,
             )
+        });
+
+        workspace.register_action({
+            move |_, _: &inline_completion_button::ToggleMenu, cx| {
+                popover_menu_handle.toggle(cx);
+            }
         });
 
         let diagnostic_summary =

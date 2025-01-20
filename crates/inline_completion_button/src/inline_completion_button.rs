@@ -18,10 +18,7 @@ use language::{
 use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc, time::Duration};
 use supermaven::{AccountStatus, Supermaven};
-use ui::{
-    ActiveTheme as _, ButtonLike, Color, FluentBuilder as _, Icon, IconWithIndicator, Indicator,
-    PopoverMenuHandle,
-};
+use ui::{prelude::*, ButtonLike, Color, Icon, IconWithIndicator, Indicator, PopoverMenuHandle};
 use workspace::{
     create_and_open_local_file,
     item::ItemHandle,
@@ -36,6 +33,7 @@ use zed_predict_tos::ZedPredictTos;
 use zeta::RateCompletionModal;
 
 actions!(zeta, [RateCompletions]);
+actions!(inline_completion, [ToggleMenu]);
 
 const COPILOT_SETTINGS_URL: &str = "https://github.com/settings/copilot";
 
@@ -50,7 +48,7 @@ pub struct InlineCompletionButton {
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
     user_store: Model<UserStore>,
-    zeta_popover_menu_handle: PopoverMenuHandle<ContextMenu>,
+    popover_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 enum SupermavenButtonStatus {
@@ -118,7 +116,7 @@ impl Render for InlineCompletionButton {
                                         .ok();
                                 }
                             }))
-                            .tooltip(|cx| Tooltip::text("GitHub Copilot", cx)),
+                            .tooltip(|cx| Tooltip::for_action("GitHub Copilot", &ToggleMenu, cx)),
                     );
                 }
                 let this = cx.view().clone();
@@ -135,9 +133,11 @@ impl Render for InlineCompletionButton {
                         })
                         .anchor(Corner::BottomRight)
                         .trigger(
-                            IconButton::new("copilot-icon", icon)
-                                .tooltip(|cx| Tooltip::text("GitHub Copilot", cx)),
-                        ),
+                            IconButton::new("copilot-icon", icon).tooltip(|cx| {
+                                Tooltip::for_action("GitHub Copilot", &ToggleMenu, cx)
+                            }),
+                        )
+                        .with_handle(self.popover_menu_handle.clone()),
                 )
             }
 
@@ -170,6 +170,7 @@ impl Render for InlineCompletionButton {
 
                 let icon = status.to_icon();
                 let tooltip_text = status.to_tooltip();
+                let has_menu = status.has_menu();
                 let this = cx.view().clone();
                 let fs = self.fs.clone();
 
@@ -202,10 +203,14 @@ impl Render for InlineCompletionButton {
                             _ => None,
                         })
                         .anchor(Corner::BottomRight)
-                        .trigger(
-                            IconButton::new("supermaven-icon", icon)
-                                .tooltip(move |cx| Tooltip::text(tooltip_text.clone(), cx)),
-                        ),
+                        .trigger(IconButton::new("supermaven-icon", icon).tooltip(move |cx| {
+                            if has_menu {
+                                Tooltip::for_action(tooltip_text.clone(), &ToggleMenu, cx)
+                            } else {
+                                Tooltip::text(tooltip_text.clone(), cx)
+                            }
+                        }))
+                        .with_handle(self.popover_menu_handle.clone()),
                 );
             }
 
@@ -254,10 +259,12 @@ impl Render for InlineCompletionButton {
                 }
 
                 let this = cx.view().clone();
-                let button = IconButton::new("zeta", IconName::ZedPredict)
-                    .when(!self.zeta_popover_menu_handle.is_deployed(), |button| {
-                        button.tooltip(|cx| Tooltip::text("Edit Prediction", cx))
-                    });
+                let button = IconButton::new("zeta", IconName::ZedPredict).when(
+                    !self.popover_menu_handle.is_deployed(),
+                    |button| {
+                        button.tooltip(|cx| Tooltip::for_action("Edit Prediction", &ToggleMenu, cx))
+                    },
+                );
 
                 let is_refreshing = self
                     .inline_completion_provider
@@ -269,7 +276,7 @@ impl Render for InlineCompletionButton {
                         Some(this.update(cx, |this, cx| this.build_zeta_context_menu(cx)))
                     })
                     .anchor(Corner::BottomRight)
-                    .with_handle(self.zeta_popover_menu_handle.clone());
+                    .with_handle(self.popover_menu_handle.clone());
 
                 if is_refreshing {
                     popover_menu = popover_menu.trigger(
@@ -296,6 +303,7 @@ impl InlineCompletionButton {
         workspace: WeakView<Workspace>,
         fs: Arc<dyn Fs>,
         user_store: Model<UserStore>,
+        popover_menu_handle: PopoverMenuHandle<ContextMenu>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         if let Some(copilot) = Copilot::global(cx) {
@@ -311,7 +319,7 @@ impl InlineCompletionButton {
             language: None,
             file: None,
             inline_completion_provider: None,
-            zeta_popover_menu_handle: PopoverMenuHandle::default(),
+            popover_menu_handle,
             workspace,
             fs,
             user_store,
@@ -470,6 +478,10 @@ impl InlineCompletionButton {
 
         cx.notify()
     }
+
+    pub fn toggle_menu(&mut self, cx: &mut ViewContext<Self>) {
+        self.popover_menu_handle.toggle(cx);
+    }
 }
 
 impl StatusItemView for InlineCompletionButton {
@@ -505,6 +517,13 @@ impl SupermavenButtonStatus {
             SupermavenButtonStatus::Errored(error) => format!("Supermaven error: {}", error),
             SupermavenButtonStatus::NeedsActivation(_) => "Supermaven needs activation".to_string(),
             SupermavenButtonStatus::Initializing => "Supermaven initializing".to_string(),
+        }
+    }
+
+    fn has_menu(&self) -> bool {
+        match self {
+            SupermavenButtonStatus::Ready | SupermavenButtonStatus::NeedsActivation(_) => true,
+            SupermavenButtonStatus::Errored(_) | SupermavenButtonStatus::Initializing => false,
         }
     }
 }
