@@ -6639,24 +6639,16 @@ impl Element for EditorElement {
                         if !editor.show_git_blame_inline {
                             return None;
                         }
-                        let Some(blame) = editor.blame.as_ref() else {
-                            return None;
-                        };
-                        let Some(blame_entry) = blame
+                        let blame = editor.blame.as_ref()?;
+                        let blame_entry = blame
                             .update(cx, |blame, cx| {
-                                let Some(buffer_row) = snapshot
+                                let buffer_row = snapshot
                                     .buffer_rows(snapshot.longest_row())
                                     .next()
-                                    .flatten()
-                                else {
-                                    return None;
-                                };
+                                    .flatten()?;
                                 blame.blame_for_rows([Some(buffer_row)], cx).next()
                             })
-                            .flatten()
-                        else {
-                            return None;
-                        };
+                            .flatten()?;
                         let workspace = editor.workspace.as_ref().map(|(w, _)| w.to_owned());
                         let mut element =
                             render_inline_blame_entry(blame, blame_entry, &style, workspace, cx);
