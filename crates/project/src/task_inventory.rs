@@ -122,7 +122,7 @@ impl Inventory {
             .collect()
     }
 
-    /// Topological sort of the dependency graph of `task`
+    /// Topological sort of the dependency graph of `task`, not including the original task
     pub fn build_pre_task_list(
         &self,
         base_task: &ResolvedTask,
@@ -153,7 +153,7 @@ impl Inventory {
             .iter()
             .enumerate()
             .map(|(idx, (source, task))| (
-                task.resolved_label,
+                task.resolved_label.as_str(),
                 (
                     idx as u32,
                     source,
@@ -180,7 +180,7 @@ impl Inventory {
             dep_graph.add_node(*node_idx);
 
             for pre_label in pre {
-                if let Some((pre_node_idx, _, _, _)) = nodes.get(pre_label) {
+                if let Some((pre_node_idx, _, _, _)) = nodes.get(*pre_label) {
                     dep_graph.add_edge(*node_idx, *pre_node_idx);
                 }
             }
@@ -193,8 +193,9 @@ impl Inventory {
                 tasks
                     .iter()
                     .rev()
+                    .take(tasks.len() - 1)
                     .filter_map(|idx| {
-                        let task = nodes.get(indexes.get(idx)?)?;
+                        let task = nodes.get(*indexes.get(idx)?)?;
                         Some((task.1.clone(), task.3.clone()))
                     })
                     .collect_vec()
