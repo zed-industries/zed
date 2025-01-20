@@ -18,7 +18,8 @@ use gpui::{
     AnyView, AppContext, AsyncAppContext, FontStyle, ModelContext, Subscription, Task, TextStyle,
     View, WhiteSpace,
 };
-use http_client::{http, AsyncBody, AwsHttpClient, HttpClient};
+use http_client::{http, AsyncBody, HttpClient};
+use aws_http_client::AwsHttpClient;
 use language_model::{
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelId, LanguageModelName,
     LanguageModelProvider, LanguageModelProviderId, LanguageModelProviderName,
@@ -31,6 +32,7 @@ use serde_json::Value;
 use settings::{Settings, SettingsStore};
 use std::pin::Pin;
 use std::sync::Arc;
+use smol::stream;
 use strum::IntoEnumIterator;
 use theme::ThemeSettings;
 use ui::{prelude::*, Icon, IconName, Tooltip};
@@ -255,13 +257,14 @@ impl BedrockModel {
         &self,
         request: bedrock::Request,
         _: &AsyncAppContext,
-    ) -> BoxFuture<
-        'static,
-        Result<BoxStream<'static, BedrockStreamingResponse>, BedrockError>,
-    > {
+    ) -> BoxFuture<'static, Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>>> {
+        let runtime_client = self.runtime_client.clone();
+
+        // Todo: ensure app state isn't dropped
+
         async move {
-            let request = bedrock::stream_completion(&self.runtime_client, request);
-            request.await.map_err(|err| err)
+            let request = bedrock::stream_completion(runtime_client, request);
+            request.await.context("Failed to stream completion")
         }
         .boxed()
     }
@@ -317,7 +320,7 @@ impl LanguageModel for BedrockModel {
 
         let request = self.stream_completion(request, cx);
         let future = self.request_limiter.stream(async move {
-            let response = request.await.map_err(|e| anyhow!(e));
+            let response = request.await.map_err(|e| anyhow!(e))?;
             Ok(map_to_language_model_completion_events(response))
         });
         async move { Ok(future.await?.boxed()) }.boxed()

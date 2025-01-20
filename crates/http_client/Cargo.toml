@@ -17,8 +17,6 @@ doctest = true
 
 [dependencies]
 bytes.workspace = true
-aws-smithy-types.workspace = true
-aws-smithy-runtime-api.workspace = true
 anyhow.workspace = true
 derive_more.workspace = true
 futures.workspace = true

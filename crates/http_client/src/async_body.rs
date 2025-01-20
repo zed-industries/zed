@@ -3,10 +3,8 @@ use std::{
     pin::Pin,
     task::Poll,
 };
-use std::ptr::from_mut;
-use aws_smithy_types::body::SdkBody;
 use bytes::Bytes;
-use futures::AsyncRead;
+use futures::{AsyncRead, AsyncReadExt};
 
 /// Based on the implementation of AsyncBody in
 /// https://github.com/sagebind/isahc/blob/5c533f1ef4d6bdf1fd291b5103c22110f41d0bf0/src/body/mod.rs
@@ -93,32 +91,6 @@ impl<T: Into<Self>> From<Option<T>> for AsyncBody {
         match body {
             Some(body) => body.into(),
             None => Self::empty(),
-        }
-    }
-}
-
-impl From<SdkBody> for AsyncBody {
-    fn from(value: SdkBody) -> Self {
-        match value.bytes() {
-            Some(bytes) => Self::from((*bytes).to_vec()),
-            None => Self::empty(),
-        }
-    }
-}
-
-impl Into<SdkBody> for AsyncBody {
-    fn into(self) -> SdkBody {
-        match self.0 {
-            Inner::Empty => {
-                SdkBody::empty()
-            }
-            Inner::Bytes(b) => {
-                let bytes = b.into_inner();
-                SdkBody::from(bytes)
-            }
-            _ => {
-                unimplemented!();
-            }
         }
     }
 }

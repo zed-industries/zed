@@ -1,5 +1,5 @@
 [package]
-name = "bedrock"
+name = "aws_http_client"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -13,12 +13,13 @@ schemars = ["dep:schemars"]
 workspace = true
 
 [lib]
-path = "src/bedrock.rs"
+path = "src/aws_client.rs"
 
 [dependencies]
 anyhow.workspace = true
 chrono.workspace = true
 futures.workspace = true
+http_client.workspace = true
 schemars = { workspace = true, optional = true }
 serde.workspace = true
 serde_json.workspace = true
@@ -26,8 +27,8 @@ strum.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 util.workspace = true
-aws-sdk-bedrockruntime = { workspace = true, features = ["behavior-version-latest"]}
-aws-config = {workspace = true, features = ["behavior-version-latest"]}
+aws-smithy-types.workspace = true
+aws-smithy-runtime-api.workspace = true
 
 [dev-dependencies]
 tokio.workspace = true

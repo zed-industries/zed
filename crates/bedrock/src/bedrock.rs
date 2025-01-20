@@ -1,19 +1,16 @@
 mod models;
 
+use std::pin::Pin;
 use anyhow::{anyhow, Context, Result};
-use aws_sdk_bedrockruntime::config::SharedHttpClient;
-use futures::stream;
-use futures::StreamExt;
-use http_client::HttpClient;
+use futures::{Stream, StreamExt};
+use futures::{stream, FutureExt};
 use serde::{Deserialize, Serialize};
-use std::sync::Arc;
 use thiserror::Error;
 
 use aws_sdk_bedrockruntime as bedrock;
 pub use aws_sdk_bedrockruntime as bedrock_client;
-use aws_sdk_bedrockruntime::types::{ContentBlockStopEvent, ConverseStreamOutput};
 use aws_sdk_bedrockruntime::types::ConverseStreamOutput::ContentBlockStop;
-use aws_sdk_bedrockruntime::types::error::ConverseStreamOutputError;
+use aws_sdk_bedrockruntime::types::ContentBlockStopEvent;
 pub use bedrock::operation::converse_stream::ConverseStreamInput as BedrockStreamingRequest;
 pub use bedrock::types::ContentBlock as BedrockRequestContent;
 pub use bedrock::types::ConversationRole as BedrockRole;
@@ -23,9 +20,6 @@ pub use bedrock::types::Message as BedrockMessage;
 pub use bedrock::types::ResponseStream as BedrockResponseStream;
 use futures::stream::BoxStream;
 use strum::Display;
-//TODO: Re-export the Bedrock stuff
-// https://doc.rust-lang.org/rustdoc/write-documentation/re-exports.html
-
 pub use models::*;
 
 pub async fn complete(
@@ -46,36 +40,35 @@ pub async fn complete(
 }
 
 pub async fn stream_completion(
-    client: &bedrock::Client,
+    client: bedrock::Client,
     request: Request,
-) -> Result<BoxStream<'static, BedrockStreamingResponse>, BedrockError> {
-    let response = bedrock::Client::converse_stream(client)
-        .model_id(request.model)
-        .set_messages(request.messages.into())
-        .send()
-        .await;
+) -> Result<BoxStream<'static, Result<BedrockStreamingResponse, BedrockError>>> {
+    let local_runtime = tokio::runtime::Runtime::new()?;
+    local_runtime.spawn(async move {
+        let response = bedrock::Client::converse_stream(&client)
+            .model_id(request.model.clone())
+            .set_messages(request.messages.into())
+            .send()
+            .await
+            .context("Failed to send request to Bedrock");
 
-    match response {
-        Ok(mut output) => {
-            let stream = stream::unfold(output.stream, |mut stream| async move {
-                // stream unfold expects Option<(_, EventReceiver)>
-                match stream.recv().await {
-                    Ok(Some(output)) => Some((output, stream)),
-                    Ok(None) => Some((ContentBlockStop(ContentBlockStopEvent::builder().build().unwrap()), stream)),
-                    _ => {
-                        todo!()
+        match response {
+            Ok(output) => {
+                let stream: Pin<Box<dyn Stream<Item=Result<BedrockStreamingResponse, BedrockError>> + Send>> = Box::pin(stream::unfold(output.stream, |mut stream| async move {
+                    match stream.recv().await {
+                        Ok(Some(output)) => Some((Ok(output), stream)),
+                        Ok(None) => Some((Ok(ContentBlockStop(ContentBlockStopEvent::builder().build().unwrap())), stream)),
+                        Err(e) => {
+                            Some((Err(BedrockError::Other(anyhow!(e))), stream))
+                        }
                     }
-                }
-            })
-            .boxed();
-
-            Ok(stream)
+                }));
+                Ok(stream)
+            }
+            Err(e) => Err(anyhow!(e)),
         }
-        Err(e) => Err(BedrockError::ClientError(anyhow!(e))),
-    }
+    }).await?
 }
-
-//TODO: A LOT of these types need to re-export the Bedrock types instead of making custom ones
 
 #[derive(Debug)]
 pub struct Request {
