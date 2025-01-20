@@ -3420,17 +3420,10 @@ impl EditorElement {
                     return None;
                 }
 
-                let highlighted_edits = if let Some(edit_preview) = edit_preview {
-                    crate::inline_completion_edit_text(
-                        editor_snapshot,
-                        edits,
-                        edit_preview,
-                        false,
-                        cx,
-                    )
-                } else {
-                    return None;
-                };
+                let highlighted_edits = edit_preview.as_ref().and_then(|edit_preview| {
+                    crate::inline_completion_edit_text(edits, edit_preview, false, cx)
+                })?;
+
                 let line_count = highlighted_edits.text.lines().count() + 1;
 
                 let longest_row =

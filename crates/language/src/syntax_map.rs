@@ -550,7 +550,7 @@ impl SyntaxSnapshot {
                         continue;
                     };
                     let tree;
-                    let mut changed_ranges;
+                    let changed_ranges;
 
                     let mut included_ranges = step.included_ranges;
                     for range in &mut included_ranges {

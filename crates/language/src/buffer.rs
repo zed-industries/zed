@@ -610,7 +610,7 @@ pub struct EditPreview {
     syntax_snapshot: SyntaxSnapshot,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Default, Clone, Debug)]
 pub struct HighlightedEdits {
     pub text: SharedString,
     pub highlights: Vec<(Range<usize>, HighlightStyle)>,
@@ -623,36 +623,33 @@ impl EditPreview {
         include_deletions: bool,
         cx: &AppContext,
     ) -> HighlightedEdits {
-        self.highlight_edits_in_range(0..self.new_snapshot.len(), edits, include_deletions, cx)
-    }
-
-    pub fn highlight_edits_in_range(
-        &self,
-        range: Range<usize>,
-        edits: &[(Range<Anchor>, String)],
-        include_deletions: bool,
-        cx: &AppContext,
-    ) -> HighlightedEdits {
         let mut text = String::new();
         let mut highlights = Vec::new();
+        let Some(range) = self.compute_visible_range(edits) else {
+            return HighlightedEdits::default();
+        };
         let mut offset = range.start;
 
+        dbg!(&range, &text);
         for (old_range, new_text) in edits {
-            let old_offset_range = old_range.to_offset(&self.old_snapshot);
+            let old_edit_range = old_range.to_offset(&self.old_snapshot);
+            let new_edit_start = old_range.start.to_offset(&self.new_snapshot);
 
-            self.highlight_text(
-                offset..old_offset_range.start,
-                &mut text,
-                &mut highlights,
-                None,
-                cx,
-            );
-            offset = old_offset_range.start + new_text.len();
+            dbg!(&old_edit_range, &new_edit_start);
 
-            if include_deletions && !old_offset_range.is_empty() {
+            let prev_range = offset..new_edit_start;
+            if !prev_range.is_empty() {
                 let start = text.len();
-                text.extend(self.old_snapshot.text_for_range(old_offset_range.clone()));
+                self.highlight_text(prev_range, &mut text, &mut highlights, None, cx);
+                offset += text.len() - start;
+                dbg!(&text);
+            }
+
+            if include_deletions && !old_edit_range.is_empty() {
+                let start = text.len();
+                text.extend(self.old_snapshot.text_for_range(old_edit_range.clone()));
                 let end = text.len();
+                dbg!(&text);
 
                 highlights.push((
                     start..end,
@@ -664,8 +661,9 @@ impl EditPreview {
             }
 
             if !new_text.is_empty() {
+                let start = old_range.start.to_offset(&self.new_snapshot);
                 self.highlight_text(
-                    old_offset_range.start..old_offset_range.start + new_text.len(),
+                    start..start + new_text.len(),
                     &mut text,
                     &mut highlights,
                     Some(HighlightStyle {
@@ -674,10 +672,13 @@ impl EditPreview {
                     }),
                     cx,
                 );
+                offset += new_text.len();
+                dbg!(&text);
             }
         }
 
         self.highlight_text(offset..range.end, &mut text, &mut highlights, None, cx);
+        dbg!(&text);
 
         HighlightedEdits {
             text: text.into(),
@@ -706,6 +707,8 @@ impl EditPreview {
                     highlight_style.highlight(override_style);
                 }
                 highlights.push((start..end, highlight_style));
+            } else if let Some(override_style) = override_style {
+                highlights.push((start..end, override_style));
             }
         }
     }
@@ -730,6 +733,19 @@ impl EditPreview {
             false,
             None,
         )
+    }
+
+    fn compute_visible_range(&self, edits: &[(Range<Anchor>, String)]) -> Option<Range<usize>> {
+        let (first, _) = edits.first()?;
+        let (last, _) = edits.last()?;
+
+        let start = first.start.to_point(&self.new_snapshot);
+        let end = last.end.to_point(&self.new_snapshot);
+
+        // Ensure that the first line of the first edit and the last line of the last edit are always fully visible
+        let range =
+            Point::new(start.row, 0)..Point::new(end.row, self.new_snapshot.line_len(end.row));
+        Some(range.to_offset(&self.new_snapshot))
     }
 }
 

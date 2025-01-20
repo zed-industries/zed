@@ -2764,7 +2764,7 @@ async fn test_preview_edits(cx: &mut TestAppContext) {
         cx: &mut TestAppContext,
         edits: impl IntoIterator<Item = (Range<Point>, &'static str)>,
     ) -> HighlightedEdits {
-        let edits: Arc<[_]> = buffer.read_with(cx, |buffer, _| {
+        let edits = buffer.read_with(cx, |buffer, _| {
             edits
                 .into_iter()
                 .map(|(range, text)| {
@@ -2774,10 +2774,11 @@ async fn test_preview_edits(cx: &mut TestAppContext) {
                     )
                 })
                 .collect::<Vec<_>>()
-                .into()
         });
         let edit_preview = buffer
-            .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))
+            .read_with(cx, |buffer, cx| {
+                buffer.preview_edits(edits.clone().into(), cx)
+            })
             .await;
         cx.read(|cx| edit_preview.highlight_edits(&edits, true, cx))
     }

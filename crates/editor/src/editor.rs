@@ -4956,15 +4956,12 @@ impl Editor {
                 InlineCompletion::Edit {
                     edits,
                     edit_preview,
-                } => edit_preview.as_ref().map(|edit_preview| {
-                    InlineCompletionText::Edit(inline_completion_edit_text(
-                        &editor_snapshot,
-                        &edits,
-                        edit_preview,
-                        true,
-                        cx,
-                    ))
-                }),
+                } => edit_preview
+                    .as_ref()
+                    .and_then(|edit_preview| {
+                        inline_completion_edit_text(&edits, edit_preview, true, cx)
+                    })
+                    .map(|highlighted_edits| InlineCompletionText::Edit(highlighted_edits)),
                 InlineCompletion::Move(target) => {
                     let target_point =
                         target.to_point(&editor_snapshot.display_snapshot.buffer_snapshot);
@@ -14871,30 +14868,11 @@ pub fn diagnostic_block_renderer(
 }
 
 fn inline_completion_edit_text(
-    editor_snapshot: &EditorSnapshot,
     edits: &[(Range<Anchor>, String)],
     edit_preview: &EditPreview,
     include_deletions: bool,
     cx: &WindowContext,
-) -> HighlightedEdits {
-    let edit_start = edits
-        .first()
-        .unwrap()
-        .0
-        .start
-        .to_display_point(editor_snapshot);
-
-    let offset = DisplayPoint::new(edit_start.row(), 0).to_offset(editor_snapshot, Bias::Left);
-    let edit_end = edits
-        .last()
-        .unwrap()
-        .0
-        .end
-        .to_display_point(editor_snapshot);
-    let end_of_line = DisplayPoint::new(edit_end.row(), editor_snapshot.line_len(edit_end.row()))
-        .to_offset(editor_snapshot, Bias::Right);
-
-    //TODO: Remove this extra allocation
+) -> Option<HighlightedEdits> {
     let edits = edits
         .iter()
         .map(|(anchor, text)| {
@@ -14905,7 +14883,7 @@ fn inline_completion_edit_text(
         })
         .collect::<Vec<_>>();
 
-    edit_preview.highlight_edits_in_range(offset..end_of_line, &edits, include_deletions, cx)
+    Some(edit_preview.highlight_edits(&edits, include_deletions, cx))
 }
 
 pub fn highlight_diagnostic_message(
