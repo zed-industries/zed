@@ -3450,7 +3450,6 @@ impl EditorElement {
                     .border_1()
                     .border_color(cx.theme().colors().border)
                     .rounded_md()
-                    .px_1()
                     .child(styled_text)
                     .into_any();
 

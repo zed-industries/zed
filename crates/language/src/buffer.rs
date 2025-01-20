@@ -646,7 +646,7 @@ impl EditPreview {
 
             if include_deletions && !old_edit_range.is_empty() {
                 let start = text.len();
-                text.extend(self.old_snapshot.text_for_range(old_edit_range.clone()));
+                text.extend(self.old_snapshot.text_for_range(old_edit_range));
                 let end = text.len();
 
                 highlights.push((
@@ -734,12 +734,19 @@ impl EditPreview {
         let (first, _) = edits.first()?;
         let (last, _) = edits.last()?;
 
-        let start = first.start.to_point(&self.new_snapshot);
-        let end = last.end.to_point(&self.new_snapshot);
+        let start = first
+            .start
+            .bias_left(&self.old_snapshot)
+            .to_point(&self.new_snapshot);
+        let end = last
+            .end
+            .bias_right(&self.old_snapshot)
+            .to_point(&self.new_snapshot);
 
         // Ensure that the first line of the first edit and the last line of the last edit are always fully visible
         let range =
             Point::new(start.row, 0)..Point::new(end.row, self.new_snapshot.line_len(end.row));
+
         Some(range.to_offset(&self.new_snapshot))
     }
 }
