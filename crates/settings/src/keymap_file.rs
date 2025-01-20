@@ -2,7 +2,7 @@ use std::rc::Rc;
 
 use crate::{settings_store::parse_json_with_comments, SettingsAssets};
 use anyhow::anyhow;
-use collections::{BTreeMap, HashMap, IndexMap};
+use collections::{HashMap, IndexMap};
 use gpui::{
     Action, ActionBuildError, AppContext, InvalidKeystrokeError, KeyBinding,
     KeyBindingContextPredicate, NoAction, SharedString, KEYSTROKE_PARSE_EXPECTED_MESSAGE,
@@ -50,9 +50,12 @@ pub struct KeymapSection {
     /// This keymap section's bindings, as a JSON object mapping keystrokes to actions. The
     /// keystrokes key is a string representing a sequence of keystrokes to type, where the
     /// keystrokes are separated by whitespace. Each keystroke is a sequence of modifiers (`ctrl`,
-    /// `alt`, `shift`, `fn`, `cmd`, `super`, or `win`) followed by a key, separated by `-`.
+    /// `alt`, `shift`, `fn`, `cmd`, `super`, or `win`) followed by a key, separated by `-`. The
+    /// order of bindings does matter. When the same keystrokes are bound at the same context depth,
+    /// the binding that occurs later in the file is preferred. For displaying keystrokes in the UI,
+    /// the later binding for the same action is preferred.
     #[serde(default)]
-    bindings: Option<BTreeMap<String, KeymapAction>>,
+    bindings: Option<IndexMap<String, KeymapAction>>,
     #[serde(flatten)]
     unrecognized_fields: IndexMap<String, Value>,
     // This struct intentionally uses permissive types for its fields, rather than validating during
@@ -64,7 +67,7 @@ pub struct KeymapSection {
 }
 
 impl KeymapSection {
-    pub fn bindings(&self) -> impl Iterator<Item = (&String, &KeymapAction)> {
+    pub fn bindings(&self) -> impl DoubleEndedIterator<Item = (&String, &KeymapAction)> {
         self.bindings.iter().flatten()
     }
 }
@@ -235,8 +238,7 @@ impl KeymapFile {
             }
 
             if let Some(bindings) = bindings {
-                for binding in bindings {
-                    let (keystrokes, action) = binding;
+                for (keystrokes, action) in bindings {
                     let result = Self::load_keybinding(
                         keystrokes,
                         action,
@@ -548,7 +550,7 @@ impl KeymapFile {
         serde_json::to_value(root_schema).unwrap()
     }
 
-    pub fn sections(&self) -> impl Iterator<Item = &KeymapSection> {
+    pub fn sections(&self) -> impl DoubleEndedIterator<Item = &KeymapSection> {
         self.0.iter()
     }
 }
