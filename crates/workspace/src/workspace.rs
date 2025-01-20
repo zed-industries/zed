@@ -4688,13 +4688,12 @@ impl Workspace {
         let Some(current_window_id) = cx.active_window().map(|a| a.window_id()) else {
             return;
         };
-        let Some(next_window) = cx
-            .windows()
+        let windows = cx.windows();
+        let Some(next_window) = windows
             .iter()
             .cycle()
             .skip_while(|window| window.window_id() != current_window_id)
             .nth(1)
-            .cloned()
         else {
             return;
         };
@@ -4705,14 +4704,13 @@ impl Workspace {
         let Some(current_window_id) = cx.active_window().map(|a| a.window_id()) else {
             return;
         };
-        let Some(prev_window) = cx
-            .windows()
+        let windows = cx.windows();
+        let Some(prev_window) = windows
             .iter()
             .rev()
             .cycle()
             .skip_while(|window| window.window_id() != current_window_id)
             .nth(1)
-            .cloned()
         else {
             return;
         };
