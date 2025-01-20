@@ -32,11 +32,11 @@ pub use test_context::*;
 use util::ResultExt;
 
 use crate::{
-    current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
-    Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, Context, DispatchPhase,
-    DisplayId, Entity, EventEmitter, FocusHandle, FocusId, ForegroundExecutor, Global, KeyBinding,
-    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
+    current_platform, hash, init_app_menus, Action, ActionBuildError, ActionRegistry, Any, AnyView,
+    AnyWindowHandle, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, Context,
+    DispatchPhase, DisplayId, Entity, EventEmitter, FocusHandle, FocusId, ForegroundExecutor,
+    Global, KeyBinding, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions,
+    Pixels, Platform, PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
     Subscription, SvgRenderer, Task, TextSystem, View, ViewContext, Window, WindowAppearance,
     WindowContext, WindowHandle, WindowId,
@@ -1220,7 +1220,7 @@ impl AppContext {
         &self,
         name: &str,
         data: Option<serde_json::Value>,
-    ) -> Result<Box<dyn Action>> {
+    ) -> std::result::Result<Box<dyn Action>, ActionBuildError> {
         self.actions.build_action(name, data)
     }
 
@@ -1635,11 +1635,10 @@ pub struct AnyTooltip {
     /// The absolute position of the mouse when the tooltip was deployed.
     pub mouse_position: Point<Pixels>,
 
-    /// Whether the tooltitp can be hovered or not.
-    pub hoverable: bool,
-
-    /// Bounds of the element that triggered the tooltip appearance.
-    pub origin_bounds: Bounds<Pixels>,
+    /// Given the bounds of the tooltip, checks whether the tooltip should still be visible and
+    /// updates its state accordingly. This is needed atop the hovered element's mouse move handler
+    /// to handle the case where the element is not painted (e.g. via use of `visible_on_hover`).
+    pub check_visible_and_update: Rc<dyn Fn(Bounds<Pixels>, &mut WindowContext) -> bool>,
 }
 
 /// A keystroke event, and potentially the associated action

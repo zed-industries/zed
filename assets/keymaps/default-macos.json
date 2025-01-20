@@ -158,7 +158,7 @@
     "bindings": {
       "alt-tab": "editor::NextInlineCompletion",
       "alt-shift-tab": "editor::PreviousInlineCompletion",
-      "ctrl-right": "editor::AcceptPartialInlineCompletion"
+      "ctrl-cmd-right": "editor::AcceptPartialInlineCompletion"
     }
   },
   {
@@ -250,6 +250,12 @@
       "down": "assistant2::FocusDown",
       "backspace": "assistant2::RemoveFocusedContext",
       "enter": "assistant2::AcceptSuggestedContext"
+    }
+  },
+  {
+    "context": "ThreadHistory",
+    "bindings": {
+      "backspace": "assistant2::RemoveSelectedThread"
     }
   },
   {
@@ -868,6 +874,13 @@
       "escape": "zeta::FocusCompletions",
       "cmd-shift-enter": "zeta::ThumbsUpActiveCompletion",
       "cmd-shift-backspace": "zeta::ThumbsDownActiveCompletion"
+    }
+  },
+  {
+    "context": "ZedPredictTos",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "menu::Cancel"
     }
   }
 ]

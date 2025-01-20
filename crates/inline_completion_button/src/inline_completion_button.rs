@@ -1,12 +1,13 @@
 use anyhow::Result;
+use client::UserStore;
 use copilot::{Copilot, Status};
 use editor::{scroll::Autoscroll, Editor};
 use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
 use fs::Fs;
 use gpui::{
     actions, div, pulsating_between, Action, Animation, AnimationExt, AppContext,
-    AsyncWindowContext, Corner, Entity, IntoElement, ParentElement, Render, Subscription, View,
-    ViewContext, WeakView, WindowContext,
+    AsyncWindowContext, Corner, Entity, IntoElement, Model, ParentElement, Render, Subscription,
+    View, ViewContext, WeakView, WindowContext,
 };
 use language::{
     language_settings::{
@@ -17,6 +18,7 @@ use language::{
 use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc, time::Duration};
 use supermaven::{AccountStatus, Supermaven};
+use ui::{ActiveTheme as _, ButtonLike, Color, Icon, IconWithIndicator, Indicator};
 use workspace::{
     create_and_open_local_file,
     item::ItemHandle,
@@ -27,6 +29,7 @@ use workspace::{
     StatusItemView, Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
+use zed_predict_tos::ZedPredictTos;
 use zeta::RateCompletionModal;
 
 actions!(zeta, [RateCompletions]);
@@ -43,6 +46,7 @@ pub struct InlineCompletionButton {
     inline_completion_provider: Option<Arc<dyn inline_completion::InlineCompletionProviderHandle>>,
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
+    user_store: Model<UserStore>,
 }
 
 enum SupermavenButtonStatus {
@@ -206,6 +210,45 @@ impl Render for InlineCompletionButton {
                     return div();
                 }
 
+                if !self
+                    .user_store
+                    .read(cx)
+                    .current_user_has_accepted_terms()
+                    .unwrap_or(false)
+                {
+                    let workspace = self.workspace.clone();
+                    let user_store = self.user_store.clone();
+
+                    return div().child(
+                        ButtonLike::new("zeta-pending-tos-icon")
+                            .child(
+                                IconWithIndicator::new(
+                                    Icon::new(IconName::ZedPredict),
+                                    Some(Indicator::dot().color(Color::Error)),
+                                )
+                                .indicator_border_color(Some(
+                                    cx.theme().colors().status_bar_background,
+                                ))
+                                .into_any_element(),
+                            )
+                            .tooltip(|cx| {
+                                Tooltip::with_meta(
+                                    "Edit Predictions",
+                                    None,
+                                    "Read Terms of Service",
+                                    cx,
+                                )
+                            })
+                            .on_click(cx.listener(move |_, _, cx| {
+                                let user_store = user_store.clone();
+
+                                if let Some(workspace) = workspace.upgrade() {
+                                    ZedPredictTos::toggle(workspace, user_store, cx);
+                                }
+                            })),
+                    );
+                }
+
                 let this = cx.view().clone();
                 let button = IconButton::new("zeta", IconName::ZedPredict)
                     .tooltip(|cx| Tooltip::text("Edit Prediction", cx));
@@ -244,6 +287,7 @@ impl InlineCompletionButton {
     pub fn new(
         workspace: WeakView<Workspace>,
         fs: Arc<dyn Fs>,
+        user_store: Model<UserStore>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         if let Some(copilot) = Copilot::global(cx) {
@@ -261,6 +305,7 @@ impl InlineCompletionButton {
             inline_completion_provider: None,
             workspace,
             fs,
+            user_store,
         }
     }
 

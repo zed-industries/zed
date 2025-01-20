@@ -61,6 +61,8 @@ pub trait GitRepository: Send + Sync {
     ///
     /// If any of the paths were previously staged but do not exist in HEAD, they will be removed from the index.
     fn unstage_paths(&self, paths: &[RepoPath]) -> Result<()>;
+
+    fn commit(&self, message: &str) -> Result<()>;
 }
 
 impl std::fmt::Debug for dyn GitRepository {
@@ -280,6 +282,24 @@ impl GitRepository for RealGitRepository {
         }
         Ok(())
     }
+
+    fn commit(&self, message: &str) -> Result<()> {
+        let working_directory = self
+            .repository
+            .lock()
+            .workdir()
+            .context("failed to read git work directory")?
+            .to_path_buf();
+
+        let cmd = new_std_command(&self.git_binary_path)
+            .current_dir(&working_directory)
+            .args(["commit", "--quiet", "-m", message])
+            .status()?;
+        if !cmd.success() {
+            return Err(anyhow!("Failed to commit: {cmd}"));
+        }
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -421,6 +441,10 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn unstage_paths(&self, _paths: &[RepoPath]) -> Result<()> {
+        unimplemented!()
+    }
+
+    fn commit(&self, _message: &str) -> Result<()> {
         unimplemented!()
     }
 }

@@ -14,7 +14,7 @@ use gpui::{
 use project::ProjectPath;
 use thread_context_picker::{render_thread_context_entry, ThreadContextEntry};
 use ui::{prelude::*, ContextMenu, ContextMenuEntry, ContextMenuItem};
-use workspace::Workspace;
+use workspace::{notifications::NotifyResultExt, Workspace};
 
 use crate::context::ContextKind;
 use crate::context_picker::directory_context_picker::DirectoryContextPicker;
@@ -92,7 +92,18 @@ impl ContextPicker {
                 .map(|(ix, entry)| self.recent_menu_item(context_picker.clone(), ix, entry));
 
             let menu = menu
-                .when(has_recent, |menu| menu.label("Recent"))
+                .when(has_recent, |menu| {
+                    menu.custom_row(|_| {
+                        div()
+                            .mb_1()
+                            .child(
+                                Label::new("Recent")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            )
+                            .into_any_element()
+                    })
+                })
                 .extend(recent_entries)
                 .when(has_recent, |menu| menu.separator())
                 .extend(ContextKind::all().into_iter().map(kind_entry));
@@ -227,25 +238,8 @@ impl ContextPicker {
             context_store.add_file_from_path(project_path.clone(), cx)
         });
 
-        let workspace = self.workspace.clone();
-
-        cx.spawn(|_, mut cx| async move {
-            match task.await {
-                Ok(_) => {
-                    return anyhow::Ok(());
-                }
-                Err(err) => {
-                    let Some(workspace) = workspace.upgrade() else {
-                        return anyhow::Ok(());
-                    };
-
-                    workspace.update(&mut cx, |workspace, cx| {
-                        workspace.show_error(&err, cx);
-                    })
-                }
-            }
-        })
-        .detach_and_log_err(cx);
+        cx.spawn(|_, mut cx| async move { task.await.notify_async_err(&mut cx) })
+            .detach();
 
         cx.notify();
     }

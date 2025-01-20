@@ -187,10 +187,10 @@ impl TerminalOutput {
         for byte in text.as_bytes() {
             if *byte == b'\n' {
                 // Dirty (?) hack to move the cursor down
-                self.parser.advance(&mut self.handler, b'\r');
-                self.parser.advance(&mut self.handler, b'\n');
+                self.parser.advance(&mut self.handler, &[b'\r']);
+                self.parser.advance(&mut self.handler, &[b'\n']);
             } else {
-                self.parser.advance(&mut self.handler, *byte);
+                self.parser.advance(&mut self.handler, &[*byte]);
             }
         }
 

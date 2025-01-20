@@ -76,6 +76,21 @@ pub trait PanelHandle: Send + Sync {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle;
     fn to_any(&self) -> AnyView;
     fn activation_priority(&self, cx: &AppContext) -> u32;
+    fn move_to_next_position(&self, cx: &mut WindowContext) {
+        let current_position = self.position(cx);
+        let next_position = [
+            DockPosition::Left,
+            DockPosition::Bottom,
+            DockPosition::Right,
+        ]
+        .into_iter()
+        .filter(|position| self.position_is_valid(*position, cx))
+        .skip_while(|valid_position| *valid_position != current_position)
+        .nth(1)
+        .unwrap_or(DockPosition::Left);
+
+        self.set_position(next_position, cx);
+    }
 }
 
 impl<T> PanelHandle for View<T>
@@ -339,9 +354,6 @@ impl Dock {
             self.is_open = open;
             if let Some(active_panel) = self.active_panel_entry() {
                 active_panel.panel.set_active(open, cx);
-                if !open {
-                    self.active_panel_index = None;
-                }
             }
 
             cx.notify();

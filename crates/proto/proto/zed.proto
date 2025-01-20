@@ -1750,6 +1750,8 @@ message User {
     uint64 id = 1;
     string github_login = 2;
     string avatar_url = 3;
+    optional string email = 4;
+    optional string name = 5;
 }
 
 message File {

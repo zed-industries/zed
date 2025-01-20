@@ -617,6 +617,25 @@ impl CompletionsMenu {
                                     })),
                             ),
                             CompletionEntry::InlineCompletionHint(
+                                hint @ InlineCompletionMenuHint::PendingTermsAcceptance,
+                            ) => div().min_w(px(250.)).max_w(px(500.)).child(
+                                ListItem::new("inline-completion")
+                                    .inset(true)
+                                    .toggle_state(item_ix == selected_item)
+                                    .start_slot(Icon::new(IconName::ZedPredict))
+                                    .child(
+                                        base_label.child(
+                                            StyledText::new(hint.label())
+                                                .with_highlights(&style.text, None),
+                                        ),
+                                    )
+                                    .on_click(cx.listener(move |editor, _event, cx| {
+                                        cx.stop_propagation();
+                                        editor.toggle_zed_predict_tos(cx);
+                                    })),
+                            ),
+
+                            CompletionEntry::InlineCompletionHint(
                                 hint @ InlineCompletionMenuHint::Loaded { .. },
                             ) => div().min_w(px(250.)).max_w(px(500.)).child(
                                 ListItem::new("inline-completion")

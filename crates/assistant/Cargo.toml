@@ -1,8 +1,8 @@
 [package]
 name = "assistant"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -58,7 +58,6 @@ project.workspace = true
 prompt_library.workspace = true
 proto.workspace = true
 regex.workspace = true
-release_channel.workspace = true
 rope.workspace = true
 rpc.workspace = true
 schemars.workspace = true

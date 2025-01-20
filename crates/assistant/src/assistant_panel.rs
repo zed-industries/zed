@@ -1,6 +1,5 @@
 use crate::{
-    humanize_token_count, prompt_library::open_prompt_library,
-    slash_command::SlashCommandCompletionProvider, slash_command_picker,
+    humanize_token_count, slash_command::SlashCommandCompletionProvider, slash_command_picker,
     terminal_inline_assistant::TerminalInlineAssistant, Assist, AssistantPatch,
     AssistantPatchStatus, CacheStatus, ConfirmCommand, Content, Context, ContextEvent, ContextId,
     ContextStore, ContextStoreEvent, CopyCode, CycleMessageRole, DeployHistory,
@@ -55,7 +54,7 @@ use multi_buffer::MultiBufferRow;
 use picker::{Picker, PickerDelegate};
 use project::lsp_store::LocalLspAdapterDelegate;
 use project::{Project, Worktree};
-use prompt_library::PromptBuilder;
+use prompt_library::{open_prompt_library, PromptBuilder, PromptLibrary};
 use rope::Point;
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use serde::{Deserialize, Serialize};
@@ -1186,7 +1185,19 @@ impl AssistantPanel {
     }
 
     fn deploy_prompt_library(&mut self, _: &DeployPromptLibrary, cx: &mut ViewContext<Self>) {
-        open_prompt_library(self.languages.clone(), cx).detach_and_log_err(cx);
+        open_prompt_library(
+            self.languages.clone(),
+            Box::new(PromptLibraryInlineAssist),
+            Arc::new(|| {
+                Box::new(SlashCommandCompletionProvider::new(
+                    Arc::new(SlashCommandWorkingSet::default()),
+                    None,
+                    None,
+                ))
+            }),
+            cx,
+        )
+        .detach_and_log_err(cx);
     }
 
     fn toggle_model_selector(&mut self, _: &ToggleModelSelector, cx: &mut ViewContext<Self>) {
@@ -1466,6 +1477,29 @@ impl EventEmitter<AssistantPanelEvent> for AssistantPanel {}
 impl FocusableView for AssistantPanel {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         self.pane.focus_handle(cx)
+    }
+}
+
+struct PromptLibraryInlineAssist;
+
+impl prompt_library::InlineAssistDelegate for PromptLibraryInlineAssist {
+    fn assist(
+        &self,
+        prompt_editor: &View<Editor>,
+        initial_prompt: Option<String>,
+        cx: &mut ViewContext<PromptLibrary>,
+    ) {
+        InlineAssistant::update_global(cx, |assistant, cx| {
+            assistant.assist(&prompt_editor, None, None, initial_prompt, cx)
+        })
+    }
+
+    fn focus_assistant_panel(
+        &self,
+        workspace: &mut Workspace,
+        cx: &mut ViewContext<Workspace>,
+    ) -> bool {
+        workspace.focus_panel::<AssistantPanel>(cx).is_some()
     }
 }
 

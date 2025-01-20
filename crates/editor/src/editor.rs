@@ -69,6 +69,7 @@ pub use element::{
 };
 use futures::{future, FutureExt};
 use fuzzy::StringMatchCandidate;
+use zed_predict_tos::ZedPredictTos;
 
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
@@ -454,6 +455,7 @@ type CompletionId = usize;
 enum InlineCompletionMenuHint {
     Loading,
     Loaded { text: InlineCompletionText },
+    PendingTermsAcceptance,
     None,
 }
 
@@ -463,6 +465,7 @@ impl InlineCompletionMenuHint {
             InlineCompletionMenuHint::Loading | InlineCompletionMenuHint::Loaded { .. } => {
                 "Edit Prediction"
             }
+            InlineCompletionMenuHint::PendingTermsAcceptance => "Accept Terms of Service",
             InlineCompletionMenuHint::None => "No Prediction",
         }
     }
@@ -3823,6 +3826,14 @@ impl Editor {
         self.do_completion(action.item_ix, CompletionIntent::Compose, cx)
     }
 
+    fn toggle_zed_predict_tos(&mut self, cx: &mut ViewContext<Self>) {
+        let (Some(workspace), Some(project)) = (self.workspace(), self.project.as_ref()) else {
+            return;
+        };
+
+        ZedPredictTos::toggle(workspace, project.read(cx).user_store().clone(), cx);
+    }
+
     fn do_completion(
         &mut self,
         item_ix: Option<usize>,
@@ -3844,6 +3855,14 @@ impl Editor {
                         drop(entries);
                         drop(context_menu);
                         self.context_menu_next(&Default::default(), cx);
+                        return Some(Task::ready(Ok(())));
+                    }
+                    Some(CompletionEntry::InlineCompletionHint(
+                        InlineCompletionMenuHint::PendingTermsAcceptance,
+                    )) => {
+                        drop(entries);
+                        drop(context_menu);
+                        self.toggle_zed_predict_tos(cx);
                         return Some(Task::ready(Ok(())));
                     }
                     _ => {}
@@ -4713,8 +4732,19 @@ impl Editor {
                 });
             }
             InlineCompletion::Edit(edits) => {
-                if edits.len() == 1 && edits[0].0.start == edits[0].0.end {
-                    let text = edits[0].1.as_str();
+                // Find an insertion that starts at the cursor position.
+                let snapshot = self.buffer.read(cx).snapshot(cx);
+                let cursor_offset = self.selections.newest::<usize>(cx).head();
+                let insertion = edits.iter().find_map(|(range, text)| {
+                    let range = range.to_offset(&snapshot);
+                    if range.is_empty() && range.start == cursor_offset {
+                        Some(text)
+                    } else {
+                        None
+                    }
+                });
+
+                if let Some(text) = insertion {
                     let mut partial_completion = text
                         .chars()
                         .by_ref()
@@ -4737,6 +4767,8 @@ impl Editor {
 
                     self.refresh_inline_completion(true, true, cx);
                     cx.notify();
+                } else {
+                    self.accept_inline_completion(&Default::default(), cx);
                 }
             }
         }
@@ -4958,6 +4990,8 @@ impl Editor {
             Some(InlineCompletionMenuHint::Loaded { text })
         } else if provider.is_refreshing(cx) {
             Some(InlineCompletionMenuHint::Loading)
+        } else if provider.needs_terms_acceptance(cx) {
+            Some(InlineCompletionMenuHint::PendingTermsAcceptance)
         } else {
             Some(InlineCompletionMenuHint::None)
         }
@@ -9224,6 +9258,7 @@ impl Editor {
                         new_selection.collapse_to(primary_range_start, SelectionGoal::None);
                         s.select_anchors(vec![new_selection.clone()]);
                     });
+                    self.refresh_inline_completion(false, true, cx);
                 }
                 return;
             }
@@ -9303,6 +9338,7 @@ impl Editor {
                             goal: SelectionGoal::None,
                         }]);
                     });
+                    self.refresh_inline_completion(false, true, cx);
                 }
                 break;
             } else {
@@ -11519,6 +11555,24 @@ impl Editor {
             .and_then(|f| f.as_local())
     }
 
+    fn target_file_abs_path(&self, cx: &mut ViewContext<Self>) -> Option<PathBuf> {
+        self.active_excerpt(cx).and_then(|(_, buffer, _)| {
+            let project_path = buffer.read(cx).project_path(cx)?;
+            let project = self.project.as_ref()?.read(cx);
+            project.absolute_path(&project_path, cx)
+        })
+    }
+
+    fn target_file_path(&self, cx: &mut ViewContext<Self>) -> Option<PathBuf> {
+        self.active_excerpt(cx).and_then(|(_, buffer, _)| {
+            let project_path = buffer.read(cx).project_path(cx)?;
+            let project = self.project.as_ref()?.read(cx);
+            let entry = project.entry_for_path(&project_path, cx)?;
+            let path = entry.path.to_path_buf();
+            Some(path)
+        })
+    }
+
     pub fn reveal_in_finder(&mut self, _: &RevealInFileManager, cx: &mut ViewContext<Self>) {
         if let Some(target) = self.target_file(cx) {
             cx.reveal_path(&target.abs_path(cx));
@@ -11526,16 +11580,16 @@ impl Editor {
     }
 
     pub fn copy_path(&mut self, _: &CopyPath, cx: &mut ViewContext<Self>) {
-        if let Some(file) = self.target_file(cx) {
-            if let Some(path) = file.abs_path(cx).to_str() {
+        if let Some(path) = self.target_file_abs_path(cx) {
+            if let Some(path) = path.to_str() {
                 cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
             }
         }
     }
 
     pub fn copy_relative_path(&mut self, _: &CopyRelativePath, cx: &mut ViewContext<Self>) {
-        if let Some(file) = self.target_file(cx) {
-            if let Some(path) = file.path().to_str() {
+        if let Some(path) = self.target_file_path(cx) {
+            if let Some(path) = path.to_str() {
                 cx.write_to_clipboard(ClipboardItem::new_string(path.to_string()));
             }
         }

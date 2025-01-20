@@ -12,7 +12,31 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 
 - Install [Visual Studio](https://visualstudio.microsoft.com/downloads/) with the optional components `MSVC v*** - VS YYYY C++ x64/x86 build tools` and `MSVC v*** - VS YYYY C++ x64/x86 Spectre-mitigated libs (latest)` (`v***` is your VS version and `YYYY` is year when your VS was released. Pay attention to the architecture and change it to yours if needed.)
 - Install Windows 11 or 10 SDK depending on your system, but ensure that at least `Windows 10 SDK version 2104 (10.0.20348.0)` is installed on your machine. You can download it from the [Windows SDK Archive](https://developer.microsoft.com/windows/downloads/windows-sdk/)
-- Install [CMake](https://cmake.org/download) (required by [a dependency](https://docs.rs/wasmtime-c-api-impl/latest/wasmtime_c_api/))
+- Install [CMake](https://cmake.org/download) (required by [a dependency](https://docs.rs/wasmtime-c-api-impl/latest/wasmtime_c_api/)). Or you can install it through Visual Studio Installer, then manually add the `bin` directory to your `PATH`, for example: `C:\Program Files\Microsoft Visual Studio\2022\Community\Common7\IDE\CommonExtensions\Microsoft\CMake\CMake\bin`.
+
+If you can't compile Zed, make sure that you have at least the following components installed:
+
+```json
+{
+  "version": "1.0",
+  "components": [
+    "Microsoft.VisualStudio.Component.CoreEditor",
+    "Microsoft.VisualStudio.Workload.CoreEditor",
+    "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+    "Microsoft.VisualStudio.ComponentGroup.WebToolsExtensions.CMake",
+    "Microsoft.VisualStudio.Component.VC.CMake.Project",
+    "Microsoft.VisualStudio.Component.Windows11SDK.26100",
+    "Microsoft.VisualStudio.Component.VC.Runtimes.x86.x64.Spectre"
+  ],
+  "extensions": []
+}
+```
+
+The list can be obtained as follows:
+
+- Open the Visual Studio Installer
+- Click on `More` in the `Installed` tab
+- Click on `Export configuration`
 
 ## Backend dependencies
 
@@ -21,13 +45,33 @@ Clone down the [Zed repository](https://github.com/zed-industries/zed).
 If you are developing collaborative features of Zed, you'll need to install the dependencies of zed's `collab` server:
 
 - Install [Postgres](https://www.postgresql.org/download/windows/)
-- Install [Livekit](https://github.com/livekit/livekit-cli) and [Foreman](https://theforeman.org/manuals/3.9/quickstart_guide.html)
+- Install [Livekit](https://github.com/livekit/livekit), optionally you can add the `livekit-server` binary to your `PATH`.
 
 Alternatively, if you have [Docker](https://www.docker.com/) installed you can bring up all the `collab` dependencies using Docker Compose:
 
 ```sh
 docker compose up -d
 ```
+
+### Notes
+
+You should modify the `pg_hba.conf` file in the `data` directory to use `trust` instead of `scram-sha-256` for the `host` method. Otherwise, the connection will fail with the error `password authentication failed`. The `pg_hba.conf` file typically locates at `C:\Program Files\PostgreSQL\17\data\pg_hba.conf`. After the modification, the file should look like this:
+
+```conf
+# IPv4 local connections:
+host    all             all             127.0.0.1/32            trust
+# IPv6 local connections:
+host    all             all             ::1/128                 trust
+```
+
+Also, if you are using a non-latin Windows version, you must modify the`lc_messages` parameter in the `postgresql.conf` file in the `data` directory to `English_United States.1252` (or whatever UTF8-compatible encoding you have). Otherwise, the database will panic. The `postgresql.conf` file should look like this:
+
+```conf
+# lc_messages = 'Chinese (Simplified)_China.936' # locale for system error message strings
+lc_messages = 'English_United States.1252'
+```
+
+After this, you should restart the `postgresql` service. Press the `win` key + `R` to launch the `Run` window. Type the `services.msc` and hit the `OK` button to open the Services Manager. Then, find the `postgresql-x64-XX` service, right-click on it, and select `Restart`.
 
 ## Building from source
 

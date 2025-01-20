@@ -1068,7 +1068,9 @@ impl OutlinePanel {
                                 }
                             }
                         } else {
-                            offset.y = -(active_editor.read(cx).file_header_size() as f32);
+                            if multi_buffer_snapshot.as_singleton().is_none() {
+                                offset.y = -(active_editor.read(cx).file_header_size() as f32);
+                            }
                             if show_excerpt_controls {
                                 offset.y -= expand_excerpt_control_height;
                             }
