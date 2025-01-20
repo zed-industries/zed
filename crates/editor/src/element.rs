@@ -3419,7 +3419,9 @@ impl EditorElement {
                     return None;
                 }
 
-                if all_edits_insertions_or_deletions(edits, &editor_snapshot.buffer_snapshot) {
+                if !hard_to_spot_single_edit(&edits, &editor_snapshot.buffer_snapshot)
+                    && all_edits_insertions_or_deletions(edits, &editor_snapshot.buffer_snapshot)
+                {
                     return None;
                 }
 
@@ -3428,6 +3430,7 @@ impl EditorElement {
                 else {
                     return None;
                 };
+
                 let line_count = text.lines().count() + 1;
 
                 let longest_row =
@@ -5195,6 +5198,26 @@ fn header_jump_data(
         anchor: jump_anchor,
         position: language::ToPoint::to_point(&jump_anchor, buffer),
         line_offset_from_top,
+    }
+}
+
+/// Returns true if there's a single edit, that's either a single character
+/// insertion or a single line deletion.
+fn hard_to_spot_single_edit(
+    edits: &[(Range<Anchor>, String)],
+    snapshot: &MultiBufferSnapshot,
+) -> bool {
+    if let [(range, new_text)] = edits {
+        match new_text.len() {
+            0 => {
+                let range = range.to_point(&snapshot);
+                range.start.row == range.end.row
+            }
+            1 => true,
+            _ => false,
+        }
+    } else {
+        false
     }
 }
 
