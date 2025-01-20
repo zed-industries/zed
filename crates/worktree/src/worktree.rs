@@ -4335,7 +4335,7 @@ impl BackgroundScanner {
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         log::debug!("received fs events {:?}", relative_paths);
         self.reload_entries_for_paths(
-            root_path.into(),
+            root_path,
             root_canonical_path,
             &relative_paths,
             abs_paths,
