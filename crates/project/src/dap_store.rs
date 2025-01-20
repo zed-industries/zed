@@ -1900,7 +1900,7 @@ impl DapStore {
         &self,
         project_path: &ProjectPath,
         absolute_path: PathBuf,
-        buffer_snapshot: BufferSnapshot,
+        buffer_snapshot: Option<BufferSnapshot>,
         source_changed: bool,
         cx: &ModelContext<Self>,
     ) -> Task<Result<()>> {
@@ -1914,7 +1914,7 @@ impl DapStore {
             .cloned()
             .unwrap_or_default()
             .iter()
-            .map(|bp| bp.source_for_snapshot(&buffer_snapshot))
+            .map(|bp| bp.source_for_snapshot(buffer_snapshot.as_ref()))
             .collect::<Vec<_>>();
 
         let mut tasks = Vec::new();
@@ -2091,11 +2091,14 @@ impl Breakpoint {
             .unwrap_or(Point::new(self.cached_position, 0))
     }
 
-    pub fn source_for_snapshot(&self, snapshot: &BufferSnapshot) -> SourceBreakpoint {
-        let line = self
-            .active_position
-            .map(|position| snapshot.summary_for_anchor::<Point>(&position).row)
-            .unwrap_or(self.cached_position) as u64;
+    pub fn source_for_snapshot(&self, snapshot: Option<&BufferSnapshot>) -> SourceBreakpoint {
+        let line = match snapshot {
+            Some(snapshot) => self
+                .active_position
+                .map(|position| snapshot.summary_for_anchor::<Point>(&position).row)
+                .unwrap_or(self.cached_position) as u64,
+            None => self.cached_position as u64,
+        };
 
         let log_message = match &self.kind {
             BreakpointKind::Standard => None,

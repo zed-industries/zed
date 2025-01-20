@@ -2544,18 +2544,11 @@ impl Project {
             } => {
                 cx.notify(); // so the UI updates
 
-                let buffer_id = self
+                let buffer_snapshot = self
                     .buffer_store
                     .read(cx)
-                    .buffer_id_for_project_path(&project_path);
-
-                let Some(buffer_id) = buffer_id else {
-                    return;
-                };
-
-                let Some(buffer) = self.buffer_for_id(*buffer_id, cx) else {
-                    return;
-                };
+                    .get_by_path(&project_path, cx)
+                    .map(|buffer| buffer.read(cx).snapshot());
 
                 let Some(absolute_path) = self.absolute_path(project_path, cx) else {
                     return;
@@ -2566,7 +2559,7 @@ impl Project {
                         .send_changed_breakpoints(
                             project_path,
                             absolute_path,
-                            buffer.read(cx).snapshot(),
+                            buffer_snapshot,
                             *source_changed,
                             cx,
                         )
