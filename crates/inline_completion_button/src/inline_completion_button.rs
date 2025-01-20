@@ -18,7 +18,10 @@ use language::{
 use settings::{update_settings_file, Settings, SettingsStore};
 use std::{path::Path, sync::Arc, time::Duration};
 use supermaven::{AccountStatus, Supermaven};
-use ui::{ActiveTheme as _, ButtonLike, Color, Icon, IconWithIndicator, Indicator};
+use ui::{
+    ActiveTheme as _, ButtonLike, Color, FluentBuilder as _, Icon, IconWithIndicator, Indicator,
+    PopoverMenuHandle,
+};
 use workspace::{
     create_and_open_local_file,
     item::ItemHandle,
@@ -47,6 +50,7 @@ pub struct InlineCompletionButton {
     fs: Arc<dyn Fs>,
     workspace: WeakView<Workspace>,
     user_store: Model<UserStore>,
+    zeta_popover_menu_handle: PopoverMenuHandle<ContextMenu>,
 }
 
 enum SupermavenButtonStatus {
@@ -251,7 +255,9 @@ impl Render for InlineCompletionButton {
 
                 let this = cx.view().clone();
                 let button = IconButton::new("zeta", IconName::ZedPredict)
-                    .tooltip(|cx| Tooltip::text("Edit Prediction", cx));
+                    .when(!self.zeta_popover_menu_handle.is_deployed(), |button| {
+                        button.tooltip(|cx| Tooltip::text("Edit Prediction", cx))
+                    });
 
                 let is_refreshing = self
                     .inline_completion_provider
@@ -262,7 +268,9 @@ impl Render for InlineCompletionButton {
                     .menu(move |cx| {
                         Some(this.update(cx, |this, cx| this.build_zeta_context_menu(cx)))
                     })
-                    .anchor(Corner::BottomRight);
+                    .anchor(Corner::BottomRight)
+                    .with_handle(self.zeta_popover_menu_handle.clone());
+
                 if is_refreshing {
                     popover_menu = popover_menu.trigger(
                         button.with_animation(
@@ -303,6 +311,7 @@ impl InlineCompletionButton {
             language: None,
             file: None,
             inline_completion_provider: None,
+            zeta_popover_menu_handle: PopoverMenuHandle::default(),
             workspace,
             fs,
             user_store,
