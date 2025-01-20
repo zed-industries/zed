@@ -313,39 +313,42 @@ impl StackFrameList {
                             .when_some(source.and_then(|s| s.path), |this, path| this.child(path)),
                     ),
             )
-            .when(supports_frame_restart, |this| {
-                this.child(
-                    h_flex()
-                        .id(("restart-stack-frame", stack_frame.id))
-                        .visible_on_hover("")
-                        .absolute()
-                        .right_2()
-                        .overflow_hidden()
-                        .rounded_md()
-                        .border_1()
-                        .border_color(cx.theme().colors().element_selected)
-                        .bg(cx.theme().colors().element_background)
-                        .hover(|style| {
-                            style
-                                .bg(cx.theme().colors().ghost_element_hover)
-                                .cursor_pointer()
-                        })
-                        .child(
-                            IconButton::new(
-                                ("restart-stack-frame", stack_frame.id),
-                                IconName::DebugRestart,
-                            )
-                            .icon_size(IconSize::Small)
-                            .on_click(cx.listener({
-                                let stack_frame_id = stack_frame.id;
-                                move |this, _, cx| {
-                                    this.restart_stack_frame(stack_frame_id, cx);
-                                }
-                            }))
-                            .tooltip(move |cx| Tooltip::text("Restart Stack Frame", cx)),
-                        ),
-                )
-            })
+            .when(
+                supports_frame_restart && stack_frame.can_restart.unwrap_or(true),
+                |this| {
+                    this.child(
+                        h_flex()
+                            .id(("restart-stack-frame", stack_frame.id))
+                            .visible_on_hover("")
+                            .absolute()
+                            .right_2()
+                            .overflow_hidden()
+                            .rounded_md()
+                            .border_1()
+                            .border_color(cx.theme().colors().element_selected)
+                            .bg(cx.theme().colors().element_background)
+                            .hover(|style| {
+                                style
+                                    .bg(cx.theme().colors().ghost_element_hover)
+                                    .cursor_pointer()
+                            })
+                            .child(
+                                IconButton::new(
+                                    ("restart-stack-frame", stack_frame.id),
+                                    IconName::DebugRestart,
+                                )
+                                .icon_size(IconSize::Small)
+                                .on_click(cx.listener({
+                                    let stack_frame_id = stack_frame.id;
+                                    move |this, _, cx| {
+                                        this.restart_stack_frame(stack_frame_id, cx);
+                                    }
+                                }))
+                                .tooltip(move |cx| Tooltip::text("Restart Stack Frame", cx)),
+                            ),
+                    )
+                },
+            )
             .into_any()
     }
 }
