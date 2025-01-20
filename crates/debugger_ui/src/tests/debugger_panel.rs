@@ -14,11 +14,17 @@ use editor::{
     Editor, EditorMode, MultiBuffer,
 };
 use gpui::{BackgroundExecutor, TestAppContext, VisualTestContext};
-use project::{FakeFs, Project};
+use project::{
+    dap_store::{Breakpoint, BreakpointEditAction, BreakpointKind},
+    FakeFs, Project,
+};
 use serde_json::json;
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
+use std::{
+    path::Path,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
 };
 use terminal_view::{terminal_panel::TerminalPanel, TerminalView};
 use tests::{active_debug_panel_item, init_test, init_test_workspace};
@@ -1141,6 +1147,149 @@ async fn test_send_breakpoints_when_editor_has_been_saved(
     assert!(
         called_set_breakpoints.load(std::sync::atomic::Ordering::SeqCst),
         "SetBreakpoint request must be called after editor is saved"
+    );
+
+    let shutdown_session = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |dap_store, cx| {
+            dap_store.shutdown_session(&session.read(cx).id(), cx)
+        })
+    });
+
+    shutdown_session.await.unwrap();
+}
+
+#[gpui::test]
+async fn test_it_send_breakpoint_request_if_breakpoint_buffer_is_unopened(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    fs.insert_tree(
+        "/a",
+        json!({
+            "main.rs": "First line\nSecond line\nThird line\nFourth line",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let worktree_id = workspace
+        .update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        })
+        .unwrap();
+
+    let task = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |store, cx| {
+            store.start_debug_session(
+                task::DebugAdapterConfig {
+                    label: "test config".into(),
+                    kind: task::DebugAdapterKind::Fake,
+                    request: task::DebugRequestType::Launch,
+                    program: None,
+                    cwd: None,
+                    initialize_args: None,
+                },
+                cx,
+            )
+        })
+    });
+
+    let (session, client) = task.await.unwrap();
+
+    client
+        .on_request::<Initialize, _>(move |_, _| {
+            Ok(dap::Capabilities {
+                supports_step_back: Some(true),
+                ..Default::default()
+            })
+        })
+        .await;
+
+    client.on_request::<Launch, _>(move |_, _| Ok(())).await;
+
+    client
+        .on_request::<StackTrace, _>(move |_, _| {
+            Ok(dap::StackTraceResponse {
+                stack_frames: Vec::default(),
+                total_frames: None,
+            })
+        })
+        .await;
+
+    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    let called_set_breakpoints = Arc::new(AtomicBool::new(false));
+    client
+        .on_request::<SetBreakpoints, _>({
+            let called_set_breakpoints = called_set_breakpoints.clone();
+            move |_, args| {
+                assert_eq!("/a/main.rs", args.source.path.unwrap());
+                assert_eq!(
+                    vec![SourceBreakpoint {
+                        line: 2,
+                        column: None,
+                        condition: None,
+                        hit_condition: None,
+                        log_message: None,
+                        mode: None
+                    }],
+                    args.breakpoints.unwrap()
+                );
+                assert!(!args.source_modified.unwrap());
+
+                called_set_breakpoints.store(true, Ordering::SeqCst);
+
+                Ok(dap::SetBreakpointsResponse {
+                    breakpoints: Vec::default(),
+                })
+            }
+        })
+        .await;
+
+    // add breakpoint for file/buffer that has not been opened yet
+    project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |dap_store, cx| {
+            dap_store.toggle_breakpoint_for_buffer(
+                &project::ProjectPath {
+                    worktree_id,
+                    path: Arc::from(Path::new(&"main.rs")),
+                },
+                Breakpoint {
+                    active_position: None,
+                    cached_position: 1,
+                    kind: BreakpointKind::Standard,
+                },
+                BreakpointEditAction::Toggle,
+                cx,
+            );
+        });
+    });
+
+    cx.run_until_parked();
+
+    assert!(
+        called_set_breakpoints.load(std::sync::atomic::Ordering::SeqCst),
+        "SetBreakpoint request must be called for unopened buffers"
     );
 
     let shutdown_session = project.update(cx, |project, cx| {
