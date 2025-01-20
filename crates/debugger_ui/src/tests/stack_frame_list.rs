@@ -1,6 +1,7 @@
 use crate::{
     debugger_panel::DebugPanel,
-    tests::{init_test, init_test_workspace},
+    stack_frame_list::StackFrameEntry,
+    tests::{active_debug_panel_item, init_test, init_test_workspace},
 };
 use dap::{
     requests::{Disconnect, Initialize, Launch, StackTrace},
@@ -418,6 +419,231 @@ async fn test_select_stack_frame(executor: BackgroundExecutor, cx: &mut TestAppC
         })
         .unwrap();
 
+    let shutdown_session = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |dap_store, cx| {
+            dap_store.shutdown_session(&session.read(cx).id(), cx)
+        })
+    });
+
+    shutdown_session.await.unwrap();
+}
+
+#[gpui::test]
+async fn test_collapsed_entries(executor: BackgroundExecutor, cx: &mut TestAppContext) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    let test_file_content = r#"
+        import { SOME_VALUE } './module.js';
+
+        console.log(SOME_VALUE);
+    "#
+    .unindent();
+
+    let module_file_content = r#"
+        export SOME_VALUE = 'some value';
+    "#
+    .unindent();
+
+    fs.insert_tree(
+        "/project",
+        json!({
+           "src": {
+               "test.js": test_file_content,
+               "module.js": module_file_content,
+           }
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/project".as_ref()], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let task = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |store, cx| {
+            store.start_debug_session(
+                task::DebugAdapterConfig {
+                    label: "test config".into(),
+                    kind: task::DebugAdapterKind::Fake,
+                    request: task::DebugRequestType::Launch,
+                    program: None,
+                    cwd: None,
+                    initialize_args: None,
+                },
+                cx,
+            )
+        })
+    });
+
+    let (session, client) = task.await.unwrap();
+
+    client
+        .on_request::<Initialize, _>(move |_, _| {
+            Ok(dap::Capabilities {
+                supports_step_back: Some(false),
+                ..Default::default()
+            })
+        })
+        .await;
+
+    client.on_request::<Launch, _>(move |_, _| Ok(())).await;
+
+    let stack_frames = vec![
+        StackFrame {
+            id: 1,
+            name: "Stack Frame 1".into(),
+            source: Some(dap::Source {
+                name: Some("test.js".into()),
+                path: Some("/project/src/test.js".into()),
+                source_reference: None,
+                presentation_hint: None,
+                origin: None,
+                sources: None,
+                adapter_data: None,
+                checksums: None,
+            }),
+            line: 3,
+            column: 1,
+            end_line: None,
+            end_column: None,
+            can_restart: None,
+            instruction_pointer_reference: None,
+            module_id: None,
+            presentation_hint: None,
+        },
+        StackFrame {
+            id: 2,
+            name: "Stack Frame 2".into(),
+            source: Some(dap::Source {
+                name: Some("module.js".into()),
+                path: Some("/project/src/module.js".into()),
+                source_reference: None,
+                presentation_hint: None,
+                origin: Some("ignored".into()),
+                sources: None,
+                adapter_data: None,
+                checksums: None,
+            }),
+            line: 1,
+            column: 1,
+            end_line: None,
+            end_column: None,
+            can_restart: None,
+            instruction_pointer_reference: None,
+            module_id: None,
+            presentation_hint: Some(dap::StackFramePresentationHint::Deemphasize),
+        },
+        StackFrame {
+            id: 3,
+            name: "Stack Frame 3".into(),
+            source: Some(dap::Source {
+                name: Some("module.js".into()),
+                path: Some("/project/src/module.js".into()),
+                source_reference: None,
+                presentation_hint: None,
+                origin: Some("ignored".into()),
+                sources: None,
+                adapter_data: None,
+                checksums: None,
+            }),
+            line: 1,
+            column: 1,
+            end_line: None,
+            end_column: None,
+            can_restart: None,
+            instruction_pointer_reference: None,
+            module_id: None,
+            presentation_hint: Some(dap::StackFramePresentationHint::Deemphasize),
+        },
+        StackFrame {
+            id: 4,
+            name: "Stack Frame 4".into(),
+            source: Some(dap::Source {
+                name: Some("module.js".into()),
+                path: Some("/project/src/module.js".into()),
+                source_reference: None,
+                presentation_hint: None,
+                origin: None,
+                sources: None,
+                adapter_data: None,
+                checksums: None,
+            }),
+            line: 1,
+            column: 1,
+            end_line: None,
+            end_column: None,
+            can_restart: None,
+            instruction_pointer_reference: None,
+            module_id: None,
+            presentation_hint: None,
+        },
+    ];
+
+    client
+        .on_request::<StackTrace, _>({
+            let stack_frames = Arc::new(stack_frames.clone());
+            move |_, args| {
+                assert_eq!(1, args.thread_id);
+
+                Ok(dap::StackTraceResponse {
+                    stack_frames: (*stack_frames).clone(),
+                    total_frames: None,
+                })
+            }
+        })
+        .await;
+
+    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
+
+    client
+        .fake_event(dap::messages::Events::Stopped(dap::StoppedEvent {
+            reason: dap::StoppedEventReason::Pause,
+            description: None,
+            thread_id: Some(1),
+            preserve_focus_hint: None,
+            text: None,
+            all_threads_stopped: None,
+            hit_breakpoint_ids: None,
+        }))
+        .await;
+
+    cx.run_until_parked();
+
+    active_debug_panel_item(workspace, cx).update(cx, |debug_panel_item, cx| {
+        debug_panel_item
+            .stack_frame_list()
+            .update(cx, |stack_frame_list, cx| {
+                assert_eq!(
+                    &vec![
+                        StackFrameEntry::Normal(stack_frames[0].clone()),
+                        StackFrameEntry::Collapsed(vec![
+                            stack_frames[1].clone(),
+                            stack_frames[2].clone()
+                        ]),
+                        StackFrameEntry::Normal(stack_frames[3].clone()),
+                    ],
+                    stack_frame_list.entries()
+                );
+
+                stack_frame_list.expand_collapsed_entry(
+                    1,
+                    &vec![stack_frames[1].clone(), stack_frames[2].clone()],
+                    cx,
+                );
+
+                assert_eq!(
+                    &vec![
+                        StackFrameEntry::Normal(stack_frames[0].clone()),
+                        StackFrameEntry::Normal(stack_frames[1].clone()),
+                        StackFrameEntry::Normal(stack_frames[2].clone()),
+                        StackFrameEntry::Normal(stack_frames[3].clone()),
+                    ],
+                    stack_frame_list.entries()
+                );
+            });
+    });
     let shutdown_session = project.update(cx, |project, cx| {
         project.dap_store().update(cx, |dap_store, cx| {
             dap_store.shutdown_session(&session.read(cx).id(), cx)

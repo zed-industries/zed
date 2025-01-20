@@ -30,14 +30,21 @@ pub struct StackFrameList {
     thread_id: u64,
     list: ListState,
     focus_handle: FocusHandle,
+    session_id: DebugSessionId,
     dap_store: Model<DapStore>,
     current_stack_frame_id: u64,
     stack_frames: Vec<StackFrame>,
+    entries: Vec<StackFrameEntry>,
     workspace: WeakView<Workspace>,
     client_id: DebugAdapterClientId,
-    session_id: DebugSessionId,
     _subscriptions: Vec<Subscription>,
     fetch_stack_frames_task: Option<Task<Result<()>>>,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum StackFrameEntry {
+    Normal(StackFrame),
+    Collapsed(Vec<StackFrame>),
 }
 
 impl StackFrameList {
@@ -70,6 +77,7 @@ impl StackFrameList {
             _subscriptions,
             client_id: *client_id,
             session_id: *session_id,
+            entries: Default::default(),
             workspace: workspace.clone(),
             dap_store: dap_store.clone(),
             fetch_stack_frames_task: None,
@@ -100,9 +108,14 @@ impl StackFrameList {
         self.client_id = DebugAdapterClientId::from_proto(stack_frame_list.client_id);
         self.current_stack_frame_id = stack_frame_list.current_stack_frame;
         self.stack_frames = Vec::from_proto(stack_frame_list.stack_frames);
-        self.list.reset(self.stack_frames.len());
 
+        self.build_entries();
         cx.notify();
+    }
+
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn entries(&self) -> &Vec<StackFrameEntry> {
+        &self.entries
     }
 
     pub fn stack_frames(&self) -> &Vec<StackFrame> {
@@ -138,6 +151,35 @@ impl StackFrameList {
         self.fetch_stack_frames(true, cx);
     }
 
+    fn build_entries(&mut self) {
+        let mut entries = Vec::new();
+        let mut collapsed_entries = Vec::new();
+
+        for stack_frame in &self.stack_frames {
+            match stack_frame.presentation_hint {
+                Some(dap::StackFramePresentationHint::Deemphasize) => {
+                    collapsed_entries.push(stack_frame.clone());
+                }
+                _ => {
+                    let collapsed_entries = std::mem::take(&mut collapsed_entries);
+                    if !collapsed_entries.is_empty() {
+                        entries.push(StackFrameEntry::Collapsed(collapsed_entries.clone()));
+                    }
+
+                    entries.push(StackFrameEntry::Normal(stack_frame.clone()));
+                }
+            }
+        }
+
+        let collapsed_entries = std::mem::take(&mut collapsed_entries);
+        if !collapsed_entries.is_empty() {
+            entries.push(StackFrameEntry::Collapsed(collapsed_entries.clone()));
+        }
+
+        std::mem::swap(&mut self.entries, &mut entries);
+        self.list.reset(self.entries.len());
+    }
+
     fn fetch_stack_frames(&mut self, go_to_stack_frame: bool, cx: &mut ViewContext<Self>) {
         // If this is a remote debug session we never need to fetch stack frames ourselves
         // because the host will fetch and send us stack frames whenever there's a stop event
@@ -155,7 +197,7 @@ impl StackFrameList {
             let task = this.update(&mut cx, |this, cx| {
                 std::mem::swap(&mut this.stack_frames, &mut stack_frames);
 
-                this.list.reset(this.stack_frames.len());
+                this.build_entries();
 
                 cx.emit(StackFrameListEvent::StackFramesUpdated);
 
@@ -254,9 +296,11 @@ impl StackFrameList {
         });
     }
 
-    fn render_entry(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
-        let stack_frame = &self.stack_frames[ix];
-
+    fn render_normal_entry(
+        &self,
+        stack_frame: &StackFrame,
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement {
         let source = stack_frame.source.clone();
         let is_selected_frame = stack_frame.id == self.current_stack_frame_id;
 
@@ -350,6 +394,71 @@ impl StackFrameList {
                 },
             )
             .into_any()
+    }
+
+    pub fn expand_collapsed_entry(
+        &mut self,
+        ix: usize,
+        stack_frames: &Vec<StackFrame>,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.entries.splice(
+            ix..ix + 1,
+            stack_frames
+                .iter()
+                .map(|frame| StackFrameEntry::Normal(frame.clone())),
+        );
+        self.list.reset(self.entries.len());
+        cx.notify();
+    }
+
+    fn render_collapsed_entry(
+        &self,
+        ix: usize,
+        stack_frames: &Vec<StackFrame>,
+        cx: &mut ViewContext<Self>,
+    ) -> AnyElement {
+        let first_stack_frame = &stack_frames[0];
+
+        h_flex()
+            .rounded_md()
+            .justify_between()
+            .w_full()
+            .group("")
+            .id(("stack-frame", first_stack_frame.id))
+            .p_1()
+            .on_click(cx.listener({
+                let stack_frames = stack_frames.clone();
+                move |this, _, cx| {
+                    this.expand_collapsed_entry(ix, &stack_frames, cx);
+                }
+            }))
+            .hover(|style| style.bg(cx.theme().colors().element_hover).cursor_pointer())
+            .child(
+                v_flex()
+                    .text_ui_sm(cx)
+                    .truncate()
+                    .text_color(cx.theme().colors().text_muted)
+                    .child(format!(
+                        "Show {} more{}",
+                        stack_frames.len(),
+                        first_stack_frame
+                            .source
+                            .as_ref()
+                            .and_then(|source| source.origin.as_ref())
+                            .map_or(String::new(), |origin| format!(": {}", origin))
+                    )),
+            )
+            .into_any()
+    }
+
+    fn render_entry(&self, ix: usize, cx: &mut ViewContext<Self>) -> AnyElement {
+        match &self.entries[ix] {
+            StackFrameEntry::Normal(stack_frame) => self.render_normal_entry(stack_frame, cx),
+            StackFrameEntry::Collapsed(stack_frames) => {
+                self.render_collapsed_entry(ix, stack_frames, cx)
+            }
+        }
     }
 }
 

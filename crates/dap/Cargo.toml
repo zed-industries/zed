@@ -25,7 +25,7 @@ async-tar.workspace = true
 async-trait.workspace = true
 client.workspace = true
 collections.workspace = true
-dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "a6376f02cf9c284c706bc919c21e7ce68ef1fb47" }
+dap-types = { git = "https://github.com/zed-industries/dap-types", rev = "f44d7d8af3a8af3e0ca09933271bee17c99e15b1" }
 fs.workspace = true
 futures.workspace = true
 gpui.workspace = true
