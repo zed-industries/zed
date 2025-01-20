@@ -2742,21 +2742,19 @@ async fn test_preview_edits(cx: &mut TestAppContext) {
         Some(tree_sitter_rust::LANGUAGE.into()),
     ));
     let buffer = cx.new_model(|cx| Buffer::local(text, cx).with_language(language, cx));
-    let highlighted_edits =
-        preview_edits(&buffer, cx, [(Point::new(6, 14)..Point::new(6, 18), "sur")]).await;
+    let highlighted_edits = preview_edits(
+        &buffer,
+        cx,
+        [
+            (Point::new(5, 7)..Point::new(5, 11), "first"),
+            (Point::new(6, 14)..Point::new(6, 18), "first"),
+        ],
+    )
+    .await;
+
     assert_eq!(
         highlighted_edits.text,
-        indoc! {r#"
-            struct Person {
-                sur_name: String,
-            }
-
-            impl Person {
-                fn last_name(&self) -> &String {
-                    &self.lastsur_name
-                }
-            }"#
-        }
+        "    fn lastfirst_name(&self) -> &String {\n        &self.lastfirst_name"
     );
 
     async fn preview_edits(

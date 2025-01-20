@@ -4988,7 +4988,7 @@ impl Editor {
                     .and_then(|edit_preview| {
                         inline_completion_edit_text(&edits, edit_preview, true, cx)
                     })
-                    .map(|highlighted_edits| InlineCompletionText::Edit(highlighted_edits)),
+                    .map(InlineCompletionText::Edit),
                 InlineCompletion::Move(target) => {
                     let target_point =
                         target.to_point(&editor_snapshot.display_snapshot.buffer_snapshot);
