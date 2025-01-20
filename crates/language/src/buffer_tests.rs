@@ -2726,51 +2726,34 @@ async fn test_preview_edits(cx: &mut TestAppContext) {
     });
 
     let text = indoc! {r#"
-        struct Human {
-            pub first_name: String,
-            pub last_name: String,
-            year_of_birth: u32,
+        struct Person {
+            sur_name: String,
         }
 
-        impl Human {
-            fn new(first_name: String, last_name: String, year_of_birth: u32) -> Self {
-                Self {
-                    first_name,
-                    last_name,
-                    year_of_birth,
-                }
+        impl Person {
+            fn last_name(&self) -> &String {
+                &self.last_name
             }
         }"#
     };
 
-    let buffer =
-        cx.new_model(|cx| Buffer::local(text, cx).with_language(Arc::new(rust_lang()), cx));
-    let highlighted_edits = preview_edits(
-        &buffer,
-        cx,
-        [
-            (Point::new(2, 8)..Point::new(2, 13), "sur"),
-            (Point::new(7, 31)..Point::new(7, 36), "sur"),
-            (Point::new(10, 12)..Point::new(10, 17), "sur"),
-        ],
-    )
-    .await;
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    let buffer = cx.new_model(|cx| Buffer::local(text, cx).with_language(language, cx));
+    let highlighted_edits =
+        preview_edits(&buffer, cx, [(Point::new(6, 14)..Point::new(6, 18), "sur")]).await;
     assert_eq!(
         highlighted_edits.text,
         indoc! {r#"
-            struct Human {
-                pub first_name: String,
-                pub last_surname: String,
-                year_of_birth: u32,
+            struct Person {
+                sur_name: String,
             }
 
-            impl Human {
-                fn new(first_name: String, last_surname: String, year_of_birth: u32) -> Self {
-                    Self {
-                        first_name,
-                        last_surname,
-                        year_of_birth,
-                    }
+            impl Person {
+                fn last_name(&self) -> &String {
+                    &self.lastsur_name
                 }
             }"#
         }
@@ -2781,7 +2764,7 @@ async fn test_preview_edits(cx: &mut TestAppContext) {
         cx: &mut TestAppContext,
         edits: impl IntoIterator<Item = (Range<Point>, &'static str)>,
     ) -> HighlightedEdits {
-        let edits: Arc<[_]> = buffer.read_with(cx, |buffer, cx| {
+        let edits: Arc<[_]> = buffer.read_with(cx, |buffer, _| {
             edits
                 .into_iter()
                 .map(|(range, text)| {

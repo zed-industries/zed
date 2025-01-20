@@ -623,7 +623,7 @@ impl EditPreview {
         include_deletions: bool,
         cx: &AppContext,
     ) -> HighlightedEdits {
-        self.highlight_edits_in_range(0..self.old_snapshot.len(), edits, include_deletions, cx)
+        self.highlight_edits_in_range(0..self.new_snapshot.len(), edits, include_deletions, cx)
     }
 
     pub fn highlight_edits_in_range(
@@ -639,11 +639,18 @@ impl EditPreview {
 
         for (old_range, new_text) in edits {
             let old_offset_range = old_range.to_offset(&self.old_snapshot);
-            text.extend(
-                self.old_snapshot
-                    .text_for_range(offset..old_offset_range.start),
-            );
-            offset = old_offset_range.end;
+            for chunk in self.highlighted_chunks(offset..old_offset_range.start) {
+                let start = text.len();
+                text.push_str(chunk.text);
+                let end = text.len();
+                if let Some(highlight_style) = chunk
+                    .syntax_highlight_id
+                    .and_then(|id| id.style(cx.theme().syntax()))
+                {
+                    highlights.push((start..end, highlight_style));
+                }
+            }
+            offset = old_offset_range.start + new_text.len();
 
             if include_deletions && !old_offset_range.is_empty() {
                 let start = text.len();
@@ -659,25 +666,66 @@ impl EditPreview {
             }
 
             if !new_text.is_empty() {
-                let start = text.len();
-                text.push_str(new_text);
-                let end = text.len();
-                highlights.push((
-                    start..end,
-                    HighlightStyle {
+                for chunk in self.highlighted_chunks(
+                    old_offset_range.start..old_offset_range.start + new_text.len(),
+                ) {
+                    let start = text.len();
+                    text.push_str(chunk.text);
+                    let end = text.len();
+
+                    let mut highlight_style = HighlightStyle {
                         background_color: Some(cx.theme().status().created_background),
                         ..Default::default()
-                    },
-                ));
+                    };
+                    if let Some(syntax_highlight_style) = chunk
+                        .syntax_highlight_id
+                        .and_then(|id| id.style(cx.theme().syntax()))
+                    {
+                        highlight_style.highlight(syntax_highlight_style);
+                    }
+                    highlights.push((start..end, highlight_style));
+                }
             }
         }
 
-        text.extend(self.old_snapshot.text_for_range(offset..range.end));
+        for chunk in self.highlighted_chunks(offset..range.end) {
+            let start = text.len();
+            text.push_str(chunk.text);
+            let end = text.len();
+
+            if let Some(highlight_style) = chunk
+                .syntax_highlight_id
+                .and_then(|id| id.style(cx.theme().syntax()))
+            {
+                highlights.push((start..end, highlight_style));
+            }
+        }
 
         HighlightedEdits {
             text: text.into(),
             highlights,
         }
+    }
+
+    fn highlighted_chunks(&self, range: Range<usize>) -> BufferChunks {
+        let captures =
+            self.syntax_snapshot
+                .captures(range.clone(), &self.new_snapshot, |grammar| {
+                    grammar.highlights_query.as_ref()
+                });
+        let highlight_maps = captures
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.highlight_map())
+            .collect();
+
+        BufferChunks::new(
+            self.new_snapshot.as_rope(),
+            range,
+            Some((captures, highlight_maps)),
+            false,
+            None,
+        )
     }
 }
 
@@ -911,10 +959,11 @@ impl Buffer {
         println!("Previewing {} edits", edits.len());
 
         let snapshot = self.text.snapshot();
-        let mut branch_buffer = self.text.branch();
-        let mut syntax_snapshot = self.syntax_map.lock().snapshot();
         let registry = self.language_registry();
         let language = self.language().cloned();
+
+        let mut branch_buffer = self.text.branch();
+        let mut syntax_snapshot = self.syntax_map.lock().snapshot();
         cx.background_executor().spawn(async move {
             println!("---- Buffer text ---- \n{}\n------", branch_buffer.text());
             for (range, text) in edits.iter() {
@@ -928,8 +977,10 @@ impl Buffer {
             if !edits.is_empty() {
                 //TODO: can we avoid cloning the edits?
                 branch_buffer.edit(edits.iter().cloned());
+                let snapshot = branch_buffer.snapshot();
+                syntax_snapshot.interpolate(&snapshot);
                 if let Some(language) = language {
-                    syntax_snapshot.reparse(&branch_buffer.snapshot(), registry, language);
+                    syntax_snapshot.reparse(&snapshot, registry, language);
                     println!("Reparsed!");
                 }
             }
