@@ -33,6 +33,14 @@ use util::{
 ,
 };
 
+fn to_path_string(path: &str) -> String {
+    if cfg!(windows) {
+        path.replace("/", "\\")
+    } else {
+        path.to_string()
+    }
+}
+
 #[gpui::test]
 async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {
     cx.executor().allow_parking();
@@ -4625,7 +4633,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/dir",
+        add_root_for_windows("/dir"),
         json!({
             "one.rs": r#"// Rust file one"#,
             "one.ts": r#"// TypeScript file one"#,
@@ -4634,7 +4642,7 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
         }),
     )
     .await;
-    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [add_root_for_windows("/dir").as_ref()], cx).await;
 
     assert_eq!(
         search(
@@ -4654,10 +4662,10 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            ("dir/one.rs".to_string(), vec![8..12]),
-            ("dir/one.ts".to_string(), vec![14..18]),
-            ("dir/two.rs".to_string(), vec![8..12]),
-            ("dir/two.ts".to_string(), vec![14..18]),
+            (to_path_string("dir/one.rs"), vec![8..12]),
+            (to_path_string("dir/one.ts"), vec![14..18]),
+            (to_path_string("dir/two.rs"), vec![8..12]),
+            (to_path_string("dir/two.ts"), vec![14..18]),
         ]),
         "If no exclusions match, all files should be returned"
     );
@@ -4680,8 +4688,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            ("dir/one.ts".to_string(), vec![14..18]),
-            ("dir/two.ts".to_string(), vec![14..18]),
+            (to_path_string("dir/one.ts"), vec![14..18]),
+            (to_path_string("dir/two.ts"), vec![14..18]),
         ]),
         "Rust exclusion search should give only TypeScript files"
     );
@@ -4703,8 +4711,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            ("dir/one.rs".to_string(), vec![8..12]),
-            ("dir/two.rs".to_string(), vec![8..12]),
+            (to_path_string("dir/one.rs"), vec![8..12]),
+            (to_path_string("dir/two.rs"), vec![8..12]),
         ]),
         "TypeScript exclusion search should give only Rust files, even if other exclusions don't match anything"
     );
@@ -4973,14 +4981,6 @@ async fn test_search_multiple_worktrees_with_inclusions(cx: &mut gpui::TestAppCo
 
 #[gpui::test]
 async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
-    fn to_path_string(path: &str) -> String {
-        if cfg!(windows) {
-            path.replace("/", "\\")
-        } else {
-            path.to_string()
-        }
-    }
-
     init_test(cx);
 
     let fs = FakeFs::new(cx.background_executor.clone());
