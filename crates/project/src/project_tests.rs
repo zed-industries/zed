@@ -1726,7 +1726,6 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
-
     let mut fake_rust_server_2 = fake_rust_servers.next().await.unwrap();
     assert_eq!(
         fake_rust_server_2

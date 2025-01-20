@@ -4,7 +4,7 @@ pub use lsp_types::request::*;
 pub use lsp_types::*;
 
 use anyhow::{anyhow, Context, Result};
-use collections::HashMap;
+use collections::{HashMap, HashSet};
 use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, SharedString, Task};
 use notification::DidChangeWorkspaceFolders;
@@ -22,6 +22,7 @@ use smol::{
     io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
     process::Child,
 };
+use text::BufferId;
 
 use std::{
     collections::BTreeSet,
@@ -100,6 +101,7 @@ pub struct LanguageServer {
     output_done_rx: Mutex<Option<barrier::Receiver>>,
     server: Arc<Mutex<Option<Child>>>,
     workspace_folders: Arc<Mutex<BTreeSet<Url>>>,
+    registered_buffers: Arc<Mutex<HashMap<BufferId, Url>>>,
 }
 
 /// Identifies a running language server.
@@ -487,6 +489,7 @@ impl LanguageServer {
             output_done_rx: Mutex::new(Some(output_done_rx)),
             server: Arc::new(Mutex::new(server)),
             workspace_folders: Default::default(),
+            registered_buffers: Default::default(),
         }
     }
 
@@ -1278,6 +1281,37 @@ impl LanguageServer {
 
     pub fn workspace_folders(&self) -> impl Deref<Target = BTreeSet<Url>> + '_ {
         self.workspace_folders.lock()
+    }
+
+    pub fn register_buffer(
+        &self,
+        buffer_id: BufferId,
+        uri: Url,
+        language_id: String,
+        version: i32,
+        initial_text: String,
+    ) {
+        let previous_value = self
+            .registered_buffers
+            .lock()
+            .insert(buffer_id, uri.clone());
+        if previous_value.is_none() {
+            self.notify::<notification::DidOpenTextDocument>(&DidOpenTextDocumentParams {
+                text_document: TextDocumentItem::new(uri, language_id, version, initial_text),
+            })
+            .log_err();
+        } else {
+            debug_assert_eq!(previous_value, Some(uri));
+        }
+    }
+
+    pub fn unregister_buffer(&self, buffer_id: BufferId) {
+        if let Some(path) = self.registered_buffers.lock().remove(&buffer_id) {
+            self.notify::<notification::DidCloseTextDocument>(&DidCloseTextDocumentParams {
+                text_document: TextDocumentIdentifier::new(path),
+            })
+            .log_err();
+        }
     }
 }
 
