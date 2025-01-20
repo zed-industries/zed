@@ -1741,7 +1741,7 @@ impl LocalLspStore {
                          server_name,
                          attach,
                          path,
-                         settings,
+                         ..
                      }| match attach {
                         language::Attach::InstancePerRoot => {
                             // todo: handle instance per root proper.
@@ -3169,9 +3169,8 @@ impl LspStore {
                 self.on_buffer_added(buffer, cx).log_err();
             }
             BufferStoreEvent::BufferChangedFilePath { buffer, old_file } => {
-                let buffer_id = buffer.read(cx).remote_id();
-                if let Some(old_file) = File::from_dyn(old_file.as_ref()) {
-                    if let Some(local) = self.as_local_mut() {
+                if let Some(local) = self.as_local_mut() {
+                    if let Some(old_file) = File::from_dyn(old_file.as_ref()) {
                         local.reset_buffer(buffer, old_file, cx);
 
                         local.unregister_old_buffer_from_language_servers(buffer, cx);
@@ -3447,7 +3446,6 @@ impl LspStore {
         cx: &mut ModelContext<Self>,
     ) {
         let buffer_file = buffer.read(cx).file().cloned();
-        let buffer_id = buffer.read(cx).remote_id();
         if let Some(local_store) = self.as_local_mut() {
             local_store.unregister_buffer_from_language_servers(buffer, cx);
         }
@@ -3660,15 +3658,13 @@ impl LspStore {
             let buffer_file = File::from_dyn(buffer.file());
             let buffer_language = buffer.language();
             let settings = language_settings(buffer_language.map(|l| l.name()), buffer.file(), cx);
-            if let Some(language) = buffer_language {
+            if buffer_language.is_some() {
                 language_formatters_to_check.push((
                     buffer_file.map(|f| f.worktree_id(cx)),
                     settings.into_owned(),
                 ));
             }
         }
-
-        let languages = self.languages.to_vec();
 
         let new_lsp_settings = ProjectSettings::get_global(cx).lsp.clone();
         let Some(current_lsp_settings) = self.swap_current_lsp_settings(new_lsp_settings.clone())

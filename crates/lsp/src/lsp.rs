@@ -4,7 +4,7 @@ pub use lsp_types::request::*;
 pub use lsp_types::*;
 
 use anyhow::{anyhow, Context, Result};
-use collections::{HashMap, HashSet};
+use collections::HashMap;
 use futures::{channel::oneshot, io::BufWriter, select, AsyncRead, AsyncWrite, Future, FutureExt};
 use gpui::{AppContext, AsyncAppContext, BackgroundExecutor, SharedString, Task};
 use notification::DidChangeWorkspaceFolders;

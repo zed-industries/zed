@@ -1726,7 +1726,9 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
         })
         .await
         .unwrap();
+    dbg!("Waiting");
     let mut fake_rust_server_2 = fake_rust_servers.next().await.unwrap();
+    dbg!("Done waiting");
     assert_eq!(
         fake_rust_server_2
             .receive_notification::<lsp::notification::DidOpenTextDocument>()
