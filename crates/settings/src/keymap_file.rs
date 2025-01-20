@@ -17,20 +17,50 @@ use serde_json::Value;
 use std::fmt::Write;
 use util::{asset_str, markdown::MarkdownString};
 
+// Note that the doc comments on these are shown by json-language-server when editing the keymap, so
+// they should be considered user-facing documentation. Documentation is not handled well with
+// schemars-0.8 - when there are newlines, it is rendered as plaintext (see
+// https://github.com/GREsau/schemars/issues/38#issuecomment-2282883519). So for now these docs
+// avoid newlines.
+//
+// TODO: Update to schemars-1.0 once it's released, and add more docs as newlines would be
+// supported. Tracking issue is https://github.com/GREsau/schemars/issues/112.
+
+/// Keymap configuration consisting of sections. Each section may have a context predicate which
+/// determines whether its bindings are used.
 #[derive(Debug, Deserialize, Default, Clone, JsonSchema)]
 #[serde(transparent)]
 pub struct KeymapFile(Vec<KeymapSection>);
 
+/// Keymap section which binds keystrokes to actions.
 #[derive(Debug, Deserialize, Default, Clone, JsonSchema)]
 pub struct KeymapSection {
+    /// Determines when these bindings are active. When just a name is provided, like `Editor` or
+    /// `Workspace`, the bindings will be active in that context. Boolean expressions like `X && Y`,
+    /// `X || Y`, `!X` are also supported. Some more complex logic including checking OS and the
+    /// current file extension are also supported - see [the
+    /// documentation](https://zed.dev/docs/key-bindings#contexts) for more details.
     #[serde(default)]
     context: String,
+    /// This option enables specifying keys based on their position on a QWERTY keyboard, by using
+    /// position-equivalent mappings for some non-QWERTY keyboards. This is currently only supported
+    /// on macOS. See the documentation for more details.
     #[serde(default)]
     use_key_equivalents: bool,
+    /// This keymap section's bindings, as a JSON object mapping keystrokes to actions. The
+    /// keystrokes key is a string representing a sequence of keystrokes to type, where the
+    /// keystrokes are separated by whitespace. Each keystroke is a sequence of modifiers (`ctrl`,
+    /// `alt`, `shift`, `fn`, `cmd`, `super`, or `win`) followed by a key, separated by `-`.
     #[serde(default)]
     bindings: Option<BTreeMap<String, KeymapAction>>,
     #[serde(flatten)]
     unrecognized_fields: IndexMap<String, Value>,
+    // This struct intentionally uses permissive types for its fields, rather than validating during
+    // deserialization. The purpose of this is to allow loading the portion of the keymap that doesn't
+    // have errors. The downside of this is that the errors are not reported with line+column info.
+    // Unfortunately the implementations of the `Spanned` types for preserving this information are
+    // highly inconvenient (`serde_spanned`) and in some cases don't work at all here
+    // (`json_spanned_>value`). Serde should really have builtin support for this.
 }
 
 impl KeymapSection {
@@ -42,9 +72,9 @@ impl KeymapSection {
 /// Keymap action as a JSON value, since it can either be null for no action, or the name of the
 /// action, or an array of the name of the action and the action input.
 ///
-/// Unlike the other deserializable types here, this doc-comment will not be included in the
-/// generated JSON schema, as it manually defines its `JsonSchema` impl. The actual schema used for
-/// it is automatically generated in `KeymapFile::generate_json_schema`.
+/// Unlike the other json types involved in keymaps (including actions), this doc-comment will not
+/// be included in the generated JSON schema, as it manually defines its `JsonSchema` impl. The
+/// actual schema used for it is automatically generated in `KeymapFile::generate_json_schema`.
 #[derive(Debug, Deserialize, Default, Clone)]
 #[serde(transparent)]
 pub struct KeymapAction(Value);
