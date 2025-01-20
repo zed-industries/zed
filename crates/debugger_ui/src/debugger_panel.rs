@@ -582,7 +582,7 @@ impl DebugPanel {
 
             task.await?;
 
-            match request_type {
+            let result = match request_type {
                 DebugRequestType::Launch => {
                     let task = this.update(&mut cx, |this, cx| {
                         this.dap_store
@@ -615,7 +615,23 @@ impl DebugPanel {
                         })?
                     }
                 }
+            };
+
+            if result.is_err() {
+                this.update(&mut cx, |debug_panel, cx| {
+                    debug_panel.dap_store.update(cx, |store, cx| {
+                        cx.emit(DapStoreEvent::Notification(
+                            "Failed to start debug session".into(),
+                        ));
+
+                        store
+                            .shutdown_session(&session_id, cx)
+                            .detach_and_log_err(cx);
+                    });
+                })?;
             }
+
+            result
         })
         .detach_and_log_err(cx);
     }
