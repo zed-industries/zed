@@ -4770,7 +4770,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/dir",
+        add_root_for_windows("/dir"),
         json!({
             "one.rs": r#"// Rust file one"#,
             "one.ts": r#"// TypeScript file one"#,
@@ -4779,7 +4779,7 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
         }),
     )
     .await;
-    let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [add_root_for_windows("/dir").as_ref()], cx).await;
 
     assert!(
         search(
@@ -4861,8 +4861,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
         .await
         .unwrap(),
         HashMap::from_iter([
-            ("dir/one.ts".to_string(), vec![14..18]),
-            ("dir/two.ts".to_string(), vec![14..18]),
+            (to_path_string("dir/one.ts"), vec![14..18]),
+            (to_path_string("dir/two.ts"), vec![14..18]),
         ]),
         "Non-intersecting TypeScript inclusions and Rust exclusions should return TypeScript files"
     );
