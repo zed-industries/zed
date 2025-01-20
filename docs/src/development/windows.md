@@ -112,10 +112,6 @@ You can see the [build script](https://github.com/msys2/MINGW-packages/blob/mast
 
 ## Troubleshooting
 
-### Can't compile zed
-
-Before reporting the issue, make sure that you have the latest rustc version with `rustup update`.
-
 ### Setting `RUSTFLAGS` env var breaks builds
 
 If you set the `RUSTFLAGS` env var, it will override the `rustflags` settings in `.cargo/config.toml` which is required to properly build Zed.
