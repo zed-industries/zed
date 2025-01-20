@@ -92,7 +92,18 @@ impl ContextPicker {
                 .map(|(ix, entry)| self.recent_menu_item(context_picker.clone(), ix, entry));
 
             let menu = menu
-                .when(has_recent, |menu| menu.label("Recent"))
+                .when(has_recent, |menu| {
+                    menu.custom_row(|_| {
+                        div()
+                            .mb_1()
+                            .child(
+                                Label::new("Recent")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            )
+                            .into_any_element()
+                    })
+                })
                 .extend(recent_entries)
                 .when(has_recent, |menu| menu.separator())
                 .extend(ContextKind::all().into_iter().map(kind_entry));
