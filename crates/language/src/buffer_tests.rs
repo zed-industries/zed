@@ -2727,7 +2727,7 @@ async fn test_preview_edits(cx: &mut TestAppContext) {
 
     let text = indoc! {r#"
         struct Person {
-            sur_name: String,
+            first_name: String,
         }
 
         impl Person {
