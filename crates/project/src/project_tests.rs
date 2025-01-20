@@ -1045,7 +1045,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/dir",
+        add_root_for_windows("/dir"),
         json!({
             "a.rs": "let a = 1;",
             "b.rs": "let b = 2;"
@@ -1053,15 +1053,27 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
     )
     .await;
 
-    let project = Project::test(fs, ["/dir/a.rs".as_ref(), "/dir/b.rs".as_ref()], cx).await;
+    let project = Project::test(
+        fs,
+        [
+            add_root_for_windows("/dir/a.rs").as_ref(),
+            add_root_for_windows("/dir/b.rs").as_ref(),
+        ],
+        cx,
+    )
+    .await;
     let lsp_store = project.read_with(cx, |project, _| project.lsp_store());
 
     let buffer_a = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/a.rs", cx))
+        .update(cx, |project, cx| {
+            project.open_local_buffer(add_root_for_windows("/dir/a.rs"), cx)
+        })
         .await
         .unwrap();
     let buffer_b = project
-        .update(cx, |project, cx| project.open_local_buffer("/dir/b.rs", cx))
+        .update(cx, |project, cx| {
+            project.open_local_buffer(add_root_for_windows("/dir/b.rs"), cx)
+        })
         .await
         .unwrap();
 
@@ -1070,7 +1082,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
             .update_diagnostics(
                 LanguageServerId(0),
                 lsp::PublishDiagnosticsParams {
-                    uri: Url::from_file_path("/dir/a.rs").unwrap(),
+                    uri: Url::from_file_path(add_root_for_windows("/dir/a.rs")).unwrap(),
                     version: None,
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 5)),
@@ -1087,7 +1099,7 @@ async fn test_single_file_worktrees_diagnostics(cx: &mut gpui::TestAppContext) {
             .update_diagnostics(
                 LanguageServerId(0),
                 lsp::PublishDiagnosticsParams {
-                    uri: Url::from_file_path("/dir/b.rs").unwrap(),
+                    uri: Url::from_file_path(add_root_for_windows("/dir/b.rs")).unwrap(),
                     version: None,
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(0, 4), lsp::Position::new(0, 5)),
