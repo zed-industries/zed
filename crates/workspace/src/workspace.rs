@@ -133,6 +133,7 @@ actions!(
         CopyRelativePath,
         Feedback,
         FollowNextCollaborator,
+        MoveFocusedPanelToNextPosition,
         NewCenterTerminal,
         NewFile,
         NewFileSplitVertical,
@@ -1747,6 +1748,29 @@ impl Workspace {
             anyhow::Ok(())
         })
         .detach_and_log_err(cx)
+    }
+
+    pub fn move_focused_panel_to_next_position(
+        &mut self,
+        _: &MoveFocusedPanelToNextPosition,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];
+        let active_dock = docks
+            .into_iter()
+            .find(|dock| dock.focus_handle(cx).contains_focused(cx));
+
+        if let Some(dock) = active_dock {
+            dock.update(cx, |dock, cx| {
+                let active_panel = dock
+                    .active_panel()
+                    .filter(|panel| panel.focus_handle(cx).contains_focused(cx));
+
+                if let Some(panel) = active_panel {
+                    panel.move_to_next_position(cx);
+                }
+            })
+        }
     }
 
     pub fn prepare_to_close(
@@ -4492,6 +4516,7 @@ impl Workspace {
             .on_action(cx.listener(Self::close_window))
             .on_action(cx.listener(Self::activate_pane_at_index))
             .on_action(cx.listener(Self::move_item_to_pane_at_index))
+            .on_action(cx.listener(Self::move_focused_panel_to_next_position))
             .on_action(cx.listener(|workspace, _: &Unfollow, cx| {
                 let pane = workspace.active_pane().clone();
                 workspace.unfollow_in_pane(&pane, cx);
@@ -7968,6 +7993,68 @@ mod tests {
             );
             assert!(dirty_regular_buffer.read(cx).is_dirty);
             assert!(dirty_regular_buffer_2.read(cx).is_dirty);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_move_focused_panel_to_next_position(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+
+        // Add a new panel to the right dock, opening the dock and setting the
+        // focus to the new panel.
+        let panel = workspace.update(cx, |workspace, cx| {
+            let panel = cx.new_view(|cx| TestPanel::new(DockPosition::Right, cx));
+            workspace.add_panel(panel.clone(), cx);
+
+            workspace
+                .right_dock()
+                .update(cx, |right_dock, cx| right_dock.set_open(true, cx));
+
+            workspace.toggle_panel_focus::<TestPanel>(cx);
+
+            panel
+        });
+
+        // Dispatch the `MoveFocusedPanelToNextPosition` action, moving the
+        // panel to the next valid position which, in this case, is the left
+        // dock.
+        cx.dispatch_action(MoveFocusedPanelToNextPosition);
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.left_dock().read(cx).is_open());
+            assert_eq!(panel.read(cx).position, DockPosition::Left);
+        });
+
+        // Dispatch the `MoveFocusedPanelToNextPosition` action, moving the
+        // panel to the next valid position which, in this case, is the bottom
+        // dock.
+        cx.dispatch_action(MoveFocusedPanelToNextPosition);
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.bottom_dock().read(cx).is_open());
+            assert_eq!(panel.read(cx).position, DockPosition::Bottom);
+        });
+
+        // Dispatch the `MoveFocusedPanelToNextPosition` action again, this time
+        // around moving the panel to its initial position, the right dock.
+        cx.dispatch_action(MoveFocusedPanelToNextPosition);
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert_eq!(panel.read(cx).position, DockPosition::Right);
+        });
+
+        // Remove focus from the panel, ensuring that, if the panel is not
+        // focused, the `MoveFocusedPanelToNextPosition` action does not update
+        // the panel's position, so the panel is still in the right dock.
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(cx);
+        });
+
+        cx.dispatch_action(MoveFocusedPanelToNextPosition);
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert_eq!(panel.read(cx).position, DockPosition::Right);
         });
     }
 
