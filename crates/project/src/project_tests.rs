@@ -3272,7 +3272,7 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
         "d/file4",
     ]
     .into_iter()
-    .map(|p| replace_path_separator(p))
+    .map(replace_path_separator)
     .collect::<Vec<_>>();
 
     cx.update(|app| {
