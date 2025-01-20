@@ -158,7 +158,7 @@
     "bindings": {
       "alt-tab": "editor::NextInlineCompletion",
       "alt-shift-tab": "editor::PreviousInlineCompletion",
-      "ctrl-right": "editor::AcceptPartialInlineCompletion"
+      "ctrl-cmd-right": "editor::AcceptPartialInlineCompletion"
     }
   },
   {
