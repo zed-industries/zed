@@ -737,7 +737,7 @@ impl GitPanel {
     }
 
     fn fill_co_authors(&mut self, _: &FillCoAuthors, cx: &mut ViewContext<Self>) {
-        const CO_AUTHOR_PREFIX: &str = "co-authored-by: ";
+        const CO_AUTHOR_PREFIX: &str = "Co-authored-by: ";
 
         let Some(room) = self
             .workspace
