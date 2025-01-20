@@ -168,6 +168,7 @@ pub fn initialize_workspace(
             inline_completion_button::InlineCompletionButton::new(
                 workspace.weak_handle(),
                 app_state.fs.clone(),
+                app_state.user_store.clone(),
                 cx,
             )
         });
