@@ -1335,11 +1335,15 @@ impl EditorElement {
             total_text_units
                 .horizontal
                 .zip(track_bounds.horizontal)
-                .map(|(total_text_units_x, track_bounds_x)| {
+                .and_then(|(total_text_units_x, track_bounds_x)| {
+                    if text_units_per_page.horizontal >= total_text_units_x {
+                        return None;
+                    }
+
                     let thumb_percent =
                         (text_units_per_page.horizontal / total_text_units_x).min(1.);
 
-                    track_bounds_x.size.width * thumb_percent
+                    Some(track_bounds_x.size.width * thumb_percent)
                 }),
             total_text_units.vertical.zip(track_bounds.vertical).map(
                 |(total_text_units_y, track_bounds_y)| {
