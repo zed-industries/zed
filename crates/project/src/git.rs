@@ -5,19 +5,27 @@ use git::{
     repository::{GitRepository, RepoPath},
     status::{GitSummary, TrackedSummary},
 };
-use gpui::{AppContext, Context as _, Model, SharedString, WeakModel};
+use gpui::{AppContext, Context as _, Model, ModelContext, SharedString, Subscription, WeakModel};
 use language::{Buffer, LanguageRegistry};
 use std::sync::Arc;
 use text::Rope;
 use worktree::RepositoryEntry;
 
+use crate::worktree_store::{self, WorktreeStore, WorktreeStoreEvent};
+
 pub struct GitState {
-    pub commit_message: Model<Buffer>,
+    repositories: Vec<RepositoryHandle>,
+    active_index: Option<usize>,
+    update_sender: mpsc::UnboundedSender<(Message, mpsc::Sender<anyhow::Error>)>,
+    _subscription: Subscription,
+}
 
-    /// When a git repository is selected, this is used to track which repository's changes
-    /// are currently being viewed or modified in the UI.
-    pub active_repository: Option<RepositoryHandle>,
-
+#[derive(Clone)]
+pub struct RepositoryHandle {
+    git_state: WeakModel<GitState>,
+    repository_entry: RepositoryEntry,
+    git_repo: Arc<dyn GitRepository>,
+    commit_message: Model<Buffer>,
     update_sender: mpsc::UnboundedSender<(Message, mpsc::Sender<anyhow::Error>)>,
 }
 
@@ -29,10 +37,14 @@ enum Message {
 }
 
 impl GitState {
-    pub fn new(languages: Arc<LanguageRegistry>, cx: &mut AppContext) -> Self {
+    pub fn new(
+        worktree_store: &Model<WorktreeStore>,
+        languages: Arc<LanguageRegistry>,
+        cx: &mut ModelContext<'_, Self>,
+    ) -> Self {
         let (update_sender, mut update_receiver) =
             mpsc::unbounded::<(Message, mpsc::Sender<anyhow::Error>)>();
-        cx.spawn(|cx| async move {
+        cx.spawn(|_, cx| async move {
             while let Some((msg, mut err_sender)) = update_receiver.next().await {
                 let result = cx
                     .background_executor()
@@ -56,39 +68,94 @@ impl GitState {
         })
         .detach();
 
-        let commit_message = cx.new_model(|cx| Buffer::local("", cx));
-        let markdown = languages.language_for_name("Markdown");
-        cx.spawn({
-            let commit_message = commit_message.clone();
-            |mut cx| async move {
-                let markdown = markdown.await.context("failed to load Markdown language")?;
-                commit_message.update(&mut cx, |commit_message, cx| {
-                    commit_message.set_language(Some(markdown), cx)
-                })
-            }
-        })
-        .detach_and_log_err(cx);
+        //let commit_message = cx.new_model(|cx| Buffer::local("", cx));
+        //let markdown = languages.language_for_name("Markdown");
+        //cx.spawn({
+        //    let commit_message = commit_message.clone();
+        //    |mut cx| async move {
+        //        let markdown = markdown.await.context("failed to load Markdown language")?;
+        //        commit_message.update(&mut cx, |commit_message, cx| {
+        //            commit_message.set_language(Some(markdown), cx)
+        //        })
+        //    }
+        //})
+        //.detach_and_log_err(cx);
+
+        let _subscription = cx.subscribe(worktree_store, Self::on_worktree_store_event);
 
         GitState {
-            commit_message,
-            active_repository: None,
+            repositories: vec![],
+            active_index: None,
             update_sender,
+            _subscription,
         }
+    }
+
+    fn on_worktree_store_event(
+        &mut self,
+        worktree_store: Model<WorktreeStore>,
+        _event: &WorktreeStoreEvent,
+        cx: &mut ModelContext<'_, Self>,
+    ) {
+        let mut new_repositories = Vec::new();
+        let mut new_active_index = None;
+        let this = cx.weak_model();
+
+        worktree_store.update(cx, |worktree_store, cx| {
+            for worktree in worktree_store.worktrees() {
+                worktree.update(cx, |worktree, cx| {
+                    let snapshot = worktree.snapshot();
+                    let Some(local) = worktree.as_local() else {
+                        return;
+                    };
+                    for repo in snapshot.repositories().iter() {
+                        let Some(local_repo) = local.get_local_repo(repo) else {
+                            continue;
+                        };
+                        let existing =
+                            self.repositories
+                                .iter()
+                                .enumerate()
+                                .find(|(_, existing_handle)| {
+                                    existing_handle.repository_entry.work_directory_id
+                                        == repo.work_directory_id
+                                });
+                        let handle = if let Some((index, handle)) = existing {
+                            if self.active_index == Some(index) {
+                                new_active_index = Some(new_repositories.len());
+                            }
+                            // Update the statuses but keep everything else.
+                            let mut existing_handle = handle.clone();
+                            existing_handle.repository_entry = repo.clone();
+                            existing_handle
+                        } else {
+                            RepositoryHandle {
+                                git_state: this.clone(),
+                                repository_entry: repo.clone(),
+                                git_repo: local_repo.repo().clone(),
+                                // FIXME set markdown
+                                commit_message: cx.new_model(|cx| Buffer::local("", cx)),
+                                update_sender: self.update_sender.clone(),
+                            }
+                        };
+                        // FIXME extend
+                        new_repositories.push(handle);
+                    }
+                })
+            }
+        });
+
+        self.repositories = new_repositories;
+        self.active_index = new_active_index;
     }
 }
 
-#[derive(Clone)]
-pub struct RepositoryHandle {
-    git_state: WeakModel<GitState>,
-    repository_entry: RepositoryEntry,
-    git_repo: Arc<dyn GitRepository>,
-    update_sender: mpsc::UnboundedSender<(Message, mpsc::Sender<anyhow::Error>)>,
-}
-
 impl RepositoryHandle {
-    pub fn activate(&self, cx: &mut AppContext) {}
-
     pub fn display_name(&self) -> SharedString {
+        todo!()
+    }
+
+    pub fn activate(&self) {
         todo!()
     }
 
@@ -101,7 +168,7 @@ impl RepositoryHandle {
             return Ok(());
         }
         self.update_sender
-            .unbounded_send((Message::Stage(git_repo.clone(), entries), err_sender))
+            .unbounded_send((Message::Stage(self.git_repo.clone(), entries), err_sender))
             .map_err(|_| anyhow!("Failed to submit stage operation"))?;
         Ok(())
     }
@@ -174,13 +241,9 @@ impl RepositoryHandle {
         if !self.can_commit(false, cx) {
             return Err(anyhow!("Unable to commit"));
         }
-        let Some((_, _, git_repo)) = self.active_repository() else {
-            return Err(anyhow!("No active repository"));
-        };
-        let git_repo = git_repo.clone();
         let message = self.commit_message.read(cx).as_rope().clone();
         self.update_sender
-            .unbounded_send((Message::Commit(git_repo, message), err_sender))
+            .unbounded_send((Message::Commit(self.git_repo.clone(), message), err_sender))
             .map_err(|_| anyhow!("Failed to submit commit operation"))?;
         Ok(())
     }
@@ -193,10 +256,8 @@ impl RepositoryHandle {
         if !self.can_commit(true, cx) {
             return Err(anyhow!("Unable to commit"));
         }
-        let Some((_, entry, git_repo)) = self.active_repository.as_ref() else {
-            return Err(anyhow!("No active repository"));
-        };
-        let to_stage = entry
+        let to_stage = self
+            .repository_entry
             .status()
             .filter(|entry| !entry.status.is_staged().unwrap_or(false))
             .map(|entry| entry.repo_path.clone())
@@ -204,7 +265,7 @@ impl RepositoryHandle {
         let message = self.commit_message.read(cx).as_rope().clone();
         self.update_sender
             .unbounded_send((
-                Message::StageAndCommit(git_repo.clone(), message, to_stage),
+                Message::StageAndCommit(self.git_repo.clone(), message, to_stage),
                 err_sender,
             ))
             .map_err(|_| anyhow!("Failed to submit commit operation"))?;

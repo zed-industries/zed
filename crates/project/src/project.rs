@@ -254,6 +254,7 @@ pub enum Event {
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
     WorktreeUpdatedGitRepositories(WorktreeId),
+    GitRepositoriesListChanged,
     DiskBasedDiagnosticsStarted {
         language_server_id: LanguageServerId,
     },
@@ -692,7 +693,8 @@ impl Project {
                 )
             });
 
-            let git_state = Some(cx.new_model(|cx| GitState::new(languages.clone(), cx)));
+            let git_state =
+                Some(cx.new_model(|cx| GitState::new(&worktree_store, languages.clone(), cx)));
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 
@@ -4169,24 +4171,6 @@ impl Project {
 
     pub fn git_state(&self) -> Option<&Model<GitState>> {
         self.git_state.as_ref()
-    }
-
-    pub fn all_repositories(&self, cx: &AppContext) -> Vec<RepositoryHandle> {
-        // FIXME this is a workaround for SumTree not being IntoIterator
-        let mut repos = vec![];
-        for worktree in project.worktrees(cx) {
-            let snapshot = worktree.read(cx).snapshot();
-            repos.extend(snapshot.repositories().iter().map(|repo| {
-                let id = repo.work_directory_id();
-                let project_path = project.path_for_entry(id, cx).unwrap();
-                let abs_path = project.absolute_path(&project_path, cx).unwrap();
-                RepositoryHandle {
-                    project_path,
-                    abs_path,
-                }
-            }));
-        }
-        repos
     }
 }
 

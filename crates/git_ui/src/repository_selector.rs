@@ -1,38 +1,18 @@
-use std::sync::Arc;
-
 use gpui::{
     AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
     Subscription, Task, View, WeakModel, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use project::Project;
+use std::sync::Arc;
 use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
-
-use crate::{all_repositories, RepositoryHandle};
-
-// get all the repos
-//  - Shared String + an id or something
-// which is active
-// handle when things change
-// (later?) harmonize with vcs_menu
-
-// foo repo
-// bar repo
-// baz repo
-
-// worktree a -> foo repo
-// - foo repo
-// - bar repo
-//
-// worktree b
-// - baz repo
 
 pub struct RepositorySelector {
     picker: View<Picker<RepositorySelectorDelegate>>,
     /// The task used to update the picker's matches when there is a change to
     /// the repository list.
     update_matches_task: Option<Task<()>>,
-    _subscriptions: Vec<Subscription>,
+    _subscription: Subscription,
 }
 
 impl RepositorySelector {
@@ -50,24 +30,24 @@ impl RepositorySelector {
         let picker =
             cx.new_view(|cx| Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into())));
 
-        let subscription = cx.subscribe(&project, move |this, project, event, cx| {
-            this.handle_project_event(project, event, cx);
-        });
+        let _subscription = cx.subscribe(&project, Self::handle_project_event);
 
         RepositorySelector {
             picker,
             update_matches_task: None,
-            _subscriptions: vec![subscription],
+            _subscription,
         }
     }
 
     fn handle_project_event(
         &mut self,
         project: Model<Project>,
-        _event: &project::Event,
+        event: &project::Event,
         cx: &mut ViewContext<Self>,
     ) {
-        // FIXME skip events that we don't care about
+        if event != &project::Event::GitRepositoriesListChanged {
+            return;
+        }
         let task = self.picker.update(cx, |this, cx| {
             let query = this.query(cx);
             this.delegate.repository_entries = all_repositories(project, cx);
@@ -77,6 +57,7 @@ impl RepositorySelector {
     }
 
     pub fn active_repository(&self, cx: &AppContext) -> Option<RepositoryHandle> {
+        // FIXME this seems wrong
         let delegate = &self.picker.read(cx).delegate;
         delegate
             .filtered_repositories
@@ -209,9 +190,9 @@ impl PickerDelegate for RepositorySelectorDelegate {
                 if let Some(git_state) = project.git_state() {
                     let worktree_id = repo_info.project_path.worktree_id;
                     let worktree = project.worktree_for_id(worktree_id).unwrap();
-                    let repository = worktree.read(cx).repository_for_path(project_pat)
+                    let repository = worktree.read(cx).repository_for_path(project_path);
                     git_state.update(cx, |git_state, cx| {
-                        git_state.activate_repository(worktree_id, )
+                        git_state.activate_repository(worktree_id)
                     });
                     cx.emit(DismissEvent);
                 }
