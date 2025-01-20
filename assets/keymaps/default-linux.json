@@ -2,28 +2,28 @@
   // Standard Linux bindings
   {
     "bindings": {
-      "shift-tab": "menu::SelectPrev",
       "home": "menu::SelectFirst",
-      "pageup": "menu::SelectFirst",
       "shift-pageup": "menu::SelectFirst",
-      "ctrl-p": "menu::SelectPrev",
-      "tab": "menu::SelectNext",
+      "pageup": "menu::SelectFirst",
       "end": "menu::SelectLast",
+      "shift-pagedown": "menu::SelectLast",
       "pagedown": "menu::SelectLast",
-      "shift-pagedown": "menu::SelectFirst",
       "ctrl-n": "menu::SelectNext",
+      "tab": "menu::SelectNext",
+      "ctrl-p": "menu::SelectPrev",
+      "shift-tab": "menu::SelectPrev",
       "enter": "menu::Confirm",
       "ctrl-enter": "menu::SecondaryConfirm",
-      "escape": "menu::Cancel",
       "ctrl-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
+      "escape": "menu::Cancel",
       "alt-shift-enter": "menu::Restart",
       "alt-enter": ["picker::ConfirmInput", { "secondary": false }],
       "ctrl-alt-enter": ["picker::ConfirmInput", { "secondary": true }],
       "ctrl-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
-      "ctrl-o": "workspace::Open",
       "open": "workspace::Open",
+      "ctrl-o": "workspace::Open",
       "ctrl-=": "zed::IncreaseBufferFontSize",
       "ctrl-+": "zed::IncreaseBufferFontSize",
       "ctrl--": "zed::DecreaseBufferFontSize",
@@ -53,8 +53,8 @@
     "context": "Editor",
     "bindings": {
       "escape": "editor::Cancel",
-      "backspace": "editor::Backspace",
       "shift-backspace": "editor::Backspace",
+      "backspace": "editor::Backspace",
       "delete": "editor::Delete",
       "tab": "editor::Tab",
       "shift-tab": "editor::TabPrev",
@@ -64,17 +64,20 @@
       "ctrl-k q": "editor::Rewrap",
       "ctrl-backspace": "editor::DeleteToPreviousWordStart",
       "ctrl-delete": "editor::DeleteToNextWordEnd",
-      "shift-delete": "editor::Cut",
       "cut": "editor::Cut",
-      "ctrl-insert": "editor::Copy",
+      "shift-delete": "editor::Cut",
+      "ctrl-x": "editor::Cut",
       "copy": "editor::Copy",
-      "shift-insert": "editor::Paste",
+      "ctrl-insert": "editor::Copy",
+      "ctrl-c": "editor::Copy",
       "paste": "editor::Paste",
-      "ctrl-z": "editor::Undo",
+      "shift-insert": "editor::Paste",
+      "ctrl-v": "editor::Paste",
       "undo": "editor::Undo",
+      "ctrl-z": "editor::Undo",
+      "redo": "editor::Redo",
       "ctrl-y": "editor::Redo",
       "ctrl-shift-z": "editor::Redo",
-      "redo": "editor::Redo",
       "up": "editor::MoveUp",
       "ctrl-up": "editor::LineUp",
       "ctrl-down": "editor::LineDown",
@@ -105,11 +108,11 @@
       "ctrl-l": "editor::SelectLine",
       "ctrl-shift-i": "editor::Format",
       // "cmd-shift-left": ["editor::SelectToBeginningOfLine", {"stop_at_soft_wraps": true }],
-      "shift-home": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true }],
       // "ctrl-shift-a": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true }],
+      "shift-home": ["editor::SelectToBeginningOfLine", { "stop_at_soft_wraps": true }],
       // "cmd-shift-right": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
-      "shift-end": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
       // "ctrl-shift-e": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
+      "shift-end": ["editor::SelectToEndOfLine", { "stop_at_soft_wraps": true }],
       // "alt-v": ["editor::MovePageUp", { "center_cursor": true }],
       "ctrl-alt-space": "editor::ShowCharacterPalette",
       "ctrl-;": "editor::ToggleLineNumbers",
@@ -123,25 +126,16 @@
     }
   },
   {
-    // Separate block with same context so these display in context menus
-    "context": "Editor",
-    "bindings": {
-      "ctrl-x": "editor::Cut",
-      "ctrl-c": "editor::Copy",
-      "ctrl-v": "editor::Paste"
-    }
-  },
-  {
     "context": "Editor && mode == full",
     "bindings": {
-      "enter": "editor::Newline",
       "shift-enter": "editor::Newline",
+      "enter": "editor::Newline",
       "ctrl-enter": "editor::NewlineAbove",
       "ctrl-shift-enter": "editor::NewlineBelow",
       "ctrl-k ctrl-z": "editor::ToggleSoftWrap",
       "ctrl-k z": "editor::ToggleSoftWrap",
-      "ctrl-f": "buffer_search::Deploy",
       "find": "buffer_search::Deploy",
+      "ctrl-f": "buffer_search::Deploy",
       "ctrl-h": ["buffer_search::Deploy", { "replace_enabled": true }],
       // "cmd-e": ["buffer_search::Deploy", { "focus": false }],
       "ctrl->": "assistant::QuoteSelection",
@@ -174,8 +168,8 @@
   {
     "context": "Markdown",
     "bindings": {
-      "ctrl-c": "markdown::Copy",
-      "copy": "markdown::Copy"
+      "copy": "markdown::Copy",
+      "ctrl-c": "markdown::Copy"
     }
   },
   {
@@ -188,15 +182,15 @@
       "ctrl-alt-/": "assistant::ToggleModelSelector",
       "ctrl-k h": "assistant::DeployHistory",
       "ctrl-k l": "assistant::DeployPromptLibrary",
-      "ctrl-n": "assistant::NewContext",
-      "new": "assistant::NewContext"
+      "new": "assistant::NewContext",
+      "ctrl-n": "assistant::NewContext"
     }
   },
   {
     "context": "PromptLibrary",
     "bindings": {
-      "ctrl-n": "prompt_library::NewPrompt",
       "new": "prompt_library::NewPrompt",
+      "ctrl-n": "prompt_library::NewPrompt",
       "ctrl-shift-s": "prompt_library::ToggleDefaultPrompt"
     }
   },
@@ -232,8 +226,8 @@
     "context": "ProjectSearchBar",
     "bindings": {
       "escape": "project_search::ToggleFocus",
-      "ctrl-shift-f": "search::FocusSearch",
       "shift-find": "search::FocusSearch",
+      "ctrl-shift-f": "search::FocusSearch",
       "ctrl-shift-h": "search::ToggleReplace",
       "alt-ctrl-g": "search::ToggleRegex",
       "alt-ctrl-x": "search::ToggleRegex"
@@ -265,34 +259,48 @@
   {
     "context": "Pane",
     "bindings": {
+      "alt-1": ["pane::ActivateItem", 0],
+      "alt-2": ["pane::ActivateItem", 1],
+      "alt-3": ["pane::ActivateItem", 2],
+      "alt-4": ["pane::ActivateItem", 3],
+      "alt-5": ["pane::ActivateItem", 4],
+      "alt-6": ["pane::ActivateItem", 5],
+      "alt-7": ["pane::ActivateItem", 6],
+      "alt-8": ["pane::ActivateItem", 7],
+      "alt-9": ["pane::ActivateItem", 8],
+      "alt-0": "pane::ActivateLastItem",
       "ctrl-pageup": "pane::ActivatePrevItem",
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-shift-pageup": "pane::SwapItemLeft",
       "ctrl-shift-pagedown": "pane::SwapItemRight",
-      "back": "pane::GoBack",
-      "forward": "pane::GoForward",
-      "ctrl-w": "pane::CloseActiveItem",
       "ctrl-f4": "pane::CloseActiveItem",
+      "ctrl-w": "pane::CloseActiveItem",
       "alt-ctrl-t": ["pane::CloseInactiveItems", { "close_pinned": false }],
       "alt-ctrl-shift-w": "workspace::CloseInactiveTabsAndPanes",
       "ctrl-k e": ["pane::CloseItemsToTheLeft", { "close_pinned": false }],
       "ctrl-k t": ["pane::CloseItemsToTheRight", { "close_pinned": false }],
       "ctrl-k u": ["pane::CloseCleanItems", { "close_pinned": false }],
       "ctrl-k w": ["pane::CloseAllItems", { "close_pinned": false }],
-      "ctrl-shift-f": "pane::DeploySearch",
-      "shift-find": "pane::DeploySearch",
+      "back": "pane::GoBack",
+      "ctrl-alt--": "pane::GoBack",
+      "ctrl-alt-_": "pane::GoForward",
+      "forward": "pane::GoForward",
       "ctrl-alt-g": "search::SelectNextMatch",
+      "f3": "search::SelectNextMatch",
       "ctrl-alt-shift-g": "search::SelectPrevMatch",
+      "shift-f3": "search::SelectPrevMatch",
+      "ctrl-shift-f": "project_search::ToggleFocus",
+      "shift-find": "project_search::ToggleFocus",
       "ctrl-alt-shift-h": "search::ToggleReplace",
       "ctrl-alt-shift-l": "search::ToggleSelection",
       "alt-enter": "search::SelectAllMatches",
       "alt-c": "search::ToggleCaseSensitive",
       "alt-w": "search::ToggleWholeWord",
-      "alt-r": "search::ToggleRegex",
       "alt-ctrl-f": "project_search::ToggleFilters",
       "alt-find": "project_search::ToggleFilters",
       "ctrl-alt-shift-r": "search::ToggleRegex",
       "ctrl-alt-shift-x": "search::ToggleRegex",
+      "alt-r": "search::ToggleRegex",
       "ctrl-k shift-enter": "pane::TogglePinTab"
     }
   },
@@ -368,46 +376,25 @@
     }
   },
   {
-    "context": "Pane",
-    "bindings": {
-      "alt-1": ["pane::ActivateItem", 0],
-      "alt-2": ["pane::ActivateItem", 1],
-      "alt-3": ["pane::ActivateItem", 2],
-      "alt-4": ["pane::ActivateItem", 3],
-      "alt-5": ["pane::ActivateItem", 4],
-      "alt-6": ["pane::ActivateItem", 5],
-      "alt-7": ["pane::ActivateItem", 6],
-      "alt-8": ["pane::ActivateItem", 7],
-      "alt-9": ["pane::ActivateItem", 8],
-      "alt-0": "pane::ActivateLastItem",
-      "ctrl-alt--": "pane::GoBack",
-      "ctrl-alt-_": "pane::GoForward",
-      "f3": "search::SelectNextMatch",
-      "shift-f3": "search::SelectPrevMatch",
-      "ctrl-shift-f": "project_search::ToggleFocus",
-      "shift-find": "project_search::ToggleFocus"
-    }
-  },
-  {
     "context": "Workspace",
     "bindings": {
       // Change the default action on `menu::Confirm` by setting the parameter
       // "alt-ctrl-o": ["projects::OpenRecent", { "create_new_window": true }],
-      "alt-ctrl-o": "projects::OpenRecent",
       "alt-open": "projects::OpenRecent",
-      "alt-ctrl-shift-o": "projects::OpenRemote",
+      "alt-ctrl-o": "projects::OpenRecent",
       "alt-shift-open": "projects::OpenRemote",
+      "alt-ctrl-shift-o": "projects::OpenRemote",
       "alt-ctrl-shift-b": "branches::OpenRecent",
       "ctrl-~": "workspace::NewTerminal",
-      "ctrl-s": "workspace::Save",
       "save": "workspace::Save",
+      "ctrl-s": "workspace::Save",
       "ctrl-k s": "workspace::SaveWithoutFormat",
-      "ctrl-shift-s": "workspace::SaveAs",
       "shift-save": "workspace::SaveAs",
-      "ctrl-n": "workspace::NewFile",
+      "ctrl-shift-s": "workspace::SaveAs",
       "new": "workspace::NewFile",
-      "ctrl-shift-n": "workspace::NewWindow",
+      "ctrl-n": "workspace::NewFile",
       "shift-new": "workspace::NewWindow",
+      "ctrl-shift-n": "workspace::NewWindow",
       "ctrl-`": "terminal_panel::ToggleFocus",
       "alt-1": ["workspace::ActivatePane", 0],
       "alt-2": ["workspace::ActivatePane", 1],
@@ -422,8 +409,8 @@
       "ctrl-b": "workspace::ToggleLeftDock",
       "ctrl-j": "workspace::ToggleBottomDock",
       "ctrl-alt-y": "workspace::CloseAllDocks",
-      "ctrl-shift-f": "pane::DeploySearch",
       "shift-find": "pane::DeploySearch",
+      "ctrl-shift-f": "pane::DeploySearch",
       "ctrl-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
       "ctrl-shift-t": "pane::ReopenClosedItem",
       "ctrl-k ctrl-s": "zed::OpenKeymap",
@@ -433,14 +420,14 @@
       "ctrl-tab": "tab_switcher::Toggle",
       "ctrl-shift-tab": ["tab_switcher::Toggle", { "select_last": true }],
       "ctrl-e": "file_finder::Toggle",
-      "ctrl-shift-p": "command_palette::Toggle",
       "f1": "command_palette::Toggle",
+      "ctrl-shift-p": "command_palette::Toggle",
       "ctrl-shift-m": "diagnostics::Deploy",
       "ctrl-shift-e": "project_panel::ToggleFocus",
       "ctrl-shift-b": "outline_panel::ToggleFocus",
       "ctrl-?": "assistant::ToggleFocus",
-      "ctrl-alt-s": "workspace::SaveAll",
       "alt-save": "workspace::SaveAll",
+      "ctrl-alt-s": "workspace::SaveAll",
       "ctrl-k m": "language_selector::Toggle",
       "escape": "workspace::Unfollow",
       "ctrl-k ctrl-left": ["workspace::ActivatePaneInDirection", "Left"],
@@ -472,7 +459,6 @@
   {
     "context": "Editor",
     "bindings": {
-      "ctrl-shift-k": "editor::DeleteLine",
       "ctrl-shift-d": "editor::DuplicateLineDown",
       "ctrl-shift-j": "editor::JoinLines",
       "ctrl-alt-backspace": "editor::DeleteToPreviousSubwordStart",
@@ -530,10 +516,10 @@
   {
     "context": "Editor && (showing_code_actions || showing_completions)",
     "bindings": {
-      "up": "editor::ContextMenuPrev",
       "ctrl-p": "editor::ContextMenuPrev",
-      "down": "editor::ContextMenuNext",
+      "up": "editor::ContextMenuPrev",
       "ctrl-n": "editor::ContextMenuNext",
+      "down": "editor::ContextMenuNext",
       "pageup": "editor::ContextMenuFirst",
       "pagedown": "editor::ContextMenuLast"
     }
@@ -650,10 +636,10 @@
       "escape": "menu::Cancel",
       "left": "outline_panel::CollapseSelectedEntry",
       "right": "outline_panel::ExpandSelectedEntry",
-      "ctrl-alt-c": "outline_panel::CopyPath",
       "alt-copy": "outline_panel::CopyPath",
-      "alt-ctrl-shift-c": "outline_panel::CopyRelativePath",
+      "ctrl-alt-c": "outline_panel::CopyPath",
       "alt-shift-copy": "outline_panel::CopyRelativePath",
+      "alt-ctrl-shift-c": "outline_panel::CopyRelativePath",
       "alt-ctrl-r": "outline_panel::RevealInFileManager",
       "space": "outline_panel::Open",
       "shift-down": "menu::SelectNext",
@@ -667,21 +653,26 @@
     "bindings": {
       "left": "project_panel::CollapseSelectedEntry",
       "right": "project_panel::ExpandSelectedEntry",
-      "ctrl-n": "project_panel::NewFile",
       "new": "project_panel::NewFile",
-      "alt-ctrl-n": "project_panel::NewDirectory",
+      "ctrl-n": "project_panel::NewFile",
       "alt-new": "project_panel::NewDirectory",
+      "alt-ctrl-n": "project_panel::NewDirectory",
       "cut": "project_panel::Cut",
-      "ctrl-insert": "project_panel::Copy",
+      "ctrl-x": "project_panel::Cut",
       "copy": "project_panel::Copy",
-      "shift-insert": "project_panel::Paste",
+      "ctrl-insert": "project_panel::Copy",
+      "ctrl-c": "project_panel::Copy",
       "paste": "project_panel::Paste",
-      "ctrl-alt-c": "project_panel::CopyPath",
+      "shift-insert": "project_panel::Paste",
+      "ctrl-v": "project_panel::Paste",
       "alt-copy": "project_panel::CopyPath",
-      "alt-ctrl-shift-c": "project_panel::CopyRelativePath",
+      "ctrl-alt-c": "project_panel::CopyPath",
       "alt-shift-copy": "project_panel::CopyRelativePath",
+      "alt-ctrl-shift-c": "project_panel::CopyRelativePath",
       "enter": "project_panel::Rename",
+      "f2": "project_panel::Rename",
       "backspace": ["project_panel::Trash", { "skip_prompt": false }],
+      "delete": ["project_panel::Trash", { "skip_prompt": false }],
       "shift-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "ctrl-backspace": ["project_panel::Delete", { "skip_prompt": false }],
       "ctrl-delete": ["project_panel::Delete", { "skip_prompt": false }],
@@ -692,17 +683,6 @@
       "shift-down": "menu::SelectNext",
       "shift-up": "menu::SelectPrev",
       "escape": "menu::Cancel"
-    }
-  },
-  {
-    // Separate block with same context so these display in context menus
-    "context": "ProjectPanel",
-    "bindings": {
-      "f2": "project_panel::Rename",
-      "ctrl-c": "project_panel::Copy",
-      "ctrl-x": "project_panel::Cut",
-      "ctrl-v": "project_panel::Paste",
-      "delete": ["project_panel::Trash", { "skip_prompt": false }]
     }
   },
   {
@@ -771,9 +751,9 @@
   {
     "context": "TabSwitcher",
     "bindings": {
+      "ctrl-shift-tab": "menu::SelectPrev",
       "ctrl-up": "menu::SelectPrev",
       "ctrl-down": "menu::SelectNext",
-      "ctrl-shift-tab": "menu::SelectPrev",
       "ctrl-backspace": "tab_switcher::CloseSelectedItem"
     }
   },
@@ -781,16 +761,18 @@
     "context": "Terminal",
     "bindings": {
       "ctrl-alt-space": "terminal::ShowCharacterPalette",
-      "ctrl-insert": "terminal::Copy",
       "copy": "terminal::Copy",
-      "shift-insert": "terminal::Paste",
+      "ctrl-insert": "terminal::Copy",
+      "ctrl-shift-c": "terminal::Copy",
       "paste": "terminal::Paste",
+      "shift-insert": "terminal::Paste",
+      "ctrl-shift-v": "terminal::Paste",
       "ctrl-enter": "assistant::InlineAssist",
       // Overrides for conflicting keybindings
       "ctrl-w": ["terminal::SendKeystroke", "ctrl-w"],
       "ctrl-shift-a": "editor::SelectAll",
-      "ctrl-shift-f": "buffer_search::Deploy",
       "find": "buffer_search::Deploy",
+      "ctrl-shift-f": "buffer_search::Deploy",
       "ctrl-shift-l": "terminal::Clear",
       "ctrl-shift-w": "pane::CloseActiveItem",
       "ctrl-e": ["terminal::SendKeystroke", "ctrl-e"],
@@ -808,14 +790,6 @@
       "shift-home": "terminal::ScrollToTop",
       "shift-end": "terminal::ScrollToBottom",
       "ctrl-shift-space": "terminal::ToggleViMode"
-    }
-  },
-  {
-    // Separate block with same context so these display in context menus
-    "context": "Terminal",
-    "bindings": {
-      "ctrl-shift-c": "terminal::Copy",
-      "ctrl-shift-v": "terminal::Paste"
     }
   }
 ]
