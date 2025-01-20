@@ -393,7 +393,7 @@ impl LanguageServerTree {
     ) {
         maybe! {{
                 for (_, nodes) in &mut self.instances.get_mut(&worktree_id)?.roots {
-                    for (server_name, (node, languages)) in nodes {
+                    for (_, (node, _)) in nodes {
                         let Some(old_server_id) = node.id.get().copied() else {
                             continue;
                         };

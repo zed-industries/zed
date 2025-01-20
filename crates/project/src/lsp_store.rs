@@ -178,15 +178,11 @@ impl LocalLspStore {
         adapter: Arc<CachedLspAdapter>,
         language: LanguageName,
         cx: &mut AppContext,
-    ) -> Option<LanguageServerId> {
+    ) -> LanguageServerId {
         let worktree = worktree_handle.read(cx);
         let worktree_id = worktree.id();
         let root_path = worktree.abs_path();
         let key = (worktree_id, adapter.name.clone());
-
-        if self.language_server_ids.contains_key(&key) {
-            return None;
-        }
 
         let project_settings = ProjectSettings::get(
             Some(SettingsLocation {
@@ -371,7 +367,7 @@ impl LocalLspStore {
             .entry(key)
             .or_default()
             .insert(server_id);
-        Some(server_id)
+        server_id
     }
 
     fn start_language_servers(
@@ -1811,7 +1807,6 @@ impl LocalLspStore {
             .collect::<Vec<_>>()
         });
 
-        dbg!(servers.len());
         let servers = servers
             .into_iter()
             .filter_map(|server_node| {
@@ -1842,7 +1837,6 @@ impl LocalLspStore {
                                     language_name,
                                     cx,
                                 )
-                                .expect("Language initialization to succeed")
                             }
                         }
                         language::Attach::Shared => {
@@ -1875,7 +1869,6 @@ impl LocalLspStore {
                                     language_name,
                                     cx,
                                 )
-                                .expect("Language initialization to succeed")
                             }
                         }
                     },
@@ -7377,8 +7370,13 @@ impl LspStore {
                 .filter_map(|buffer| {
                     buffer.update(cx, |buffer, cx| {
                         let worktree_id = buffer.file()?.worktree_id(cx);
-                        let language_server_ids = local.language_server_ids_for_buffer(buffer, cx);
-                        Some((language_server_ids, worktree_id))
+                        let language_server_ids = local.language_servers_for_buffer(buffer, cx);
+                        Some((
+                            language_server_ids
+                                .map(|(adapter, server)| (server.server_id(), adapter.clone()))
+                                .collect::<BTreeMap<_, _>>(),
+                            worktree_id,
+                        ))
                     })
                 })
                 .fold(
@@ -7386,7 +7384,7 @@ impl LspStore {
                     |mut worktree_to_ids, (server_ids, worktree_id)| {
                         worktree_to_ids
                             .entry(worktree_id)
-                            .or_insert_with(BTreeSet::new)
+                            .or_insert_with(BTreeMap::new)
                             .extend(server_ids);
                         worktree_to_ids
                     },
@@ -7395,31 +7393,50 @@ impl LspStore {
             // Multiple worktrees might refer to the same language server;
             // we don't want to restart them multiple times.
             let mut restarted_language_servers = BTreeMap::new();
-            local.lsp_tree.update(cx, |tree, _| {
-                for (worktree, servers_to_restart) in language_servers_for_worktrees {
+            let mut servers_to_stop = BTreeSet::new();
+            local.lsp_tree.clone().update(cx, |tree, cx| {
+                for (worktree_id, adapters_to_restart) in language_servers_for_worktrees {
+                    let Some(worktree_handle) = local
+                        .worktree_store
+                        .read(cx)
+                        .worktree_for_id(worktree_id, cx)
+                    else {
+                        continue;
+                    };
+                    let delegate =
+                        LocalLspAdapterDelegate::from_local_lsp(local, &worktree_handle, cx);
+                    let servers_to_restart = adapters_to_restart.keys().copied().collect();
                     tree.restart_language_servers(
-                        worktree,
+                        worktree_id,
                         servers_to_restart,
                         &mut |old_server_id, disposition| match restarted_language_servers
                             .entry(old_server_id)
                         {
                             btree_map::Entry::Vacant(unfilled) => {
-                                local
-                                    .start_language_server(
-                                        worktree_handle,
-                                        delegate,
-                                        adapter,
-                                        language,
-                                        cx,
-                                    )
-                                    .unwrap();
-                                todo!()
+                                servers_to_stop.insert(old_server_id);
+
+                                let adapter = adapters_to_restart
+                                    .get(&old_server_id)
+                                    .map(Clone::clone)
+                                    .expect("Language server adapter to be found");
+                                let new_id = local.start_language_server(
+                                    &worktree_handle,
+                                    delegate.clone(),
+                                    adapter,
+                                    LanguageName::new("Ayy"),
+                                    cx,
+                                );
+                                unfilled.insert(new_id);
+                                new_id
                             }
                             btree_map::Entry::Occupied(server_id) => *server_id.get(),
                         },
                     );
                 }
             });
+            for server_id in servers_to_stop {
+                self.stop_local_language_server(server_id, cx).detach();
+            }
             // for (worktree, language) in language_server_lookup_info {
             //     self.restart_local_language_servers(worktree, language, cx);
             // }
@@ -7786,7 +7803,6 @@ impl LspStore {
                     })
                 })
                 .collect::<HashSet<_>>();
-
             for server_id in servers {
                 self.cancel_language_server_work(server_id, None, cx);
             }
@@ -7810,16 +7826,6 @@ impl LspStore {
                             continue;
                         }
                     }
-                    if progress.is_cancellable {
-                        server
-                            .notify::<lsp::notification::WorkDoneProgressCancel>(
-                                &WorkDoneProgressCancelParams {
-                                    token: lsp::NumberOrString::String(token.clone()),
-                                },
-                            )
-                            .ok();
-                    }
-
                     if progress.is_cancellable {
                         server
                             .notify::<lsp::notification::WorkDoneProgressCancel>(
