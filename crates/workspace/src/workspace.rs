@@ -125,6 +125,8 @@ actions!(
     [
         ActivateNextPane,
         ActivatePreviousPane,
+        ActivateNextWindow,
+        ActivatePreviousWindow,
         AddFolderToProject,
         ClearAllNotifications,
         CloseAllDocks,
@@ -4517,6 +4519,12 @@ impl Workspace {
             .on_action(
                 cx.listener(|workspace, _: &ActivateNextPane, cx| workspace.activate_next_pane(cx)),
             )
+            .on_action(cx.listener(|workspace, _: &ActivateNextWindow, cx| {
+                workspace.activate_next_window(cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &ActivatePreviousWindow, cx| {
+                workspace.activate_previous_window(cx)
+            }))
             .on_action(
                 cx.listener(|workspace, action: &ActivatePaneInDirection, cx| {
                     workspace.activate_pane_in_direction(action.0, cx)
@@ -4674,6 +4682,41 @@ impl Workspace {
 
     pub fn zoomed_item(&self) -> Option<&AnyWeakView> {
         self.zoomed.as_ref()
+    }
+
+    pub fn activate_next_window(&mut self, cx: &mut ViewContext<Self>) {
+        let Some(current_window_id) = cx.active_window().map(|a| a.window_id()) else {
+            return;
+        };
+        let Some(next_window) = cx
+            .windows()
+            .iter()
+            .cycle()
+            .skip_while(|window| window.window_id() != current_window_id)
+            .nth(1)
+            .cloned()
+        else {
+            return;
+        };
+        next_window.update(cx, |_, cx| cx.activate_window()).ok();
+    }
+
+    pub fn activate_previous_window(&mut self, cx: &mut ViewContext<Self>) {
+        let Some(current_window_id) = cx.active_window().map(|a| a.window_id()) else {
+            return;
+        };
+        let Some(prev_window) = cx
+            .windows()
+            .iter()
+            .rev()
+            .cycle()
+            .skip_while(|window| window.window_id() != current_window_id)
+            .nth(1)
+            .cloned()
+        else {
+            return;
+        };
+        prev_window.update(cx, |_, cx| cx.activate_window()).ok();
     }
 }
 
