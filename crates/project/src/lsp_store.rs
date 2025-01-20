@@ -7369,35 +7369,57 @@ impl LspStore {
                 .spawn(request)
                 .detach_and_log_err(cx);
         } else {
-            // buffers == ["./src/main.rs", "./Cargo.toml"]
-
-            // on_settings_changed
-
-            // self.restart_local_language_servers()
             let Some(local) = self.as_local_mut() else {
                 return;
             };
-            let language_server_lookup_info: HashSet<(Model<Worktree>, LanguageName)> = buffers
+            let language_servers_for_worktrees = buffers
                 .into_iter()
                 .filter_map(|buffer| {
-                    let buffer = buffer.read(cx);
-                    let file = buffer.file()?;
-                    let worktree = File::from_dyn(Some(file))?.worktree.clone();
-                    // ? should we use language_for_file ?
-                    //
-                    // why not?
-                    //
-                    // previously we had just one instance so we didn't care about the paths
-                    //
-                    // now, when we restart LSP we need to pass them to the ServerTree cause we care about the paths
-                    let language =
-                        self.languages
-                            .language_for_file(file, Some(buffer.as_rope()), cx)?;
-
-                    Some((worktree, language.name()))
+                    buffer.update(cx, |buffer, cx| {
+                        let worktree_id = buffer.file()?.worktree_id(cx);
+                        let language_server_ids = local.language_server_ids_for_buffer(buffer, cx);
+                        Some((language_server_ids, worktree_id))
+                    })
                 })
-                .collect();
+                .fold(
+                    HashMap::default(),
+                    |mut worktree_to_ids, (server_ids, worktree_id)| {
+                        worktree_to_ids
+                            .entry(worktree_id)
+                            .or_insert_with(BTreeSet::new)
+                            .extend(server_ids);
+                        worktree_to_ids
+                    },
+                );
 
+            // Multiple worktrees might refer to the same language server;
+            // we don't want to restart them multiple times.
+            let mut restarted_language_servers = BTreeMap::new();
+            local.lsp_tree.update(cx, |tree, _| {
+                for (worktree, servers_to_restart) in language_servers_for_worktrees {
+                    tree.restart_language_servers(
+                        worktree,
+                        servers_to_restart,
+                        &mut |old_server_id, disposition| match restarted_language_servers
+                            .entry(old_server_id)
+                        {
+                            btree_map::Entry::Vacant(unfilled) => {
+                                local
+                                    .start_language_server(
+                                        worktree_handle,
+                                        delegate,
+                                        adapter,
+                                        language,
+                                        cx,
+                                    )
+                                    .unwrap();
+                                todo!()
+                            }
+                            btree_map::Entry::Occupied(server_id) => *server_id.get(),
+                        },
+                    );
+                }
+            });
             // for (worktree, language) in language_server_lookup_info {
             //     self.restart_local_language_servers(worktree, language, cx);
             // }
@@ -7407,7 +7429,7 @@ impl LspStore {
     fn restart_local_language_servers(
         &mut self,
         worktree: Model<Worktree>,
-        ids: Vec<LanguageServerId>,
+        ids: BTreeSet<LanguageServerId>,
         cx: &mut ModelContext<Self>,
     ) {
         let worktree_id = worktree.read(cx).id();

@@ -23,6 +23,7 @@ use language::{
 use lsp::LanguageServerName;
 use once_cell::sync::OnceCell;
 use settings::{Settings, SettingsLocation, WorktreeId};
+use util::maybe;
 
 use crate::{project_settings::LspSettings, LanguageServerId, ProjectPath};
 
@@ -50,6 +51,7 @@ pub struct LanguageServerTree {
 #[derive(Clone)]
 pub(crate) struct LanguageServerTreeNode(Weak<InnerTreeNode>);
 
+/// Describes a request to launch a language server.
 pub(crate) struct LaunchDisposition<'a> {
     pub(crate) server_name: &'a LanguageServerName,
     pub(crate) attach: Attach,
@@ -57,6 +59,16 @@ pub(crate) struct LaunchDisposition<'a> {
     pub(crate) settings: Arc<LspSettings>,
 }
 
+impl<'a> From<&'a InnerTreeNode> for LaunchDisposition<'a> {
+    fn from(value: &'a InnerTreeNode) -> Self {
+        LaunchDisposition {
+            server_name: &value.name,
+            attach: value.attach,
+            path: value.path.clone(),
+            settings: value.settings.clone(),
+        }
+    }
+}
 impl LanguageServerTreeNode {
     /// Returns a language server ID for this node if there is one.
     /// Returns None if this node has not been initialized yet or it is no longer in the tree.
@@ -77,14 +89,7 @@ impl LanguageServerTreeNode {
     ) -> Option<LanguageServerId> {
         let this = self.0.upgrade()?;
         this.id
-            .get_or_try_init(|| {
-                init(LaunchDisposition {
-                    server_name: &this.name,
-                    attach: this.attach,
-                    path: this.path.clone(),
-                    settings: this.settings.clone(),
-                })
-            })
+            .get_or_try_init(|| init(LaunchDisposition::from(&*this)))
             .ok()
             .copied()
     }
@@ -110,14 +115,14 @@ impl InnerTreeNode {
         name: LanguageServerName,
         attach: Attach,
         path: ProjectPath,
-        settings: LspSettings,
+        settings: impl Into<Arc<LspSettings>>,
     ) -> Self {
         InnerTreeNode {
             id: Default::default(),
             name,
             attach,
             path,
-            settings: Arc::new(settings),
+            settings: settings.into(),
         }
     }
 }
@@ -157,7 +162,6 @@ impl LanguageServerTree {
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut AppContext,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
-        dbg!(&path);
         let settings_location = SettingsLocation {
             worktree_id: path.worktree_id,
             path: &path.path,
@@ -378,5 +382,33 @@ impl LanguageServerTree {
         for server_to_remove in all_instances.difference(&referenced_instances) {
             on_language_server_removed(*server_to_remove);
         }
+    }
+
+    /// Updates nodes in language server tree in place, changing the ID of initialized nodes.
+    pub(crate) fn restart_language_servers(
+        &mut self,
+        worktree_id: WorktreeId,
+        ids: BTreeSet<LanguageServerId>,
+        restart_callback: &mut dyn FnMut(LanguageServerId, LaunchDisposition) -> LanguageServerId,
+    ) {
+        maybe! {{
+                for (_, nodes) in &mut self.instances.get_mut(&worktree_id)?.roots {
+                    for (server_name, (node, languages)) in nodes {
+                        let Some(old_server_id) = node.id.get().copied() else {
+                            continue;
+                        };
+                        if !ids.contains(&old_server_id) {
+                            continue;
+                        }
+
+                        let new_id = restart_callback(old_server_id, LaunchDisposition::from(&**node));
+
+                        *node = Arc::new(InnerTreeNode::new(node.name.clone(), node.attach, node.path.clone(), node.settings.clone()));
+                        node.id.set(new_id).expect("The id to be unset after clearing the node.");
+                    }
+            }
+            Some(())
+        }
+        };
     }
 }
