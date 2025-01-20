@@ -6199,7 +6199,7 @@ impl LspStore {
             .map(|(key, value)| (*key, value))
     }
 
-    pub(super) fn did_rename_entry(
+    pub fn did_rename_entry(
         &self,
         worktree_id: WorktreeId,
         old_path: &Path,
@@ -6235,7 +6235,7 @@ impl LspStore {
         });
     }
 
-    pub(super) fn will_rename_entry(
+    pub fn will_rename_entry(
         this: WeakModel<Self>,
         worktree_id: WorktreeId,
         old_path: &Path,
