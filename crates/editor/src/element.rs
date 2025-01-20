@@ -6635,29 +6635,37 @@ impl Element for EditorElement {
                         cx,
                     );
 
-                    let longest_line_blame_width = self.editor.update(cx, |editor, cx| {
-                        if !editor.show_git_blame_inline {
-                            return None;
-                        }
-                        let blame = editor.blame.as_ref()?;
-                        let blame_entry = blame
-                            .update(cx, |blame, cx| {
-                                let buffer_row = snapshot
-                                    .buffer_rows(snapshot.longest_row())
-                                    .next()
-                                    .flatten()?;
-                                blame.blame_for_rows([Some(buffer_row)], cx).next()
-                            })
-                            .flatten()?;
-                        let workspace = editor.workspace.as_ref().map(|(w, _)| w.to_owned());
-                        let mut element =
-                            render_inline_blame_entry(blame, blame_entry, &style, workspace, cx);
-                        let inline_blame_padding = INLINE_BLAME_PADDING_EM_WIDTHS * em_advance;
-                        Some(
-                            element.layout_as_root(AvailableSpace::min_size(), cx).width
-                                + inline_blame_padding,
-                        )
-                    });
+                    let longest_line_blame_width = self
+                        .editor
+                        .update(cx, |editor, cx| {
+                            if !editor.show_git_blame_inline {
+                                return None;
+                            }
+                            let blame = editor.blame.as_ref()?;
+                            let blame_entry = blame
+                                .update(cx, |blame, cx| {
+                                    let buffer_row = snapshot
+                                        .buffer_rows(snapshot.longest_row())
+                                        .next()
+                                        .flatten()?;
+                                    blame.blame_for_rows([Some(buffer_row)], cx).next()
+                                })
+                                .flatten()?;
+                            let workspace = editor.workspace.as_ref().map(|(w, _)| w.to_owned());
+                            let mut element = render_inline_blame_entry(
+                                blame,
+                                blame_entry,
+                                &style,
+                                workspace,
+                                cx,
+                            );
+                            let inline_blame_padding = INLINE_BLAME_PADDING_EM_WIDTHS * em_advance;
+                            Some(
+                                element.layout_as_root(AvailableSpace::min_size(), cx).width
+                                    + inline_blame_padding,
+                            )
+                        })
+                        .unwrap_or(Pixels::ZERO);
 
                     let longest_line_width = layout_line(
                         snapshot.longest_row(),
@@ -6668,14 +6676,14 @@ impl Element for EditorElement {
                         window,
                         cx,
                     )
-                    .width
-                        + longest_line_blame_width.unwrap_or(Pixels::ZERO);
+                    .width;
 
                     let scrollbar_range_data = ScrollbarRangeData::new(
                         scrollbar_bounds,
                         letter_size,
                         &snapshot,
                         longest_line_width,
+                        longest_line_blame_width,
                         &style,
                         cx,
                     );
@@ -7268,6 +7276,7 @@ impl ScrollbarRangeData {
         letter_size: Size<Pixels>,
         snapshot: &EditorSnapshot,
         longest_line_width: Pixels,
+        longest_line_blame_width: Pixels,
         style: &EditorStyle,
 
         cx: &mut App,
@@ -7286,7 +7295,7 @@ impl ScrollbarRangeData {
         };
 
         let overscroll = size(
-            scrollbar_width + (letter_size.width / 2.0),
+            scrollbar_width + (letter_size.width / 2.0) + longest_line_blame_width,
             letter_size.height * scroll_beyond_last_line,
         );
 
