@@ -4250,7 +4250,7 @@ impl BackgroundScanner {
         abs_paths.sort_unstable();
         abs_paths.dedup_by(|a, b| a.starts_with(b));
         abs_paths.retain(|abs_path| {
-            let abs_path: Arc<Path> = SanitizedPath::from(abs_path).into();
+            let abs_path = SanitizedPath::from(abs_path);
             let snapshot = &self.state.lock().snapshot;
             {
                 let mut is_git_related = false;
@@ -4262,7 +4262,7 @@ impl BackgroundScanner {
                     FsMonitor
                 }
                 let mut fsmonitor_parse_state = None;
-                if let Some(dot_git_abs_path) = abs_path
+                if let Some(dot_git_abs_path) = abs_path.as_path()
                     .ancestors()
                     .find(|ancestor| {
                         let file_name = ancestor.file_name();
@@ -4289,7 +4289,7 @@ impl BackgroundScanner {
                 }
 
                 let relative_path: Arc<Path> =
-                    if let Ok(path) = abs_path.strip_prefix(root_canonical_path.as_path()) {
+                    if let Ok(path) = abs_path.strip_prefix(&root_canonical_path) {
                         path.into()
                     } else {
                         if is_git_related {

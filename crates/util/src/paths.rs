@@ -1,4 +1,5 @@
 use std::cmp;
+use std::path::StripPrefixError;
 use std::sync::{Arc, OnceLock};
 use std::{
     ffi::OsStr,
@@ -116,6 +117,10 @@ impl SanitizedPath {
 
     pub fn join(&self, path: &Self) -> Self {
         self.0.join(&path.0).into()
+    }
+
+    pub fn strip_prefix(&self, base: &Self) -> Result<&Path, StripPrefixError> {
+        self.0.strip_prefix(base.as_path())
     }
 }
 
