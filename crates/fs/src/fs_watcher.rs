@@ -44,19 +44,11 @@ impl Watcher for FsWatcher {
                         .paths
                         .iter()
                         .filter_map(|event_path| {
-                            let event_p = SanitizedPath::from(event_path);
-                            // event_p.starts_with(&root_path).then(|| PathEvent {
-                            //     path: event_p.as_path().to_path_buf(),
-                            //     kind,
-                            // })
-                            if event_p.starts_with(&root_path) {
-                                Some(PathEvent {
-                                    path: event_p.as_path().to_path_buf(),
-                                    kind,
-                                })
-                            } else {
-                                None
-                            }
+                            let event_path = SanitizedPath::from(event_path);
+                            event_path.starts_with(&root_path).then(|| PathEvent {
+                                path: event_path.as_path().to_path_buf(),
+                                kind,
+                            })
                         })
                         .collect::<Vec<_>>();
 
