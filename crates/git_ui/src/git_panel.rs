@@ -749,12 +749,13 @@ impl GitPanel {
 
         let mut existing_text = self.commit_editor.read(cx).text(cx);
         existing_text.make_ascii_lowercase();
+        let lowercase_co_author_prefix = CO_AUTHOR_PREFIX.to_lowercase();
         let mut ends_with_co_authors = false;
         let existing_co_authors = existing_text
             .lines()
             .filter_map(|line| {
                 let line = line.trim();
-                if line.starts_with(CO_AUTHOR_PREFIX) {
+                if line.starts_with(&lowercase_co_author_prefix) {
                     ends_with_co_authors = true;
                     Some(line)
                 } else {
