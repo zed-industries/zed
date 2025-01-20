@@ -183,7 +183,6 @@ impl LocalLspStore {
         let worktree_id = worktree.id();
         let root_path = worktree.abs_path();
         let key = (worktree_id, adapter.name.clone());
-
         let project_settings = ProjectSettings::get(
             Some(SettingsLocation {
                 worktree_id,
@@ -1826,6 +1825,7 @@ impl LocalLspStore {
                                 server_ids.iter().cloned().next().unwrap()
                             } else {
                                 let language_name = language.name();
+
                                 self.start_language_server(
                                     &worktree,
                                     delegate.clone(),
@@ -2048,7 +2048,7 @@ impl LocalLspStore {
         let Some(language) = buffer.language().cloned() else {
             return;
         };
-        self.start_language_servers(&worktree, language.name(), cx);
+        //self.start_language_servers(&worktree, language.name(), cx);
         for adapter in self.languages.lsp_adapters(&language.name()) {
             let servers = self
                 .language_server_ids
@@ -3827,7 +3827,6 @@ impl LspStore {
                 );
             });
         });
-        dbg!(&to_stop);
         for id in to_stop {
             self.stop_local_language_server(id, cx).detach();
         }

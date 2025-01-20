@@ -336,7 +336,6 @@ impl LanguageServerTree {
                                 })
                         })
                         .collect::<BTreeSet<_>>();
-                    dbg!(&enabled_languages);
                     if adapter_with_settings.is_empty() {
                         // Since all languages that have had this server enabled are now disabled, we can remove the server entirely.
                         continue;

@@ -2562,14 +2562,12 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
     let mut fake_servers = language_registry.register_fake_lsp("Rust", FakeLspAdapter::default());
-
     let (buffer, _handle) = project
         .update(cx, |project, cx| {
             project.open_local_buffer_with_lsp("/dir/b.rs", cx)
         })
         .await
         .unwrap();
-
     let fake_server = fake_servers.next().await.unwrap();
     fake_server.handle_request::<lsp::request::GotoDefinition, _, _>(|params, _| async move {
         let params = params.text_document_position_params;
@@ -2586,7 +2584,6 @@ async fn test_definition(cx: &mut gpui::TestAppContext) {
             ),
         )))
     });
-
     let mut definitions = project
         .update(cx, |project, cx| project.definition(&buffer, 22, cx))
         .await
