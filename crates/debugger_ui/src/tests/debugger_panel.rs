@@ -1300,3 +1300,82 @@ async fn test_it_send_breakpoint_request_if_breakpoint_buffer_is_unopened(
 
     shutdown_session.await.unwrap();
 }
+
+#[gpui::test]
+async fn test_debug_session_is_shutdown_when_attach_and_launch_request_fails(
+    executor: BackgroundExecutor,
+    cx: &mut TestAppContext,
+) {
+    init_test(cx);
+
+    let fs = FakeFs::new(executor.clone());
+
+    let project = Project::test(fs, [], cx).await;
+    let workspace = init_test_workspace(&project, cx).await;
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+
+    let task = project.update(cx, |project, cx| {
+        project.dap_store().update(cx, |store, cx| {
+            store.start_debug_session(
+                task::DebugAdapterConfig {
+                    label: "test config".into(),
+                    kind: task::DebugAdapterKind::Fake,
+                    request: task::DebugRequestType::Launch,
+                    program: None,
+                    cwd: None,
+                    initialize_args: None,
+                },
+                cx,
+            )
+        })
+    });
+
+    let (session, client) = task.await.unwrap();
+    let session_id = cx.update(|cx| session.read(cx).id());
+
+    client
+        .on_request::<Initialize, _>(move |_, _| {
+            Ok(dap::Capabilities {
+                supports_step_back: Some(false),
+                ..Default::default()
+            })
+        })
+        .await;
+
+    client
+        .on_request::<Launch, _>(move |_, _| {
+            Err(ErrorResponse {
+                error: Some(dap::Message {
+                    id: 1,
+                    format: "error".into(),
+                    variables: None,
+                    send_telemetry: None,
+                    show_user: None,
+                    url: None,
+                    url_label: None,
+                }),
+            })
+        })
+        .await;
+
+    client
+        .on_request::<StackTrace, _>(move |_, _| {
+            Ok(dap::StackTraceResponse {
+                stack_frames: Vec::default(),
+                total_frames: None,
+            })
+        })
+        .await;
+
+    client.on_request::<Disconnect, _>(move |_, _| Ok(())).await;
+
+    cx.run_until_parked();
+
+    project.update(cx, |project, cx| {
+        assert!(project
+            .dap_store()
+            .read(cx)
+            .session_by_id(&session_id)
+            .is_none());
+    });
+}
