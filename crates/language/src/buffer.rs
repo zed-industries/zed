@@ -639,23 +639,21 @@ impl EditPreview {
 
         for (old_range, new_text) in edits {
             let old_offset_range = old_range.to_offset(&self.old_snapshot);
-            for chunk in self.highlighted_chunks(offset..old_offset_range.start) {
-                let start = text.len();
-                text.push_str(chunk.text);
-                let end = text.len();
-                if let Some(highlight_style) = chunk
-                    .syntax_highlight_id
-                    .and_then(|id| id.style(cx.theme().syntax()))
-                {
-                    highlights.push((start..end, highlight_style));
-                }
-            }
+
+            self.highlight_text(
+                offset..old_offset_range.start,
+                &mut text,
+                &mut highlights,
+                None,
+                cx,
+            );
             offset = old_offset_range.start + new_text.len();
 
             if include_deletions && !old_offset_range.is_empty() {
                 let start = text.len();
                 text.extend(self.old_snapshot.text_for_range(old_offset_range.clone()));
                 let end = text.len();
+
                 highlights.push((
                     start..end,
                     HighlightStyle {
@@ -666,44 +664,49 @@ impl EditPreview {
             }
 
             if !new_text.is_empty() {
-                for chunk in self.highlighted_chunks(
+                self.highlight_text(
                     old_offset_range.start..old_offset_range.start + new_text.len(),
-                ) {
-                    let start = text.len();
-                    text.push_str(chunk.text);
-                    let end = text.len();
-
-                    let mut highlight_style = HighlightStyle {
+                    &mut text,
+                    &mut highlights,
+                    Some(HighlightStyle {
                         background_color: Some(cx.theme().status().created_background),
                         ..Default::default()
-                    };
-                    if let Some(syntax_highlight_style) = chunk
-                        .syntax_highlight_id
-                        .and_then(|id| id.style(cx.theme().syntax()))
-                    {
-                        highlight_style.highlight(syntax_highlight_style);
-                    }
-                    highlights.push((start..end, highlight_style));
-                }
+                    }),
+                    cx,
+                );
             }
         }
 
-        for chunk in self.highlighted_chunks(offset..range.end) {
-            let start = text.len();
-            text.push_str(chunk.text);
-            let end = text.len();
-
-            if let Some(highlight_style) = chunk
-                .syntax_highlight_id
-                .and_then(|id| id.style(cx.theme().syntax()))
-            {
-                highlights.push((start..end, highlight_style));
-            }
-        }
+        self.highlight_text(offset..range.end, &mut text, &mut highlights, None, cx);
 
         HighlightedEdits {
             text: text.into(),
             highlights,
+        }
+    }
+
+    fn highlight_text(
+        &self,
+        range: Range<usize>,
+        text: &mut String,
+        highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
+        override_style: Option<HighlightStyle>,
+        cx: &AppContext,
+    ) {
+        for chunk in self.highlighted_chunks(range) {
+            let start = text.len();
+            text.push_str(chunk.text);
+            let end = text.len();
+
+            if let Some(mut highlight_style) = chunk
+                .syntax_highlight_id
+                .and_then(|id| id.style(cx.theme().syntax()))
+            {
+                if let Some(override_style) = override_style {
+                    highlight_style.highlight(override_style);
+                }
+                highlights.push((start..end, highlight_style));
+            }
         }
     }
 
@@ -713,6 +716,7 @@ impl EditPreview {
                 .captures(range.clone(), &self.new_snapshot, |grammar| {
                     grammar.highlights_query.as_ref()
                 });
+
         let highlight_maps = captures
             .grammars()
             .iter()
