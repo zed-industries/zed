@@ -15,17 +15,7 @@ pub fn init(cx: &mut AppContext) {
 
 #[derive(Clone)]
 pub struct RepositoryInfo {
-    display_name: String,
-}
-
-impl RepositoryInfo {
-    pub fn new(display_name: String) -> Self {
-        RepositoryInfo { display_name }
-    }
-
-    pub fn display_name(&self) -> SharedString {
-        self.display_name.clone().into()
-    }
+    pub display_name: SharedString,
 }
 
 pub fn all_repositories(project: Model<Project>, cx: &AppContext) -> Vec<RepositoryInfo> {
@@ -38,7 +28,10 @@ pub fn all_repositories(project: Model<Project>, cx: &AppContext) -> Vec<Reposit
             let id = repo.work_directory_id();
             let path = project.path_for_entry(id, cx).unwrap();
             let path = project.absolute_path(&path, cx).unwrap();
-            RepositoryInfo::new(path.to_string_lossy().to_string())
+            let display_name = path
+                .file_name()
+                .map_or("/".into(), |name| name.to_string_lossy().to_string().into());
+            RepositoryInfo { display_name }
         }));
     }
     repos

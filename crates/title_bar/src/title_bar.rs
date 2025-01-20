@@ -489,7 +489,7 @@ impl TitleBar {
         if !all_repositories(project.clone(), cx).is_empty() {
             let repository_selector = cx.new_view(|cx| RepositorySelector::new(project, cx));
             let active_repository = repository_selector.read(cx).active_repository(cx)?;
-            let display_name = active_repository.clone().display_name();
+            let display_name = active_repository.display_name.clone();
             Some(RepositorySelectorPopoverMenu::new(
                 repository_selector,
                 ButtonLike::new("active-model")
