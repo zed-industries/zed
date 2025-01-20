@@ -36,10 +36,13 @@ impl MarkdownString {
             match c {
                 // Always escaped.
                 '\\' | '`' | '*' | '_' | '[' | '^' | '$' | '~' | '&' |
+                // TODO: escaping this is only needed within a table.
+                '|' |
                 // TODO: these only need to be escaped when they are the first non-whitespace
                 // character of the line of a block. There should probably be both an `escape_block`
                 // which does this and an `escape_inline` method which does not escape these.
-                '#' | '+' | '=' | '-' => {
+                '#' | '+' | '=' | '-' =>
+                {
                     match start_of_unescaped {
                         None => {}
                         Some(start_of_unescaped) => {
