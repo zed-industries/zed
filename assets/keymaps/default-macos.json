@@ -38,7 +38,9 @@
       "alt-cmd-h": "zed::HideOthers",
       "cmd-m": "zed::Minimize",
       "fn-f": "zed::ToggleFullScreen",
-      "ctrl-cmd-f": "zed::ToggleFullScreen"
+      "ctrl-cmd-f": "zed::ToggleFullScreen",
+      "ctrl-shift-z": "zeta::RateCompletions",
+      "ctrl-shift-i": "inline_completion::ToggleMenu"
     }
   },
   {
@@ -68,7 +70,6 @@
       "cmd-v": "editor::Paste",
       "cmd-z": "editor::Undo",
       "cmd-shift-z": "editor::Redo",
-      "ctrl-shift-z": "zeta::RateCompletions",
       "up": "editor::MoveUp",
       "ctrl-up": "editor::MoveToStartOfParagraph",
       "pageup": "editor::MovePageUp",
