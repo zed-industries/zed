@@ -1,8 +1,10 @@
+use std::path::PathBuf;
+
 use ::settings::Settings;
 use git::status::FileStatus;
 use git_panel_settings::GitPanelSettings;
 use gpui::{AppContext, Hsla, Model};
-use project::Project;
+use project::{Project, ProjectPath};
 use ui::{Color, Icon, IconName, IntoElement, SharedString};
 
 pub mod git_panel;
@@ -11,30 +13,6 @@ pub mod repository_selector;
 
 pub fn init(cx: &mut AppContext) {
     GitPanelSettings::register(cx);
-}
-
-#[derive(Clone)]
-pub struct RepositoryInfo {
-    pub display_name: SharedString,
-}
-
-pub fn all_repositories(project: Model<Project>, cx: &AppContext) -> Vec<RepositoryInfo> {
-    let project = project.read(cx);
-    // FIXME this is a workaround for SumTree not being IntoIterator
-    let mut repos = vec![];
-    for worktree in project.worktrees(cx) {
-        let snapshot = worktree.read(cx).snapshot();
-        repos.extend(snapshot.repositories().iter().map(|repo| {
-            let id = repo.work_directory_id();
-            let path = project.path_for_entry(id, cx).unwrap();
-            let path = project.absolute_path(&path, cx).unwrap();
-            let display_name = path
-                .file_name()
-                .map_or("/".into(), |name| name.to_string_lossy().to_string().into());
-            RepositoryInfo { display_name }
-        }));
-    }
-    repos
 }
 
 const ADDED_COLOR: Hsla = Hsla {

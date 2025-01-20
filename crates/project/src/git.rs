@@ -5,26 +5,18 @@ use git::{
     repository::{GitRepository, RepoPath},
     status::{GitSummary, TrackedSummary},
 };
-use gpui::{AppContext, Context as _, Model};
+use gpui::{AppContext, Context as _, Model, SharedString, WeakModel};
 use language::{Buffer, LanguageRegistry};
-use settings::WorktreeId;
 use std::sync::Arc;
 use text::Rope;
 use worktree::RepositoryEntry;
-
-// project
-// > worktree
-//   > sumtree<repositoryentry>
-//
-// gitstate has a list of all repositories
-// that gets updated in response to worktree events that we are already handling
 
 pub struct GitState {
     pub commit_message: Model<Buffer>,
 
     /// When a git repository is selected, this is used to track which repository's changes
     /// are currently being viewed or modified in the UI.
-    pub active_repository: Option<(WorktreeId, RepositoryEntry, Arc<dyn GitRepository>)>,
+    pub active_repository: Option<RepositoryHandle>,
 
     update_sender: mpsc::UnboundedSender<(Message, mpsc::Sender<anyhow::Error>)>,
 }
@@ -83,20 +75,21 @@ impl GitState {
             update_sender,
         }
     }
+}
 
-    pub fn activate_repository(
-        &mut self,
-        worktree_id: WorktreeId,
-        active_repository: RepositoryEntry,
-        git_repo: Arc<dyn GitRepository>,
-    ) {
-        self.active_repository = Some((worktree_id, active_repository, git_repo));
-    }
+#[derive(Clone)]
+pub struct RepositoryHandle {
+    git_state: WeakModel<GitState>,
+    repository_entry: RepositoryEntry,
+    git_repo: Arc<dyn GitRepository>,
+    update_sender: mpsc::UnboundedSender<(Message, mpsc::Sender<anyhow::Error>)>,
+}
 
-    pub fn active_repository(
-        &self,
-    ) -> Option<&(WorktreeId, RepositoryEntry, Arc<dyn GitRepository>)> {
-        self.active_repository.as_ref()
+impl RepositoryHandle {
+    pub fn activate(&self, cx: &mut AppContext) {}
+
+    pub fn display_name(&self) -> SharedString {
+        todo!()
     }
 
     pub fn stage_entries(
@@ -107,9 +100,6 @@ impl GitState {
         if entries.is_empty() {
             return Ok(());
         }
-        let Some((_, _, git_repo)) = self.active_repository.as_ref() else {
-            return Err(anyhow!("No active repository"));
-        };
         self.update_sender
             .unbounded_send((Message::Stage(git_repo.clone(), entries), err_sender))
             .map_err(|_| anyhow!("Failed to submit stage operation"))?;
@@ -124,20 +114,15 @@ impl GitState {
         if entries.is_empty() {
             return Ok(());
         }
-        let Some((_, _, git_repo)) = self.active_repository.as_ref() else {
-            return Err(anyhow!("No active repository"));
-        };
         self.update_sender
-            .unbounded_send((Message::Unstage(git_repo.clone(), entries), err_sender))
+            .unbounded_send((Message::Unstage(self.git_repo.clone(), entries), err_sender))
             .map_err(|_| anyhow!("Failed to submit unstage operation"))?;
         Ok(())
     }
 
     pub fn stage_all(&self, err_sender: mpsc::Sender<anyhow::Error>) -> anyhow::Result<()> {
-        let Some((_, entry, _)) = self.active_repository.as_ref() else {
-            return Err(anyhow!("No active repository"));
-        };
-        let to_stage = entry
+        let to_stage = self
+            .repository_entry
             .status()
             .filter(|entry| !entry.status.is_staged().unwrap_or(false))
             .map(|entry| entry.repo_path.clone())
@@ -147,10 +132,8 @@ impl GitState {
     }
 
     pub fn unstage_all(&self, err_sender: mpsc::Sender<anyhow::Error>) -> anyhow::Result<()> {
-        let Some((_, entry, _)) = self.active_repository.as_ref() else {
-            return Err(anyhow!("No active repository"));
-        };
-        let to_unstage = entry
+        let to_unstage = self
+            .repository_entry
             .status()
             .filter(|entry| entry.status.is_staged().unwrap_or(true))
             .map(|entry| entry.repo_path.clone())
@@ -162,23 +145,15 @@ impl GitState {
     /// Get a count of all entries in the active repository, including
     /// untracked files.
     pub fn entry_count(&self) -> usize {
-        self.active_repository
-            .as_ref()
-            .map_or(0, |(_, entry, _)| entry.status_len())
+        self.repository_entry.status_len()
     }
 
     fn have_changes(&self) -> bool {
-        let Some((_, entry, _)) = self.active_repository.as_ref() else {
-            return false;
-        };
-        entry.status_summary() != GitSummary::UNCHANGED
+        self.repository_entry.status_summary() != GitSummary::UNCHANGED
     }
 
     fn have_staged_changes(&self) -> bool {
-        let Some((_, entry, _)) = self.active_repository.as_ref() else {
-            return false;
-        };
-        entry.status_summary().index != TrackedSummary::UNCHANGED
+        self.repository_entry.status_summary().index != TrackedSummary::UNCHANGED
     }
 
     pub fn can_commit(&self, commit_all: bool, cx: &AppContext) -> bool {

@@ -2,13 +2,13 @@ use std::sync::Arc;
 
 use gpui::{
     AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
-    Subscription, Task, View, WeakView,
+    Subscription, Task, View, WeakModel, WeakView,
 };
 use picker::{Picker, PickerDelegate};
 use project::Project;
 use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
 
-use crate::{all_repositories, RepositoryInfo};
+use crate::{all_repositories, RepositoryHandle};
 
 // get all the repos
 //  - Shared String + an id or something
@@ -40,6 +40,7 @@ impl RepositorySelector {
         let all_repositories = all_repositories(project.clone(), cx);
         let filtered_repositories = all_repositories.clone();
         let delegate = RepositorySelectorDelegate {
+            project: project.downgrade(),
             repository_selector: cx.view().downgrade(),
             repository_entries: all_repositories,
             filtered_repositories,
@@ -66,6 +67,7 @@ impl RepositorySelector {
         _event: &project::Event,
         cx: &mut ViewContext<Self>,
     ) {
+        // FIXME skip events that we don't care about
         let task = self.picker.update(cx, |this, cx| {
             let query = this.query(cx);
             this.delegate.repository_entries = all_repositories(project, cx);
@@ -74,7 +76,7 @@ impl RepositorySelector {
         self.update_matches_task = Some(task);
     }
 
-    pub fn active_repository(&self, cx: &AppContext) -> Option<RepositoryInfo> {
+    pub fn active_repository(&self, cx: &AppContext) -> Option<RepositoryHandle> {
         let delegate = &self.picker.read(cx).delegate;
         delegate
             .filtered_repositories
@@ -135,14 +137,15 @@ impl<T: PopoverTrigger> RenderOnce for RepositorySelectorPopoverMenu<T> {
 }
 
 pub struct RepositorySelectorDelegate {
+    project: WeakModel<Project>,
     repository_selector: WeakView<RepositorySelector>,
-    repository_entries: Vec<RepositoryInfo>,
-    filtered_repositories: Vec<RepositoryInfo>,
+    repository_entries: Vec<RepositoryHandle>,
+    filtered_repositories: Vec<RepositoryHandle>,
     selected_index: usize,
 }
 
 impl RepositorySelectorDelegate {
-    pub fn update_repository_entries(&mut self, all_repositories: Vec<RepositoryInfo>) {
+    pub fn update_repository_entries(&mut self, all_repositories: Vec<RepositoryHandle>) {
         self.repository_entries = all_repositories.clone();
         self.filtered_repositories = all_repositories;
         self.selected_index = 0;
@@ -200,9 +203,19 @@ impl PickerDelegate for RepositorySelectorDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
-        if let Some(_repo_info) = self.filtered_repositories.get(self.selected_index) {
-            // TODO: Implement repository selection logic
-            cx.emit(DismissEvent);
+        if let Some(repo_info) = self.filtered_repositories.get(self.selected_index) {
+            if let Some(project) = self.project.upgrade() {
+                let project = project.read(cx);
+                if let Some(git_state) = project.git_state() {
+                    let worktree_id = repo_info.project_path.worktree_id;
+                    let worktree = project.worktree_for_id(worktree_id).unwrap();
+                    let repository = worktree.read(cx).repository_for_path(project_pat)
+                    git_state.update(cx, |git_state, cx| {
+                        git_state.activate_repository(worktree_id, )
+                    });
+                    cx.emit(DismissEvent);
+                }
+            }
         }
     }
 
@@ -231,7 +244,7 @@ impl PickerDelegate for RepositorySelectorDelegate {
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .child(Label::new(&repo_info.display_name)),
+                .child(Label::new(repo_info.display_name())),
         )
     }
 
