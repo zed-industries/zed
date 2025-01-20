@@ -2,14 +2,12 @@
 resolver = "2"
 members = [
     "crates/activity_indicator",
-    "crates/zed_predict_tos",
     "crates/anthropic",
     "crates/assets",
     "crates/assistant",
     "crates/assistant2",
     "crates/assistant_settings",
     "crates/assistant_slash_command",
-    "crates/assistant_slash_commands",
     "crates/assistant_tool",
     "crates/assistant_tools",
     "crates/audio",
@@ -91,7 +89,6 @@ members = [
     "crates/project",
     "crates/project_panel",
     "crates/project_symbols",
-    "crates/prompt_library",
     "crates/proto",
     "crates/recent_projects",
     "crates/refineable",
@@ -117,7 +114,6 @@ members = [
     "crates/sqlez_macros",
     "crates/story",
     "crates/storybook",
-    "crates/streaming_diff",
     "crates/sum_tree",
     "crates/supermaven",
     "crates/supermaven_api",
@@ -187,10 +183,6 @@ members = [
 ]
 default-members = ["crates/zed"]
 
-[workspace.package]
-publish = false
-edition = "2021"
-
 [workspace.dependencies]
 
 #
@@ -199,14 +191,12 @@ edition = "2021"
 
 activity_indicator = { path = "crates/activity_indicator" }
 ai = { path = "crates/ai" }
-zed_predict_tos = { path = "crates/zed_predict_tos" }
 anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 assistant2 = { path = "crates/assistant2" }
 assistant_settings = { path = "crates/assistant_settings" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
-assistant_slash_commands = { path = "crates/assistant_slash_commands" }
 assistant_tool = { path = "crates/assistant_tool" }
 assistant_tools = { path = "crates/assistant_tools" }
 audio = { path = "crates/audio" }
@@ -289,7 +279,6 @@ prettier = { path = "crates/prettier" }
 project = { path = "crates/project" }
 project_panel = { path = "crates/project_panel" }
 project_symbols = { path = "crates/project_symbols" }
-prompt_library = { path = "crates/prompt_library" }
 proto = { path = "crates/proto" }
 recent_projects = { path = "crates/recent_projects" }
 refineable = { path = "crates/refineable" }
@@ -314,7 +303,6 @@ sqlez = { path = "crates/sqlez" }
 sqlez_macros = { path = "crates/sqlez_macros" }
 story = { path = "crates/story" }
 storybook = { path = "crates/storybook" }
-streaming_diff = { path = "crates/streaming_diff" }
 sum_tree = { path = "crates/sum_tree" }
 supermaven = { path = "crates/supermaven" }
 supermaven_api = { path = "crates/supermaven_api" }
@@ -352,8 +340,7 @@ zeta = { path = "crates/zeta" }
 #
 
 aho-corasick = "1.1"
-# TODO(#18342): Update to version 0.25 from crates.io when it is released.
-alacritty_terminal = { git = "https://github.com/alacritty/alacritty.git", rev = "5e78d20c709cb1ab8d44ca7a8702cc26d779227c" }
+alacritty_terminal = "0.24"
 any_vec = "0.14"
 anyhow = "1.0.86"
 arrayvec = { version = "0.7.4", features = ["serde"] }
