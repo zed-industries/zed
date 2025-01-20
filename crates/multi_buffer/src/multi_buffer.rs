@@ -2534,11 +2534,15 @@ impl MultiBuffer {
             if at_transform_boundary {
                 let mut preserved_transforms =
                     old_diff_transforms.slice(&edit.old.start, Bias::Left, &());
-                if old_diff_transforms.end(&()).0 == edit.old.start
-                    && old_diff_transforms.start().0 < edit.old.start
+                while old_diff_transforms.end(&()).0 == edit.old.start
+                    && old_diff_transforms.start().0 <= edit.old.start
                 {
-                    preserved_transforms.extend(old_diff_transforms.item().cloned(), &());
-                    old_diff_transforms.next(&());
+                    if let Some(old_diff_transform) = old_diff_transforms.item().cloned() {
+                        preserved_transforms.push(old_diff_transform, &());
+                        old_diff_transforms.next(&());
+                    } else {
+                        break;
+                    }
                 }
                 self.append_transforms(&mut new_diff_transforms, preserved_transforms);
                 at_transform_boundary = false;
@@ -2633,7 +2637,6 @@ impl MultiBuffer {
                                     };
                                     edits.push(edit);
                                 }
-                                dbg!("next on accident");
                                 old_diff_transforms.next(&());
                             }
 
