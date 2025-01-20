@@ -1703,13 +1703,24 @@ async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
+    fn add_root_for_uri(path: &str) -> String {
+        if cfg!(windows) {
+            path.replace("file:///", "file:///C:/")
+        } else {
+            path.to_string()
+        }
+    }
+
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
-    fs.insert_tree("/dir", json!({ "a.rs": "", "b.js": "" }))
-        .await;
+    fs.insert_tree(
+        add_root_for_windows("/dir"),
+        json!({ "a.rs": "", "b.js": "" }),
+    )
+    .await;
 
-    let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+    let project = Project::test(fs, [add_root_for_windows("/dir").as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
 
     let mut fake_rust_servers = language_registry.register_fake_lsp(
@@ -1731,13 +1742,13 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
 
     let _rs_buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp("/dir/a.rs", cx)
+            project.open_local_buffer_with_lsp(add_root_for_windows("/dir/a.rs"), cx)
         })
         .await
         .unwrap();
     let _js_buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp("/dir/b.js", cx)
+            project.open_local_buffer_with_lsp(add_root_for_windows("/dir/b.js"), cx)
         })
         .await
         .unwrap();
@@ -1750,7 +1761,7 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
             .text_document
             .uri
             .as_str(),
-        "file:///dir/a.rs"
+        add_root_for_uri("file:///dir/a.rs")
     );
 
     let mut fake_js_server = fake_js_servers.next().await.unwrap();
@@ -1761,7 +1772,7 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
             .text_document
             .uri
             .as_str(),
-        "file:///dir/b.js"
+        add_root_for_uri("file:///dir/b.js")
     );
 
     // Disable Rust language server, ensuring only that server gets stopped.
@@ -1812,7 +1823,7 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
             .text_document
             .uri
             .as_str(),
-        "file:///dir/a.rs"
+        add_root_for_uri("file:///dir/a.rs")
     );
     fake_js_server
         .receive_notification::<lsp::notification::Exit>()
