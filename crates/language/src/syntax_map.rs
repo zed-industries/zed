@@ -392,8 +392,6 @@ impl SyntaxSnapshot {
             .edits_since::<usize>(&self.parsed_version)
             .map(|edit| edit.new)
             .collect::<Vec<_>>();
-        println!("Re-parsing with ranges: {:?}", edit_ranges);
-        println!("Text:\n{:?}", text.text());
         self.reparse_with_ranges(text, root_language.clone(), edit_ranges, registry.as_ref());
 
         if let Some(registry) = registry {
@@ -632,10 +630,6 @@ impl SyntaxSnapshot {
                             }
                         };
 
-                        println!(
-                            "Joining ranges: {:?}, max offset: {}",
-                            invalidated_ranges, step_end_byte
-                        );
                         changed_ranges = join_ranges(
                             invalidated_ranges
                                 .iter()
@@ -647,7 +641,6 @@ impl SyntaxSnapshot {
                                 step_start_byte + r.start_byte..step_start_byte + r.end_byte
                             }),
                         );
-                        println!("Changed ranges: {:?}", changed_ranges);
                     } else {
                         if matches!(step.mode, ParseMode::Combined { .. }) {
                             insert_newlines_between_ranges(
@@ -692,20 +685,10 @@ impl SyntaxSnapshot {
                         changed_ranges = vec![step_start_byte..step_end_byte];
                     }
 
-                    println!("Got changed ranges: {:?}", &changed_ranges);
-
-                    // for range in &mut changed_ranges {
-                    //     range.start = cmp::max(range.start, 0);
-                    //     range.end = cmp::min(range.end, step_end_byte);
-                    // }
-
-                    println!("Got changed ranges: {:?}", &changed_ranges);
-
                     if let (Some((config, registry)), false) = (
                         grammar.injection_config.as_ref().zip(registry.as_ref()),
                         changed_ranges.is_empty(),
                     ) {
-                        println!("Got injections");
                         for range in &changed_ranges {
                             changed_regions.insert(
                                 ChangedRegion {
@@ -732,8 +715,6 @@ impl SyntaxSnapshot {
                         );
                     }
 
-                    println!("Parsed!");
-
                     SyntaxLayerContent::Parsed { tree, language }
                 }
                 ParseStepLanguage::Pending { name } => SyntaxLayerContent::Pending {
@@ -757,8 +738,6 @@ impl SyntaxSnapshot {
         self.parsed_version = text.version.clone();
         #[cfg(debug_assertions)]
         self.check_invariants(text);
-
-        println!("Reparsed!");
     }
 
     #[cfg(debug_assertions)]

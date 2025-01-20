@@ -956,8 +956,6 @@ impl Buffer {
         edits: Arc<[(Range<Anchor>, String)]>,
         cx: &AppContext,
     ) -> Task<EditPreview> {
-        println!("Previewing {} edits", edits.len());
-
         let snapshot = self.text.snapshot();
         let registry = self.language_registry();
         let language = self.language().cloned();
@@ -965,15 +963,6 @@ impl Buffer {
         let mut branch_buffer = self.text.branch();
         let mut syntax_snapshot = self.syntax_map.lock().snapshot();
         cx.background_executor().spawn(async move {
-            println!("---- Buffer text ---- \n{}\n------", branch_buffer.text());
-            for (range, text) in edits.iter() {
-                println!(
-                    "Edit: (old range: {:?}) at {:?}",
-                    range.to_offset(&snapshot),
-                    text,
-                );
-            }
-
             if !edits.is_empty() {
                 //TODO: can we avoid cloning the edits?
                 branch_buffer.edit(edits.iter().cloned());
@@ -981,7 +970,6 @@ impl Buffer {
                 syntax_snapshot.interpolate(&snapshot);
                 if let Some(language) = language {
                     syntax_snapshot.reparse(&snapshot, registry, language);
-                    println!("Reparsed!");
                 }
             }
             EditPreview {
