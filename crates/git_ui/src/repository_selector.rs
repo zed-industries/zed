@@ -1,11 +1,14 @@
 use std::sync::Arc;
 
 use gpui::{
-    AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Subscription,
-    Task, View, WeakView,
+    AnyElement, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
+    Subscription, Task, View, WeakView,
 };
 use picker::{Picker, PickerDelegate};
+use project::Project;
 use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
+
+use crate::{all_repositories, RepositoryInfo};
 
 // get all the repos
 //  - Shared String + an id or something
@@ -33,40 +36,50 @@ pub struct RepositorySelector {
 }
 
 impl RepositorySelector {
-    pub fn new(cx: &mut ViewContext<Self>) -> Self {
-        let all_repositories = Self::all_repositories(cx);
+    pub fn new(project: Model<Project>, cx: &mut ViewContext<Self>) -> Self {
+        let all_repositories = all_repositories(project.clone(), cx);
+        let filtered_repositories = all_repositories.clone();
         let delegate = RepositorySelectorDelegate {
             repository_selector: cx.view().downgrade(),
-            all_repositories: all_repositories.clone(),
-            filtered_repositories: all_repositories,
+            repository_entries: all_repositories,
+            filtered_repositories,
             selected_index: 0,
         };
 
         let picker =
             cx.new_view(|cx| Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into())));
 
+        let subscription = cx.subscribe(&project, move |this, project, event, cx| {
+            this.handle_project_event(project, event, cx);
+        });
+
         RepositorySelector {
             picker,
             update_matches_task: None,
-            _subscriptions: vec![
-                // TODO: Subscribe to repository list changes
-            ],
+            _subscriptions: vec![subscription],
         }
     }
 
-    fn handle_project_event(&mut self, _event: &project::Event, cx: &mut ViewContext<Self>) {
-        // TODO: handle when project/repo changes
+    fn handle_project_event(
+        &mut self,
+        project: Model<Project>,
+        _event: &project::Event,
+        cx: &mut ViewContext<Self>,
+    ) {
         let task = self.picker.update(cx, |this, cx| {
             let query = this.query(cx);
-            this.delegate.all_repositories = Self::all_repositories(cx);
+            this.delegate.repository_entries = all_repositories(project, cx);
             this.delegate.update_matches(query, cx)
         });
         self.update_matches_task = Some(task);
     }
 
-    fn all_repositories(cx: &AppContext) -> Vec<RepositoryInfo> {
-        // TODO: Implement fetching all repositories
-        Vec::new()
+    pub fn active_repository(&self, cx: &AppContext) -> Option<RepositoryInfo> {
+        let delegate = &self.picker.read(cx).delegate;
+        delegate
+            .filtered_repositories
+            .get(delegate.selected_index)
+            .cloned()
     }
 }
 
@@ -121,16 +134,19 @@ impl<T: PopoverTrigger> RenderOnce for RepositorySelectorPopoverMenu<T> {
     }
 }
 
-#[derive(Clone)]
-struct RepositoryInfo {
-    // TODO: Define repository information fields
-}
-
 pub struct RepositorySelectorDelegate {
     repository_selector: WeakView<RepositorySelector>,
-    all_repositories: Vec<RepositoryInfo>,
+    repository_entries: Vec<RepositoryInfo>,
     filtered_repositories: Vec<RepositoryInfo>,
     selected_index: usize,
+}
+
+impl RepositorySelectorDelegate {
+    pub fn update_repository_entries(&mut self, all_repositories: Vec<RepositoryInfo>) {
+        self.repository_entries = all_repositories.clone();
+        self.filtered_repositories = all_repositories;
+        self.selected_index = 0;
+    }
 }
 
 impl PickerDelegate for RepositorySelectorDelegate {
@@ -154,7 +170,7 @@ impl PickerDelegate for RepositorySelectorDelegate {
     }
 
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
-        let all_repositories = self.all_repositories.clone();
+        let all_repositories = self.repository_entries.clone();
 
         cx.spawn(|this, mut cx| async move {
             let filtered_repositories = cx
@@ -165,7 +181,7 @@ impl PickerDelegate for RepositorySelectorDelegate {
                     } else {
                         all_repositories
                             .into_iter()
-                            .filter(|repo_info| {
+                            .filter(|_repo_info| {
                                 // TODO: Implement repository filtering logic
                                 true
                             })
@@ -184,7 +200,7 @@ impl PickerDelegate for RepositorySelectorDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
-        if let Some(repo_info) = self.filtered_repositories.get(self.selected_index) {
+        if let Some(_repo_info) = self.filtered_repositories.get(self.selected_index) {
             // TODO: Implement repository selection logic
             cx.emit(DismissEvent);
         }
@@ -205,7 +221,7 @@ impl PickerDelegate for RepositorySelectorDelegate {
         &self,
         ix: usize,
         selected: bool,
-        cx: &mut ViewContext<Picker<Self>>,
+        _cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let repo_info = self.filtered_repositories.get(ix)?;
 
@@ -215,12 +231,17 @@ impl PickerDelegate for RepositorySelectorDelegate {
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .child(Label::new("Repository Name")), // Placeholder
+                .child(Label::new(&repo_info.display_name)),
         )
     }
 
-    fn render_footer(&self, _cx: &mut ViewContext<Picker<Self>>) -> Option<gpui::AnyElement> {
+    fn render_footer(&self, cx: &mut ViewContext<Picker<Self>>) -> Option<gpui::AnyElement> {
         // TODO: Implement footer rendering if needed
-        None
+        Some(
+            div()
+                .text_ui_sm(cx)
+                .child("Temporary location for repo selector")
+                .into_any_element(),
+        )
     }
 }
