@@ -179,8 +179,7 @@ impl GitState {
             .commit_message
             .read(cx)
             .chars()
-            .find(|c| !c.is_ascii_whitespace())
-            .is_some()
+            .any(|c| !c.is_ascii_whitespace())
             && self.have_changes()
             && (commit_all || self.have_staged_changes());
     }
