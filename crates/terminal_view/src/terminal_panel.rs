@@ -26,22 +26,19 @@ use terminal::{
     Terminal,
 };
 use ui::{
-    div, h_flex, IconButton, IconPosition,
-    IconSize, InteractiveElement, Selectable,
-    prelude::*, ButtonCommon, Clickable, ContextMenu, FluentBuilder, PopoverMenu, Toggleable,
-    Tooltip,
+    div, h_flex, prelude::*, ButtonCommon, Clickable, ContextMenu, FluentBuilder, IconButton,
+    IconPosition, IconSize, InteractiveElement, PopoverMenu, Toggleable, Tooltip,
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
     dock::{DockPosition, Panel, PanelEvent, PanelHandle},
     item::SerializableItem,
     move_active_item, move_item, pane,
-    ui::IconName, 
-    ActivatePane, BottomDockLayout, NewTerminal, 
-    SetBottomDockLayout, ActivateNextPane, ActivatePaneInDirection, ActivatePreviousPane, 
-    DraggedTab, ItemId, MoveItemToPane, MoveItemToPaneInDirection, NewTerminal, Pane, PaneGroup,
-    SplitDirection, SplitDown, SplitLeft, SplitRight, SplitUp, SwapPaneInDirection, ToggleZoom,
-    Workspace,
+    ui::IconName,
+    ActivateNextPane, ActivatePane, ActivatePaneInDirection, ActivatePreviousPane,
+    BottomDockLayout, DraggedTab, ItemId, MoveItemToPane, MoveItemToPaneInDirection, NewTerminal,
+    Pane, PaneGroup, SetBottomDockLayout, SplitDirection, SplitDown, SplitLeft, SplitRight,
+    SplitUp, SwapPaneInDirection, ToggleZoom, Workspace,
 };
 
 use anyhow::{anyhow, Context, Result};
@@ -204,7 +201,7 @@ impl TerminalPanel {
                                     .icon_size(IconSize::Small)
                                     .tooltip(|cx| Tooltip::text("Layout Mode", cx)),
                             )
-                            .anchor(AnchorCorner::TopRight)
+                            .anchor(Corner::TopRight)
                             .with_handle(pane.layout_mode_context_menu_handle.clone())
                             .menu({
                                 let workspace = workspace.clone();
