@@ -24,7 +24,12 @@ use std::{str::FromStr, sync::OnceLock};
 use std::{mem, num::NonZeroU32, ops::Range, task::Poll};
 use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
-use util::{assert_set_eq, paths::PathMatcher, test::temp_tree, TryFutureExt as _};
+use util::{
+    assert_set_eq,
+    paths::{replace_path_separator, PathMatcher},
+    test::temp_tree,
+    TryFutureExt as _,
+};
 
 #[gpui::test]
 async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {
@@ -3265,7 +3270,10 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
         "d",
         "d/file3",
         "d/file4",
-    ];
+    ]
+    .into_iter()
+    .map(replace_path_separator)
+    .collect::<Vec<_>>();
 
     cx.update(|app| {
         assert_eq!(

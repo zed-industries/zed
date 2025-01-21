@@ -356,6 +356,8 @@ impl EditorElement {
         register_action(view, cx, Editor::unfold_all);
         register_action(view, cx, Editor::unfold_at);
         register_action(view, cx, Editor::fold_selected_ranges);
+        register_action(view, cx, Editor::set_mark);
+        register_action(view, cx, Editor::exchange_mark);
         register_action(view, cx, Editor::show_completions);
         register_action(view, cx, Editor::toggle_code_actions);
         register_action(view, cx, Editor::open_excerpts);
@@ -3328,7 +3330,7 @@ impl EditorElement {
                     .px_0p5()
                     .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
                     .text_size(TextSize::XSmall.rems(cx))
-                    .text_color(cx.theme().colors().text.opacity(0.8))
+                    .text_color(cx.theme().colors().text)
                     .child("tab");
 
                 let icon_container = div().mt(px(2.5)); // For optical alignment
@@ -3338,9 +3340,9 @@ impl EditorElement {
                     .py_0p5()
                     .px_1()
                     .gap_1()
-                    .bg(cx.theme().colors().editor_subheader_background)
+                    .bg(cx.theme().colors().text_accent.opacity(0.15))
                     .border_1()
-                    .border_color(cx.theme().colors().text_accent.opacity(0.2))
+                    .border_color(cx.theme().colors().text_accent.opacity(0.8))
                     .rounded_md()
                     .shadow_sm();
 
@@ -3422,7 +3424,9 @@ impl EditorElement {
                     return None;
                 }
 
-                if all_edits_insertions_or_deletions(edits, &editor_snapshot.buffer_snapshot) {
+                if !hard_to_spot_single_edit(&edits, &editor_snapshot.buffer_snapshot)
+                    && all_edits_insertions_or_deletions(edits, &editor_snapshot.buffer_snapshot)
+                {
                     return None;
                 }
 
@@ -5196,6 +5200,26 @@ fn header_jump_data(
         anchor: jump_anchor,
         position: language::ToPoint::to_point(&jump_anchor, buffer),
         line_offset_from_top,
+    }
+}
+
+/// Returns true if there's a single edit, that's either a single character
+/// insertion or a single line deletion.
+fn hard_to_spot_single_edit(
+    edits: &[(Range<Anchor>, String)],
+    snapshot: &MultiBufferSnapshot,
+) -> bool {
+    if let [(range, new_text)] = edits {
+        match new_text.len() {
+            0 => {
+                let range = range.to_point(&snapshot);
+                range.start.row == range.end.row
+            }
+            1 => true,
+            _ => false,
+        }
+    } else {
+        false
     }
 }
 

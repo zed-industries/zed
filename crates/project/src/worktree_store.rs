@@ -27,7 +27,7 @@ use text::ReplicaId;
 use util::{paths::SanitizedPath, ResultExt};
 use worktree::{Entry, ProjectEntryId, Worktree, WorktreeId, WorktreeSettings};
 
-use crate::{search::SearchQuery, LspStore, ProjectPath};
+use crate::{search::SearchQuery, ProjectPath};
 
 struct MatchingEntry {
     worktree_path: Arc<Path>,
@@ -1016,59 +1016,6 @@ impl WorktreeStore {
                 .ok_or_else(|| anyhow!("worktree not found"))
         })??;
         Worktree::handle_create_entry(worktree, envelope.payload, cx).await
-    }
-
-    pub async fn handle_rename_project_entry(
-        this: Model<super::Project>,
-        envelope: TypedEnvelope<proto::RenameProjectEntry>,
-        mut cx: AsyncAppContext,
-    ) -> Result<proto::ProjectEntryResponse> {
-        let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
-        let (worktree_id, worktree, old_path, is_dir) = this
-            .update(&mut cx, |this, cx| {
-                this.worktree_store
-                    .read(cx)
-                    .worktree_and_entry_for_id(entry_id, cx)
-                    .map(|(worktree, entry)| {
-                        (
-                            worktree.read(cx).id(),
-                            worktree,
-                            entry.path.clone(),
-                            entry.is_dir(),
-                        )
-                    })
-            })?
-            .ok_or_else(|| anyhow!("worktree not found"))?;
-        let (old_abs_path, new_abs_path) = {
-            let root_path = worktree.update(&mut cx, |this, _| this.abs_path())?;
-            (
-                root_path.join(&old_path),
-                root_path.join(&envelope.payload.new_path),
-            )
-        };
-        let lsp_store = this
-            .update(&mut cx, |this, _| this.lsp_store())?
-            .downgrade();
-        LspStore::will_rename_entry(
-            lsp_store,
-            worktree_id,
-            &old_abs_path,
-            &new_abs_path,
-            is_dir,
-            cx.clone(),
-        )
-        .await;
-        let response = Worktree::handle_rename_entry(worktree, envelope.payload, cx.clone()).await;
-        this.update(&mut cx, |this, cx| {
-            this.lsp_store().read(cx).did_rename_entry(
-                worktree_id,
-                &old_abs_path,
-                &new_abs_path,
-                is_dir,
-            );
-        })
-        .ok();
-        response
     }
 
     pub async fn handle_copy_project_entry(

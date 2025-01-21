@@ -16,7 +16,7 @@ use crate::{
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use client::{proto, TypedEnvelope};
-use collections::{btree_map, BTreeMap, HashMap, HashSet};
+use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
 use futures::{
     future::{join_all, Shared},
     select,
@@ -172,7 +172,6 @@ impl LocalLspStore {
         worktree_handle: &Model<Worktree>,
         delegate: Arc<LocalLspAdapterDelegate>,
         adapter: Arc<CachedLspAdapter>,
-        language: LanguageName,
         cx: &mut ModelContext<LspStore>,
     ) {
         let worktree = worktree_handle.read(cx);
@@ -243,7 +242,6 @@ impl LocalLspStore {
         let state = LanguageServerState::Starting({
             let server_name = adapter.name.0.clone();
             let delegate = delegate as Arc<dyn LspAdapterDelegate>;
-            let language = language.clone();
             let key = key.clone();
             let adapter = adapter.clone();
 
@@ -324,7 +322,6 @@ impl LocalLspStore {
                     Ok(server) => {
                         this.update(&mut cx, |this, mut cx| {
                             this.insert_newly_running_language_server(
-                                language,
                                 adapter,
                                 server.clone(),
                                 server_id,
@@ -416,7 +413,7 @@ impl LocalLspStore {
                 self.fs.clone(),
                 cx,
             );
-            self.start_language_server(worktree, delegate, adapter.clone(), language.clone(), cx);
+            self.start_language_server(worktree, delegate, adapter.clone(), cx);
         }
 
         // After starting all the language servers, reorder them to reflect the desired order
@@ -2872,6 +2869,7 @@ impl LspStore {
         client.add_model_request_handler(Self::handle_on_type_formatting);
         client.add_model_request_handler(Self::handle_apply_additional_edits_for_completion);
         client.add_model_request_handler(Self::handle_register_buffer_with_language_servers);
+        client.add_model_request_handler(Self::handle_rename_project_entry);
         client.add_model_request_handler(Self::handle_lsp_command::<GetCodeActions>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetCompletions>);
         client.add_model_request_handler(Self::handle_lsp_command::<GetHover>);
@@ -4359,7 +4357,7 @@ impl LspStore {
 
         // NB: Zed does not have `details` inside the completion resolve capabilities, but certain language servers violate the spec and do not return `details` immediately, e.g. https://github.com/yioneko/vtsls/issues/213
         // So we have to update the label here anyway...
-        let new_label = match snapshot.language() {
+        let mut new_label = match snapshot.language() {
             Some(language) => {
                 adapter
                     .labels_for_completions(&[completion_item.clone()], language)
@@ -4375,6 +4373,7 @@ impl LspStore {
                 completion_item.filter_text.as_deref(),
             )
         });
+        ensure_uniform_list_compatible_label(&mut new_label);
 
         let mut completions = completions.borrow_mut();
         let completion = &mut completions[completion_index];
@@ -4796,20 +4795,13 @@ impl LspStore {
                     .into_iter()
                     .filter_map(|symbol| Self::deserialize_symbol(symbol).log_err())
                     .collect::<Vec<_>>();
-                populate_labels_for_symbols(
-                    core_symbols,
-                    &language_registry,
-                    None,
-                    None,
-                    &mut symbols,
-                )
-                .await;
+                populate_labels_for_symbols(core_symbols, &language_registry, None, &mut symbols)
+                    .await;
                 Ok(symbols)
             })
         } else if let Some(local) = self.as_local() {
             struct WorkspaceSymbolsResult {
                 lsp_adapter: Arc<CachedLspAdapter>,
-                language: LanguageName,
                 worktree: WeakModel<Worktree>,
                 worktree_abs_path: Arc<Path>,
                 lsp_symbols: Vec<(String, SymbolKind, lsp::Location)>,
@@ -4830,13 +4822,10 @@ impl LspStore {
                 }
                 let worktree_abs_path = worktree.abs_path().clone();
 
-                let (lsp_adapter, language, server) = match local.language_servers.get(server_id) {
+                let (lsp_adapter, server) = match local.language_servers.get(server_id) {
                     Some(LanguageServerState::Running {
-                        adapter,
-                        language,
-                        server,
-                        ..
-                    }) => (adapter.clone(), language.clone(), server),
+                        adapter, server, ..
+                    }) => (adapter.clone(), server),
 
                     _ => continue,
                 };
@@ -4873,7 +4862,7 @@ impl LspStore {
 
                                 WorkspaceSymbolsResult {
                                     lsp_adapter,
-                                    language,
+
                                     worktree: worktree_handle.downgrade(),
                                     worktree_abs_path,
                                     lsp_symbols,
@@ -4934,7 +4923,6 @@ impl LspStore {
                     populate_labels_for_symbols(
                         core_symbols,
                         &language_registry,
-                        Some(result.language),
                         Some(result.lsp_adapter),
                         &mut symbols,
                     )
@@ -5926,6 +5914,52 @@ impl LspStore {
             Ok(())
         })??;
         Ok(proto::Ack {})
+    }
+
+    async fn handle_rename_project_entry(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::RenameProjectEntry>,
+        mut cx: AsyncAppContext,
+    ) -> Result<proto::ProjectEntryResponse> {
+        let entry_id = ProjectEntryId::from_proto(envelope.payload.entry_id);
+        let (worktree_id, worktree, old_path, is_dir) = this
+            .update(&mut cx, |this, cx| {
+                this.worktree_store
+                    .read(cx)
+                    .worktree_and_entry_for_id(entry_id, cx)
+                    .map(|(worktree, entry)| {
+                        (
+                            worktree.read(cx).id(),
+                            worktree,
+                            entry.path.clone(),
+                            entry.is_dir(),
+                        )
+                    })
+            })?
+            .ok_or_else(|| anyhow!("worktree not found"))?;
+        let (old_abs_path, new_abs_path) = {
+            let root_path = worktree.update(&mut cx, |this, _| this.abs_path())?;
+            (
+                root_path.join(&old_path),
+                root_path.join(&envelope.payload.new_path),
+            )
+        };
+
+        Self::will_rename_entry(
+            this.downgrade(),
+            worktree_id,
+            &old_abs_path,
+            &new_abs_path,
+            is_dir,
+            cx.clone(),
+        )
+        .await;
+        let response = Worktree::handle_rename_entry(worktree, envelope.payload, cx.clone()).await;
+        this.update(&mut cx, |this, _| {
+            this.did_rename_entry(worktree_id, &old_abs_path, &new_abs_path, is_dir);
+        })
+        .ok();
+        response
     }
 
     async fn handle_update_diagnostic_summary(
@@ -7420,7 +7454,6 @@ impl LspStore {
 
     fn insert_newly_running_language_server(
         &mut self,
-        language: LanguageName,
         adapter: Arc<CachedLspAdapter>,
         language_server: Arc<LanguageServer>,
         server_id: LanguageServerId,
@@ -7447,7 +7480,6 @@ impl LspStore {
             server_id,
             LanguageServerState::Running {
                 adapter: adapter.clone(),
-                language: language.clone(),
                 server: language_server.clone(),
                 simulate_disk_based_diagnostics_completion: None,
             },
@@ -7983,15 +8015,18 @@ async fn populate_labels_for_completions(
             None
         };
 
+        let mut label = label.unwrap_or_else(|| {
+            CodeLabel::plain(
+                lsp_completion.label.clone(),
+                lsp_completion.filter_text.as_deref(),
+            )
+        });
+        ensure_uniform_list_compatible_label(&mut label);
+
         completions.push(Completion {
             old_range: completion.old_range,
             new_text: completion.new_text,
-            label: label.unwrap_or_else(|| {
-                CodeLabel::plain(
-                    lsp_completion.label.clone(),
-                    lsp_completion.filter_text.as_deref(),
-                )
-            }),
+            label,
             server_id: completion.server_id,
             documentation,
             lsp_completion,
@@ -8251,7 +8286,6 @@ pub enum LanguageServerState {
     Starting(Task<Option<Arc<LanguageServer>>>),
 
     Running {
-        language: LanguageName,
         adapter: Arc<CachedLspAdapter>,
         server: Arc<LanguageServer>,
         simulate_disk_based_diagnostics_completion: Option<Task<()>>,
@@ -8264,10 +8298,9 @@ impl std::fmt::Debug for LanguageServerState {
             LanguageServerState::Starting(_) => {
                 f.debug_struct("LanguageServerState::Starting").finish()
             }
-            LanguageServerState::Running { language, .. } => f
-                .debug_struct("LanguageServerState::Running")
-                .field("language", &language)
-                .finish(),
+            LanguageServerState::Running { .. } => {
+                f.debug_struct("LanguageServerState::Running").finish()
+            }
         }
     }
 }
@@ -8607,27 +8640,21 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
 async fn populate_labels_for_symbols(
     symbols: Vec<CoreSymbol>,
     language_registry: &Arc<LanguageRegistry>,
-    default_language: Option<LanguageName>,
     lsp_adapter: Option<Arc<CachedLspAdapter>>,
     output: &mut Vec<Symbol>,
 ) {
     #[allow(clippy::mutable_key_type)]
     let mut symbols_by_language = HashMap::<Option<Arc<Language>>, Vec<CoreSymbol>>::default();
 
-    let mut unknown_path = None;
+    let mut unknown_paths = BTreeSet::new();
     for symbol in symbols {
         let language = language_registry
             .language_for_file_path(&symbol.path.path)
             .await
             .ok()
             .or_else(|| {
-                unknown_path.get_or_insert(symbol.path.path.clone());
-                default_language.as_ref().and_then(|name| {
-                    language_registry
-                        .language_for_name(&name.0)
-                        .now_or_never()?
-                        .ok()
-                })
+                unknown_paths.insert(symbol.path.path.clone());
+                None
             });
         symbols_by_language
             .entry(language)
@@ -8635,7 +8662,7 @@ async fn populate_labels_for_symbols(
             .push(symbol);
     }
 
-    if let Some(unknown_path) = unknown_path {
+    for unknown_path in unknown_paths {
         log::info!(
             "no language found for symbol path {}",
             unknown_path.display()
@@ -8708,6 +8735,70 @@ fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
             }
         },
     }
+}
+
+/// Completion items are displayed in a `UniformList`.
+/// Usually, those items are single-line strings, but in LSP responses,
+/// completion items `label`, `detail` and `label_details.description` may contain newlines or long spaces.
+/// Many language plugins construct these items by joining these parts together, and we may fall back to `CodeLabel::plain` that uses `label`.
+/// All that may lead to a newline being inserted into resulting `CodeLabel.text`, which will force `UniformList` to bloat each entry to occupy more space,
+/// breaking the completions menu presentation.
+///
+/// Sanitize the text to ensure there are no newlines, or, if there are some, remove them and also remove long space sequences if there were newlines.
+fn ensure_uniform_list_compatible_label(label: &mut CodeLabel) {
+    let mut new_text = String::with_capacity(label.text.len());
+    let mut offset_map = vec![0; label.text.len() + 1];
+    let mut last_char_was_space = false;
+    let mut new_idx = 0;
+    let mut chars = label.text.char_indices().fuse();
+    let mut newlines_removed = false;
+
+    while let Some((idx, c)) = chars.next() {
+        offset_map[idx] = new_idx;
+
+        match c {
+            '\n' if last_char_was_space => {
+                newlines_removed = true;
+            }
+            '\t' | ' ' if last_char_was_space => {}
+            '\n' if !last_char_was_space => {
+                new_text.push(' ');
+                new_idx += 1;
+                last_char_was_space = true;
+                newlines_removed = true;
+            }
+            ' ' | '\t' => {
+                new_text.push(' ');
+                new_idx += 1;
+                last_char_was_space = true;
+            }
+            _ => {
+                new_text.push(c);
+                new_idx += 1;
+                last_char_was_space = false;
+            }
+        }
+    }
+    offset_map[label.text.len()] = new_idx;
+
+    // Only modify the label if newlines were removed.
+    if !newlines_removed {
+        return;
+    }
+
+    for (range, _) in &mut label.runs {
+        range.start = offset_map[range.start];
+        range.end = offset_map[range.end];
+    }
+
+    if label.filter_range == (0..label.text.len()) {
+        label.filter_range = 0..new_text.len();
+    } else {
+        label.filter_range.start = offset_map[label.filter_range.start];
+        label.filter_range.end = offset_map[label.filter_range.end];
+    }
+
+    label.text = new_text;
 }
 
 #[cfg(test)]
