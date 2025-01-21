@@ -3,7 +3,6 @@
 pub mod assistant_panel;
 mod context_editor;
 mod context_history;
-pub mod context_store;
 mod inline_assistant;
 mod slash_command;
 pub(crate) mod slash_command_picker;
@@ -32,7 +31,6 @@ use settings::{Settings, SettingsStore};
 use util::ResultExt;
 
 pub use crate::assistant_panel::{AssistantPanel, AssistantPanelEvent};
-pub use crate::context_store::*;
 pub(crate) use crate::inline_assistant::*;
 use crate::slash_command_settings::SlashCommandSettings;
 
@@ -152,7 +150,7 @@ pub fn init(
     })
     .detach();
 
-    context_store::init(&client.clone().into());
+    assistant_context_editor::init(client.clone(), cx);
     prompt_library::init(cx);
     init_language_model_settings(cx);
     assistant_slash_command::init(cx);

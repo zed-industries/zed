@@ -1,8 +1,8 @@
-use anyhow::{anyhow, Context as _, Result};
-use assistant_context_editor::{
+use crate::{
     Context, ContextEvent, ContextId, ContextOperation, ContextVersion, SavedContext,
     SavedContextMetadata,
 };
+use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{SlashCommandId, SlashCommandWorkingSet};
 use assistant_tool::{ToolId, ToolWorkingSet};
 use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
@@ -33,7 +33,7 @@ use std::{
 };
 use util::{ResultExt, TryFutureExt};
 
-pub fn init(client: &AnyProtoClient) {
+pub(crate) fn init(client: &AnyProtoClient) {
     client.add_model_message_handler(ContextStore::handle_advertise_contexts);
     client.add_model_request_handler(ContextStore::handle_open_context);
     client.add_model_request_handler(ContextStore::handle_create_context);
@@ -497,11 +497,7 @@ impl ContextStore {
         })
     }
 
-    pub(super) fn loaded_context_for_id(
-        &self,
-        id: &ContextId,
-        cx: &AppContext,
-    ) -> Option<Model<Context>> {
+    pub fn loaded_context_for_id(&self, id: &ContextId, cx: &AppContext) -> Option<Model<Context>> {
         self.contexts.iter().find_map(|context| {
             let context = context.upgrade()?;
             if context.read(cx).id() == id {
