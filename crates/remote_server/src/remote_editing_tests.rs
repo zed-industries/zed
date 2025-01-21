@@ -1050,7 +1050,7 @@ async fn test_open_server_settings(cx: &mut TestAppContext, server_cx: &mut Test
 async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        add_root_for_windows("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -1067,7 +1067,7 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
 
     let (worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(add_root_for_windows("/code/project1"), true, cx)
         })
         .await
         .unwrap();
@@ -1097,7 +1097,9 @@ async fn test_reconnect(cx: &mut TestAppContext, server_cx: &mut TestAppContext)
         .unwrap();
 
     assert_eq!(
-        fs.load("/code/project1/src/lib.rs".as_ref()).await.unwrap(),
+        fs.load(add_root_for_windows("/code/project1/src/lib.rs").as_ref())
+            .await
+            .unwrap(),
         "fn one() -> usize { 100 }"
     );
 }
