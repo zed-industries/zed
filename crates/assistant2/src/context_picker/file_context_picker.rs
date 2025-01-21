@@ -283,21 +283,19 @@ impl PickerDelegate for FileContextPickerDelegate {
 
                 let buffer = editor.buffer().read(cx).snapshot(cx);
                 let mut rows_to_fold = BTreeSet::new();
-                let crease_iter =
-                    start_anchors
-                        .into_iter()
-                        .zip(end_anchors.into_iter())
-                        .map(|(start, end)| {
-                            dbg!(&start, &end);
-                            rows_to_fold.insert(MultiBufferRow(start.to_point(&buffer).row));
+                let crease_iter = start_anchors
+                    .into_iter()
+                    .zip(end_anchors)
+                    .map(|(start, end)| {
+                        rows_to_fold.insert(MultiBufferRow(start.to_point(&buffer).row));
 
-                            Crease::inline(
-                                start..end,
-                                placeholder.clone(),
-                                fold_toggle("tool-use"),
-                                render_trailer,
-                            )
-                        });
+                        Crease::inline(
+                            start..end,
+                            placeholder.clone(),
+                            fold_toggle("tool-use"),
+                            render_trailer,
+                        )
+                    });
 
                 editor.insert_creases(crease_iter, cx);
 

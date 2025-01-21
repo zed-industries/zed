@@ -103,7 +103,6 @@ pub trait SlashCommand: 'static + Send + Sync {
     ) -> Task<SlashCommandResult>;
 }
 
-
 #[derive(Debug, PartialEq)]
 pub enum SlashCommandContent {
     Text {
