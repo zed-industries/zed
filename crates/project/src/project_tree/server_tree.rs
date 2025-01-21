@@ -282,7 +282,10 @@ impl LanguageServerTree {
             WorktreeId,
             &mut AppContext,
         ) -> Option<Arc<dyn LspAdapterDelegate>>,
-        spawn_language_server: &mut dyn FnMut(LaunchDisposition) -> LanguageServerId,
+        spawn_language_server: &mut dyn FnMut(
+            LaunchDisposition,
+            &mut AppContext,
+        ) -> LanguageServerId,
         on_language_server_removed: &mut dyn FnMut(LanguageServerId),
         cx: &mut AppContext,
     ) {
@@ -356,15 +359,17 @@ impl LanguageServerTree {
                                 .roots
                                 .get(&disposition.path.path)
                                 .and_then(|roots| roots.get(disposition.server_name))
-                                .filter(|_| {
-                                    old_attach_kinds
-                                        .get(disposition.server_name)
-                                        .map_or(false, |old_attach| {
+                                .filter(|(old_node, _)| {
+                                    old_attach_kinds.get(disposition.server_name).map_or(
+                                        false,
+                                        |old_attach| {
                                             disposition.attach == *old_attach
-                                        })
+                                                && disposition.settings == old_node.settings
+                                        },
+                                    )
                                 })
                             else {
-                                return Ok(spawn_language_server(disposition));
+                                return Ok(spawn_language_server(disposition, cx));
                             };
                             if let Some(id) = existing_node.id.get().copied() {
                                 // If we have a node with ID assigned (and it's parameters match `disposition`), reuse the id.

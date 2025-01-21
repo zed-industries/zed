@@ -3657,22 +3657,45 @@ impl LspStore {
             return;
         };
         let mut to_stop = Vec::new();
-        if let Some(local) = self.as_local() {
-            local.lsp_tree.update(cx, |this, cx| {
-                let mut get_adapter =
-                    |worktree_id, cx: &mut AppContext| -> Option<Arc<dyn LspAdapterDelegate>> {
-                        let worktree = local
-                            .worktree_store
-                            .read(cx)
-                            .worktree_for_id(worktree_id, cx)?;
-                        Some(LocalLspAdapterDelegate::from_local_lsp(
-                            local, &worktree, cx,
+        if let Some(local) = self.as_local_mut() {
+            local.lsp_tree.clone().update(cx, |this, cx| {
+                let mut get_adapter = {
+                    let languages = local.languages.clone();
+                    let environment = local.environment.clone();
+                    let weak = local.weak.clone();
+                    let worktree_store = local.worktree_store.clone();
+                    let http_client = local.http_client.clone();
+                    let fs = local.fs.clone();
+                    move |worktree_id, cx: &mut AppContext| -> Option<Arc<dyn LspAdapterDelegate>> {
+                        let worktree = worktree_store.read(cx).worktree_for_id(worktree_id, cx)?;
+                        Some(LocalLspAdapterDelegate::new(
+                            languages.clone(),
+                            &environment,
+                            weak.clone(),
+                            &worktree,
+                            http_client.clone(),
+                            fs.clone(),
+                            cx,
                         ))
-                    };
+                    }
+                };
 
                 this.on_settings_changed(
                     &mut get_adapter,
-                    &mut |disposition| todo!(),
+                    &mut |disposition, cx| {
+                        let worktree = local
+                            .worktree_store
+                            .read(cx)
+                            .worktree_for_id(disposition.path.worktree_id, cx)
+                            .expect("Worktree ID to be valid");
+                        let delegate =
+                            LocalLspAdapterDelegate::from_local_lsp(local, &worktree, cx);
+                        let adapter = local
+                            .languages
+                            .adapter_for_name(disposition.server_name)
+                            .expect("Adapter to be available");
+                        local.start_language_server(&worktree, delegate, adapter, cx)
+                    },
                     &mut |id| to_stop.push(id),
                     cx,
                 );
