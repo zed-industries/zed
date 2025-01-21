@@ -82,7 +82,7 @@ async fn test_open_with_last_tab_selected(cx: &mut gpui::TestAppContext) {
         .fs
         .as_fake()
         .insert_tree(
-            "/root",
+            add_root_for_windows("/root"),
             json!({
                 "1.txt": "First file",
                 "2.txt": "Second file",
@@ -91,7 +91,12 @@ async fn test_open_with_last_tab_selected(cx: &mut gpui::TestAppContext) {
         )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+    let project = Project::test(
+        app_state.fs.clone(),
+        [add_root_for_windows("/root").as_ref()],
+        cx,
+    )
+    .await;
     let (workspace, cx) =
         cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
