@@ -2596,7 +2596,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                "/root",
+                add_root_for_windows("/root"),
                 json!({
                     ".gitignore": "ignored_dir\n",
                     ".git": {
@@ -2621,7 +2621,12 @@ mod tests {
             )
             .await;
 
-        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let project = Project::test(
+            app_state.fs.clone(),
+            [add_root_for_windows("/root").as_ref()],
+            cx,
+        )
+        .await;
         project.update(cx, |project, _cx| {
             project.languages().add(markdown_language())
         });
@@ -2630,9 +2635,9 @@ mod tests {
 
         let initial_entries = cx.read(|cx| workspace.file_project_paths(cx));
         let paths_to_open = [
-            Path::new("/root/excluded_dir/file").to_path_buf(),
-            Path::new("/root/.git/HEAD").to_path_buf(),
-            Path::new("/root/excluded_dir/ignored_subdir").to_path_buf(),
+            PathBuf::from(add_root_for_windows("/root/excluded_dir/file")),
+            PathBuf::from(add_root_for_windows("/root/.git/HEAD")),
+            PathBuf::from(add_root_for_windows("/root/excluded_dir/ignored_subdir")),
         ];
         let (opened_workspace, new_items) = cx
             .update(|cx| {
