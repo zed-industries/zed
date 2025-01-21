@@ -3273,6 +3273,7 @@ impl ProjectPanel {
             active_selection: selection,
             marked_selections: selections,
         };
+
         let bg_color = if is_marked || is_active {
             item_colors.marked_active
         } else {
