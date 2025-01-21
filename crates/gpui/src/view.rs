@@ -197,10 +197,12 @@ impl Element for AnyView {
 
                     let refreshing = mem::replace(&mut window.refreshing, true);
                     let prepaint_start = window.prepaint_index();
-                    let (mut element, accessed_entities) =
-                        cx.detect_accessed_entities(|cx| (self.render)(self, window, cx));
-                    element.layout_as_root(bounds.size.into(), window, cx);
-                    element.prepaint_at(bounds.origin, window, cx);
+                    let (mut element, accessed_entities) = cx.detect_accessed_entities(|cx| {
+                        let mut element = (self.render)(self, window, cx);
+                        element.layout_as_root(bounds.size.into(), window, cx);
+                        element.prepaint_at(bounds.origin, window, cx);
+                        element
+                    });
                     let prepaint_end = window.prepaint_index();
                     window.refreshing = refreshing;
 
