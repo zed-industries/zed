@@ -460,11 +460,28 @@ pub fn compare_paths(
 }
 
 #[cfg(any(test, feature = "test-support"))]
+pub fn add_root_for_windows(path: &str) -> String {
+    #[cfg(target_os = "windows")]
+    {
+        assert!(path.starts_with("/"));
+        format!("C:{}", path)
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        path.to_string()
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
 pub fn replace_path_separator(path: &str) -> String {
     #[cfg(target_os = "windows")]
-    return path.replace("/", std::path::MAIN_SEPARATOR_STR);
+    {
+        path.replace("/", "\\")
+    }
     #[cfg(not(target_os = "windows"))]
-    return path.to_string();
+    {
+        path.to_string()
+    }
 }
 
 #[cfg(test)]
