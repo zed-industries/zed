@@ -1,4 +1,4 @@
-use crate::assistant_panel::ContextEditor;
+use crate::context_editor::ContextEditor;
 use anyhow::Result;
 use assistant_slash_command::AfterCompletion;
 pub use assistant_slash_command::SlashCommand;
