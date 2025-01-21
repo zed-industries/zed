@@ -269,6 +269,9 @@ jobs:
         # Windows can't run shell scripts, so we need to use `cargo xtask`.
         run: cargo xtask clippy
 
+      - name: Run tests
+        uses: ./.github/actions/run_tests_windows
+
       - name: Build Zed
         working-directory: ${{ env.ZED_WORKSPACE }}
         run: cargo build

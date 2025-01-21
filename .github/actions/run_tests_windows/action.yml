@@ -1,0 +1,19 @@
+name: "Run tests on Windows"
+description: "Runs the tests on Windows"
+
+runs:
+  using: "composite"
+  steps:
+    - name: Install Rust
+      run: cargo install cargo-nextest --locked
+
+    - name: Install Node
+      uses: actions/setup-node@39370e3970a6d050c480ffad4ff0ed4d3fdee5af # v4
+      with:
+        node-version: "18"
+
+    - name: Limit target directory size
+      run: ./script/clear-target-dir-if-larger-than.ps1 100
+
+    - name: Run tests
+      run: cargo nextest run --workspace --no-fail-fast
