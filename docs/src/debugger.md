@@ -17,8 +17,8 @@ To debug a program using Zed you must first create a debug configuration within 
     "request": "launch",
     // cwd: defaults to the current working directory of your project
     // The current working directory to start the debugger from
-    // accepts zed task variables e.g. $ZED_WORKPLACE_ROOT
-    "cwd": "$ZED_WORKPLACE_ROOT",
+    // accepts zed task variables e.g. $ZED_WORKTREE_ROOT
+    "cwd": "$ZED_WORKTREE_ROOT",
     // program: The program to debug
     // accepts zed task variables
     "program": "path_to_program",
