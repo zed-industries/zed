@@ -317,6 +317,11 @@ impl StackFrameList {
             .supports_restart_frame
             .unwrap_or_default();
 
+        let origin = stack_frame
+            .source
+            .to_owned()
+            .and_then(|source| source.origin);
+
         h_flex()
             .rounded_md()
             .justify_between()
@@ -325,7 +330,18 @@ impl StackFrameList {
             .id(("stack-frame", stack_frame.id))
             .tooltip({
                 let formatted_path = formatted_path.clone();
-                move |cx| Tooltip::text(formatted_path.clone(), cx)
+                move |cx| {
+                    cx.new_view(|_| {
+                        let mut tooltip = Tooltip::new(formatted_path.clone());
+
+                        if let Some(origin) = &origin {
+                            tooltip = tooltip.meta(origin);
+                        }
+
+                        tooltip
+                    })
+                    .into()
+                }
             })
             .p_1()
             .when(is_selected_frame, |this| {
