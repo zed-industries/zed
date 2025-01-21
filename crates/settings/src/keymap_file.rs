@@ -119,9 +119,6 @@ pub enum KeymapFileLoadResult {
         key_bindings: Vec<KeyBinding>,
         error_message: MarkdownString,
     },
-    AllFailedToLoad {
-        error_message: MarkdownString,
-    },
     JsonParseFailure {
         error: anyhow::Error,
     },
@@ -135,8 +132,7 @@ impl KeymapFile {
     pub fn load_asset(asset_path: &str, cx: &AppContext) -> anyhow::Result<Vec<KeyBinding>> {
         match Self::load(asset_str::<SettingsAssets>(asset_path).as_ref(), cx) {
             KeymapFileLoadResult::Success { key_bindings, .. } => Ok(key_bindings),
-            KeymapFileLoadResult::SomeFailedToLoad { error_message, .. }
-            | KeymapFileLoadResult::AllFailedToLoad { error_message } => Err(anyhow!(
+            KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => Err(anyhow!(
                 "Error loading built-in keymap \"{asset_path}\": {error_message}"
             )),
             KeymapFileLoadResult::JsonParseFailure { error } => Err(anyhow!(
@@ -151,11 +147,14 @@ impl KeymapFile {
         cx: &AppContext,
     ) -> anyhow::Result<Vec<KeyBinding>> {
         match Self::load(asset_str::<SettingsAssets>(asset_path).as_ref(), cx) {
-            KeymapFileLoadResult::Success { key_bindings, .. }
-            | KeymapFileLoadResult::SomeFailedToLoad { key_bindings, .. } => Ok(key_bindings),
-            KeymapFileLoadResult::AllFailedToLoad { error_message } => Err(anyhow!(
+            KeymapFileLoadResult::SomeFailedToLoad {
+                key_bindings,
+                error_message,
+            } if key_bindings.is_empty() => Err(anyhow!(
                 "Error loading built-in keymap \"{asset_path}\": {error_message}"
             )),
+            KeymapFileLoadResult::Success { key_bindings, .. }
+            | KeymapFileLoadResult::SomeFailedToLoad { key_bindings, .. } => Ok(key_bindings),
             KeymapFileLoadResult::JsonParseFailure { error } => Err(anyhow!(
                 "JSON parse error in built-in keymap \"{asset_path}\": {error}"
             )),
@@ -166,8 +165,7 @@ impl KeymapFile {
     pub fn load_panic_on_failure(content: &str, cx: &AppContext) -> Vec<KeyBinding> {
         match Self::load(content, cx) {
             KeymapFileLoadResult::Success { key_bindings } => key_bindings,
-            KeymapFileLoadResult::SomeFailedToLoad { error_message, .. }
-            | KeymapFileLoadResult::AllFailedToLoad { error_message, .. } => {
+            KeymapFileLoadResult::SomeFailedToLoad { error_message, .. } => {
                 panic!("{error_message}");
             }
             KeymapFileLoadResult::JsonParseFailure { error } => {
