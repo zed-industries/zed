@@ -203,7 +203,7 @@ impl LanguageServerTree {
                     .clone()
             });
         }
-        dbg!(&roots);
+
         roots.into_iter().filter_map(move |(adapter, root_path)| {
             let attach = self.attach_kind(&adapter);
             let (settings, new_languages) = adapters.get(&adapter).cloned()?;
@@ -333,26 +333,22 @@ impl LanguageServerTree {
 
                     let mut adapter_with_settings = IndexMap::default();
 
-                    let enabled_languages = languages
-                        .iter()
-                        .filter_map(|language_name| {
-                            self.adapters_for_language(settings_location, language_name, cx)
-                                .into_iter()
-                                .find_map(|(lsp_adapter, lsp_settings)| {
-                                    if &lsp_adapter.0.name() != server_name {
-                                        return None;
-                                    }
-                                    adapter_with_settings
-                                        .entry(lsp_adapter)
-                                        .and_modify(|x: &mut (_, BTreeSet<LanguageName>)| {
-                                            x.1.extend(lsp_settings.1.clone())
-                                        })
-                                        .or_insert(lsp_settings);
+                    for language_name in languages {
+                        self.adapters_for_language(settings_location, language_name, cx)
+                            .into_iter()
+                            .for_each(|(lsp_adapter, lsp_settings)| {
+                                if &lsp_adapter.0.name() != server_name {
+                                    return;
+                                }
+                                adapter_with_settings
+                                    .entry(lsp_adapter)
+                                    .and_modify(|x: &mut (_, BTreeSet<LanguageName>)| {
+                                        x.1.extend(lsp_settings.1.clone())
+                                    })
+                                    .or_insert(lsp_settings);
+                            });
+                    }
 
-                                    Some(language_name.clone())
-                                })
-                        })
-                        .collect::<BTreeSet<_>>();
                     if adapter_with_settings.is_empty() {
                         // Since all languages that have had this server enabled are now disabled, we can remove the server entirely.
                         continue;
@@ -367,7 +363,7 @@ impl LanguageServerTree {
                         delegate.clone(),
                         cx,
                     ) {
-                        let id = new_node.server_id_or_try_init(|disposition| {
+                        new_node.server_id_or_try_init(|disposition| {
                             let Some((existing_node, _)) = servers
                                 .roots
                                 .get(&disposition.path.path)

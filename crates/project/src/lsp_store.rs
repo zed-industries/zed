@@ -152,7 +152,6 @@ pub struct LocalLspStore {
     supplementary_language_servers:
         HashMap<LanguageServerId, (LanguageServerName, Arc<LanguageServer>)>,
     prettier_store: Model<PrettierStore>,
-    current_lsp_settings: HashMap<LanguageServerName, LspSettings>,
     next_diagnostic_group_id: usize,
     diagnostics: HashMap<
         WorktreeId,
@@ -175,21 +174,15 @@ impl LocalLspStore {
         worktree_handle: &Model<Worktree>,
         delegate: Arc<LocalLspAdapterDelegate>,
         adapter: Arc<CachedLspAdapter>,
+        settings: Arc<LspSettings>,
         cx: &mut AppContext,
     ) -> LanguageServerId {
         let worktree = worktree_handle.read(cx);
         let worktree_id = worktree.id();
         let root_path = worktree.abs_path();
         let key = (worktree_id, adapter.name.clone());
-        let project_settings = ProjectSettings::get(
-            Some(SettingsLocation {
-                worktree_id,
-                path: Path::new(""),
-            }),
-            cx,
-        );
-        let lsp = project_settings.lsp.get(&adapter.name);
-        let override_options = lsp.and_then(|s| s.initialization_options.clone());
+
+        let override_options = settings.initialization_options.clone();
 
         let stderr_capture = Arc::new(Mutex::new(Some(String::new())));
 
@@ -1878,7 +1871,7 @@ impl LocalLspStore {
                          server_name,
                          attach,
                          path,
-                         ..
+                         settings,
                      }| match attach {
                         language::Attach::InstancePerRoot => {
                             // todo: handle instance per root proper.
@@ -1898,6 +1891,7 @@ impl LocalLspStore {
                                         .into_iter()
                                         .find(|adapter| &adapter.name() == server_name)
                                         .expect("To find LSP adapter"),
+                                    settings,
                                     cx,
                                 )
                             }
@@ -1929,6 +1923,7 @@ impl LocalLspStore {
                                         .into_iter()
                                         .find(|adapter| &adapter.name() == server_name)
                                         .expect("To find LSP adapter"),
+                                    settings,
                                     cx,
                                 )
                             }
@@ -3001,19 +2996,6 @@ impl LspStore {
         }
     }
 
-    pub fn swap_current_lsp_settings(
-        &mut self,
-        new_settings: HashMap<LanguageServerName, LspSettings>,
-    ) -> Option<HashMap<LanguageServerName, LspSettings>> {
-        match &mut self.mode {
-            LspStoreMode::Local(LocalLspStore {
-                current_lsp_settings,
-                ..
-            }) => Some(mem::replace(current_lsp_settings, new_settings)),
-            LspStoreMode::Remote(_) => None,
-        }
-    }
-
     #[allow(clippy::too_many_arguments)]
     pub fn new_local(
         buffer_store: Model<BufferStore>,
@@ -3056,7 +3038,6 @@ impl LspStore {
                 language_server_watched_paths: Default::default(),
                 language_server_paths_watched_for_rename: Default::default(),
                 language_server_watcher_registrations: Default::default(),
-                current_lsp_settings: ProjectSettings::get_global(cx).lsp.clone(),
                 buffers_being_formatted: Default::default(),
                 buffer_snapshots: Default::default(),
                 prettier_store,
@@ -3650,11 +3631,6 @@ impl LspStore {
             }
         }
 
-        let new_lsp_settings = ProjectSettings::get_global(cx).lsp.clone();
-        let Some(current_lsp_settings) = self.swap_current_lsp_settings(new_lsp_settings.clone())
-        else {
-            return;
-        };
         let mut to_stop = Vec::new();
         if let Some(local) = self.as_local_mut() {
             local.lsp_tree.clone().update(cx, |this, cx| {
@@ -3693,7 +3669,13 @@ impl LspStore {
                             .languages
                             .adapter_for_name(disposition.server_name)
                             .expect("Adapter to be available");
-                        local.start_language_server(&worktree, delegate, adapter, cx)
+                        local.start_language_server(
+                            &worktree,
+                            delegate,
+                            adapter,
+                            disposition.settings,
+                            cx,
+                        )
                     },
                     &mut |id| to_stop.push(id),
                     cx,
@@ -7331,6 +7313,7 @@ impl LspStore {
                                     &worktree_handle,
                                     delegate.clone(),
                                     adapter,
+                                    disposition.settings,
                                     cx,
                                 );
                                 unfilled.insert(new_id);
