@@ -219,7 +219,7 @@ pub struct MultiBufferSnapshot {
 pub enum DiffTransform {
     BufferContent {
         summary: TextSummary,
-        is_inserted_hunk: bool,
+        inserted_hunk_anchor: Option<text::Anchor>,
     },
     DeletedHunk {
         summary: TextSummary,
@@ -2147,7 +2147,7 @@ impl MultiBuffer {
                 match cursor.item() {
                     Some(DiffTransform::DeletedHunk { .. })
                     | Some(DiffTransform::BufferContent {
-                        is_inserted_hunk: true,
+                        inserted_hunk_anchor: Some(_),
                         ..
                     }) => return true,
                     _ => {}
@@ -2503,7 +2503,7 @@ impl MultiBuffer {
         let mut edits = Vec::new();
         let mut output_delta = 0_isize;
         let mut at_transform_boundary = true;
-        let mut end_of_current_insert = ExcerptOffset::new(0);
+        let mut end_of_current_insert = None;
         let mut excerpt_edits = changes.into_iter().peekable();
         while let Some((edit, operation)) = excerpt_edits.next() {
             excerpts.seek_forward(&edit.new.start, Bias::Right, &());
@@ -2568,7 +2568,7 @@ impl MultiBuffer {
                 // to include the lines of the edit.
                 if let Some((
                     DiffTransform::BufferContent {
-                        is_inserted_hunk: true,
+                        inserted_hunk_anchor: Some(inserted_hunk_anchor),
                         ..
                     },
                     excerpt,
@@ -2586,9 +2586,10 @@ impl MultiBuffer {
                             buffer.point_to_offset(edit_buffer_end_point + Point::new(1, 0));
                         let edit_end = excerpt_start
                             + ExcerptOffset::new(edit_buffer_end - excerpt_buffer_start);
-                        end_of_current_insert = edit_end.min(excerpt_end);
+                        end_of_current_insert =
+                            Some((edit_end.min(excerpt_end), *inserted_hunk_anchor));
                     } else {
-                        end_of_current_insert = edit.new.end;
+                        end_of_current_insert = Some((edit.new.end, *inserted_hunk_anchor));
                     }
                 }
             }
@@ -2682,9 +2683,10 @@ impl MultiBuffer {
                                         previous_expanded_summary = *summary_including_newline;
                                     }
                                     Some(DiffTransform::BufferContent {
-                                        is_inserted_hunk, ..
+                                        inserted_hunk_anchor,
+                                        ..
                                     }) => {
-                                        was_previously_expanded = *is_inserted_hunk;
+                                        was_previously_expanded = inserted_hunk_anchor.is_some();
                                     }
                                     None => {}
                                 };
@@ -2759,7 +2761,10 @@ impl MultiBuffer {
                                 }
 
                                 if !hunk_buffer_range.is_empty() {
-                                    end_of_current_insert = hunk_excerpt_end.min(excerpt_end);
+                                    end_of_current_insert = Some((
+                                        hunk_excerpt_end.min(excerpt_end),
+                                        hunk.buffer_range.start,
+                                    ));
                                 }
 
                                 if was_previously_expanded {
@@ -2828,7 +2833,7 @@ impl MultiBuffer {
             new_diff_transforms.push(
                 DiffTransform::BufferContent {
                     summary: Default::default(),
-                    is_inserted_hunk: false,
+                    inserted_hunk_anchor: None,
                 },
                 &(),
             );
@@ -2850,13 +2855,13 @@ impl MultiBuffer {
         subtree: SumTree<DiffTransform>,
     ) {
         if let Some(DiffTransform::BufferContent {
-            is_inserted_hunk,
+            inserted_hunk_anchor,
             summary,
         }) = subtree.first()
         {
             if self.extend_last_buffer_content_transform(
                 new_transforms,
-                *is_inserted_hunk,
+                *inserted_hunk_anchor,
                 *summary,
             ) {
                 let mut cursor = subtree.cursor::<()>(&());
@@ -2875,12 +2880,15 @@ impl MultiBuffer {
         transform: DiffTransform,
     ) {
         if let DiffTransform::BufferContent {
-            is_inserted_hunk,
+            inserted_hunk_anchor,
             summary,
         } = transform
         {
-            if self.extend_last_buffer_content_transform(new_transforms, is_inserted_hunk, summary)
-            {
+            if self.extend_last_buffer_content_transform(
+                new_transforms,
+                inserted_hunk_anchor,
+                summary,
+            ) {
                 return;
             }
         }
@@ -2892,12 +2900,16 @@ impl MultiBuffer {
         old_snapshot: &MultiBufferSnapshot,
         new_transforms: &mut SumTree<DiffTransform>,
         end_offset: ExcerptOffset,
-        end_of_current_inserted_hunk: ExcerptOffset,
+        current_inserted_hunk: Option<(ExcerptOffset, text::Anchor)>,
     ) {
-        for (end_offset, region_is_inserted_hunk) in [
-            (end_offset.min(end_of_current_inserted_hunk), true),
-            (end_offset, false),
-        ] {
+        let inserted_region = current_inserted_hunk.map(|(insertion_end_offset, anchor)| {
+            (end_offset.min(insertion_end_offset), Some(anchor))
+        });
+        let unchanged_region = [(end_offset, None)];
+
+        for (end_offset, inserted_hunk_anchor) in
+            inserted_region.into_iter().chain(unchanged_region)
+        {
             let start_offset = new_transforms.summary().excerpt_len();
             if end_offset <= start_offset {
                 continue;
@@ -2907,13 +2919,13 @@ impl MultiBuffer {
 
             if !self.extend_last_buffer_content_transform(
                 new_transforms,
-                region_is_inserted_hunk,
+                inserted_hunk_anchor,
                 summary_to_add,
             ) {
                 new_transforms.push(
                     DiffTransform::BufferContent {
                         summary: summary_to_add,
-                        is_inserted_hunk: region_is_inserted_hunk,
+                        inserted_hunk_anchor,
                     },
                     &(),
                 )
@@ -2924,7 +2936,7 @@ impl MultiBuffer {
     fn extend_last_buffer_content_transform(
         &self,
         new_transforms: &mut SumTree<DiffTransform>,
-        region_is_inserted_hunk: bool,
+        new_inserted_hunk_anchor: Option<text::Anchor>,
         summary_to_add: TextSummary,
     ) -> bool {
         let mut did_extend = false;
@@ -2932,10 +2944,10 @@ impl MultiBuffer {
             |last_transform| {
                 if let DiffTransform::BufferContent {
                     summary,
-                    is_inserted_hunk,
+                    inserted_hunk_anchor,
                 } = last_transform
                 {
-                    if *is_inserted_hunk == region_is_inserted_hunk {
+                    if *inserted_hunk_anchor == new_inserted_hunk_anchor {
                         *summary += summary_to_add;
                         did_extend = true;
                     }
@@ -5400,17 +5412,17 @@ impl MultiBufferSnapshot {
         for item in self.diff_transforms.iter() {
             if let DiffTransform::BufferContent {
                 summary,
-                is_inserted_hunk,
+                inserted_hunk_anchor,
             } = item
             {
                 if let Some(DiffTransform::BufferContent {
-                    is_inserted_hunk: prev_is_inserted_hunk,
+                    inserted_hunk_anchor: prev_inserted_hunk_anchor,
                     ..
                 }) = prev_transform
                 {
-                    if *is_inserted_hunk == *prev_is_inserted_hunk {
+                    if *inserted_hunk_anchor == *prev_inserted_hunk_anchor {
                         panic!(
-                            "multiple adjacent buffer content transforms with is_inserted_hunk = {is_inserted_hunk}. transforms: {:+?}",
+                            "multiple adjacent buffer content transforms with is_inserted_hunk = {inserted_hunk_anchor:?}. transforms: {:+?}",
                             self.diff_transforms.items(&()));
                     }
                 }
@@ -5586,7 +5598,8 @@ where
                 });
             }
             DiffTransform::BufferContent {
-                is_inserted_hunk, ..
+                inserted_hunk_anchor,
+                ..
             } => {
                 let buffer = &excerpt.buffer;
                 let buffer_context_start = excerpt.range.context.start.summary::<D>(buffer);
@@ -5623,7 +5636,7 @@ where
                     excerpt,
                     has_trailing_newline,
                     is_main_buffer: true,
-                    is_inserted_hunk: *is_inserted_hunk,
+                    is_inserted_hunk: inserted_hunk_anchor.is_some(),
                     buffer_range: buffer_start..buffer_end,
                     range: start..end,
                 })
