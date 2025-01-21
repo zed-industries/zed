@@ -2619,6 +2619,7 @@ impl MultiBuffer {
         snapshot.check_invariants();
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn recompute_diff_transforms_for_edit(
         &self,
         edit: &Edit<TypedOffset<Excerpt>>,
