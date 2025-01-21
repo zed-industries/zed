@@ -111,6 +111,7 @@ impl GitPanel {
     pub fn new(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) -> View<Self> {
         let fs = workspace.app_state().fs.clone();
         let project = workspace.project().clone();
+        let git_state = project.read(cx).git_state().cloned();
         let active_repository = project.read(cx).active_repository(cx);
         let (err_sender, mut err_receiver) = mpsc::channel(1);
         let workspace = cx.view().downgrade();
@@ -197,6 +198,16 @@ impl GitPanel {
                 }
             })
             .detach();
+
+            if let Some(git_state) = git_state {
+                cx.subscribe(&git_state, move |this, git_state, event, cx| match event {
+                    project::git::Event::RepositoriesUpdated => {
+                        this.active_repository = git_state.read(cx).active_repository();
+                        this.schedule_update();
+                    }
+                })
+                .detach();
+            }
 
             let mut git_panel = Self {
                 focus_handle: cx.focus_handle(),

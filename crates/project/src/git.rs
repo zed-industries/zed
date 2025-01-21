@@ -36,6 +36,22 @@ pub struct RepositoryHandle {
     update_sender: mpsc::UnboundedSender<(Message, mpsc::Sender<anyhow::Error>)>,
 }
 
+impl PartialEq<Self> for RepositoryHandle {
+    fn eq(&self, other: &Self) -> bool {
+        self.worktree_id == other.worktree_id
+            && self.repository_entry.work_directory_id()
+                == other.repository_entry.work_directory_id()
+    }
+}
+
+impl Eq for RepositoryHandle {}
+
+impl PartialEq<RepositoryEntry> for RepositoryHandle {
+    fn eq(&self, other: &RepositoryEntry) -> bool {
+        self.repository_entry.work_directory_id() == other.work_directory_id()
+    }
+}
+
 enum Message {
     StageAndCommit(Arc<dyn GitRepository>, Rope, Vec<RepoPath>),
     Commit(Arc<dyn GitRepository>, Rope),
@@ -120,14 +136,11 @@ impl GitState {
                         let Some(local_repo) = local.get_local_repo(repo) else {
                             continue;
                         };
-                        let existing =
-                            self.repositories
-                                .iter()
-                                .enumerate()
-                                .find(|(_, existing_handle)| {
-                                    existing_handle.repository_entry.work_directory_id
-                                        == repo.work_directory_id
-                                });
+                        let existing = self
+                            .repositories
+                            .iter()
+                            .enumerate()
+                            .find(|(_, existing_handle)| existing_handle == &repo);
                         let handle = if let Some((index, handle)) = existing {
                             if self.active_index == Some(index) {
                                 new_active_index = Some(new_repositories.len());
@@ -159,21 +172,18 @@ impl GitState {
                                 update_sender: self.update_sender.clone(),
                             }
                         };
-                        // FIXME extend
                         new_repositories.push(handle);
                     }
                 })
             }
         });
 
-        if dbg!(new_active_index) == None && dbg!(new_repositories.len()) > 0 {
-            self.active_index = Some(0);
+        if new_active_index == None && new_repositories.len() > 0 {
+            new_active_index = Some(0);
         }
 
-        // FIXME emit an event if appropriate for the git UI to listen for
-
-        self.repositories = new_repositories;
-        self.active_index = new_active_index;
+        self.repositories = dbg!(new_repositories);
+        self.active_index = dbg!(new_active_index);
 
         cx.emit(Event::RepositoriesUpdated);
     }
@@ -200,6 +210,24 @@ impl RepositoryHandle {
         .unwrap_or("".into())
     }
 
+    pub fn activate(&self, cx: &mut AppContext) {
+        let Some(git_state) = self.git_state.upgrade() else {
+            return;
+        };
+        git_state.update(cx, |git_state, cx| {
+            let Some((index, _)) = git_state
+                .repositories
+                .iter()
+                .enumerate()
+                .find(|(_, handle)| handle == &self)
+            else {
+                return;
+            };
+            git_state.active_index = Some(index);
+            cx.emit(Event::RepositoriesUpdated);
+        });
+    }
+
     pub fn status(&self) -> impl '_ + Iterator<Item = StatusEntry> {
         self.repository_entry.status()
     }
@@ -208,10 +236,6 @@ impl RepositoryHandle {
         let path = self.repository_entry.unrelativize(path)?;
         Some((self.worktree_id, path).into())
     }
-
-    //pub fn activate(&self) {
-    //    todo!()
-    //}
 
     pub fn commit_message(&self) -> Model<Buffer> {
         self.commit_message.clone()

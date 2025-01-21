@@ -193,8 +193,11 @@ impl PickerDelegate for RepositorySelectorDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
-        // FIXME
-        eprintln!("confirm triggered!");
+        let Some(selected_repo) = self.filtered_repositories.get(self.selected_index) else {
+            return;
+        };
+        selected_repo.activate(cx);
+        // TODO dismiss
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
