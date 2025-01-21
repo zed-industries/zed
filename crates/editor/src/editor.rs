@@ -5650,15 +5650,18 @@ impl Editor {
 
             // If the selection is empty and the cursor is before a closing delimiter, then move
             // the cursor 1 column to the right.
-            let cursor = selection.head();
-            let snapshot = buffer.read(cx);
-            if let Some(next_char) = snapshot.chars_at(cursor).next() {
-                let is_before_closing_delimiter = matches!(next_char, ')' | '}' | ']' | '\'' | '\"');
-                if is_before_closing_delimiter {
-                    selection.start = Point::new(cursor.row, cursor.column + 1);
-                    continue;
+            if cursor.column != snapshot.line_len(MultiBufferRow(cursor.row)) {
+                if let Some(next_char) = snapshot.chars_at(cursor).next() {
+                    let is_before_closing_delimiter =
+                        matches!(next_char, ')' | '}' | ']' | '\'' | '\"' | ';');
+                    if is_before_closing_delimiter {
+                        let old_cursor = selection.end;
+                        let new_cursor = Point::new(old_cursor.row, old_cursor.column + 1);
+                        selection.collapse_to(new_cursor, SelectionGoal::None);
+                        continue;
+                    };
                 };
-            }
+            };
 
             // Otherwise, insert a hard or soft tab.
             let settings = buffer.settings_at(cursor, cx);
