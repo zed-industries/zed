@@ -197,7 +197,7 @@ impl PickerDelegate for RepositorySelectorDelegate {
             return;
         };
         selected_repo.activate(cx);
-        // TODO dismiss
+        self.dismissed(cx);
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {

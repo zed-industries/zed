@@ -100,6 +100,45 @@ pub struct GitPanel {
     err_sender: mpsc::Sender<anyhow::Error>,
 }
 
+fn commit_message_editor(
+    active_repository: Option<&RepositoryHandle>,
+    cx: &mut ViewContext<'_, Editor>,
+) -> Editor {
+    let theme = ThemeSettings::get_global(cx);
+
+    let mut text_style = cx.text_style();
+    let refinement = TextStyleRefinement {
+        font_family: Some(theme.buffer_font.family.clone()),
+        font_features: Some(FontFeatures::disable_ligatures()),
+        font_size: Some(px(12.).into()),
+        color: Some(cx.theme().colors().editor_foreground),
+        background_color: Some(gpui::transparent_black()),
+        ..Default::default()
+    };
+    text_style.refine(&refinement);
+
+    let mut commit_editor = if let Some(active_repository) = active_repository.as_ref() {
+        let buffer =
+            cx.new_model(|cx| MultiBuffer::singleton(active_repository.commit_message(), cx));
+        Editor::new(
+            EditorMode::AutoHeight { max_lines: 10 },
+            buffer,
+            None,
+            false,
+            cx,
+        )
+    } else {
+        Editor::auto_height(10, cx)
+    };
+    commit_editor.set_use_autoclose(false);
+    commit_editor.set_show_gutter(false, cx);
+    commit_editor.set_show_wrap_guides(false, cx);
+    commit_editor.set_show_indent_guides(false, cx);
+    commit_editor.set_text_style_refinement(refinement);
+    commit_editor.set_placeholder_text("Enter commit message", cx);
+    commit_editor
+}
+
 impl GitPanel {
     pub fn load(
         workspace: WeakView<Workspace>,
@@ -124,44 +163,8 @@ impl GitPanel {
             })
             .detach();
 
-            let commit_editor = cx.new_view(|cx| {
-                let theme = ThemeSettings::get_global(cx);
-
-                let mut text_style = cx.text_style();
-                let refinement = TextStyleRefinement {
-                    font_family: Some(theme.buffer_font.family.clone()),
-                    font_features: Some(FontFeatures::disable_ligatures()),
-                    font_size: Some(px(12.).into()),
-                    color: Some(cx.theme().colors().editor_foreground),
-                    background_color: Some(gpui::transparent_black()),
-                    ..Default::default()
-                };
-                text_style.refine(&refinement);
-
-                let mut commit_editor = if let Some(active_repository) = active_repository.as_ref()
-                {
-                    let buffer = cx.new_model(|cx| {
-                        MultiBuffer::singleton(active_repository.commit_message(), cx)
-                    });
-                    // TODO should we attach the project?
-                    Editor::new(
-                        EditorMode::AutoHeight { max_lines: 10 },
-                        buffer,
-                        None,
-                        false,
-                        cx,
-                    )
-                } else {
-                    Editor::auto_height(10, cx)
-                };
-                commit_editor.set_use_autoclose(false);
-                commit_editor.set_show_gutter(false, cx);
-                commit_editor.set_show_wrap_guides(false, cx);
-                commit_editor.set_show_indent_guides(false, cx);
-                commit_editor.set_text_style_refinement(refinement);
-                commit_editor.set_placeholder_text("Enter commit message", cx);
-                commit_editor
-            });
+            let commit_editor =
+                cx.new_view(|cx| commit_message_editor(active_repository.as_ref(), cx));
 
             let scroll_handle = UniformListScrollHandle::new();
 
@@ -190,6 +193,9 @@ impl GitPanel {
                         if let Some(this) = handle.upgrade() {
                             this.update(&mut cx, |this, cx| {
                                 this.update_visible_entries(cx);
+                                let active_repository = this.active_repository.as_ref();
+                                this.commit_editor =
+                                    cx.new_view(|cx| commit_message_editor(active_repository, cx));
                             })
                             .ok();
                         }
@@ -931,15 +937,15 @@ impl GitPanel {
     pub fn render_commit_editor(&self, cx: &ViewContext<Self>) -> impl IntoElement {
         let editor = self.commit_editor.clone();
         let editor_focus_handle = editor.read(cx).focus_handle(cx).clone();
-        let (can_commit, can_commit_all) =
-            self.active_repository
-                .as_ref()
-                .map_or((false, false), |active_repository| {
-                    (
-                        active_repository.can_commit(false, cx),
-                        active_repository.can_commit(true, cx),
-                    )
-                });
+        let (can_commit, can_commit_all) = self.active_repository.as_ref().map_or_else(
+            || (false, false),
+            |active_repository| {
+                (
+                    active_repository.can_commit(false, cx),
+                    active_repository.can_commit(true, cx),
+                )
+            },
+        );
 
         let focus_handle_1 = self.focus_handle(cx).clone();
         let focus_handle_2 = self.focus_handle(cx).clone();

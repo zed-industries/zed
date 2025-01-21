@@ -182,13 +182,12 @@ impl GitState {
             new_active_index = Some(0);
         }
 
-        self.repositories = dbg!(new_repositories);
-        self.active_index = dbg!(new_active_index);
+        self.repositories = new_repositories;
+        self.active_index = new_active_index;
 
         cx.emit(Event::RepositoriesUpdated);
     }
 
-    // FIXME
     pub fn all_repositories(&self) -> Vec<RepositoryHandle> {
         self.repositories.clone()
     }
