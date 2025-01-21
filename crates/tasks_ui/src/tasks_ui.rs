@@ -82,7 +82,7 @@ pub fn init(cx: &mut App) {
 
                             let task_context = task_context(workspace, window, cx);
 
-                            let _ = cx.spawn_in(window, |workspace, mut cx| async move {
+                            cx.spawn_in(window, |workspace, mut cx| async move {
                                 let task_context = task_context.await;
                                 let Some(workspace) = workspace.upgrade() else {
                                     return;
@@ -119,7 +119,8 @@ pub fn init(cx: &mut App) {
                                     );
                                 })
                                 .log_err();
-                            });
+                            })
+                            .detach();
                         }
                     } else {
                         toggle_modal(workspace, None, window, cx).detach();
