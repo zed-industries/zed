@@ -8744,14 +8744,14 @@ async fn test_multiline_completion(cx: &mut gpui::TestAppContext) {
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/a",
+        add_root_for_windows("/a"),
         json!({
             "main.ts": "a",
         }),
     )
     .await;
 
-    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let project = Project::test(fs, [add_root_for_windows("/a").as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     let typescript_language = Arc::new(Language::new(
         LanguageConfig {
@@ -8811,7 +8811,7 @@ async fn test_multiline_completion(cx: &mut gpui::TestAppContext) {
         .unwrap();
     let _buffer = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp("/a/main.ts", cx)
+            project.open_local_buffer_with_lsp(add_root_for_windows("/a/main.ts"), cx)
         })
         .await
         .unwrap();
