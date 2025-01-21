@@ -27,7 +27,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::paths::add_root_for_windows;
+use util::paths::{add_root_for_windows, replace_path_separator};
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
@@ -166,7 +166,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
 async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        add_root_for_windows("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -183,7 +183,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
 
     project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(add_root_for_windows("/code/project1"), true, cx)
         })
         .await
         .unwrap();
@@ -214,7 +214,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
         buffer.update(&mut cx, |buffer, cx| {
             assert_eq!(
                 buffer.file().unwrap().full_path(cx).to_string_lossy(),
-                "project1/README.md"
+                replace_path_separator("project1/README.md")
             )
         });
 
