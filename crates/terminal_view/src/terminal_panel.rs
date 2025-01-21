@@ -484,7 +484,10 @@ impl TerminalPanel {
         self.deferred_tasks.insert(
             primary_task.id.clone(),
             cx.spawn_in(window, |terminal_panel, mut cx| async move {
-                for task in tasks {
+                let mut task_iter = tasks.iter();
+                let mut failed_task_info: Option<(&str, i32)> = None;
+
+                for task in task_iter.by_ref() {
                     let builder = ShellBuilder::new(is_local, &task.shell);
                     let command_label = builder.command_label(&task.command_label);
                     let (command, args) = builder.build(task.command.clone(), &task.args);
@@ -502,7 +505,7 @@ impl TerminalPanel {
                         })
                         .log_err()
                     else {
-                        return;
+                        break;
                     };
 
                     let Some(spawn_terminal_task) = if terminal_task.allow_concurrent_runs
@@ -545,11 +548,11 @@ impl TerminalPanel {
                         }
                     }
                     .log_err() else {
-                        return;
+                        break;
                     };
 
                     let Some(terminal) = spawn_terminal_task.await.log_err() else {
-                        return;
+                        break;
                     };
 
                     let task_result = cx
@@ -558,20 +561,24 @@ impl TerminalPanel {
                         })
                         .log_err();
                     let Some(task_result) = task_result else {
-                        return;
+                        break;
                     };
 
                     let exit_code = task_result.await;
 
                     if exit_code != 0 {
-                        Result::<()>::Err(anyhow!(
-                            "Task \"{}\" exited with non-zero exit code, aborting remaining tasks",
-                            task.command_label.as_str()
-                        ))
-                        .log_err();
-                        return;
+                        failed_task_info = Some((task.label.as_str(), exit_code));
+                        break;
                     }
                 }
+
+                if let Some((label, exit_code)) = failed_task_info {
+                    let n_remaining = task_iter.count();
+                    Result::<()>::Err(anyhow!(
+                        "Task '{label}' exited with non-zero exit code ({exit_code}), aborting {n_remaining} remaining tasks",
+                    ))
+                    .log_err();
+                };
             }),
         );
     }
