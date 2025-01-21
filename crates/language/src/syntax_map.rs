@@ -565,7 +565,7 @@ impl SyntaxSnapshot {
                             .to_ts_point();
                     }
 
-                    let (tree, changed_ranges) = if let Some((
+                    let old_tree = if let Some((
                         SyntaxLayerContent::Parsed { tree: old_tree, .. },
                         layer_start,
                     )) =
@@ -604,12 +604,7 @@ impl SyntaxSnapshot {
                         }
 
                         if included_ranges.is_empty() {
-                            included_ranges.push(tree_sitter::Range {
-                                start_byte: 0,
-                                end_byte: 0,
-                                start_point: Default::default(),
-                                end_point: Default::default(),
-                            });
+                            included_ranges.push(zeroed_tree_sitter_range());
                         }
 
                         log::trace!(
@@ -619,35 +614,7 @@ impl SyntaxSnapshot {
                             LogIncludedRanges(&included_ranges),
                         );
 
-                        let result = parse_text(
-                            grammar,
-                            text.as_rope(),
-                            step_start_byte,
-                            included_ranges,
-                            Some(old_tree.clone()),
-                        );
-
-                        let tree = match result {
-                            Ok(inner) => inner,
-                            Err(e) => {
-                                log::error!("error parsing text: {:?}", e);
-                                continue;
-                            }
-                        };
-
-                        let changed_ranges = join_ranges(
-                            invalidated_ranges
-                                .iter()
-                                .filter(|&range| {
-                                    range.start <= step_end_byte && range.end >= step_start_byte
-                                })
-                                .cloned(),
-                            old_tree.changed_ranges(&tree).map(|r| {
-                                step_start_byte + r.start_byte..step_start_byte + r.end_byte
-                            }),
-                        );
-
-                        (tree, changed_ranges)
+                        Some(old_tree)
                     } else {
                         if matches!(step.mode, ParseMode::Combined { .. }) {
                             insert_newlines_between_ranges(
@@ -660,12 +627,7 @@ impl SyntaxSnapshot {
                         }
 
                         if included_ranges.is_empty() {
-                            included_ranges.push(tree_sitter::Range {
-                                start_byte: 0,
-                                end_byte: 0,
-                                start_point: Default::default(),
-                                end_point: Default::default(),
-                            });
+                            included_ranges.push(zeroed_tree_sitter_range());
                         }
 
                         log::trace!(
@@ -675,51 +637,68 @@ impl SyntaxSnapshot {
                             LogIncludedRanges(&included_ranges),
                         );
 
-                        let result = parse_text(
-                            grammar,
-                            text.as_rope(),
-                            step_start_byte,
-                            included_ranges,
-                            None,
-                        );
-                        let tree = match result {
-                            Ok(inner) => inner,
-                            Err(e) => {
-                                log::error!("error parsing text: {:?}", e);
-                                continue;
-                            }
-                        };
-
-                        (tree, vec![step_start_byte..step_end_byte])
+                        None
                     };
 
-                    if let (Some((config, registry)), false) = (
-                        grammar.injection_config.as_ref().zip(registry.as_ref()),
-                        changed_ranges.is_empty(),
-                    ) {
-                        for range in &changed_ranges {
-                            changed_regions.insert(
-                                ChangedRegion {
+                    let result = parse_text(
+                        grammar,
+                        text.as_rope(),
+                        step_start_byte,
+                        included_ranges,
+                        old_tree.cloned(),
+                    );
+                    let tree = match result {
+                        Ok(inner) => inner,
+                        Err(e) => {
+                            log::error!("error parsing text: {:?}", e);
+                            continue;
+                        }
+                    };
+
+                    let changed_ranges = if let Some(old_tree) = old_tree {
+                        join_ranges(
+                            invalidated_ranges
+                                .iter()
+                                .filter(|&range| {
+                                    range.start <= step_end_byte && range.end >= step_start_byte
+                                })
+                                .cloned(),
+                            old_tree.changed_ranges(&tree).map(|r| {
+                                step_start_byte + r.start_byte..step_start_byte + r.end_byte
+                            }),
+                        )
+                    } else {
+                        vec![step_start_byte..step_end_byte]
+                    };
+
+                    // re-run queries if something changed
+                    if !changed_ranges.is_empty() {
+                        if let Some((config, registry)) =
+                            grammar.injection_config.as_ref().zip(registry.as_ref())
+                        {
+                            for range in &changed_ranges {
+                                let region = ChangedRegion {
                                     depth: step.depth + 1,
                                     range: text.anchor_before(range.start)
                                         ..text.anchor_after(range.end),
-                                },
+                                };
+                                changed_regions.insert(region, text);
+                            }
+
+                            update_injection_parse_steps(
+                                config,
                                 text,
+                                step.range.clone(),
+                                tree.root_node_with_offset(
+                                    step_start_byte,
+                                    step_start_point.to_ts_point(),
+                                ),
+                                registry,
+                                step.depth + 1,
+                                &changed_ranges,
+                                &mut queue,
                             );
                         }
-                        update_injection_parse_steps(
-                            config,
-                            text,
-                            step.range.clone(),
-                            tree.root_node_with_offset(
-                                step_start_byte,
-                                step_start_point.to_ts_point(),
-                            ),
-                            registry,
-                            step.depth + 1,
-                            &changed_ranges,
-                            &mut queue,
-                        );
                     }
 
                     SyntaxLayerContent::Parsed { tree, language }
@@ -869,7 +848,7 @@ impl SyntaxSnapshot {
         iter::from_fn(move || {
             while let Some(layer) = cursor.item() {
                 let mut info = None;
-                if let SyntaxLayerContent::Parsed { tree, language } = &layer.content {
+                if let SyntaxLayerContent::Parsed { tree, language, .. } = &layer.content {
                     let layer_start_offset = layer.range.start.to_offset(buffer);
                     let layer_start_point = layer.range.start.to_point(buffer).to_ts_point();
                     if include_hidden || !language.config.hidden {
@@ -1026,6 +1005,7 @@ impl<'a> SyntaxMapCaptures<'a> {
 pub struct TreeSitterOptions {
     max_start_depth: Option<u32>,
 }
+
 impl TreeSitterOptions {
     pub fn max_start_depth(max_start_depth: u32) -> Self {
         Self {
@@ -1295,7 +1275,6 @@ fn update_injection_parse_steps(
             if content_ranges.is_empty() {
                 continue;
             }
-
             let content_range =
                 content_ranges.first().unwrap().start_byte..content_ranges.last().unwrap().end_byte;
 
@@ -1906,5 +1885,14 @@ impl fmt::Debug for LogChangedRegions<'_> {
 impl fmt::Debug for LogPoint {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         (self.0.row, self.0.column).fmt(f)
+    }
+}
+
+fn zeroed_tree_sitter_range() -> tree_sitter::Range {
+    tree_sitter::Range {
+        start_byte: 0,
+        end_byte: 0,
+        start_point: Default::default(),
+        end_point: Default::default(),
     }
 }
