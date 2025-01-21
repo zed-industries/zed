@@ -1,14 +1,14 @@
-use crate::context_editor::{
-    ContextEditor, ContextEditorToolbarItem, ContextEditorToolbarItemEvent, DEFAULT_TAB_TITLE,
-};
 use crate::context_history::ContextHistory;
 use crate::{
-    slash_command::SlashCommandCompletionProvider,
     terminal_inline_assistant::TerminalInlineAssistant, DeployHistory, DeployPromptLibrary,
-    InlineAssistant, InsertDraggedFiles, NewContext, ToggleFocus, ToggleModelSelector,
+    InlineAssistant, NewContext, ToggleFocus,
 };
-use anyhow::Result;
-use assistant_context_editor::{Context, ContextId, ContextStore, ContextStoreEvent};
+use anyhow::{anyhow, Result};
+use assistant_context_editor::{
+    AssistantPanelDelegate, Context, ContextEditor, ContextEditorToolbarItem,
+    ContextEditorToolbarItemEvent, ContextId, ContextStore, ContextStoreEvent, InsertDraggedFiles,
+    SlashCommandCompletionProvider, ToggleModelSelector, DEFAULT_TAB_TITLE,
+};
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
@@ -46,6 +46,8 @@ use workspace::{
 use zed_actions::InlineAssist;
 
 pub fn init(cx: &mut AppContext) {
+    <dyn AssistantPanelDelegate>::set_global(Arc::new(ConcreteAssistantPanelDelegate), cx);
+
     workspace::FollowableViewRegistry::register::<ContextEditor>(cx);
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
@@ -438,7 +440,7 @@ impl AssistantPanel {
             if let Some(context_editor) = self.active_context_editor(cx) {
                 let new_summary = model_summary_editor.read(cx).text(cx);
                 context_editor.update(cx, |context_editor, cx| {
-                    context_editor.context.update(cx, |context, cx| {
+                    context_editor.context().update(cx, |context, cx| {
                         if context.summary().is_none()
                             && (new_summary == DEFAULT_TAB_TITLE || new_summary.trim().is_empty())
                         {
@@ -475,7 +477,7 @@ impl AssistantPanel {
     ) {
         if let Some(context_editor) = self.active_context_editor(cx) {
             context_editor.update(cx, |context_editor, cx| {
-                context_editor.context.update(cx, |context, cx| {
+                context_editor.context().update(cx, |context, cx| {
                     context.summarize(true, cx);
                 })
             })
@@ -501,7 +503,6 @@ impl AssistantPanel {
             .log_err()
             .flatten();
 
-        let assistant_panel = cx.view().downgrade();
         let editor = cx.new_view(|cx| {
             let mut editor = ContextEditor::for_context(
                 context,
@@ -509,7 +510,6 @@ impl AssistantPanel {
                 self.workspace.clone(),
                 self.project.clone(),
                 lsp_adapter_delegate,
-                assistant_panel,
                 cx,
             );
             editor.insert_default_prompt(cx);
@@ -523,7 +523,7 @@ impl AssistantPanel {
         if let Some(editor) = self.active_context_editor(cx) {
             editor.update(cx, |active_context, cx| {
                 active_context
-                    .context
+                    .context()
                     .update(cx, |context, cx| context.completion_provider_changed(cx))
             })
         }
@@ -716,7 +716,7 @@ impl AssistantPanel {
                 .read(cx)
                 .active_context_editor(cx)
                 .and_then(|editor| {
-                    let editor = &editor.read(cx).editor;
+                    let editor = &editor.read(cx).editor().clone();
                     if editor.read(cx).is_focused(cx) {
                         Some(editor.clone())
                     } else {
@@ -778,7 +778,6 @@ impl AssistantPanel {
 
                     let fs = this.fs.clone();
                     let project = this.project.clone();
-                    let weak_assistant_panel = cx.view().downgrade();
 
                     let editor = cx.new_view(|cx| {
                         ContextEditor::for_context(
@@ -787,7 +786,6 @@ impl AssistantPanel {
                             workspace,
                             project,
                             lsp_adapter_delegate,
-                            weak_assistant_panel,
                             cx,
                         )
                     });
@@ -808,7 +806,6 @@ impl AssistantPanel {
                 .log_err()
                 .flatten();
 
-            let assistant_panel = cx.view().downgrade();
             let editor = cx.new_view(|cx| {
                 let mut editor = ContextEditor::for_context(
                     context,
@@ -816,7 +813,6 @@ impl AssistantPanel {
                     self.workspace.clone(),
                     self.project.clone(),
                     lsp_adapter_delegate,
-                    assistant_panel,
                     cx,
                 );
                 editor.insert_default_prompt(cx);
@@ -1013,7 +1009,7 @@ impl AssistantPanel {
     }
 
     pub fn active_context(&self, cx: &AppContext) -> Option<Model<Context>> {
-        Some(self.active_context_editor(cx)?.read(cx).context.clone())
+        Some(self.active_context_editor(cx)?.read(cx).context().clone())
     }
 
     pub fn open_saved_context(
@@ -1023,7 +1019,7 @@ impl AssistantPanel {
     ) -> Task<Result<()>> {
         let existing_context = self.pane.read(cx).items().find_map(|item| {
             item.downcast::<ContextEditor>()
-                .filter(|editor| editor.read(cx).context.read(cx).path() == Some(&path))
+                .filter(|editor| editor.read(cx).context().read(cx).path() == Some(&path))
         });
         if let Some(existing_context) = existing_context {
             return cx.spawn(|this, mut cx| async move {
@@ -1042,7 +1038,6 @@ impl AssistantPanel {
 
         cx.spawn(|this, mut cx| async move {
             let context = context.await?;
-            let assistant_panel = this.clone();
             this.update(&mut cx, |this, cx| {
                 let editor = cx.new_view(|cx| {
                     ContextEditor::for_context(
@@ -1051,7 +1046,6 @@ impl AssistantPanel {
                         workspace,
                         project,
                         lsp_adapter_delegate,
-                        assistant_panel,
                         cx,
                     )
                 });
@@ -1069,7 +1063,7 @@ impl AssistantPanel {
     ) -> Task<Result<View<ContextEditor>>> {
         let existing_context = self.pane.read(cx).items().find_map(|item| {
             item.downcast::<ContextEditor>()
-                .filter(|editor| *editor.read(cx).context.read(cx).id() == id)
+                .filter(|editor| *editor.read(cx).context().read(cx).id() == id)
         });
         if let Some(existing_context) = existing_context {
             return cx.spawn(|this, mut cx| async move {
@@ -1091,7 +1085,6 @@ impl AssistantPanel {
 
         cx.spawn(|this, mut cx| async move {
             let context = context.await?;
-            let assistant_panel = this.clone();
             this.update(&mut cx, |this, cx| {
                 let editor = cx.new_view(|cx| {
                     ContextEditor::for_context(
@@ -1100,7 +1093,6 @@ impl AssistantPanel {
                         workspace,
                         this.project.clone(),
                         lsp_adapter_delegate,
-                        assistant_panel,
                         cx,
                     )
                 });
@@ -1301,6 +1293,61 @@ impl prompt_library::InlineAssistDelegate for PromptLibraryInlineAssist {
         cx: &mut ViewContext<Workspace>,
     ) -> bool {
         workspace.focus_panel::<AssistantPanel>(cx).is_some()
+    }
+}
+
+struct ConcreteAssistantPanelDelegate;
+
+impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
+    fn active_context_editor(
+        &self,
+        workspace: &mut Workspace,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<View<ContextEditor>> {
+        let panel = workspace.panel::<AssistantPanel>(cx)?;
+        panel.read(cx).active_context_editor(cx)
+    }
+
+    fn open_remote_context(
+        &self,
+        workspace: &mut Workspace,
+        context_id: ContextId,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<View<ContextEditor>>> {
+        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return Task::ready(Err(anyhow!("no Assistant panel found")));
+        };
+
+        panel.update(cx, |panel, cx| panel.open_remote_context(context_id, cx))
+    }
+
+    fn quote_selection(
+        &self,
+        workspace: &mut Workspace,
+        creases: Vec<(String, String)>,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return;
+        };
+
+        // Activate the panel
+        if !panel.focus_handle(cx).contains_focused(cx) {
+            workspace.toggle_panel_focus::<AssistantPanel>(cx);
+        }
+
+        panel.update(cx, |_, cx| {
+            // Wait to create a new context until the workspace is no longer
+            // being updated.
+            cx.defer(move |panel, cx| {
+                if let Some(context) = panel
+                    .active_context_editor(cx)
+                    .or_else(|| panel.new_context(cx))
+                {
+                    context.update(cx, |context, cx| context.quote_creases(creases, cx));
+                };
+            });
+        });
     }
 }
 

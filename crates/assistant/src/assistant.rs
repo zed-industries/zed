@@ -1,15 +1,11 @@
 #![cfg_attr(target_os = "windows", allow(unused, dead_code))]
 
 pub mod assistant_panel;
-mod context_editor;
 mod context_history;
 mod inline_assistant;
-mod slash_command;
-pub(crate) mod slash_command_picker;
 pub mod slash_command_settings;
 mod terminal_inline_assistant;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use assistant_settings::AssistantSettings;
@@ -19,7 +15,6 @@ use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
-use gpui::impl_internal_actions;
 use gpui::{actions, AppContext, Global, UpdateGlobal};
 use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
@@ -37,32 +32,15 @@ use crate::slash_command_settings::SlashCommandSettings;
 actions!(
     assistant,
     [
-        Assist,
-        Edit,
-        Split,
-        CopyCode,
-        CycleMessageRole,
-        QuoteSelection,
-        InsertIntoEditor,
         ToggleFocus,
         InsertActivePrompt,
         DeployHistory,
         DeployPromptLibrary,
-        ConfirmCommand,
         NewContext,
-        ToggleModelSelector,
         CycleNextInlineAssist,
         CyclePreviousInlineAssist
     ]
 );
-
-#[derive(PartialEq, Clone)]
-pub enum InsertDraggedFiles {
-    ProjectPaths(Vec<PathBuf>),
-    ExternalFiles(Vec<PathBuf>),
-}
-
-impl_internal_actions!(assistant, [InsertDraggedFiles]);
 
 const DEFAULT_CONTEXT_LINES: usize = 50;
 
@@ -331,24 +309,6 @@ fn update_slash_commands_from_settings(cx: &mut AppContext) {
     } else {
         slash_command_registry
             .unregister_command(assistant_slash_commands::CargoWorkspaceSlashCommand);
-    }
-}
-
-pub fn humanize_token_count(count: usize) -> String {
-    match count {
-        0..=999 => count.to_string(),
-        1000..=9999 => {
-            let thousands = count / 1000;
-            let hundreds = (count % 1000 + 50) / 100;
-            if hundreds == 0 {
-                format!("{}k", thousands)
-            } else if hundreds == 10 {
-                format!("{}k", thousands + 1)
-            } else {
-                format!("{}.{}k", thousands, hundreds)
-            }
-        }
-        _ => format!("{}k", (count + 500) / 1000),
     }
 }
 

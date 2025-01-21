@@ -1,6 +1,8 @@
 use std::sync::Arc;
 
-use assistant_context_editor::{ContextStore, RemoteContextMetadata, SavedContextMetadata};
+use assistant_context_editor::{
+    ContextStore, RemoteContextMetadata, SavedContextMetadata, DEFAULT_TAB_TITLE,
+};
 use gpui::{
     AppContext, EventEmitter, FocusHandle, FocusableView, Model, Subscription, Task, View, WeakView,
 };
@@ -10,7 +12,6 @@ use ui::utils::{format_distance_from_now, DateTimeType};
 use ui::{prelude::*, Avatar, ListItem, ListItemSpacing};
 use workspace::Item;
 
-use crate::context_editor::DEFAULT_TAB_TITLE;
 use crate::AssistantPanel;
 
 #[derive(Clone)]

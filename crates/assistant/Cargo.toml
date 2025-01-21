@@ -37,7 +37,6 @@ editor.workspace = true
 feature_flags.workspace = true
 fs.workspace = true
 futures.workspace = true
-fuzzy.workspace = true
 gpui.workspace = true
 indexed_docs.workspace = true
 indoc.workspace = true
