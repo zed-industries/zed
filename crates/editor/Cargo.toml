@@ -1,8 +1,8 @@
 [package]
 name = "editor"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -88,6 +88,7 @@ url.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
+zed_predict_tos.workspace = true
 
 [dev-dependencies]
 ctor.workspace = true

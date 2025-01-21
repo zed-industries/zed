@@ -20,6 +20,7 @@ use smol::channel;
 use std::{
     future::Future,
     path::Path,
+    pin::pin,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -247,13 +248,14 @@ impl SummaryIndex {
 
     fn check_summary_cache(
         &self,
-        mut might_need_summary: channel::Receiver<UnsummarizedFile>,
+        might_need_summary: channel::Receiver<UnsummarizedFile>,
         cx: &AppContext,
     ) -> NeedsSummary {
         let db_connection = self.db_connection.clone();
         let db = self.summary_db;
         let (needs_summary_tx, needs_summary_rx) = channel::bounded(512);
         let task = cx.background_executor().spawn(async move {
+            let mut might_need_summary = pin!(might_need_summary);
             while let Some(file) = might_need_summary.next().await {
                 let tx = db_connection
                     .read_txn()
@@ -484,12 +486,12 @@ impl SummaryIndex {
 
     fn summarize_files(
         &self,
-        mut unsummarized_files: channel::Receiver<UnsummarizedFile>,
+        unsummarized_files: channel::Receiver<UnsummarizedFile>,
         cx: &AppContext,
     ) -> SummarizeFiles {
         let (summarized_tx, summarized_rx) = channel::bounded(512);
         let task = cx.spawn(|cx| async move {
-            while let Some(file) = unsummarized_files.next().await {
+            while let Ok(file) = unsummarized_files.recv().await {
                 log::debug!("Summarizing {:?}", file);
                 let summary = cx
                     .update(|cx| Self::summarize_code(&file.contents, &file.path, cx))?
@@ -607,7 +609,7 @@ impl SummaryIndex {
         let digest_db = self.file_digest_db;
         let summary_db = self.summary_db;
         cx.background_executor().spawn(async move {
-            let mut summaries = summaries.chunks_timeout(4096, Duration::from_secs(2));
+            let mut summaries = pin!(summaries.chunks_timeout(4096, Duration::from_secs(2)));
             while let Some(summaries) = summaries.next().await {
                 let mut txn = db_connection.write_txn()?;
                 for file in &summaries {

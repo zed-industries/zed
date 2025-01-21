@@ -84,6 +84,9 @@ version_info=$(rustc --version --verbose)
 host_line=$(echo "$version_info" | grep host)
 local_target_triple=${host_line#*: }
 
+# Generate the licenses first, so they can be baked into the binaries
+script/generate-licenses
+
 if [ "$local_arch" = true ]; then
     echo "Building for local target only."
     cargo build ${build_flag} --package zed --package cli --package remote_server
@@ -203,7 +206,7 @@ function prepare_binaries() {
     rm -f target/${architecture}/${target_dir}/Zed.dwarf.gz
 
     echo "Gzipping dSYMs for $architecture"
-    gzip target/${architecture}/${target_dir}/Zed.dwarf
+    gzip -f target/${architecture}/${target_dir}/Zed.dwarf
 
     echo "Uploading dSYMs for $architecture"
     upload_to_blob_store_public \
@@ -378,6 +381,6 @@ else
 
     sign_binary "target/x86_64-apple-darwin/release/remote_server"
     sign_binary "target/aarch64-apple-darwin/release/remote_server"
-    gzip --stdout --best target/x86_64-apple-darwin/release/remote_server > target/zed-remote-server-macos-x86_64.gz
-    gzip --stdout --best target/aarch64-apple-darwin/release/remote_server > target/zed-remote-server-macos-aarch64.gz
+    gzip -f --stdout --best target/x86_64-apple-darwin/release/remote_server > target/zed-remote-server-macos-x86_64.gz
+    gzip -f --stdout --best target/aarch64-apple-darwin/release/remote_server > target/zed-remote-server-macos-aarch64.gz
 fi

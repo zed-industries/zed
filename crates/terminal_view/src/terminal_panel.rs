@@ -20,7 +20,7 @@ use itertools::Itertools;
 use project::{terminals::TerminalKind, Fs, Project, ProjectEntryId};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
 use settings::Settings;
-use task::{RevealStrategy, RevealTarget, Shell, SpawnInTerminal, TaskId};
+use task::{RevealStrategy, RevealTarget, ShellBuilder, SpawnInTerminal, TaskId};
 use terminal::{
     terminal_settings::{TerminalDockPosition, TerminalSettings},
     Terminal,
@@ -31,7 +31,7 @@ use ui::{
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::{
-    dock::{DockPosition, Panel, PanelEvent},
+    dock::{DockPosition, Panel, PanelEvent, PanelHandle},
     item::SerializableItem,
     move_active_item, move_item, pane,
     ui::IconName,
@@ -75,6 +75,7 @@ pub struct TerminalPanel {
     deferred_tasks: HashMap<TaskId, Task<()>>,
     assistant_enabled: bool,
     assistant_tab_bar_button: Option<AnyView>,
+    active: bool,
 }
 
 impl TerminalPanel {
@@ -82,7 +83,6 @@ impl TerminalPanel {
         let project = workspace.project();
         let pane = new_terminal_pane(workspace.weak_handle(), project.clone(), false, cx);
         let center = PaneGroup::new(pane.clone());
-        cx.focus_view(&pane);
         let terminal_panel = Self {
             center,
             active_pane: pane,
@@ -95,6 +95,7 @@ impl TerminalPanel {
             deferred_tasks: HashMap::default(),
             assistant_enabled: false,
             assistant_tab_bar_button: None,
+            active: false,
         };
         terminal_panel.apply_tab_bar_buttons(&terminal_panel.active_pane, cx);
         terminal_panel
@@ -281,6 +282,25 @@ impl TerminalPanel {
             }
         }
 
+        if let Some(workspace) = workspace.upgrade() {
+            let should_focus = workspace
+                .update(&mut cx, |workspace, cx| {
+                    workspace.active_item(cx).is_none()
+                        && workspace.is_dock_at_position_open(terminal_panel.position(cx), cx)
+                })
+                .unwrap_or(false);
+
+            if should_focus {
+                terminal_panel
+                    .update(&mut cx, |panel, cx| {
+                        panel.active_pane.update(cx, |pane, cx| {
+                            pane.focus_active_item(cx);
+                        });
+                    })
+                    .ok();
+            }
+        }
+
         Ok(terminal_panel)
     }
 
@@ -427,167 +447,68 @@ impl TerminalPanel {
             .detach_and_log_err(cx);
     }
 
-    fn spawn_task(&mut self, spawn_in_terminal: &SpawnInTerminal, cx: &mut ViewContext<Self>) {
-        let mut spawn_task = spawn_in_terminal.clone();
+    fn spawn_task(&mut self, task: &SpawnInTerminal, cx: &mut ViewContext<Self>) {
         let Ok(is_local) = self
             .workspace
             .update(cx, |workspace, cx| workspace.project().read(cx).is_local())
         else {
             return;
         };
-        if let ControlFlow::Break(_) =
-            Self::fill_command(is_local, spawn_in_terminal, &mut spawn_task)
-        {
-            return;
-        }
-        let spawn_task = spawn_task;
 
-        let allow_concurrent_runs = spawn_in_terminal.allow_concurrent_runs;
-        let use_new_terminal = spawn_in_terminal.use_new_terminal;
+        let builder = ShellBuilder::new(is_local, &task.shell);
+        let command_label = builder.command_label(&task.command_label);
+        let (command, args) = builder.build(task.command.clone(), &task.args);
 
-        if allow_concurrent_runs && use_new_terminal {
-            self.spawn_in_new_terminal(spawn_task, cx)
-                .detach_and_log_err(cx);
-            return;
-        }
-
-        let terminals_for_task = self.terminals_for_task(&spawn_in_terminal.full_label, cx);
-        if terminals_for_task.is_empty() {
-            self.spawn_in_new_terminal(spawn_task, cx)
-                .detach_and_log_err(cx);
-            return;
-        }
-        let (existing_item_index, task_pane, existing_terminal) = terminals_for_task
-            .last()
-            .expect("covered no terminals case above")
-            .clone();
-        let id = spawn_in_terminal.id.clone();
-        cx.spawn(move |this, mut cx| async move {
-            if allow_concurrent_runs {
-                debug_assert!(
-                    !use_new_terminal,
-                    "Should have handled 'allow_concurrent_runs && use_new_terminal' case above"
-                );
-                this.update(&mut cx, |terminal_panel, cx| {
-                    terminal_panel.replace_terminal(
-                        spawn_task,
-                        task_pane,
-                        existing_item_index,
-                        existing_terminal,
-                        cx,
-                    )
-                })?
-                .await;
-            } else {
-                this.update(&mut cx, |this, cx| {
-                    this.deferred_tasks.insert(
-                        id,
-                        cx.spawn(|terminal_panel, mut cx| async move {
-                            wait_for_terminals_tasks(terminals_for_task, &mut cx).await;
-                            let Ok(Some(new_terminal_task)) =
-                                terminal_panel.update(&mut cx, |terminal_panel, cx| {
-                                    if use_new_terminal {
-                                        terminal_panel
-                                            .spawn_in_new_terminal(spawn_task, cx)
-                                            .detach_and_log_err(cx);
-                                        None
-                                    } else {
-                                        Some(terminal_panel.replace_terminal(
-                                            spawn_task,
-                                            task_pane,
-                                            existing_item_index,
-                                            existing_terminal,
-                                            cx,
-                                        ))
-                                    }
-                                })
-                            else {
-                                return;
-                            };
-                            new_terminal_task.await;
-                        }),
-                    );
-                })
-                .ok();
-            }
-            anyhow::Result::<_, anyhow::Error>::Ok(())
-        })
-        .detach()
-    }
-
-    pub fn fill_command(
-        is_local: bool,
-        spawn_in_terminal: &SpawnInTerminal,
-        spawn_task: &mut SpawnInTerminal,
-    ) -> ControlFlow<()> {
-        let Some((shell, mut user_args)) = (match spawn_in_terminal.shell.clone() {
-            Shell::System => {
-                if is_local {
-                    retrieve_system_shell().map(|shell| (shell, Vec::new()))
-                } else {
-                    Some(("\"${SHELL:-sh}\"".to_string(), Vec::new()))
-                }
-            }
-            Shell::Program(shell) => Some((shell, Vec::new())),
-            Shell::WithArguments { program, args, .. } => Some((program, args)),
-        }) else {
-            return ControlFlow::Break(());
+        let task = SpawnInTerminal {
+            command_label,
+            command,
+            args,
+            ..task.clone()
         };
-        #[cfg(target_os = "windows")]
-        let windows_shell_type = to_windows_shell_type(&shell);
-        #[cfg(not(target_os = "windows"))]
-        {
-            spawn_task.command_label = format!("{shell} -i -c '{}'", spawn_task.command_label);
-        }
-        #[cfg(target_os = "windows")]
-        {
-            use crate::terminal_panel::WindowsShellType;
 
-            match windows_shell_type {
-                WindowsShellType::Powershell => {
-                    spawn_task.command_label = format!("{shell} -C '{}'", spawn_task.command_label)
-                }
-                WindowsShellType::Cmd => {
-                    spawn_task.command_label = format!("{shell} /C '{}'", spawn_task.command_label)
-                }
-                WindowsShellType::Other => {
-                    spawn_task.command_label =
-                        format!("{shell} -i -c '{}'", spawn_task.command_label)
-                }
-            }
+        if task.allow_concurrent_runs && task.use_new_terminal {
+            self.spawn_in_new_terminal(task, cx).detach_and_log_err(cx);
+            return;
         }
-        let task_command = std::mem::replace(&mut spawn_task.command, shell);
-        let task_args = std::mem::take(&mut spawn_task.args);
-        let combined_command = task_args
-            .into_iter()
-            .fold(task_command, |mut command, arg| {
-                command.push(' ');
-                #[cfg(not(target_os = "windows"))]
-                command.push_str(&arg);
-                #[cfg(target_os = "windows")]
-                command.push_str(&to_windows_shell_variable(windows_shell_type, arg));
-                command
-            });
-        #[cfg(not(target_os = "windows"))]
-        user_args.extend(["-i".to_owned(), "-c".to_owned(), combined_command]);
-        #[cfg(target_os = "windows")]
-        {
-            use crate::terminal_panel::WindowsShellType;
 
-            match windows_shell_type {
-                WindowsShellType::Powershell => {
-                    user_args.extend(["-C".to_owned(), combined_command])
-                }
-                WindowsShellType::Cmd => user_args.extend(["/C".to_owned(), combined_command]),
-                WindowsShellType::Other => {
-                    user_args.extend(["-i".to_owned(), "-c".to_owned(), combined_command])
-                }
-            }
+        let mut terminals_for_task = self.terminals_for_task(&task.full_label, cx);
+        let Some(existing) = terminals_for_task.pop() else {
+            self.spawn_in_new_terminal(task, cx).detach_and_log_err(cx);
+            return;
+        };
+
+        let (existing_item_index, task_pane, existing_terminal) = existing;
+        if task.allow_concurrent_runs {
+            self.replace_terminal(task, task_pane, existing_item_index, existing_terminal, cx)
+                .detach();
+            return;
         }
-        spawn_task.args = user_args;
-        // Set up shell args unconditionally, as tasks are always spawned inside of a shell.
 
-        ControlFlow::Continue(())
+        self.deferred_tasks.insert(
+            task.id.clone(),
+            cx.spawn(|terminal_panel, mut cx| async move {
+                wait_for_terminals_tasks(terminals_for_task, &mut cx).await;
+                let task = terminal_panel.update(&mut cx, |terminal_panel, cx| {
+                    if task.use_new_terminal {
+                        terminal_panel
+                            .spawn_in_new_terminal(task, cx)
+                            .detach_and_log_err(cx);
+                        None
+                    } else {
+                        Some(terminal_panel.replace_terminal(
+                            task,
+                            task_pane,
+                            existing_item_index,
+                            existing_terminal,
+                            cx,
+                        ))
+                    }
+                });
+                if let Ok(Some(task)) = task {
+                    task.await;
+                }
+            }),
+        );
     }
 
     pub fn spawn_in_new_terminal(
@@ -1339,7 +1260,9 @@ impl Panel for TerminalPanel {
     }
 
     fn set_active(&mut self, active: bool, cx: &mut ViewContext<Self>) {
-        if !active || !self.has_no_terminals(cx) {
+        let old_active = self.active;
+        self.active = active;
+        if !active || old_active == active || !self.has_no_terminals(cx) {
             return;
         }
         cx.defer(|this, cx| {
@@ -1415,98 +1338,4 @@ impl Render for InlineAssistTabBarButton {
                 Tooltip::for_action_in("Inline Assist", &InlineAssist::default(), &focus_handle, cx)
             })
     }
-}
-
-fn retrieve_system_shell() -> Option<String> {
-    #[cfg(not(target_os = "windows"))]
-    {
-        use anyhow::Context;
-        use util::ResultExt;
-
-        std::env::var("SHELL")
-            .context("Error finding SHELL in env.")
-            .log_err()
-    }
-    // `alacritty_terminal` uses this as default on Windows. See:
-    // https://github.com/alacritty/alacritty/blob/0d4ab7bca43213d96ddfe40048fc0f922543c6f8/alacritty_terminal/src/tty/windows/mod.rs#L130
-    #[cfg(target_os = "windows")]
-    return Some("powershell".to_owned());
-}
-
-#[cfg(target_os = "windows")]
-fn to_windows_shell_variable(shell_type: WindowsShellType, input: String) -> String {
-    match shell_type {
-        WindowsShellType::Powershell => to_powershell_variable(input),
-        WindowsShellType::Cmd => to_cmd_variable(input),
-        WindowsShellType::Other => input,
-    }
-}
-
-#[cfg(target_os = "windows")]
-fn to_windows_shell_type(shell: &str) -> WindowsShellType {
-    if shell == "powershell"
-        || shell.ends_with("powershell.exe")
-        || shell == "pwsh"
-        || shell.ends_with("pwsh.exe")
-    {
-        WindowsShellType::Powershell
-    } else if shell == "cmd" || shell.ends_with("cmd.exe") {
-        WindowsShellType::Cmd
-    } else {
-        // Someother shell detected, the user might install and use a
-        // unix-like shell.
-        WindowsShellType::Other
-    }
-}
-
-/// Convert `${SOME_VAR}`, `$SOME_VAR` to `%SOME_VAR%`.
-#[inline]
-#[cfg(target_os = "windows")]
-fn to_cmd_variable(input: String) -> String {
-    if let Some(var_str) = input.strip_prefix("${") {
-        if var_str.find(':').is_none() {
-            // If the input starts with "${", remove the trailing "}"
-            format!("%{}%", &var_str[..var_str.len() - 1])
-        } else {
-            // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
-            // which will result in the task failing to run in such cases.
-            input
-        }
-    } else if let Some(var_str) = input.strip_prefix('$') {
-        // If the input starts with "$", directly append to "$env:"
-        format!("%{}%", var_str)
-    } else {
-        // If no prefix is found, return the input as is
-        input
-    }
-}
-
-/// Convert `${SOME_VAR}`, `$SOME_VAR` to `$env:SOME_VAR`.
-#[inline]
-#[cfg(target_os = "windows")]
-fn to_powershell_variable(input: String) -> String {
-    if let Some(var_str) = input.strip_prefix("${") {
-        if var_str.find(':').is_none() {
-            // If the input starts with "${", remove the trailing "}"
-            format!("$env:{}", &var_str[..var_str.len() - 1])
-        } else {
-            // `${SOME_VAR:-SOME_DEFAULT}`, we currently do not handle this situation,
-            // which will result in the task failing to run in such cases.
-            input
-        }
-    } else if let Some(var_str) = input.strip_prefix('$') {
-        // If the input starts with "$", directly append to "$env:"
-        format!("$env:{}", var_str)
-    } else {
-        // If no prefix is found, return the input as is
-        input
-    }
-}
-
-#[cfg(target_os = "windows")]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum WindowsShellType {
-    Powershell,
-    Cmd,
-    Other,
 }

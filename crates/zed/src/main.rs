@@ -48,7 +48,7 @@ use std::{
 };
 use theme::{ActiveTheme, SystemAppearance, ThemeRegistry, ThemeSettings};
 use time::UtcOffset;
-use util::{load_login_shell_environment, maybe, ResultExt, TryFutureExt};
+use util::{maybe, ResultExt, TryFutureExt};
 use uuid::Uuid;
 use welcome::{show_welcome_view, BaseKeymap, FIRST_OPEN};
 use workspace::{
@@ -64,7 +64,7 @@ use zed::{
 use crate::zed::inline_completion_registry;
 
 #[cfg(unix)]
-use util::load_shell_from_passwd;
+use util::{load_login_shell_environment, load_shell_from_passwd};
 
 #[cfg(feature = "mimalloc")]
 #[global_allocator]
@@ -255,13 +255,11 @@ fn main() {
         paths::keymap_file().clone(),
     );
 
+    #[cfg(unix)]
     if !stdout_is_a_pty() {
         app.background_executor()
             .spawn(async {
-                #[cfg(unix)]
-                {
-                    load_shell_from_passwd().log_err();
-                }
+                load_shell_from_passwd().log_err();
                 load_login_shell_environment().log_err();
             })
             .detach()
@@ -293,7 +291,7 @@ fn main() {
         }
         settings::init(cx);
         handle_settings_file_changes(user_settings_file_rx, cx, handle_settings_changed);
-        handle_keymap_file_changes(user_keymap_file_rx, cx, handle_keymap_changed);
+        handle_keymap_file_changes(user_keymap_file_rx, cx);
         client::init_settings(cx);
         let user_agent = format!(
             "Zed/{} ({}; {})",
@@ -440,7 +438,11 @@ fn main() {
             cx,
         );
         snippet_provider::init(cx);
-        inline_completion_registry::init(app_state.client.clone(), cx);
+        inline_completion_registry::init(
+            app_state.client.clone(),
+            app_state.user_store.clone(),
+            cx,
+        );
         let prompt_builder = assistant::init(
             app_state.fs.clone(),
             app_state.client.clone(),
@@ -609,31 +611,6 @@ fn main() {
         })
         .detach();
     });
-}
-
-fn handle_keymap_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
-    struct KeymapParseErrorNotification;
-    let id = NotificationId::unique::<KeymapParseErrorNotification>();
-
-    for workspace in workspace::local_workspace_windows(cx) {
-        workspace
-            .update(cx, |workspace, cx| match &error {
-                Some(error) => {
-                    workspace.show_notification(id.clone(), cx, |cx| {
-                        cx.new_view(|_| {
-                            MessageNotification::new(format!("Invalid keymap file\n{error}"))
-                                .with_click_message("Open keymap file")
-                                .on_click(|cx| {
-                                    cx.dispatch_action(zed_actions::OpenKeymap.boxed_clone());
-                                    cx.emit(DismissEvent);
-                                })
-                        })
-                    });
-                }
-                None => workspace.dismiss_notification(&id, cx),
-            })
-            .log_err();
-    }
 }
 
 fn handle_settings_changed(error: Option<anyhow::Error>, cx: &mut AppContext) {
@@ -1219,7 +1196,7 @@ fn watch_file_types(fs: Arc<dyn fs::Fs>, cx: &mut AppContext) {
     use gpui::UpdateGlobal;
 
     let path = {
-        let p = Path::new("assets/icons/file_icons/file_types.json");
+        let p = Path::new("assets").join(file_icons::FILE_TYPES_ASSET);
         let Ok(full_path) = p.canonicalize() else {
             return;
         };

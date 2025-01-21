@@ -1,9 +1,9 @@
 [package]
 name = "livekit_client"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 description = "Logic for using LiveKit with GPUI"
-publish = false
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -18,11 +18,7 @@ name = "test_app"
 
 [features]
 no-webrtc = []
-test-support = [
-    "collections/test-support",
-    "gpui/test-support",
-    "nanoid",
-]
+test-support = ["collections/test-support", "gpui/test-support", "nanoid"]
 
 [dependencies]
 anyhow.workspace = true
@@ -32,19 +28,17 @@ cpal = "0.15"
 futures.workspace = true
 gpui.workspace = true
 http_2 = { package = "http", version = "0.2.1" }
+livekit.workspace = true
 livekit_server.workspace = true
 log.workspace = true
 media.workspace = true
-nanoid = { workspace = true, optional = true}
+nanoid = { workspace = true, optional = true }
 parking_lot.workspace = true
 postage.workspace = true
 util.workspace = true
 http_client.workspace = true
 smallvec.workspace = true
 image.workspace = true
-
-[target.'cfg(not(target_os = "windows"))'.dependencies]
-livekit.workspace = true
 
 [target.'cfg(target_os = "macos")'.dependencies]
 core-foundation.workspace = true

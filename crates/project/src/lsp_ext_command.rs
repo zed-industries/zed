@@ -47,6 +47,10 @@ impl LspCommand for ExpandMacro {
     type LspRequest = LspExpandMacro;
     type ProtoRequest = proto::LspExtExpandMacro;
 
+    fn display_name(&self) -> &str {
+        "Expand macro"
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
@@ -171,6 +175,10 @@ impl LspCommand for OpenDocs {
     type LspRequest = LspOpenDocs;
     type ProtoRequest = proto::LspExtOpenDocs;
 
+    fn display_name(&self) -> &str {
+        "Open docs"
+    }
+
     fn to_lsp(
         &self,
         path: &Path,
@@ -283,6 +291,10 @@ impl LspCommand for SwitchSourceHeader {
     type Response = SwitchSourceHeaderResult;
     type LspRequest = LspSwitchSourceHeader;
     type ProtoRequest = proto::LspExtSwitchSourceHeader;
+
+    fn display_name(&self) -> &str {
+        "Switch source header"
+    }
 
     fn to_lsp(
         &self,

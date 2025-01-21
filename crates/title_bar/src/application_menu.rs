@@ -1,17 +1,18 @@
 use gpui::{impl_actions, OwnedMenu, OwnedMenuItem, View};
+use schemars::JsonSchema;
 use serde::Deserialize;
 use smallvec::SmallVec;
 use ui::{prelude::*, ContextMenu, PopoverMenu, PopoverMenuHandle, Tooltip};
 
 impl_actions!(
     app_menu,
-    [OpenApplicationMenu, NavigateApplicationMenuInDirection,]
+    [OpenApplicationMenu, NavigateApplicationMenuInDirection]
 );
 
-#[derive(Clone, Deserialize, PartialEq, Default)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Default)]
 pub struct OpenApplicationMenu(String);
 
-#[derive(Clone, Deserialize, PartialEq, Default)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq, Default)]
 pub struct NavigateApplicationMenuInDirection(String);
 
 #[derive(Clone)]

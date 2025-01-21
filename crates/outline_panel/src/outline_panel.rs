@@ -394,12 +394,10 @@ impl PartialEq for PanelEntry {
                 Self::FoldedDirs(FoldedDirsEntry {
                     worktree_id: worktree_id_a,
                     entries: entries_a,
-                    ..
                 }),
                 Self::FoldedDirs(FoldedDirsEntry {
                     worktree_id: worktree_id_b,
                     entries: entries_b,
-                    ..
                 }),
             ) => worktree_id_a == worktree_id_b && entries_a == entries_b,
             (Self::Outline(a), Self::Outline(b)) => a == b,
@@ -523,23 +521,11 @@ impl SearchData {
     }
 }
 
-#[derive(Clone, Debug, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
 struct OutlineEntryExcerpt {
     id: ExcerptId,
     buffer_id: BufferId,
     range: ExcerptRange<language::Anchor>,
-}
-
-impl PartialEq for OutlineEntryExcerpt {
-    fn eq(&self, other: &Self) -> bool {
-        self.buffer_id == other.buffer_id && self.id == other.id
-    }
-}
-
-impl Hash for OutlineEntryExcerpt {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        (self.buffer_id, self.id).hash(state)
-    }
 }
 
 #[derive(Clone, Debug, Eq)]
@@ -551,13 +537,24 @@ struct OutlineEntryOutline {
 
 impl PartialEq for OutlineEntryOutline {
     fn eq(&self, other: &Self) -> bool {
-        self.buffer_id == other.buffer_id && self.excerpt_id == other.excerpt_id
+        self.buffer_id == other.buffer_id
+            && self.excerpt_id == other.excerpt_id
+            && self.outline.depth == other.outline.depth
+            && self.outline.range == other.outline.range
+            && self.outline.text == other.outline.text
     }
 }
 
 impl Hash for OutlineEntryOutline {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        (self.buffer_id, self.excerpt_id).hash(state);
+        (
+            self.buffer_id,
+            self.excerpt_id,
+            self.outline.depth,
+            &self.outline.range,
+            &self.outline.text,
+        )
+            .hash(state);
     }
 }
 
@@ -1060,8 +1057,7 @@ impl OutlinePanel {
                                         FsEntry::Directory(..) => None,
                                     })
                                     .skip_while(|id| *id != buffer_id)
-                                    .skip(1)
-                                    .next();
+                                    .nth(1);
                                 if let Some(previous_buffer_id) = previous_buffer_id {
                                     if !active_editor.read(cx).buffer_folded(previous_buffer_id, cx)
                                     {
@@ -1070,7 +1066,9 @@ impl OutlinePanel {
                                 }
                             }
                         } else {
-                            offset.y = -(active_editor.read(cx).file_header_size() as f32);
+                            if multi_buffer_snapshot.as_singleton().is_none() {
+                                offset.y = -(active_editor.read(cx).file_header_size() as f32);
+                            }
                             if show_excerpt_controls {
                                 offset.y -= expand_excerpt_control_height;
                             }
@@ -1813,7 +1811,10 @@ impl OutlinePanel {
     }
 
     fn reveal_entry_for_selection(&mut self, editor: View<Editor>, cx: &mut ViewContext<Self>) {
-        if !self.active || !OutlinePanelSettings::get_global(cx).auto_reveal_entries {
+        if !self.active
+            || !OutlinePanelSettings::get_global(cx).auto_reveal_entries
+            || self.focus_handle.contains_focused(cx)
+        {
             return;
         }
         let project = self.project.clone();
@@ -1983,7 +1984,7 @@ impl OutlinePanel {
         let is_expanded = !self
             .collapsed_entries
             .contains(&CollapsedEntry::Excerpt(excerpt.buffer_id, excerpt.id));
-        let color = entry_git_aware_label_color(None, false, is_active);
+        let color = entry_label_color(is_active);
         let icon = if has_outlines {
             FileIcons::get_chevron_icon(is_expanded, cx)
                 .map(|icon_path| Icon::from_path(icon_path).color(color).into_any_element())
@@ -2087,7 +2088,7 @@ impl OutlinePanel {
             }) => {
                 let name = self.entry_name(worktree_id, entry, cx);
                 let color =
-                    entry_git_aware_label_color(entry.git_status, entry.is_ignored, is_active);
+                    entry_git_aware_label_color(entry.git_summary, entry.is_ignored, is_active);
                 let icon = if settings.file_icons {
                     FileIcons::get_icon(&entry.path, cx)
                         .map(|icon_path| Icon::from_path(icon_path).color(color).into_any_element())
@@ -2115,7 +2116,7 @@ impl OutlinePanel {
                     directory.entry.id,
                 ));
                 let color = entry_git_aware_label_color(
-                    directory.entry.git_status,
+                    directory.entry.git_summary,
                     directory.entry.is_ignored,
                     is_active,
                 );
@@ -2211,7 +2212,8 @@ impl OutlinePanel {
             let git_status = folded_dir
                 .entries
                 .first()
-                .and_then(|entry| entry.git_status);
+                .map(|entry| entry.git_summary)
+                .unwrap_or_default();
             let color = entry_git_aware_label_color(git_status, is_ignored, is_active);
             let icon = if settings.folder_icons {
                 FileIcons::get_folder_icon(is_expanded, cx)
@@ -2557,7 +2559,10 @@ impl OutlinePanel {
                             match entry_id.and_then(|id| worktree.entry_for_id(id)).cloned() {
                                 Some(entry) => {
                                     let entry = GitEntry {
-                                        git_status: worktree.status_for_file(&entry.path),
+                                        git_summary: worktree
+                                            .status_for_file(&entry.path)
+                                            .map(|status| status.summary())
+                                            .unwrap_or_default(),
                                         entry,
                                     };
                                     let mut traversal = worktree
@@ -4965,6 +4970,7 @@ impl GenerationState {
 
 #[cfg(test)]
 mod tests {
+    use db::indoc;
     use gpui::{TestAppContext, VisualTestContext, WindowHandle};
     use language::{tree_sitter_rust, Language, LanguageConfig, LanguageMatcher};
     use pretty_assertions::assert_eq;
@@ -5494,6 +5500,312 @@ mod tests {
                 selected_row_text(&new_active_editor, cx),
                 next_navigated_outline_selection.replace("search: ", ""), // Clear outline metadata prefixes
                 "When opening the excerpt, should navigate to the place corresponding the outline entry"
+            );
+        });
+    }
+
+    #[gpui::test]
+    async fn test_navigating_in_singleton(cx: &mut TestAppContext) {
+        init_test(cx);
+
+        let root = "/root";
+        let fs = FakeFs::new(cx.background_executor.clone());
+        fs.insert_tree(
+            root,
+            json!({
+                "src": {
+                    "lib.rs": indoc!("
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+struct OutlineEntryExcerpt {
+    id: ExcerptId,
+    buffer_id: BufferId,
+    range: ExcerptRange<language::Anchor>,
+}"),
+                }
+            }),
+        )
+        .await;
+        let project = Project::test(fs.clone(), [root.as_ref()], cx).await;
+        project.read_with(cx, |project, _| {
+            project.languages().add(Arc::new(
+                rust_lang()
+                    .with_outline_query(
+                        r#"
+                (struct_item
+                    (visibility_modifier)? @context
+                    "struct" @context
+                    name: (_) @name) @item
+
+                (field_declaration
+                    (visibility_modifier)? @context
+                    name: (_) @name) @item
+"#,
+                    )
+                    .unwrap(),
+            ))
+        });
+        let workspace = add_outline_panel(&project, cx).await;
+        let cx = &mut VisualTestContext::from_window(*workspace, cx);
+        let outline_panel = outline_panel(&workspace, cx);
+        outline_panel.update(cx, |outline_panel, cx| outline_panel.set_active(true, cx));
+
+        let _editor = workspace
+            .update(cx, |workspace, cx| {
+                workspace.open_abs_path(PathBuf::from("/root/src/lib.rs"), true, cx)
+            })
+            .unwrap()
+            .await
+            .expect("Failed to open Rust source file")
+            .downcast::<Editor>()
+            .expect("Should open an editor for Rust source file");
+
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                indoc!(
+                    "
+outline: struct OutlineEntryExcerpt
+  outline: id
+  outline: buffer_id
+  outline: range"
+                )
+            );
+        });
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.select_next(&SelectNext, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                indoc!(
+                    "
+outline: struct OutlineEntryExcerpt  <==== selected
+  outline: id
+  outline: buffer_id
+  outline: range"
+                )
+            );
+        });
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.select_next(&SelectNext, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                indoc!(
+                    "
+outline: struct OutlineEntryExcerpt
+  outline: id  <==== selected
+  outline: buffer_id
+  outline: range"
+                )
+            );
+        });
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.select_next(&SelectNext, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                indoc!(
+                    "
+outline: struct OutlineEntryExcerpt
+  outline: id
+  outline: buffer_id  <==== selected
+  outline: range"
+                )
+            );
+        });
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.select_next(&SelectNext, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                indoc!(
+                    "
+outline: struct OutlineEntryExcerpt
+  outline: id
+  outline: buffer_id
+  outline: range  <==== selected"
+                )
+            );
+        });
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.select_next(&SelectNext, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                indoc!(
+                    "
+outline: struct OutlineEntryExcerpt  <==== selected
+  outline: id
+  outline: buffer_id
+  outline: range"
+                )
+            );
+        });
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.select_prev(&SelectPrev, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                indoc!(
+                    "
+outline: struct OutlineEntryExcerpt
+  outline: id
+  outline: buffer_id
+  outline: range  <==== selected"
+                )
+            );
+        });
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.select_prev(&SelectPrev, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                indoc!(
+                    "
+outline: struct OutlineEntryExcerpt
+  outline: id
+  outline: buffer_id  <==== selected
+  outline: range"
+                )
+            );
+        });
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.select_prev(&SelectPrev, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                indoc!(
+                    "
+outline: struct OutlineEntryExcerpt
+  outline: id  <==== selected
+  outline: buffer_id
+  outline: range"
+                )
+            );
+        });
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.select_prev(&SelectPrev, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                indoc!(
+                    "
+outline: struct OutlineEntryExcerpt  <==== selected
+  outline: id
+  outline: buffer_id
+  outline: range"
+                )
+            );
+        });
+
+        outline_panel.update(cx, |outline_panel, cx| {
+            outline_panel.select_prev(&SelectPrev, cx);
+        });
+        cx.executor()
+            .advance_clock(UPDATE_DEBOUNCE + Duration::from_millis(100));
+        cx.run_until_parked();
+        outline_panel.update(cx, |outline_panel, cx| {
+            assert_eq!(
+                display_entries(
+                    &snapshot(&outline_panel, cx),
+                    &outline_panel.cached_entries,
+                    outline_panel.selected_entry()
+                ),
+                indoc!(
+                    "
+outline: struct OutlineEntryExcerpt
+  outline: id
+  outline: buffer_id
+  outline: range  <==== selected"
+                )
             );
         });
     }
@@ -6043,8 +6355,8 @@ mod tests {
         .with_injection_query(
             r#"
                 (macro_invocation
-                    (token_tree) @content
-                    (#set! "language" "rust"))
+                    (token_tree) @injection.content
+                    (#set! injection.language "rust"))
             "#,
         )
         .unwrap()

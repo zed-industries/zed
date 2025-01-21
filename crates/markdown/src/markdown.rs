@@ -14,7 +14,7 @@ use parser::{parse_links_only, parse_markdown, MarkdownEvent, MarkdownTag, Markd
 
 use std::{iter, mem, ops::Range, rc::Rc, sync::Arc};
 use theme::SyntaxTheme;
-use ui::prelude::*;
+use ui::{prelude::*, Tooltip};
 use util::{ResultExt, TryFutureExt};
 
 #[derive(Clone)]
@@ -61,7 +61,13 @@ pub struct Markdown {
     focus_handle: FocusHandle,
     language_registry: Option<Arc<LanguageRegistry>>,
     fallback_code_block_language: Option<String>,
+    options: Options,
+}
+
+#[derive(Debug)]
+struct Options {
     parse_links_only: bool,
+    copy_code_block_buttons: bool,
 }
 
 actions!(markdown, [Copy]);
@@ -87,7 +93,10 @@ impl Markdown {
             focus_handle,
             language_registry,
             fallback_code_block_language,
-            parse_links_only: false,
+            options: Options {
+                parse_links_only: false,
+                copy_code_block_buttons: true,
+            },
         };
         this.parse(cx);
         this
@@ -113,7 +122,10 @@ impl Markdown {
             focus_handle,
             language_registry,
             fallback_code_block_language,
-            parse_links_only: true,
+            options: Options {
+                parse_links_only: true,
+                copy_code_block_buttons: true,
+            },
         };
         this.parse(cx);
         this
@@ -164,7 +176,7 @@ impl Markdown {
         }
 
         let text = self.source.clone();
-        let parse_text_only = self.parse_links_only;
+        let parse_text_only = self.options.parse_links_only;
         let parsed = cx.background_executor().spawn(async move {
             let text = SharedString::from(text);
             let events = match parse_text_only {
@@ -194,6 +206,11 @@ impl Markdown {
             }
             .log_err()
         }));
+    }
+
+    pub fn copy_code_block_buttons(mut self, should_copy: bool) -> Self {
+        self.options.copy_code_block_buttons = should_copy;
+        self
     }
 }
 
@@ -667,6 +684,35 @@ impl Element for MarkdownElement {
                     }
                     MarkdownTagEnd::CodeBlock => {
                         builder.trim_trailing_newline();
+
+                        if self.markdown.read(cx).options.copy_code_block_buttons {
+                            builder.flush_text();
+                            builder.modify_current_div(|el| {
+                                let id =
+                                    ElementId::NamedInteger("copy-markdown-code".into(), range.end);
+                                let copy_button = div().absolute().top_1().right_1().w_5().child(
+                                    IconButton::new(id, IconName::Copy)
+                                        .icon_color(Color::Muted)
+                                        .shape(ui::IconButtonShape::Square)
+                                        .tooltip(|cx| Tooltip::text("Copy Code Block", cx))
+                                        .on_click({
+                                            let code = without_fences(
+                                                parsed_markdown.source()[range.clone()].trim(),
+                                            )
+                                            .to_string();
+
+                                            move |_, cx| {
+                                                cx.write_to_clipboard(ClipboardItem::new_string(
+                                                    code.clone(),
+                                                ))
+                                            }
+                                        }),
+                                );
+
+                                el.child(copy_button)
+                            });
+                        }
+
                         builder.pop_div();
                         builder.pop_code_block();
                         if self.style.code_block.text.is_some() {
@@ -915,6 +961,13 @@ impl MarkdownElementBuilder {
         }
 
         self.div_stack.push(div);
+    }
+
+    fn modify_current_div(&mut self, f: impl FnOnce(AnyDiv) -> AnyDiv) {
+        self.flush_text();
+        if let Some(div) = self.div_stack.pop() {
+            self.div_stack.push(f(div));
+        }
     }
 
     fn pop_div(&mut self) {
@@ -1218,5 +1271,45 @@ impl RenderedText {
         self.links
             .iter()
             .find(|link| link.source_range.contains(&source_index))
+    }
+}
+
+/// Some markdown blocks are indented, and others have e.g. ```rust … ``` around them.
+/// If this block is fenced with backticks, strip them off (and the language name).
+/// We use this when copying code blocks to the clipboard.
+fn without_fences(mut markdown: &str) -> &str {
+    if let Some(opening_backticks) = markdown.find("```") {
+        markdown = &markdown[opening_backticks..];
+
+        // Trim off the next newline. This also trims off a language name if it's there.
+        if let Some(newline) = markdown.find('\n') {
+            markdown = &markdown[newline + 1..];
+        }
+    };
+
+    if let Some(closing_backticks) = markdown.rfind("```") {
+        markdown = &markdown[..closing_backticks];
+    };
+
+    markdown
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_without_fences() {
+        let input = "```rust\nlet x = 5;\n```";
+        assert_eq!(without_fences(input), "let x = 5;\n");
+
+        let input = "   ```\nno language\n```   ";
+        assert_eq!(without_fences(input), "no language\n");
+
+        let input = "plain text";
+        assert_eq!(without_fences(input), "plain text");
+
+        let input = "```python\nprint('hello')\nprint('world')\n```";
+        assert_eq!(without_fences(input), "print('hello')\nprint('world')\n");
     }
 }

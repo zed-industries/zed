@@ -542,6 +542,7 @@ static ENV_PRIORITY_LIST: &'static [PythonEnvironmentKind] = &[
     PythonEnvironmentKind::VirtualEnvWrapper,
     PythonEnvironmentKind::Venv,
     PythonEnvironmentKind::VirtualEnv,
+    PythonEnvironmentKind::Pixi,
     PythonEnvironmentKind::Conda,
     PythonEnvironmentKind::Pyenv,
     PythonEnvironmentKind::GlobalPaths,

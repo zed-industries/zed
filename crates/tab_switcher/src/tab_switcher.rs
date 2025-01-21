@@ -10,6 +10,7 @@ use gpui::{
 };
 use picker::{Picker, PickerDelegate};
 use project::Project;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
@@ -23,7 +24,7 @@ use workspace::{
 
 const PANEL_WIDTH_REMS: f32 = 28.;
 
-#[derive(PartialEq, Clone, Deserialize, Default)]
+#[derive(PartialEq, Clone, Deserialize, JsonSchema, Default)]
 pub struct Toggle {
     #[serde(default)]
     pub select_last: bool,
@@ -184,11 +185,7 @@ impl TabSwitcherDelegate {
                 PaneEvent::AddItem { .. }
                 | PaneEvent::RemovedItem { .. }
                 | PaneEvent::Remove { .. } => tab_switcher.picker.update(cx, |picker, cx| {
-                    let selected_item_id = picker.delegate.selected_item_id();
                     picker.delegate.update_matches(cx);
-                    if let Some(item_id) = selected_item_id {
-                        picker.delegate.select_item(item_id, cx);
-                    }
                     cx.notify();
                 }),
                 _ => {}
@@ -198,6 +195,7 @@ impl TabSwitcherDelegate {
     }
 
     fn update_matches(&mut self, cx: &mut WindowContext) {
+        let selected_item_id = self.selected_item_id();
         self.matches.clear();
         let Some(pane) = self.pane.upgrade() else {
             return;
@@ -235,13 +233,7 @@ impl TabSwitcherDelegate {
             a_score.cmp(&b_score)
         });
 
-        if self.matches.len() > 1 {
-            if self.select_last {
-                self.selected_index = self.matches.len() - 1;
-            } else {
-                self.selected_index = 1;
-            }
-        }
+        self.selected_index = self.compute_selected_index(selected_item_id);
     }
 
     fn selected_item_id(&self) -> Option<EntityId> {
@@ -250,17 +242,34 @@ impl TabSwitcherDelegate {
             .map(|tab_match| tab_match.item.item_id())
     }
 
-    fn select_item(
-        &mut self,
-        item_id: EntityId,
-        cx: &mut ViewContext<Picker<TabSwitcherDelegate>>,
-    ) {
-        let selected_idx = self
-            .matches
-            .iter()
-            .position(|tab_match| tab_match.item.item_id() == item_id)
-            .unwrap_or(0);
-        self.set_selected_index(selected_idx, cx);
+    fn compute_selected_index(&mut self, prev_selected_item_id: Option<EntityId>) -> usize {
+        if self.matches.is_empty() {
+            return 0;
+        }
+
+        if let Some(selected_item_id) = prev_selected_item_id {
+            // If the previously selected item is still in the list, select its new position.
+            if let Some(item_index) = self
+                .matches
+                .iter()
+                .position(|tab_match| tab_match.item.item_id() == selected_item_id)
+            {
+                return item_index;
+            }
+            // Otherwise, try to preserve the previously selected index.
+            return self.selected_index.min(self.matches.len() - 1);
+        }
+
+        if self.select_last {
+            return self.matches.len() - 1;
+        }
+
+        if self.matches.len() > 1 {
+            // Index 0 is active, so don't preselect it for switching.
+            return 1;
+        }
+
+        0
     }
 
     fn close_item_at(&mut self, ix: usize, cx: &mut ViewContext<Picker<TabSwitcherDelegate>>) {
@@ -361,7 +370,10 @@ impl PickerDelegate for TabSwitcherDelegate {
                         .and_then(|path| {
                             let project = self.project.read(cx);
                             let entry = project.entry_for_path(path, cx)?;
-                            let git_status = project.project_path_git_status(path, cx);
+                            let git_status = project
+                                .project_path_git_status(path, cx)
+                                .map(|status| status.summary())
+                                .unwrap_or_default();
                             Some((entry, git_status))
                         })
                         .map(|(entry, git_status)| {

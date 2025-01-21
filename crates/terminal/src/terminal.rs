@@ -347,7 +347,7 @@ impl TerminalBuilder {
 
         env.insert("ZED_TERM".to_string(), "true".to_string());
         env.insert("TERM_PROGRAM".to_string(), "zed".to_string());
-        env.insert("TERM".to_string(), "alacritty".to_string());
+        env.insert("TERM".to_string(), "xterm-256color".to_string());
         env.insert(
             "TERM_PROGRAM_VERSION".to_string(),
             release_channel::AppVersion::global(cx).to_string(),
@@ -376,7 +376,7 @@ impl TerminalBuilder {
                 working_directory: working_directory
                     .clone()
                     .or_else(|| Some(home_dir().to_path_buf())),
-                hold: false,
+                drain_on_exit: true,
                 env: env.into_iter().collect(),
             }
         };
@@ -441,7 +441,7 @@ impl TerminalBuilder {
             term.clone(),
             ZedListener(events_tx.clone()),
             pty,
-            pty_options.hold,
+            pty_options.drain_on_exit,
             false,
         )?;
 
@@ -1731,9 +1731,9 @@ impl Terminal {
     pub fn wait_for_completed_task(&self, cx: &AppContext) -> Task<()> {
         if let Some(task) = self.task() {
             if task.status == TaskStatus::Running {
-                let mut completion_receiver = task.completion_rx.clone();
+                let completion_receiver = task.completion_rx.clone();
                 return cx.spawn(|_| async move {
-                    completion_receiver.next().await;
+                    let _ = completion_receiver.recv().await;
                 });
             }
         }

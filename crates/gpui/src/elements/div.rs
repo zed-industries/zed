@@ -42,7 +42,8 @@ use taffy::style::Overflow;
 use util::ResultExt;
 
 const DRAG_THRESHOLD: f64 = 2.;
-pub(crate) const TOOLTIP_DELAY: Duration = Duration::from_millis(500);
+const TOOLTIP_SHOW_DELAY: Duration = Duration::from_millis(500);
+const HOVERABLE_TOOLTIP_HIDE_DELAY: Duration = Duration::from_millis(500);
 
 /// The styling information for a given group.
 pub struct GroupStyle {
@@ -1104,6 +1105,7 @@ pub fn div() -> Div {
     Div {
         interactivity,
         children: SmallVec::default(),
+        prepaint_listener: None,
     }
 }
 
@@ -1111,6 +1113,19 @@ pub fn div() -> Div {
 pub struct Div {
     interactivity: Interactivity,
     children: SmallVec<[AnyElement; 2]>,
+    prepaint_listener: Option<Box<dyn Fn(Vec<Bounds<Pixels>>, &mut WindowContext) + 'static>>,
+}
+
+impl Div {
+    /// Add a listener to be called when the children of this `Div` are prepainted.
+    /// This allows you to store the [`Bounds`] of the children for later use.
+    pub fn on_children_prepainted(
+        mut self,
+        listener: impl Fn(Vec<Bounds<Pixels>>, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.prepaint_listener = Some(Box::new(listener));
+        self
+    }
 }
 
 /// A frame state for a `Div` element, which contains layout IDs for its children.
@@ -1177,6 +1192,13 @@ impl Element for Div {
         request_layout: &mut Self::RequestLayoutState,
         cx: &mut WindowContext,
     ) -> Option<Hitbox> {
+        let has_prepaint_listener = self.prepaint_listener.is_some();
+        let mut children_bounds = Vec::with_capacity(if has_prepaint_listener {
+            request_layout.child_layout_ids.len()
+        } else {
+            0
+        });
+
         let mut child_min = point(Pixels::MAX, Pixels::MAX);
         let mut child_max = Point::default();
         if let Some(handle) = self.interactivity.scroll_anchor.as_ref() {
@@ -1189,6 +1211,7 @@ impl Element for Div {
             state.child_bounds = Vec::with_capacity(request_layout.child_layout_ids.len());
             state.bounds = bounds;
             let requested = state.requested_scroll_top.take();
+            // TODO az
 
             for (ix, child_layout_id) in request_layout.child_layout_ids.iter().enumerate() {
                 let child_bounds = cx.layout_bounds(*child_layout_id);
@@ -1209,6 +1232,10 @@ impl Element for Div {
                 let child_bounds = cx.layout_bounds(*child_layout_id);
                 child_min = child_min.min(&child_bounds.origin);
                 child_max = child_max.max(&child_bounds.bottom_right());
+
+                if has_prepaint_listener {
+                    children_bounds.push(child_bounds);
+                }
             }
             (child_max - child_min).into()
         };
@@ -1224,6 +1251,11 @@ impl Element for Div {
                         child.prepaint(cx);
                     }
                 });
+
+                if let Some(listener) = self.prepaint_listener.as_ref() {
+                    listener(children_bounds, cx);
+                }
+
                 hitbox
             },
         )
@@ -1394,17 +1426,17 @@ impl Interactivity {
                     element_state.map(|element_state| element_state.unwrap_or_default());
                 let style = self.compute_style_internal(None, element_state.as_mut(), cx);
 
-                if let Some(element_state) = element_state.as_ref() {
+                if let Some(element_state) = element_state.as_mut() {
                     if let Some(clicked_state) = element_state.clicked_state.as_ref() {
                         let clicked_state = clicked_state.borrow();
                         self.active = Some(clicked_state.element);
                     }
-
                     if let Some(active_tooltip) = element_state.active_tooltip.as_ref() {
-                        if let Some(active_tooltip) = active_tooltip.borrow().as_ref() {
-                            if let Some(tooltip) = active_tooltip.tooltip.clone() {
-                                self.tooltip_id = Some(cx.set_tooltip(tooltip));
-                            }
+                        if self.tooltip_builder.is_some() {
+                            self.tooltip_id = set_tooltip_on_window(active_tooltip, cx);
+                        } else {
+                            // If there is no longer a tooltip builder, remove the active tooltip.
+                            element_state.active_tooltip.take();
                         }
                     }
                 }
@@ -1904,13 +1936,7 @@ impl Interactivity {
                 });
             }
 
-            // Ensure to remove active tooltip if tooltip builder is none
-            if self.tooltip_builder.is_none() {
-                element_state.active_tooltip.take();
-            }
-
             if let Some(tooltip_builder) = self.tooltip_builder.take() {
-                let tooltip_is_hoverable = tooltip_builder.hoverable;
                 let active_tooltip = element_state
                     .active_tooltip
                     .get_or_insert_with(Default::default)
@@ -1920,85 +1946,24 @@ impl Interactivity {
                     .get_or_insert_with(Default::default)
                     .clone();
 
-                cx.on_mouse_event({
-                    let active_tooltip = active_tooltip.clone();
-                    let hitbox = hitbox.clone();
-                    let source_bounds = hitbox.bounds;
-                    let tooltip_id = self.tooltip_id;
-                    move |_: &MouseMoveEvent, phase, cx| {
-                        let is_hovered =
-                            pending_mouse_down.borrow().is_none() && hitbox.is_hovered(cx);
-                        let tooltip_is_hovered =
-                            tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(cx));
-                        if !is_hovered && (!tooltip_is_hoverable || !tooltip_is_hovered) {
-                            if active_tooltip.borrow_mut().take().is_some() {
-                                cx.refresh();
-                            }
-
-                            return;
-                        }
-
-                        if phase != DispatchPhase::Bubble {
-                            return;
-                        }
-
-                        if active_tooltip.borrow().is_none() {
-                            let task = cx.spawn({
-                                let active_tooltip = active_tooltip.clone();
-                                let build_tooltip = tooltip_builder.build.clone();
-                                move |mut cx| async move {
-                                    cx.background_executor().timer(TOOLTIP_DELAY).await;
-                                    cx.update(|cx| {
-                                        active_tooltip.borrow_mut().replace(ActiveTooltip {
-                                            tooltip: Some(AnyTooltip {
-                                                view: build_tooltip(cx),
-                                                mouse_position: cx.mouse_position(),
-                                                hoverable: tooltip_is_hoverable,
-                                                origin_bounds: source_bounds,
-                                            }),
-                                            _task: None,
-                                        });
-                                        cx.refresh();
-                                    })
-                                    .ok();
-                                }
-                            });
-                            active_tooltip.borrow_mut().replace(ActiveTooltip {
-                                tooltip: None,
-                                _task: Some(task),
-                            });
-                        }
-                    }
+                let tooltip_is_hoverable = tooltip_builder.hoverable;
+                let build_tooltip = Rc::new(move |cx: &mut WindowContext| {
+                    Some(((tooltip_builder.build)(cx), tooltip_is_hoverable))
                 });
-
-                cx.on_mouse_event({
-                    let active_tooltip = active_tooltip.clone();
-                    let tooltip_id = self.tooltip_id;
-                    move |_: &MouseDownEvent, _, cx| {
-                        let tooltip_is_hovered =
-                            tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(cx));
-
-                        if (!tooltip_is_hoverable || !tooltip_is_hovered)
-                            && active_tooltip.borrow_mut().take().is_some()
-                        {
-                            cx.refresh();
-                        }
-                    }
+                // Use bounds instead of testing hitbox since check_is_hovered is also called
+                // during prepaint.
+                let source_bounds = hitbox.bounds;
+                let check_is_hovered = Rc::new(move |cx: &WindowContext| {
+                    pending_mouse_down.borrow().is_none()
+                        && source_bounds.contains(&cx.mouse_position())
                 });
-
-                cx.on_mouse_event({
-                    let active_tooltip = active_tooltip.clone();
-                    let tooltip_id = self.tooltip_id;
-                    move |_: &ScrollWheelEvent, _, cx| {
-                        let tooltip_is_hovered =
-                            tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(cx));
-                        if (!tooltip_is_hoverable || !tooltip_is_hovered)
-                            && active_tooltip.borrow_mut().take().is_some()
-                        {
-                            cx.refresh();
-                        }
-                    }
-                })
+                register_tooltip_mouse_handlers(
+                    &active_tooltip,
+                    self.tooltip_id,
+                    build_tooltip,
+                    check_is_hovered,
+                    cx,
+                );
             }
 
             let active_state = element_state
@@ -2253,12 +2218,6 @@ pub struct InteractiveElementState {
     pub(crate) active_tooltip: Option<Rc<RefCell<Option<ActiveTooltip>>>>,
 }
 
-/// The current active tooltip
-pub struct ActiveTooltip {
-    pub(crate) tooltip: Option<AnyTooltip>,
-    pub(crate) _task: Option<Task<()>>,
-}
-
 /// Whether or not the element or a group that contains it is clicked by the mouse.
 #[derive(Copy, Clone, Default, Eq, PartialEq)]
 pub struct ElementClickedState {
@@ -2273,6 +2232,269 @@ impl ElementClickedState {
     fn is_clicked(&self) -> bool {
         self.group || self.element
     }
+}
+
+pub(crate) enum ActiveTooltip {
+    /// Currently delaying before showing the tooltip.
+    WaitingForShow { _task: Task<()> },
+    /// Tooltip is visible, element was hovered or for hoverable tooltips, the tooltip was hovered.
+    Visible {
+        tooltip: AnyTooltip,
+        is_hoverable: bool,
+    },
+    /// Tooltip is visible and hoverable, but the mouse is no longer hovering. Currently delaying
+    /// before hiding it.
+    WaitingForHide {
+        tooltip: AnyTooltip,
+        _task: Task<()>,
+    },
+}
+
+pub(crate) fn clear_active_tooltip(
+    active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
+    cx: &mut WindowContext,
+) {
+    match active_tooltip.borrow_mut().take() {
+        None => {}
+        Some(ActiveTooltip::WaitingForShow { .. }) => {}
+        Some(ActiveTooltip::Visible { .. }) => cx.refresh(),
+        Some(ActiveTooltip::WaitingForHide { .. }) => cx.refresh(),
+    }
+}
+
+pub(crate) fn clear_active_tooltip_if_not_hoverable(
+    active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
+    cx: &mut WindowContext,
+) {
+    let should_clear = match active_tooltip.borrow().as_ref() {
+        None => false,
+        Some(ActiveTooltip::WaitingForShow { .. }) => false,
+        Some(ActiveTooltip::Visible { is_hoverable, .. }) => !is_hoverable,
+        Some(ActiveTooltip::WaitingForHide { .. }) => false,
+    };
+    if should_clear {
+        active_tooltip.borrow_mut().take();
+        cx.refresh();
+    }
+}
+
+pub(crate) fn set_tooltip_on_window(
+    active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
+    cx: &mut WindowContext,
+) -> Option<TooltipId> {
+    let tooltip = match active_tooltip.borrow().as_ref() {
+        None => return None,
+        Some(ActiveTooltip::WaitingForShow { .. }) => return None,
+        Some(ActiveTooltip::Visible { tooltip, .. }) => tooltip.clone(),
+        Some(ActiveTooltip::WaitingForHide { tooltip, .. }) => tooltip.clone(),
+    };
+    Some(cx.set_tooltip(tooltip))
+}
+
+pub(crate) fn register_tooltip_mouse_handlers(
+    active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
+    tooltip_id: Option<TooltipId>,
+    build_tooltip: Rc<dyn Fn(&mut WindowContext) -> Option<(AnyView, bool)>>,
+    check_is_hovered: Rc<dyn Fn(&WindowContext) -> bool>,
+    cx: &mut WindowContext,
+) {
+    cx.on_mouse_event({
+        let active_tooltip = active_tooltip.clone();
+        let build_tooltip = build_tooltip.clone();
+        let check_is_hovered = check_is_hovered.clone();
+        move |_: &MouseMoveEvent, phase, cx| {
+            handle_tooltip_mouse_move(
+                &active_tooltip,
+                &build_tooltip,
+                &check_is_hovered,
+                phase,
+                cx,
+            )
+        }
+    });
+
+    cx.on_mouse_event({
+        let active_tooltip = active_tooltip.clone();
+        move |_: &MouseDownEvent, _, cx| {
+            if !tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(cx)) {
+                clear_active_tooltip_if_not_hoverable(&active_tooltip, cx);
+            }
+        }
+    });
+
+    cx.on_mouse_event({
+        let active_tooltip = active_tooltip.clone();
+        move |_: &ScrollWheelEvent, _, cx| {
+            if !tooltip_id.map_or(false, |tooltip_id| tooltip_id.is_hovered(cx)) {
+                clear_active_tooltip_if_not_hoverable(&active_tooltip, cx);
+            }
+        }
+    });
+}
+
+fn handle_tooltip_mouse_move(
+    active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
+    build_tooltip: &Rc<dyn Fn(&mut WindowContext) -> Option<(AnyView, bool)>>,
+    check_is_hovered: &Rc<dyn Fn(&WindowContext) -> bool>,
+    phase: DispatchPhase,
+    cx: &mut WindowContext,
+) {
+    // Separates logic for what mutation should occur from applying it, to avoid overlapping
+    // RefCell borrows.
+    enum Action {
+        None,
+        CancelShow,
+        ScheduleShow,
+    }
+
+    let action = match active_tooltip.borrow().as_ref() {
+        None => {
+            let is_hovered = check_is_hovered(cx);
+            if is_hovered && phase.bubble() {
+                Action::ScheduleShow
+            } else {
+                Action::None
+            }
+        }
+        Some(ActiveTooltip::WaitingForShow { .. }) => {
+            let is_hovered = check_is_hovered(cx);
+            if is_hovered {
+                Action::None
+            } else {
+                Action::CancelShow
+            }
+        }
+        // These are handled in check_visible_and_update.
+        Some(ActiveTooltip::Visible { .. }) | Some(ActiveTooltip::WaitingForHide { .. }) => {
+            Action::None
+        }
+    };
+
+    match action {
+        Action::None => {}
+        Action::CancelShow => {
+            // Cancel waiting to show tooltip when it is no longer hovered.
+            active_tooltip.borrow_mut().take();
+        }
+        Action::ScheduleShow => {
+            let delayed_show_task = cx.spawn({
+                let active_tooltip = active_tooltip.clone();
+                let build_tooltip = build_tooltip.clone();
+                let check_is_hovered = check_is_hovered.clone();
+                move |mut cx| async move {
+                    cx.background_executor().timer(TOOLTIP_SHOW_DELAY).await;
+                    cx.update(|cx| {
+                        let new_tooltip = build_tooltip(cx).map(|(view, tooltip_is_hoverable)| {
+                            let active_tooltip = active_tooltip.clone();
+                            ActiveTooltip::Visible {
+                                tooltip: AnyTooltip {
+                                    view,
+                                    mouse_position: cx.mouse_position(),
+                                    check_visible_and_update: Rc::new(move |tooltip_bounds, cx| {
+                                        handle_tooltip_check_visible_and_update(
+                                            &active_tooltip,
+                                            tooltip_is_hoverable,
+                                            &check_is_hovered,
+                                            tooltip_bounds,
+                                            cx,
+                                        )
+                                    }),
+                                },
+                                is_hoverable: tooltip_is_hoverable,
+                            }
+                        });
+                        *active_tooltip.borrow_mut() = new_tooltip;
+                        cx.refresh();
+                    })
+                    .ok();
+                }
+            });
+            active_tooltip
+                .borrow_mut()
+                .replace(ActiveTooltip::WaitingForShow {
+                    _task: delayed_show_task,
+                });
+        }
+    }
+}
+
+/// Returns a callback which will be called by window prepaint to update tooltip visibility. The
+/// purpose of doing this logic here instead of the mouse move handler is that the mouse move
+/// handler won't get called when the element is not painted (e.g. via use of `visible_on_hover`).
+fn handle_tooltip_check_visible_and_update(
+    active_tooltip: &Rc<RefCell<Option<ActiveTooltip>>>,
+    tooltip_is_hoverable: bool,
+    check_is_hovered: &Rc<dyn Fn(&WindowContext) -> bool>,
+    tooltip_bounds: Bounds<Pixels>,
+    cx: &mut WindowContext,
+) -> bool {
+    // Separates logic for what mutation should occur from applying it, to avoid overlapping RefCell
+    // borrows.
+    enum Action {
+        None,
+        Hide,
+        ScheduleHide(AnyTooltip),
+        CancelHide(AnyTooltip),
+    }
+
+    let is_hovered = check_is_hovered(cx)
+        || (tooltip_is_hoverable && tooltip_bounds.contains(&cx.mouse_position()));
+    let action = match active_tooltip.borrow().as_ref() {
+        Some(ActiveTooltip::Visible { tooltip, .. }) => {
+            if is_hovered {
+                Action::None
+            } else {
+                if tooltip_is_hoverable {
+                    Action::ScheduleHide(tooltip.clone())
+                } else {
+                    Action::Hide
+                }
+            }
+        }
+        Some(ActiveTooltip::WaitingForHide { tooltip, .. }) => {
+            if is_hovered {
+                Action::CancelHide(tooltip.clone())
+            } else {
+                Action::None
+            }
+        }
+        None | Some(ActiveTooltip::WaitingForShow { .. }) => Action::None,
+    };
+
+    match action {
+        Action::None => {}
+        Action::Hide => {
+            clear_active_tooltip(&active_tooltip, cx);
+        }
+        Action::ScheduleHide(tooltip) => {
+            let delayed_hide_task = cx.spawn({
+                let active_tooltip = active_tooltip.clone();
+                move |mut cx| async move {
+                    cx.background_executor()
+                        .timer(HOVERABLE_TOOLTIP_HIDE_DELAY)
+                        .await;
+                    if active_tooltip.borrow_mut().take().is_some() {
+                        cx.update(|cx| cx.refresh()).ok();
+                    }
+                }
+            });
+            active_tooltip
+                .borrow_mut()
+                .replace(ActiveTooltip::WaitingForHide {
+                    tooltip,
+                    _task: delayed_hide_task,
+                });
+        }
+        Action::CancelHide(tooltip) => {
+            // Cancel waiting to hide tooltip when it becomes hovered.
+            active_tooltip.borrow_mut().replace(ActiveTooltip::Visible {
+                tooltip,
+                is_hoverable: true,
+            });
+        }
+    }
+
+    active_tooltip.borrow().is_some()
 }
 
 #[derive(Default)]
@@ -2327,6 +2549,18 @@ where
 {
     fn style(&mut self) -> &mut StyleRefinement {
         self.element.style()
+    }
+}
+
+impl Focusable<Div> {
+    /// Add a listener to be called when the children of this `Div` are prepainted.
+    /// This allows you to store the [`Bounds`] of the children for later use.
+    pub fn on_children_prepainted(
+        mut self,
+        listener: impl Fn(Vec<Bounds<Pixels>>, &mut WindowContext) + 'static,
+    ) -> Self {
+        self.element = self.element.on_children_prepainted(listener);
+        self
     }
 }
 

@@ -2,14 +2,14 @@ use crate::{
     editor_settings::SeedQuerySetting,
     persistence::{SerializedEditor, DB},
     scroll::ScrollAnchor,
-    Anchor, Autoscroll, Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, MultiBuffer,
-    MultiBufferSnapshot, NavigationData, SearchWithinRange, ToPoint as _,
+    Anchor, Autoscroll, Editor, EditorEvent, EditorSettings, ExcerptId, ExcerptRange, FormatTarget,
+    MultiBuffer, MultiBufferSnapshot, NavigationData, SearchWithinRange, ToPoint as _,
 };
 use anyhow::{anyhow, Context as _, Result};
 use collections::HashSet;
 use file_icons::FileIcons;
 use futures::future::try_join_all;
-use git::repository::GitFileStatus;
+use git::status::GitSummary;
 use gpui::{
     point, AnyElement, AppContext, AsyncWindowContext, Context, Entity, EntityId, EventEmitter,
     IntoElement, Model, ParentElement, Pixels, SharedString, Styled, Task, View, ViewContext,
@@ -27,9 +27,6 @@ use project::{
 };
 use rpc::proto::{self, update_view, PeerId};
 use settings::Settings;
-use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
-
-use project::lsp_store::FormatTarget;
 use std::{
     any::TypeId,
     borrow::Cow,
@@ -44,6 +41,7 @@ use theme::{Theme, ThemeSettings};
 use ui::{h_flex, prelude::*, IconDecorationKind, Label};
 use util::{paths::PathExt, ResultExt, TryFutureExt};
 use workspace::item::{BreadcrumbText, FollowEvent};
+use workspace::item::{Dedup, ItemSettings, SerializableItem, TabContentParams};
 use workspace::{
     item::{FollowableItem, Item, ItemEvent, ProjectItem},
     searchable::{Direction, SearchEvent, SearchableItem, SearchableItemHandle},
@@ -622,10 +620,10 @@ impl Item for Editor {
                         .worktree_for_id(path.worktree_id, cx)?
                         .read(cx)
                         .snapshot()
-                        .status_for_file(path.path);
+                        .status_for_file(path.path)?;
 
                     Some(entry_git_aware_label_color(
-                        git_status,
+                        git_status.summary(),
                         entry.is_ignored,
                         params.selected,
                     ))
@@ -756,7 +754,7 @@ impl Item for Editor {
                     editor.perform_format(
                         project.clone(),
                         FormatTrigger::Save,
-                        FormatTarget::Buffer,
+                        FormatTarget::Buffers,
                         cx,
                     )
                 })?
@@ -1261,8 +1259,8 @@ impl SearchableItem for Editor {
             return;
         }
 
-        let ranges = self.selections.disjoint_anchor_ranges();
-        if ranges.iter().any(|range| range.start != range.end) {
+        let ranges = self.selections.disjoint_anchor_ranges().collect::<Vec<_>>();
+        if ranges.iter().any(|s| s.start != s.end) {
             self.set_search_within_ranges(&ranges, cx);
         } else if let Some(previous_search_ranges) = self.previous_search_ranges.take() {
             self.set_search_within_ranges(&previous_search_ranges, cx)
@@ -1561,20 +1559,18 @@ pub fn entry_diagnostic_aware_icon_decoration_and_color(
     }
 }
 
-pub fn entry_git_aware_label_color(
-    git_status: Option<GitFileStatus>,
-    ignored: bool,
-    selected: bool,
-) -> Color {
+pub fn entry_git_aware_label_color(git_status: GitSummary, ignored: bool, selected: bool) -> Color {
+    let tracked = git_status.index + git_status.worktree;
     if ignored {
         Color::Ignored
+    } else if git_status.conflict > 0 {
+        Color::Conflict
+    } else if tracked.modified > 0 {
+        Color::Modified
+    } else if tracked.added > 0 || git_status.untracked > 0 {
+        Color::Created
     } else {
-        match git_status {
-            Some(GitFileStatus::Added) | Some(GitFileStatus::Untracked) => Color::Created,
-            Some(GitFileStatus::Modified) => Color::Modified,
-            Some(GitFileStatus::Conflict) => Color::Conflict,
-            Some(GitFileStatus::Deleted) | None => entry_label_color(selected),
-        }
+        entry_label_color(selected)
     }
 }
 

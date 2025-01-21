@@ -29,6 +29,7 @@
       "alt-u": "editor::ConvertToUpperCase", // upcase-word
       "alt-l": "editor::ConvertToLowerCase", // downcase-word
       "alt-c": "editor::ConvertToUpperCamelCase", // capitalize-word
+      "ctrl-t": "editor::Transpose", // transpose-chars
       "alt-;": ["editor::ToggleComments", { "advance_downwards": false }],
       "ctrl-x ctrl-;": "editor::ToggleComments",
       "alt-.": "editor::GoToDefinition", // xref-find-definitions
@@ -55,7 +56,7 @@
     }
   },
   {
-    "context": "Workspace && !Terminal",
+    "context": "Workspace",
     "bindings": {
       "ctrl-x ctrl-c": "zed::Quit", // save-buffers-kill-terminal
       "ctrl-x 5 0": "workspace::CloseWindow", // delete-frame
@@ -70,6 +71,18 @@
       "ctrl-x ctrl-s": "workspace::Save", // save-buffer
       "ctrl-x ctrl-w": "workspace::SaveAs", // write-file
       "ctrl-x s": "workspace::SaveAll" // save-some-buffers
+    }
+  },
+  {
+    // Workaround to enable using emacs in the Zed terminal.
+    // Unbind so Zed ignores these keys and lets emacs handle them.
+    "context": "Terminal",
+    "bindings": {
+      "ctrl-x ctrl-c": null, // save-buffers-kill-terminal
+      "ctrl-x ctrl-f": null, // find-file
+      "ctrl-x ctrl-s": null, // save-buffer
+      "ctrl-x ctrl-w": null, // write-file
+      "ctrl-x s": null // save-some-buffers
     }
   },
   {

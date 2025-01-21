@@ -1,5 +1,6 @@
 use std::{
     path::{Path, PathBuf},
+    pin::pin,
     sync::{atomic::AtomicUsize, Arc},
 };
 
@@ -648,7 +649,7 @@ impl WorktreeStore {
         // We spawn a number of workers that take items from the filter channel and check the query
         // against the version of the file on disk.
         let (filter_tx, filter_rx) = smol::channel::bounded(64);
-        let (output_tx, mut output_rx) = smol::channel::bounded(64);
+        let (output_tx, output_rx) = smol::channel::bounded(64);
         let (matching_paths_tx, matching_paths_rx) = smol::channel::unbounded();
 
         let input = cx.background_executor().spawn({
@@ -685,7 +686,7 @@ impl WorktreeStore {
         cx.background_executor()
             .spawn(async move {
                 let mut matched = 0;
-                while let Some(mut receiver) = output_rx.next().await {
+                while let Ok(mut receiver) = output_rx.recv().await {
                     let Some(path) = receiver.next().await else {
                         continue;
                     };
@@ -990,6 +991,7 @@ impl WorktreeStore {
         mut input: Receiver<MatchingEntry>,
         query: &SearchQuery,
     ) -> Result<()> {
+        let mut input = pin!(input);
         while let Some(mut entry) = input.next().await {
             let abs_path = entry.worktree_path.join(&entry.path.path);
             let Some(file) = fs.open_sync(&abs_path).await.log_err() else {

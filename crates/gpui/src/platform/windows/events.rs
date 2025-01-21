@@ -16,8 +16,9 @@ use windows::Win32::{
 
 use crate::*;
 
-pub(crate) const CURSOR_STYLE_CHANGED: u32 = WM_USER + 1;
-pub(crate) const CLOSE_ONE_WINDOW: u32 = WM_USER + 2;
+pub(crate) const WM_GPUI_CURSOR_STYLE_CHANGED: u32 = WM_USER + 1;
+pub(crate) const WM_GPUI_CLOSE_ONE_WINDOW: u32 = WM_USER + 2;
+pub(crate) const WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD: u32 = WM_USER + 3;
 
 const SIZE_MOVE_LOOP_TIMER_ID: usize = 1;
 const AUTO_HIDE_TASKBAR_THICKNESS_PX: i32 = 1;
@@ -89,7 +90,7 @@ pub(crate) fn handle_msg(
         WM_SETCURSOR => handle_set_cursor(lparam, state_ptr),
         WM_SETTINGCHANGE => handle_system_settings_changed(handle, state_ptr),
         WM_DWMCOLORIZATIONCOLORCHANGED => handle_system_theme_changed(state_ptr),
-        CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
+        WM_GPUI_CURSOR_STYLE_CHANGED => handle_cursor_changed(lparam, state_ptr),
         _ => None,
     };
     if let Some(n) = handled {
@@ -243,9 +244,9 @@ fn handle_destroy_msg(handle: HWND, state_ptr: Rc<WindowsWindowStatePtr>) -> Opt
         callback();
     }
     unsafe {
-        PostMessageW(
-            None,
-            CLOSE_ONE_WINDOW,
+        PostThreadMessageW(
+            state_ptr.main_thread_id_win32,
+            WM_GPUI_CLOSE_ONE_WINDOW,
             WPARAM(state_ptr.validation_number),
             LPARAM(handle.0 as isize),
         )

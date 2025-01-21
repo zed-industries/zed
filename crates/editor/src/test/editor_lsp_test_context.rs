@@ -331,7 +331,7 @@ impl EditorLspTestContext {
     }
 
     pub fn notify<T: notification::Notification>(&self, params: T::Params) {
-        self.lsp.notify::<T>(params);
+        self.lsp.notify::<T>(&params);
     }
 
     #[cfg(target_os = "windows")]

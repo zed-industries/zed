@@ -14,7 +14,6 @@ use editor::{
     scroll::Autoscroll,
     Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
-use feature_flags::FeatureFlagAppExt;
 use gpui::{
     actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
     FocusableView, Global, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement,
@@ -96,6 +95,7 @@ impl Render for ProjectDiagnosticsEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let child = if self.path_states.is_empty() {
             div()
+                .key_context("EmptyPane")
                 .bg(cx.theme().colors().editor_background)
                 .flex()
                 .items_center()
@@ -107,10 +107,8 @@ impl Render for ProjectDiagnosticsEditor {
         };
 
         div()
+            .key_context("Diagnostics")
             .track_focus(&self.focus_handle(cx))
-            .when(self.path_states.is_empty(), |el| {
-                el.key_context("EmptyPane")
-            })
             .size_full()
             .on_action(cx.listener(Self::toggle_warnings))
             .child(child)
@@ -933,18 +931,16 @@ fn context_range_for_entry(
     snapshot: &BufferSnapshot,
     cx: &AppContext,
 ) -> Range<Point> {
-    if cx.is_staff() {
-        if let Some(rows) = heuristic_syntactic_expand(
-            entry.range.clone(),
-            DIAGNOSTIC_EXPANSION_ROW_LIMIT,
-            snapshot,
-            cx,
-        ) {
-            return Range {
-                start: Point::new(*rows.start(), 0),
-                end: snapshot.clip_point(Point::new(*rows.end(), u32::MAX), Bias::Left),
-            };
-        }
+    if let Some(rows) = heuristic_syntactic_expand(
+        entry.range.clone(),
+        DIAGNOSTIC_EXPANSION_ROW_LIMIT,
+        snapshot,
+        cx,
+    ) {
+        return Range {
+            start: Point::new(*rows.start(), 0),
+            end: snapshot.clip_point(Point::new(*rows.end(), u32::MAX), Bias::Left),
+        };
     }
     Range {
         start: Point::new(entry.range.start.row.saturating_sub(context), 0),

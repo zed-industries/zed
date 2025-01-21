@@ -295,7 +295,7 @@ impl TitleBar {
         let muted_by_user = room.muted_by_user();
         let is_deafened = room.is_deafened().unwrap_or(false);
         let is_screen_sharing = room.is_screen_sharing();
-        let can_use_microphone = room.can_use_microphone(cx);
+        let can_use_microphone = room.can_use_microphone();
         let can_share_projects = room.can_share_projects();
         let screen_sharing_supported = match self.platform_style {
             PlatformStyle::Mac => true,
@@ -381,7 +381,7 @@ impl TitleBar {
                 .style(ButtonStyle::Subtle)
                 .icon_size(IconSize::Small)
                 .toggle_state(is_muted)
-                .selected_style(ButtonStyle::Tinted(TintColor::Negative))
+                .selected_style(ButtonStyle::Tinted(TintColor::Error))
                 .on_click(move |_, cx| {
                     toggle_mute(&Default::default(), cx);
                 })
@@ -398,7 +398,7 @@ impl TitleBar {
                     },
                 )
                 .style(ButtonStyle::Subtle)
-                .selected_style(ButtonStyle::Tinted(TintColor::Negative))
+                .selected_style(ButtonStyle::Tinted(TintColor::Error))
                 .icon_size(IconSize::Small)
                 .toggle_state(is_deafened)
                 .tooltip(move |cx| {

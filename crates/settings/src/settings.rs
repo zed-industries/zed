@@ -13,7 +13,7 @@ use util::asset_str;
 pub use editable_setting_control::*;
 pub use json_schema::*;
 pub use key_equivalents::*;
-pub use keymap_file::KeymapFile;
+pub use keymap_file::{KeymapFile, KeymapFileLoadResult};
 pub use settings_file::*;
 pub use settings_store::{
     parse_json_with_comments, InvalidSettingsError, LocalSettingsKind, Settings, SettingsLocation,
@@ -82,8 +82,10 @@ pub fn default_keymap() -> Cow<'static, str> {
     asset_str::<SettingsAssets>(DEFAULT_KEYMAP_PATH)
 }
 
+pub const VIM_KEYMAP_PATH: &str = "keymaps/vim.json";
+
 pub fn vim_keymap() -> Cow<'static, str> {
-    asset_str::<SettingsAssets>("keymaps/vim.json")
+    asset_str::<SettingsAssets>(VIM_KEYMAP_PATH)
 }
 
 pub fn initial_user_settings_content() -> Cow<'static, str> {

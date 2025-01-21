@@ -269,7 +269,7 @@ struct ExcerptIdMapping {
 
 /// A range of text from a single [`Buffer`], to be shown as an [`Excerpt`].
 /// These ranges are relative to the buffer itself
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Hash)]
 pub struct ExcerptRange<T> {
     /// The full range of text to be shown in the excerpt.
     pub context: Range<T>,

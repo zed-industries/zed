@@ -67,7 +67,8 @@ impl Keymap {
         self.bindings.iter()
     }
 
-    /// Iterate over all bindings for the given action, in the order they were added.
+    /// Iterate over all bindings for the given action, in the order they were added. For display,
+    /// the last binding should take precedence.
     pub fn bindings_for_action<'a>(
         &'a self,
         action: &'a dyn Action,
@@ -108,8 +109,8 @@ impl Keymap {
         })
     }
 
-    /// all bindings for input returns all bindings that might match the input
-    /// (without checking context)
+    /// Returns all bindings that might match the input without checking context. The bindings
+    /// returned in precedence order (reverse of the order they were added to the keymap).
     pub fn all_bindings_for_input(&self, input: &[Keystroke]) -> Vec<KeyBinding> {
         self.bindings()
             .rev()
@@ -120,20 +121,20 @@ impl Keymap {
             .collect()
     }
 
-    /// bindings_for_input returns a list of bindings that match the given input,
-    /// and a boolean indicating whether or not more bindings might match if
-    /// the input was longer.
+    /// Returns a list of bindings that match the given input, and a boolean indicating whether or
+    /// not more bindings might match if the input was longer. Bindings are returned in precedence
+    /// order.
     ///
-    /// Precedence is defined by the depth in the tree (matches on the Editor take
-    /// precedence over matches on the Pane, then the Workspace, etc.). Bindings with
-    /// no context are treated as the same as the deepest context.
+    /// Precedence is defined by the depth in the tree (matches on the Editor take precedence over
+    /// matches on the Pane, then the Workspace, etc.). Bindings with no context are treated as the
+    /// same as the deepest context.
     ///
-    /// In the case of multiple bindings at the same depth, the ones defined later in the
-    /// keymap take precedence (so user bindings take precedence over built-in bindings).
+    /// In the case of multiple bindings at the same depth, the ones added to the keymap later take
+    /// precedence. User bindings are added after built-in bindings so that they take precedence.
     ///
-    /// If a user has disabled a binding with `"x": null` it will not be returned. Disabled
-    /// bindings are evaluated with the same precedence rules so you can disable a rule in
-    /// a given context only.
+    /// If a user has disabled a binding with `"x": null` it will not be returned. Disabled bindings
+    /// are evaluated with the same precedence rules so you can disable a rule in a given context
+    /// only.
     pub fn bindings_for_input(
         &self,
         input: &[Keystroke],

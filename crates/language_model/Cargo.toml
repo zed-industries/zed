@@ -1,8 +1,8 @@
 [package]
 name = "language_model"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -28,6 +28,7 @@ image.workspace = true
 log.workspace = true
 ollama = { workspace = true, features = ["schemars"] }
 open_ai = { workspace = true, features = ["schemars"] }
+lmstudio = { workspace = true, features = ["schemars"] }
 parking_lot.workspace = true
 proto.workspace = true
 schemars.workspace = true
