@@ -549,7 +549,7 @@ async fn test_remote_cancel_language_server_work(
 ) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        add_root_for_windows("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -565,7 +565,7 @@ async fn test_remote_cancel_language_server_work(
     let (project, headless) = init_test(&fs, cx, server_cx).await;
 
     fs.insert_tree(
-        "/code/project1/.zed",
+        add_root_for_windows("/code/project1/.zed"),
         json!({
             "settings.json": r#"
           {
@@ -612,7 +612,7 @@ async fn test_remote_cancel_language_server_work(
 
     let worktree_id = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(add_root_for_windows("/code/project1"), true, cx)
         })
         .await
         .unwrap()
