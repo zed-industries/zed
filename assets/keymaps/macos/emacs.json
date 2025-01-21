@@ -17,7 +17,7 @@
       "alt-g alt-g": "go_to_line::Toggle", // goto-line
       "ctrl-space": "editor::SetMark", // set-mark
       "ctrl-@": "editor::SetMark", // set-mark
-      "ctrl-x ctrl-x": "editor::ExchangeMark", // exchange-point-and-mark
+      "ctrl-x ctrl-x": "editor::SwapSelectionEnds", // exchange-point-and-mark
       "ctrl-f": "editor::MoveRight", // forward-char
       "ctrl-b": "editor::MoveLeft", // backward-char
       "ctrl-n": "editor::MoveDown", // next-line

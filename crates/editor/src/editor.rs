@@ -10633,17 +10633,18 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn exchange_mark(&mut self, _: &actions::ExchangeMark, cx: &mut ViewContext<Self>) {
-        if self.selection_mark_mode {
-            self.change_selections(None, cx, |s| {
-                s.move_with(|_, sel| {
-                    if sel.start != sel.end {
-                        sel.reversed = !sel.reversed
-                    }
-                });
-            })
-        }
-        self.selection_mark_mode = true;
+    pub fn swap_selection_ends(
+        &mut self,
+        _: &actions::SwapSelectionEnds,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.change_selections(None, cx, |s| {
+            s.move_with(|_, sel| {
+                if sel.start != sel.end {
+                    sel.reversed = !sel.reversed
+                }
+            });
+        });
         cx.notify();
     }
 
