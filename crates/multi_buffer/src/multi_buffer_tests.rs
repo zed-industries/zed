@@ -1665,17 +1665,14 @@ impl ReferenceMultibuffer {
             return;
         };
         let diff = change_set.read(cx).diff_to_buffer.clone();
+        let excerpt_range = excerpt.range.to_offset(&buffer);
+        if excerpt_range.is_empty() {
+            return;
+        }
         for hunk in diff.hunks_intersecting_range(range, &buffer) {
-            let hunk_precedes_excerpt = hunk
-                .buffer_range
-                .end
-                .cmp(&excerpt.range.start, &buffer)
-                .is_le();
-            let hunk_follows_excerpt = hunk
-                .buffer_range
-                .start
-                .cmp(&excerpt.range.end, &buffer)
-                .is_ge();
+            let hunk_range = hunk.buffer_range.to_offset(&buffer);
+            let hunk_precedes_excerpt = hunk_range.end <= excerpt_range.start;
+            let hunk_follows_excerpt = hunk_range.start >= excerpt_range.end;
             if hunk_precedes_excerpt || hunk_follows_excerpt {
                 continue;
             }
@@ -1685,8 +1682,9 @@ impl ReferenceMultibuffer {
                 .binary_search_by(|anchor| anchor.cmp(&hunk.buffer_range.start, &buffer))
             {
                 log::info!(
-                    "expanding diff hunk {:?}",
-                    hunk.buffer_range.to_offset(&buffer)
+                    "expanding diff hunk {:?}. excerpt: {:?}",
+                    hunk_range,
+                    excerpt_range
                 );
                 excerpt
                     .expanded_diff_hunks
@@ -1829,6 +1827,7 @@ impl ReferenceMultibuffer {
     fn diffs_updated(&mut self, cx: &AppContext) {
         for excerpt in &mut self.excerpts {
             let buffer = excerpt.buffer.read(cx).snapshot();
+            let excerpt_range = excerpt.range.to_offset(&buffer);
             let buffer_id = buffer.remote_id();
             let diff = &self
                 .change_sets
@@ -1838,12 +1837,19 @@ impl ReferenceMultibuffer {
                 .diff_to_buffer;
             let mut hunks = diff.hunks_in_row_range(0..u32::MAX, &buffer).peekable();
             excerpt.expanded_diff_hunks.retain(|hunk_anchor| {
+                if !hunk_anchor.is_valid(&buffer) {
+                    return false;
+                }
                 while let Some(hunk) = hunks.peek() {
                     match hunk.buffer_range.start.cmp(&hunk_anchor, &buffer) {
                         cmp::Ordering::Less => {
                             hunks.next();
                         }
-                        cmp::Ordering::Equal => return true,
+                        cmp::Ordering::Equal => {
+                            let hunk_range = hunk.buffer_range.to_offset(&buffer);
+                            return hunk_range.end > excerpt_range.start
+                                && hunk_range.start < excerpt_range.end;
+                        }
                         cmp::Ordering::Greater => break,
                     }
                 }
@@ -1880,6 +1886,7 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
                     buf.randomly_edit(&mut rng, edit_count, cx);
                     needs_diff_calculation = true;
                 });
+                reference.diffs_updated(cx);
             }
             15..=19 if !reference.excerpts.is_empty() => {
                 multibuffer.update(cx, |multibuffer, cx| {
