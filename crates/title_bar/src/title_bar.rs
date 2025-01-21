@@ -487,9 +487,8 @@ impl TitleBar {
         cx: &mut ViewContext<Self>,
     ) -> Option<impl IntoElement> {
         let active_repository = project.read(cx).active_repository(cx)?;
-        let repository_selector = cx.new_view(|cx| RepositorySelector::new(project, cx));
-        // FIXME inline
-        let display_name = active_repository.display_name();
+        let repository_selector = cx.new_view(|cx| RepositorySelector::new(project.clone(), cx));
+        let display_name = active_repository.display_name(project.read(cx), cx);
         Some(RepositorySelectorPopoverMenu::new(
             repository_selector,
             ButtonLike::new("active-model")

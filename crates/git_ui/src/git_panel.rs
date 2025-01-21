@@ -525,7 +525,9 @@ impl GitPanel {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
-        let path = active_repository.unrelativize(&entry.repo_path);
+        let Some(path) = active_repository.unrelativize(&entry.repo_path) else {
+            return;
+        };
         let path_exists = self.project.update(cx, |project, cx| {
             project.entry_for_path(&path, cx).is_some()
         });

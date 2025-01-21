@@ -193,21 +193,7 @@ impl PickerDelegate for RepositorySelectorDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
-        todo!()
-        //if let Some(repo_info) = self.filtered_repositories.get(self.selected_index) {
-        //    if let Some(project) = self.project.upgrade() {
-        //        let project = project.read(cx);
-        //        if let Some(git_state) = project.git_state() {
-        //            let worktree_id = repo_info.project_path.worktree_id;
-        //            let worktree = project.worktree_for_id(worktree_id).unwrap();
-        //            let repository = worktree.read(cx).repository_for_path(project_path);
-        //            git_state.update(cx, |git_state, cx| {
-        //                git_state.activate_repository(worktree_id)
-        //            });
-        //            cx.emit(DismissEvent);
-        //        }
-        //    }
-        //}
+        eprintln!("confirm triggered!");
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
@@ -225,17 +211,18 @@ impl PickerDelegate for RepositorySelectorDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
+        let project = self.project.upgrade()?;
         let repo_info = self.filtered_repositories.get(ix)?;
-
+        let display_name = repo_info.display_name(project.read(cx), cx);
         // TODO: Implement repository item rendering
         Some(
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
                 .toggle_state(selected)
-                .child(Label::new(repo_info.display_name())),
+                .child(Label::new(display_name)),
         )
     }
 

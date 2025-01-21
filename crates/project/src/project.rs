@@ -4174,11 +4174,14 @@ impl Project {
     }
 
     pub fn active_repository(&self, cx: &AppContext) -> Option<RepositoryHandle> {
-        todo!()
+        self.git_state()
+            .and_then(|git_state| git_state.read(cx).active_repository())
     }
 
     pub fn all_repositories(&self, cx: &AppContext) -> Vec<RepositoryHandle> {
-        todo!()
+        self.git_state()
+            .map(|git_state| git_state.read(cx).all_repositories())
+            .unwrap_or_default()
     }
 }
 

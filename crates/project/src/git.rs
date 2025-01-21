@@ -10,12 +10,14 @@ use gpui::{
     WeakModel,
 };
 use language::{Buffer, LanguageRegistry};
+use settings::WorktreeId;
 use std::sync::Arc;
 use text::Rope;
+use util::maybe;
 use worktree::{RepositoryEntry, StatusEntry};
 
 use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
-use crate::ProjectPath;
+use crate::{Project, ProjectPath};
 
 pub struct GitState {
     repositories: Vec<RepositoryHandle>,
@@ -27,6 +29,7 @@ pub struct GitState {
 #[derive(Clone)]
 pub struct RepositoryHandle {
     git_state: WeakModel<GitState>,
+    worktree_id: WorktreeId,
     repository_entry: RepositoryEntry,
     git_repo: Arc<dyn GitRepository>,
     commit_message: Model<Buffer>,
@@ -99,6 +102,11 @@ impl GitState {
         }
     }
 
+    pub fn active_repository(&self) -> Option<RepositoryHandle> {
+        self.active_index
+            .map(|index| self.repositories[index].clone())
+    }
+
     fn on_worktree_store_event(
         &mut self,
         worktree_store: Model<WorktreeStore>,
@@ -139,6 +147,7 @@ impl GitState {
                         } else {
                             RepositoryHandle {
                                 git_state: this.clone(),
+                                worktree_id: worktree.id(),
                                 repository_entry: repo.clone(),
                                 git_repo: local_repo.repo().clone(),
                                 // FIXME set markdown
@@ -166,8 +175,19 @@ impl GitState {
 }
 
 impl RepositoryHandle {
-    pub fn display_name(&self) -> SharedString {
-        todo!()
+    pub fn display_name(&self, project: &Project, cx: &AppContext) -> SharedString {
+        maybe!({
+            let path = self.unrelativize(&"".into())?;
+            Some(
+                project
+                    .absolute_path(&path, cx)?
+                    .file_name()?
+                    .to_string_lossy()
+                    .to_string()
+                    .into(),
+            )
+        })
+        .unwrap_or("".into())
     }
 
     pub fn status(&self) -> impl Iterator<Item = &StatusEntry> {
@@ -175,13 +195,14 @@ impl RepositoryHandle {
         std::iter::empty()
     }
 
-    pub fn unrelativize(&self, path: &RepoPath) -> ProjectPath {
-        todo!()
+    pub fn unrelativize(&self, path: &RepoPath) -> Option<ProjectPath> {
+        let path = self.repository_entry.unrelativize(path)?;
+        Some((self.worktree_id, path).into())
     }
 
-    pub fn activate(&self) {
-        todo!()
-    }
+    //pub fn activate(&self) {
+    //    todo!()
+    //}
 
     pub fn commit_message(&self) -> Model<Buffer> {
         self.commit_message.clone()
