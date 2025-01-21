@@ -1446,7 +1446,7 @@ impl ShellExec {
 
 #[cfg(test)]
 mod test {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
     use crate::{
         state::Mode,
@@ -1552,15 +1552,15 @@ mod test {
     #[gpui::test]
     async fn test_command_write(cx: &mut TestAppContext) {
         let mut cx = VimTestContext::new(cx, true).await;
-        let path = Path::new("/root/dir/file.rs");
+        let path = PathBuf::from(add_root_for_windows("/root/dir/file.rs"));
         let fs = cx.workspace(|workspace, _, cx| workspace.project().read(cx).fs().clone());
 
         cx.simulate_keystrokes("i @ escape");
         cx.simulate_keystrokes(": w enter");
 
-        assert_eq!(fs.load(path).await.unwrap(), "@\n");
+        assert_eq!(fs.load(&path).await.unwrap().replace("\r\n", "\n"), "@\n");
 
-        fs.as_fake().insert_file(path, b"oops\n".to_vec()).await;
+        fs.as_fake().insert_file(&path, b"oops\n".to_vec()).await;
 
         // conflict!
         cx.simulate_keystrokes("i @ escape");
@@ -1568,12 +1568,15 @@ mod test {
         assert!(cx.has_pending_prompt());
         // "Cancel"
         cx.simulate_prompt_answer(0);
-        assert_eq!(fs.load(path).await.unwrap(), "oops\n");
+        assert_eq!(
+            fs.load(&path).await.unwrap().replace("\r\n", "\n"),
+            "oops\n"
+        );
         assert!(!cx.has_pending_prompt());
         // force overwrite
         cx.simulate_keystrokes(": w ! enter");
         assert!(!cx.has_pending_prompt());
-        assert_eq!(fs.load(path).await.unwrap(), "@@\n");
+        assert_eq!(fs.load(&path).await.unwrap().replace("\r\n", "\n"), "@@\n");
     }
 
     #[gpui::test]
