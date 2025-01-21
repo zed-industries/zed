@@ -17,7 +17,7 @@ use crate::{
 use anyhow::{anyhow, Context as _, Result};
 use async_trait::async_trait;
 use client::{proto, TypedEnvelope};
-use collections::{btree_map, BTreeMap, HashMap, HashSet};
+use collections::{btree_map, BTreeMap, BTreeSet, HashMap, HashSet};
 use futures::{
     future::{join_all, Shared},
     select,
@@ -68,7 +68,6 @@ use std::{
     any::Any,
     cell::RefCell,
     cmp::Ordering,
-    collections::BTreeSet,
     convert::TryInto,
     ffi::OsStr,
     iter, mem,
@@ -176,7 +175,6 @@ impl LocalLspStore {
         worktree_handle: &Model<Worktree>,
         delegate: Arc<LocalLspAdapterDelegate>,
         adapter: Arc<CachedLspAdapter>,
-        language: LanguageName,
         cx: &mut AppContext,
     ) -> LanguageServerId {
         let worktree = worktree_handle.read(cx);
@@ -244,7 +242,6 @@ impl LocalLspStore {
         let startup = {
             let server_name = adapter.name.0.clone();
             let delegate = delegate as Arc<dyn LspAdapterDelegate>;
-            let language = language.clone();
             let key = key.clone();
             let adapter = adapter.clone();
             let this = self.weak.clone();
@@ -326,7 +323,6 @@ impl LocalLspStore {
                     Ok(server) => {
                         this.update(&mut cx, |this, mut cx| {
                             this.insert_newly_running_language_server(
-                                language,
                                 adapter,
                                 server.clone(),
                                 server_id,
@@ -1761,7 +1757,6 @@ impl LocalLspStore {
                                         .into_iter()
                                         .find(|adapter| &adapter.name() == server_name)
                                         .expect("To find LSP adapter"),
-                                    language_name,
                                     cx,
                                 )
                             }
@@ -1793,7 +1788,6 @@ impl LocalLspStore {
                                         .into_iter()
                                         .find(|adapter| &adapter.name() == server_name)
                                         .expect("To find LSP adapter"),
-                                    language_name,
                                     cx,
                                 )
                             }
@@ -4791,21 +4785,14 @@ impl LspStore {
                     .into_iter()
                     .filter_map(|symbol| Self::deserialize_symbol(symbol).log_err())
                     .collect::<Vec<_>>();
-                populate_labels_for_symbols(
-                    core_symbols,
-                    &language_registry,
-                    None,
-                    None,
-                    &mut symbols,
-                )
-                .await;
+                populate_labels_for_symbols(core_symbols, &language_registry, None, &mut symbols)
+                    .await;
                 Ok(symbols)
             })
         } else if let Some(local) = self.as_local() {
             struct WorkspaceSymbolsResult {
                 server_id: LanguageServerId,
                 lsp_adapter: Arc<CachedLspAdapter>,
-                language: LanguageName,
                 worktree: WeakModel<Worktree>,
                 worktree_abs_path: Arc<Path>,
                 lsp_symbols: Vec<(String, SymbolKind, lsp::Location)>,
@@ -4831,17 +4818,13 @@ impl LspStore {
                     .cloned()
                     .collect::<BTreeSet<_>>();
                 for server_id in &servers_to_query {
-                    let (lsp_adapter, language, server) =
-                        match local.language_servers.get(server_id) {
-                            Some(LanguageServerState::Running {
-                                adapter,
-                                language,
-                                server,
-                                ..
-                            }) => (adapter.clone(), language.clone(), server),
+                    let (lsp_adapter, server) = match local.language_servers.get(server_id) {
+                        Some(LanguageServerState::Running {
+                            adapter, server, ..
+                        }) => (adapter.clone(), server),
 
-                            _ => continue 'next_server,
-                        };
+                        _ => continue 'next_server,
+                    };
                     let worktree_abs_path = worktree.abs_path().clone();
                     let worktree_handle = worktree_handle.clone();
                     let server_id = server.server_id();
@@ -4878,7 +4861,6 @@ impl LspStore {
                                     WorkspaceSymbolsResult {
                                         server_id,
                                         lsp_adapter,
-                                        language,
                                         worktree: worktree_handle.downgrade(),
                                         worktree_abs_path,
                                         lsp_symbols,
@@ -4942,7 +4924,6 @@ impl LspStore {
                     populate_labels_for_symbols(
                         core_symbols,
                         &language_registry,
-                        Some(result.language),
                         Some(result.lsp_adapter),
                         &mut symbols,
                     )
@@ -7334,7 +7315,6 @@ impl LspStore {
                                     &worktree_handle,
                                     delegate.clone(),
                                     adapter,
-                                    LanguageName::new("Ayy"),
                                     cx,
                                 );
                                 unfilled.insert(new_id);
@@ -7482,7 +7462,6 @@ impl LspStore {
     #[allow(clippy::too_many_arguments)]
     fn insert_newly_running_language_server(
         &mut self,
-        language: LanguageName,
         adapter: Arc<CachedLspAdapter>,
         language_server: Arc<LanguageServer>,
         server_id: LanguageServerId,
@@ -7509,7 +7488,6 @@ impl LspStore {
         local.language_servers.insert(
             server_id,
             LanguageServerState::running(
-                language.clone(),
                 workspace_folders.lock().clone(),
                 adapter.clone(),
                 language_server.clone(),
@@ -8307,7 +8285,6 @@ pub enum LanguageServerState {
     },
 
     Running {
-        language: LanguageName,
         adapter: Arc<CachedLspAdapter>,
         server: Arc<LanguageServer>,
         simulate_disk_based_diagnostics_completion: Option<Task<()>>,
@@ -8340,7 +8317,6 @@ impl LanguageServerState {
         }
     }
     fn running(
-        language: LanguageName,
         workspace_folders: BTreeSet<Url>,
         adapter: Arc<CachedLspAdapter>,
         server: Arc<LanguageServer>,
@@ -8348,7 +8324,6 @@ impl LanguageServerState {
     ) -> Self {
         server.set_workspace_folders(workspace_folders);
         Self::Running {
-            language,
             adapter,
             server,
             simulate_disk_based_diagnostics_completion,
@@ -8362,10 +8337,9 @@ impl std::fmt::Debug for LanguageServerState {
             LanguageServerState::Starting { .. } => {
                 f.debug_struct("LanguageServerState::Starting").finish()
             }
-            LanguageServerState::Running { language, .. } => f
-                .debug_struct("LanguageServerState::Running")
-                .field("language", &language)
-                .finish(),
+            LanguageServerState::Running { .. } => {
+                f.debug_struct("LanguageServerState::Running").finish()
+            }
         }
     }
 }
@@ -8731,27 +8705,21 @@ impl LspAdapterDelegate for LocalLspAdapterDelegate {
 async fn populate_labels_for_symbols(
     symbols: Vec<CoreSymbol>,
     language_registry: &Arc<LanguageRegistry>,
-    default_language: Option<LanguageName>,
     lsp_adapter: Option<Arc<CachedLspAdapter>>,
     output: &mut Vec<Symbol>,
 ) {
     #[allow(clippy::mutable_key_type)]
     let mut symbols_by_language = HashMap::<Option<Arc<Language>>, Vec<CoreSymbol>>::default();
 
-    let mut unknown_path = None;
+    let mut unknown_paths = BTreeSet::new();
     for symbol in symbols {
         let language = language_registry
             .language_for_file_path(&symbol.path.path)
             .await
             .ok()
             .or_else(|| {
-                unknown_path.get_or_insert(symbol.path.path.clone());
-                default_language.as_ref().and_then(|name| {
-                    language_registry
-                        .language_for_name(&name.0)
-                        .now_or_never()?
-                        .ok()
-                })
+                unknown_paths.insert(symbol.path.path.clone());
+                None
             });
         symbols_by_language
             .entry(language)
@@ -8759,7 +8727,7 @@ async fn populate_labels_for_symbols(
             .push(symbol);
     }
 
-    if let Some(unknown_path) = unknown_path {
+    for unknown_path in unknown_paths {
         log::info!(
             "no language found for symbol path {}",
             unknown_path.display()
