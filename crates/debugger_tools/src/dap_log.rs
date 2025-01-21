@@ -102,10 +102,10 @@ impl LogStore {
     fn new(cx: &ModelContext<Self>) -> Self {
         let (rpc_tx, mut rpc_rx) = unbounded::<(DebugAdapterClientId, IoKind, String)>();
         cx.spawn(|this, mut cx| async move {
-            while let Some((server_id, io_kind, message)) = rpc_rx.next().await {
+            while let Some((client_id, io_kind, message)) = rpc_rx.next().await {
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
-                        this.on_rpc_log(server_id, io_kind, &message, cx);
+                        this.on_rpc_log(client_id, io_kind, &message, cx);
                     })?;
                 }
 
@@ -118,10 +118,10 @@ impl LogStore {
         let (adapter_log_tx, mut adapter_log_rx) =
             unbounded::<(DebugAdapterClientId, IoKind, String)>();
         cx.spawn(|this, mut cx| async move {
-            while let Some((server_id, io_kind, message)) = adapter_log_rx.next().await {
+            while let Some((client_id, io_kind, message)) = adapter_log_rx.next().await {
                 if let Some(this) = this.upgrade() {
                     this.update(&mut cx, |this, cx| {
-                        this.on_adapter_log(server_id, io_kind, &message, cx);
+                        this.on_adapter_log(client_id, io_kind, &message, cx);
                     })?;
                 }
 
@@ -387,7 +387,7 @@ impl Render for DapLogToolbarItemView {
         let dap_menu: PopoverMenu<_> = PopoverMenu::new("DapLogView")
             .anchor(gpui::Corner::TopLeft)
             .trigger(Button::new(
-                "debug_server_menu_header",
+                "debug_client_menu_header",
                 current_client
                     .map(|sub_item| {
                         Cow::Owned(format!(
@@ -400,7 +400,7 @@ impl Render for DapLogToolbarItemView {
                             }
                         ))
                     })
-                    .unwrap_or_else(|| "No server selected".into()),
+                    .unwrap_or_else(|| "No adapter selected".into()),
             ))
             .menu(move |cx| {
                 let log_view = log_view.clone();
@@ -434,7 +434,7 @@ impl Render for DapLogToolbarItemView {
                                             .into_any_element()
                                     },
                                     cx.handler_for(&log_view, move |view, cx| {
-                                        view.show_log_messages_for_server(sub_item.client_id, cx);
+                                        view.show_log_messages_for_adapter(sub_item.client_id, cx);
                                     }),
                                 );
                             }
@@ -646,7 +646,7 @@ impl DapLogView {
         cx.focus(&self.focus_handle);
     }
 
-    fn show_log_messages_for_server(
+    fn show_log_messages_for_adapter(
         &mut self,
         client_id: DebugAdapterClientId,
         cx: &mut ViewContext<Self>,
@@ -711,7 +711,7 @@ impl Render for DapLogView {
     }
 }
 
-actions!(debug, [OpenDebuggerServerLogs]);
+actions!(debug, [OpenDebuggerAdapterLogs]);
 
 pub fn init(cx: &mut AppContext) {
     let log_store = cx.new_model(|cx| LogStore::new(cx));
@@ -725,7 +725,7 @@ pub fn init(cx: &mut AppContext) {
         }
 
         let log_store = log_store.clone();
-        workspace.register_action(move |workspace, _: &OpenDebuggerServerLogs, cx| {
+        workspace.register_action(move |workspace, _: &OpenDebuggerAdapterLogs, cx| {
             let project = workspace.project().read(cx);
             if project.is_local() {
                 workspace.add_item_to_active_pane(
