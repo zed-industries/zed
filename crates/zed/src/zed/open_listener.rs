@@ -618,12 +618,22 @@ mod tests {
     async fn test_open_workspace_with_nonexistent_files(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
 
-        app_state.fs.as_fake().insert_tree("/root", json!({})).await;
+        app_state
+            .fs
+            .as_fake()
+            .insert_tree(add_root_for_windows("/root"), json!({}))
+            .await;
 
         assert_eq!(cx.windows().len(), 0);
 
         // Test case 1: Open a single file that does not exist yet
-        open_workspace_file("/root/file5.txt", None, app_state.clone(), cx).await;
+        open_workspace_file(
+            &add_root_for_windows("/root/file5.txt"),
+            None,
+            app_state.clone(),
+            cx,
+        )
+        .await;
 
         assert_eq!(cx.windows().len(), 1);
         let workspace_1 = cx.windows()[0].downcast::<Workspace>().unwrap();
@@ -635,7 +645,13 @@ mod tests {
 
         // Test case 2: Open a single file that does not exist yet,
         // but tell Zed to add it to the current workspace
-        open_workspace_file("/root/file6.txt", Some(false), app_state.clone(), cx).await;
+        open_workspace_file(
+            &add_root_for_windows("/root/file6.txt"),
+            Some(false),
+            app_state.clone(),
+            cx,
+        )
+        .await;
 
         assert_eq!(cx.windows().len(), 1);
         workspace_1
@@ -647,7 +663,13 @@ mod tests {
 
         // Test case 3: Open a single file that does not exist yet,
         // but tell Zed to NOT add it to the current workspace
-        open_workspace_file("/root/file7.txt", Some(true), app_state.clone(), cx).await;
+        open_workspace_file(
+            &add_root_for_windows("/root/file7.txt"),
+            Some(true),
+            app_state.clone(),
+            cx,
+        )
+        .await;
 
         assert_eq!(cx.windows().len(), 2);
         let workspace_2 = cx.windows()[1].downcast::<Workspace>().unwrap();
