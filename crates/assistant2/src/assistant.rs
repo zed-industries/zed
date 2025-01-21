@@ -36,6 +36,7 @@ actions!(
     [
         ToggleFocus,
         NewThread,
+        NewPromptEditor,
         ToggleContextPicker,
         ToggleModelSelector,
         RemoveAllContext,

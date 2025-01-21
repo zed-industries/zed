@@ -1,7 +1,9 @@
 use std::sync::Arc;
 
 use anyhow::Result;
+use assistant_context_editor::ContextEditor;
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
+use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 use client::zed_urls;
 use fs::Fs;
@@ -10,10 +12,14 @@ use gpui::{
     FocusHandle, FocusableView, FontWeight, Model, Pixels, Task, View, ViewContext, WeakView,
     WindowContext,
 };
-use language::LanguageRegistry;
+use language::{LanguageRegistry, LspAdapterDelegate};
+use project::lsp_store::LocalLspAdapterDelegate;
+use project::Project;
+use prompt_library::PromptBuilder;
 use settings::Settings;
 use time::UtcOffset;
 use ui::{prelude::*, KeyBinding, Tab, Tooltip};
+use util::ResultExt as _;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
 
@@ -22,7 +28,7 @@ use crate::message_editor::MessageEditor;
 use crate::thread::{Thread, ThreadError, ThreadId};
 use crate::thread_history::{PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
-use crate::{NewThread, OpenHistory, ToggleFocus};
+use crate::{NewPromptEditor, NewThread, OpenHistory, ToggleFocus};
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -42,6 +48,12 @@ pub fn init(cx: &mut AppContext) {
                         workspace.focus_panel::<AssistantPanel>(cx);
                         panel.update(cx, |panel, cx| panel.open_history(cx));
                     }
+                })
+                .register_action(|workspace, _: &NewPromptEditor, cx| {
+                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                        workspace.focus_panel::<AssistantPanel>(cx);
+                        panel.update(cx, |panel, cx| panel.new_prompt_editor(workspace, cx));
+                    }
                 });
         },
     )
@@ -50,6 +62,7 @@ pub fn init(cx: &mut AppContext) {
 
 enum ActiveView {
     Thread,
+    PromptEditor,
     History,
 }
 
@@ -60,6 +73,8 @@ pub struct AssistantPanel {
     thread_store: Model<ThreadStore>,
     thread: View<ActiveThread>,
     message_editor: View<MessageEditor>,
+    context_store: Model<assistant_context_editor::ContextStore>,
+    context_editor: Option<View<ContextEditor>>,
     tools: Arc<ToolWorkingSet>,
     local_timezone: UtcOffset,
     active_view: ActiveView,
@@ -71,6 +86,7 @@ pub struct AssistantPanel {
 impl AssistantPanel {
     pub fn load(
         workspace: WeakView<Workspace>,
+        prompt_builder: Arc<PromptBuilder>,
         cx: AsyncWindowContext,
     ) -> Task<Result<View<Self>>> {
         cx.spawn(|mut cx| async move {
@@ -82,8 +98,22 @@ impl AssistantPanel {
                 })?
                 .await?;
 
+            let slash_commands = Arc::new(SlashCommandWorkingSet::default());
+            let context_store = workspace
+                .update(&mut cx, |workspace, cx| {
+                    let project = workspace.project().clone();
+                    assistant_context_editor::ContextStore::new(
+                        project,
+                        prompt_builder.clone(),
+                        slash_commands,
+                        tools.clone(),
+                        cx,
+                    )
+                })?
+                .await?;
+
             workspace.update(&mut cx, |workspace, cx| {
-                cx.new_view(|cx| Self::new(workspace, thread_store, tools, cx))
+                cx.new_view(|cx| Self::new(workspace, thread_store, context_store, tools, cx))
             })
         })
     }
@@ -91,6 +121,7 @@ impl AssistantPanel {
     fn new(
         workspace: &Workspace,
         thread_store: Model<ThreadStore>,
+        context_store: Model<assistant_context_editor::ContextStore>,
         tools: Arc<ToolWorkingSet>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -126,6 +157,8 @@ impl AssistantPanel {
                 )
             }),
             message_editor,
+            context_store,
+            context_editor: None,
             tools,
             local_timezone: UtcOffset::from_whole_seconds(
                 chrono::Local::now().offset().local_minus_utc(),
@@ -175,6 +208,29 @@ impl AssistantPanel {
             )
         });
         self.message_editor.focus_handle(cx).focus(cx);
+    }
+
+    fn new_prompt_editor(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
+        self.active_view = ActiveView::PromptEditor;
+
+        let project = workspace.project().clone();
+        let context = self
+            .context_store
+            .update(cx, |context_store, cx| context_store.create(cx));
+        let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err().flatten();
+
+        self.context_editor = Some(cx.new_view(|cx| {
+            ContextEditor::for_context(
+                context,
+                self.fs.clone(),
+                self.workspace.clone(),
+                project,
+                lsp_adapter_delegate,
+                cx,
+            )
+        }));
+
+        cx.notify();
     }
 
     fn open_history(&mut self, cx: &mut ViewContext<Self>) {
@@ -227,6 +283,7 @@ impl FocusableView for AssistantPanel {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         match self.active_view {
             ActiveView::Thread => self.message_editor.focus_handle(cx),
+            ActiveView::PromptEditor => self.context_editor.as_ref().unwrap().focus_handle(cx),
             ActiveView::History => self.history.focus_handle(cx),
         }
     }
@@ -635,7 +692,32 @@ impl Render for AssistantPanel {
                             .child(self.message_editor.clone()),
                     )
                     .children(self.render_last_error(cx)),
+                ActiveView::PromptEditor => parent.children(self.context_editor.clone()),
                 ActiveView::History => parent.child(self.history.clone()),
             })
     }
+}
+
+fn make_lsp_adapter_delegate(
+    project: &Model<Project>,
+    cx: &mut AppContext,
+) -> Result<Option<Arc<dyn LspAdapterDelegate>>> {
+    project.update(cx, |project, cx| {
+        // TODO: Find the right worktree.
+        let Some(worktree) = project.worktrees(cx).next() else {
+            return Ok(None::<Arc<dyn LspAdapterDelegate>>);
+        };
+        let http_client = project.client().http_client().clone();
+        project.lsp_store().update(cx, |_, cx| {
+            Ok(Some(LocalLspAdapterDelegate::new(
+                project.languages().clone(),
+                project.environment(),
+                cx.weak_model(),
+                &worktree,
+                http_client,
+                project.fs().clone(),
+                cx,
+            ) as Arc<dyn LspAdapterDelegate>))
+        })
+    })
 }

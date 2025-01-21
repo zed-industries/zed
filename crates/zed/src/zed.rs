@@ -362,8 +362,11 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             workspace_handle.clone(),
             cx.clone(),
         );
-        let assistant_panel =
-            assistant::AssistantPanel::load(workspace_handle.clone(), prompt_builder, cx.clone());
+        let assistant_panel = assistant::AssistantPanel::load(
+            workspace_handle.clone(),
+            prompt_builder.clone(),
+            cx.clone(),
+        );
 
         let (
             project_panel,
@@ -427,7 +430,14 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             }
         };
         let assistant2_panel = if is_assistant2_enabled {
-            Some(assistant2::AssistantPanel::load(workspace_handle.clone(), cx.clone()).await?)
+            Some(
+                assistant2::AssistantPanel::load(
+                    workspace_handle.clone(),
+                    prompt_builder,
+                    cx.clone(),
+                )
+                .await?,
+            )
         } else {
             None
         };
