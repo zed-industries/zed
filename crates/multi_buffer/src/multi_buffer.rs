@@ -4,13 +4,13 @@ mod multi_buffer_tests;
 mod position;
 
 pub use anchor::{Anchor, AnchorRangeExt, Offset};
-use git::diff::DiffHunkStatus;
 pub use position::{TypedOffset, TypedPoint, TypedRow};
 
 use anyhow::{anyhow, Result};
 use clock::ReplicaId;
 use collections::{BTreeMap, Bound, HashMap, HashSet};
 use futures::{channel::mpsc, SinkExt};
+use git::diff::DiffHunkStatus;
 use gpui::{AppContext, EntityId, EventEmitter, Model, ModelContext, Task};
 use itertools::Itertools;
 use language::{
@@ -44,7 +44,6 @@ use text::{
     BufferId, Edit, TextSummary,
 };
 use theme::SyntaxTheme;
-
 use util::post_inc;
 
 #[cfg(any(test, feature = "test-support"))]
@@ -2498,10 +2497,11 @@ impl MultiBuffer {
         let mut old_diff_transforms = snapshot
             .diff_transforms
             .cursor::<(ExcerptOffset, usize)>(&());
+        let mut old_expanded_hunks = Vec::<(ExcerptId, text::Anchor)>::new();
 
         let mut new_diff_transforms = SumTree::default();
-        let mut edits = Vec::new();
-        let mut output_delta = 0_isize;
+        let mut output_edits = Vec::new();
+        let mut len_delta = 0_isize;
         let mut at_transform_boundary = true;
         let mut end_of_current_insert = None;
         let mut excerpt_edits = changes.into_iter().peekable();
@@ -2516,297 +2516,60 @@ impl MultiBuffer {
                 at_transform_boundary = false;
                 let transforms_before_edit =
                     old_diff_transforms.slice(&edit.old.start, Bias::Left, &());
-                self.append_transforms(&mut new_diff_transforms, transforms_before_edit);
+                self.append_diff_transforms(&mut new_diff_transforms, transforms_before_edit);
                 if let Some(transform) = old_diff_transforms.item() {
                     if old_diff_transforms.end(&()).0 == edit.old.start
                         && old_diff_transforms.start().0 < edit.old.start
                     {
-                        self.push_transform(&mut new_diff_transforms, transform.clone());
+                        self.push_diff_transform(&mut new_diff_transforms, transform.clone());
                         old_diff_transforms.next(&());
                     }
                 }
             }
 
-            // When the excerpts have been edited, remove any expanded hunks whose
-            // beginning has been deleted.
+            // Compute the start of the edit in output coordinates.
+            let edit_old_start = old_diff_transforms.start().1
+                + (edit.old.start - old_diff_transforms.start().0).value;
+            let edit_new_start = (edit_old_start as isize + len_delta) as usize;
+
             if operation == DiffChangeKind::InputEdited {
-                // Preserve deleted hunks immediately preceding edits.
-                if let Some(transform) = old_diff_transforms.item() {
-                    if old_diff_transforms.start().0 == edit.old.start {
-                        if let DiffTransform::DeletedHunk { hunk_anchor, .. } = transform {
-                            if excerpts
-                                .item()
-                                .map_or(false, |excerpt| hunk_anchor.is_valid(&excerpt.buffer))
-                            {
-                                self.push_transform(&mut new_diff_transforms, transform.clone());
-                                old_diff_transforms.next(&());
-                            }
-                        }
-                    }
-                }
-
-                // Convert input edits to output coordinates.
-                let edit_start_transform = old_diff_transforms.item();
-                let edit_old_start = old_diff_transforms.start().1
-                    + (edit.old.start - old_diff_transforms.start().0).value;
-                let edit_old_len = (edit.old.end - edit.old.start).value;
-                let edit_new_len = (edit.new.end - edit.new.start).value;
-                let edit_new_start = (edit_old_start as isize + output_delta) as usize;
-                let edit_new_end = edit_new_start + edit_new_len;
-                output_delta += edit_new_len as isize - edit_old_len as isize;
-
-                old_diff_transforms.seek_forward(&edit.old.end, Bias::Right, &());
-                let edit_old_end = old_diff_transforms.start().1
-                    + (edit.old.end.saturating_sub(old_diff_transforms.start().0)).value;
-                let output_edit = Edit {
-                    old: edit_old_start..edit_old_end,
-                    new: edit_new_start..edit_new_end,
-                };
-                edits.push(output_edit);
-
-                // When an edit starts within an inserted hunks, extend the hunk
-                // to include the lines of the edit.
-                if let Some((
-                    DiffTransform::BufferContent {
-                        inserted_hunk_anchor: Some(inserted_hunk_anchor),
-                        ..
-                    },
-                    excerpt,
-                )) = edit_start_transform.zip(excerpts.item())
-                {
-                    let buffer = &excerpt.buffer;
-                    let excerpt_start = *excerpts.start();
-                    let excerpt_end = excerpt_start + ExcerptOffset::new(excerpt.text_summary.len);
-                    let excerpt_buffer_start = excerpt.range.context.start.to_offset(buffer);
-                    let mut edit_buffer_end = excerpt_buffer_start
-                        + edit.new.end.value.saturating_sub(excerpt_start.value);
-                    let edit_buffer_end_point = buffer.offset_to_point(edit_buffer_end);
-                    if edit_buffer_end_point.column != 0 {
-                        edit_buffer_end =
-                            buffer.point_to_offset(edit_buffer_end_point + Point::new(1, 0));
-                        let edit_end = excerpt_start
-                            + ExcerptOffset::new(edit_buffer_end - excerpt_buffer_start);
-                        end_of_current_insert =
-                            Some((edit_end.min(excerpt_end), *inserted_hunk_anchor));
-                    } else {
-                        end_of_current_insert = Some((edit.new.end, *inserted_hunk_anchor));
-                    }
-                }
+                self.recompute_diff_transforms_for_buffer_edit(
+                    &edit,
+                    &excerpts,
+                    &mut old_diff_transforms,
+                    &mut new_diff_transforms,
+                    &mut end_of_current_insert,
+                );
+            } else {
+                self.recompute_diff_transforms_for_diff_edit(
+                    &edit,
+                    &mut excerpts,
+                    &mut old_diff_transforms,
+                    &mut new_diff_transforms,
+                    &mut end_of_current_insert,
+                    &mut old_expanded_hunks,
+                    &snapshot,
+                    operation,
+                );
             }
-            // When the diff has been recalculated or hunks are being expanded or collapsed,
-            // requery the diff hunks in the affected regions.
-            else {
-                // Visit each excerpt that intersects the edit.
-                while let Some(excerpt) = excerpts.item() {
-                    if excerpt.text_summary.len == 0 {
-                        if excerpts.end(&()) <= edit.new.end {
-                            excerpts.next(&());
-                            continue;
-                        } else {
-                            break;
-                        }
-                    }
-
-                    // Recompute the expanded hunks in the portion of the excerpt that
-                    // intersects the edit.
-                    if let Some(diff_state) = snapshot.diffs.get(&excerpt.buffer_id) {
-                        let diff = &diff_state.diff;
-                        let base_text = &diff_state.base_text;
-                        let buffer = &excerpt.buffer;
-                        let excerpt_start = *excerpts.start();
-                        let excerpt_end =
-                            excerpt_start + ExcerptOffset::new(excerpt.text_summary.len);
-                        let excerpt_buffer_start = excerpt.range.context.start.to_offset(buffer);
-                        let excerpt_buffer_end = excerpt_buffer_start + excerpt.text_summary.len;
-                        let edit_buffer_start = excerpt_buffer_start
-                            + edit.new.start.value.saturating_sub(excerpt_start.value);
-                        let edit_buffer_end = excerpt_buffer_start
-                            + edit.new.end.value.saturating_sub(excerpt_start.value);
-                        let edit_buffer_end = edit_buffer_end.min(excerpt_buffer_end);
-                        let edit_anchor_range = buffer.anchor_before(edit_buffer_start)
-                            ..buffer.anchor_after(edit_buffer_end);
-
-                        for hunk in diff.hunks_intersecting_range(edit_anchor_range, buffer) {
-                            if !hunk.buffer_range.start.is_valid(buffer) {
-                                continue;
-                            }
-
-                            let hunk_buffer_range = hunk.buffer_range.to_offset(buffer);
-                            let hunk_excerpt_start = excerpt_start
-                                + ExcerptOffset::new(
-                                    hunk_buffer_range.start.saturating_sub(excerpt_buffer_start),
-                                );
-                            let hunk_excerpt_end = excerpt_start
-                                + ExcerptOffset::new(hunk_buffer_range.end - excerpt_buffer_start);
-
-                            // Record edits for any hunks which are no longer present.
-                            while old_diff_transforms.end(&()).0 < hunk_excerpt_start
-                                || (old_diff_transforms.end(&()).0 == hunk_excerpt_start
-                                    && old_diff_transforms.start().0 < hunk_excerpt_start)
-                            {
-                                let Some(item) = old_diff_transforms.item() else {
-                                    break;
-                                };
-                                if let DiffTransform::DeletedHunk { .. } = item {
-                                    let old_range = old_diff_transforms.start().1
-                                        ..old_diff_transforms.end(&()).1;
-                                    let new_offset =
-                                        (old_range.start as isize + output_delta) as usize;
-                                    output_delta -= (old_range.end - old_range.start) as isize;
-                                    let edit = Edit {
-                                        old: old_range,
-                                        new: new_offset..new_offset,
-                                    };
-                                    edits.push(edit);
-                                }
-                                old_diff_transforms.next(&());
-                            }
-
-                            self.push_buffer_content_transform(
-                                &snapshot,
-                                &mut new_diff_transforms,
-                                hunk_excerpt_start,
-                                end_of_current_insert,
-                            );
-
-                            // For every existing hunk, determine if it was previously expanded
-                            // and if it should currently be expanded.
-                            let mut was_previously_expanded = false;
-                            let mut previous_expanded_summary = TextSummary::default();
-                            if old_diff_transforms.start().0 == hunk_excerpt_start {
-                                match old_diff_transforms.item() {
-                                    Some(DiffTransform::DeletedHunk {
-                                        summary: summary_including_newline,
-                                        ..
-                                    }) => {
-                                        was_previously_expanded = true;
-                                        previous_expanded_summary = *summary_including_newline;
-                                    }
-                                    Some(DiffTransform::BufferContent {
-                                        inserted_hunk_anchor,
-                                        ..
-                                    }) => {
-                                        was_previously_expanded = inserted_hunk_anchor.is_some();
-                                    }
-                                    None => {}
-                                };
-                            }
-                            let should_expand_hunk = match &operation {
-                                DiffChangeKind::DiffUpdated { base_changed: true } => {
-                                    self.all_diff_hunks_expanded
-                                }
-                                DiffChangeKind::ExpandOrCollapseHunks { expand } => {
-                                    let intersects = hunk_buffer_range.is_empty()
-                                        || hunk_buffer_range.end > edit_buffer_start;
-                                    if *expand {
-                                        was_previously_expanded
-                                            || self.all_diff_hunks_expanded
-                                            || intersects
-                                    } else {
-                                        !intersects
-                                            && (was_previously_expanded
-                                                || self.all_diff_hunks_expanded)
-                                    }
-                                }
-                                _ => was_previously_expanded || self.all_diff_hunks_expanded,
-                            };
-
-                            if should_expand_hunk {
-                                if !hunk.diff_base_byte_range.is_empty()
-                                    && hunk_buffer_range.start >= edit_buffer_start
-                                    && hunk_buffer_range.start <= excerpt_buffer_end
-                                {
-                                    let mut text_cursor =
-                                        base_text.as_rope().cursor(hunk.diff_base_byte_range.start);
-                                    let mut base_text_summary = text_cursor
-                                        .summary::<TextSummary>(hunk.diff_base_byte_range.end);
-
-                                    let mut has_trailing_newline = false;
-                                    if base_text_summary.last_line_chars > 0 {
-                                        base_text_summary += TextSummary::newline();
-                                        has_trailing_newline = true;
-                                    }
-
-                                    if !was_previously_expanded
-                                        || base_text_summary != previous_expanded_summary
-                                    {
-                                        let hunk_overshoot = (hunk_excerpt_start
-                                            - old_diff_transforms.start().0)
-                                            .value;
-                                        let old_start =
-                                            old_diff_transforms.start().1 + hunk_overshoot;
-                                        let old_end = old_start + previous_expanded_summary.len;
-                                        let new_start = new_diff_transforms.summary().output.len;
-                                        let new_end = new_start + base_text_summary.len;
-                                        output_delta += base_text_summary.len as isize
-                                            - previous_expanded_summary.len as isize;
-
-                                        let edit = Edit {
-                                            old: old_start..old_end,
-                                            new: new_start..new_end,
-                                        };
-                                        edits.push(edit);
-                                    }
-
-                                    new_diff_transforms.push(
-                                        DiffTransform::DeletedHunk {
-                                            base_text_byte_range: hunk.diff_base_byte_range.clone(),
-                                            summary: base_text_summary,
-                                            hunk_anchor: hunk.buffer_range.start,
-                                            buffer_id: excerpt.buffer_id,
-                                            has_trailing_newline,
-                                        },
-                                        &(),
-                                    );
-                                }
-
-                                if !hunk_buffer_range.is_empty() {
-                                    end_of_current_insert = Some((
-                                        hunk_excerpt_end.min(excerpt_end),
-                                        hunk.buffer_range.start,
-                                    ));
-                                }
-
-                                if was_previously_expanded {
-                                    old_diff_transforms.next(&());
-                                }
-                            }
-                        }
-                    }
-
-                    if excerpts.end(&()) <= edit.new.end {
-                        excerpts.next(&());
-                    } else {
-                        break;
-                    }
-                }
-
-                while old_diff_transforms.end(&()).0 <= edit.old.end {
-                    let Some(item) = old_diff_transforms.item() else {
-                        break;
-                    };
-                    if let DiffTransform::DeletedHunk { .. } = item {
-                        let old_range =
-                            old_diff_transforms.start().1..old_diff_transforms.end(&()).1;
-                        let new_offset = (old_range.start as isize + output_delta) as usize;
-                        output_delta -= (old_range.end - old_range.start) as isize;
-                        let edit = Edit {
-                            old: old_range,
-                            new: new_offset..new_offset,
-                        };
-
-                        edits.push(edit);
-                    }
-                    old_diff_transforms.next(&());
-                }
-            }
-
             self.push_buffer_content_transform(
                 &snapshot,
                 &mut new_diff_transforms,
                 edit.new.end,
                 end_of_current_insert,
             );
+
+            // Compute the end of the edit in output coordinates.
+            let edit_old_end = old_diff_transforms.start().1
+                + (edit.old.end.saturating_sub(old_diff_transforms.start().0)).value;
+            let edit_new_end = new_diff_transforms.summary().output.len;
+            let edit_old_len = (edit.old.end - edit.old.start).value;
+            let edit_new_len = (edit.new.end - edit.new.start).value;
+            len_delta += edit_new_len as isize - edit_old_len as isize;
+            output_edits.push(Edit {
+                old: edit_old_start..edit_old_end,
+                new: edit_new_start..edit_new_end,
+            });
 
             // If this is the last edit that intersects the current diff transform,
             // then preserve a suffix of the this diff transform.
@@ -2828,7 +2591,10 @@ impl MultiBuffer {
             }
         }
 
-        self.append_transforms(&mut new_diff_transforms, old_diff_transforms.suffix(&()));
+        // Keep any transforms that are after the last edit.
+        self.append_diff_transforms(&mut new_diff_transforms, old_diff_transforms.suffix(&()));
+
+        // Ensure there's always at least one buffer content transform.
         if new_diff_transforms.is_empty() {
             new_diff_transforms.push(
                 DiffTransform::BufferContent {
@@ -2838,8 +2604,8 @@ impl MultiBuffer {
                 &(),
             );
         }
-        self.subscriptions.publish(edits);
 
+        self.subscriptions.publish(output_edits);
         drop(old_diff_transforms);
         drop(excerpts);
         snapshot.diff_transforms = new_diff_transforms;
@@ -2849,7 +2615,235 @@ impl MultiBuffer {
         snapshot.check_invariants();
     }
 
-    fn append_transforms(
+    fn recompute_diff_transforms_for_diff_edit(
+        &self,
+        edit: &Edit<TypedOffset<Excerpt>>,
+        excerpts: &mut Cursor<Excerpt, TypedOffset<Excerpt>>,
+        old_diff_transforms: &mut Cursor<DiffTransform, (TypedOffset<Excerpt>, usize)>,
+        new_diff_transforms: &mut SumTree<DiffTransform>,
+        end_of_current_insert: &mut Option<(TypedOffset<Excerpt>, text::Anchor)>,
+        old_expanded_hunks: &mut Vec<(ExcerptId, text::Anchor)>,
+        snapshot: &MultiBufferSnapshot,
+        operation: DiffChangeKind,
+    ) {
+        // Visit each excerpt that intersects the edit.
+        while let Some(excerpt) = excerpts.item() {
+            if excerpt.text_summary.len == 0 {
+                if excerpts.end(&()) <= edit.new.end {
+                    excerpts.next(&());
+                    continue;
+                } else {
+                    break;
+                }
+            }
+
+            // Recompute the expanded hunks in the portion of the excerpt that
+            // intersects the edit.
+            if let Some(diff_state) = snapshot.diffs.get(&excerpt.buffer_id) {
+                let diff = &diff_state.diff;
+                let base_text = &diff_state.base_text;
+                let buffer = &excerpt.buffer;
+                let excerpt_start = *excerpts.start();
+                let excerpt_end = excerpt_start + ExcerptOffset::new(excerpt.text_summary.len);
+                let excerpt_buffer_start = excerpt.range.context.start.to_offset(buffer);
+                let excerpt_buffer_end = excerpt_buffer_start + excerpt.text_summary.len;
+                let edit_buffer_start =
+                    excerpt_buffer_start + edit.new.start.value.saturating_sub(excerpt_start.value);
+                let edit_buffer_end =
+                    excerpt_buffer_start + edit.new.end.value.saturating_sub(excerpt_start.value);
+                let edit_buffer_end = edit_buffer_end.min(excerpt_buffer_end);
+                let edit_anchor_range =
+                    buffer.anchor_before(edit_buffer_start)..buffer.anchor_after(edit_buffer_end);
+
+                for hunk in diff.hunks_intersecting_range(edit_anchor_range, buffer) {
+                    if !hunk.buffer_range.start.is_valid(buffer) {
+                        continue;
+                    }
+
+                    let hunk_buffer_range = hunk.buffer_range.to_offset(buffer);
+                    let hunk_excerpt_start = excerpt_start
+                        + ExcerptOffset::new(
+                            hunk_buffer_range.start.saturating_sub(excerpt_buffer_start),
+                        );
+                    let hunk_excerpt_end = excerpt_start
+                        + ExcerptOffset::new(hunk_buffer_range.end - excerpt_buffer_start);
+
+                    // Record edits for any hunks which are no longer present.
+                    while old_diff_transforms.end(&()).0 < hunk_excerpt_start
+                        || old_diff_transforms.end(&()).0 == hunk_excerpt_start
+                            && old_diff_transforms.start().0 < hunk_excerpt_start
+                    {
+                        let Some(item) = old_diff_transforms.item() else {
+                            break;
+                        };
+                        match item {
+                            DiffTransform::DeletedHunk { hunk_anchor, .. }
+                            | DiffTransform::BufferContent {
+                                inserted_hunk_anchor: Some(hunk_anchor),
+                                ..
+                            } => old_expanded_hunks.push((excerpt.id, *hunk_anchor)),
+                            _ => {}
+                        }
+                        old_diff_transforms.next(&());
+                    }
+
+                    self.push_buffer_content_transform(
+                        snapshot,
+                        new_diff_transforms,
+                        hunk_excerpt_start,
+                        *end_of_current_insert,
+                    );
+
+                    // For every existing hunk, determine if it was previously expanded
+                    // and if it should currently be expanded.
+                    let mut previous_expanded_len = None;
+                    if old_diff_transforms.start().0 == hunk_excerpt_start {
+                        match old_diff_transforms.item() {
+                            Some(DiffTransform::DeletedHunk {
+                                summary: summary_including_newline,
+                                ..
+                            }) => {
+                                previous_expanded_len = Some(summary_including_newline.len);
+                            }
+                            Some(DiffTransform::BufferContent {
+                                inserted_hunk_anchor: Some(_),
+                                ..
+                            }) => {
+                                previous_expanded_len = Some(0);
+                            }
+                            _ => {}
+                        };
+                    }
+
+                    let should_expand_hunk = match &operation {
+                        DiffChangeKind::DiffUpdated { base_changed: true } => {
+                            self.all_diff_hunks_expanded
+                        }
+                        DiffChangeKind::ExpandOrCollapseHunks { expand } => {
+                            let intersects = hunk_buffer_range.is_empty()
+                                || hunk_buffer_range.end > edit_buffer_start;
+                            if *expand {
+                                intersects
+                                    || previous_expanded_len.is_some()
+                                    || self.all_diff_hunks_expanded
+                            } else {
+                                !intersects
+                                    && (previous_expanded_len.is_some()
+                                        || self.all_diff_hunks_expanded)
+                            }
+                        }
+                        _ => previous_expanded_len.is_some() || self.all_diff_hunks_expanded,
+                    };
+
+                    if should_expand_hunk {
+                        if !hunk.diff_base_byte_range.is_empty()
+                            && hunk_buffer_range.start >= edit_buffer_start
+                            && hunk_buffer_range.start <= excerpt_buffer_end
+                        {
+                            let mut text_cursor =
+                                base_text.as_rope().cursor(hunk.diff_base_byte_range.start);
+                            let mut base_text_summary =
+                                text_cursor.summary::<TextSummary>(hunk.diff_base_byte_range.end);
+
+                            let mut has_trailing_newline = false;
+                            if base_text_summary.last_line_chars > 0 {
+                                base_text_summary += TextSummary::newline();
+                                has_trailing_newline = true;
+                            }
+
+                            new_diff_transforms.push(
+                                DiffTransform::DeletedHunk {
+                                    base_text_byte_range: hunk.diff_base_byte_range.clone(),
+                                    summary: base_text_summary,
+                                    hunk_anchor: hunk.buffer_range.start,
+                                    buffer_id: excerpt.buffer_id,
+                                    has_trailing_newline,
+                                },
+                                &(),
+                            );
+                        }
+
+                        if !hunk_buffer_range.is_empty() {
+                            *end_of_current_insert =
+                                Some((hunk_excerpt_end.min(excerpt_end), hunk.buffer_range.start));
+                        }
+
+                        if previous_expanded_len.is_some() {
+                            old_diff_transforms.next(&());
+                        }
+                    }
+                }
+            }
+
+            if excerpts.end(&()) <= edit.new.end {
+                excerpts.next(&());
+            } else {
+                break;
+            }
+        }
+
+        while old_diff_transforms.end(&()).0 <= edit.old.end && old_diff_transforms.item().is_some()
+        {
+            old_diff_transforms.next(&());
+        }
+    }
+
+    fn recompute_diff_transforms_for_buffer_edit(
+        &self,
+        edit: &Edit<TypedOffset<Excerpt>>,
+        excerpts: &Cursor<Excerpt, TypedOffset<Excerpt>>,
+        old_diff_transforms: &mut Cursor<DiffTransform, (TypedOffset<Excerpt>, usize)>,
+        new_diff_transforms: &mut SumTree<DiffTransform>,
+        end_of_current_insert: &mut Option<(TypedOffset<Excerpt>, text::Anchor)>,
+    ) {
+        // Preserve deleted hunks immediately preceding edits.
+        if let Some(transform) = old_diff_transforms.item() {
+            if old_diff_transforms.start().0 == edit.old.start {
+                if let DiffTransform::DeletedHunk { hunk_anchor, .. } = transform {
+                    if excerpts
+                        .item()
+                        .map_or(false, |excerpt| hunk_anchor.is_valid(&excerpt.buffer))
+                    {
+                        self.push_diff_transform(new_diff_transforms, transform.clone());
+                        old_diff_transforms.next(&());
+                    }
+                }
+            }
+        }
+
+        // Convert input edits to output coordinates.
+        let edit_start_transform = old_diff_transforms.item();
+        old_diff_transforms.seek_forward(&edit.old.end, Bias::Right, &());
+
+        // When an edit starts within an inserted hunks, extend the hunk
+        // to include the lines of the edit.
+        if let Some((
+            DiffTransform::BufferContent {
+                inserted_hunk_anchor: Some(inserted_hunk_anchor),
+                ..
+            },
+            excerpt,
+        )) = edit_start_transform.zip(excerpts.item())
+        {
+            let buffer = &excerpt.buffer;
+            let excerpt_start = *excerpts.start();
+            let excerpt_end = excerpt_start + ExcerptOffset::new(excerpt.text_summary.len);
+            let excerpt_buffer_start = excerpt.range.context.start.to_offset(buffer);
+            let mut edit_buffer_end =
+                excerpt_buffer_start + edit.new.end.value.saturating_sub(excerpt_start.value);
+            let edit_buffer_end_point = buffer.offset_to_point(edit_buffer_end);
+            if edit_buffer_end_point.column != 0 {
+                edit_buffer_end = buffer.point_to_offset(edit_buffer_end_point + Point::new(1, 0));
+                let edit_end =
+                    excerpt_start + ExcerptOffset::new(edit_buffer_end - excerpt_buffer_start);
+                *end_of_current_insert = Some((edit_end.min(excerpt_end), *inserted_hunk_anchor));
+            } else {
+                *end_of_current_insert = Some((edit.new.end, *inserted_hunk_anchor));
+            }
+        }
+    }
+
+    fn append_diff_transforms(
         &self,
         new_transforms: &mut SumTree<DiffTransform>,
         subtree: SumTree<DiffTransform>,
@@ -2874,7 +2868,7 @@ impl MultiBuffer {
         new_transforms.append(subtree, &());
     }
 
-    fn push_transform(
+    fn push_diff_transform(
         &self,
         new_transforms: &mut SumTree<DiffTransform>,
         transform: DiffTransform,
