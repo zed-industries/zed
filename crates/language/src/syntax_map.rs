@@ -92,6 +92,7 @@ struct SyntaxLayerEntry {
 enum SyntaxLayerContent {
     Parsed {
         tree: tree_sitter::Tree,
+        brackets: SumTree<BracketItem>,
         language: Arc<Language>,
     },
     Pending {
@@ -112,6 +113,72 @@ impl SyntaxLayerContent {
             SyntaxLayerContent::Parsed { tree, .. } => Some(tree),
             SyntaxLayerContent::Pending { .. } => None,
         }
+    }
+}
+
+// "fn main()   {   }"
+// [Iso(7), Open(1), Close(1), Iso(2), Open(1), Iso(3), Close(1)]
+#[derive(Clone)]
+enum BracketItem {
+    Isomorphic { len: usize },
+    OpenBracket { len: usize },
+    CloseBracket { len: usize },
+}
+
+impl BracketItem {
+    pub fn len(&self) -> usize {
+        match self {
+            &Self::Isomorphic { len } => len,
+            &Self::OpenBracket { len } => len,
+            &Self::CloseBracket { len } => len,
+        }
+    }
+}
+
+#[derive(Clone, Default)]
+struct BracketSummary {
+    len: usize,
+    /// The change in depth that happened inside this summary.
+    depth_diff: i32,
+}
+
+impl sum_tree::Summary for BracketSummary {
+    type Context = ();
+
+    fn zero(_: &()) -> Self {
+        Self::default()
+    }
+
+    fn add_summary(&mut self, summary: &Self, _: &()) {
+        self.len += summary.len;
+        self.depth_diff += summary.depth_diff;
+    }
+}
+
+impl sum_tree::Item for BracketItem {
+    type Summary = BracketSummary;
+
+    fn summary(&self, _: &()) -> Self::Summary {
+        let depth_diff = match self {
+            &Self::Isomorphic { .. } => 0,
+            &Self::OpenBracket { .. } => 1,
+            &Self::CloseBracket { .. } => -1,
+        };
+
+        BracketSummary {
+            len: self.len(),
+            depth_diff,
+        }
+    }
+}
+
+impl<'a> sum_tree::Dimension<'a, BracketSummary> for usize {
+    fn zero(_cx: &()) -> Self {
+        0
+    }
+
+    fn add_summary(&mut self, summary: &'a BracketSummary, _: &()) {
+        *self += summary.len;
     }
 }
 
@@ -565,8 +632,12 @@ impl SyntaxSnapshot {
                             .to_ts_point();
                     }
 
-                    let old_tree = if let Some((
-                        SyntaxLayerContent::Parsed { tree: old_tree, .. },
+                    let (old_tree, mut brackets) = if let Some((
+                        SyntaxLayerContent::Parsed {
+                            tree: old_tree,
+                            brackets,
+                            ..
+                        },
                         layer_start,
                     )) =
                         old_layer.map(|layer| (&layer.content, layer.range.start))
@@ -614,7 +685,7 @@ impl SyntaxSnapshot {
                             LogIncludedRanges(&included_ranges),
                         );
 
-                        Some(old_tree)
+                        (Some(old_tree), brackets.clone())
                     } else {
                         if matches!(step.mode, ParseMode::Combined { .. }) {
                             insert_newlines_between_ranges(
@@ -637,7 +708,7 @@ impl SyntaxSnapshot {
                             LogIncludedRanges(&included_ranges),
                         );
 
-                        None
+                        (None, SumTree::new(&()))
                     };
 
                     let result = parse_text(
@@ -699,9 +770,26 @@ impl SyntaxSnapshot {
                                 &mut queue,
                             );
                         }
+
+                        if let Some(config) = grammar.brackets_config.as_ref() {
+                            update_brackets_in_range(
+                                config,
+                                text,
+                                tree.root_node_with_offset(
+                                    step_start_byte,
+                                    step_start_point.to_ts_point(),
+                                ),
+                                &changed_ranges,
+                                &mut brackets,
+                            );
+                        }
                     }
 
-                    SyntaxLayerContent::Parsed { tree, language }
+                    SyntaxLayerContent::Parsed {
+                        tree,
+                        language,
+                        brackets,
+                    }
                 }
             };
 
@@ -1362,6 +1450,46 @@ fn update_injection_parse_steps(
                 parent_layer_changed_ranges: changed_ranges.to_vec(),
             },
         })
+    }
+}
+
+fn update_brackets_in_range(
+    config: &BracketConfig,
+    text: &BufferSnapshot,
+    node: Node,
+    changed_ranges: &[Range<usize>],
+    brackets_tree: &mut SumTree<BracketItem>,
+) {
+    let mut query_cursor = QueryCursorHandle::new();
+
+    for changed_range in changed_ranges {
+        let mut new_bracket_subtree = SumTree::new(&());
+
+        // TODO: is this saturating_sub necessary?
+        query_cursor.set_byte_range(changed_range.start.saturating_sub(1)..changed_range.end + 1);
+
+        for mat in query_cursor.matches(&config.query, node, TextProvider(text.as_rope())) {
+            let open_capture = mat.nodes_for_capture_index(config.open_capture_ix).next();
+            let close_capture = mat.nodes_for_capture_index(config.close_capture_ix).next();
+
+            let Some((open_capture, close_capture)) = open_capture.zip(close_capture) else {
+                log::warn!("couldn't find @open and @close captures in brackets pattern");
+                continue;
+            };
+
+            todo!("how do I insert this into the SumTree, or, should I put it in a BTreeSet");
+            // cursor.see
+        }
+
+        let mut cursor = brackets_tree.cursor::<usize>(&());
+        let mut left_side = cursor.slice(&changed_range.start, Bias::Left, &());
+        cursor.seek(&changed_range.end, Bias::Right, &());
+        let right_side = cursor.suffix(&());
+
+        left_side.append(new_bracket_subtree, &());
+        left_side.append(right_side, &());
+        drop(cursor); // make the borrow checker happy
+        *brackets_tree = left_side;
     }
 }
 
