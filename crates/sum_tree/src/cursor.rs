@@ -372,13 +372,7 @@ where
             "Must call `seek`, `next` or `prev` before calling this method"
         );
     }
-}
 
-impl<'a, T, D> Cursor<'a, T, D>
-where
-    T: Item,
-    D: Dimension<'a, T::Summary>,
-{
     #[track_caller]
     pub fn seek<Target>(
         &mut self,

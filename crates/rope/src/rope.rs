@@ -1216,7 +1216,7 @@ impl TextDimension for TextSummary {
 
 impl<'a> sum_tree::Dimension<'a, ChunkSummary> for usize {
     fn zero(_cx: &()) -> Self {
-        Default::default()
+        0
     }
 
     fn add_summary(&mut self, summary: &'a ChunkSummary, _: &()) {
