@@ -49,6 +49,10 @@ util.workspace = true
 uuid.workspace = true
 
 [dev-dependencies]
+language_model = { workspace = true, features = ["test-support"] }
+parking_lot.workspace = true
 pretty_assertions.workspace = true
+rand.workspace = true
 settings.workspace = true
 unindent.workspace = true
+workspace = { workspace = true, features = ["test-support"] }

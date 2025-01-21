@@ -525,10 +525,12 @@ dependencies = [
  "language_models",
  "log",
  "open_ai",
+ "parking_lot",
  "paths",
  "pretty_assertions",
  "project",
  "prompt_library",
+ "rand 0.8.5",
  "regex",
  "rpc",
  "serde",
@@ -543,6 +545,7 @@ dependencies = [
  "unindent",
  "util",
  "uuid",
+ "workspace",
 ]
 
 [[package]]

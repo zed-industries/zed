@@ -1,5 +1,5 @@
-// #[cfg(test)]
-// mod context_tests;
+#[cfg(test)]
+mod context_tests;
 
 use crate::patch::{AssistantEdit, AssistantPatch, AssistantPatchStatus};
 use anyhow::{anyhow, Context as _, Result};
