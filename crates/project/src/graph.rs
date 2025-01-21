@@ -84,7 +84,7 @@ impl Graph {
         None
     }
 
-    /// Build a subgraph starting from `start_node` from the nodes of this grpah
+    /// Build a subgraph starting from `start_node` from the nodes of this graph
     pub fn subgraph(&self, start_node: u32) -> Graph {
         let Some(_) = self.adjacencies.get(&start_node) else {
             let mut graph = Graph::new();

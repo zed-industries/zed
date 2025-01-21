@@ -168,7 +168,7 @@ impl Inventory {
             })
             .collect::<HashMap<_, _>>();
 
-        // map node idxs to task labels for retreival if a cycle is found
+        // map node idxs to task labels for retrieval if a cycle is found
         let indexes = nodes
             .iter()
             .map(|(label, (idx, _, _, _))| (*idx, *label))
