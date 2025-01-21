@@ -2725,9 +2725,18 @@ mod tests {
     #[gpui::test]
     async fn test_open_and_save_new_file(cx: &mut TestAppContext) {
         let app_state = init_test(cx);
-        app_state.fs.create_dir(Path::new("/root")).await.unwrap();
+        app_state
+            .fs
+            .create_dir(Path::new(&add_root_for_windows("/root")))
+            .await
+            .unwrap();
 
-        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let project = Project::test(
+            app_state.fs.clone(),
+            [add_root_for_windows("/root").as_ref()],
+            cx,
+        )
+        .await;
         project.update(cx, |project, _| {
             project.languages().add(markdown_language());
             project.languages().add(rust_lang());
@@ -2770,7 +2779,7 @@ mod tests {
             .unwrap();
         cx.background_executor.run_until_parked();
         cx.simulate_new_path_selection(|parent_dir| {
-            assert_eq!(parent_dir, Path::new("/root"));
+            assert_eq!(parent_dir, Path::new(&add_root_for_windows("/root")));
             Some(parent_dir.join("the-new-name.rs"))
         });
         cx.read(|cx| {
