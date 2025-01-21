@@ -4357,7 +4357,7 @@ impl LspStore {
 
         // NB: Zed does not have `details` inside the completion resolve capabilities, but certain language servers violate the spec and do not return `details` immediately, e.g. https://github.com/yioneko/vtsls/issues/213
         // So we have to update the label here anyway...
-        let new_label = match snapshot.language() {
+        let mut new_label = match snapshot.language() {
             Some(language) => {
                 adapter
                     .labels_for_completions(&[completion_item.clone()], language)
@@ -4373,6 +4373,7 @@ impl LspStore {
                 completion_item.filter_text.as_deref(),
             )
         });
+        remove_newlines(&mut new_label);
 
         let mut completions = completions.borrow_mut();
         let completion = &mut completions[completion_index];
@@ -8014,15 +8015,18 @@ async fn populate_labels_for_completions(
             None
         };
 
+        let mut label = label.unwrap_or_else(|| {
+            CodeLabel::plain(
+                lsp_completion.label.clone(),
+                lsp_completion.filter_text.as_deref(),
+            )
+        });
+        remove_newlines(&mut label);
+
         completions.push(Completion {
             old_range: completion.old_range,
             new_text: completion.new_text,
-            label: label.unwrap_or_else(|| {
-                CodeLabel::plain(
-                    lsp_completion.label.clone(),
-                    lsp_completion.filter_text.as_deref(),
-                )
-            }),
+            label,
             server_id: completion.server_id,
             documentation,
             lsp_completion,
@@ -8731,6 +8735,54 @@ fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
             }
         },
     }
+}
+
+fn remove_newlines(label: &mut CodeLabel) {
+    let mut new_text = String::new();
+    let mut removals = Vec::new();
+    let mut last_char_was_space = false;
+
+    for (idx, c) in label.text.char_indices() {
+        match c {
+            '\n' => {
+                if !last_char_was_space {
+                    new_text.push(' ');
+                }
+                removals.push(idx);
+                last_char_was_space = true;
+            }
+            ' ' if label.text[idx..].starts_with("    ") => {
+                new_text.push(' ');
+                removals.extend(idx + 1..idx + 4);
+                last_char_was_space = true;
+            }
+            ' ' if last_char_was_space => {
+                removals.push(idx);
+            }
+            _ => {
+                new_text.push(c);
+                last_char_was_space = false;
+            }
+        }
+    }
+
+    adjust_ranges(label, &removals);
+    label.text = new_text;
+}
+
+fn adjust_ranges(label: &mut CodeLabel, removals: &[usize]) {
+    for (range, _) in &mut label.runs {
+        range.start -= removals.iter().filter(|&&idx| idx < range.start).count();
+        range.end -= removals.iter().filter(|&&idx| idx < range.end).count();
+    }
+    label.filter_range.start -= removals
+        .iter()
+        .filter(|&&idx| idx < label.filter_range.start)
+        .count();
+    label.filter_range.end -= removals
+        .iter()
+        .filter(|&&idx| idx < label.filter_range.end)
+        .count();
 }
 
 #[cfg(test)]
