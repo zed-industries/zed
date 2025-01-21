@@ -4175,7 +4175,7 @@ impl BackgroundScanner {
 
         let root_path = self.state.lock().snapshot.abs_path.clone();
         let root_canonical_path = match self.fs.canonicalize(root_path.as_path()).await {
-            Ok(path) => path,
+            Ok(path) => SanitizedPath::from(path),
             Err(err) => {
                 log::error!("failed to canonicalize root path: {}", err);
                 return true;
@@ -4186,9 +4186,9 @@ impl BackgroundScanner {
             .iter()
             .map(|path| {
                 if path.file_name().is_some() {
-                    root_canonical_path.join(path)
+                    root_canonical_path.as_path().join(path).to_path_buf()
                 } else {
-                    root_canonical_path.clone()
+                    root_canonical_path.as_path().to_path_buf()
                 }
             })
             .collect::<Vec<_>>();
@@ -4203,7 +4203,7 @@ impl BackgroundScanner {
         }
 
         self.reload_entries_for_paths(
-            root_path.into(),
+            root_path,
             root_canonical_path,
             &request.relative_paths,
             abs_paths,
@@ -4217,7 +4217,7 @@ impl BackgroundScanner {
     async fn process_events(&self, mut abs_paths: Vec<PathBuf>) {
         let root_path = self.state.lock().snapshot.abs_path.clone();
         let root_canonical_path = match self.fs.canonicalize(root_path.as_path()).await {
-            Ok(path) => path,
+            Ok(path) => SanitizedPath::from(path),
             Err(err) => {
                 let new_path = self
                     .state
@@ -4250,6 +4250,7 @@ impl BackgroundScanner {
         abs_paths.sort_unstable();
         abs_paths.dedup_by(|a, b| a.starts_with(b));
         abs_paths.retain(|abs_path| {
+            let abs_path = SanitizedPath::from(abs_path);
             let snapshot = &self.state.lock().snapshot;
             {
                 let mut is_git_related = false;
@@ -4261,7 +4262,7 @@ impl BackgroundScanner {
                     FsMonitor
                 }
                 let mut fsmonitor_parse_state = None;
-                if let Some(dot_git_abs_path) = abs_path
+                if let Some(dot_git_abs_path) = abs_path.as_path()
                     .ancestors()
                     .find(|ancestor| {
                         let file_name = ancestor.file_name();
@@ -4334,7 +4335,7 @@ impl BackgroundScanner {
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         log::debug!("received fs events {:?}", relative_paths);
         self.reload_entries_for_paths(
-            root_path.into(),
+            root_path,
             root_canonical_path,
             &relative_paths,
             abs_paths,
@@ -4693,8 +4694,8 @@ impl BackgroundScanner {
     /// All list arguments should be sorted before calling this function
     async fn reload_entries_for_paths(
         &self,
-        root_abs_path: Arc<Path>,
-        root_canonical_path: PathBuf,
+        root_abs_path: SanitizedPath,
+        root_canonical_path: SanitizedPath,
         relative_paths: &[Arc<Path>],
         abs_paths: Vec<PathBuf>,
         scan_queue_tx: Option<Sender<ScanJob>>,
@@ -4722,7 +4723,7 @@ impl BackgroundScanner {
                             }
                         }
 
-                        anyhow::Ok(Some((metadata, canonical_path)))
+                        anyhow::Ok(Some((metadata, SanitizedPath::from(canonical_path))))
                     } else {
                         Ok(None)
                     }
@@ -4819,7 +4820,7 @@ impl BackgroundScanner {
         }
 
         for (path, metadata) in relative_paths.iter().zip(metadata.into_iter()) {
-            let abs_path: Arc<Path> = root_abs_path.join(path).into();
+            let abs_path: Arc<Path> = root_abs_path.as_path().join(path).into();
             match metadata {
                 Ok(Some((metadata, canonical_path))) => {
                     let ignore_stack = state
@@ -4832,7 +4833,7 @@ impl BackgroundScanner {
                         self.next_entry_id.as_ref(),
                         state.snapshot.root_char_bag,
                         if metadata.is_symlink {
-                            Some(canonical_path.into())
+                            Some(canonical_path.as_path().to_path_buf().into())
                         } else {
                             None
                         },
