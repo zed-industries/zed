@@ -1196,7 +1196,10 @@ mod tests {
             Some(px(rng.gen_range(0.0..=1000.0)))
         };
         let tab_size = NonZeroU32::new(rng.gen_range(1..=4)).unwrap();
+        #[cfg(not(target_os = "windows"))]
         let font = font("Helvetica");
+        #[cfg(target_os = "windows")]
+        let font = font("Courier New");
         let _font_id = text_system.font_id(&font);
         let font_size = px(14.0);
 
