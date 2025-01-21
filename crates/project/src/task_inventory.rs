@@ -58,18 +58,6 @@ pub enum TaskSourceKind {
 }
 
 impl TaskSourceKind {
-    pub fn friendly_path(&self) -> Cow<'_, str> {
-        match self {
-            Self::UserInput => Cow::Borrowed("custom-task"),
-            Self::Language { name } => format!("{name}-language-tasks").into(),
-            Self::AbsPath { abs_path, .. } => abs_path.to_string_lossy(),
-            Self::Worktree {
-                directory_in_worktree,
-                ..
-            } => format!("{}", directory_in_worktree.join("tasks.json").display()).into(),
-        }
-    }
-
     pub fn to_id_base(&self) -> String {
         match self {
             TaskSourceKind::UserInput => "oneshot".to_string(),
