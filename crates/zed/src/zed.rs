@@ -2997,7 +2997,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                "/root",
+                add_root_for_windows("/root"),
                 json!({
                     "a": {
                         "file1": "contents 1",
@@ -3008,7 +3008,12 @@ mod tests {
             )
             .await;
 
-        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let project = Project::test(
+            app_state.fs.clone(),
+            [add_root_for_windows("/root").as_ref()],
+            cx,
+        )
+        .await;
         project.update(cx, |project, _cx| {
             project.languages().add(markdown_language())
         });
