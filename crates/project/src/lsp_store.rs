@@ -1897,23 +1897,11 @@ impl LocalLspStore {
                             }
                         }
                         language::Attach::Shared => {
-                            if let Some(server_ids) = self
-                                .language_server_ids
-                                .get(&(worktree_id, server_name.clone()))
-                            {
-                                debug_assert_eq!(server_ids.len(), 1);
-                                let server_id = server_ids.iter().cloned().next().unwrap();
-
-                                if let Some(state) = self.language_servers.get(&server_id) {
-                                    let uri = Url::from_directory_path(
-                                        worktree.read(cx).abs_path().join(&path.path),
-                                    );
-                                    if let Ok(uri) = uri {
-                                        state.add_workspace_folder(uri);
-                                    };
-                                }
-                                server_id
-                            } else {
+                            let uri = Url::from_directory_path(
+                                worktree.read(cx).abs_path().join(&path.path),
+                            );
+                            let key = (worktree_id, server_name.clone());
+                            if !self.language_server_ids.contains_key(&key) {
                                 let language_name = language.name();
                                 self.start_language_server(
                                     &worktree,
@@ -1925,7 +1913,23 @@ impl LocalLspStore {
                                         .expect("To find LSP adapter"),
                                     settings,
                                     cx,
-                                )
+                                );
+                            }
+                            if let Some(server_ids) = self
+                                .language_server_ids
+                                .get(&key)
+                            {
+                                debug_assert_eq!(server_ids.len(), 1);
+                                let server_id = server_ids.iter().cloned().next().unwrap();
+
+                                if let Some(state) = self.language_servers.get(&server_id) {
+                                    if let Ok(uri) = uri {
+                                        state.add_workspace_folder(uri);
+                                    };
+                                }
+                                server_id
+                            } else {
+                                unreachable!("Language server ID should be available, as it's registered on demand")
                             }
                         }
                     },
