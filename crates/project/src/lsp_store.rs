@@ -211,7 +211,6 @@ impl LocalLspStore {
 
             move |cx| async move {
                 let binary = binary.await?;
-                dbg!(&binary);
                 #[cfg(any(test, feature = "test-support"))]
                 if let Some(server) = lsp_store
                     .update(&mut cx.clone(), |this, cx| {
@@ -7287,7 +7286,6 @@ impl LspStore {
                                     .get(&old_server_id)
                                     .map(Clone::clone)
                                     .expect("Language server adapter to be found");
-                                dbg!(&disposition);
                                 let new_id = local.start_language_server(
                                     &worktree_handle,
                                     delegate.clone(),

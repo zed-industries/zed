@@ -743,7 +743,6 @@ async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
         .update(cx, |store, cx| store.reload(Some("gleam".into()), cx))
         .await;
 
-    dbg!("Restart");
     cx.executor().run_until_parked();
     project.update(cx, |project, cx| {
         project.restart_language_servers_for_buffers([buffer.clone()], cx)
