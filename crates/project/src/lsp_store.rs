@@ -1694,7 +1694,6 @@ impl LocalLspStore {
         }
 
         let worktree_id = file.worktree_id(cx);
-        let language = buffer.language().cloned();
 
         if let Some(diagnostics) = self.diagnostics.get(&worktree_id) {
             for (server_id, diagnostics) in
@@ -1704,17 +1703,6 @@ impl LocalLspStore {
                     .log_err();
             }
         }
-
-        let Some(language) = language else {
-            return;
-        };
-        let Some(worktree) = self
-            .worktree_store
-            .read(cx)
-            .worktree_for_id(worktree_id, cx)
-        else {
-            return;
-        };
     }
 
     pub(crate) fn reset_buffer(
