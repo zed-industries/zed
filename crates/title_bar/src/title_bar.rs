@@ -17,7 +17,7 @@ use call::ActiveCall;
 use client::{Client, UserStore};
 use feature_flags::{FeatureFlagAppExt, ZedPro};
 use git_ui::repository_selector::RepositorySelector;
-use git_ui::{all_repositories, repository_selector::RepositorySelectorPopoverMenu};
+use git_ui::repository_selector::RepositorySelectorPopoverMenu;
 use gpui::{
     actions, div, px, Action, AnyElement, AppContext, Decorations, Element, InteractiveElement,
     Interactivity, IntoElement, Model, MouseButton, ParentElement, Render, Stateful,
@@ -486,36 +486,33 @@ impl TitleBar {
         project: Model<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Option<impl IntoElement> {
-        if !all_repositories(project.clone(), cx).is_empty() {
-            let repository_selector = cx.new_view(|cx| RepositorySelector::new(project, cx));
-            let active_repository = repository_selector.read(cx).active_repository(cx)?;
-            let display_name = active_repository.display_name();
-            Some(RepositorySelectorPopoverMenu::new(
-                repository_selector,
-                ButtonLike::new("active-model")
-                    .style(ButtonStyle::Subtle)
-                    .child(
-                        h_flex().w_full().gap_0p5().child(
-                            div()
-                                .overflow_x_hidden()
-                                .flex_grow()
-                                .whitespace_nowrap()
-                                .child(
-                                    h_flex()
-                                        .gap_1()
-                                        .child(
-                                            Label::new(display_name)
-                                                .size(LabelSize::Small)
-                                                .color(Color::Muted),
-                                        )
-                                        .into_any_element(),
-                                ),
-                        ),
+        let active_repository = project.read(cx).active_repository(cx)?;
+        let repository_selector = cx.new_view(|cx| RepositorySelector::new(project, cx));
+        // FIXME inline
+        let display_name = active_repository.display_name();
+        Some(RepositorySelectorPopoverMenu::new(
+            repository_selector,
+            ButtonLike::new("active-model")
+                .style(ButtonStyle::Subtle)
+                .child(
+                    h_flex().w_full().gap_0p5().child(
+                        div()
+                            .overflow_x_hidden()
+                            .flex_grow()
+                            .whitespace_nowrap()
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Label::new(display_name)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .into_any_element(),
+                            ),
                     ),
-            ))
-        } else {
-            None
-        }
+                ),
+        ))
     }
 
     pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {

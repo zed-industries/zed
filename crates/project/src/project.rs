@@ -4172,6 +4172,14 @@ impl Project {
     pub fn git_state(&self) -> Option<&Model<GitState>> {
         self.git_state.as_ref()
     }
+
+    pub fn active_repository(&self, cx: &AppContext) -> Option<RepositoryHandle> {
+        todo!()
+    }
+
+    pub fn all_repositories(&self, cx: &AppContext) -> Vec<RepositoryHandle> {
+        todo!()
+    }
 }
 
 fn deserialize_code_actions(code_actions: &HashMap<String, bool>) -> Vec<lsp::CodeActionKind> {

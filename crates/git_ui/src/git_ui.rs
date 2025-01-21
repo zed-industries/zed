@@ -1,11 +1,8 @@
-use std::path::PathBuf;
-
 use ::settings::Settings;
 use git::status::FileStatus;
 use git_panel_settings::GitPanelSettings;
-use gpui::{AppContext, Hsla, Model};
-use project::{Project, ProjectPath};
-use ui::{Color, Icon, IconName, IntoElement, SharedString};
+use gpui::{AppContext, Hsla};
+use ui::{Color, Icon, IconName, IntoElement};
 
 pub mod git_panel;
 mod git_panel_settings;

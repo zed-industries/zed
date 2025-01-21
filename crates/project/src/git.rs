@@ -1,17 +1,21 @@
-use anyhow::{anyhow, Context as _};
+use anyhow::anyhow;
 use futures::channel::mpsc;
 use futures::{SinkExt as _, StreamExt as _};
 use git::{
     repository::{GitRepository, RepoPath},
     status::{GitSummary, TrackedSummary},
 };
-use gpui::{AppContext, Context as _, Model, ModelContext, SharedString, Subscription, WeakModel};
+use gpui::{
+    AppContext, Context as _, EventEmitter, Model, ModelContext, SharedString, Subscription,
+    WeakModel,
+};
 use language::{Buffer, LanguageRegistry};
 use std::sync::Arc;
 use text::Rope;
-use worktree::RepositoryEntry;
+use worktree::{RepositoryEntry, StatusEntry};
 
-use crate::worktree_store::{self, WorktreeStore, WorktreeStoreEvent};
+use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
+use crate::ProjectPath;
 
 pub struct GitState {
     repositories: Vec<RepositoryHandle>,
@@ -35,6 +39,10 @@ enum Message {
     Stage(Arc<dyn GitRepository>, Vec<RepoPath>),
     Unstage(Arc<dyn GitRepository>, Vec<RepoPath>),
 }
+
+pub enum Event {}
+
+impl EventEmitter<Event> for GitState {}
 
 impl GitState {
     pub fn new(
@@ -145,8 +153,15 @@ impl GitState {
             }
         });
 
+        // FIXME emit an event if appropriate for the git UI to listen for
+
         self.repositories = new_repositories;
         self.active_index = new_active_index;
+    }
+
+    // FIXME
+    pub fn all_repositories(&self) -> Vec<RepositoryHandle> {
+        self.repositories.clone()
     }
 }
 
@@ -155,8 +170,21 @@ impl RepositoryHandle {
         todo!()
     }
 
+    pub fn status(&self) -> impl Iterator<Item = &StatusEntry> {
+        // FIXME
+        std::iter::empty()
+    }
+
+    pub fn unrelativize(&self, path: &RepoPath) -> ProjectPath {
+        todo!()
+    }
+
     pub fn activate(&self) {
         todo!()
+    }
+
+    pub fn commit_message(&self) -> Model<Buffer> {
+        self.commit_message.clone()
     }
 
     pub fn stage_entries(
@@ -234,7 +262,7 @@ impl RepositoryHandle {
     }
 
     pub fn commit(
-        &mut self,
+        &self,
         err_sender: mpsc::Sender<anyhow::Error>,
         cx: &AppContext,
     ) -> anyhow::Result<()> {
@@ -245,11 +273,12 @@ impl RepositoryHandle {
         self.update_sender
             .unbounded_send((Message::Commit(self.git_repo.clone(), message), err_sender))
             .map_err(|_| anyhow!("Failed to submit commit operation"))?;
+        // FIXME clear it
         Ok(())
     }
 
     pub fn commit_all(
-        &mut self,
+        &self,
         err_sender: mpsc::Sender<anyhow::Error>,
         cx: &AppContext,
     ) -> anyhow::Result<()> {
@@ -269,6 +298,7 @@ impl RepositoryHandle {
                 err_sender,
             ))
             .map_err(|_| anyhow!("Failed to submit commit operation"))?;
+        // FIXME clear it
         Ok(())
     }
 }

@@ -57,6 +57,7 @@ pub struct WorktreeStore {
     state: WorktreeStoreState,
 }
 
+// TODO add all events necessary for git UI
 pub enum WorktreeStoreEvent {
     WorktreeAdded(Model<Worktree>),
     WorktreeRemoved(EntityId, WorktreeId),

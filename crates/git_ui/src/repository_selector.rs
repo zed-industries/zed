@@ -3,7 +3,10 @@ use gpui::{
     Subscription, Task, View, WeakModel, WeakView,
 };
 use picker::{Picker, PickerDelegate};
-use project::Project;
+use project::{
+    git::{GitState, RepositoryHandle},
+    Project,
+};
 use std::sync::Arc;
 use ui::{prelude::*, ListItem, ListItemSpacing, PopoverMenu, PopoverMenuHandle, PopoverTrigger};
 
@@ -12,12 +15,15 @@ pub struct RepositorySelector {
     /// The task used to update the picker's matches when there is a change to
     /// the repository list.
     update_matches_task: Option<Task<()>>,
-    _subscription: Subscription,
+    _subscriptions: Vec<Subscription>,
 }
 
 impl RepositorySelector {
     pub fn new(project: Model<Project>, cx: &mut ViewContext<Self>) -> Self {
-        let all_repositories = all_repositories(project.clone(), cx);
+        let git_state = project.read(cx).git_state().cloned();
+        let all_repositories = git_state
+            .as_ref()
+            .map_or(vec![], |git_state| git_state.read(cx).all_repositories());
         let filtered_repositories = all_repositories.clone();
         let delegate = RepositorySelectorDelegate {
             project: project.downgrade(),
@@ -30,40 +36,43 @@ impl RepositorySelector {
         let picker =
             cx.new_view(|cx| Picker::uniform_list(delegate, cx).max_height(Some(rems(20.).into())));
 
-        let _subscription = cx.subscribe(&project, Self::handle_project_event);
+        let _subscriptions = if let Some(git_state) = git_state {
+            vec![cx.subscribe(&git_state, Self::handle_project_git_event)]
+        } else {
+            Vec::new()
+        };
 
         RepositorySelector {
             picker,
             update_matches_task: None,
-            _subscription,
+            _subscriptions,
         }
     }
 
-    fn handle_project_event(
+    fn handle_project_git_event(
         &mut self,
-        project: Model<Project>,
-        event: &project::Event,
+        git_state: Model<GitState>,
+        _event: &project::git::Event,
         cx: &mut ViewContext<Self>,
     ) {
-        if event != &project::Event::GitRepositoriesListChanged {
-            return;
-        }
+        // FIXME handle events individually
         let task = self.picker.update(cx, |this, cx| {
             let query = this.query(cx);
-            this.delegate.repository_entries = all_repositories(project, cx);
+            // FIXME iter/map
+            this.delegate.repository_entries = git_state.read(cx).all_repositories();
             this.delegate.update_matches(query, cx)
         });
         self.update_matches_task = Some(task);
     }
 
-    pub fn active_repository(&self, cx: &AppContext) -> Option<RepositoryHandle> {
-        // FIXME this seems wrong
-        let delegate = &self.picker.read(cx).delegate;
-        delegate
-            .filtered_repositories
-            .get(delegate.selected_index)
-            .cloned()
-    }
+    //pub fn active_repository(&self, cx: &AppContext) -> Option<RepositoryHandle> {
+    //    // FIXME this seems wrong
+    //    let delegate = &self.picker.read(cx).delegate;
+    //    delegate
+    //        .filtered_repositories
+    //        .get(delegate.selected_index)
+    //        .cloned()
+    //}
 }
 
 impl EventEmitter<DismissEvent> for RepositorySelector {}
@@ -184,20 +193,21 @@ impl PickerDelegate for RepositorySelectorDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
-        if let Some(repo_info) = self.filtered_repositories.get(self.selected_index) {
-            if let Some(project) = self.project.upgrade() {
-                let project = project.read(cx);
-                if let Some(git_state) = project.git_state() {
-                    let worktree_id = repo_info.project_path.worktree_id;
-                    let worktree = project.worktree_for_id(worktree_id).unwrap();
-                    let repository = worktree.read(cx).repository_for_path(project_path);
-                    git_state.update(cx, |git_state, cx| {
-                        git_state.activate_repository(worktree_id)
-                    });
-                    cx.emit(DismissEvent);
-                }
-            }
-        }
+        todo!()
+        //if let Some(repo_info) = self.filtered_repositories.get(self.selected_index) {
+        //    if let Some(project) = self.project.upgrade() {
+        //        let project = project.read(cx);
+        //        if let Some(git_state) = project.git_state() {
+        //            let worktree_id = repo_info.project_path.worktree_id;
+        //            let worktree = project.worktree_for_id(worktree_id).unwrap();
+        //            let repository = worktree.read(cx).repository_for_path(project_path);
+        //            git_state.update(cx, |git_state, cx| {
+        //                git_state.activate_repository(worktree_id)
+        //            });
+        //            cx.emit(DismissEvent);
+        //        }
+        //    }
+        //}
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
