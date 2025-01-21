@@ -43,6 +43,7 @@ pub struct ProjectPanelSettings {
     pub auto_fold_dirs: bool,
     pub scrollbar: ScrollbarSettings,
     pub show_diagnostics: ShowDiagnostics,
+    pub show_file_numbers: ShowFileNumbers,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -85,6 +86,19 @@ pub enum ShowDiagnostics {
     #[default]
     /// Mark files containing diagnostic errors or warnings in the project panel.
     All,
+}
+
+/// Whether to show file numbers in project panel items.
+///
+/// Default: Off
+#[derive(Copy, Clone, Debug, Default, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShowFileNumbers {
+    /// Never number files the project panel.
+    #[default]
+    Off,
+    /// Number files relative to the currently opened file.
+    On,
 }
 
 #[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
@@ -138,6 +152,10 @@ pub struct ProjectPanelSettingsContent {
     ///
     /// Default: all
     pub show_diagnostics: Option<ShowDiagnostics>,
+    /// Number files in the project panel for navigating with shortcuts.
+    ///
+    /// Default: off
+    pub show_file_numbers: Option<ShowFileNumbers>,
     /// Settings related to indent guides in the project panel.
     pub indent_guides: Option<IndentGuidesSettingsContent>,
 }

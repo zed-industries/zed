@@ -40,7 +40,7 @@ use crate::{
     object::Object,
     state::Mode,
     visual::VisualDeleteLine,
-    Vim,
+    GoToFileByNumber, NumberedFileNavigation, Vim,
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -694,6 +694,11 @@ fn generate_commands(_: &AppContext) -> Vec<VimCommand> {
         VimCommand::new(("foldo", "pen"), editor::actions::UnfoldLines)
             .bang(editor::actions::UnfoldRecursive)
             .range(act_on_range),
+        VimCommand::new(
+            ("gf", "ile"),
+            GoToFileByNumber(NumberedFileNavigation::Down),
+        )
+        .range(wrap_count),
         VimCommand::new(("foldc", "lose"), editor::actions::Fold)
             .bang(editor::actions::FoldRecursive)
             .range(act_on_range),
@@ -846,6 +851,15 @@ pub fn command_interceptor(mut input: &str, cx: &AppContext) -> Option<CommandIn
         } else {
             None
         }
+    } else if range.is_some() && query.ends_with("G") {
+        let navigation = match query {
+            q if q.ends_with("jG") => NumberedFileNavigation::Down,
+            q if q.ends_with("kG") => NumberedFileNavigation::Up,
+            q if q.ends_with("G") => NumberedFileNavigation::Absolute,
+            _ => return None,
+        };
+
+        Some(crate::GoToFileByNumber(navigation).boxed_clone())
     } else if query.contains('!') {
         ShellExec::parse(query, range.clone())
     } else {
