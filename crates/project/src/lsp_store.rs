@@ -3146,17 +3146,6 @@ impl LspStore {
         }
     }
 
-    fn worktree_for_id(
-        &self,
-        worktree_id: WorktreeId,
-        cx: &ModelContext<Self>,
-    ) -> Result<Model<Worktree>> {
-        self.worktree_store
-            .read(cx)
-            .worktree_for_id(worktree_id, cx)
-            .ok_or_else(|| anyhow!("worktree not found"))
-    }
-
     fn on_buffer_store_event(
         &mut self,
         _: Model<BufferStore>,
@@ -7308,29 +7297,6 @@ impl LspStore {
             //     self.restart_local_language_servers(worktree, language, cx);
             // }
         }
-    }
-
-    fn restart_local_language_servers(
-        &mut self,
-        worktree: Model<Worktree>,
-        ids: BTreeSet<LanguageServerId>,
-        cx: &mut ModelContext<Self>,
-    ) {
-        let worktree_id = worktree.read(cx).id();
-
-        let stop_tasks = ids
-            .into_iter()
-            .map(|language_server_id| self.stop_local_language_server(language_server_id, cx))
-            .collect::<Vec<_>>();
-        if stop_tasks.is_empty() {
-            return;
-        }
-
-        cx.background_executor()
-            .spawn(async move {
-                futures::future::join_all(stop_tasks).await;
-            })
-            .detach();
     }
 
     pub fn update_diagnostics(
