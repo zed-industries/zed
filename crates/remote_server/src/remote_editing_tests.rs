@@ -1,3 +1,6 @@
+/// todo(windows)
+/// The tests in this file assume that server_cx is running on Windows too.
+/// We neead to find a way to test Windows-Non-Windows interactions.
 use crate::headless_project::HeadlessProject;
 use client::{Client, UserStore};
 use clock::FakeSystemClock;
@@ -24,12 +27,13 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
+use util::paths::add_root_for_windows;
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        add_root_for_windows("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -45,14 +49,14 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
     )
     .await;
     fs.set_index_for_repo(
-        Path::new("/code/project1/.git"),
+        Path::new(&add_root_for_windows("/code/project1/.git")),
         &[("src/lib.rs".into(), "fn one() -> usize { 0 }".into())],
     );
 
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
     let (worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(add_root_for_windows("/code/project1"), true, cx)
         })
         .await
         .unwrap();
@@ -113,7 +117,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
     // A new file is created in the remote filesystem. The user
     // sees the new file.
     fs.save(
-        "/code/project1/src/main.rs".as_ref(),
+        add_root_for_windows("/code/project1/src/main.rs").as_ref(),
         &"fn main() {}".into(),
         Default::default(),
     )
@@ -134,8 +138,8 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
 
     // A file that is currently open in a buffer is renamed.
     fs.rename(
-        "/code/project1/src/lib.rs".as_ref(),
-        "/code/project1/src/lib2.rs".as_ref(),
+        add_root_for_windows("/code/project1/src/lib.rs").as_ref(),
+        add_root_for_windows("/code/project1/src/lib2.rs").as_ref(),
         Default::default(),
     )
     .await
@@ -146,7 +150,7 @@ async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut Test
     });
 
     fs.set_index_for_repo(
-        Path::new("/code/project1/.git"),
+        Path::new(&add_root_for_windows("/code/project1/.git")),
         &[("src/lib2.rs".into(), "fn one() -> usize { 100 }".into())],
     );
     cx.executor().run_until_parked();
