@@ -183,10 +183,18 @@ async fn test_open_with_single_item(cx: &mut gpui::TestAppContext) {
     app_state
         .fs
         .as_fake()
-        .insert_tree("/root", json!({"1.txt": "Single file"}))
+        .insert_tree(
+            add_root_for_windows("/root"),
+            json!({"1.txt": "Single file"}),
+        )
         .await;
 
-    let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+    let project = Project::test(
+        app_state.fs.clone(),
+        [add_root_for_windows("/root").as_ref()],
+        cx,
+    )
+    .await;
     let (workspace, cx) =
         cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
 
