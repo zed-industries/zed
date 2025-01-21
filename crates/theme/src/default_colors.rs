@@ -165,7 +165,7 @@ impl ThemeColors {
             tab_active_background: neutral().dark().step_1(),
             search_match_background: neutral().dark().step_5(),
             panel_background: neutral().dark().step_2(),
-            panel_focused_border: blue().dark().step_12(),
+            panel_focused_border: blue().dark().step_8(),
             panel_indent_guide: neutral().dark_alpha().step_4(),
             panel_indent_guide_hover: neutral().dark_alpha().step_6(),
             panel_indent_guide_active: neutral().dark_alpha().step_6(),
