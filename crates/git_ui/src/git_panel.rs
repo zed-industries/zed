@@ -706,7 +706,7 @@ impl GitPanel {
         };
 
         // First pass - collect all paths
-        let path_set = HashSet::from_iter(repo.status().map(|entry| entry.repo_path.clone()));
+        let path_set = HashSet::from_iter(repo.status().map(|entry| entry.repo_path));
 
         // Second pass - create entries with proper depth calculation
         let mut all_staged = None;

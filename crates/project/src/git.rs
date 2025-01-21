@@ -1,3 +1,5 @@
+use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
+use crate::{Project, ProjectPath};
 use anyhow::anyhow;
 use futures::channel::mpsc;
 use futures::{SinkExt as _, StreamExt as _};
@@ -16,13 +18,11 @@ use text::Rope;
 use util::maybe;
 use worktree::{RepositoryEntry, StatusEntry};
 
-use crate::worktree_store::{WorktreeStore, WorktreeStoreEvent};
-use crate::{Project, ProjectPath};
-
 pub struct GitState {
     repositories: Vec<RepositoryHandle>,
     active_index: Option<usize>,
     update_sender: mpsc::UnboundedSender<(Message, mpsc::Sender<anyhow::Error>)>,
+    languages: Arc<LanguageRegistry>,
     _subscription: Subscription,
 }
 
@@ -79,22 +79,10 @@ impl GitState {
         })
         .detach();
 
-        //let commit_message = cx.new_model(|cx| Buffer::local("", cx));
-        //let markdown = languages.language_for_name("Markdown");
-        //cx.spawn({
-        //    let commit_message = commit_message.clone();
-        //    |mut cx| async move {
-        //        let markdown = markdown.await.context("failed to load Markdown language")?;
-        //        commit_message.update(&mut cx, |commit_message, cx| {
-        //            commit_message.set_language(Some(markdown), cx)
-        //        })
-        //    }
-        //})
-        //.detach_and_log_err(cx);
-
         let _subscription = cx.subscribe(worktree_store, Self::on_worktree_store_event);
 
         GitState {
+            languages,
             repositories: vec![],
             active_index: None,
             update_sender,
@@ -113,6 +101,8 @@ impl GitState {
         _event: &WorktreeStoreEvent,
         cx: &mut ModelContext<'_, Self>,
     ) {
+        // FIXME inspect the event
+
         let mut new_repositories = Vec::new();
         let mut new_active_index = None;
         let this = cx.weak_model();
@@ -145,13 +135,25 @@ impl GitState {
                             existing_handle.repository_entry = repo.clone();
                             existing_handle
                         } else {
+                            let commit_message = cx.new_model(|cx| Buffer::local("", cx));
+                            cx.spawn({
+                                let commit_message = commit_message.downgrade();
+                                let languages = self.languages.clone();
+                                |_, mut cx| async move {
+                                    let markdown = languages.language_for_name("Markdown").await?;
+                                    commit_message.update(&mut cx, |commit_message, cx| {
+                                        commit_message.set_language(Some(markdown), cx);
+                                    })?;
+                                    anyhow::Ok(())
+                                }
+                            })
+                            .detach_and_log_err(cx);
                             RepositoryHandle {
                                 git_state: this.clone(),
                                 worktree_id: worktree.id(),
                                 repository_entry: repo.clone(),
                                 git_repo: local_repo.repo().clone(),
-                                // FIXME set markdown
-                                commit_message: cx.new_model(|cx| Buffer::local("", cx)),
+                                commit_message,
                                 update_sender: self.update_sender.clone(),
                             }
                         };
@@ -190,9 +192,8 @@ impl RepositoryHandle {
         .unwrap_or("".into())
     }
 
-    pub fn status(&self) -> impl Iterator<Item = &StatusEntry> {
-        // FIXME
-        std::iter::empty()
+    pub fn status(&self) -> impl '_ + Iterator<Item = StatusEntry> {
+        self.repository_entry.status()
     }
 
     pub fn unrelativize(&self, path: &RepoPath) -> Option<ProjectPath> {

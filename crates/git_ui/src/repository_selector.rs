@@ -193,6 +193,7 @@ impl PickerDelegate for RepositorySelectorDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
+        // FIXME
         eprintln!("confirm triggered!");
     }
 
