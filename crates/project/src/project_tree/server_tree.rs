@@ -52,6 +52,7 @@ pub struct LanguageServerTree {
 pub(crate) struct LanguageServerTreeNode(Weak<InnerTreeNode>);
 
 /// Describes a request to launch a language server.
+#[derive(Debug)]
 pub(crate) struct LaunchDisposition<'a> {
     pub(crate) server_name: &'a LanguageServerName,
     pub(crate) attach: Attach,
