@@ -3328,7 +3328,7 @@ impl EditorElement {
                     .px_0p5()
                     .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
                     .text_size(TextSize::XSmall.rems(cx))
-                    .text_color(cx.theme().colors().text.opacity(0.8))
+                    .text_color(cx.theme().colors().text)
                     .child("tab");
 
                 let icon_container = div().mt(px(2.5)); // For optical alignment
@@ -3338,9 +3338,9 @@ impl EditorElement {
                     .py_0p5()
                     .px_1()
                     .gap_1()
-                    .bg(cx.theme().colors().editor_subheader_background)
+                    .bg(cx.theme().colors().text_accent.opacity(0.15))
                     .border_1()
-                    .border_color(cx.theme().colors().text_accent.opacity(0.2))
+                    .border_color(cx.theme().colors().text_accent.opacity(0.8))
                     .rounded_md()
                     .shadow_sm();
 
