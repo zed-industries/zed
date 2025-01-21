@@ -527,7 +527,7 @@ impl ComponentPreview for Button {
                     ),
                     single_example(
                         "Tinted Icons",
-                        Button::new("icon_color", "Error")
+                        Button::new("tinted_icons", "Error")
                             .style(ButtonStyle::Tinted(TintColor::Error))
                             .color(Color::Error)
                             .icon_color(Color::Error)
