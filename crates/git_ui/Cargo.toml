@@ -31,7 +31,6 @@ theme.workspace = true
 ui.workspace = true
 util.workspace = true
 workspace.workspace = true
-worktree.workspace = true
 picker.workspace = true
 
 [target.'cfg(windows)'.dependencies]
