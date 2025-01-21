@@ -22,12 +22,12 @@ test-support = [
 
 [dependencies]
 anyhow.workspace = true
+assistant_context_editor.workspace = true
 assistant_settings.workspace = true
 assistant_slash_command.workspace = true
 assistant_slash_commands.workspace = true
 assistant_tool.workspace = true
 async-watch.workspace = true
-chrono.workspace = true
 client.workspace = true
 clock.workspace = true
 collections.workspace = true
@@ -50,7 +50,6 @@ log.workspace = true
 lsp.workspace = true
 menu.workspace = true
 multi_buffer.workspace = true
-open_ai = { workspace = true, features = ["schemars"] }
 parking_lot.workspace = true
 paths.workspace = true
 picker.workspace = true
@@ -67,10 +66,8 @@ serde.workspace = true
 serde_json.workspace = true
 settings.workspace = true
 similar.workspace = true
-smallvec.workspace = true
 smol.workspace = true
 streaming_diff.workspace = true
-strum.workspace = true
 telemetry.workspace = true
 telemetry_events.workspace = true
 terminal.workspace = true
@@ -79,7 +76,6 @@ text.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true
-uuid.workspace = true
 workspace.workspace = true
 zed_actions.workspace = true
 

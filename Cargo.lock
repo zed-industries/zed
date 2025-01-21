@@ -372,12 +372,12 @@ name = "assistant"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assistant_context_editor",
  "assistant_settings",
  "assistant_slash_command",
  "assistant_slash_commands",
  "assistant_tool",
  "async-watch",
- "chrono",
  "client",
  "clock",
  "collections",
@@ -403,7 +403,6 @@ dependencies = [
  "lsp",
  "menu",
  "multi_buffer",
- "open_ai",
  "parking_lot",
  "paths",
  "picker",
@@ -423,10 +422,8 @@ dependencies = [
  "serde_json_lenient",
  "settings",
  "similar",
- "smallvec",
  "smol",
  "streaming_diff",
- "strum",
  "telemetry",
  "telemetry_events",
  "terminal",
@@ -437,7 +434,6 @@ dependencies = [
  "ui",
  "unindent",
  "util",
- "uuid",
  "workspace",
  "zed_actions",
 ]
@@ -508,6 +504,42 @@ dependencies = [
 [[package]]
 name = "assistant_context_editor"
 version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assistant_slash_command",
+ "assistant_slash_commands",
+ "assistant_tool",
+ "chrono",
+ "client",
+ "clock",
+ "collections",
+ "editor",
+ "feature_flags",
+ "fs",
+ "futures 0.3.31",
+ "gpui",
+ "language",
+ "language_model",
+ "language_models",
+ "log",
+ "open_ai",
+ "paths",
+ "pretty_assertions",
+ "project",
+ "prompt_library",
+ "serde",
+ "serde_json",
+ "settings",
+ "smallvec",
+ "smol",
+ "strum",
+ "telemetry_events",
+ "text",
+ "ui",
+ "unindent",
+ "util",
+ "uuid",
+]
 
 [[package]]
 name = "assistant_settings"

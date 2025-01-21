@@ -1,4 +1,9 @@
 use anyhow::Result;
+use assistant_context_editor::{
+    AssistantPatch, AssistantPatchStatus, CacheStatus, Content, Context, ContextEvent, ContextId,
+    InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId, MessageMetadata,
+    MessageStatus, ParsedSlashCommand, PendingSlashCommandStatus, RequestType,
+};
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
 use assistant_slash_commands::{
@@ -58,11 +63,8 @@ use workspace::{
 
 use crate::{
     humanize_token_count, slash_command::SlashCommandCompletionProvider, slash_command_picker,
-    Assist, AssistantPanel, AssistantPatch, AssistantPatchStatus, CacheStatus, ConfirmCommand,
-    Content, Context, ContextEvent, ContextId, CopyCode, CycleMessageRole, Edit,
-    InsertDraggedFiles, InsertIntoEditor, InvokedSlashCommandId, InvokedSlashCommandStatus,
-    Message, MessageId, MessageMetadata, MessageStatus, ParsedSlashCommand,
-    PendingSlashCommandStatus, QuoteSelection, RequestType, Split, ToggleModelSelector,
+    Assist, AssistantPanel, ConfirmCommand, CopyCode, CycleMessageRole, Edit, InsertDraggedFiles,
+    InsertIntoEditor, QuoteSelection, Split, ToggleModelSelector,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -138,7 +140,7 @@ impl ContextEditor {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let completion_provider = SlashCommandCompletionProvider::new(
-            context.read(cx).slash_commands.clone(),
+            context.read(cx).slash_commands().clone(),
             Some(cx.view().downgrade()),
             Some(workspace.clone()),
         );
@@ -167,8 +169,8 @@ impl ContextEditor {
 
         let sections = context.read(cx).slash_command_output_sections().to_vec();
         let patch_ranges = context.read(cx).patch_ranges().collect::<Vec<_>>();
-        let slash_commands = context.read(cx).slash_commands.clone();
-        let tools = context.read(cx).tools.clone();
+        let slash_commands = context.read(cx).slash_commands().clone();
+        let tools = context.read(cx).tools().clone();
         let mut this = Self {
             context,
             slash_commands,

@@ -1,8 +1,7 @@
 use crate::context_editor::ContextEditor;
 use anyhow::Result;
-use assistant_slash_command::AfterCompletion;
 pub use assistant_slash_command::SlashCommand;
-use assistant_slash_command::SlashCommandWorkingSet;
+use assistant_slash_command::{AfterCompletion, SlashCommandLine, SlashCommandWorkingSet};
 use editor::{CompletionProvider, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
 use gpui::{Model, Task, ViewContext, WeakView, WindowContext};
@@ -26,13 +25,6 @@ pub(crate) struct SlashCommandCompletionProvider {
     slash_commands: Arc<SlashCommandWorkingSet>,
     editor: Option<WeakView<ContextEditor>>,
     workspace: Option<WeakView<Workspace>>,
-}
-
-pub(crate) struct SlashCommandLine {
-    /// The range within the line containing the command name.
-    pub name: Range<usize>,
-    /// Ranges within the line containing the command arguments.
-    pub arguments: Vec<Range<usize>>,
 }
 
 impl SlashCommandCompletionProvider {
@@ -334,59 +326,5 @@ impl CompletionProvider for SlashCommandCompletionProvider {
 
     fn sort_completions(&self) -> bool {
         false
-    }
-}
-
-impl SlashCommandLine {
-    pub(crate) fn parse(line: &str) -> Option<Self> {
-        let mut call: Option<Self> = None;
-        let mut ix = 0;
-        for c in line.chars() {
-            let next_ix = ix + c.len_utf8();
-            if let Some(call) = &mut call {
-                // The command arguments start at the first non-whitespace character
-                // after the command name, and continue until the end of the line.
-                if let Some(argument) = call.arguments.last_mut() {
-                    if c.is_whitespace() {
-                        if (*argument).is_empty() {
-                            argument.start = next_ix;
-                            argument.end = next_ix;
-                        } else {
-                            argument.end = ix;
-                            call.arguments.push(next_ix..next_ix);
-                        }
-                    } else {
-                        argument.end = next_ix;
-                    }
-                }
-                // The command name ends at the first whitespace character.
-                else if !call.name.is_empty() {
-                    if c.is_whitespace() {
-                        call.arguments = vec![next_ix..next_ix];
-                    } else {
-                        call.name.end = next_ix;
-                    }
-                }
-                // The command name must begin with a letter.
-                else if c.is_alphabetic() {
-                    call.name.end = next_ix;
-                } else {
-                    return None;
-                }
-            }
-            // Commands start with a slash.
-            else if c == '/' {
-                call = Some(SlashCommandLine {
-                    name: next_ix..next_ix,
-                    arguments: Vec::new(),
-                });
-            }
-            // The line can't contain anything before the slash except for whitespace.
-            else if !c.is_whitespace() {
-                return None;
-            }
-            ix = next_ix;
-        }
-        call
     }
 }

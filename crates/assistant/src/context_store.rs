@@ -1,8 +1,8 @@
-use crate::{
+use anyhow::{anyhow, Context as _, Result};
+use assistant_context_editor::{
     Context, ContextEvent, ContextId, ContextOperation, ContextVersion, SavedContext,
     SavedContextMetadata,
 };
-use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{SlashCommandId, SlashCommandWorkingSet};
 use assistant_tool::{ToolId, ToolWorkingSet};
 use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
