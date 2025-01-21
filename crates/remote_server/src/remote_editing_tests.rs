@@ -1136,6 +1136,46 @@ async fn test_remote_root_rename(cx: &mut TestAppContext, server_cx: &mut TestAp
 }
 
 #[gpui::test]
+async fn test_remote_rename_entry(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
+    let fs = FakeFs::new(server_cx.executor());
+    fs.insert_tree(
+        "/code",
+        json!({
+            "project1": {
+                ".git": {},
+                "README.md": "# project 1",
+            },
+        }),
+    )
+    .await;
+
+    let (project, _) = init_test(&fs, cx, server_cx).await;
+    let (worktree, _) = project
+        .update(cx, |project, cx| {
+            project.find_or_create_worktree("/code/project1", true, cx)
+        })
+        .await
+        .unwrap();
+
+    cx.run_until_parked();
+
+    let entry = worktree
+        .update(cx, |worktree, cx| {
+            let entry = worktree.entry_for_path("README.md").unwrap();
+            worktree.rename_entry(entry.id, Path::new("README.rst"), cx)
+        })
+        .await
+        .unwrap()
+        .to_included()
+        .unwrap();
+
+    cx.run_until_parked();
+
+    worktree.update(cx, |worktree, _| {
+        assert_eq!(worktree.entry_for_path("README.rst").unwrap().id, entry.id)
+    });
+}
+#[gpui::test]
 async fn test_remote_git_branches(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
