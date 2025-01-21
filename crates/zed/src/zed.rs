@@ -1738,12 +1738,15 @@ mod tests {
         app_state
             .fs
             .as_fake()
-            .insert_tree("/root", json!({"a": "hey", "b": "", "dir": {"c": "f"}}))
+            .insert_tree(
+                add_root_for_windows("/root"),
+                json!({"a": "hey", "b": "", "dir": {"c": "f"}}),
+            )
             .await;
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from("/root/dir")],
+                &[PathBuf::from(add_root_for_windows("/root/dir"))],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -1755,7 +1758,7 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from("/root/a")],
+                &[PathBuf::from(add_root_for_windows("/root/a"))],
                 app_state.clone(),
                 workspace::OpenOptions {
                     open_new_workspace: Some(false),
@@ -1770,7 +1773,7 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from("/root/dir/c")],
+                &[PathBuf::from(add_root_for_windows("/root/dir/c"))],
                 app_state.clone(),
                 workspace::OpenOptions {
                     open_new_workspace: Some(true),
