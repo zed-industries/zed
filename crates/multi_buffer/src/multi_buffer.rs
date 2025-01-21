@@ -3374,7 +3374,7 @@ impl MultiBufferSnapshot {
     ///
     /// The given callback will be called for every excerpt intersecting the given range. It will
     /// be passed the excerpt's buffer and the buffer range that the input range intersects.
-    /// The callback should return an interator of metadata items from that buffer, each paired
+    /// The callback should return an iterator of metadata items from that buffer, each paired
     /// with a buffer range.
     ///
     /// The returned iterator yields each of these metadata items, paired with its range in
