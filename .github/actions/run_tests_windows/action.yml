@@ -5,6 +5,7 @@ runs:
   using: "composite"
   steps:
     - name: Install Rust
+      shell: pwsh
       run: cargo install cargo-nextest --locked
 
     - name: Install Node
@@ -13,7 +14,9 @@ runs:
         node-version: "18"
 
     - name: Limit target directory size
+      shell: pwsh
       run: ./script/clear-target-dir-if-larger-than.ps1 100
 
     - name: Run tests
+      shell: pwsh
       run: cargo nextest run --workspace --no-fail-fast
