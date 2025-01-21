@@ -791,7 +791,7 @@ async fn test_remote_resolve_path_in_buffer(
 ) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        add_root_for_windows("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -807,7 +807,7 @@ async fn test_remote_resolve_path_in_buffer(
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
     let (worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(add_root_for_windows("/code/project1"), true, cx)
         })
         .await
         .unwrap();
@@ -823,14 +823,18 @@ async fn test_remote_resolve_path_in_buffer(
 
     let path = project
         .update(cx, |project, cx| {
-            project.resolve_path_in_buffer("/code/project1/README.md", &buffer, cx)
+            project.resolve_path_in_buffer(
+                &add_root_for_windows("/code/project1/README.md"),
+                &buffer,
+                cx,
+            )
         })
         .await
         .unwrap();
     assert!(path.is_file());
     assert_eq!(
         path.abs_path().unwrap().to_string_lossy(),
-        "/code/project1/README.md"
+        add_root_for_windows("/code/project1/README.md")
     );
 
     let path = project
