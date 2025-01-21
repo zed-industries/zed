@@ -6,7 +6,6 @@ mod inline_assistant;
 pub mod slash_command_settings;
 mod terminal_inline_assistant;
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use assistant_settings::AssistantSettings;
@@ -16,7 +15,6 @@ use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
-use gpui::impl_internal_actions;
 use gpui::{actions, AppContext, Global, UpdateGlobal};
 use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
@@ -34,32 +32,15 @@ use crate::slash_command_settings::SlashCommandSettings;
 actions!(
     assistant,
     [
-        Assist,
-        Edit,
-        Split,
-        CopyCode,
-        CycleMessageRole,
-        QuoteSelection,
-        InsertIntoEditor,
         ToggleFocus,
         InsertActivePrompt,
         DeployHistory,
         DeployPromptLibrary,
-        ConfirmCommand,
         NewContext,
-        ToggleModelSelector,
         CycleNextInlineAssist,
         CyclePreviousInlineAssist
     ]
 );
-
-#[derive(PartialEq, Clone)]
-pub enum InsertDraggedFiles {
-    ProjectPaths(Vec<PathBuf>),
-    ExternalFiles(Vec<PathBuf>),
-}
-
-impl_internal_actions!(assistant, [InsertDraggedFiles]);
 
 const DEFAULT_CONTEXT_LINES: usize = 50;
 

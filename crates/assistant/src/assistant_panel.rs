@@ -1,13 +1,13 @@
 use crate::context_history::ContextHistory;
 use crate::{
     terminal_inline_assistant::TerminalInlineAssistant, DeployHistory, DeployPromptLibrary,
-    InlineAssistant, InsertDraggedFiles, NewContext, ToggleFocus, ToggleModelSelector,
+    InlineAssistant, NewContext, ToggleFocus,
 };
 use anyhow::{anyhow, Result};
 use assistant_context_editor::{
     AssistantPanelDelegate, Context, ContextEditor, ContextEditorToolbarItem,
-    ContextEditorToolbarItemEvent, ContextId, ContextStore, ContextStoreEvent,
-    SlashCommandCompletionProvider, DEFAULT_TAB_TITLE,
+    ContextEditorToolbarItemEvent, ContextId, ContextStore, ContextStoreEvent, InsertDraggedFiles,
+    SlashCommandCompletionProvider, ToggleModelSelector, DEFAULT_TAB_TITLE,
 };
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
@@ -510,7 +510,6 @@ impl AssistantPanel {
                 self.workspace.clone(),
                 self.project.clone(),
                 lsp_adapter_delegate,
-                Box::new(ConcreteAssistantPanelDelegate),
                 cx,
             );
             editor.insert_default_prompt(cx);
@@ -787,7 +786,6 @@ impl AssistantPanel {
                             workspace,
                             project,
                             lsp_adapter_delegate,
-                            Box::new(ConcreteAssistantPanelDelegate),
                             cx,
                         )
                     });
@@ -815,7 +813,6 @@ impl AssistantPanel {
                     self.workspace.clone(),
                     self.project.clone(),
                     lsp_adapter_delegate,
-                    Box::new(ConcreteAssistantPanelDelegate),
                     cx,
                 );
                 editor.insert_default_prompt(cx);
@@ -1049,7 +1046,6 @@ impl AssistantPanel {
                         workspace,
                         project,
                         lsp_adapter_delegate,
-                        Box::new(ConcreteAssistantPanelDelegate),
                         cx,
                     )
                 });
@@ -1097,7 +1093,6 @@ impl AssistantPanel {
                         workspace,
                         this.project.clone(),
                         lsp_adapter_delegate,
-                        Box::new(ConcreteAssistantPanelDelegate),
                         cx,
                     )
                 });

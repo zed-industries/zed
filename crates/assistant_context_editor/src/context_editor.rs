@@ -26,8 +26,8 @@ use gpui::{
     size, Animation, AnimationExt, AnyElement, AnyView, AppContext, AsyncWindowContext,
     ClipboardEntry, ClipboardItem, CursorStyle, Empty, Entity, EventEmitter, FocusHandle,
     FocusableView, FontWeight, Global, InteractiveElement, IntoElement, Model, ParentElement,
-    Pixels, ReadGlobal, Render, RenderImage, SharedString, Size, StatefulInteractiveElement,
-    Styled, Subscription, Task, Transformation, View, WeakModel, WeakView,
+    Pixels, Render, RenderImage, SharedString, Size, StatefulInteractiveElement, Styled,
+    Subscription, Task, Transformation, View, WeakModel, WeakView,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{language_settings::SoftWrap, BufferSnapshot, LspAdapterDelegate, ToOffset};
@@ -171,7 +171,6 @@ pub struct ContextEditor {
     _subscriptions: Vec<Subscription>,
     patches: HashMap<Range<language::Anchor>, PatchViewState>,
     active_patch: Option<Range<language::Anchor>>,
-    assistant_panel_delegate: Box<dyn AssistantPanelDelegate>,
     last_error: Option<AssistError>,
     show_accept_terms: bool,
     pub(crate) slash_menu_handle:
@@ -194,7 +193,6 @@ impl ContextEditor {
         workspace: WeakView<Workspace>,
         project: Model<Project>,
         lsp_adapter_delegate: Option<Arc<dyn LspAdapterDelegate>>,
-        assistant_panel_delegate: Box<dyn AssistantPanelDelegate>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let completion_provider = SlashCommandCompletionProvider::new(
@@ -248,7 +246,6 @@ impl ContextEditor {
             _subscriptions,
             patches: HashMap::default(),
             active_patch: None,
-            assistant_panel_delegate,
             last_error: None,
             show_accept_terms: false,
             slash_menu_handle: Default::default(),
