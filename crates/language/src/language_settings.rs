@@ -125,6 +125,8 @@ pub struct LanguageSettings {
     pub use_autoclose: bool,
     /// Whether to automatically surround text with brackets.
     pub use_auto_surround: bool,
+    // Whether to tab-out of parentheses, brarkets, etc. when pressing tab.
+    pub use_tabout: bool,
     /// Whether to use additional LSP queries to format (and amend) the code after
     /// every "trigger" symbol input, defined by LSP server capabilities.
     pub use_on_type_format: bool,
@@ -364,6 +366,9 @@ pub struct LanguageSettingsContent {
     /// no matter how they were inserted.
     ///
     /// Default: false
+    pub use_tabout: Option<bool>,
+    // Whether to tab-out of parentheses, brarkets, etc. when pressing tab.
+    // Default: true
     pub always_treat_brackets_as_autoclosed: Option<bool>,
     /// Whether to use additional LSP queries to format (and amend) the code after
     /// every "trigger" symbol input, defined by LSP server capabilities.
@@ -1152,6 +1157,7 @@ fn merge_settings(settings: &mut LanguageSettings, src: &LanguageSettingsContent
     merge(&mut settings.soft_wrap, src.soft_wrap);
     merge(&mut settings.use_autoclose, src.use_autoclose);
     merge(&mut settings.use_auto_surround, src.use_auto_surround);
+    merge(&mut settings.use_tabout, src.use_tabout);
     merge(&mut settings.use_on_type_format, src.use_on_type_format);
     merge(&mut settings.auto_indent_on_paste, src.auto_indent_on_paste);
     merge(
