@@ -1,7 +1,7 @@
-use itertools::Itertools;
 use ::settings::Settings;
 use editor::{tasks::task_context, Editor};
 use gpui::{App, AppContext as _, Context, Task as AsyncTask, Window};
+use itertools::Itertools;
 use modal::{TaskOverrides, TasksModal};
 use project::{Location, TaskSourceKind, WorktreeId};
 use task::{RevealTarget, TaskId};
@@ -77,14 +77,16 @@ pub fn init(cx: &mut App) {
 
                             let worktree = match task_source_kind {
                                 TaskSourceKind::Worktree { id, .. } => Some(id),
-                                _ => None
+                                _ => None,
                             };
 
                             let task_context = task_context(workspace, window, cx);
 
                             let _ = cx.spawn_in(window, |workspace, mut cx| async move {
                                 let task_context = task_context.await;
-                                let Some(workspace) = workspace.upgrade() else { return; };
+                                let Some(workspace) = workspace.upgrade() else {
+                                    return;
+                                };
 
                                 cx.update_model(&workspace, |workspace, cx| {
                                     let pre_tasks = workspace
@@ -99,7 +101,7 @@ pub fn init(cx: &mut App) {
                                                 .build_pre_task_list(
                                                     &last_scheduled_task,
                                                     worktree,
-                                                    &task_context
+                                                    &task_context,
                                                 )
                                                 .unwrap_or(vec![])
                                                 .into_iter()
@@ -115,10 +117,9 @@ pub fn init(cx: &mut App) {
                                         false,
                                         cx,
                                     );
-                                }).log_err();
-
+                                })
+                                .log_err();
                             });
-
                         }
                     } else {
                         toggle_modal(workspace, None, window, cx).detach();

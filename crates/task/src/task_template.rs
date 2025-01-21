@@ -1,5 +1,5 @@
-use std::path::PathBuf;
 use itertools::Itertools as _;
+use std::path::PathBuf;
 use util::serde::default_true;
 
 use anyhow::{bail, Context};
@@ -196,12 +196,14 @@ impl TaskTemplate {
         let pre_labels = self
             .pre
             .iter()
-            .filter_map(|pre_label| substitute_all_template_variables_in_str(
-                pre_label,
-                &truncated_variables,
-                &variable_names,
-                &mut substituted_variables
-            ))
+            .filter_map(|pre_label| {
+                substitute_all_template_variables_in_str(
+                    pre_label,
+                    &truncated_variables,
+                    &variable_names,
+                    &mut substituted_variables,
+                )
+            })
             .collect_vec();
 
         let command = substitute_all_template_variables_in_str(

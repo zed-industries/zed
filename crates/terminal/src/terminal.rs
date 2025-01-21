@@ -1731,23 +1731,13 @@ impl Terminal {
             TaskStatus::Unknown => Task::ready(0),
             TaskStatus::Running => {
                 let rx = task.completion_rx.clone();
-                cx.spawn(|_| async move {
-                    if let Ok(exit_code) = rx.recv().await {
-                        exit_code
-                    } else {
-                        -1
-                    }
-                })
+                cx.spawn(|_| async move { rx.recv().await.unwrap_or(-1) })
             }
         }
     }
 
-    fn register_task_finished(
-        &mut self,
-        error_code: Option<i32>,
-        cx: &mut Context<'_, Terminal>,
-    ) {
-        let exit_code = if let Some(code) = error_code { code } else { 0 };
+    fn register_task_finished(&mut self, error_code: Option<i32>, cx: &mut Context<'_, Terminal>) {
+        let exit_code = error_code.unwrap_or(0);
 
         self.completion_tx.try_send(exit_code).ok();
 

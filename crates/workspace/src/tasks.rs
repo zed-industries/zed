@@ -32,7 +32,7 @@ pub fn schedule_task(
     {
         let worktree = match task_source_kind {
             TaskSourceKind::Worktree { id, .. } => Some(id),
-            _ => None
+            _ => None,
         };
 
         let pre_tasks = workspace
@@ -44,11 +44,7 @@ pub fn schedule_task(
             .map_or(vec![], |inventory| {
                 inventory
                     .read(cx)
-                    .build_pre_task_list(
-                        &spawn_in_terminal,
-                        worktree,
-                        task_cx
-                    )
+                    .build_pre_task_list(&spawn_in_terminal, worktree, task_cx)
                     .unwrap_or(vec![])
                     .into_iter()
                     .map(|(_, task)| task)

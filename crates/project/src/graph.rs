@@ -8,25 +8,31 @@ type HashMap = std::collections::hash_map::HashMap<u32, Vec<u32>, BuildNoHashHas
 pub(crate) struct Graph {
     // This might end up being more cache efficient if implemented with Vec<Vec<NodeIndex>> instead
     // and we assuming continuous indexing but this enables arbitrary node identities
-    adjacencies: HashMap
+    adjacencies: HashMap,
 }
 
 #[derive(Debug)]
 pub(crate) struct Cycle {
     pub src_node: u32,
-    pub dst_node: u32
+    pub dst_node: u32,
 }
 
 impl Into<anyhow::Error> for Cycle {
     fn into(self) -> anyhow::Error {
-        anyhow::anyhow!("cycle found: src: {}, dst: {}", self.src_node, self.dst_node)
+        anyhow::anyhow!(
+            "cycle found: src: {}, dst: {}",
+            self.src_node,
+            self.dst_node
+        )
     }
 }
 
 impl Graph {
     /// Creates a new, empty [`Graph`]
     pub fn new() -> Self {
-        Self { adjacencies: HashMap::default() }
+        Self {
+            adjacencies: HashMap::default(),
+        }
     }
 
     /// Adds an edge to the graph, adding the nodes if not present
@@ -38,7 +44,7 @@ impl Graph {
             None => {
                 self.adjacencies.insert(src_node, vec![dst_node]);
             }
-            _ => ()
+            _ => (),
         }
     }
 
@@ -49,12 +55,7 @@ impl Graph {
         }
     }
 
-    fn dfs(
-        &self,
-        node: u32,
-        visited: &mut Vec<u32>,
-        stack: &mut Vec<u32>
-    ) -> Option<Cycle> {
+    fn dfs(&self, node: u32, visited: &mut Vec<u32>, stack: &mut Vec<u32>) -> Option<Cycle> {
         if visited.contains(&node) {
             return None;
         }
@@ -68,7 +69,10 @@ impl Graph {
 
         for neighbor in neighbors {
             if stack.contains(&neighbor) {
-                return Some(Cycle { src_node: *neighbor, dst_node: node });
+                return Some(Cycle {
+                    src_node: *neighbor,
+                    dst_node: node,
+                });
             } else if let cycle @ Some(_) = self.dfs(*neighbor, visited, stack) {
                 return cycle;
             }
@@ -136,10 +140,7 @@ mod graph_test {
 
     #[test]
     fn finds_no_cycle() {
-        const GRAPH: [[u32; 2]; 2] = [
-            [1, 2],
-            [2, 3]
-        ];
+        const GRAPH: [[u32; 2]; 2] = [[1, 2], [2, 3]];
 
         let mut graph = Graph::new();
 
@@ -152,14 +153,7 @@ mod graph_test {
 
     #[test]
     fn subgraph_correct() {
-        const GRAPH: [[u32; 2]; 6] = [
-            [3, 1],
-            [2, 1],
-            [1, 4],
-            [4, 5],
-            [3, 4],
-            [2, 4]
-        ];
+        const GRAPH: [[u32; 2]; 6] = [[3, 1], [2, 1], [1, 4], [4, 5], [3, 4], [2, 4]];
 
         let mut graph = Graph::new();
         for [src, dst] in &GRAPH {
@@ -178,11 +172,7 @@ mod graph_test {
 
     #[test]
     fn finds_cycle() {
-        const GRAPH: [[u32; 2]; 3] = [
-            [1, 2],
-            [2, 3],
-            [3, 1]
-        ];
+        const GRAPH: [[u32; 2]; 3] = [[1, 2], [2, 3], [3, 1]];
 
         let mut graph = Graph::new();
         for edge in GRAPH {
@@ -194,14 +184,7 @@ mod graph_test {
 
     #[test]
     fn sorts_correctly() {
-        const GRAPH: [[u32; 2]; 6] = [
-            [2, 3],
-            [2, 1],
-            [4, 1],
-            [2, 4],
-            [5, 4],
-            [5, 1]
-        ];
+        const GRAPH: [[u32; 2]; 6] = [[2, 3], [2, 1], [4, 1], [2, 4], [5, 4], [5, 1]];
 
         let mut graph = Graph::new();
 

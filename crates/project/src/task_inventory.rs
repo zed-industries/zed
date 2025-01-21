@@ -62,14 +62,11 @@ impl TaskSourceKind {
         match self {
             Self::UserInput => Cow::Borrowed("custom-task"),
             Self::Language { name } => format!("{name}-language-tasks").into(),
-            Self::AbsPath {
-                abs_path,
-                ..
-            } => abs_path.to_string_lossy(),
+            Self::AbsPath { abs_path, .. } => abs_path.to_string_lossy(),
             Self::Worktree {
                 directory_in_worktree,
                 ..
-            } => format!("{}", directory_in_worktree.join("tasks.json").display()).into()
+            } => format!("{}", directory_in_worktree.join("tasks.json").display()).into(),
         }
     }
 
@@ -134,8 +131,7 @@ impl Inventory {
             .chain(self.global_templates_from_settings())
             .filter_map(|(kind, task)| {
                 let base_id = kind.to_id_base();
-                task
-                    .resolve_task(&base_id, task_context)
+                task.resolve_task(&base_id, task_context)
                     .map(|task| (kind, task))
             })
             .unique_by(|(_, task)| task.resolved_label.clone())
@@ -145,27 +141,31 @@ impl Inventory {
             .iter()
             .find(|(_, task)| task.resolved_label == base_task.resolved_label)
         {
-            return Err(anyhow::anyhow!("couldn't find with label {} in available tasks", base_task.resolved_label));
+            return Err(anyhow::anyhow!(
+                "couldn't find with label {} in available tasks",
+                base_task.resolved_label
+            ));
         }
 
         // map task labels to their dep graph node idx, source, and dependencies
         let nodes = tasks_in_scope
             .iter()
             .enumerate()
-            .map(|(idx, (source, task))| (
-                task.resolved_label.as_str(),
+            .map(|(idx, (source, task))| {
                 (
-                    idx as u32,
-                    source,
-                    task
-                        .resolved_pre_labels
-                        .iter()
-                        .map(|s| s.as_str())
-                        .unique()
-                        .collect_vec(),
-                    task
+                    task.resolved_label.as_str(),
+                    (
+                        idx as u32,
+                        source,
+                        task.resolved_pre_labels
+                            .iter()
+                            .map(|s| s.as_str())
+                            .unique()
+                            .collect_vec(),
+                        task,
+                    ),
                 )
-            ))
+            })
             .collect::<HashMap<_, _>>();
 
         // map node idxs to task labels for retreival if a cycle is found

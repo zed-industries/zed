@@ -79,7 +79,7 @@ pub struct ResolvedTask {
     /// with all task variables resolved.
     pub resolved: Option<SpawnInTerminal>,
     /// Pretasks with their variables expanded
-    pub resolved_pre_labels: Vec<String>
+    pub resolved_pre_labels: Vec<String>,
 }
 
 impl ResolvedTask {

@@ -315,7 +315,7 @@ impl PickerDelegate for TasksModalDelegate {
             .update(cx, |workspace, cx| {
                 let worktree = match task_source_kind {
                     TaskSourceKind::Worktree { id, .. } => Some(id),
-                    _ => None
+                    _ => None,
                 };
 
                 let pre_tasks = workspace
@@ -327,11 +327,7 @@ impl PickerDelegate for TasksModalDelegate {
                     .map_or(vec![], |inventory| {
                         inventory
                             .read(cx)
-                            .build_pre_task_list(
-                                &task,
-                                worktree,
-                                &self.task_context
-                            )
+                            .build_pre_task_list(&task, worktree, &self.task_context)
                             .unwrap_or(vec![])
                             .into_iter()
                             .map(|(_, task)| task)
@@ -344,7 +340,7 @@ impl PickerDelegate for TasksModalDelegate {
                     pre_tasks,
                     task,
                     omit_history_entry,
-                    cx
+                    cx,
                 );
             })
             .ok();
@@ -505,7 +501,7 @@ impl PickerDelegate for TasksModalDelegate {
                     vec![],
                     task,
                     omit_history_entry,
-                    cx
+                    cx,
                 );
             })
             .ok();
