@@ -1017,7 +1017,7 @@ async fn test_adding_then_removing_then_adding_worktrees(
 async fn test_open_server_settings(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        add_root_for_windows("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -1039,7 +1039,9 @@ async fn test_open_server_settings(cx: &mut TestAppContext, server_cx: &mut Test
     cx.update(|cx| {
         assert_eq!(
             buffer.read(cx).text(),
-            initial_server_settings_content().to_string()
+            initial_server_settings_content()
+                .to_string()
+                .replace("\r\n", "\n")
         )
     })
 }
