@@ -8738,51 +8738,58 @@ fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
 }
 
 fn remove_newlines(label: &mut CodeLabel) {
-    let mut new_text = String::new();
-    let mut removals = Vec::new();
+    let mut new_text = String::with_capacity(label.text.len());
+    let mut offset_map = vec![0; label.text.len() + 1];
     let mut last_char_was_space = false;
+    let mut new_idx = 0;
+    let mut chars = label.text.char_indices().fuse();
 
-    for (idx, c) in label.text.char_indices() {
+    while let Some((idx, c)) = chars.next() {
+        offset_map[idx] = new_idx;
+
         match c {
-            '\n' => {
-                if !last_char_was_space {
-                    new_text.push(' ');
-                }
-                removals.push(idx);
-                last_char_was_space = true;
-            }
-            ' ' if label.text[idx..].starts_with("    ") => {
+            '\n' | ' ' if last_char_was_space => (),
+            '\n' if !last_char_was_space => {
                 new_text.push(' ');
-                removals.extend(idx + 1..idx + 4);
+                new_idx += 1;
                 last_char_was_space = true;
             }
-            ' ' if last_char_was_space => {
-                removals.push(idx);
+            ' ' => {
+                if label.text[idx..].starts_with("    ") {
+                    new_text.push(' ');
+                    new_idx += 1;
+                    last_char_was_space = true;
+                    for _ in 0..3 {
+                        chars.next();
+                    }
+                } else {
+                    new_text.push(' ');
+                    new_idx += 1;
+                    last_char_was_space = true;
+                }
             }
             _ => {
                 new_text.push(c);
+                new_idx += 1;
                 last_char_was_space = false;
             }
         }
     }
+    offset_map[label.text.len()] = new_idx;
 
-    adjust_ranges(label, &removals);
-    label.text = new_text;
-}
-
-fn adjust_ranges(label: &mut CodeLabel, removals: &[usize]) {
     for (range, _) in &mut label.runs {
-        range.start -= removals.iter().filter(|&&idx| idx < range.start).count();
-        range.end -= removals.iter().filter(|&&idx| idx < range.end).count();
+        range.start = offset_map[range.start];
+        range.end = offset_map[range.end];
     }
-    label.filter_range.start -= removals
-        .iter()
-        .filter(|&&idx| idx < label.filter_range.start)
-        .count();
-    label.filter_range.end -= removals
-        .iter()
-        .filter(|&&idx| idx < label.filter_range.end)
-        .count();
+
+    if label.filter_range == (0..label.text.len()) {
+        label.filter_range = 0..new_text.len();
+    } else {
+        label.filter_range.start = offset_map[label.filter_range.start];
+        label.filter_range.end = offset_map[label.filter_range.end];
+    }
+
+    label.text = new_text;
 }
 
 #[cfg(test)]
