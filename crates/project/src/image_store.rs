@@ -68,10 +68,10 @@ fn image_color_type_description(color_type: ColorType) -> &'static str {
     match color_type {
         ColorType::L8 => "Grayscale (8-bit)",
         ColorType::La8 => "Grayscale with Alpha (8-bit)",
-        ColorType::Rgba8 => "PNG (32-bit color)",
+        ColorType::Rgba8 => "RGBA (32-bit color)",
         ColorType::Rgb8 => "RGB (24-bit color)",
         ColorType::Rgb16 => "RGB (48-bit color)",
-        ColorType::Rgba16 => "PNG (64-bit color)",
+        ColorType::Rgba16 => "RGBA (64-bit color)",
         ColorType::L16 => "Grayscale (16-bit)",
         ColorType::La16 => "Grayscale with Alpha (16-bit)",
 
