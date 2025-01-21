@@ -73,7 +73,7 @@ impl RemoteVideoTrackView {
 impl EventEmitter<RemoteVideoTrackViewEvent> for RemoteVideoTrackView {}
 
 impl Render for RemoteVideoTrackView {
-    fn render(&mut self, _: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         #[cfg(target_os = "macos")]
         if let Some(latest_frame) = &self.latest_frame {
             use gpui::Styled as _;
@@ -90,7 +90,7 @@ impl Render for RemoteVideoTrackView {
                     // Only drop the frame if it's not also the current frame.
                     if frame.id != current_rendered_frame.id {
                         use util::ResultExt as _;
-                        window.drop_image(frame).log_err();
+                        _window.drop_image(frame).log_err();
                     }
                 }
                 self.previous_rendered_frame = Some(current_rendered_frame)
