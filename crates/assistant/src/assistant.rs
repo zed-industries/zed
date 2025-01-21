@@ -1,12 +1,9 @@
 #![cfg_attr(target_os = "windows", allow(unused, dead_code))]
 
 pub mod assistant_panel;
-mod context;
 mod context_editor;
 mod context_history;
-pub mod context_store;
 mod inline_assistant;
-mod patch;
 mod slash_command;
 pub(crate) mod slash_command_picker;
 pub mod slash_command_settings;
@@ -18,26 +15,23 @@ use std::sync::Arc;
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::SlashCommandRegistry;
 use assistant_slash_commands::{ProjectSlashCommandFeatureFlag, SearchSlashCommandFeatureFlag};
-use client::{proto, Client};
+use client::Client;
 use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::FeatureFlagAppExt;
 use fs::Fs;
 use gpui::impl_internal_actions;
-use gpui::{actions, AppContext, Global, SharedString, UpdateGlobal};
+use gpui::{actions, AppContext, Global, UpdateGlobal};
 use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
 };
 use prompt_library::{PromptBuilder, PromptLoadingParams};
 use semantic_index::{CloudEmbeddingProvider, SemanticDb};
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use settings::{Settings, SettingsStore};
 use util::ResultExt;
 
 pub use crate::assistant_panel::{AssistantPanel, AssistantPanelEvent};
-pub use crate::context::*;
-pub use crate::context_store::*;
 pub(crate) use crate::inline_assistant::*;
-pub use crate::patch::*;
 use crate::slash_command_settings::SlashCommandSettings;
 
 actions!(
@@ -72,15 +66,6 @@ impl_internal_actions!(assistant, [InsertDraggedFiles]);
 
 const DEFAULT_CONTEXT_LINES: usize = 50;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
-pub struct MessageId(clock::Lamport);
-
-impl MessageId {
-    pub fn as_u64(self) -> u64 {
-        self.0.as_u64()
-    }
-}
-
 #[derive(Deserialize, Debug)]
 pub struct LanguageModelUsage {
     pub prompt_tokens: u32,
@@ -93,55 +78,6 @@ pub struct LanguageModelChoiceDelta {
     pub index: u32,
     pub delta: LanguageModelResponseMessage,
     pub finish_reason: Option<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub enum MessageStatus {
-    Pending,
-    Done,
-    Error(SharedString),
-    Canceled,
-}
-
-impl MessageStatus {
-    pub fn from_proto(status: proto::ContextMessageStatus) -> MessageStatus {
-        match status.variant {
-            Some(proto::context_message_status::Variant::Pending(_)) => MessageStatus::Pending,
-            Some(proto::context_message_status::Variant::Done(_)) => MessageStatus::Done,
-            Some(proto::context_message_status::Variant::Error(error)) => {
-                MessageStatus::Error(error.message.into())
-            }
-            Some(proto::context_message_status::Variant::Canceled(_)) => MessageStatus::Canceled,
-            None => MessageStatus::Pending,
-        }
-    }
-
-    pub fn to_proto(&self) -> proto::ContextMessageStatus {
-        match self {
-            MessageStatus::Pending => proto::ContextMessageStatus {
-                variant: Some(proto::context_message_status::Variant::Pending(
-                    proto::context_message_status::Pending {},
-                )),
-            },
-            MessageStatus::Done => proto::ContextMessageStatus {
-                variant: Some(proto::context_message_status::Variant::Done(
-                    proto::context_message_status::Done {},
-                )),
-            },
-            MessageStatus::Error(message) => proto::ContextMessageStatus {
-                variant: Some(proto::context_message_status::Variant::Error(
-                    proto::context_message_status::Error {
-                        message: message.to_string(),
-                    },
-                )),
-            },
-            MessageStatus::Canceled => proto::ContextMessageStatus {
-                variant: Some(proto::context_message_status::Variant::Canceled(
-                    proto::context_message_status::Canceled {},
-                )),
-            },
-        }
-    }
 }
 
 /// The state pertaining to the Assistant.
@@ -214,7 +150,7 @@ pub fn init(
     })
     .detach();
 
-    context_store::init(&client.clone().into());
+    assistant_context_editor::init(client.clone(), cx);
     prompt_library::init(cx);
     init_language_model_settings(cx);
     assistant_slash_command::init(cx);

@@ -4,11 +4,11 @@ use crate::context_editor::{
 use crate::context_history::ContextHistory;
 use crate::{
     slash_command::SlashCommandCompletionProvider,
-    terminal_inline_assistant::TerminalInlineAssistant, Context, ContextId, ContextStore,
-    ContextStoreEvent, DeployHistory, DeployPromptLibrary, InlineAssistant, InsertDraggedFiles,
-    NewContext, ToggleFocus, ToggleModelSelector,
+    terminal_inline_assistant::TerminalInlineAssistant, DeployHistory, DeployPromptLibrary,
+    InlineAssistant, InsertDraggedFiles, NewContext, ToggleFocus, ToggleModelSelector,
 };
 use anyhow::Result;
+use assistant_context_editor::{Context, ContextId, ContextStore, ContextStoreEvent};
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;

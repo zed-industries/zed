@@ -1,5 +1,6 @@
 use std::sync::Arc;
 
+use assistant_context_editor::{ContextStore, RemoteContextMetadata, SavedContextMetadata};
 use gpui::{
     AppContext, EventEmitter, FocusHandle, FocusableView, Model, Subscription, Task, View, WeakView,
 };
@@ -10,7 +11,7 @@ use ui::{prelude::*, Avatar, ListItem, ListItemSpacing};
 use workspace::Item;
 
 use crate::context_editor::DEFAULT_TAB_TITLE;
-use crate::{AssistantPanel, ContextStore, RemoteContextMetadata, SavedContextMetadata};
+use crate::AssistantPanel;
 
 #[derive(Clone)]
 pub enum ContextMetadata {
