@@ -691,7 +691,7 @@ impl Project {
                 )
             });
 
-            let git_state = Some(cx.new_model(|cx| GitState::new(cx)));
+            let git_state = Some(cx.new_model(|cx| GitState::new(languages.clone(), cx)));
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 

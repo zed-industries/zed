@@ -10488,6 +10488,7 @@ async fn test_move_to_enclosing_bracket(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorLspTestContext::new_typescript(Default::default(), cx).await;
     let mut assert = |before, after| {
         let _state_context = cx.set_state(before);
+        cx.run_until_parked();
         cx.update_editor(|editor, cx| {
             editor.move_to_enclosing_bracket(&MoveToEnclosingBracket, cx)
         });
