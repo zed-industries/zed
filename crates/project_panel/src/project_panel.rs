@@ -4798,7 +4798,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::{Path, PathBuf};
-    use util::paths::add_root_for_windows;
+    use util::paths::{add_root_for_windows, replace_path_separator};
     use workspace::{
         item::{Item, ProjectItem},
         register_project_item, AppState,
@@ -5072,7 +5072,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor().clone());
         fs.insert_tree(
-            "/root1",
+            add_root_for_windows("/root1"),
             json!({
                 "dir_1": {
                     "nested_dir_1": {
@@ -5094,7 +5094,7 @@ mod tests {
         )
         .await;
         fs.insert_tree(
-            "/root2",
+            add_root_for_windows("/root2"),
             json!({
                 "dir_2": {
                     "file_1.java": "// File contents",
@@ -5103,7 +5103,15 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), ["/root1".as_ref(), "/root2".as_ref()], cx).await;
+        let project = Project::test(
+            fs.clone(),
+            [
+                add_root_for_windows("/root1").as_ref(),
+                add_root_for_windows("/root2").as_ref(),
+            ],
+            cx,
+        )
+        .await;
         let workspace =
             cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
@@ -5122,7 +5130,7 @@ mod tests {
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
-                "    > dir_1/nested_dir_1/nested_dir_2/nested_dir_3",
+                &replace_path_separator("    > dir_1/nested_dir_1/nested_dir_2/nested_dir_3"),
                 "v root2",
                 "    > dir_2",
             ]
@@ -5137,8 +5145,10 @@ mod tests {
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
-                "    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3  <== selected",
-                "        > nested_dir_4/nested_dir_5",
+                &replace_path_separator(
+                    "    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3  <== selected"
+                ),
+                &replace_path_separator("        > nested_dir_4/nested_dir_5"),
                 "          file_a.java",
                 "          file_b.java",
                 "          file_c.java",
@@ -5156,8 +5166,8 @@ mod tests {
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
-                "    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3",
-                "        v nested_dir_4/nested_dir_5  <== selected",
+                &replace_path_separator("    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3"),
+                &replace_path_separator("        v nested_dir_4/nested_dir_5  <== selected"),
                 "              file_d.java",
                 "          file_a.java",
                 "          file_b.java",
@@ -5171,8 +5181,8 @@ mod tests {
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
-                "    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3",
-                "        v nested_dir_4/nested_dir_5",
+                &replace_path_separator("    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3"),
+                &replace_path_separator("        v nested_dir_4/nested_dir_5"),
                 "              file_d.java",
                 "          file_a.java",
                 "          file_b.java",
