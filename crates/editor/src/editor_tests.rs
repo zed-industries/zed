@@ -8608,6 +8608,26 @@ async fn test_multiline_completion(cx: &mut gpui::TestAppContext) {
                     })),
                     ..lsp::CompletionItem::default()
                 },
+                lsp::CompletionItem {
+                    label: "Label with many     spaces and \t but without newlines".to_string(),
+                    detail: Some(
+                        "Details with many     spaces and \t but without newlines".to_string(),
+                    ),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range {
+                            start: lsp::Position {
+                                line: params.text_document_position.position.line,
+                                character: params.text_document_position.position.character,
+                            },
+                            end: lsp::Position {
+                                line: params.text_document_position.position.line,
+                                character: params.text_document_position.position.character,
+                            },
+                        },
+                        new_text: "new_text_4".to_string(),
+                    })),
+                    ..lsp::CompletionItem::default()
+                },
             ])))
         });
 
@@ -8633,11 +8653,12 @@ async fn test_multiline_completion(cx: &mut gpui::TestAppContext) {
                 completion_labels,
                 &[
                     "StickyHeaderExcerpt { excerpt, next_excerpt_controls_present, next_buffer_row, }: StickyHeaderExcerpt<'_>,",
-                    "single line label 1 []struct { \tSignerId\tstruct { \t\tIssuer\t\t\tstring\t`json:\"issuer\"` \t\tSubjectSerialNumber\"` }}",
-            "single line label 2 d e f ",
-            "a b c g h i ",
+                    "single line label 1 []struct { SignerId struct { Issuer string `json:\"issuer\"` SubjectSerialNumber\"` }}",
+                    "single line label 2 d e f ",
+                    "a b c g h i ",
+                    "Label with many     spaces and \t but without newlines Details with many     spaces and \t but without newlines",
                 ],
-                "Completion items should have their labels without newlines"
+                "Completion items should have their labels without newlines, also replacing excessive whitespaces. Completion items without newlines should not be altered.",
             );
 
             for completion in menu

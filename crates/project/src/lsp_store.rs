@@ -4373,7 +4373,7 @@ impl LspStore {
                 completion_item.filter_text.as_deref(),
             )
         });
-        remove_newlines(&mut new_label);
+        ensure_uniform_list_compatible_label(&mut new_label);
 
         let mut completions = completions.borrow_mut();
         let completion = &mut completions[completion_index];
@@ -8021,7 +8021,7 @@ async fn populate_labels_for_completions(
                 lsp_completion.filter_text.as_deref(),
             )
         });
-        remove_newlines(&mut label);
+        ensure_uniform_list_compatible_label(&mut label);
 
         completions.push(Completion {
             old_range: completion.old_range,
@@ -8737,36 +8737,40 @@ fn include_text(server: &lsp::LanguageServer) -> Option<bool> {
     }
 }
 
-fn remove_newlines(label: &mut CodeLabel) {
+/// Completion items are displayed in a `UniformList`.
+/// Usually, those items are single-line strings, but in LSP responses,
+/// completion items `label`, `detail` and `label_details.description` may contain newlines or long spaces.
+/// Many language plugins construct these items by joining these parts together, and we may fall back to `CodeLabel::plain` that uses `label`.
+/// All that may lead to a newline being inserted into resulting `CodeLabel.text`, which will force `UniformList` to bloat each entry to occupy more space,
+/// breaking the completions menu presentation.
+///
+/// Sanitize the text to ensure there are no newlines, or, if there are some, remove them and also remove long space sequences if there were newlines.
+fn ensure_uniform_list_compatible_label(label: &mut CodeLabel) {
     let mut new_text = String::with_capacity(label.text.len());
     let mut offset_map = vec![0; label.text.len() + 1];
     let mut last_char_was_space = false;
     let mut new_idx = 0;
     let mut chars = label.text.char_indices().fuse();
+    let mut newlines_removed = false;
 
     while let Some((idx, c)) = chars.next() {
         offset_map[idx] = new_idx;
 
         match c {
-            '\n' | ' ' if last_char_was_space => (),
+            '\n' if last_char_was_space => {
+                newlines_removed = true;
+            }
+            '\t' | ' ' if last_char_was_space => {}
             '\n' if !last_char_was_space => {
                 new_text.push(' ');
                 new_idx += 1;
                 last_char_was_space = true;
+                newlines_removed = true;
             }
-            ' ' => {
-                if label.text[idx..].starts_with("    ") {
-                    new_text.push(' ');
-                    new_idx += 1;
-                    last_char_was_space = true;
-                    for _ in 0..3 {
-                        chars.next();
-                    }
-                } else {
-                    new_text.push(' ');
-                    new_idx += 1;
-                    last_char_was_space = true;
-                }
+            ' ' | '\t' => {
+                new_text.push(' ');
+                new_idx += 1;
+                last_char_was_space = true;
             }
             _ => {
                 new_text.push(c);
@@ -8776,6 +8780,11 @@ fn remove_newlines(label: &mut CodeLabel) {
         }
     }
     offset_map[label.text.len()] = new_idx;
+
+    // Only modify the label if newlines were removed.
+    if !newlines_removed {
+        return;
+    }
 
     for (range, _) in &mut label.runs {
         range.start = offset_map[range.start];
