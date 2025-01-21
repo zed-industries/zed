@@ -3994,8 +3994,11 @@ impl MultiBufferSnapshot {
         let point = Point::new(row.0, 0);
         cursor.seek(&point);
         let region = cursor.region()?;
-        let overshoot = point - region.range.start;
+        let overshoot = point.min(region.range.end) - region.range.start;
         let buffer_point = region.buffer_range.start + overshoot;
+        if buffer_point.row > region.buffer_range.end.row {
+            return None;
+        }
         let line_start = Point::new(buffer_point.row, 0).max(region.buffer_range.start);
         let line_end = Point::new(buffer_point.row, region.buffer.line_len(buffer_point.row))
             .min(region.buffer_range.end);
