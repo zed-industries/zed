@@ -486,6 +486,7 @@ impl TitleBar {
         project: Model<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Option<impl IntoElement> {
+        // FIXME render it even if no active repo (?)
         let active_repository = project.read(cx).active_repository(cx)?;
         let repository_selector = cx.new_view(|cx| RepositorySelector::new(project.clone(), cx));
         let display_name = active_repository.display_name(project.read(cx), cx);

@@ -43,7 +43,9 @@ enum Message {
     Unstage(Arc<dyn GitRepository>, Vec<RepoPath>),
 }
 
-pub enum Event {}
+pub enum Event {
+    RepositoriesUpdated,
+}
 
 impl EventEmitter<Event> for GitState {}
 
@@ -164,10 +166,16 @@ impl GitState {
             }
         });
 
+        if dbg!(new_active_index) == None && dbg!(new_repositories.len()) > 0 {
+            self.active_index = Some(0);
+        }
+
         // FIXME emit an event if appropriate for the git UI to listen for
 
         self.repositories = new_repositories;
         self.active_index = new_active_index;
+
+        cx.emit(Event::RepositoriesUpdated);
     }
 
     // FIXME

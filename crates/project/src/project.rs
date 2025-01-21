@@ -254,7 +254,6 @@ pub enum Event {
     WorktreeRemoved(WorktreeId),
     WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
     WorktreeUpdatedGitRepositories(WorktreeId),
-    GitRepositoriesListChanged,
     DiskBasedDiagnosticsStarted {
         language_server_id: LanguageServerId,
     },
