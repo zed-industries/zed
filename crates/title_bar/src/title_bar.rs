@@ -100,6 +100,7 @@ pub struct TitleBar {
     platform_style: PlatformStyle,
     content: Stateful<Div>,
     children: SmallVec<[AnyElement; 2]>,
+    repository_selector: View<RepositorySelector>,
     project: Model<Project>,
     user_store: Model<UserStore>,
     client: Arc<Client>,
@@ -183,10 +184,7 @@ impl Render for TitleBar {
                                         title_bar
                                             .children(self.render_project_host(cx))
                                             .child(self.render_project_name(cx))
-                                            .children(self.render_current_repository(
-                                                self.project.clone(),
-                                                cx,
-                                            ))
+                                            .children(self.render_current_repository(cx))
                                             .children(self.render_project_branch(cx))
                                     })
                             })
@@ -296,6 +294,7 @@ impl TitleBar {
             content: div().id(id.into()),
             children: SmallVec::new(),
             application_menu,
+            repository_selector: cx.new_view(|cx| RepositorySelector::new(project.clone(), cx)),
             workspace: workspace.weak_handle(),
             should_move: false,
             project,
@@ -483,16 +482,14 @@ impl TitleBar {
     // NOTE: Not sure we want to keep this in the titlebar, but for while we are working on Git it is helpful in the short term
     pub fn render_current_repository(
         &self,
-        project: Model<Project>,
         cx: &mut ViewContext<Self>,
     ) -> Option<impl IntoElement> {
         // TODO what to render if no active repository?
-        let active_repository = project.read(cx).active_repository(cx)?;
-        let repository_selector = cx.new_view(|cx| RepositorySelector::new(project.clone(), cx));
-        let display_name = active_repository.display_name(project.read(cx), cx);
+        let active_repository = self.project.read(cx).active_repository(cx)?;
+        let display_name = active_repository.display_name(self.project.read(cx), cx);
         Some(RepositorySelectorPopoverMenu::new(
-            repository_selector,
-            ButtonLike::new("active-model")
+            self.repository_selector.clone(),
+            ButtonLike::new("active-repository")
                 .style(ButtonStyle::Subtle)
                 .child(
                     h_flex().w_full().gap_0p5().child(
