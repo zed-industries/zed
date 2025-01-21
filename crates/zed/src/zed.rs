@@ -1569,6 +1569,7 @@ mod tests {
         time::Duration,
     };
     use theme::{ThemeRegistry, ThemeSettings};
+    use util::paths::add_root_for_windows;
     use workspace::{
         item::{Item, ItemHandle},
         open_new, open_paths, pane, NewFile, OpenVisible, SaveIntent, SplitDirection,
@@ -3020,7 +3021,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                "/root",
+                add_root_for_windows("/root"),
                 json!({
                     "a": {
                         "file1": "contents 1\n".repeat(20),
@@ -3031,7 +3032,12 @@ mod tests {
             )
             .await;
 
-        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let project = Project::test(
+            app_state.fs.clone(),
+            [add_root_for_windows("/root").as_ref()],
+            cx,
+        )
+        .await;
         project.update(cx, |project, _cx| {
             project.languages().add(markdown_language())
         });
@@ -3262,7 +3268,10 @@ mod tests {
             .unwrap();
         app_state
             .fs
-            .remove_file(Path::new("/root/a/file2"), Default::default())
+            .remove_file(
+                Path::new(&add_root_for_windows("/root/a/file2")),
+                Default::default(),
+            )
             .await
             .unwrap();
         cx.background_executor.run_until_parked();
