@@ -1,9 +1,4 @@
 use anyhow::Result;
-use assistant_context_editor::{
-    AssistantPatch, AssistantPatchStatus, CacheStatus, Content, Context, ContextEvent, ContextId,
-    InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId, MessageMetadata,
-    MessageStatus, ParsedSlashCommand, PendingSlashCommandStatus, RequestType,
-};
 use assistant_settings::AssistantSettings;
 use assistant_slash_command::{SlashCommand, SlashCommandOutputSection, SlashCommandWorkingSet};
 use assistant_slash_commands::{
@@ -27,12 +22,12 @@ use editor::{display_map::CreaseId, FoldPlaceholder};
 use fs::Fs;
 use futures::FutureExt;
 use gpui::{
-    div, img, percentage, point, prelude::*, pulsating_between, size, Animation, AnimationExt,
-    AnyElement, AnyView, AppContext, AsyncWindowContext, ClipboardEntry, ClipboardItem,
-    CursorStyle, Empty, Entity, EventEmitter, FocusHandle, FocusableView, FontWeight,
-    InteractiveElement, IntoElement, Model, ParentElement, Pixels, Render, RenderImage,
-    SharedString, Size, StatefulInteractiveElement, Styled, Subscription, Task, Transformation,
-    View, WeakModel, WeakView,
+    actions, div, img, impl_internal_actions, percentage, point, prelude::*, pulsating_between,
+    size, Animation, AnimationExt, AnyElement, AnyView, AppContext, AsyncWindowContext,
+    ClipboardEntry, ClipboardItem, CursorStyle, Empty, Entity, EventEmitter, FocusHandle,
+    FocusableView, FontWeight, InteractiveElement, IntoElement, Model, ParentElement, Pixels,
+    Render, RenderImage, SharedString, Size, StatefulInteractiveElement, Styled, Subscription,
+    Task, Transformation, View, WeakModel, WeakView,
 };
 use indexed_docs::IndexedDocsStore;
 use language::{language_settings::SoftWrap, BufferSnapshot, LspAdapterDelegate, ToOffset};
@@ -61,10 +56,34 @@ use workspace::{
     Workspace,
 };
 
+actions!(
+    assistant,
+    [
+        Assist,
+        ConfirmCommand,
+        CopyCode,
+        CycleMessageRole,
+        Edit,
+        InsertIntoEditor,
+        QuoteSelection,
+        Split,
+        ToggleModelSelector,
+    ]
+);
+
+#[derive(PartialEq, Clone)]
+pub enum InsertDraggedFiles {
+    ProjectPaths(Vec<PathBuf>),
+    ExternalFiles(Vec<PathBuf>),
+}
+
+impl_internal_actions!(assistant, [InsertDraggedFiles]);
+
+use crate::{slash_command::SlashCommandCompletionProvider, slash_command_picker};
 use crate::{
-    humanize_token_count, slash_command::SlashCommandCompletionProvider, slash_command_picker,
-    Assist, AssistantPanel, ConfirmCommand, CopyCode, CycleMessageRole, Edit, InsertDraggedFiles,
-    InsertIntoEditor, QuoteSelection, Split, ToggleModelSelector,
+    AssistantPatch, AssistantPatchStatus, CacheStatus, Content, Context, ContextEvent, ContextId,
+    InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId, MessageMetadata,
+    MessageStatus, ParsedSlashCommand, PendingSlashCommandStatus, RequestType,
 };
 
 #[derive(Copy, Clone, Debug, PartialEq)]
@@ -3464,6 +3483,24 @@ fn configuration_error(cx: &AppContext) -> Option<ConfigurationError> {
     }
 
     None
+}
+
+pub fn humanize_token_count(count: usize) -> String {
+    match count {
+        0..=999 => count.to_string(),
+        1000..=9999 => {
+            let thousands = count / 1000;
+            let hundreds = (count % 1000 + 50) / 100;
+            if hundreds == 0 {
+                format!("{}k", thousands)
+            } else if hundreds == 10 {
+                format!("{}k", thousands + 1)
+            } else {
+                format!("{}.{}k", thousands, hundreds)
+            }
+        }
+        _ => format!("{}k", (count + 500) / 1000),
+    }
 }
 
 #[cfg(test)]
