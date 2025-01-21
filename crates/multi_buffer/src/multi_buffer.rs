@@ -5494,15 +5494,11 @@ where
             let position_in_excerpt = *position - excerpt_start;
             let mut excerpt_position = self.excerpts.start().0;
             excerpt_position.add_assign(&position_in_excerpt);
-            dbg!(excerpt_position);
             self.diff_transforms
                 .seek(&ExcerptDimension(excerpt_position), Bias::Left, &());
-            // if matches!(
-            //     self.diff_transforms.item(),
-            //     Some(DiffTransform::DeletedHunk { .. })
-            // ) {
-            //     self.diff_transforms.next(&());
-            // }
+            if self.diff_transforms.item().is_none() {
+                self.diff_transforms.next(&());
+            }
         }
     }
 
