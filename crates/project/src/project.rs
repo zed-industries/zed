@@ -602,8 +602,6 @@ impl Project {
         client.add_model_request_handler(Self::handle_open_new_buffer);
         client.add_model_message_handler(Self::handle_create_buffer_for_peer);
 
-        client.add_model_request_handler(WorktreeStore::handle_rename_project_entry);
-
         WorktreeStore::init(&client);
         BufferStore::init(&client);
         LspStore::init(&client);
@@ -693,7 +691,7 @@ impl Project {
                 )
             });
 
-            let git_state = Some(cx.new_model(|cx| GitState::new(cx)));
+            let git_state = Some(cx.new_model(|cx| GitState::new(languages.clone(), cx)));
 
             cx.subscribe(&lsp_store, Self::on_lsp_store_event).detach();
 

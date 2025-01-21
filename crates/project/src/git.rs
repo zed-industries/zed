@@ -1,19 +1,19 @@
-use std::sync::Arc;
-
-use anyhow::anyhow;
+use anyhow::{anyhow, Context as _};
 use futures::channel::mpsc;
 use futures::{SinkExt as _, StreamExt as _};
 use git::{
     repository::{GitRepository, RepoPath},
     status::{GitSummary, TrackedSummary},
 };
-use gpui::{AppContext, SharedString};
+use gpui::{AppContext, Context as _, Model};
+use language::{Buffer, LanguageRegistry};
 use settings::WorktreeId;
+use std::sync::Arc;
+use text::Rope;
 use worktree::RepositoryEntry;
 
 pub struct GitState {
-    /// The current commit message being composed.
-    pub commit_message: SharedString,
+    pub commit_message: Model<Buffer>,
 
     /// When a git repository is selected, this is used to track which repository's changes
     /// are currently being viewed or modified in the UI.
@@ -23,14 +23,14 @@ pub struct GitState {
 }
 
 enum Message {
-    StageAndCommit(Arc<dyn GitRepository>, SharedString, Vec<RepoPath>),
-    Commit(Arc<dyn GitRepository>, SharedString),
+    StageAndCommit(Arc<dyn GitRepository>, Rope, Vec<RepoPath>),
+    Commit(Arc<dyn GitRepository>, Rope),
     Stage(Arc<dyn GitRepository>, Vec<RepoPath>),
     Unstage(Arc<dyn GitRepository>, Vec<RepoPath>),
 }
 
 impl GitState {
-    pub fn new(cx: &AppContext) -> Self {
+    pub fn new(languages: Arc<LanguageRegistry>, cx: &mut AppContext) -> Self {
         let (update_sender, mut update_receiver) =
             mpsc::unbounded::<(Message, mpsc::Sender<anyhow::Error>)>();
         cx.spawn(|cx| async move {
@@ -41,12 +41,12 @@ impl GitState {
                         match msg {
                             Message::StageAndCommit(repo, message, paths) => {
                                 repo.stage_paths(&paths)?;
-                                repo.commit(&message)?;
+                                repo.commit(&message.to_string())?;
                                 Ok(())
                             }
                             Message::Stage(repo, paths) => repo.stage_paths(&paths),
                             Message::Unstage(repo, paths) => repo.unstage_paths(&paths),
-                            Message::Commit(repo, message) => repo.commit(&message),
+                            Message::Commit(repo, message) => repo.commit(&message.to_string()),
                         }
                     })
                     .await;
@@ -56,8 +56,22 @@ impl GitState {
             }
         })
         .detach();
+
+        let commit_message = cx.new_model(|cx| Buffer::local("", cx));
+        let markdown = languages.language_for_name("Markdown");
+        cx.spawn({
+            let commit_message = commit_message.clone();
+            |mut cx| async move {
+                let markdown = markdown.await.context("failed to load Markdown language")?;
+                commit_message.update(&mut cx, |commit_message, cx| {
+                    commit_message.set_language(Some(markdown), cx)
+                })
+            }
+        })
+        .detach_and_log_err(cx);
+
         GitState {
-            commit_message: SharedString::default(),
+            commit_message,
             active_repository: None,
             update_sender,
         }
@@ -160,29 +174,41 @@ impl GitState {
         entry.status_summary().index != TrackedSummary::UNCHANGED
     }
 
-    pub fn can_commit(&self, commit_all: bool) -> bool {
-        return !self.commit_message.trim().is_empty()
+    pub fn can_commit(&self, commit_all: bool, cx: &AppContext) -> bool {
+        return self
+            .commit_message
+            .read(cx)
+            .chars()
+            .any(|c| !c.is_ascii_whitespace())
             && self.have_changes()
             && (commit_all || self.have_staged_changes());
     }
 
-    pub fn commit(&mut self, err_sender: mpsc::Sender<anyhow::Error>) -> anyhow::Result<()> {
-        if !self.can_commit(false) {
+    pub fn commit(
+        &mut self,
+        err_sender: mpsc::Sender<anyhow::Error>,
+        cx: &AppContext,
+    ) -> anyhow::Result<()> {
+        if !self.can_commit(false, cx) {
             return Err(anyhow!("Unable to commit"));
         }
         let Some((_, _, git_repo)) = self.active_repository() else {
             return Err(anyhow!("No active repository"));
         };
         let git_repo = git_repo.clone();
-        let message = std::mem::take(&mut self.commit_message);
+        let message = self.commit_message.read(cx).as_rope().clone();
         self.update_sender
             .unbounded_send((Message::Commit(git_repo, message), err_sender))
             .map_err(|_| anyhow!("Failed to submit commit operation"))?;
         Ok(())
     }
 
-    pub fn commit_all(&mut self, err_sender: mpsc::Sender<anyhow::Error>) -> anyhow::Result<()> {
-        if !self.can_commit(true) {
+    pub fn commit_all(
+        &mut self,
+        err_sender: mpsc::Sender<anyhow::Error>,
+        cx: &AppContext,
+    ) -> anyhow::Result<()> {
+        if !self.can_commit(true, cx) {
             return Err(anyhow!("Unable to commit"));
         }
         let Some((_, entry, git_repo)) = self.active_repository.as_ref() else {
@@ -193,7 +219,7 @@ impl GitState {
             .filter(|entry| !entry.status.is_staged().unwrap_or(false))
             .map(|entry| entry.repo_path.clone())
             .collect::<Vec<_>>();
-        let message = std::mem::take(&mut self.commit_message);
+        let message = self.commit_message.read(cx).as_rope().clone();
         self.update_sender
             .unbounded_send((
                 Message::StageAndCommit(git_repo.clone(), message, to_stage),

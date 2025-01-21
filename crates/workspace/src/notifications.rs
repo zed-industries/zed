@@ -1,19 +1,13 @@
 use crate::{Toast, Workspace};
 use anyhow::Context;
 use anyhow::{anyhow, Result};
-use collections::HashMap;
 use gpui::{
-    svg, AnyView, AppContext, AsyncWindowContext, ClipboardItem, DismissEvent, Entity, EntityId,
-    EventEmitter, Global, PromptLevel, Render, ScrollHandle, Task, View, ViewContext,
-    VisualContext, WindowContext,
+    svg, AppContext, AsyncWindowContext, ClipboardItem, DismissEvent, EventEmitter, PromptLevel,
+    Render, ScrollHandle, Task, View, ViewContext, VisualContext, WindowContext,
 };
-use std::{any::TypeId, ops::DerefMut, time::Duration};
+use std::{any::TypeId, time::Duration};
 use ui::{prelude::*, Tooltip};
 use util::ResultExt;
-
-pub fn init(cx: &mut AppContext) {
-    cx.set_global(NotificationTracker::new());
-}
 
 #[derive(Debug, PartialEq, Clone)]
 pub enum NotificationId {
@@ -44,81 +38,7 @@ pub trait Notification: EventEmitter<DismissEvent> + Render {}
 
 impl<V: EventEmitter<DismissEvent> + Render> Notification for V {}
 
-pub trait NotificationHandle: Send {
-    fn id(&self) -> EntityId;
-    fn to_any(&self) -> AnyView;
-}
-
-impl<T: Notification> NotificationHandle for View<T> {
-    fn id(&self) -> EntityId {
-        self.entity_id()
-    }
-
-    fn to_any(&self) -> AnyView {
-        self.clone().into()
-    }
-}
-
-impl From<&dyn NotificationHandle> for AnyView {
-    fn from(val: &dyn NotificationHandle) -> Self {
-        val.to_any()
-    }
-}
-
-pub(crate) struct NotificationTracker {
-    notifications_sent: HashMap<TypeId, Vec<NotificationId>>,
-}
-
-impl Global for NotificationTracker {}
-
-impl std::ops::Deref for NotificationTracker {
-    type Target = HashMap<TypeId, Vec<NotificationId>>;
-
-    fn deref(&self) -> &Self::Target {
-        &self.notifications_sent
-    }
-}
-
-impl DerefMut for NotificationTracker {
-    fn deref_mut(&mut self) -> &mut Self::Target {
-        &mut self.notifications_sent
-    }
-}
-
-impl NotificationTracker {
-    fn new() -> Self {
-        Self {
-            notifications_sent: Default::default(),
-        }
-    }
-}
-
 impl Workspace {
-    pub fn has_shown_notification_once<V: Notification>(
-        &self,
-        id: &NotificationId,
-        cx: &ViewContext<Self>,
-    ) -> bool {
-        cx.global::<NotificationTracker>()
-            .get(&TypeId::of::<V>())
-            .map(|ids| ids.contains(id))
-            .unwrap_or(false)
-    }
-
-    pub fn show_notification_once<V: Notification>(
-        &mut self,
-        id: NotificationId,
-        cx: &mut ViewContext<Self>,
-        build_notification: impl FnOnce(&mut ViewContext<Self>) -> View<V>,
-    ) {
-        if !self.has_shown_notification_once::<V>(&id, cx) {
-            let tracker = cx.global_mut::<NotificationTracker>();
-            let entry = tracker.entry(TypeId::of::<V>()).or_default();
-            entry.push(id.clone());
-            self.show_notification::<V>(id, cx, build_notification)
-        }
-    }
-
     #[cfg(any(test, feature = "test-support"))]
     pub fn notification_ids(&self) -> Vec<NotificationId> {
         self.notifications
@@ -144,7 +64,7 @@ impl Workspace {
             }
         })
         .detach();
-        self.notifications.push((id, Box::new(notification)));
+        self.notifications.push((id, notification.into()));
         cx.notify();
     }
 

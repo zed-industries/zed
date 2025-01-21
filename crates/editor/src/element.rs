@@ -370,6 +370,8 @@ impl EditorElement {
         register_action(view, cx, Editor::unfold_all);
         register_action(view, cx, Editor::unfold_at);
         register_action(view, cx, Editor::fold_selected_ranges);
+        register_action(view, cx, Editor::set_mark);
+        register_action(view, cx, Editor::exchange_mark);
         register_action(view, cx, Editor::show_completions);
         register_action(view, cx, Editor::toggle_code_actions);
         register_action(view, cx, Editor::open_excerpts);
@@ -1573,6 +1575,7 @@ impl EditorElement {
         &self,
         display_row: DisplayRow,
         row_info: &RowInfo,
+        buffer_snapshot: &MultiBufferSnapshot,
         line_layout: &LineWithInvisibles,
         crease_trailer: Option<&CreaseTrailerLayout>,
         em_width: Pixels,
@@ -1595,7 +1598,28 @@ impl EditorElement {
             .as_ref()
             .map(|(w, _)| w.clone());
 
-        let blame = self.editor.read(cx).blame.clone()?;
+        let editor = self.editor.read(cx);
+        let blame = editor.blame.clone()?;
+        let padding = {
+            const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
+            const INLINE_ACCEPT_SUGGESTION_EM_WIDTHS: f32 = 14.;
+
+            let mut padding = INLINE_BLAME_PADDING_EM_WIDTHS;
+
+            if let Some(inline_completion) = editor.active_inline_completion.as_ref() {
+                match &inline_completion.completion {
+                    InlineCompletion::Edit(edits)
+                        if single_line_edit(&edits, buffer_snapshot).is_some() =>
+                    {
+                        padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS
+                    }
+                    _ => {}
+                }
+            }
+
+            padding * em_width
+        };
+
         let blame_entry = blame
             .update(cx, |blame, cx| {
                 blame.blame_for_rows(&[*row_info], cx).next()
@@ -1609,14 +1633,13 @@ impl EditorElement {
             + line_height * (display_row.as_f32() - scroll_pixel_position.y / line_height);
 
         let start_x = {
-            const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
-
             let line_end = if let Some(crease_trailer) = crease_trailer {
                 crease_trailer.bounds.right()
             } else {
                 content_origin.x - scroll_pixel_position.x + line_layout.width
             };
-            let padded_line_end = line_end + em_width * INLINE_BLAME_PADDING_EM_WIDTHS;
+
+            let padded_line_end = line_end + padding;
 
             let min_column_in_pixels = ProjectSettings::get_global(cx)
                 .git
@@ -3302,49 +3325,23 @@ impl EditorElement {
 
         match &active_inline_completion.completion {
             InlineCompletion::Move(target_position) => {
-                let tab_kbd = h_flex()
-                    .px_0p5()
-                    .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                    .text_size(TextSize::XSmall.rems(cx))
-                    .text_color(cx.theme().colors().text.opacity(0.8))
-                    .child("tab");
-
-                let icon_container = div().mt(px(2.5)); // For optical alignment
-
-                let container_element = h_flex()
-                    .items_center()
-                    .py_0p5()
-                    .px_1()
-                    .gap_1()
-                    .bg(cx.theme().colors().editor_subheader_background)
-                    .border_1()
-                    .border_color(cx.theme().colors().text_accent.opacity(0.2))
-                    .rounded_md()
-                    .shadow_sm();
-
                 let target_display_point = target_position.to_display_point(editor_snapshot);
                 if target_display_point.row().as_f32() < scroll_top {
-                    let mut element = container_element
-                        .child(tab_kbd)
-                        .child(Label::new("Jump to Edit").size(LabelSize::Small))
-                        .child(
-                            icon_container
-                                .child(Icon::new(IconName::ArrowUp).size(IconSize::Small)),
-                        )
-                        .into_any();
+                    let mut element = inline_completion_tab_indicator(
+                        "Jump to Edit",
+                        Some(IconName::ArrowUp),
+                        cx,
+                    );
                     let size = element.layout_as_root(AvailableSpace::min_size(), cx);
                     let offset = point((text_bounds.size.width - size.width) / 2., PADDING_Y);
                     element.prepaint_at(text_bounds.origin + offset, cx);
                     Some(element)
                 } else if (target_display_point.row().as_f32() + 1.) > scroll_bottom {
-                    let mut element = container_element
-                        .child(tab_kbd)
-                        .child(Label::new("Jump to Edit").size(LabelSize::Small))
-                        .child(
-                            icon_container
-                                .child(Icon::new(IconName::ArrowDown).size(IconSize::Small)),
-                        )
-                        .into_any();
+                    let mut element = inline_completion_tab_indicator(
+                        "Jump to Edit",
+                        Some(IconName::ArrowDown),
+                        cx,
+                    );
                     let size = element.layout_as_root(AvailableSpace::min_size(), cx);
                     let offset = point(
                         (text_bounds.size.width - size.width) / 2.,
@@ -3353,10 +3350,7 @@ impl EditorElement {
                     element.prepaint_at(text_bounds.origin + offset, cx);
                     Some(element)
                 } else {
-                    let mut element = container_element
-                        .child(tab_kbd)
-                        .child(Label::new("Jump to Edit").size(LabelSize::Small))
-                        .into_any();
+                    let mut element = inline_completion_tab_indicator("Jump to Edit", None, cx);
 
                     let target_line_end = DisplayPoint::new(
                         target_display_point.row(),
@@ -3397,6 +3391,27 @@ impl EditorElement {
                     return None;
                 }
 
+                if let Some(range) = single_line_edit(&edits, &editor_snapshot.buffer_snapshot) {
+                    let mut element = inline_completion_tab_indicator("Accept", None, cx);
+
+                    let target_display_point = range.end.to_display_point(editor_snapshot);
+                    let target_line_end = DisplayPoint::new(
+                        target_display_point.row(),
+                        editor_snapshot.line_len(target_display_point.row()),
+                    );
+                    let origin = self.editor.update(cx, |editor, cx| {
+                        editor.display_to_pixel_point(target_line_end, editor_snapshot, cx)
+                    })?;
+
+                    element.prepaint_as_root(
+                        text_bounds.origin + origin + point(PADDING_X, px(0.)),
+                        AvailableSpace::min_size(),
+                        cx,
+                    );
+
+                    return Some(element);
+                }
+
                 if all_edits_insertions_or_deletions(edits, &editor_snapshot.buffer_snapshot) {
                     return None;
                 }
@@ -3406,6 +3421,7 @@ impl EditorElement {
                 else {
                     return None;
                 };
+
                 let line_count = text.lines().count() + 1;
 
                 let longest_row =
@@ -5268,6 +5284,58 @@ fn header_jump_data(
     }
 }
 
+fn inline_completion_tab_indicator(
+    label: impl Into<SharedString>,
+    icon: Option<IconName>,
+    cx: &WindowContext,
+) -> AnyElement {
+    let tab_kbd = h_flex()
+        .px_0p5()
+        .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+        .text_size(TextSize::XSmall.rems(cx))
+        .text_color(cx.theme().colors().text)
+        .child("tab");
+
+    let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
+
+    h_flex()
+        .py_0p5()
+        .pl_1()
+        .pr(padding_right)
+        .gap_1()
+        .bg(cx.theme().colors().text_accent.opacity(0.15))
+        .border_1()
+        .border_color(cx.theme().colors().text_accent.opacity(0.8))
+        .rounded_md()
+        .shadow_sm()
+        .child(tab_kbd)
+        .child(Label::new(label).size(LabelSize::Small))
+        .when_some(icon, |element, icon| {
+            element.child(
+                div()
+                    .mt(px(1.5))
+                    .child(Icon::new(icon).size(IconSize::Small)),
+            )
+        })
+        .into_any()
+}
+
+fn single_line_edit<'a>(
+    edits: &'a [(Range<Anchor>, String)],
+    snapshot: &MultiBufferSnapshot,
+) -> Option<&'a Range<Anchor>> {
+    let [(range, _)] = edits else {
+        return None;
+    };
+
+    let point_range = range.to_point(&snapshot);
+    if point_range.start.row == point_range.end.row {
+        Some(range)
+    } else {
+        None
+    }
+}
+
 fn all_edits_insertions_or_deletions(
     edits: &Vec<(Range<Anchor>, String)>,
     snapshot: &MultiBufferSnapshot,
@@ -6567,6 +6635,7 @@ impl Element for EditorElement {
                             inline_blame = self.layout_inline_blame(
                                 display_row,
                                 row_info,
+                                &snapshot.buffer_snapshot,
                                 line_layout,
                                 crease_trailer_layout,
                                 em_width,

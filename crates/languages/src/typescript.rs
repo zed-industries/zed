@@ -212,16 +212,14 @@ impl LspAdapter for TypeScriptLspAdapter {
             _ => None,
         }?;
 
-        let one_line = |s: &str| s.replace("    ", "").replace('\n', " ");
-
         let text = if let Some(description) = item
             .label_details
             .as_ref()
             .and_then(|label_details| label_details.description.as_ref())
         {
-            format!("{} {}", item.label, one_line(description))
+            format!("{} {}", item.label, description)
         } else if let Some(detail) = &item.detail {
-            format!("{} {}", item.label, one_line(detail))
+            format!("{} {}", item.label, detail)
         } else {
             item.label.clone()
         };
