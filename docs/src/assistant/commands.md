@@ -12,6 +12,7 @@ Slash commands enhance the assistant's capabilities. Begin by typing a `/` at th
 - `/prompt`: Adds a custom-configured prompt to the context ([see Prompt Library](./prompting#prompt-library))
 - `/symbols`: Inserts the current tab's active symbols into the context
 - `/tab`: Inserts the content of the active tab or all open tabs into the context
+- `/tabs`: Inserts the content of all open tabs into the context
 - `/terminal`: Inserts a select number of lines of output from the terminal
 - `/selection`: Inserts the selected text into the context
 
@@ -87,6 +88,12 @@ Examples:
 - `/tab` - Inserts the content of the active tab.
 - `/tab "index.js"` - Inserts the content of the tab named "index.js".
 - `/tab all` - Inserts the content of all open tabs.
+
+## `/tabs`
+
+The `/tabs` command inserts the content of all open tabs into the context. (Same as /tab all)
+
+Usage: `/tabs`
 
 ## `/terminal`
 

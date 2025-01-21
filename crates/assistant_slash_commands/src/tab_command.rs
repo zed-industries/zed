@@ -178,33 +178,7 @@ fn tab_items_for_queries(
                         let full_path = snapshot.resolve_file_path(cx, true);
                         return anyhow::Ok(vec![(full_path, snapshot, 0)]);
                     }
-
-                    let mut timestamps_by_entity_id = HashMap::default();
-                    let mut visited_buffers = HashSet::default();
-                    let mut open_buffers = Vec::new();
-
-                    for pane in workspace.panes() {
-                        let pane = pane.read(cx);
-                        for entry in pane.activation_history() {
-                            timestamps_by_entity_id.insert(entry.entity_id, entry.timestamp);
-                        }
-                    }
-
-                    for editor in workspace.items_of_type::<Editor>(cx) {
-                        if let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() {
-                            if let Some(timestamp) =
-                                timestamps_by_entity_id.get(&editor.entity_id())
-                            {
-                                if visited_buffers.insert(buffer.read(cx).remote_id()) {
-                                    let snapshot = buffer.read(cx).snapshot();
-                                    let full_path = snapshot.resolve_file_path(cx, true);
-                                    open_buffers.push((full_path, snapshot, *timestamp));
-                                }
-                            }
-                        }
-                    }
-
-                    Ok(open_buffers)
+                    Ok(get_open_buffers(workspace, cx))
                 })??;
 
         let background_executor = cx.background_executor().clone();
@@ -277,6 +251,35 @@ fn tab_items_for_queries(
             })
             .await
     })
+}
+
+pub fn get_open_buffers(
+    workspace: &mut Workspace,
+    cx: &mut ViewContext<Workspace>,
+) -> Vec<(Option<PathBuf>, language::BufferSnapshot, usize)> {
+    let mut timestamps_by_entity_id = HashMap::default();
+    let mut visited_buffers = HashSet::default();
+    let mut open_buffers = Vec::new();
+
+    for pane in workspace.panes() {
+        let pane = pane.read(cx);
+        for entry in pane.activation_history() {
+            timestamps_by_entity_id.insert(entry.entity_id, entry.timestamp);
+        }
+    }
+
+    for editor in workspace.items_of_type::<Editor>(cx) {
+        if let Some(buffer) = editor.read(cx).buffer().read(cx).as_singleton() {
+            if let Some(timestamp) = timestamps_by_entity_id.get(&editor.entity_id()) {
+                if visited_buffers.insert(buffer.read(cx).remote_id()) {
+                    let snapshot = buffer.read(cx).snapshot();
+                    let full_path = snapshot.resolve_file_path(cx, true);
+                    open_buffers.push((full_path, snapshot, *timestamp));
+                }
+            }
+        }
+    }
+    open_buffers
 }
 
 fn active_item_buffer(

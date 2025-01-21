@@ -15,6 +15,7 @@ mod selection_command;
 mod streaming_example_command;
 mod symbols_command;
 mod tab_command;
+mod tabs_command;
 mod terminal_command;
 
 use gpui::AppContext;
@@ -38,6 +39,7 @@ pub use crate::selection_command::*;
 pub use crate::streaming_example_command::*;
 pub use crate::symbols_command::*;
 pub use crate::tab_command::*;
+pub use crate::tabs_command::*;
 pub use crate::terminal_command::*;
 
 pub fn create_label_for_command(
