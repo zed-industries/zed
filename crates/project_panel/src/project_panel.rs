@@ -1106,8 +1106,13 @@ impl ProjectPanel {
         let worktree_id = edit_state.worktree_id;
         let is_new_entry = edit_state.is_new_entry();
         let filename = self.filename_editor.read(cx).text(cx);
-        edit_state.is_dir = edit_state.is_dir
-            || (edit_state.is_new_entry() && filename.ends_with(std::path::MAIN_SEPARATOR));
+        #[cfg(not(target_os = "windows"))]
+        let filename_indicates_dir = filename.ends_with("/");
+        // On Windows, path separator could be either `/` or `\`.
+        #[cfg(target_os = "windows")]
+        let filename_indicates_dir = filename.ends_with("/") || filename.ends_with("\\");
+        edit_state.is_dir =
+            edit_state.is_dir || (edit_state.is_new_entry() && filename_indicates_dir);
         let is_dir = edit_state.is_dir;
         let worktree = self.project.read(cx).worktree_for_id(worktree_id, cx)?;
         let entry = worktree.read(cx).entry_for_id(edit_state.entry_id)?.clone();
@@ -4793,6 +4798,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::{Path, PathBuf};
+    use util::paths::add_root_for_windows;
     use workspace::{
         item::{Item, ProjectItem},
         register_project_item, AppState,
@@ -5682,7 +5688,7 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor().clone());
         fs.insert_tree(
-            "/root1",
+            add_root_for_windows("/root1"),
             json!({
                 ".dockerignore": "",
                 ".git": {
@@ -5692,7 +5698,8 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs.clone(), ["/root1".as_ref()], cx).await;
+        let project =
+            Project::test(fs.clone(), [add_root_for_windows("/root1").as_ref()], cx).await;
         let workspace =
             cx.add_window(|window, cx| Workspace::test_new(project.clone(), window, cx));
         let cx = &mut VisualTestContext::from_window(*workspace, cx);
@@ -5727,9 +5734,10 @@ mod tests {
         );
 
         let confirm = panel.update_in(cx, |panel, window, cx| {
+            // If we want to create a subdirectory, there should be no prefix slash.
             panel
                 .filename_editor
-                .update(cx, |editor, cx| editor.set_text("/new_dir/", window, cx));
+                .update(cx, |editor, cx| editor.set_text("new_dir/", window, cx));
             panel.confirm_edit(window, cx).unwrap()
         });
 
@@ -5738,14 +5746,14 @@ mod tests {
             &[
                 "v root1",
                 "    > .git",
-                "      [PROCESSING: '/new_dir/']  <== selected",
+                "      [PROCESSING: 'new_dir/']  <== selected",
                 "      .dockerignore",
             ]
         );
 
         confirm.await.unwrap();
         assert_eq!(
-            visible_entries_as_strings(&panel, 0..13, cx),
+            visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
                 "    > .git",
@@ -5753,6 +5761,57 @@ mod tests {
                 "      .dockerignore",
             ]
         );
+
+        // Test filename ends with "\"
+        #[cfg(target_os = "windows")]
+        {
+            select_path(&panel, "root1", cx);
+            panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
+            let confirm = panel.update(cx, |panel, cx| {
+                // If we want to create a subdirectory, there should be no prefix slash.
+                panel
+                    .filename_editor
+                    .update(cx, |editor, cx| editor.set_text("new_dir_2\\", cx));
+                panel.confirm_edit(cx).unwrap()
+            });
+            confirm.await.unwrap();
+            assert_eq!(
+                visible_entries_as_strings(&panel, 0..10, cx),
+                &[
+                    "v root1",
+                    "    > .git",
+                    "    v new_dir",
+                    "    v new_dir_2  <== selected",
+                    "      .dockerignore",
+                ]
+            );
+        }
+
+        // Test filename with whitespace
+        #[cfg(target_os = "windows")]
+        {
+            select_path(&panel, "root1", cx);
+            panel.update(cx, |panel, cx| panel.new_file(&NewFile, cx));
+            let confirm = panel.update(cx, |panel, cx| {
+                // If we want to create a subdirectory, there should be no prefix slash.
+                panel
+                    .filename_editor
+                    .update(cx, |editor, cx| editor.set_text("new dir 3/", cx));
+                panel.confirm_edit(cx).unwrap()
+            });
+            confirm.await.unwrap();
+            assert_eq!(
+                visible_entries_as_strings(&panel, 0..10, cx),
+                &[
+                    "v root1",
+                    "    > .git",
+                    "    v new dir 3  <== selected",
+                    "    v new_dir",
+                    "    v new_dir_2",
+                    "      .dockerignore",
+                ]
+            );
+        }
     }
 
     #[gpui::test]
