@@ -713,7 +713,7 @@ async fn test_remote_cancel_language_server_work(
 async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        add_root_for_windows("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -729,7 +729,7 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
     let (project, _headless) = init_test(&fs, cx, server_cx).await;
     let (worktree, _) = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(add_root_for_windows("/code/project1"), true, cx)
         })
         .await
         .unwrap();
@@ -744,7 +744,7 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
         .unwrap();
 
     fs.save(
-        &PathBuf::from("/code/project1/src/lib.rs"),
+        &PathBuf::from(add_root_for_windows("/code/project1/src/lib.rs")),
         &("bangles".to_string().into()),
         LineEnding::Unix,
     )
@@ -759,7 +759,7 @@ async fn test_remote_reload(cx: &mut TestAppContext, server_cx: &mut TestAppCont
     });
 
     fs.save(
-        &PathBuf::from("/code/project1/src/lib.rs"),
+        &PathBuf::from(add_root_for_windows("/code/project1/src/lib.rs")),
         &("bloop".to_string().into()),
         LineEnding::Unix,
     )
