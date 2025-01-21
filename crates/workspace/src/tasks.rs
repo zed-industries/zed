@@ -88,15 +88,14 @@ pub fn schedule_resolved_tasks(
             });
         }
 
-        let mut all_tasks = pre_tasks
+        let pre_tasks = pre_tasks
             .into_iter()
             .filter_map(|mut task| task.resolved.take())
             .collect_vec();
 
-        all_tasks.push(spawn_in_terminal);
-
         cx.emit(crate::Event::SpawnTask {
-            action: all_tasks,
+            pre_actions: pre_tasks,
+            action: Box::new(spawn_in_terminal),
         });
     }
 }

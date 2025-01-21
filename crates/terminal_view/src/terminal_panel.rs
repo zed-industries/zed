@@ -253,10 +253,13 @@ impl TerminalPanel {
                 .update_in(&mut cx, |_, window, cx| {
                     cx.subscribe_in(&workspace, window, |terminal_panel, _, e, window, cx| {
                         if let workspace::Event::SpawnTask {
+                            pre_actions: pre_tasks,
                             action: spawn_in_terminal,
                         } = e
                         {
-                            terminal_panel.spawn_task_queue(spawn_in_terminal, window, cx);
+                            let mut tasks = pre_tasks.clone();
+                            tasks.push(*spawn_in_terminal.clone());
+                            terminal_panel.spawn_task_queue(tasks, window, cx);
                         };
                     })
                     .detach();
@@ -456,72 +459,97 @@ impl TerminalPanel {
             .detach_and_log_err(cx);
     }
 
-    fn spawn_task_queue(&mut self, task: &SpawnInTerminal, window: &mut Window, cx: &mut Context<Self>) {
-        todo!("implement task synchronization");
-        for task in tasks {
-            let Ok(is_local) = self
-                .workspace
-                .update(cx, |workspace, cx| workspace.project().read(cx).is_local())
-            else {
-                return;
-            };
-
-            let builder = ShellBuilder::new(is_local, &task.shell);
-            let command_label = builder.command_label(&task.command_label);
-            let (command, args) = builder.build(task.command.clone(), &task.args);
-
-            let task = SpawnInTerminal {
-                command_label,
-                command,
-                args,
-                ..task.clone()
-            };
-
-            if task.allow_concurrent_runs && task.use_new_terminal {
-                self.spawn_in_new_terminal(task, window, cx).detach_and_log_err(cx);
-                return;
-            }
-
-            let mut terminals_for_task = self.terminals_for_task(&task.full_label, cx);
-            let Some(existing) = terminals_for_task.pop() else {
-                self.spawn_in_new_terminal(task, window, cx).detach_and_log_err(cx);
-                return;
-            };
-
-            let (existing_item_index, task_pane, existing_terminal) = existing;
-            if task.allow_concurrent_runs {
-                self.replace_terminal(task, task_pane, existing_item_index, existing_terminal, window, cx)
-                    .detach();
-                return;
-            }
-
-            self.deferred_tasks.insert(
-                task.id.clone(),
-                cx.spawn(|terminal_panel, mut cx| async move {
-                    wait_for_terminals_tasks(terminals_for_task, &mut cx).await;
-                    let task = terminal_panel.update(&mut cx, |terminal_panel, cx| {
-                        if task.use_new_terminal {
-                            terminal_panel
-                                .spawn_in_new_terminal(task, window, cx)
-                                .detach_and_log_err(cx);
-                            None
-                        } else {
-                            Some(terminal_panel.replace_terminal(
-                                task,
-                                task_pane,
-                                existing_item_index,
-                                existing_terminal,
-                                window,
-                                cx,
-                            ))
-                        }
-                    });
-                    if let Ok(Some(task)) = task {
-                        task.await;
-                    }
-                }),
-            );
+    fn spawn_task_queue(&mut self, tasks: Vec<SpawnInTerminal>, window: &mut Window, cx: &mut Context<Self>) {
+        if tasks.is_empty() {
+            return;
         }
+
+        let Some(is_local) = self
+            .workspace
+            .update(cx, |workspace, cx| workspace.project().read(cx).is_local())
+            .log_err() else {
+            return;
+        };
+
+        let Some(primary_task) = tasks.last() else {
+            return;
+        };
+
+        self.deferred_tasks.insert(
+            primary_task.id.clone(),
+            cx.spawn_in(window, |terminal_panel, mut cx| async move {
+                for task in tasks {
+                    let builder = ShellBuilder::new(is_local, &task.shell);
+                    let command_label = builder.command_label(&task.command_label);
+                    let (command, args) = builder.build(task.command.clone(), &task.args);
+
+                    let terminal_task = SpawnInTerminal {
+                        command_label,
+                        command,
+                        args,
+                        ..task.clone()
+                    };
+
+                    let Some(mut terminals_for_task) = terminal_panel.update(&mut cx, |terminal_panel, cx| {
+                        terminal_panel.terminals_for_task(&terminal_task.full_label, cx)
+                    }).log_err() else {
+                        return;
+                    };
+
+                    let Some(spawn_terminal_task) = if terminal_task.allow_concurrent_runs && terminal_task.use_new_terminal || terminals_for_task.is_empty() {
+                        terminal_panel.update_in(&mut cx, |terminal_panel, window, cx| {
+                            terminal_panel.spawn_in_new_terminal(terminal_task, window, cx)
+                        })
+                    } else {
+                        let (existing_index, pane, existing_term) = terminals_for_task.pop().unwrap();
+                        if terminal_task.allow_concurrent_runs {
+                            terminal_panel.update_in(&mut cx, |terminal_panel, window, cx| {
+                                terminal_panel.replace_terminal(terminal_task, pane, existing_index, existing_term, window, cx)
+                            })
+                        } else {
+                            wait_for_terminals_tasks(terminals_for_task, &mut cx).await;
+                            terminal_panel.update_in(&mut cx, |terminal_panel, window, cx| {
+                                if terminal_task.use_new_terminal {
+                                    terminal_panel.spawn_in_new_terminal(terminal_task, window, cx)
+                                } else {
+                                    terminal_panel.replace_terminal(
+                                        terminal_task,
+                                        pane,
+                                        existing_index,
+                                        existing_term,
+                                        window,
+                                        cx,
+                                    )
+                                }
+                            })
+                        }
+                    }.log_err() else {
+                        return;
+                    };
+
+                    let Some(terminal) = spawn_terminal_task.await.log_err() else {
+                        return;
+                    };
+
+                    let task_result = cx
+                        .read_model(&terminal, |terminal, cx| terminal.wait_for_completed_task(cx))
+                        .log_err();
+                    let Some(task_result) = task_result else {
+                        return;
+                    };
+
+                    let exit_code = task_result.await;
+
+                    if exit_code != 0 {
+                        Result::<()>::Err(anyhow!(
+                            "Task \"{}\" exited with non-zero exit code, aborting remaining tasks",
+                            task.command_label.as_str()
+                        )).log_err();
+                        return;
+                    }
+                }
+            })
+        );
     }
 
     pub fn spawn_in_new_terminal(
@@ -767,7 +795,7 @@ impl TerminalPanel {
         terminal_to_replace: Entity<TerminalView>,
         window: &mut Window,
         cx: &mut Context<Self>,
-    ) -> Task<Option<()>> {
+    ) -> Task<Result<Entity<Terminal>>> {
         let reveal = spawn_task.reveal;
         let reveal_target = spawn_task.reveal_target;
         let window_handle = window.window_handle();
@@ -777,22 +805,19 @@ impl TerminalPanel {
                 .update(&mut cx, |this, cx| {
                     this.workspace
                         .update(cx, |workspace, _| workspace.project().clone())
-                        .ok()
-                })
-                .ok()
-                .flatten()?;
+                })??;
+
             let new_terminal = project
                 .update(&mut cx, |project, cx| {
                     project.create_terminal(TerminalKind::Task(spawn_task), window_handle, cx)
-                })
-                .ok()?
-                .await
-                .log_err()?;
+                })?
+                .await?;
+
+            let _new_terminal = new_terminal.clone();
             terminal_to_replace
                 .update_in(&mut cx, |terminal_to_replace, window, cx| {
-                    terminal_to_replace.set_terminal(new_terminal, window, cx);
-                })
-                .ok()?;
+                    terminal_to_replace.set_terminal(_new_terminal, window, cx);
+                })?;
 
             match reveal {
                 RevealStrategy::Always => match reveal_target {
@@ -801,13 +826,11 @@ impl TerminalPanel {
                             .update_in(&mut cx, |workspace, window, cx| {
                                 workspace
                                     .active_item(cx)
-                                    .context("retrieving active terminal item in the workspace")
-                                    .log_err()?
+                                    .context("retrieving active terminal item in the workspace")?
                                     .item_focus_handle(cx)
                                     .focus(window);
-                                Some(())
-                            })
-                            .ok()??;
+                                Result::<()>::Ok(())
+                            })??;
                     }
                     RevealTarget::Dock => {
                         terminal_panel
@@ -819,17 +842,12 @@ impl TerminalPanel {
                                     window,
                                     cx,
                                 )
-                            })
-                            .ok()?;
+                            })?;
 
                         cx.spawn(|mut cx| async move {
                             task_workspace
-                                .update_in(&mut cx, |workspace, window, cx| {
-                                    workspace.focus_panel::<Self>(window, cx)
-                                })
-                                .ok()
-                        })
-                        .detach();
+                                .update_in(&mut cx, |workspace, window, cx| workspace.focus_panel::<Self>(window, cx))
+                        }).detach();
                     }
                 },
                 RevealStrategy::NoFocus => match reveal_target {
@@ -837,8 +855,7 @@ impl TerminalPanel {
                         task_workspace
                             .update_in(&mut cx, |workspace, window, cx| {
                                 workspace.active_pane().focus_handle(cx).focus(window);
-                            })
-                            .ok()?;
+                            })?;
                     }
                     RevealTarget::Dock => {
                         terminal_panel
@@ -850,23 +867,17 @@ impl TerminalPanel {
                                     window,
                                     cx,
                                 )
-                            })
-                            .ok()?;
+                            })?;
 
-                        cx.spawn(|mut cx| async move {
-                            task_workspace
-                                .update_in(&mut cx, |workspace, window, cx| {
-                                    workspace.open_panel::<Self>(window, cx)
-                                })
-                                .ok()
-                        })
-                        .detach();
+                            task_workspace.update_in(&mut cx, |workspace, window, cx| {
+                                workspace.open_panel::<Self>(window, cx)
+                            }).log_err();
                     }
                 },
                 RevealStrategy::Never => {}
             }
 
-            Some(())
+            Ok(new_terminal)
         })
     }
 
@@ -1071,7 +1082,7 @@ async fn wait_for_terminals_tasks(
             })
             .ok()
     });
-    let _: Vec<()> = join_all(pending_tasks).await;
+    let _: Vec<_> = join_all(pending_tasks).await;
 }
 
 fn add_paths_to_terminal(

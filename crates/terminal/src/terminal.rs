@@ -333,7 +333,7 @@ impl TerminalBuilder {
         max_scroll_history_lines: Option<usize>,
         is_ssh_terminal: bool,
         window: AnyWindowHandle,
-        completion_tx: Sender<()>,
+        completion_tx: Sender<i32>,
         cx: &App,
     ) -> Result<TerminalBuilder> {
         // If the parent environment doesn't have a locale set
@@ -608,7 +608,7 @@ pub enum SelectionPhase {
 
 pub struct Terminal {
     pty_tx: Notifier,
-    completion_tx: Sender<()>,
+    completion_tx: Sender<i32>,
     term: Arc<FairMutex<Term<ZedListener>>>,
     term_config: Config,
     events: VecDeque<InternalEvent>,
@@ -641,7 +641,7 @@ pub struct TaskState {
     pub label: String,
     pub command_label: String,
     pub status: TaskStatus,
-    pub completion_rx: Receiver<()>,
+    pub completion_rx: Receiver<i32>,
     pub hide: HideStrategy,
     pub show_summary: bool,
     pub show_command: bool,
@@ -656,7 +656,7 @@ pub enum TaskStatus {
     /// The task is started and running currently.
     Running,
     /// After the start, the task stopped running and reported its error code back.
-    Completed { success: bool },
+    Completed { exit_code: i32 },
 }
 
 impl TaskStatus {
@@ -666,10 +666,8 @@ impl TaskStatus {
         }
     }
 
-    fn register_task_exit(&mut self, error_code: i32) {
-        *self = TaskStatus::Completed {
-            success: error_code == 0,
-        };
+    fn register_task_exit(&mut self, exit_code: i32) {
+        *self = TaskStatus::Completed { exit_code };
     }
 }
 
@@ -1723,20 +1721,36 @@ impl Terminal {
         self.task.as_ref()
     }
 
-    pub fn wait_for_completed_task(&self, cx: &App) -> Task<()> {
-        if let Some(task) = self.task() {
-            if task.status == TaskStatus::Running {
-                let completion_receiver = task.completion_rx.clone();
-                return cx.spawn(|_| async move {
-                    let _ = completion_receiver.recv().await;
-                });
+    pub fn wait_for_completed_task(&self, cx: &App) -> Task<i32> {
+        let Some(task) = self.task() else {
+            return Task::ready(0);
+        };
+
+        match task.status {
+            TaskStatus::Completed { exit_code } => Task::ready(exit_code),
+            TaskStatus::Unknown => Task::ready(0),
+            TaskStatus::Running => {
+                let rx = task.completion_rx.clone();
+                cx.spawn(|_| async move {
+                    if let Ok(exit_code) = rx.recv().await {
+                        exit_code
+                    } else {
+                        -1
+                    }
+                })
             }
         }
-        Task::ready(())
     }
 
-    fn register_task_finished(&mut self, error_code: Option<i32>, cx: &mut Context<'_, Terminal>) {
-        self.completion_tx.try_send(()).ok();
+    fn register_task_finished(
+        &mut self,
+        error_code: Option<i32>,
+        cx: &mut Context<'_, Terminal>,
+    ) {
+        let exit_code = if let Some(code) = error_code { code } else { 0 };
+
+        self.completion_tx.try_send(exit_code).ok();
+
         let task = match &mut self.task {
             Some(task) => task,
             None => {

@@ -1247,9 +1247,9 @@ impl Item for TerminalView {
                     Color::Warning,
                     Some(rerun_button(terminal_task.id.clone())),
                 ),
-                TaskStatus::Completed { success } => {
+                TaskStatus::Completed { exit_code } => {
                     let rerun_button = rerun_button(terminal_task.id.clone());
-                    if *success {
+                    if *exit_code == 0 {
                         (IconName::Check, Color::Success, Some(rerun_button))
                     } else {
                         (IconName::XCircle, Color::Error, Some(rerun_button))

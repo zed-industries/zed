@@ -1287,7 +1287,8 @@ impl ShellExec {
                 let cwd = project.first_project_directory(cx);
                 let shell = project.terminal_settings(&cwd, cx).shell.clone();
                 cx.emit(workspace::Event::SpawnTask {
-                    action: vec![SpawnInTerminal {
+                    pre_actions: vec![],
+                    action: Box::new(SpawnInTerminal {
                         id: TaskId("vim".to_string()),
                         full_label: self.command.clone(),
                         label: self.command.clone(),
@@ -1304,7 +1305,7 @@ impl ShellExec {
                         shell,
                         show_summary: false,
                         show_command: false,
-                    }],
+                    }),
                 });
             });
             return;

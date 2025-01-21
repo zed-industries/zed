@@ -1,11 +1,10 @@
 use itertools::Itertools;
 use ::settings::Settings;
 use editor::{tasks::task_context, Editor};
-use gpui::{App, Context, Task as AsyncTask, Window};
+use gpui::{App, AppContext as _, Context, Task as AsyncTask, Window};
 use modal::{TaskOverrides, TasksModal};
 use project::{Location, TaskSourceKind, WorktreeId};
 use task::{RevealTarget, TaskId};
-use ui::VisualContext;
 use util::ResultExt;
 use workspace::tasks::schedule_task;
 use workspace::{tasks::schedule_resolved_tasks, Workspace};
@@ -81,13 +80,13 @@ pub fn init(cx: &mut App) {
                                 _ => None
                             };
 
-                            let task_context = task_context(workspace, cx);
+                            let task_context = task_context(workspace, window, cx);
 
-                            let _ = cx.spawn(|workspace, mut cx| async move {
+                            let _ = cx.spawn_in(window, |workspace, mut cx| async move {
                                 let task_context = task_context.await;
                                 let Some(workspace) = workspace.upgrade() else { return; };
 
-                                cx.update_view(&workspace, |workspace, cx| {
+                                cx.update_model(&workspace, |workspace, cx| {
                                     let pre_tasks = workspace
                                         .project()
                                         .read(cx)
