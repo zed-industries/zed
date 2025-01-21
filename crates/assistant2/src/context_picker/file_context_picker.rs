@@ -4,7 +4,7 @@ use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use editor::actions::{Backspace, FoldAt};
+use editor::actions::FoldAt;
 use editor::display_map::{Crease, FoldId};
 use editor::scroll::Autoscroll;
 use editor::{Anchor, Editor, FoldPlaceholder, ToPoint};
@@ -275,11 +275,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                 editor.insert("\n", cx); // Needed to end the fold
 
                 let placeholder = FoldPlaceholder {
-                    render: render_fold_icon_button(
-                        cx.view().downgrade(),
-                        IconName::File,
-                        file_name.into(),
-                    ),
+                    render: render_fold_icon_button(IconName::File, file_name.into()),
                     ..Default::default()
                 };
 
@@ -303,7 +299,7 @@ impl PickerDelegate for FileContextPickerDelegate {
                             )
                         });
 
-                let crease_ids = editor.insert_creases(crease_iter, cx);
+                editor.insert_creases(crease_iter, cx);
 
                 for buffer_row in rows_to_fold {
                     editor.fold_at(&FoldAt { buffer_row }, cx);
@@ -446,28 +442,15 @@ pub fn render_file_context_entry(
 }
 
 fn render_fold_icon_button(
-    editor: WeakView<Editor>,
     icon: IconName,
     label: SharedString,
 ) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut WindowContext) -> AnyElement> {
-    Arc::new(move |fold_id, fold_range, _cx| {
-        let editor = editor.clone();
+    Arc::new(move |fold_id, _fold_range, _cx| {
         ButtonLike::new(fold_id)
             .style(ButtonStyle::Filled)
             .layer(ElevationIndex::ElevatedSurface)
             .child(Icon::new(icon))
             .child(Label::new(label.clone()).single_line())
-            // .on_click(move |_, cx| {
-            //     editor
-            //         .update(cx, |editor, cx| {
-            //             let buffer_start = fold_range
-            //                 .start
-            //                 .to_point(&editor.buffer().read(cx).read(cx));
-            //             let buffer_row = MultiBufferRow(buffer_start.row);
-            //             editor.unfold_at(&UnfoldAt { buffer_row }, cx);
-            //         })
-            //         .ok();
-            // })
             .into_any_element()
     })
 }

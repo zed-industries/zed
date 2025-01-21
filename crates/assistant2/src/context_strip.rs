@@ -24,7 +24,6 @@ use crate::{
 };
 
 pub struct ContextStrip {
-    editor: WeakView<Editor>,
     context_store: Model<ContextStore>,
     pub context_picker: View<ContextPicker>,
     context_picker_menu_handle: PopoverMenuHandle<ContextPicker>,
@@ -66,7 +65,6 @@ impl ContextStrip {
         ];
 
         Self {
-            editor,
             context_store: context_store.clone(),
             context_picker,
             context_picker_menu_handle,
