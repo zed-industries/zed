@@ -170,7 +170,7 @@ pub struct ActivatePane(pub usize);
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct ActivatePaneInDirection(pub SplitDirection);
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct SetBottomDockLayout(pub BottomDockLayout);
 
 #[derive(Clone, Deserialize, PartialEq, JsonSchema)]
