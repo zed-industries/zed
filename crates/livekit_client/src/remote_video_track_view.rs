@@ -24,7 +24,7 @@ impl RemoteVideoTrackView {
     pub fn new(track: RemoteVideoTrack, window: &mut Window, cx: &mut ModelContext<Self>) -> Self {
         cx.focus_handle();
         let frames = super::play_remote_video_track(&track);
-        let window_handle = window.window_handle();
+        let _window_handle = window.window_handle();
 
         Self {
             track,
@@ -42,14 +42,14 @@ impl RemoteVideoTrackView {
                     {
                         use util::ResultExt as _;
                         if let Some(frame) = _this.previous_rendered_frame.take() {
-                            window_handle
+                            _window_handle
                                 .update(cx, |_, window, _cx| window.drop_image(frame).log_err())
                                 .ok();
                         }
                         // TODO(mgsloan): This might leak the last image of the screenshare if
                         // render is called after the screenshare ends.
                         if let Some(frame) = _this.current_rendered_frame.take() {
-                            window_handle
+                            _window_handle
                                 .update(cx, |_, window, _cx| window.drop_image(frame).log_err())
                                 .ok();
                         }
@@ -73,7 +73,7 @@ impl RemoteVideoTrackView {
 impl EventEmitter<RemoteVideoTrackViewEvent> for RemoteVideoTrackView {}
 
 impl Render for RemoteVideoTrackView {
-    fn render(&mut self, window: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
+    fn render(&mut self, _: &mut Window, _cx: &mut ModelContext<Self>) -> impl IntoElement {
         #[cfg(target_os = "macos")]
         if let Some(latest_frame) = &self.latest_frame {
             use gpui::Styled as _;

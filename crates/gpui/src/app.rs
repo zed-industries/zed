@@ -949,6 +949,7 @@ impl AppContext {
     fn apply_refresh_effect(&mut self) {
         for window in self.windows.values_mut() {
             if let Some(window) = window.as_mut() {
+                window.refreshing = true;
                 window.dirty.set(true);
             }
         }

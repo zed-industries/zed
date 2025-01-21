@@ -891,6 +891,8 @@ impl Window {
             return;
         };
 
+        // Mark ancestor views as dirty. If already in the `dirty_views` set, then all its ancestors
+        // should already be dirty.
         for view_id in self
             .rendered_frame
             .dispatch_tree
