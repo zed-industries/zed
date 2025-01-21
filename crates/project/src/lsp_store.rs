@@ -3128,12 +3128,15 @@ impl LspStore {
                 })
                 .detach()
             }
-            WorktreeStoreEvent::WorktreeReleased(..) => {}
             WorktreeStoreEvent::WorktreeRemoved(_, id) => self.remove_worktree(*id, cx),
-            WorktreeStoreEvent::WorktreeOrderChanged => {}
             WorktreeStoreEvent::WorktreeUpdateSent(worktree) => {
                 worktree.update(cx, |worktree, _cx| self.send_diagnostic_summaries(worktree));
             }
+            WorktreeStoreEvent::WorktreeReleased(..)
+            | WorktreeStoreEvent::WorktreeOrderChanged
+            | WorktreeStoreEvent::WorktreeUpdatedEntries(..)
+            | WorktreeStoreEvent::WorktreeUpdatedGitRepositories(..)
+            | WorktreeStoreEvent::WorktreeDeletedEntry(..) => {}
         }
     }
 
