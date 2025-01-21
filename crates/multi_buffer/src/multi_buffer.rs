@@ -893,16 +893,6 @@ impl MultiBuffer {
                 return;
             }
 
-            if let Some(buffer) = this.as_singleton() {
-                buffer.update(cx, |buffer, cx| {
-                    buffer.autoindent_ranges(edits.into_iter().map(|e| e.0), cx);
-                });
-                cx.emit(Event::ExcerptsEdited {
-                    ids: this.excerpt_ids(),
-                });
-                return;
-            }
-
             let (buffer_edits, edited_excerpt_ids) =
                 this.convert_edits_to_buffer_edits(edits, &snapshot, &[]);
             drop(snapshot);
@@ -945,20 +935,13 @@ impl MultiBuffer {
         cx: &mut ModelContext<Self>,
     ) -> Point {
         let multibuffer_point = position.to_point(&self.read(cx));
-        if let Some(buffer) = self.as_singleton() {
-            buffer.update(cx, |buffer, cx| {
-                buffer.insert_empty_line(multibuffer_point, space_above, space_below, cx)
-            })
-        } else {
-            let (buffer, buffer_point, _) =
-                self.point_to_buffer_point(multibuffer_point, cx).unwrap();
-            self.start_transaction(cx);
-            let empty_line_start = buffer.update(cx, |buffer, cx| {
-                buffer.insert_empty_line(buffer_point, space_above, space_below, cx)
-            });
-            self.end_transaction(cx);
-            multibuffer_point + (empty_line_start - buffer_point)
-        }
+        let (buffer, buffer_point, _) = self.point_to_buffer_point(multibuffer_point, cx).unwrap();
+        self.start_transaction(cx);
+        let empty_line_start = buffer.update(cx, |buffer, cx| {
+            buffer.insert_empty_line(buffer_point, space_above, space_below, cx)
+        });
+        self.end_transaction(cx);
+        multibuffer_point + (empty_line_start - buffer_point)
     }
 
     pub fn start_transaction(&mut self, cx: &mut ModelContext<Self>) -> Option<TransactionId> {
@@ -1018,13 +1001,6 @@ impl MultiBuffer {
     where
         D: TextDimension + Ord + Sub<D, Output = D>,
     {
-        if let Some(buffer) = self.as_singleton() {
-            return buffer
-                .read(cx)
-                .edited_ranges_for_transaction_id(transaction_id)
-                .collect::<Vec<_>>();
-        }
-
         let Some(transaction) = self.history.transaction(transaction_id) else {
             return Vec::new();
         };
