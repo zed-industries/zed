@@ -187,7 +187,7 @@
   // bracket, brace, single or double quote characters.
   // For example, when you select text and type (, Zed will surround the text with ().
   "use_auto_surround": true,
-  // Whether to tab-out of parentheses, brarkets, etc. when pressing tab.
+  // Whether to tab-out of parentheses, brackets, braces, single or double quotes when pressing tab.
   "use_tabout": true,
   // Whether indentation of pasted content should be adjusted based on the context.
   "auto_indent_on_paste": true,

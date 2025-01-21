@@ -125,7 +125,7 @@ pub struct LanguageSettings {
     pub use_autoclose: bool,
     /// Whether to automatically surround text with brackets.
     pub use_auto_surround: bool,
-    // Whether to tab-out of parentheses, brarkets, etc. when pressing tab.
+    // Whether to tab-out of parentheses, brackets, braces, single or double quotes when pressing tab.
     pub use_tabout: bool,
     /// Whether to use additional LSP queries to format (and amend) the code after
     /// every "trigger" symbol input, defined by LSP server capabilities.
@@ -367,7 +367,7 @@ pub struct LanguageSettingsContent {
     ///
     /// Default: false
     pub use_tabout: Option<bool>,
-    // Whether to tab-out of parentheses, brarkets, etc. when pressing tab.
+    // Whether to tab-out of parentheses, brackets, braces, single or double quotes when pressing tab.
     // Default: true
     pub always_treat_brackets_as_autoclosed: Option<bool>,
     /// Whether to use additional LSP queries to format (and amend) the code after
