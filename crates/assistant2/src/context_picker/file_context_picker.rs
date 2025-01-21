@@ -265,14 +265,24 @@ impl PickerDelegate for FileContextPickerDelegate {
                         .selections
                         .all::<Point>(cx)
                         .into_iter()
-                        .map(|selection| snapshot.anchor_at(selection.head(), Bias::Left))
+                        .map(|selection| snapshot.anchor_after(selection.end))
                         .collect::<Vec<_>>()
                 };
+
+                editor.insert("\n", cx); // Needed to end the fold
+
+                // let snapshot = &editor.snapshot(cx).buffer_snapshot;
+                // for anchor in &start_anchors {
+                //     dbg!(anchor.to_point(&snapshot));
+                // }
+                // for anchor in &end_anchors {
+                //     dbg!(anchor.to_point(&snapshot));
+                // }
 
                 let placeholder = FoldPlaceholder {
                     render: render_fold_icon_button(
                         cx.view().downgrade(),
-                        IconName::PocketKnife,
+                        IconName::File,
                         file_name.into(),
                     ),
                     ..Default::default()
