@@ -633,6 +633,8 @@ impl Project {
 
         client.add_model_request_handler(WorktreeStore::handle_rename_project_entry);
 
+        client.add_model_message_handler(Self::handle_toggle_ignore_breakpoints);
+
         WorktreeStore::init(&client);
         BufferStore::init(&client);
         LspStore::init(&client);
@@ -1385,6 +1387,26 @@ impl Project {
         result
     }
 
+    async fn handle_toggle_ignore_breakpoints(
+        this: Model<Self>,
+        envelope: TypedEnvelope<proto::ToggleIgnoreBreakpoints>,
+        mut cx: AsyncAppContext,
+    ) -> Result<()> {
+        this.update(&mut cx, |project, cx| {
+            // Only the host should handle this message because the host
+            // handles direct communication with the debugger servers.
+            if let Some((_, _)) = project.dap_store.read(cx).downstream_client() {
+                project
+                    .toggle_ignore_breakpoints(
+                        &DebugSessionId::from_proto(envelope.payload.session_id),
+                        &DebugAdapterClientId::from_proto(envelope.payload.client_id),
+                        cx,
+                    )
+                    .detach_and_log_err(cx);
+            }
+        })
+    }
+
     pub fn toggle_ignore_breakpoints(
         &self,
         session_id: &DebugSessionId,
@@ -1392,7 +1414,29 @@ impl Project {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let tasks = self.dap_store.update(cx, |store, cx| {
+            if let Some((upstream_client, project_id)) = store.upstream_client() {
+                upstream_client
+                    .send(proto::ToggleIgnoreBreakpoints {
+                        session_id: session_id.to_proto(),
+                        client_id: client_id.to_proto(),
+                        project_id,
+                    })
+                    .log_err();
+
+                return Vec::new();
+            }
+
             store.toggle_ignore_breakpoints(session_id, cx);
+
+            if let Some((downstream_client, project_id)) = store.downstream_client() {
+                downstream_client
+                    .send(proto::IgnoreBreakpointState {
+                        session_id: session_id.to_proto(),
+                        project_id: *project_id,
+                        ignore: store.ignore_breakpoints(session_id, cx),
+                    })
+                    .log_err();
+            }
 
             let mut tasks = Vec::new();
 

@@ -1,0 +1,2 @@
+
+ALTER TABLE debug_clients ADD COLUMN ignore_breakpoints BOOLEAN NOT NULL DEFAULT FALSE;

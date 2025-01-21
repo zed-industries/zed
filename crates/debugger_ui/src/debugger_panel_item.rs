@@ -506,6 +506,12 @@ impl DebugPanelItem {
         &self.thread_state
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn are_breakpoints_ignored(&self, cx: &AppContext) -> bool {
+        self.dap_store
+            .read_with(cx, |dap, cx| dap.ignore_breakpoints(&self.session_id, cx))
+    }
+
     pub fn capabilities(&self, cx: &mut ViewContext<Self>) -> Capabilities {
         self.dap_store.read(cx).capabilities_by_id(&self.client_id)
     }

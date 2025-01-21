@@ -25,6 +25,7 @@ pub struct Model {
     pub session_id: i64,
     #[sea_orm(column_type = "Integer")]
     pub capabilities: i32,
+    pub ignore_breakpoints: bool,
 }
 
 impl Model {

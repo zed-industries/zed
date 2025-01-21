@@ -292,6 +292,11 @@ impl DebugPanel {
         &self.message_queue
     }
 
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn dap_store(&self) -> Model<DapStore> {
+        self.dap_store.clone()
+    }
+
     pub fn active_debug_panel_item(
         &self,
         cx: &mut ViewContext<Self>,
@@ -565,14 +570,19 @@ impl DebugPanel {
         client_id: &DebugAdapterClientId,
         cx: &mut ViewContext<Self>,
     ) {
-        let Some(session) = self.dap_store.read(cx).session_by_id(session_id) else {
+        let Some(session) = self
+            .dap_store
+            .read(cx)
+            .session_by_id(session_id)
+            .and_then(|session| session.read(cx).as_local())
+        else {
             return;
         };
 
         let session_id = *session_id;
         let client_id = *client_id;
         let workspace = self.workspace.clone();
-        let request_type = session.read(cx).configuration().request.clone();
+        let request_type = session.configuration().request.clone();
         cx.spawn(|this, mut cx| async move {
             let task = this.update(&mut cx, |this, cx| {
                 this.dap_store.update(cx, |store, cx| {
@@ -1028,6 +1038,11 @@ impl DebugPanel {
                         thread_id,
                         cx,
                     )
+                });
+
+                self.dap_store.update(cx, |dap_store, cx| {
+                    dap_store.add_remote_session(session_id, None, cx);
+                    dap_store.add_client_to_session(session_id, client_id);
                 });
 
                 pane.add_item(Box::new(debug_panel_item.clone()), true, true, None, cx);

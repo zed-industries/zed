@@ -331,7 +331,10 @@ message Envelope {
         UpdateThreadStatus update_thread_status = 310;
         VariablesRequest variables_request = 311;
         DapVariables dap_variables = 312;
-        DapRestartStackFrameRequest dap_restart_stack_frame_request = 313; // current max
+        DapRestartStackFrameRequest dap_restart_stack_frame_request = 313;
+        IgnoreBreakpointState ignore_breakpoint_state = 314;
+        ToggleIgnoreBreakpoints toggle_ignore_breakpoints = 315;
+        DebuggerSessionEnded debugger_session_ended = 316; // current max
     }
 
     reserved 87 to 88;
@@ -2471,10 +2474,16 @@ enum BreakpointKind {
     Log = 1;
 }
 
+message DebuggerSessionEnded {
+    uint64 project_id = 1;
+    uint64 session_id = 2;
+}
+
 message DebuggerSession {
     uint64 session_id = 1;
     uint64 project_id = 2;
-    repeated DebugClient clients = 3;
+    bool ignore_breakpoints = 3;
+    repeated DebugClient clients = 4;
 }
 
 message DebugClient {
@@ -2707,6 +2716,18 @@ message DapRestartStackFrameRequest {
 message DapShutdownSession {
     uint64 project_id = 1;
     optional uint64 session_id = 2; // Shutdown all sessions if this is None
+}
+
+message ToggleIgnoreBreakpoints {
+    uint64 project_id = 1;
+    uint64 client_id = 2;
+    uint64 session_id = 3;
+}
+
+message IgnoreBreakpointState {
+    uint64 project_id = 1;
+    uint64 session_id = 2;
+    bool ignore = 3;
 }
 
 message DapNextRequest {

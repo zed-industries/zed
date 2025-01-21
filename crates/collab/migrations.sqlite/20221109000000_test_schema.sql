@@ -474,6 +474,7 @@ CREATE TABLE IF NOT EXISTS "debug_clients" (
     project_id INTEGER NOT NULL,
     session_id BIGINT NOT NULL,
     capabilities INTEGER NOT NULL,
+    ignore_breakpoints BOOLEAN NOT NULL DEFAULT FALSE,
     PRIMARY KEY (id, project_id, session_id),
     FOREIGN KEY (project_id) REFERENCES projects (id) ON DELETE CASCADE
 );

@@ -713,7 +713,7 @@ async fn test_handle_start_debugging_reverse_request(
     cx.run_until_parked();
 
     project.update(cx, |_, cx| {
-        assert_eq!(2, session.read(cx).clients_len());
+        assert_eq!(2, session.read(cx).as_local().unwrap().clients_len());
     });
     assert!(
         send_response.load(std::sync::atomic::Ordering::SeqCst),
@@ -723,6 +723,8 @@ async fn test_handle_start_debugging_reverse_request(
     let second_client = project.update(cx, |_, cx| {
         session
             .read(cx)
+            .as_local()
+            .unwrap()
             .client_by_id(&DebugAdapterClientId(1))
             .unwrap()
     });
