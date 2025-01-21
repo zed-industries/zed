@@ -13,6 +13,7 @@ use gpui::{
 };
 use parking_lot::Mutex;
 use project::Project;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
@@ -717,7 +718,7 @@ impl PaneAxis {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, JsonSchema)]
 pub enum SplitDirection {
     Up,
     Down,
@@ -800,7 +801,7 @@ impl SplitDirection {
     }
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, JsonSchema, PartialEq)]
 pub enum ResizeIntent {
     Lengthen,
     Shorten,
@@ -1018,7 +1019,7 @@ mod element {
         fn request_layout(
             &mut self,
             _global_id: Option<&GlobalElementId>,
-            cx: &mut ui::prelude::WindowContext,
+            cx: &mut WindowContext,
         ) -> (gpui::LayoutId, Self::RequestLayoutState) {
             let style = Style {
                 flex_grow: 1.,
@@ -1119,7 +1120,7 @@ mod element {
             bounds: gpui::Bounds<ui::prelude::Pixels>,
             _: &mut Self::RequestLayoutState,
             layout: &mut Self::PrepaintState,
-            cx: &mut ui::prelude::WindowContext,
+            cx: &mut WindowContext,
         ) {
             for child in &mut layout.children {
                 child.element.paint(cx);

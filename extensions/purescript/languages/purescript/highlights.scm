@@ -18,7 +18,7 @@
 (integer) @number
 (exp_negation) @number
 (exp_literal (number)) @float
-(char) @character
+(char) @string
 [
   (string)
   (triple_quote_string)

@@ -1,12 +1,14 @@
 mod extension_slash_command;
 mod slash_command_registry;
+mod slash_command_working_set;
 
 pub use crate::extension_slash_command::*;
 pub use crate::slash_command_registry::*;
+pub use crate::slash_command_working_set::*;
 use anyhow::Result;
 use futures::stream::{self, BoxStream};
 use futures::StreamExt;
-use gpui::{AnyElement, AppContext, ElementId, SharedString, Task, WeakView, WindowContext};
+use gpui::{AppContext, SharedString, Task, WeakView, WindowContext};
 use language::{BufferSnapshot, CodeLabel, LspAdapterDelegate, OffsetRangeExt};
 pub use language_model::Role;
 use serde::{Deserialize, Serialize};
@@ -100,12 +102,6 @@ pub trait SlashCommand: 'static + Send + Sync {
         cx: &mut WindowContext,
     ) -> Task<SlashCommandResult>;
 }
-
-pub type RenderFoldPlaceholder = Arc<
-    dyn Send
-        + Sync
-        + Fn(ElementId, Arc<dyn Fn(&mut WindowContext)>, &mut WindowContext) -> AnyElement,
->;
 
 #[derive(Debug, PartialEq)]
 pub enum SlashCommandContent {

@@ -257,7 +257,8 @@ impl EditorLspTestContext {
         Self::new(language, Default::default(), cx).await
     }
 
-    // Constructs lsp range using a marked string with '[', ']' range delimiters
+    /// Constructs lsp range using a marked string with '[', ']' range delimiters
+    #[track_caller]
     pub fn lsp_range(&mut self, marked_text: &str) -> lsp::Range {
         let ranges = self.ranges(marked_text);
         self.to_lsp_range(ranges[0].clone())
@@ -330,7 +331,7 @@ impl EditorLspTestContext {
     }
 
     pub fn notify<T: notification::Notification>(&self, params: T::Params) {
-        self.lsp.notify::<T>(params);
+        self.lsp.notify::<T>(&params);
     }
 
     #[cfg(target_os = "windows")]

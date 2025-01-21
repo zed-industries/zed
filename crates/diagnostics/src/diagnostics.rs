@@ -14,7 +14,6 @@ use editor::{
     scroll::Autoscroll,
     Editor, EditorEvent, ExcerptId, ExcerptRange, MultiBuffer, ToOffset,
 };
-use feature_flags::FeatureFlagAppExt;
 use gpui::{
     actions, div, svg, AnyElement, AnyView, AppContext, Context, EventEmitter, FocusHandle,
     FocusableView, Global, HighlightStyle, InteractiveElement, IntoElement, Model, ParentElement,
@@ -96,6 +95,7 @@ impl Render for ProjectDiagnosticsEditor {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let child = if self.path_states.is_empty() {
             div()
+                .key_context("EmptyPane")
                 .bg(cx.theme().colors().editor_background)
                 .flex()
                 .items_center()
@@ -107,10 +107,8 @@ impl Render for ProjectDiagnosticsEditor {
         };
 
         div()
+            .key_context("Diagnostics")
             .track_focus(&self.focus_handle(cx))
-            .when(self.path_states.is_empty(), |el| {
-                el.key_context("EmptyPane")
-            })
             .size_full()
             .on_action(cx.listener(Self::toggle_warnings))
             .child(child)
@@ -166,7 +164,7 @@ impl ProjectDiagnosticsEditor {
         let excerpts = cx.new_model(|cx| MultiBuffer::new(project_handle.read(cx).capability()));
         let editor = cx.new_view(|cx| {
             let mut editor =
-                Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), false, cx);
+                Editor::for_multibuffer(excerpts.clone(), Some(project_handle.clone()), true, cx);
             editor.set_vertical_scroll_margin(5, cx);
             editor
         });
@@ -836,19 +834,23 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
     let (message, code_ranges) = highlight_diagnostic_message(&diagnostic, None);
     let message: SharedString = message;
     Arc::new(move |cx| {
-        let highlight_style: HighlightStyle = cx.theme().colors().text_accent.into();
+        let color = cx.theme().colors();
+        let highlight_style: HighlightStyle = color.text_accent.into();
+
         h_flex()
             .id(DIAGNOSTIC_HEADER)
             .block_mouse_down()
             .h(2. * cx.line_height())
-            .pl_10()
-            .pr_5()
             .w_full()
+            .px_9()
             .justify_between()
             .gap_2()
             .child(
                 h_flex()
-                    .gap_3()
+                    .gap_2()
+                    .px_1()
+                    .rounded_md()
+                    .bg(color.surface_background.opacity(0.5))
                     .map(|stack| {
                         stack.child(
                             svg()
@@ -880,22 +882,18 @@ fn diagnostic_header_renderer(diagnostic: Diagnostic) -> RenderBlock {
                                 stack.child(
                                     div()
                                         .child(SharedString::from(format!("({code})")))
-                                        .text_color(cx.theme().colors().text_muted),
+                                        .text_color(color.text_muted),
                                 )
                             }),
                     ),
             )
-            .child(
-                h_flex()
-                    .gap_1()
-                    .when_some(diagnostic.source.as_ref(), |stack, source| {
-                        stack.child(
-                            div()
-                                .child(SharedString::from(source.clone()))
-                                .text_color(cx.theme().colors().text_muted),
-                        )
-                    }),
-            )
+            .when_some(diagnostic.source.as_ref(), |stack, source| {
+                stack.child(
+                    div()
+                        .child(SharedString::from(source.clone()))
+                        .text_color(color.text_muted),
+                )
+            })
             .into_any_element()
     })
 }
@@ -933,18 +931,16 @@ fn context_range_for_entry(
     snapshot: &BufferSnapshot,
     cx: &AppContext,
 ) -> Range<Point> {
-    if cx.is_staff() {
-        if let Some(rows) = heuristic_syntactic_expand(
-            entry.range.clone(),
-            DIAGNOSTIC_EXPANSION_ROW_LIMIT,
-            snapshot,
-            cx,
-        ) {
-            return Range {
-                start: Point::new(*rows.start(), 0),
-                end: snapshot.clip_point(Point::new(*rows.end(), u32::MAX), Bias::Left),
-            };
-        }
+    if let Some(rows) = heuristic_syntactic_expand(
+        entry.range.clone(),
+        DIAGNOSTIC_EXPANSION_ROW_LIMIT,
+        snapshot,
+        cx,
+    ) {
+        return Range {
+            start: Point::new(*rows.start(), 0),
+            end: snapshot.clip_point(Point::new(*rows.end(), u32::MAX), Bias::Left),
+        };
     }
     Range {
         start: Point::new(entry.range.start.row.saturating_sub(context), 0),

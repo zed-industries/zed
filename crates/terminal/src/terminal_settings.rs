@@ -47,6 +47,40 @@ pub struct TerminalSettings {
     pub detect_venv: VenvSettings,
     pub max_scroll_history_lines: Option<usize>,
     pub toolbar: Toolbar,
+    pub scrollbar: ScrollbarSettings,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ScrollbarSettings {
+    /// When to show the scrollbar in the terminal.
+    ///
+    /// Default: inherits editor scrollbar settings
+    pub show: Option<ShowScrollbar>,
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+pub struct ScrollbarSettingsContent {
+    /// When to show the scrollbar in the terminal.
+    ///
+    /// Default: inherits editor scrollbar settings
+    pub show: Option<Option<ShowScrollbar>>,
+}
+
+/// When to show the scrollbar in the terminal.
+///
+/// Default: auto
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum ShowScrollbar {
+    /// Show the scrollbar if there's important information or
+    /// follow the system's configured behavior.
+    Auto,
+    /// Match the system's configured behavior.
+    System,
+    /// Always show the scrollbar.
+    Always,
+    /// Never show the scrollbar.
+    Never,
 }
 
 #[derive(Clone, Debug, Default, Serialize, Deserialize, JsonSchema)]
@@ -187,6 +221,8 @@ pub struct TerminalSettingsContent {
     pub max_scroll_history_lines: Option<usize>,
     /// Toolbar related settings
     pub toolbar: Option<ToolbarContent>,
+    /// Scrollbar-related settings
+    pub scrollbar: Option<ScrollbarSettingsContent>,
 }
 
 impl settings::Settings for TerminalSettings {

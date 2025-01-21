@@ -1,20 +1,20 @@
-use std::ops::Range;
-
 use editor::{scroll::Autoscroll, Editor, MultiBufferSnapshot, ToOffset, ToPoint};
 use gpui::{impl_actions, ViewContext};
 use language::{Bias, Point};
+use schemars::JsonSchema;
 use serde::Deserialize;
+use std::ops::Range;
 
 use crate::{state::Mode, Vim};
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct Increment {
     #[serde(default)]
     step: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct Decrement {
     #[serde(default)]

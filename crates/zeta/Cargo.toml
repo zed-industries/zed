@@ -1,8 +1,8 @@
 [package]
 name = "zeta"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 exclude = ["fixtures"]
 
@@ -39,6 +39,7 @@ telemetry.workspace = true
 telemetry_events.workspace = true
 theme.workspace = true
 ui.workspace = true
+util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
 

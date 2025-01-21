@@ -44,7 +44,7 @@ jobs:
       - name: Install cargo nextest
         shell: bash -euxo pipefail {0}
         run: |
-          cargo install cargo-nextest
+          cargo install cargo-nextest --locked
 
       - name: Limit target directory size
         shell: bash -euxo pipefail {0}

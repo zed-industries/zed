@@ -128,6 +128,13 @@ impl BranchListDelegate {
             branch_name_trailoff_after,
         })
     }
+
+    fn branch_count(&self) -> usize {
+        self.matches
+            .iter()
+            .filter(|item| matches!(item, BranchEntry::Branch(_)))
+            .count()
+    }
 }
 
 impl PickerDelegate for BranchListDelegate {
@@ -308,8 +315,8 @@ impl PickerDelegate for BranchListDelegate {
                 .into_any_element()
         } else {
             let match_label = self.matches.is_empty().not().then(|| {
-                let suffix = if self.matches.len() == 1 { "" } else { "es" };
-                Label::new(format!("{} match{}", self.matches.len(), suffix))
+                let suffix = if self.branch_count() == 1 { "" } else { "es" };
+                Label::new(format!("{} match{}", self.branch_count(), suffix))
                     .color(Color::Muted)
                     .size(LabelSize::Small)
             });

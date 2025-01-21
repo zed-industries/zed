@@ -6,7 +6,7 @@ use ui::{
     element_cell, prelude::*, string_cell, utils::calculate_contrast_ratio, AudioStatus,
     Availability, Avatar, AvatarAudioStatusIndicator, AvatarAvailabilityIndicator, ButtonLike,
     Checkbox, CheckboxWithLabel, ContentGroup, DecoratedIcon, ElevationIndex, Facepile,
-    IconDecoration, Indicator, Switch, SwitchWithLabel, Table, TintColor, Tooltip,
+    IconDecoration, Indicator, Switch, Table, TintColor, Tooltip,
 };
 
 use crate::{Item, Workspace};
@@ -379,7 +379,6 @@ impl ThemePreview {
             .child(IconDecoration::render_component_previews(cx))
             .child(Indicator::render_component_previews(cx))
             .child(Switch::render_component_previews(cx))
-            .child(SwitchWithLabel::render_component_previews(cx))
             .child(Table::render_component_previews(cx))
     }
 

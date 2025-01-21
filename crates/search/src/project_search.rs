@@ -29,6 +29,7 @@ use std::{
     mem,
     ops::{Not, Range},
     path::Path,
+    pin::pin,
 };
 use theme::ThemeSettings;
 use ui::{
@@ -249,7 +250,7 @@ impl ProjectSearch {
         self.active_query = Some(query);
         self.match_ranges.clear();
         self.pending_search = Some(cx.spawn(|this, mut cx| async move {
-            let mut matches = search.ready_chunks(1024);
+            let mut matches = pin!(search.ready_chunks(1024));
             let this = this.upgrade()?;
             this.update(&mut cx, |this, cx| {
                 this.match_ranges.clear();
@@ -1254,7 +1255,7 @@ impl ProjectSearchView {
 fn buffer_search_query(
     workspace: &mut Workspace,
     item: &dyn ItemHandle,
-    cx: &mut ViewContext<'_, Workspace>,
+    cx: &mut ViewContext<Workspace>,
 ) -> Option<String> {
     let buffer_search_bar = workspace
         .pane_for(item)
@@ -1596,7 +1597,8 @@ impl Render for ProjectSearchBar {
                 .min_w_32()
                 .w(input_width)
                 .h_8()
-                .px_2()
+                .pl_2()
+                .pr_1()
                 .py_1()
                 .border_1()
                 .border_color(search.border_color_for(InputPanel::Query, cx))
@@ -1610,7 +1612,7 @@ impl Render for ProjectSearchBar {
             .child(self.render_text_input(&search.query_editor, cx))
             .child(
                 h_flex()
-                    .gap_0p5()
+                    .gap_1()
                     .child(SearchOptions::CASE_SENSITIVE.as_button(
                         self.is_option_enabled(SearchOptions::CASE_SENSITIVE, cx),
                         focus_handle.clone(),
@@ -1905,6 +1907,7 @@ impl Render for ProjectSearchBar {
         }
 
         v_flex()
+            .py(px(1.0))
             .key_context(key_context)
             .on_action(cx.listener(|this, _: &ToggleFocus, cx| this.move_focus_to_results(cx)))
             .on_action(cx.listener(|this, _: &ToggleFilters, cx| {

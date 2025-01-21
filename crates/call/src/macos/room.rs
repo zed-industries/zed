@@ -156,7 +156,7 @@ impl Room {
             cx.spawn(|this, mut cx| async move {
                 connect.await?;
                 this.update(&mut cx, |this, cx| {
-                    if this.can_use_microphone(cx) {
+                    if this.can_use_microphone() {
                         if let Some(live_kit) = &this.live_kit {
                             if !live_kit.muted_by_user && !live_kit.deafened {
                                 return this.share_microphone(cx);
@@ -1323,7 +1323,7 @@ impl Room {
         self.live_kit.as_ref().map(|live_kit| live_kit.deafened)
     }
 
-    pub fn can_use_microphone(&self, _cx: &AppContext) -> bool {
+    pub fn can_use_microphone(&self) -> bool {
         use proto::ChannelRole::*;
         match self.local_participant.role {
             Admin | Member | Talker => true,

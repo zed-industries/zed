@@ -194,7 +194,7 @@ impl PickerDelegate for BaseKeymapSelectorDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut gpui::ViewContext<Picker<Self>>,
+        _cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let keymap_match = &self.matches[ix];
 

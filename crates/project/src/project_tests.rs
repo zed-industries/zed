@@ -1,7 +1,7 @@
 use crate::{Event, *};
+use ::git::diff::assert_hunks;
 use fs::FakeFs;
 use futures::{future, StreamExt};
-use git::diff::assert_hunks;
 use gpui::{AppContext, SemanticVersion, UpdateGlobal};
 use http_client::Url;
 use language::{
@@ -24,7 +24,12 @@ use std::{str::FromStr, sync::OnceLock};
 use std::{mem, num::NonZeroU32, ops::Range, task::Poll};
 use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
-use util::{assert_set_eq, paths::PathMatcher, test::temp_tree, TryFutureExt as _};
+use util::{
+    assert_set_eq,
+    paths::{replace_path_separator, PathMatcher},
+    test::temp_tree,
+    TryFutureExt as _,
+};
 
 #[gpui::test]
 async fn test_block_via_channel(cx: &mut gpui::TestAppContext) {
@@ -781,11 +786,19 @@ async fn test_managing_language_servers(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppContext) {
+    fn add_root_for_windows(path: &str) -> String {
+        if cfg!(windows) {
+            format!("C:{}", path)
+        } else {
+            path.to_string()
+        }
+    }
+
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
     fs.insert_tree(
-        "/the-root",
+        add_root_for_windows("/the-root"),
         json!({
             ".gitignore": "target\n",
             "src": {
@@ -813,7 +826,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     )
     .await;
 
-    let project = Project::test(fs.clone(), ["/the-root".as_ref()], cx).await;
+    let project = Project::test(fs.clone(), [add_root_for_windows("/the-root").as_ref()], cx).await;
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
     let mut fake_servers = language_registry.register_fake_lsp(
@@ -829,7 +842,7 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
     // Start the language server by opening a buffer with a compatible file extension.
     let _ = project
         .update(cx, |project, cx| {
-            project.open_local_buffer_with_lsp("/the-root/src/a.rs", cx)
+            project.open_local_buffer_with_lsp(add_root_for_windows("/the-root/src/a.rs"), cx)
         })
         .await
         .unwrap();
@@ -869,21 +882,21 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
                     lsp::DidChangeWatchedFilesRegistrationOptions {
                         watchers: vec![
                             lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    "/the-root/Cargo.toml".to_string(),
-                                ),
+                                glob_pattern: lsp::GlobPattern::String(add_root_for_windows(
+                                    "/the-root/Cargo.toml",
+                                )),
                                 kind: None,
                             },
                             lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    "/the-root/src/*.{rs,c}".to_string(),
-                                ),
+                                glob_pattern: lsp::GlobPattern::String(add_root_for_windows(
+                                    "/the-root/src/*.{rs,c}",
+                                )),
                                 kind: None,
                             },
                             lsp::FileSystemWatcher {
-                                glob_pattern: lsp::GlobPattern::String(
-                                    "/the-root/target/y/**/*.rs".to_string(),
-                                ),
+                                glob_pattern: lsp::GlobPattern::String(add_root_for_windows(
+                                    "/the-root/target/y/**/*.rs",
+                                )),
                                 kind: None,
                             },
                         ],
@@ -936,21 +949,36 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
 
     // Perform some file system mutations, two of which match the watched patterns,
     // and one of which does not.
-    fs.create_file("/the-root/src/c.rs".as_ref(), Default::default())
-        .await
-        .unwrap();
-    fs.create_file("/the-root/src/d.txt".as_ref(), Default::default())
-        .await
-        .unwrap();
-    fs.remove_file("/the-root/src/b.rs".as_ref(), Default::default())
-        .await
-        .unwrap();
-    fs.create_file("/the-root/target/x/out/x2.rs".as_ref(), Default::default())
-        .await
-        .unwrap();
-    fs.create_file("/the-root/target/y/out/y2.rs".as_ref(), Default::default())
-        .await
-        .unwrap();
+    fs.create_file(
+        add_root_for_windows("/the-root/src/c.rs").as_ref(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    fs.create_file(
+        add_root_for_windows("/the-root/src/d.txt").as_ref(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    fs.remove_file(
+        add_root_for_windows("/the-root/src/b.rs").as_ref(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    fs.create_file(
+        add_root_for_windows("/the-root/target/x/out/x2.rs").as_ref(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
+    fs.create_file(
+        add_root_for_windows("/the-root/target/y/out/y2.rs").as_ref(),
+        Default::default(),
+    )
+    .await
+    .unwrap();
 
     // The language server receives events for the FS mutations that match its watch patterns.
     cx.executor().run_until_parked();
@@ -958,15 +986,16 @@ async fn test_reporting_fs_changes_to_language_servers(cx: &mut gpui::TestAppCon
         &*file_changes.lock(),
         &[
             lsp::FileEvent {
-                uri: lsp::Url::from_file_path("/the-root/src/b.rs").unwrap(),
+                uri: lsp::Url::from_file_path(add_root_for_windows("/the-root/src/b.rs")).unwrap(),
                 typ: lsp::FileChangeType::DELETED,
             },
             lsp::FileEvent {
-                uri: lsp::Url::from_file_path("/the-root/src/c.rs").unwrap(),
+                uri: lsp::Url::from_file_path(add_root_for_windows("/the-root/src/c.rs")).unwrap(),
                 typ: lsp::FileChangeType::CREATED,
             },
             lsp::FileEvent {
-                uri: lsp::Url::from_file_path("/the-root/target/y/out/y2.rs").unwrap(),
+                uri: lsp::Url::from_file_path(add_root_for_windows("/the-root/target/y/out/y2.rs"))
+                    .unwrap(),
                 typ: lsp::FileChangeType::CREATED,
             },
         ]
@@ -1269,7 +1298,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         }
     );
 
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(&lsp::PublishDiagnosticsParams {
         uri: Url::from_file_path("/dir/a.rs").unwrap(),
         version: None,
         diagnostics: vec![lsp::Diagnostic {
@@ -1321,7 +1350,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
     });
 
     // Ensure publishing empty diagnostics twice only results in one update event.
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(&lsp::PublishDiagnosticsParams {
         uri: Url::from_file_path("/dir/a.rs").unwrap(),
         version: None,
         diagnostics: Default::default(),
@@ -1334,7 +1363,7 @@ async fn test_disk_based_diagnostics_progress(cx: &mut gpui::TestAppContext) {
         }
     );
 
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(&lsp::PublishDiagnosticsParams {
         uri: Url::from_file_path("/dir/a.rs").unwrap(),
         version: None,
         diagnostics: Default::default(),
@@ -1453,7 +1482,7 @@ async fn test_restarting_server_with_diagnostics_published(cx: &mut gpui::TestAp
 
     // Publish diagnostics
     let fake_server = fake_servers.next().await.unwrap();
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(&lsp::PublishDiagnosticsParams {
         uri: Url::from_file_path("/dir/a.rs").unwrap(),
         version: None,
         diagnostics: vec![lsp::Diagnostic {
@@ -1534,7 +1563,7 @@ async fn test_restarted_server_reporting_invalid_buffer_version(cx: &mut gpui::T
 
     // Before restarting the server, report diagnostics with an unknown buffer version.
     let fake_server = fake_servers.next().await.unwrap();
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(&lsp::PublishDiagnosticsParams {
         uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
         version: Some(10000),
         diagnostics: Vec::new(),
@@ -1784,7 +1813,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     assert!(change_notification_1.text_document.version > open_notification.text_document.version);
 
     // Report some diagnostics for the initial version of the buffer
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(&lsp::PublishDiagnosticsParams {
         uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
         version: Some(open_notification.text_document.version),
         diagnostics: vec![
@@ -1870,7 +1899,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     });
 
     // Ensure overlapping diagnostics are highlighted correctly.
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(&lsp::PublishDiagnosticsParams {
         uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
         version: Some(open_notification.text_document.version),
         diagnostics: vec![
@@ -1962,7 +1991,7 @@ async fn test_transforming_diagnostics(cx: &mut gpui::TestAppContext) {
     );
 
     // Handle out-of-order diagnostics
-    fake_server.notify::<lsp::notification::PublishDiagnostics>(lsp::PublishDiagnosticsParams {
+    fake_server.notify::<lsp::notification::PublishDiagnostics>(&lsp::PublishDiagnosticsParams {
         uri: lsp::Url::from_file_path("/dir/a.rs").unwrap(),
         version: Some(change_notification_2.text_document.version),
         diagnostics: vec![
@@ -3241,7 +3270,10 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
         "d",
         "d/file3",
         "d/file4",
-    ];
+    ]
+    .into_iter()
+    .map(replace_path_separator)
+    .collect::<Vec<_>>();
 
     cx.update(|app| {
         assert_eq!(
@@ -4135,7 +4167,10 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
         .next()
         .await
         .unwrap();
-    let range = response.await.unwrap().unwrap();
+    let response = response.await.unwrap();
+    let PrepareRenameResponse::Success(range) = response else {
+        panic!("{:?}", response);
+    };
     let range = buffer.update(cx, |buffer, _| range.to_offset(buffer));
     assert_eq!(range, 6..9);
 
@@ -5657,9 +5692,9 @@ async fn search(
     query: SearchQuery,
     cx: &mut gpui::TestAppContext,
 ) -> Result<HashMap<String, Vec<Range<usize>>>> {
-    let mut search_rx = project.update(cx, |project, cx| project.search(query, cx));
+    let search_rx = project.update(cx, |project, cx| project.search(query, cx));
     let mut results = HashMap::default();
-    while let Some(search_result) = search_rx.next().await {
+    while let Ok(search_result) = search_rx.recv().await {
         match search_result {
             SearchResult::Buffer { buffer, ranges } => {
                 results.entry(buffer).or_insert(ranges);

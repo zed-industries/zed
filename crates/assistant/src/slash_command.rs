@@ -1,12 +1,12 @@
 use crate::assistant_panel::ContextEditor;
-use crate::SlashCommandWorkingSet;
 use anyhow::Result;
 use assistant_slash_command::AfterCompletion;
-pub use assistant_slash_command::{SlashCommand, SlashCommandOutput};
+pub use assistant_slash_command::SlashCommand;
+use assistant_slash_command::SlashCommandWorkingSet;
 use editor::{CompletionProvider, Editor};
 use fuzzy::{match_strings, StringMatchCandidate};
-use gpui::{AppContext, Model, Task, ViewContext, WeakView, WindowContext};
-use language::{Anchor, Buffer, CodeLabel, Documentation, HighlightId, LanguageServerId, ToPoint};
+use gpui::{Model, Task, ViewContext, WeakView, WindowContext};
+use language::{Anchor, Buffer, Documentation, LanguageServerId, ToPoint};
 use parking_lot::Mutex;
 use project::CompletionIntent;
 use rope::Point;
@@ -19,26 +19,7 @@ use std::{
         Arc,
     },
 };
-use ui::ActiveTheme;
 use workspace::Workspace;
-pub mod auto_command;
-pub mod cargo_workspace_command;
-pub mod context_server_command;
-pub mod default_command;
-pub mod delta_command;
-pub mod diagnostics_command;
-pub mod docs_command;
-pub mod fetch_command;
-pub mod file_command;
-pub mod now_command;
-pub mod project_command;
-pub mod prompt_command;
-pub mod search_command;
-pub mod selection_command;
-pub mod streaming_example_command;
-pub mod symbols_command;
-pub mod tab_command;
-pub mod terminal_command;
 
 pub(crate) struct SlashCommandCompletionProvider {
     cancel_flag: Mutex<Arc<AtomicBool>>,
@@ -149,6 +130,7 @@ impl SlashCommandCompletionProvider {
                             server_id: LanguageServerId(0),
                             lsp_completion: Default::default(),
                             confirm,
+                            resolved: true,
                         })
                     })
                     .collect()
@@ -242,6 +224,7 @@ impl SlashCommandCompletionProvider {
                             server_id: LanguageServerId(0),
                             lsp_completion: Default::default(),
                             confirm,
+                            resolved: true,
                         }
                     })
                     .collect())
@@ -330,16 +313,6 @@ impl CompletionProvider for SlashCommandCompletionProvider {
         Task::ready(Ok(true))
     }
 
-    fn apply_additional_edits_for_completion(
-        &self,
-        _: Model<Buffer>,
-        _: project::Completion,
-        _: bool,
-        _: &mut ViewContext<Editor>,
-    ) -> Task<Result<Option<language::Transaction>>> {
-        Task::ready(Ok(None))
-    }
-
     fn is_completion_trigger(
         &self,
         buffer: &Model<Buffer>,
@@ -416,20 +389,4 @@ impl SlashCommandLine {
         }
         call
     }
-}
-
-pub fn create_label_for_command(
-    command_name: &str,
-    arguments: &[&str],
-    cx: &AppContext,
-) -> CodeLabel {
-    let mut label = CodeLabel::default();
-    label.push_str(command_name, None);
-    label.push_str(" ", None);
-    label.push_str(
-        &arguments.join(" "),
-        cx.theme().syntax().highlight_id("comment").map(HighlightId),
-    );
-    label.filter_range = 0..command_name.len();
-    label
 }

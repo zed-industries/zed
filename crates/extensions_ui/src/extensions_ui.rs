@@ -82,13 +82,26 @@ pub fn init(cx: &mut AppContext) {
                                 }
                             };
 
-                        store
+                        let install_task = store
                             .update(&mut cx, |store, cx| {
-                                store
-                                    .install_dev_extension(extension_path, cx)
-                                    .detach_and_log_err(cx)
+                                store.install_dev_extension(extension_path, cx)
                             })
                             .ok()?;
+
+                        match install_task.await {
+                            Ok(_) => {}
+                            Err(err) => {
+                                workspace_handle
+                                    .update(&mut cx, |workspace, cx| {
+                                        workspace.show_error(
+                                            &err.context("failed to install dev extension"),
+                                            cx,
+                                        );
+                                    })
+                                    .ok();
+                            }
+                        }
+
                         Some(())
                     })
                     .detach();
@@ -843,7 +856,7 @@ impl ExtensionsPage {
         }
     }
 
-    fn fetch_extensions_debounced(&mut self, cx: &mut ViewContext<'_, ExtensionsPage>) {
+    fn fetch_extensions_debounced(&mut self, cx: &mut ViewContext<ExtensionsPage>) {
         self.extension_fetch_task = Some(cx.spawn(|this, mut cx| async move {
             let search = this
                 .update(&mut cx, |this, cx| this.search_query(cx))

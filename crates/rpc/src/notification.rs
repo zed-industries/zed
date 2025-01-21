@@ -1,7 +1,7 @@
 use crate::proto;
 use serde::{Deserialize, Serialize};
 use serde_json::{map, Value};
-use strum::{EnumVariantNames, VariantNames as _};
+use strum::VariantNames;
 
 const KIND: &str = "kind";
 const ENTITY_ID: &str = "entity_id";
@@ -15,7 +15,7 @@ const ENTITY_ID: &str = "entity_id";
 /// Most notification types have a special field which is aliased to
 /// `entity_id`. This field is stored in its own database column, and can
 /// be used to query the notification.
-#[derive(Debug, Clone, PartialEq, Eq, EnumVariantNames, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, VariantNames, Serialize, Deserialize)]
 #[serde(tag = "kind")]
 pub enum Notification {
     ContactRequest {

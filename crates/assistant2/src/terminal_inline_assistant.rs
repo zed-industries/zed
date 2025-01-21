@@ -3,7 +3,6 @@ use crate::context_store::ContextStore;
 use crate::inline_prompt_editor::{
     CodegenStatus, PromptEditor, PromptEditorEvent, TerminalInlineAssistId,
 };
-use crate::prompts::PromptBuilder;
 use crate::terminal_codegen::{CodegenEvent, TerminalCodegen, CLEAR_INPUT};
 use crate::thread_store::ThreadStore;
 use anyhow::{Context as _, Result};
@@ -20,6 +19,7 @@ use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
 use language_models::report_assistant_event;
+use prompt_library::PromptBuilder;
 use std::sync::Arc;
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use terminal_view::TerminalView;
@@ -78,7 +78,7 @@ impl TerminalInlineAssistant {
         let prompt_buffer = cx.new_model(|cx| {
             MultiBuffer::singleton(cx.new_model(|cx| Buffer::local(String::new(), cx)), cx)
         });
-        let context_store = cx.new_model(|_cx| ContextStore::new());
+        let context_store = cx.new_model(|_cx| ContextStore::new(workspace.clone()));
         let codegen = cx.new_model(|_| TerminalCodegen::new(terminal, self.telemetry.clone()));
 
         let prompt_editor = cx.new_view(|cx| {
@@ -245,10 +245,10 @@ impl TerminalInlineAssistant {
             cache: false,
         };
 
-        let context = assist
-            .context_store
-            .update(cx, |this, _cx| this.context().clone());
-        attach_context_to_message(&mut request_message, context);
+        attach_context_to_message(
+            &mut request_message,
+            assist.context_store.read(cx).snapshot(cx),
+        );
 
         request_message.content.push(prompt.into());
 

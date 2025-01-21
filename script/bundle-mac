@@ -14,7 +14,7 @@ can_code_sign=false
 
 # This must match the team in the provisioning profile.
 IDENTITY="Zed Industries, Inc."
-APPLE_NOTORIZATION_TEAM="MQ55VZLNZQ"
+APPLE_NOTARIZATION_TEAM="MQ55VZLNZQ"
 
 # Function for displaying help info
 help_info() {
@@ -83,6 +83,9 @@ export CXXFLAGS="-stdlib=libc++"
 version_info=$(rustc --version --verbose)
 host_line=$(echo "$version_info" | grep host)
 local_target_triple=${host_line#*: }
+
+# Generate the licenses first, so they can be baked into the binaries
+script/generate-licenses
 
 if [ "$local_arch" = true ]; then
     echo "Building for local target only."
@@ -203,7 +206,7 @@ function prepare_binaries() {
     rm -f target/${architecture}/${target_dir}/Zed.dwarf.gz
 
     echo "Gzipping dSYMs for $architecture"
-    gzip target/${architecture}/${target_dir}/Zed.dwarf
+    gzip -f target/${architecture}/${target_dir}/Zed.dwarf
 
     echo "Uploading dSYMs for $architecture"
     upload_to_blob_store_public \
@@ -317,7 +320,7 @@ function sign_app_binaries() {
             /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "$(pwd)/${dmg_file_path}" -v
 
             echo "Notarizing DMG with Apple"
-            "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTORIZATION_TEAM" "${dmg_file_path}"
+            "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTARIZATION_TEAM" "${dmg_file_path}"
 
             echo "Removing temporary DMG (used only for notarization)"
             rm "${dmg_file_path}"
@@ -344,7 +347,7 @@ function sign_app_binaries() {
         if [[ $can_code_sign = true ]]; then
             echo "Notarizing DMG with Apple"
             /usr/bin/codesign --deep --force --timestamp --options runtime --sign "$IDENTITY" "$(pwd)/${dmg_file_path}" -v
-            "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTORIZATION_TEAM" "${dmg_file_path}"
+            "${xcode_bin_dir_path}/notarytool" submit --wait --apple-id "$APPLE_NOTARIZATION_USERNAME" --password "$APPLE_NOTARIZATION_PASSWORD" --team-id "$APPLE_NOTARIZATION_TEAM" "${dmg_file_path}"
             "${xcode_bin_dir_path}/stapler" staple "${dmg_file_path}"
         fi
 
@@ -378,6 +381,6 @@ else
 
     sign_binary "target/x86_64-apple-darwin/release/remote_server"
     sign_binary "target/aarch64-apple-darwin/release/remote_server"
-    gzip --stdout --best target/x86_64-apple-darwin/release/remote_server > target/zed-remote-server-macos-x86_64.gz
-    gzip --stdout --best target/aarch64-apple-darwin/release/remote_server > target/zed-remote-server-macos-aarch64.gz
+    gzip -f --stdout --best target/x86_64-apple-darwin/release/remote_server > target/zed-remote-server-macos-x86_64.gz
+    gzip -f --stdout --best target/aarch64-apple-darwin/release/remote_server > target/zed-remote-server-macos-aarch64.gz
 fi

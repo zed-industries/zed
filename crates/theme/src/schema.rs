@@ -270,7 +270,7 @@ pub struct ThemeColorsContent {
 
     /// Fill Color. Used for the muted or deemphasized fill color of an icon.
     ///
-    /// This might be used to show an icon in an inactive pane, or to demphasize a series of icons to give them less visual weight.
+    /// This might be used to show an icon in an inactive pane, or to deemphasize a series of icons to give them less visual weight.
     #[serde(rename = "icon.muted")]
     pub icon_muted: Option<String>,
 
@@ -389,6 +389,10 @@ pub struct ThemeColorsContent {
     /// Text Color. Used for the text of the line number in the editor gutter when the line is highlighted.
     #[serde(rename = "editor.active_line_number")]
     pub editor_active_line_number: Option<String>,
+
+    /// Text Color. Used for the text of the line number in the editor gutter when the line is hovered over.
+    #[serde(rename = "editor.hover_line_number")]
+    pub editor_hover_line_number: Option<String>,
 
     /// Text Color. Used to mark invisible characters in the editor.
     ///
@@ -791,6 +795,10 @@ impl ThemeColorsContent {
                 .and_then(|color| try_parse_color(color).ok()),
             editor_line_number: self
                 .editor_line_number
+                .as_ref()
+                .and_then(|color| try_parse_color(color).ok()),
+            editor_hover_line_number: self
+                .editor_hover_line_number
                 .as_ref()
                 .and_then(|color| try_parse_color(color).ok()),
             editor_active_line_number: self

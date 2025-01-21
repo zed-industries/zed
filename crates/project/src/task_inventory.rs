@@ -109,7 +109,7 @@ impl Inventory {
     /// Pulls its task sources relevant to the worktree and the language given and resolves them with the [`TaskContext`] given.
     /// Joins the new resolutions with the resolved tasks that were used (spawned) before,
     /// orders them so that the most recently used come first, all equally used ones are ordered so that the most specific tasks come first.
-    /// Deduplicates the tasks by their labels and contenxt and splits the ordered list into two: used tasks and the rest, newly resolved tasks.
+    /// Deduplicates the tasks by their labels and context and splits the ordered list into two: used tasks and the rest, newly resolved tasks.
     pub fn used_and_current_resolved_tasks(
         &self,
         worktree: Option<WorktreeId>,

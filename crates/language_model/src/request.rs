@@ -214,9 +214,9 @@ impl LanguageModelRequestMessage {
                 .content
                 .first()
                 .map(|content| match content {
-                    MessageContent::Text(text) => text.trim().is_empty(),
+                    MessageContent::Text(text) => text.chars().all(|c| c.is_whitespace()),
                     MessageContent::ToolResult(tool_result) => {
-                        tool_result.content.trim().is_empty()
+                        tool_result.content.chars().all(|c| c.is_whitespace())
                     }
                     MessageContent::ToolUse(_) | MessageContent::Image(_) => true,
                 })

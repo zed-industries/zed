@@ -1,18 +1,20 @@
 use gpui::{
-    uniform_list, AppContext, FocusHandle, FocusableView, Model, UniformListScrollHandle, WeakView,
+    uniform_list, AppContext, FocusHandle, FocusableView, Model, ScrollStrategy,
+    UniformListScrollHandle, WeakView,
 };
 use time::{OffsetDateTime, UtcOffset};
 use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing, Tooltip};
 
 use crate::thread::Thread;
 use crate::thread_store::ThreadStore;
-use crate::AssistantPanel;
+use crate::{AssistantPanel, RemoveSelectedThread};
 
 pub struct ThreadHistory {
     focus_handle: FocusHandle,
     assistant_panel: WeakView<AssistantPanel>,
     thread_store: Model<ThreadStore>,
     scroll_handle: UniformListScrollHandle,
+    selected_index: usize,
 }
 
 impl ThreadHistory {
@@ -26,6 +28,82 @@ impl ThreadHistory {
             assistant_panel,
             thread_store,
             scroll_handle: UniformListScrollHandle::default(),
+            selected_index: 0,
+        }
+    }
+
+    pub fn select_prev(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
+        let count = self.thread_store.read(cx).non_empty_len(cx);
+
+        if count > 0 {
+            if self.selected_index == 0 {
+                self.set_selected_index(count - 1, cx);
+            } else {
+                self.set_selected_index(self.selected_index - 1, cx);
+            }
+        }
+    }
+
+    pub fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
+        let count = self.thread_store.read(cx).non_empty_len(cx);
+
+        if count > 0 {
+            if self.selected_index == count - 1 {
+                self.set_selected_index(0, cx);
+            } else {
+                self.set_selected_index(self.selected_index + 1, cx);
+            }
+        }
+    }
+
+    fn select_first(&mut self, _: &menu::SelectFirst, cx: &mut ViewContext<Self>) {
+        let count = self.thread_store.read(cx).non_empty_len(cx);
+        if count > 0 {
+            self.set_selected_index(0, cx);
+        }
+    }
+
+    fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
+        let count = self.thread_store.read(cx).non_empty_len(cx);
+        if count > 0 {
+            self.set_selected_index(count - 1, cx);
+        }
+    }
+
+    fn set_selected_index(&mut self, index: usize, cx: &mut ViewContext<Self>) {
+        self.selected_index = index;
+        self.scroll_handle
+            .scroll_to_item(index, ScrollStrategy::Top);
+        cx.notify();
+    }
+
+    fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
+        let threads = self.thread_store.update(cx, |this, cx| this.threads(cx));
+
+        if let Some(thread) = threads.get(self.selected_index) {
+            self.assistant_panel
+                .update(cx, move |this, cx| {
+                    let thread_id = thread.read(cx).id().clone();
+                    this.open_thread(&thread_id, cx)
+                })
+                .ok();
+
+            cx.notify();
+        }
+    }
+
+    fn remove_selected_thread(&mut self, _: &RemoveSelectedThread, cx: &mut ViewContext<Self>) {
+        let threads = self.thread_store.update(cx, |this, cx| this.threads(cx));
+
+        if let Some(thread) = threads.get(self.selected_index) {
+            self.assistant_panel
+                .update(cx, |this, cx| {
+                    let thread_id = thread.read(cx).id().clone();
+                    this.delete_thread(&thread_id, cx);
+                })
+                .ok();
+
+            cx.notify();
         }
     }
 }
@@ -39,13 +117,21 @@ impl FocusableView for ThreadHistory {
 impl Render for ThreadHistory {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let threads = self.thread_store.update(cx, |this, cx| this.threads(cx));
+        let selected_index = self.selected_index;
 
         v_flex()
             .id("thread-history-container")
+            .key_context("ThreadHistory")
             .track_focus(&self.focus_handle)
             .overflow_y_scroll()
             .size_full()
             .p_1()
+            .on_action(cx.listener(Self::select_prev))
+            .on_action(cx.listener(Self::select_next))
+            .on_action(cx.listener(Self::select_first))
+            .on_action(cx.listener(Self::select_last))
+            .on_action(cx.listener(Self::confirm))
+            .on_action(cx.listener(Self::remove_selected_thread))
             .map(|history| {
                 if threads.is_empty() {
                     history
@@ -65,10 +151,12 @@ impl Render for ThreadHistory {
                             move |history, range, _cx| {
                                 threads[range]
                                     .iter()
-                                    .map(|thread| {
+                                    .enumerate()
+                                    .map(|(index, thread)| {
                                         h_flex().w_full().pb_1().child(PastThread::new(
                                             thread.clone(),
                                             history.assistant_panel.clone(),
+                                            selected_index == index,
                                         ))
                                     })
                                     .collect()
@@ -86,13 +174,19 @@ impl Render for ThreadHistory {
 pub struct PastThread {
     thread: Model<Thread>,
     assistant_panel: WeakView<AssistantPanel>,
+    selected: bool,
 }
 
 impl PastThread {
-    pub fn new(thread: Model<Thread>, assistant_panel: WeakView<AssistantPanel>) -> Self {
+    pub fn new(
+        thread: Model<Thread>,
+        assistant_panel: WeakView<AssistantPanel>,
+        selected: bool,
+    ) -> Self {
         Self {
             thread,
             assistant_panel,
+            selected,
         }
     }
 }
@@ -100,12 +194,8 @@ impl PastThread {
 impl RenderOnce for PastThread {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
         let (id, summary) = {
-            const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Thread");
             let thread = self.thread.read(cx);
-            (
-                thread.id().clone(),
-                thread.summary().unwrap_or(DEFAULT_SUMMARY),
-            )
+            (thread.id().clone(), thread.summary_or_default())
         };
 
         let thread_timestamp = time_format::format_localized_timestamp(
@@ -120,6 +210,7 @@ impl RenderOnce for PastThread {
 
         ListItem::new(("past-thread", self.thread.entity_id()))
             .outlined()
+            .toggle_state(self.selected)
             .start_slot(
                 Icon::new(IconName::MessageCircle)
                     .size(IconSize::Small)

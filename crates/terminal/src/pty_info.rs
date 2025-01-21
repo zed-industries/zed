@@ -10,7 +10,7 @@ use windows::Win32::{Foundation::HANDLE, System::Threading::GetProcessId};
 
 use sysinfo::{Pid, Process, ProcessRefreshKind, RefreshKind, System, UpdateKind};
 
-struct ProcessIdGetter {
+pub struct ProcessIdGetter {
     handle: i32,
     fallback_pid: u32,
 }
@@ -30,6 +30,10 @@ impl ProcessIdGetter {
             return Some(Pid::from_u32(self.fallback_pid));
         }
         Some(Pid::from_u32(pid as u32))
+    }
+
+    pub fn fallback_pid(&self) -> u32 {
+        self.fallback_pid
     }
 }
 
@@ -61,6 +65,10 @@ impl ProcessIdGetter {
             return Some(Pid::from_u32(self.fallback_pid));
         }
         Some(Pid::from_u32(pid))
+    }
+
+    pub fn fallback_pid(&self) -> u32 {
+        self.fallback_pid
     }
 }
 
@@ -94,6 +102,10 @@ impl PtyProcessInfo {
             pid_getter: ProcessIdGetter::new(pty),
             current: None,
         }
+    }
+
+    pub fn pid_getter(&self) -> &ProcessIdGetter {
+        &self.pid_getter
     }
 
     fn refresh(&mut self) -> Option<&Process> {

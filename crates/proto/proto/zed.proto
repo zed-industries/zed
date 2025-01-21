@@ -927,6 +927,7 @@ message Completion {
     string new_text = 3;
     uint64 server_id = 4;
     bytes lsp_completion = 5;
+    bool resolved = 6;
 }
 
 message GetCodeActions {
@@ -1032,6 +1033,7 @@ message PrepareRenameResponse {
     Anchor start = 2;
     Anchor end = 3;
     repeated VectorClockEntry version = 4;
+    bool only_unprepared_rename_supported = 5;
 }
 
 message PerformRename {
@@ -1748,6 +1750,8 @@ message User {
     uint64 id = 1;
     string github_login = 2;
     string avatar_url = 3;
+    optional string email = 4;
+    optional string name = 5;
 }
 
 message File {
@@ -1767,7 +1771,7 @@ message Entry {
     bool is_ignored = 7;
     bool is_external = 8;
     reserved 6;
-    optional GitStatus git_status = 9;
+    reserved 9;
     bool is_fifo = 10;
     optional uint64 size = 11;
     optional string canonical_path = 12;
@@ -1776,17 +1780,47 @@ message Entry {
 message RepositoryEntry {
     uint64 work_directory_id = 1;
     optional string branch = 2;
+    repeated StatusEntry updated_statuses = 3;
+    repeated string removed_statuses = 4;
 }
 
 message StatusEntry {
     string repo_path = 1;
-    GitStatus status = 2;
+    // Can be removed once collab's min version is >=0.171.0.
+    GitStatus simple_status = 2;
+    GitFileStatus status = 3;
 }
 
 enum GitStatus {
     Added = 0;
     Modified = 1;
     Conflict = 2;
+    Deleted = 3;
+    Updated = 4;
+    TypeChanged = 5;
+    Renamed = 6;
+    Copied = 7;
+    Unmodified = 8;
+}
+
+message GitFileStatus {
+    oneof variant {
+        Untracked untracked = 1;
+        Ignored ignored = 2;
+        Unmerged unmerged = 3;
+        Tracked tracked = 4;
+    }
+
+    message Untracked {}
+    message Ignored {}
+    message Unmerged {
+        GitStatus first_head = 1;
+        GitStatus second_head = 2;
+    }
+    message Tracked {
+        GitStatus index_status = 1;
+        GitStatus worktree_status = 2;
+    }
 }
 
 message BufferState {

@@ -256,7 +256,7 @@ pub async fn prepare_completion_documentation(
             }
 
             lsp::MarkupKind::Markdown => {
-                let parsed = parse_markdown(value, language_registry, language).await;
+                let parsed = parse_markdown(value, Some(language_registry), language).await;
                 Documentation::MultiLineMarkdown(parsed)
             }
         },
@@ -3943,14 +3943,14 @@ impl BufferSnapshot {
     ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
     where
         T: 'a + Clone + ToOffset,
-        O: 'a + FromAnchor + Ord,
+        O: 'a + FromAnchor,
     {
         let mut iterators: Vec<_> = self
             .diagnostics
             .iter()
             .map(|(_, collection)| {
                 collection
-                    .range::<T, O>(search_range.clone(), self, true, reversed)
+                    .range::<T, text::Anchor>(search_range.clone(), self, true, reversed)
                     .peekable()
             })
             .collect();
@@ -3964,7 +3964,7 @@ impl BufferSnapshot {
                     let cmp = a
                         .range
                         .start
-                        .cmp(&b.range.start)
+                        .cmp(&b.range.start, self)
                         // when range is equal, sort by diagnostic severity
                         .then(a.diagnostic.severity.cmp(&b.diagnostic.severity))
                         // and stabilize order with group_id
@@ -3975,7 +3975,13 @@ impl BufferSnapshot {
                         cmp
                     }
                 })?;
-            iterators[next_ix].next()
+            iterators[next_ix]
+                .next()
+                .map(|DiagnosticEntry { range, diagnostic }| DiagnosticEntry {
+                    diagnostic,
+                    range: FromAnchor::from_anchor(&range.start, self)
+                        ..FromAnchor::from_anchor(&range.end, self),
+                })
         })
     }
 
@@ -4013,12 +4019,12 @@ impl BufferSnapshot {
     }
 
     /// Returns an iterator over the diagnostics for the given group.
-    pub fn diagnostic_group<'a, O>(
-        &'a self,
+    pub fn diagnostic_group<O>(
+        &self,
         group_id: usize,
-    ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
+    ) -> impl Iterator<Item = DiagnosticEntry<O>> + '_
     where
-        O: 'a + FromAnchor,
+        O: FromAnchor + 'static,
     {
         self.diagnostics
             .iter()
