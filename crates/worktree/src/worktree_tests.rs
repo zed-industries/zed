@@ -2184,7 +2184,7 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
     let repo = git_init(&root_path.join("projects/project1"));
     git_add("a", &repo);
     git_commit("init", &repo);
-    std::fs::write(root_path.join("projects/project1/a"), "aa").ok();
+    std::fs::write(root_path.join("projects/project1/a"), "aa").unwrap();
 
     cx.read(|cx| tree.read(cx).as_local().unwrap().scan_complete())
         .await;
@@ -2209,7 +2209,7 @@ async fn test_rename_work_directory(cx: &mut TestAppContext) {
         root_path.join("projects/project1"),
         root_path.join("projects/project2"),
     )
-    .ok();
+    .unwrap();
     tree.flush_fs_events(cx).await;
 
     cx.read(|cx| {
