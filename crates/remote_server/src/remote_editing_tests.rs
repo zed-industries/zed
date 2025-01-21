@@ -372,7 +372,7 @@ async fn test_remote_settings(cx: &mut TestAppContext, server_cx: &mut TestAppCo
 async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
     let fs = FakeFs::new(server_cx.executor());
     fs.insert_tree(
-        "/code",
+        add_root_for_windows("/code"),
         json!({
             "project1": {
                 ".git": {},
@@ -388,7 +388,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
     let (project, headless) = init_test(&fs, cx, server_cx).await;
 
     fs.insert_tree(
-        "/code/project1/.zed",
+        add_root_for_windows("/code/project1/.zed"),
         json!({
             "settings.json": r#"
           {
@@ -435,7 +435,7 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
 
     let worktree_id = project
         .update(cx, |project, cx| {
-            project.find_or_create_worktree("/code/project1", true, cx)
+            project.find_or_create_worktree(add_root_for_windows("/code/project1"), true, cx)
         })
         .await
         .unwrap()
@@ -516,7 +516,8 @@ async fn test_remote_lsp(cx: &mut TestAppContext, server_cx: &mut TestAppContext
         Ok(Some(lsp::WorkspaceEdit {
             changes: Some(
                 [(
-                    lsp::Url::from_file_path("/code/project1/src/lib.rs").unwrap(),
+                    lsp::Url::from_file_path(add_root_for_windows("/code/project1/src/lib.rs"))
+                        .unwrap(),
                     vec![lsp::TextEdit::new(
                         lsp::Range::new(lsp::Position::new(0, 3), lsp::Position::new(0, 6)),
                         "two".to_string(),
