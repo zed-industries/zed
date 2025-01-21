@@ -3072,8 +3072,13 @@ mod tests {
         let (mut inlay_map, inlay_snapshot) = InlayMap::new(buffer_snapshot.clone());
         let (mut fold_map, fold_snapshot) = FoldMap::new(inlay_snapshot);
         let (mut tab_map, tab_snapshot) = TabMap::new(fold_snapshot, 4.try_into().unwrap());
-        let (wrap_map, wraps_snapshot) = cx
-            .update(|cx| WrapMap::new(tab_snapshot, font("Helvetica"), font_size, wrap_width, cx));
+        let font = if cfg!(windows) {
+            font("Courier New")
+        } else {
+            font("Helvetica")
+        };
+        let (wrap_map, wraps_snapshot) =
+            cx.update(|cx| WrapMap::new(tab_snapshot, font, font_size, wrap_width, cx));
         let mut block_map = BlockMap::new(
             wraps_snapshot,
             true,
