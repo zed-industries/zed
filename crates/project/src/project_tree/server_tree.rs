@@ -178,8 +178,9 @@ impl LanguageServerTree {
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut AppContext,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
+        let worktree_id = path.worktree_id;
         #[allow(clippy::mutable_key_type)]
-        let roots = self.project_tree.update(cx, |this, cx| {
+        let mut roots = self.project_tree.update(cx, |this, cx| {
             this.root_for_path(
                 path,
                 adapters
@@ -190,7 +191,19 @@ impl LanguageServerTree {
                 cx,
             )
         });
-
+        let mut root_path = None;
+        // Backwards-compat: Fill in any adapters for which we did not detect the root as having the project root at the root of a worktree.
+        for (adapter, _) in adapters.iter() {
+            roots.entry(adapter.clone()).or_insert_with(|| {
+                root_path
+                    .get_or_insert_with(|| ProjectPath {
+                        worktree_id,
+                        path: Arc::from("".as_ref()),
+                    })
+                    .clone()
+            });
+        }
+        dbg!(&roots);
         roots.into_iter().filter_map(move |(adapter, root_path)| {
             let attach = self.attach_kind(&adapter);
             let (settings, new_languages) = adapters.get(&adapter).cloned()?;

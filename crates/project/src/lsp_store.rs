@@ -1870,7 +1870,6 @@ impl LocalLspStore {
             )
             .collect::<Vec<_>>()
         });
-
         let servers = servers
             .into_iter()
             .filter_map(|server_node| {
