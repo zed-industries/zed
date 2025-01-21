@@ -2721,10 +2721,15 @@ mod tests {
         app_state
             .fs
             .as_fake()
-            .insert_tree("/root", json!({ "a.txt": "" }))
+            .insert_tree(add_root_for_windows("/root"), json!({ "a.txt": "" }))
             .await;
 
-        let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+        let project = Project::test(
+            app_state.fs.clone(),
+            [add_root_for_windows("/root").as_ref()],
+            cx,
+        )
+        .await;
         project.update(cx, |project, _cx| {
             project.languages().add(markdown_language())
         });
@@ -2735,7 +2740,7 @@ mod tests {
         window
             .update(cx, |workspace, window, cx| {
                 workspace.open_paths(
-                    vec![PathBuf::from("/root/a.txt")],
+                    vec![PathBuf::from(add_root_for_windows("/root/a.txt"))],
                     OpenVisible::All,
                     None,
                     window,
@@ -2759,7 +2764,7 @@ mod tests {
         app_state
             .fs
             .as_fake()
-            .insert_file("/root/a.txt", b"changed".to_vec())
+            .insert_file(add_root_for_windows("/root/a.txt"), b"changed".to_vec())
             .await;
 
         cx.run_until_parked();
