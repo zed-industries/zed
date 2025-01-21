@@ -2227,7 +2227,10 @@ mod tests {
             multi_buffer
         });
 
+        #[cfg(not(target_os = "windows"))]
         let font = font("Helvetica");
+        #[cfg(target_os = "windows")]
+        let font = font("Courier New");
         let font_size = px(14.);
         let font_id = cx.text_system().resolve_font(&font);
         let mut wrap_width = px(0.);
