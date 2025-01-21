@@ -1352,8 +1352,12 @@ where
 {
     fn add_assign(&mut self, other: &Self) {
         self.key.add_assign(&other.key);
-        if let Some((value, other_value)) = self.value.as_mut().zip(other.value.as_ref()) {
-            value.add_assign(other_value);
+        if let Some(value) = &mut self.value {
+            if let Some(other_value) = other.value.as_ref() {
+                value.add_assign(other_value);
+            } else {
+                self.value.take();
+            }
         }
     }
 
