@@ -85,7 +85,6 @@ pub struct GitPanel {
     hide_scrollbar_task: Option<Task<()>>,
     pending_serialization: Task<Option<()>>,
     workspace: WeakView<Workspace>,
-    // FIXME should this be weak?
     project: Model<Project>,
     active_repository: Option<RepositoryHandle>,
     scroll_handle: UniformListScrollHandle,
@@ -167,21 +166,6 @@ impl GitPanel {
                 cx.new_view(|cx| commit_message_editor(active_repository.as_ref(), cx));
 
             let scroll_handle = UniformListScrollHandle::new();
-
-            //let mut visible_worktrees = project.read(cx).visible_worktrees(cx);
-            //let first_worktree = visible_worktrees.next();
-            //drop(visible_worktrees);
-            //if let Some(first_worktree) = first_worktree {
-            //    let snapshot = first_worktree.read(cx).snapshot();
-
-            //    if let Some(((repo, git_repo), git_state)) =
-            //        first_worktree_repository(&project, snapshot.id(), cx).zip(git_state)
-            //    {
-            //        git_state.update(cx, |git_state, _| {
-            //            git_state.activate_repository(snapshot.id(), repo, git_repo);
-            //        });
-            //    }
-            //};
 
             let rebuild_requested = Arc::new(AtomicBool::new(false));
             let flag = rebuild_requested.clone();
@@ -275,10 +259,6 @@ impl GitPanel {
 
         git_panel
     }
-
-    //fn git_state(&self, cx: &AppContext) -> Option<Model<GitState>> {
-    //    self.project.read(cx).git_state().cloned()
-    //}
 
     fn serialize(&mut self, cx: &mut ViewContext<Self>) {
         // TODO: we can store stage status here

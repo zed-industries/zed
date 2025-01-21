@@ -55,24 +55,14 @@ impl RepositorySelector {
         _event: &project::git::Event,
         cx: &mut ViewContext<Self>,
     ) {
-        // FIXME handle events individually
+        // TODO handle events individually
         let task = self.picker.update(cx, |this, cx| {
             let query = this.query(cx);
-            // FIXME iter/map
             this.delegate.repository_entries = git_state.read(cx).all_repositories();
             this.delegate.update_matches(query, cx)
         });
         self.update_matches_task = Some(task);
     }
-
-    //pub fn active_repository(&self, cx: &AppContext) -> Option<RepositoryHandle> {
-    //    // FIXME this seems wrong
-    //    let delegate = &self.picker.read(cx).delegate;
-    //    delegate
-    //        .filtered_repositories
-    //        .get(delegate.selected_index)
-    //        .cloned()
-    //}
 }
 
 impl EventEmitter<DismissEvent> for RepositorySelector {}

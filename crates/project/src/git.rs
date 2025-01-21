@@ -119,7 +119,7 @@ impl GitState {
         _event: &WorktreeStoreEvent,
         cx: &mut ModelContext<'_, Self>,
     ) {
-        // FIXME inspect the event
+        // TODO inspect the event
 
         let mut new_repositories = Vec::new();
         let mut new_active_index = None;
@@ -317,7 +317,7 @@ impl RepositoryHandle {
     pub fn commit(
         &self,
         err_sender: mpsc::Sender<anyhow::Error>,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> anyhow::Result<()> {
         if !self.can_commit(false, cx) {
             return Err(anyhow!("Unable to commit"));
@@ -326,14 +326,16 @@ impl RepositoryHandle {
         self.update_sender
             .unbounded_send((Message::Commit(self.git_repo.clone(), message), err_sender))
             .map_err(|_| anyhow!("Failed to submit commit operation"))?;
-        // FIXME clear it
+        self.commit_message.update(cx, |commit_message, cx| {
+            commit_message.set_text("", cx);
+        });
         Ok(())
     }
 
     pub fn commit_all(
         &self,
         err_sender: mpsc::Sender<anyhow::Error>,
-        cx: &AppContext,
+        cx: &mut AppContext,
     ) -> anyhow::Result<()> {
         if !self.can_commit(true, cx) {
             return Err(anyhow!("Unable to commit"));
@@ -351,7 +353,9 @@ impl RepositoryHandle {
                 err_sender,
             ))
             .map_err(|_| anyhow!("Failed to submit commit operation"))?;
-        // FIXME clear it
+        self.commit_message.update(cx, |commit_message, cx| {
+            commit_message.set_text("", cx);
+        });
         Ok(())
     }
 }
