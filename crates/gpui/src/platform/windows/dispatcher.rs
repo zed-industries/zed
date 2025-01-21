@@ -15,29 +15,37 @@ use windows::{
         ThreadPool, ThreadPoolTimer, TimerElapsedHandler, WorkItemHandler, WorkItemOptions,
         WorkItemPriority,
     },
-    Win32::{Foundation::HANDLE, System::Threading::SetEvent},
+    Win32::{
+        Foundation::{LPARAM, WPARAM},
+        UI::WindowsAndMessaging::PostThreadMessageW,
+    },
 };
 
-use crate::{PlatformDispatcher, SafeHandle, TaskLabel};
+use crate::{PlatformDispatcher, TaskLabel, WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD};
 
 pub(crate) struct WindowsDispatcher {
     main_sender: Sender<Runnable>,
-    dispatch_event: SafeHandle,
     parker: Mutex<Parker>,
     main_thread_id: ThreadId,
+    main_thread_id_win32: u32,
+    validation_number: usize,
 }
 
 impl WindowsDispatcher {
-    pub(crate) fn new(main_sender: Sender<Runnable>, dispatch_event: HANDLE) -> Self {
-        let dispatch_event = dispatch_event.into();
+    pub(crate) fn new(
+        main_sender: Sender<Runnable>,
+        main_thread_id_win32: u32,
+        validation_number: usize,
+    ) -> Self {
         let parker = Mutex::new(Parker::new());
         let main_thread_id = current().id();
 
         WindowsDispatcher {
             main_sender,
-            dispatch_event,
             parker,
             main_thread_id,
+            main_thread_id_win32,
+            validation_number,
         }
     }
 
@@ -87,11 +95,23 @@ impl PlatformDispatcher for WindowsDispatcher {
     }
 
     fn dispatch_on_main_thread(&self, runnable: Runnable) {
-        self.main_sender
+        if self
+            .main_sender
             .send(runnable)
             .context("Dispatch on main thread failed")
-            .log_err();
-        unsafe { SetEvent(*self.dispatch_event).log_err() };
+            .log_err()
+            .is_some()
+        {
+            unsafe {
+                PostThreadMessageW(
+                    self.main_thread_id_win32,
+                    WM_GPUI_TASK_DISPATCHED_ON_MAIN_THREAD,
+                    WPARAM(self.validation_number),
+                    LPARAM(0),
+                )
+                .log_err();
+            }
+        }
     }
 
     fn dispatch_after(&self, duration: Duration, runnable: Runnable) {

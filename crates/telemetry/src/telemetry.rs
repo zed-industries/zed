@@ -17,6 +17,13 @@ pub use telemetry_events::FlexibleEvent as Event;
 /// ```
 #[macro_export]
 macro_rules! event {
+    ($name:expr) => {{
+        let event = $crate::Event {
+            event_type: $name.to_string(),
+            event_properties: std::collections::HashMap::new(),
+        };
+        $crate::send_event(event);
+    }};
     ($name:expr, $($key:ident $(= $value:expr)?),+ $(,)?) => {{
         let event = $crate::Event {
             event_type: $name.to_string(),

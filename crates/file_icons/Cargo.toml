@@ -1,8 +1,8 @@
 [package]
 name = "file_icons"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -13,9 +13,11 @@ path = "src/file_icons.rs"
 doctest = false
 
 [dependencies]
+collections.workspace = true
 gpui.workspace = true
-util.workspace = true
 serde.workspace = true
 serde_derive.workspace = true
 serde_json.workspace = true
-collections.workspace = true
+settings.workspace = true
+theme.workspace = true
+util.workspace = true

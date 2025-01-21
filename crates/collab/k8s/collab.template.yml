@@ -252,7 +252,7 @@ spec:
               value: "${AUTO_JOIN_CHANNEL_ID}"
           securityContext:
             capabilities:
-              # FIXME - Switch to the more restrictive `PERFMON` capability.
+              # TODO - Switch to the more restrictive `PERFMON` capability.
               # This capability isn't yet available in a stable version of Debian.
               add: ["SYS_ADMIN"]
       terminationGracePeriodSeconds: 10

@@ -8,7 +8,7 @@ use workspace::Workspace;
 
 fn task_context_with_editor(
     editor: &mut Editor,
-    cx: &mut WindowContext<'_>,
+    cx: &mut WindowContext,
 ) -> AsyncTask<Option<TaskContext>> {
     let Some(project) = editor.project.clone() else {
         return AsyncTask::ready(None);
@@ -74,7 +74,7 @@ fn task_context_with_editor(
     })
 }
 
-pub fn task_context(workspace: &Workspace, cx: &mut WindowContext<'_>) -> AsyncTask<TaskContext> {
+pub fn task_context(workspace: &Workspace, cx: &mut WindowContext) -> AsyncTask<TaskContext> {
     let Some(editor) = workspace
         .active_item(cx)
         .and_then(|item| item.act_as::<Editor>(cx))

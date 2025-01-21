@@ -160,6 +160,7 @@ fn init_panic_hook() {
                 option_env!("ZED_COMMIT_SHA").unwrap_or(&env!("ZED_PKG_VERSION"))
             ),
             release_channel: release_channel::RELEASE_CHANNEL.display_name().into(),
+            target: env!("TARGET").to_owned().into(),
             os_name: telemetry::os_name(),
             os_version: Some(telemetry::os_version()),
             architecture: env::consts::ARCH.into(),
@@ -248,7 +249,7 @@ impl ServerListeners {
 
 fn start_server(
     listeners: ServerListeners,
-    mut log_rx: Receiver<Vec<u8>>,
+    log_rx: Receiver<Vec<u8>>,
     cx: &mut AppContext,
 ) -> Arc<ChannelClient> {
     // This is the server idle timeout. If no connection comes in in this timeout, the server will shut down.
@@ -350,8 +351,8 @@ fn start_server(
                         }
                     }
 
-                    log_message = log_rx.next().fuse() => {
-                        if let Some(log_message) = log_message {
+                    log_message = log_rx.recv().fuse() => {
+                        if let Ok(log_message) = log_message {
                             if let Err(error) = stderr_stream.write_all(&log_message).await {
                                 log::error!("failed to write log message to stderr: {:?}", error);
                                 break;

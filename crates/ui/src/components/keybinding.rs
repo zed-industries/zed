@@ -16,19 +16,24 @@ pub struct KeyBinding {
 }
 
 impl KeyBinding {
+    /// Returns the highest precedence keybinding for an action. This is the last binding added to
+    /// the keymap. User bindings are added after built-in bindings so that they take precedence.
     pub fn for_action(action: &dyn Action, cx: &mut WindowContext) -> Option<Self> {
-        let key_binding = cx.bindings_for_action(action).last().cloned()?;
+        let key_binding = cx.bindings_for_action(action).into_iter().rev().next()?;
         Some(Self::new(key_binding))
     }
 
-    // like for_action(), but lets you specify the context from which keybindings
-    // are matched.
+    /// Like `for_action`, but lets you specify the context from which keybindings are matched.
     pub fn for_action_in(
         action: &dyn Action,
         focus: &FocusHandle,
         cx: &mut WindowContext,
     ) -> Option<Self> {
-        let key_binding = cx.bindings_for_action_in(action, focus).last().cloned()?;
+        let key_binding = cx
+            .bindings_for_action_in(action, focus)
+            .into_iter()
+            .rev()
+            .next()?;
         Some(Self::new(key_binding))
     }
 
@@ -197,7 +202,8 @@ impl KeyIcon {
 
 /// Returns a textual representation of the key binding for the given [`Action`].
 pub fn text_for_action(action: &dyn Action, cx: &WindowContext) -> Option<String> {
-    let key_binding = cx.bindings_for_action(action).last().cloned()?;
+    let bindings = cx.bindings_for_action(action);
+    let key_binding = bindings.last()?;
     Some(text_for_key_binding(key_binding, PlatformStyle::platform()))
 }
 
@@ -208,13 +214,14 @@ pub fn text_for_action_in(
     focus: &FocusHandle,
     cx: &mut WindowContext,
 ) -> Option<String> {
-    let key_binding = cx.bindings_for_action_in(action, focus).last().cloned()?;
+    let bindings = cx.bindings_for_action_in(action, focus);
+    let key_binding = bindings.last()?;
     Some(text_for_key_binding(key_binding, PlatformStyle::platform()))
 }
 
 /// Returns a textual representation of the given key binding for the specified platform.
 pub fn text_for_key_binding(
-    key_binding: gpui::KeyBinding,
+    key_binding: &gpui::KeyBinding,
     platform_style: PlatformStyle,
 ) -> String {
     key_binding

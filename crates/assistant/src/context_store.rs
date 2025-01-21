@@ -1,10 +1,9 @@
-use crate::slash_command::context_server_command;
-use crate::SlashCommandId;
 use crate::{
-    prompts::PromptBuilder, slash_command_working_set::SlashCommandWorkingSet, Context,
-    ContextEvent, ContextId, ContextOperation, ContextVersion, SavedContext, SavedContextMetadata,
+    Context, ContextEvent, ContextId, ContextOperation, ContextVersion, SavedContext,
+    SavedContextMetadata,
 };
 use anyhow::{anyhow, Context as _, Result};
+use assistant_slash_command::{SlashCommandId, SlashCommandWorkingSet};
 use assistant_tool::{ToolId, ToolWorkingSet};
 use client::{proto, telemetry::Telemetry, Client, TypedEnvelope};
 use clock::ReplicaId;
@@ -20,8 +19,10 @@ use gpui::{
 use language::LanguageRegistry;
 use paths::contexts_dir;
 use project::Project;
+use prompt_library::PromptBuilder;
 use regex::Regex;
 use rpc::AnyProtoClient;
+use std::sync::LazyLock;
 use std::{
     cmp::Reverse,
     ffi::OsStr,
@@ -753,8 +754,8 @@ impl ContextStore {
                     continue;
                 }
 
-                let pattern = r" - \d+.zed.json$";
-                let re = Regex::new(pattern).unwrap();
+                static ASSISTANT_CONTEXT_REGEX: LazyLock<Regex> =
+                    LazyLock::new(|| Regex::new(r" - \d+.zed.json$").unwrap());
 
                 let metadata = fs.metadata(&path).await?;
                 if let Some((file_name, metadata)) = path
@@ -763,11 +764,15 @@ impl ContextStore {
                     .zip(metadata)
                 {
                     // This is used to filter out contexts saved by the new assistant.
-                    if !re.is_match(file_name) {
+                    if !ASSISTANT_CONTEXT_REGEX.is_match(file_name) {
                         continue;
                     }
 
-                    if let Some(title) = re.replace(file_name, "").lines().next() {
+                    if let Some(title) = ASSISTANT_CONTEXT_REGEX
+                        .replace(file_name, "")
+                        .lines()
+                        .next()
+                    {
                         contexts.push(SavedContextMetadata {
                             title: title.to_string(),
                             path,
@@ -830,14 +835,14 @@ impl ContextStore {
                                 if let Some(prompts) = protocol.list_prompts().await.log_err() {
                                     let slash_command_ids = prompts
                                         .into_iter()
-                                        .filter(context_server_command::acceptable_prompt)
+                                        .filter(assistant_slash_commands::acceptable_prompt)
                                         .map(|prompt| {
                                             log::info!(
                                                 "registering context server command: {:?}",
                                                 prompt.name
                                             );
                                             slash_command_working_set.insert(Arc::new(
-                                                context_server_command::ContextServerSlashCommand::new(
+                                                assistant_slash_commands::ContextServerSlashCommand::new(
                                                     context_server_manager.clone(),
                                                     &server,
                                                     prompt,

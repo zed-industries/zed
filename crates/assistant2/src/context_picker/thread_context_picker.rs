@@ -5,9 +5,8 @@ use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, Wea
 use picker::{Picker, PickerDelegate};
 use ui::{prelude::*, ListItem};
 
-use crate::context::ContextKind;
-use crate::context_picker::ContextPicker;
-use crate::context_store;
+use crate::context_picker::{ConfirmBehavior, ContextPicker};
+use crate::context_store::{self, ContextStore};
 use crate::thread::ThreadId;
 use crate::thread_store::ThreadStore;
 
@@ -20,10 +19,15 @@ impl ThreadContextPicker {
         thread_store: WeakModel<ThreadStore>,
         context_picker: WeakView<ContextPicker>,
         context_store: WeakModel<context_store::ContextStore>,
+        confirm_behavior: ConfirmBehavior,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let delegate =
-            ThreadContextPickerDelegate::new(thread_store, context_picker, context_store);
+        let delegate = ThreadContextPickerDelegate::new(
+            thread_store,
+            context_picker,
+            context_store,
+            confirm_behavior,
+        );
         let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
 
         ThreadContextPicker { picker }
@@ -43,15 +47,16 @@ impl Render for ThreadContextPicker {
 }
 
 #[derive(Debug, Clone)]
-struct ThreadContextEntry {
-    id: ThreadId,
-    summary: SharedString,
+pub struct ThreadContextEntry {
+    pub id: ThreadId,
+    pub summary: SharedString,
 }
 
 pub struct ThreadContextPickerDelegate {
     thread_store: WeakModel<ThreadStore>,
     context_picker: WeakView<ContextPicker>,
     context_store: WeakModel<context_store::ContextStore>,
+    confirm_behavior: ConfirmBehavior,
     matches: Vec<ThreadContextEntry>,
     selected_index: usize,
 }
@@ -61,11 +66,13 @@ impl ThreadContextPickerDelegate {
         thread_store: WeakModel<ThreadStore>,
         context_picker: WeakView<ContextPicker>,
         context_store: WeakModel<context_store::ContextStore>,
+        confirm_behavior: ConfirmBehavior,
     ) -> Self {
         ThreadContextPickerDelegate {
             thread_store,
             context_picker,
             context_store,
+            confirm_behavior,
             matches: Vec::new(),
             selected_index: 0,
         }
@@ -96,10 +103,8 @@ impl PickerDelegate for ThreadContextPickerDelegate {
             this.threads(cx)
                 .into_iter()
                 .map(|thread| {
-                    const DEFAULT_SUMMARY: SharedString = SharedString::new_static("New Thread");
-
                     let id = thread.read(cx).id().clone();
-                    let summary = thread.read(cx).summary().unwrap_or(DEFAULT_SUMMARY);
+                    let summary = thread.read(cx).summary_or_default();
                     ThreadContextEntry { id, summary }
                 })
                 .collect::<Vec<_>>()
@@ -146,7 +151,9 @@ impl PickerDelegate for ThreadContextPickerDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
-        let entry = &self.matches[self.selected_index];
+        let Some(entry) = self.matches.get(self.selected_index) else {
+            return;
+        };
 
         let Some(thread_store) = self.thread_store.upgrade() else {
             return;
@@ -158,34 +165,18 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         };
 
         self.context_store
-            .update(cx, |context_store, cx| {
-                let text = thread.update(cx, |thread, _cx| {
-                    let mut text = String::new();
-
-                    for message in thread.messages() {
-                        text.push_str(match message.role {
-                            language_model::Role::User => "User:",
-                            language_model::Role::Assistant => "Assistant:",
-                            language_model::Role::System => "System:",
-                        });
-                        text.push('\n');
-
-                        text.push_str(&message.text);
-                        text.push('\n');
-                    }
-
-                    text
-                });
-
-                context_store.insert_context(ContextKind::Thread, entry.summary.clone(), text);
-            })
+            .update(cx, |context_store, cx| context_store.add_thread(thread, cx))
             .ok();
+
+        match self.confirm_behavior {
+            ConfirmBehavior::KeepOpen => {}
+            ConfirmBehavior::Close => self.dismissed(cx),
+        }
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         self.context_picker
-            .update(cx, |this, cx| {
-                this.reset_mode();
+            .update(cx, |_, cx| {
                 cx.emit(DismissEvent);
             })
             .ok();
@@ -195,15 +186,41 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let thread = &self.matches[ix];
 
-        Some(
-            ListItem::new(ix)
-                .inset(true)
-                .toggle_state(selected)
-                .child(thread.summary.clone()),
-        )
+        Some(ListItem::new(ix).inset(true).toggle_state(selected).child(
+            render_thread_context_entry(thread, self.context_store.clone(), cx),
+        ))
     }
+}
+
+pub fn render_thread_context_entry(
+    thread: &ThreadContextEntry,
+    context_store: WeakModel<ContextStore>,
+    cx: &mut WindowContext,
+) -> Div {
+    let added = context_store.upgrade().map_or(false, |ctx_store| {
+        ctx_store.read(cx).includes_thread(&thread.id).is_some()
+    });
+
+    h_flex()
+        .gap_1()
+        .w_full()
+        .child(Icon::new(IconName::MessageCircle).size(IconSize::Small))
+        .child(Label::new(thread.summary.clone()))
+        .child(div().w_full())
+        .when(added, |el| {
+            el.child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::Check)
+                            .size(IconSize::Small)
+                            .color(Color::Success),
+                    )
+                    .child(Label::new("Added").size(LabelSize::Small)),
+            )
+        })
 }

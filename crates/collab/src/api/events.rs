@@ -279,6 +279,7 @@ pub async fn post_panic(
 
     let report: telemetry_events::PanicRequest = serde_json::from_slice(&body)
         .map_err(|_| Error::http(StatusCode::BAD_REQUEST, "invalid json".into()))?;
+    let incident_id = uuid::Uuid::new_v4().to_string();
     let panic = report.panic;
 
     if panic.os_name == "Linux" && panic.os_version == Some("1.0.0".to_string()) {
@@ -288,11 +289,37 @@ pub async fn post_panic(
         ))?;
     }
 
+    if let Some(blob_store_client) = app.blob_store_client.as_ref() {
+        let response = blob_store_client
+            .head_object()
+            .bucket(CRASH_REPORTS_BUCKET)
+            .key(incident_id.clone() + ".json")
+            .send()
+            .await;
+
+        if response.is_ok() {
+            log::info!("We've already uploaded this crash");
+            return Ok(());
+        }
+
+        blob_store_client
+            .put_object()
+            .bucket(CRASH_REPORTS_BUCKET)
+            .key(incident_id.clone() + ".json")
+            .acl(aws_sdk_s3::types::ObjectCannedAcl::PublicRead)
+            .body(ByteStream::from(body.to_vec()))
+            .send()
+            .await
+            .map_err(|e| log::error!("Failed to upload crash: {}", e))
+            .ok();
+    }
+
     tracing::error!(
         service = "client",
         version = %panic.app_version,
         os_name = %panic.os_name,
         os_version = %panic.os_version.clone().unwrap_or_default(),
+        incident_id = %incident_id,
         installation_id = %panic.installation_id.clone().unwrap_or_default(),
         description = %panic.payload,
         backtrace = %panic.backtrace.join("\n"),
@@ -331,10 +358,19 @@ pub async fn post_panic(
                         panic.app_version
                     )))
                     .add_field({
+                        let hostname = app.config.blob_store_url.clone().unwrap_or_default();
+                        let hostname = hostname.strip_prefix("https://").unwrap_or_else(|| {
+                            hostname.strip_prefix("http://").unwrap_or_default()
+                        });
+
                         slack::Text::markdown(format!(
-                            "*OS:*\n{} {}",
+                            "*{} {}:*\n<https://{}.{}/{}.json|{}…>",
                             panic.os_name,
-                            panic.os_version.unwrap_or_default()
+                            panic.os_version.unwrap_or_default(),
+                            CRASH_REPORTS_BUCKET,
+                            hostname,
+                            incident_id,
+                            incident_id.chars().take(8).collect::<String>(),
                         ))
                     })
                 })
@@ -361,6 +397,12 @@ pub async fn post_panic(
 }
 
 fn report_to_slack(panic: &Panic) -> bool {
+    // Panics on macOS should make their way to Slack as a crash report,
+    // so we don't need to send them a second time via this channel.
+    if panic.os_name == "macOS" {
+        return false;
+    }
+
     if panic.payload.contains("ERROR_SURFACE_LOST_KHR") {
         return false;
     }

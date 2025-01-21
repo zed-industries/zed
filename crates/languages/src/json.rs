@@ -64,6 +64,8 @@ pub struct JsonLspAdapter {
 }
 
 impl JsonLspAdapter {
+    const PACKAGE_NAME: &str = "vscode-langservers-extracted";
+
     pub fn new(node: NodeRuntime, languages: Arc<LanguageRegistry>) -> Self {
         Self {
             node,
@@ -73,8 +75,7 @@ impl JsonLspAdapter {
     }
 
     fn get_workspace_config(language_names: Vec<String>, cx: &mut AppContext) -> Value {
-        let action_names = cx.all_action_names();
-
+        let keymap_schema = KeymapFile::generate_json_schema_for_registered_actions(cx);
         let font_names = &cx.text_system().all_font_names();
         let settings_schema = cx.global::<SettingsStore>().json_schema(
             &SettingsJsonSchemaParams {
@@ -87,6 +88,8 @@ impl JsonLspAdapter {
         let tsconfig_schema = serde_json::Value::from_str(TSCONFIG_SCHEMA).unwrap();
         let package_json_schema = serde_json::Value::from_str(PACKAGE_JSON_SCHEMA).unwrap();
 
+        // This can be viewed via `debug: open language server logs` -> `json-language-server` ->
+        // `Server Info`
         serde_json::json!({
             "json": {
                 "format": {
@@ -114,7 +117,7 @@ impl JsonLspAdapter {
                     },
                     {
                         "fileMatch": [schema_file_match(paths::keymap_file())],
-                        "schema": KeymapFile::generate_json_schema(action_names),
+                        "schema": keymap_schema,
                     },
                     {
                         "fileMatch": [
@@ -142,9 +145,34 @@ impl LspAdapter for JsonLspAdapter {
     ) -> Result<Box<dyn 'static + Send + Any>> {
         Ok(Box::new(
             self.node
-                .npm_package_latest_version("vscode-langservers-extracted")
+                .npm_package_latest_version(Self::PACKAGE_NAME)
                 .await?,
         ) as Box<_>)
+    }
+
+    async fn check_if_version_installed(
+        &self,
+        version: &(dyn 'static + Send + Any),
+        container_dir: &PathBuf,
+        _: &dyn LspAdapterDelegate,
+    ) -> Option<LanguageServerBinary> {
+        let version = version.downcast_ref::<String>().unwrap();
+        let server_path = container_dir.join(SERVER_PATH);
+
+        let should_install_language_server = self
+            .node
+            .should_install_npm_package(Self::PACKAGE_NAME, &server_path, &container_dir, &version)
+            .await;
+
+        if should_install_language_server {
+            None
+        } else {
+            Some(LanguageServerBinary {
+                path: self.node.binary_path().await.ok()?,
+                env: None,
+                arguments: server_binary_arguments(&server_path),
+            })
+        }
     }
 
     async fn fetch_server_binary(
@@ -155,18 +183,13 @@ impl LspAdapter for JsonLspAdapter {
     ) -> Result<LanguageServerBinary> {
         let latest_version = latest_version.downcast::<String>().unwrap();
         let server_path = container_dir.join(SERVER_PATH);
-        let package_name = "vscode-langservers-extracted";
 
-        let should_install_language_server = self
-            .node
-            .should_install_npm_package(package_name, &server_path, &container_dir, &latest_version)
-            .await;
-
-        if should_install_language_server {
-            self.node
-                .npm_install_packages(&container_dir, &[(package_name, latest_version.as_str())])
-                .await?;
-        }
+        self.node
+            .npm_install_packages(
+                &container_dir,
+                &[(Self::PACKAGE_NAME, latest_version.as_str())],
+            )
+            .await?;
 
         Ok(LanguageServerBinary {
             path: self.node.binary_path().await?,

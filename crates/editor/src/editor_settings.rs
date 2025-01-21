@@ -35,6 +35,7 @@ pub struct EditorSettings {
     pub auto_signature_help: bool,
     pub show_signature_help_after_edits: bool,
     pub jupyter: Jupyter,
+    pub show_inline_completions_in_menu: bool,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, PartialEq, Eq, JsonSchema)]
@@ -104,7 +105,7 @@ pub struct Scrollbar {
     pub git_diff: bool,
     pub selected_symbol: bool,
     pub search_results: bool,
-    pub diagnostics: bool,
+    pub diagnostics: ScrollbarDiagnostics,
     pub cursors: bool,
     pub axes: ScrollbarAxes,
 }
@@ -147,6 +148,73 @@ pub struct ScrollbarAxes {
     ///
     /// Default: true
     pub vertical: bool,
+}
+
+/// Which diagnostic indicators to show in the scrollbar.
+///
+/// Default: all
+#[derive(Copy, Clone, Debug, Serialize, JsonSchema, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum ScrollbarDiagnostics {
+    /// Show all diagnostic levels: hint, information, warnings, error.
+    All,
+    /// Show only the following diagnostic levels: information, warning, error.
+    Information,
+    /// Show only the following diagnostic levels: warning, error.
+    Warning,
+    /// Show only the following diagnostic level: error.
+    Error,
+    /// Do not show diagnostics.
+    None,
+}
+
+impl<'de> Deserialize<'de> for ScrollbarDiagnostics {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ScrollbarDiagnostics;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(
+                    f,
+                    r#"a boolean or one of "all", "information", "warning", "error", "none""#
+                )
+            }
+
+            fn visit_bool<E>(self, b: bool) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                match b {
+                    false => Ok(ScrollbarDiagnostics::None),
+                    true => Ok(ScrollbarDiagnostics::All),
+                }
+            }
+
+            fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                match s {
+                    "all" => Ok(ScrollbarDiagnostics::All),
+                    "information" => Ok(ScrollbarDiagnostics::Information),
+                    "warning" => Ok(ScrollbarDiagnostics::Warning),
+                    "error" => Ok(ScrollbarDiagnostics::Error),
+                    "none" => Ok(ScrollbarDiagnostics::None),
+                    _ => Err(E::unknown_variant(
+                        s,
+                        &["all", "information", "warning", "error", "none"],
+                    )),
+                }
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
 }
 
 /// The key to use for adding multiple cursors
@@ -300,6 +368,12 @@ pub struct EditorSettingsContent {
     /// Default: false
     pub show_signature_help_after_edits: Option<bool>,
 
+    /// Whether to show the inline completions next to the completions provided by a language server.
+    /// Only has an effect if inline completion provider supports it.
+    ///
+    /// Default: true
+    pub show_inline_completions_in_menu: Option<bool>,
+
     /// Jupyter REPL settings.
     pub jupyter: Option<JupyterContent>,
 }
@@ -341,10 +415,10 @@ pub struct ScrollbarContent {
     ///
     /// Default: true
     pub selected_symbol: Option<bool>,
-    /// Whether to show diagnostic indicators in the scrollbar.
+    /// Which diagnostic indicators to show in the scrollbar:
     ///
-    /// Default: true
-    pub diagnostics: Option<bool>,
+    /// Default: all
+    pub diagnostics: Option<ScrollbarDiagnostics>,
     /// Whether to show cursor positions in the scrollbar.
     ///
     /// Default: true

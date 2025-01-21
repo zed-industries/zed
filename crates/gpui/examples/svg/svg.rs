@@ -1,7 +1,11 @@
+use std::fs;
 use std::path::PathBuf;
 
-use gpui::*;
-use std::fs;
+use anyhow::Result;
+use gpui::{
+    div, prelude::*, px, rgb, size, svg, App, AppContext, AssetSource, Bounds, SharedString,
+    ViewContext, WindowBounds, WindowOptions,
+};
 
 struct Assets {
     base: PathBuf,

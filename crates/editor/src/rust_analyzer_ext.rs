@@ -33,7 +33,7 @@ pub fn apply_related_actions(editor: &View<Editor>, cx: &mut WindowContext) {
 pub fn expand_macro_recursively(
     editor: &mut Editor,
     _: &ExpandMacroRecursively,
-    cx: &mut ViewContext<'_, Editor>,
+    cx: &mut ViewContext<Editor>,
 ) {
     if editor.selections.count() == 0 {
         return;
@@ -98,7 +98,7 @@ pub fn expand_macro_recursively(
     .detach_and_log_err(cx);
 }
 
-pub fn open_docs(editor: &mut Editor, _: &OpenDocs, cx: &mut ViewContext<'_, Editor>) {
+pub fn open_docs(editor: &mut Editor, _: &OpenDocs, cx: &mut ViewContext<Editor>) {
     if editor.selections.count() == 0 {
         return;
     }

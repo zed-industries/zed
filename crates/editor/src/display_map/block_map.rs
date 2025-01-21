@@ -1411,6 +1411,66 @@ impl BlockSnapshot {
         })
     }
 
+    pub fn sticky_header_excerpt(&self, top_row: u32) -> Option<StickyHeaderExcerpt<'_>> {
+        let mut cursor = self.transforms.cursor::<BlockRow>(&());
+        cursor.seek(&BlockRow(top_row), Bias::Left, &());
+
+        while let Some(transform) = cursor.item() {
+            let start = cursor.start().0;
+            let end = cursor.end(&()).0;
+
+            match &transform.block {
+                Some(Block::ExcerptBoundary {
+                    prev_excerpt,
+                    next_excerpt,
+                    starts_new_buffer,
+                    show_excerpt_controls,
+                    ..
+                }) => {
+                    let matches_start = if *show_excerpt_controls && prev_excerpt.is_some() {
+                        start < top_row
+                    } else {
+                        start <= top_row
+                    };
+
+                    if matches_start && top_row <= end {
+                        return next_excerpt.as_ref().map(|excerpt| StickyHeaderExcerpt {
+                            next_buffer_row: None,
+                            next_excerpt_controls_present: *show_excerpt_controls,
+                            excerpt,
+                        });
+                    }
+
+                    let next_buffer_row = if *starts_new_buffer { Some(end) } else { None };
+
+                    return prev_excerpt.as_ref().map(|excerpt| StickyHeaderExcerpt {
+                        excerpt,
+                        next_buffer_row,
+                        next_excerpt_controls_present: *show_excerpt_controls,
+                    });
+                }
+                Some(Block::FoldedBuffer {
+                    prev_excerpt: Some(excerpt),
+                    ..
+                }) if top_row <= start => {
+                    return Some(StickyHeaderExcerpt {
+                        next_buffer_row: Some(end),
+                        next_excerpt_controls_present: false,
+                        excerpt,
+                    });
+                }
+                Some(Block::FoldedBuffer { .. }) | Some(Block::Custom(_)) | None => {}
+            }
+
+            // This is needed to iterate past None / FoldedBuffer / Custom blocks. For FoldedBuffer,
+            // if scrolled slightly past the header of a folded block, the next block is needed for
+            // the sticky header.
+            cursor.next(&());
+        }
+
+        None
+    }
+
     pub fn block_for_id(&self, block_id: BlockId) -> Option<Block> {
         let buffer = self.wrap_snapshot.buffer_snapshot();
         let wrap_point = match block_id {
@@ -1692,6 +1752,13 @@ impl<'a> BlockChunks<'a> {
             self.input_chunk = Chunk::default();
         }
     }
+}
+
+pub struct StickyHeaderExcerpt<'a> {
+    pub excerpt: &'a ExcerptInfo,
+    pub next_excerpt_controls_present: bool,
+    // TODO az remove option
+    pub next_buffer_row: Option<u32>,
 }
 
 impl<'a> Iterator for BlockChunks<'a> {
@@ -2681,7 +2748,7 @@ mod tests {
                 .iter()
                 .filter(|(_, block)| matches!(block, Block::FoldedBuffer { .. }))
                 .count(),
-            "Should have one folded block, prodicing a header of the second buffer"
+            "Should have one folded block, producing a header of the second buffer"
         );
         assert_eq!(
             blocks_snapshot.text(),
@@ -2927,7 +2994,7 @@ mod tests {
                     }
                 })
                 .count(),
-            "Should have one folded block, prodicing a header of the second buffer"
+            "Should have one folded block, producing a header of the second buffer"
         );
         assert_eq!(blocks_snapshot.text(), "\n");
         assert_eq!(

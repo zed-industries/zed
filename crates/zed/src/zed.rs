@@ -12,7 +12,6 @@ pub(crate) mod windows_only_instance;
 use anyhow::Context as _;
 pub use app_menus::*;
 use assets::Assets;
-use assistant::PromptBuilder;
 use breadcrumbs::Breadcrumbs;
 use client::{zed_urls, ZED_URL_SCHEME};
 use collections::VecDeque;
@@ -20,10 +19,12 @@ use command_palette_hooks::CommandPaletteFilter;
 use editor::ProposedChangesEditorToolbar;
 use editor::{scroll::Autoscroll, Editor, MultiBuffer};
 use feature_flags::FeatureFlagAppExt;
+use futures::FutureExt;
 use futures::{channel::mpsc, select_biased, StreamExt};
 use gpui::{
-    actions, point, px, AppContext, AsyncAppContext, Context, FocusableView, MenuItem,
-    PathPromptOptions, PromptLevel, ReadGlobal, Task, TitlebarOptions, View, ViewContext,
+    actions, point, px, Action, AnyWindowHandle, AppContext, AsyncAppContext, Context,
+    DismissEvent, Element, FocusableView, KeyBinding, MenuItem, ParentElement, PathPromptOptions,
+    PromptLevel, ReadGlobal, SharedString, Styled, Task, TitlebarOptions, View, ViewContext,
     VisualContext, WindowKind, WindowOptions,
 };
 pub use open_listener::*;
@@ -31,25 +32,29 @@ use outline_panel::OutlinePanel;
 use paths::{local_settings_file_relative_path, local_tasks_file_relative_path};
 use project::{DirectoryLister, ProjectItem};
 use project_panel::ProjectPanel;
+use prompt_library::PromptBuilder;
 use quick_action_bar::QuickActionBar;
 use recent_projects::open_ssh_project;
 use release_channel::{AppCommitSha, ReleaseChannel};
 use rope::Rope;
 use search::project_search::ProjectSearchBar;
 use settings::{
-    initial_project_settings_content, initial_tasks_content, KeymapFile, Settings, SettingsStore,
-    DEFAULT_KEYMAP_PATH,
+    initial_project_settings_content, initial_tasks_content, update_settings_file, KeymapFile,
+    KeymapFileLoadResult, Settings, SettingsStore, DEFAULT_KEYMAP_PATH, VIM_KEYMAP_PATH,
 };
 use std::any::TypeId;
 use std::path::PathBuf;
+use std::rc::Rc;
 use std::{borrow::Cow, ops::Deref, path::Path, sync::Arc};
 use terminal_view::terminal_panel::{self, TerminalPanel};
-use theme::ActiveTheme;
+use theme::{ActiveTheme, ThemeSettings};
+use ui::PopoverMenuHandle;
+use util::markdown::MarkdownString;
 use util::{asset_str, ResultExt};
 use uuid::Uuid;
 use vim_mode_setting::VimModeSetting;
 use welcome::{BaseKeymap, MultibufferHint};
-use workspace::notifications::NotificationId;
+use workspace::notifications::{dismiss_app_notification, show_app_notification, NotificationId};
 use workspace::CloseIntent;
 use workspace::{
     create_and_open_local_file, notifications::simple_message_notification::MessageNotification,
@@ -152,20 +157,30 @@ pub fn initialize_workspace(
         })
         .detach();
 
-        #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-        initialize_linux_file_watcher(cx);
+        #[cfg(not(target_os = "macos"))]
+        initialize_file_watcher(cx);
 
         if let Some(specs) = cx.gpu_specs() {
             log::info!("Using GPU: {:?}", specs);
             show_software_emulation_warning_if_needed(specs, cx);
         }
 
+        let popover_menu_handle = PopoverMenuHandle::default();
+
         let inline_completion_button = cx.new_view(|cx| {
             inline_completion_button::InlineCompletionButton::new(
                 workspace.weak_handle(),
                 app_state.fs.clone(),
+                app_state.user_store.clone(),
+                popover_menu_handle.clone(),
                 cx,
             )
+        });
+
+        workspace.register_action({
+            move |_, _: &inline_completion_button::ToggleMenu, cx| {
+                popover_menu_handle.toggle(cx);
+            }
         });
 
         let diagnostic_summary =
@@ -234,8 +249,8 @@ fn feature_gate_zed_pro_actions(cx: &mut AppContext) {
 }
 
 #[cfg(any(target_os = "linux", target_os = "freebsd"))]
-fn initialize_linux_file_watcher(cx: &mut ViewContext<Workspace>) {
-    if let Err(e) = fs::linux_watcher::global(|_| {}) {
+fn initialize_file_watcher(cx: &mut ViewContext<Workspace>) {
+    if let Err(e) = fs::fs_watcher::global(|_| {}) {
         let message = format!(
             db::indoc! {r#"
             inotify_init returned {}
@@ -263,8 +278,38 @@ fn initialize_linux_file_watcher(cx: &mut ViewContext<Workspace>) {
     }
 }
 
+#[cfg(target_os = "windows")]
+fn initialize_file_watcher(cx: &mut ViewContext<Workspace>) {
+    if let Err(e) = fs::fs_watcher::global(|_| {}) {
+        let message = format!(
+            db::indoc! {r#"
+            ReadDirectoryChangesW initialization failed: {}
+
+            This may occur on network filesystems and WSL paths. For troubleshooting see: https://zed.dev/docs/windows
+            "#},
+            e
+        );
+        let prompt = cx.prompt(
+            PromptLevel::Critical,
+            "Could not start ReadDirectoryChangesW",
+            Some(&message),
+            &["Troubleshoot and Quit"],
+        );
+        cx.spawn(|_, mut cx| async move {
+            if prompt.await == Ok(0) {
+                cx.update(|cx| {
+                    cx.open_url("https://zed.dev/docs/windows");
+                    cx.quit()
+                })
+                .ok();
+            }
+        })
+        .detach()
+    }
+}
+
 fn show_software_emulation_warning_if_needed(
-    specs: gpui::GPUSpecs,
+    specs: gpui::GpuSpecs,
     cx: &mut ViewContext<Workspace>,
 ) {
     if specs.is_software_emulated && std::env::var("ZED_ALLOW_EMULATED_GPU").is_err() {
@@ -300,7 +345,6 @@ fn show_software_emulation_warning_if_needed(
 }
 
 fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Workspace>) {
-    let release_channel = ReleaseChannel::global(cx);
     let assistant2_feature_flag = cx.wait_for_flag::<feature_flags::Assistant2FeatureFlag>();
     let git_ui_feature_flag = cx.wait_for_flag::<feature_flags::GitUiFeatureFlag>();
 
@@ -346,10 +390,19 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             workspace.add_panel(channels_panel, cx);
             workspace.add_panel(chat_panel, cx);
             workspace.add_panel(notification_panel, cx);
-            workspace.add_panel(assistant_panel, cx);
+            workspace.add_panel(assistant_panel, cx)
         })?;
 
-        let git_ui_enabled = git_ui_feature_flag.await;
+        let git_ui_enabled = {
+            let mut git_ui_feature_flag = git_ui_feature_flag.fuse();
+            let mut timeout =
+                FutureExt::fuse(smol::Timer::after(std::time::Duration::from_secs(5)));
+
+            select_biased! {
+                is_git_ui_enabled = git_ui_feature_flag => is_git_ui_enabled,
+                _ = timeout => false,
+            }
+        };
         let git_panel = if git_ui_enabled {
             Some(git_ui::git_panel::GitPanel::load(workspace_handle.clone(), cx.clone()).await?)
         } else {
@@ -361,10 +414,17 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             }
         })?;
 
-        let is_assistant2_enabled = if cfg!(test) || release_channel != ReleaseChannel::Dev {
+        let is_assistant2_enabled = if cfg!(test) {
             false
         } else {
-            assistant2_feature_flag.await
+            let mut assistant2_feature_flag = assistant2_feature_flag.fuse();
+            let mut timeout =
+                FutureExt::fuse(smol::Timer::after(std::time::Duration::from_secs(5)));
+
+            select_biased! {
+                is_assistant2_enabled = assistant2_feature_flag => is_assistant2_enabled,
+                _ = timeout => false,
+            }
         };
         let assistant2_panel = if is_assistant2_enabled {
             Some(assistant2::AssistantPanel::load(workspace_handle.clone(), cx.clone()).await?)
@@ -381,7 +441,9 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             } else {
                 workspace.register_action(assistant::AssistantPanel::inline_assist);
             }
-        })
+        })?;
+
+        anyhow::Ok(())
     })
     .detach();
 }
@@ -406,9 +468,6 @@ fn register_actions(
             OpenListener::global(cx).open_urls(vec![action.url.clone()])
         })
         .register_action(|_, action: &OpenBrowser, cx| cx.open_url(&action.url))
-        .register_action(move |_, _: &zed_actions::IncreaseBufferFontSize, cx| {
-            theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
-        })
         .register_action(|workspace, _: &workspace::Open, cx| {
             workspace
                 .client()
@@ -444,29 +503,68 @@ fn register_actions(
             })
             .detach()
         })
-        .register_action(move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
-            theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, _: &zed_actions::IncreaseUiFontSize, cx| {
+                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
+                    let buffer_font_size = ThemeSettings::clamp_font_size(
+                        ThemeSettings::get_global(cx).ui_font_size + px(1.),
+                    );
+
+                    let _ = settings.ui_font_size.insert(buffer_font_size.into());
+                });
+            }
         })
-        .register_action(move |_, _: &zed_actions::ResetBufferFontSize, cx| {
-            theme::reset_buffer_font_size(cx)
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, _: &zed_actions::DecreaseUiFontSize, cx| {
+                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
+                    let buffer_font_size = ThemeSettings::clamp_font_size(
+                        ThemeSettings::get_global(cx).ui_font_size - px(1.),
+                    );
+
+                    let _ = settings.ui_font_size.insert(buffer_font_size.into());
+                });
+            }
         })
-        .register_action(move |_, _: &zed_actions::IncreaseUiFontSize, cx| {
-            theme::adjust_ui_font_size(cx, |size| *size += px(1.0))
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, _: &zed_actions::ResetUiFontSize, cx| {
+                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, _| {
+                    let _ = settings.ui_font_size.take();
+                });
+            }
         })
-        .register_action(move |_, _: &zed_actions::DecreaseUiFontSize, cx| {
-            theme::adjust_ui_font_size(cx, |size| *size -= px(1.0))
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, _: &zed_actions::IncreaseBufferFontSize, cx| {
+                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
+                    let buffer_font_size = ThemeSettings::clamp_font_size(
+                        ThemeSettings::get_global(cx).buffer_font_size() + px(1.),
+                    );
+
+                    let _ = settings.buffer_font_size.insert(buffer_font_size.into());
+                });
+            }
         })
-        .register_action(move |_, _: &zed_actions::ResetUiFontSize, cx| {
-            theme::reset_ui_font_size(cx)
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
+                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, cx| {
+                    let buffer_font_size = ThemeSettings::clamp_font_size(
+                        ThemeSettings::get_global(cx).buffer_font_size() - px(1.),
+                    );
+                    let _ = settings.buffer_font_size.insert(buffer_font_size.into());
+                });
+            }
         })
-        .register_action(move |_, _: &zed_actions::IncreaseBufferFontSize, cx| {
-            theme::adjust_buffer_font_size(cx, |size| *size += px(1.0))
-        })
-        .register_action(move |_, _: &zed_actions::DecreaseBufferFontSize, cx| {
-            theme::adjust_buffer_font_size(cx, |size| *size -= px(1.0))
-        })
-        .register_action(move |_, _: &zed_actions::ResetBufferFontSize, cx| {
-            theme::reset_buffer_font_size(cx)
+        .register_action({
+            let fs = app_state.fs.clone();
+            move |_, _: &zed_actions::ResetBufferFontSize, cx| {
+                update_settings_file::<ThemeSettings>(fs.clone(), cx, move |settings, _| {
+                    let _ = settings.buffer_font_size.take();
+                });
+            }
         })
         .register_action(install_cli)
         .register_action(|_, _: &install_cli::RegisterZedScheme, cx| {
@@ -696,7 +794,7 @@ fn initialize_pane(workspace: &Workspace, pane: &View<Pane>, cx: &mut ViewContex
     });
 }
 
-fn about(_: &mut Workspace, _: &zed_actions::About, cx: &mut gpui::ViewContext<Workspace>) {
+fn about(_: &mut Workspace, _: &zed_actions::About, cx: &mut ViewContext<Workspace>) {
     let release_channel = ReleaseChannel::global(cx).display_name();
     let version = env!("CARGO_PKG_VERSION");
     let message = format!("{release_channel} {version}");
@@ -899,7 +997,6 @@ fn open_log_file(workspace: &mut Workspace, cx: &mut ViewContext<Workspace>) {
 pub fn handle_keymap_file_changes(
     mut user_keymap_file_rx: mpsc::UnboundedReceiver<String>,
     cx: &mut AppContext,
-    keymap_changed: impl Fn(Option<anyhow::Error>, &mut AppContext) + 'static,
 ) {
     BaseKeymap::register(cx);
     VimModeSetting::register(cx);
@@ -920,6 +1017,16 @@ pub fn handle_keymap_file_changes(
     })
     .detach();
 
+    // Need to notify about keymap load errors when new workspaces are created, so that initial
+    // keymap load errors are shown to the user.
+    let (new_workspace_window_tx, mut new_workspace_window_rx) = mpsc::unbounded();
+    cx.observe_new_views(move |_: &mut Workspace, cx| {
+        new_workspace_window_tx
+            .unbounded_send(cx.window_handle())
+            .unwrap();
+    })
+    .detach();
+
     let mut current_mapping = settings::get_key_equivalents(cx.keyboard_layout());
     cx.on_keyboard_layout_change(move |cx| {
         let next_mapping = settings::get_key_equivalents(cx.keyboard_layout());
@@ -932,36 +1039,179 @@ pub fn handle_keymap_file_changes(
 
     load_default_keymap(cx);
 
+    struct KeymapParseErrorNotification;
+    let notification_id = NotificationId::unique::<KeymapParseErrorNotification>();
+
     cx.spawn(move |cx| async move {
-        let mut user_keymap = KeymapFile::default();
+        let mut user_keymap_content = String::new();
+        enum LastError {
+            None,
+            JsonError(anyhow::Error),
+            LoadError(MarkdownString),
+        }
+        let mut last_load_error = LastError::None;
         loop {
-            select_biased! {
-                _ = base_keymap_rx.next() => {}
-                _ = keyboard_layout_rx.next() => {}
-                user_keymap_content = user_keymap_file_rx.next() => {
-                    if let Some(user_keymap_content) = user_keymap_content {
-                        match KeymapFile::parse(&user_keymap_content) {
-                            Ok(keymap_content) => {
-                                cx.update(|cx| keymap_changed(None, cx)).log_err();
-                                user_keymap = keymap_content;
+            let new_workspace_window = select_biased! {
+                _ = base_keymap_rx.next() => None,
+                _ = keyboard_layout_rx.next() => None,
+                workspace = new_workspace_window_rx.next() => workspace,
+                content = user_keymap_file_rx.next() => {
+                    if let Some(content) = content {
+                        user_keymap_content = content;
+                    }
+                    None
+                }
+            };
+            cx.update(|cx| {
+                // No need to reload keymaps when a new workspace is added, just need to send the notification to it.
+                if new_workspace_window.is_none() {
+                    let load_result = KeymapFile::load(&user_keymap_content, cx);
+                    match load_result {
+                        KeymapFileLoadResult::Success { key_bindings } => {
+                            reload_keymaps(cx, key_bindings);
+                            dismiss_app_notification(&notification_id, cx);
+                            last_load_error = LastError::None;
+                        }
+                        KeymapFileLoadResult::SomeFailedToLoad {
+                            key_bindings,
+                            error_message,
+                        } => {
+                            if !key_bindings.is_empty() {
+                                reload_keymaps(cx, key_bindings);
                             }
-                            Err(error) => {
-                                cx.update(|cx| keymap_changed(Some(error), cx)).log_err();
-                            }
+                            last_load_error = LastError::LoadError(error_message);
+                        }
+                        KeymapFileLoadResult::JsonParseFailure { error } => {
+                            last_load_error = LastError::JsonError(error);
                         }
                     }
                 }
-            }
-            cx.update(|cx| reload_keymaps(cx, &user_keymap)).ok();
+                match &last_load_error {
+                    LastError::None => {}
+                    LastError::JsonError(err) => {
+                        show_keymap_file_json_error(
+                            new_workspace_window,
+                            notification_id.clone(),
+                            err,
+                            cx,
+                        );
+                    }
+                    LastError::LoadError(message) => {
+                        show_keymap_file_load_error(
+                            new_workspace_window,
+                            notification_id.clone(),
+                            message.clone(),
+                            cx,
+                        );
+                    }
+                }
+            })
+            .ok();
         }
     })
     .detach();
 }
 
-fn reload_keymaps(cx: &mut AppContext, keymap_content: &KeymapFile) {
+fn show_keymap_file_json_error(
+    new_workspace_window: Option<AnyWindowHandle>,
+    notification_id: NotificationId,
+    error: &anyhow::Error,
+    cx: &mut AppContext,
+) {
+    let message: SharedString =
+        format!("JSON parse error in keymap file. Bindings not reloaded.\n\n{error}").into();
+    show_notification_to_specific_workspace_or_all_workspaces(
+        new_workspace_window,
+        notification_id,
+        cx,
+        move |cx| {
+            cx.new_view(|_cx| {
+                MessageNotification::new(message.clone())
+                    .with_click_message("Open keymap file")
+                    .on_click(|cx| {
+                        cx.dispatch_action(zed_actions::OpenKeymap.boxed_clone());
+                        cx.emit(DismissEvent);
+                    })
+            })
+        },
+    );
+}
+
+fn show_keymap_file_load_error(
+    new_workspace_window: Option<AnyWindowHandle>,
+    notification_id: NotificationId,
+    markdown_error_message: MarkdownString,
+    cx: &mut AppContext,
+) {
+    let parsed_markdown = cx.background_executor().spawn(async move {
+        let file_location_directory = None;
+        let language_registry = None;
+        markdown_preview::markdown_parser::parse_markdown(
+            &markdown_error_message.0,
+            file_location_directory,
+            language_registry,
+        )
+        .await
+    });
+
+    cx.spawn(move |cx| async move {
+        let parsed_markdown = Rc::new(parsed_markdown.await);
+        cx.update(|cx| {
+            show_notification_to_specific_workspace_or_all_workspaces(
+                new_workspace_window,
+                notification_id,
+                cx,
+                move |cx| {
+                    let workspace_handle = cx.view().downgrade();
+                    let parsed_markdown = parsed_markdown.clone();
+                    cx.new_view(move |_cx| {
+                        MessageNotification::new_from_builder(move |cx| {
+                            gpui::div()
+                                .text_xs()
+                                .child(markdown_preview::markdown_renderer::render_parsed_markdown(
+                                    &parsed_markdown.clone(),
+                                    Some(workspace_handle.clone()),
+                                    cx,
+                                ))
+                                .into_any()
+                        })
+                        .with_click_message("Open keymap file")
+                        .on_click(|cx| {
+                            cx.dispatch_action(zed_actions::OpenKeymap.boxed_clone());
+                            cx.emit(DismissEvent);
+                        })
+                    })
+                },
+            )
+        })
+        .ok();
+    })
+    .detach();
+}
+
+fn show_notification_to_specific_workspace_or_all_workspaces<V>(
+    new_workspace_window: Option<AnyWindowHandle>,
+    notification_id: NotificationId,
+    cx: &mut AppContext,
+    build_notification: impl Fn(&mut ViewContext<Workspace>) -> View<V>,
+) where
+    V: workspace::notifications::Notification,
+{
+    if let Some(workspace_window) = new_workspace_window.and_then(|w| w.downcast::<Workspace>()) {
+        workspace_window
+            .update(cx, |workspace, cx| {
+                workspace.show_notification(notification_id, cx, build_notification);
+            })
+            .ok();
+    } else {
+        show_app_notification(notification_id, cx, build_notification).ok();
+    }
+}
+
+fn reload_keymaps(cx: &mut AppContext, user_key_bindings: Vec<KeyBinding>) {
     cx.clear_key_bindings();
     load_default_keymap(cx);
-    keymap_content.clone().add_to_cx(cx).log_err();
+    cx.bind_keys(user_key_bindings);
     cx.set_menus(app_menus());
     cx.set_dock_menu(vec![MenuItem::action("New Window", workspace::NewWindow)]);
 }
@@ -972,13 +1222,13 @@ pub fn load_default_keymap(cx: &mut AppContext) {
         return;
     }
 
-    KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap();
+    cx.bind_keys(KeymapFile::load_asset(DEFAULT_KEYMAP_PATH, cx).unwrap());
     if VimModeSetting::get_global(cx).0 {
-        KeymapFile::load_asset("keymaps/vim.json", cx).unwrap();
+        cx.bind_keys(KeymapFile::load_asset(VIM_KEYMAP_PATH, cx).unwrap());
     }
 
     if let Some(asset_path) = base_keymap.asset_path() {
-        KeymapFile::load_asset(asset_path, cx).unwrap();
+        cx.bind_keys(KeymapFile::load_asset(asset_path, cx).unwrap());
     }
 }
 
@@ -3291,7 +3541,7 @@ mod tests {
                 PathBuf::from("/keymap.json"),
             );
             handle_settings_file_changes(settings_rx, cx, |_, _| {});
-            handle_keymap_file_changes(keymap_rx, cx, |_, _| {});
+            handle_keymap_file_changes(keymap_rx, cx);
         });
         workspace
             .update(cx, |workspace, cx| {
@@ -3404,7 +3654,7 @@ mod tests {
             );
 
             handle_settings_file_changes(settings_rx, cx, |_, _| {});
-            handle_keymap_file_changes(keymap_rx, cx, |_, _| {});
+            handle_keymap_file_changes(keymap_rx, cx);
         });
 
         cx.background_executor.run_until_parked();
@@ -3452,6 +3702,73 @@ mod tests {
         cx.background_executor.run_until_parked();
 
         assert_key_bindings_for(workspace.into(), cx, vec![("6", &Deploy)], line!());
+    }
+
+    #[gpui::test]
+    async fn test_generate_keymap_json_schema_for_registered_actions(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        init_keymap_test(cx);
+        cx.update(|cx| {
+            // Make sure it doesn't panic.
+            KeymapFile::generate_json_schema_for_registered_actions(cx);
+        });
+    }
+
+    /// Actions that don't build from empty input won't work from command palette invocation.
+    #[gpui::test]
+    async fn test_actions_build_with_empty_input(cx: &mut gpui::TestAppContext) {
+        init_keymap_test(cx);
+        cx.update(|cx| {
+            let all_actions = cx.all_action_names();
+            let mut failing_names = Vec::new();
+            let mut errors = Vec::new();
+            for action in all_actions {
+                match action.to_string().as_str() {
+                    "vim::FindCommand"
+                    | "vim::Literal"
+                    | "vim::ResizePane"
+                    | "vim::SwitchMode"
+                    | "vim::PushOperator"
+                    | "vim::Number"
+                    | "vim::SelectRegister"
+                    | "terminal::SendText"
+                    | "terminal::SendKeystroke"
+                    | "app_menu::OpenApplicationMenu"
+                    | "app_menu::NavigateApplicationMenuInDirection"
+                    | "picker::ConfirmInput"
+                    | "editor::HandleInput"
+                    | "editor::FoldAtLevel"
+                    | "pane::ActivateItem"
+                    | "workspace::ActivatePane"
+                    | "workspace::ActivatePaneInDirection"
+                    | "workspace::MoveItemToPane"
+                    | "workspace::MoveItemToPaneInDirection"
+                    | "workspace::OpenTerminal"
+                    | "workspace::SwapPaneInDirection"
+                    | "workspace::SendKeystrokes"
+                    | "zed::OpenBrowser"
+                    | "zed::OpenZedUrl" => {}
+                    _ => {
+                        let result = cx.build_action(action, None);
+                        match &result {
+                            Ok(_) => {}
+                            Err(err) => {
+                                failing_names.push(action);
+                                errors.push(format!("{action} failed to build: {err:?}"));
+                            }
+                        }
+                    }
+                }
+            }
+            if errors.len() > 0 {
+                panic!(
+                    "Failed to build actions using {{}} as input: {:?}. Errors:\n{}",
+                    failing_names,
+                    errors.join("\n")
+                );
+            }
+        });
     }
 
     #[gpui::test]
