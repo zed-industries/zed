@@ -402,7 +402,7 @@ fn test_diff_boundary_anchors(cx: &mut AppContext) {
 }
 
 #[gpui::test]
-fn test_diff_hunks_in_range(cx: &mut AppContext) {
+fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
     let base_text = "one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\n";
     let text = "one\nfour\nseven\n";
     let buffer = cx.new_model(|cx| Buffer::local(text, cx));
@@ -413,18 +413,20 @@ fn test_diff_hunks_in_range(cx: &mut AppContext) {
         change_set
     });
     let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer, cx));
-    multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.set_all_hunks_expanded(cx);
-        multibuffer.add_change_set(change_set, cx);
+    let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
+        (multibuffer.snapshot(cx), multibuffer.subscribe())
     });
-    cx.background_executor().run_until_parked();
 
-    let snapshot = multibuffer.read(cx).snapshot(cx);
-    let actual_text = snapshot.text();
-    let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
-    let actual_diff = format_diff(&actual_text, &actual_row_infos, &Default::default());
-    pretty_assertions::assert_eq!(
-        actual_diff,
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.add_change_set(change_set, cx);
+        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+    });
+
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
         indoc! {
             "  one
              - two
@@ -463,6 +465,37 @@ fn test_diff_hunks_in_range(cx: &mut AppContext) {
             .diff_hunk_before(Point::new(4, 0))
             .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0),
         Some(1..3)
+    );
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+    });
+
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc! {
+            "
+            one
+            four
+            seven
+            "
+        },
+    );
+
+    assert_eq!(
+        snapshot
+            .diff_hunk_before(Point::new(2, 0))
+            .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0),
+        Some(1..1),
+    );
+    assert_eq!(
+        snapshot
+            .diff_hunk_before(Point::new(4, 0))
+            .map(|hunk| hunk.row_range.start.0..hunk.row_range.end.0),
+        Some(2..2)
     );
 }
 

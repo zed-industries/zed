@@ -3550,8 +3550,8 @@ impl MultiBufferSnapshot {
                         continue;
                     }
 
-                    let buffer_start = Point::new(hunk.row_range.start, 0);
-                    let buffer_end = Point::new(hunk.row_range.end, 0);
+                    let hunk_start = Point::new(hunk.row_range.start, 0);
+                    let hunk_end = Point::new(hunk.row_range.end, 0);
 
                     cursor.seek_to_buffer_position_in_current_excerpt(&DimensionPair {
                         key: hunk_range.start,
@@ -3559,13 +3559,14 @@ impl MultiBufferSnapshot {
                     });
 
                     let mut region = cursor.region()?;
-                    while !region.is_main_buffer || region.buffer_range.end.key > hunk_range.end {
+                    while !region.is_main_buffer || region.buffer_range.start.key >= hunk_range.end
+                    {
                         cursor.prev();
                         region = cursor.region()?;
                     }
 
                     let overshoot = if region.is_main_buffer {
-                        buffer_start.saturating_sub(region.buffer_range.start.value.unwrap())
+                        hunk_start.saturating_sub(region.buffer_range.start.value.unwrap())
                     } else {
                         Point::zero()
                     };
@@ -3573,7 +3574,7 @@ impl MultiBufferSnapshot {
 
                     while let Some(region) = cursor.region() {
                         if !region.is_main_buffer
-                            || region.buffer_range.end.value.unwrap() <= buffer_end
+                            || region.buffer_range.end.value.unwrap() <= hunk_end
                         {
                             cursor.next();
                         } else {
@@ -3583,7 +3584,7 @@ impl MultiBufferSnapshot {
 
                     let end = if let Some(region) = cursor.region() {
                         let overshoot = if region.is_main_buffer {
-                            buffer_end.saturating_sub(region.buffer_range.start.value.unwrap())
+                            hunk_end.saturating_sub(region.buffer_range.start.value.unwrap())
                         } else {
                             Point::zero()
                         };

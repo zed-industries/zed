@@ -10078,7 +10078,7 @@ async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-async fn go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
+async fn test_go_to_hunk(executor: BackgroundExecutor, cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
