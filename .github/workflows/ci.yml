@@ -7,16 +7,10 @@ on:
       - "v[0-9]+.[0-9]+.x"
     tags:
       - "v*"
-    paths-ignore:
-      - "docs/**/*"
-      - ".github/workflows/community_*"
 
   pull_request:
     branches:
       - "**"
-    paths-ignore:
-      - "docs/**/*"
-      - ".github/workflows/community_*"
 
 concurrency:
   # Allow only one workflow per any non-`main` branch.
