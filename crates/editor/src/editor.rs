@@ -10633,7 +10633,7 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn exchange_mark(&mut self, _: &actions::ExchangeMark, cx: &mut ViewContext<Self>) {
+    pub fn swap_selection_ends(&mut self, _: &actions::SwapSelectionEnds, cx: &mut ViewContext<Self>) {
         self.change_selections(None, cx, |s| {
             s.move_with(|_, sel| {
                 if sel.start != sel.end {
