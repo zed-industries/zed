@@ -2188,6 +2188,7 @@ pub mod tests {
     use project::FakeFs;
     use serde_json::json;
     use settings::SettingsStore;
+    use util::paths::add_root_for_windows;
     use workspace::DeploySearch;
 
     #[gpui::test]
@@ -3771,13 +3772,13 @@ pub mod tests {
 
         let fs = FakeFs::new(cx.background_executor.clone());
         fs.insert_tree(
-            "/dir",
+            add_root_for_windows("/dir"),
             json!({
                 "one.rs": "const ONE: usize = 1;",
             }),
         )
         .await;
-        let project = Project::test(fs.clone(), ["/dir".as_ref()], cx).await;
+        let project = Project::test(fs.clone(), [add_root_for_windows("/dir").as_ref()], cx).await;
         let worktree_id = project.update(cx, |this, cx| {
             this.worktrees(cx).next().unwrap().read(cx).id()
         });
