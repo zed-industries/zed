@@ -3,6 +3,7 @@
 pub mod assistant_panel;
 mod context;
 mod context_editor;
+mod context_history;
 pub mod context_store;
 mod inline_assistant;
 mod patch;
