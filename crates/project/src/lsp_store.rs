@@ -3671,7 +3671,7 @@ impl LspStore {
             return;
         };
         let mut to_stop = Vec::new();
-        self.as_local().map(|local| {
+        if let Some(local) = self.as_local() {
             local.lsp_tree.update(cx, |this, cx| {
                 let mut get_adapter =
                     |worktree_id, cx: &mut AppContext| -> Option<Arc<dyn LspAdapterDelegate>> {
@@ -3687,11 +3687,11 @@ impl LspStore {
                 this.on_settings_changed(
                     &mut get_adapter,
                     &mut |disposition| todo!(),
-                    &mut |id| to_stop.push(id), //self.stop_local_language_server(id, cx).detach(),
+                    &mut |id| to_stop.push(id),
                     cx,
                 );
             });
-        });
+        }
         for id in to_stop {
             self.stop_local_language_server(id, cx).detach();
         }
