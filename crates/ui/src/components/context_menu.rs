@@ -145,7 +145,7 @@ impl ContextMenu {
                     delayed: false,
                     clicked: false,
                     _on_blur_subscription,
-                    keep_open_on_confirm: true,
+                    keep_open_on_confirm: false,
                 },
                 cx,
             )
