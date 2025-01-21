@@ -1,13 +1,12 @@
 use std::collections::BTreeSet;
-use std::ffi::OsStr;
-use std::iter;
 use std::ops::Range;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
-use editor::actions::FoldAt;
+use editor::actions::{Backspace, FoldAt};
 use editor::display_map::{Crease, FoldId};
+use editor::scroll::Autoscroll;
 use editor::{Anchor, Editor, FoldPlaceholder, ToPoint};
 use file_icons::FileIcons;
 use fuzzy::PathMatch;
@@ -15,11 +14,11 @@ use gpui::{
     AnyElement, AppContext, DismissEvent, Empty, FocusHandle, FocusableView, Stateful, Task, View,
     WeakModel, WeakView,
 };
-use multi_buffer::MultiBufferRow;
+use multi_buffer::{MultiBufferPoint, MultiBufferRow};
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
 use rope::Point;
-use text::Bias;
+use text::SelectionGoal;
 use ui::{prelude::*, ButtonLike, Disclosure, ElevationIndex, ListItem, Tooltip};
 use util::ResultExt as _;
 use workspace::{notifications::NotifyResultExt, Workspace};
@@ -233,27 +232,31 @@ impl PickerDelegate for FileContextPickerDelegate {
 
         editor.update(cx, |editor, cx| {
             editor.transact(cx, |editor, cx| {
+                // Move empty selections left by 1 column to select the `@`s, so they get overwritten when we insert.
+                {
+                    let mut selections = editor.selections.all::<MultiBufferPoint>(cx);
+
+                    for selection in selections.iter_mut() {
+                        if selection.is_empty() {
+                            let old_head = selection.head();
+                            let new_head = MultiBufferPoint::new(
+                                old_head.row,
+                                old_head.column.saturating_sub(1),
+                            );
+                            selection.set_head(new_head, SelectionGoal::None);
+                        }
+                    }
+
+                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
+                }
+
                 let start_anchors = {
-                    let snapshot = editor.snapshot(cx);
-                    let (excerpt_id, _buffer_id, _) =
-                        snapshot.buffer_snapshot.as_singleton().unwrap();
-                    let excerpt_id = *excerpt_id;
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
                     editor
                         .selections
                         .all::<Point>(cx)
                         .into_iter()
-                        .map(|selection| {
-                            let anchor = snapshot
-                                .buffer_snapshot
-                                .anchor_in_excerpt(
-                                    excerpt_id,
-                                    snapshot
-                                        .buffer_snapshot
-                                        .anchor_at(selection.head(), Bias::Left)
-                                        .text_anchor,
-                                )
-                                .unwrap();
-                        })
+                        .map(|selection| snapshot.anchor_before(selection.start))
                         .collect::<Vec<_>>()
                 };
 
@@ -270,14 +273,6 @@ impl PickerDelegate for FileContextPickerDelegate {
                 };
 
                 editor.insert("\n", cx); // Needed to end the fold
-
-                // let snapshot = &editor.snapshot(cx).buffer_snapshot;
-                // for anchor in &start_anchors {
-                //     dbg!(anchor.to_point(&snapshot));
-                // }
-                // for anchor in &end_anchors {
-                //     dbg!(anchor.to_point(&snapshot));
-                // }
 
                 let placeholder = FoldPlaceholder {
                     render: render_fold_icon_button(
