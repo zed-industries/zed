@@ -1274,7 +1274,7 @@ pub mod tests {
     use settings::SettingsStore;
     use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
     use text::Point;
-    use util::add_root_for_windows;
+    use util::paths::add_root_for_windows;
 
     use super::*;
 

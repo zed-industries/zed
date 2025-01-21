@@ -579,7 +579,7 @@ mod test {
     use serde_json::json;
     use settings::SettingsStore;
     use smol::stream::StreamExt;
-    use util::add_root_for_windows;
+    use util::paths::add_root_for_windows;
 
     use super::collect_files;
 

@@ -41,6 +41,7 @@ use test::{build_editor_with_project, editor_lsp_test_context::rust_lang};
 use unindent::Unindent;
 use util::{
     assert_set_eq,
+    paths::add_root_for_windows,
     test::{marked_text_ranges, marked_text_ranges_by, sample_text, TextRangeMarker},
 };
 use workspace::{
@@ -7071,8 +7072,6 @@ async fn test_snippets(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
-    use util::add_root_for_windows;
-
     init_test(cx, |_| {});
 
     let fs = FakeFs::new(cx.executor());
@@ -7220,8 +7219,6 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
-    use util::add_root_for_windows;
-
     init_test(cx, |_| {});
 
     let cols = 4;
@@ -7460,8 +7457,6 @@ async fn test_multibuffer_format_during_save(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
-    use util::add_root_for_windows;
-
     init_test(cx, |_| {});
 
     let fs = FakeFs::new(cx.executor());
@@ -7609,8 +7604,6 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
-    use util::add_root_for_windows;
-
     init_test(cx, |settings| {
         settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(
             FormatterList(vec![Formatter::LanguageServer { name: None }].into()),
@@ -10577,8 +10570,6 @@ async fn go_to_prev_overlapping_diagnostic(
     executor: BackgroundExecutor,
     cx: &mut gpui::TestAppContext,
 ) {
-    use util::add_root_for_windows;
-
     init_test(cx, |_| {});
 
     let mut cx = EditorTestContext::new(cx).await;
@@ -10689,7 +10680,7 @@ async fn test_diagnostics_with_links(cx: &mut TestAppContext) {
             lsp_store.update_diagnostics(
                 LanguageServerId(0),
                 lsp::PublishDiagnosticsParams {
-                    uri: lsp::Url::from_file_path(util::add_root_for_windows("/root/file")).unwrap(),
+                    uri: lsp::Url::from_file_path(add_root_for_windows("/root/file")).unwrap(),
                     version: None,
                     diagnostics: vec![lsp::Diagnostic {
                         range: lsp::Range::new(lsp::Position::new(0, 8), lsp::Position::new(0, 12)),
@@ -10945,8 +10936,6 @@ async fn test_move_to_enclosing_bracket(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
-    use util::add_root_for_windows;
-
     init_test(cx, |_| {});
 
     let fs = FakeFs::new(cx.executor());
@@ -11064,8 +11053,6 @@ async fn test_on_type_formatting_not_triggered(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::TestAppContext) {
-    use util::add_root_for_windows;
-
     init_test(cx, |_| {});
 
     let fs = FakeFs::new(cx.executor());
@@ -11884,8 +11871,6 @@ fn completion_menu_entries(menu: &CompletionsMenu) -> Vec<String> {
 
 #[gpui::test]
 async fn test_document_format_with_prettier(cx: &mut gpui::TestAppContext) {
-    use util::add_root_for_windows;
-
     init_test(cx, |settings| {
         settings.defaults.formatter = Some(language_settings::SelectedFormatter::List(
             FormatterList(vec![Formatter::Prettier].into()),

@@ -921,7 +921,7 @@ mod tests {
     use indoc::indoc;
     use language::language_settings::InlayHintSettings;
     use lsp::request::{GotoDefinition, GotoTypeDefinition};
-    use util::{add_root_for_windows, assert_set_eq};
+    use util::{assert_set_eq, paths::add_root_for_windows};
     use workspace::item::Item;
 
     #[gpui::test]

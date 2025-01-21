@@ -6,7 +6,7 @@ use gpui::{Entity, TestAppContext, VisualTestContext};
 use menu::{Confirm, SelectNext, SelectPrev};
 use project::{RemoveOptions, FS_WATCH_LATENCY};
 use serde_json::json;
-use util::add_root_for_windows;
+use util::paths::add_root_for_windows;
 use workspace::{AppState, ToggleFileFinder, Workspace};
 
 #[ctor::ctor]

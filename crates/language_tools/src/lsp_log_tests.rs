@@ -11,7 +11,7 @@ use lsp_log::LogKind;
 use project::{FakeFs, Project};
 use serde_json::json;
 use settings::SettingsStore;
-use util::add_root_for_windows;
+use util::paths::add_root_for_windows;
 
 #[gpui::test]
 async fn test_lsp_logs(cx: &mut TestAppContext) {

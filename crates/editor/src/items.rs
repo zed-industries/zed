@@ -1717,7 +1717,7 @@ mod tests {
     use language::{LanguageMatcher, TestFile};
     use project::FakeFs;
     use std::path::{Path, PathBuf};
-    use util::add_root_for_windows;
+    use util::paths::add_root_for_windows;
 
     #[gpui::test]
     fn test_path_for_file(cx: &mut App) {

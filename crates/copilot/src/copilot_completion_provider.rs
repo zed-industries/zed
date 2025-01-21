@@ -291,7 +291,7 @@ mod tests {
     use settings::SettingsStore;
     use std::future::Future;
     use util::{
-        add_root_for_windows,
+        paths::add_root_for_windows,
         test::{marked_text_ranges_by, TextRangeMarker},
     };
 

@@ -1061,7 +1061,7 @@ async fn get_copilot_lsp(http: Arc<dyn HttpClient>) -> anyhow::Result<PathBuf> {
 mod tests {
     use super::*;
     use gpui::TestAppContext;
-    use util::add_root_for_windows;
+    use util::paths::add_root_for_windows;
 
     #[gpui::test(iterations = 10)]
     async fn test_buffer_management(cx: &mut TestAppContext) {

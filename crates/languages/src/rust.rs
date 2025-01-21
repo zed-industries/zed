@@ -818,7 +818,7 @@ mod tests {
     use lsp::CompletionItemLabelDetails;
     use settings::SettingsStore;
     use theme::SyntaxTheme;
-    use util::add_root_for_windows;
+    use util::paths::add_root_for_windows;
 
     #[gpui::test]
     async fn test_process_rust_diagnostics() {
