@@ -885,7 +885,7 @@ mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            "/dir",
+            add_root_for_windows("/dir"),
             json!({
                 "a1.ts": "// a1",
                 "a2.ts": "// a2",
@@ -894,7 +894,7 @@ mod tests {
         )
         .await;
 
-        let project = Project::test(fs, ["/dir".as_ref()], cx).await;
+        let project = Project::test(fs, [add_root_for_windows("/dir").as_ref()], cx).await;
         project.read_with(cx, |project, _| {
             let language_registry = project.languages();
             language_registry.add(Arc::new(
@@ -955,31 +955,53 @@ mod tests {
 
         let _ts_file_1 = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from("/dir/a1.ts"), true, window, cx)
+                workspace.open_abs_path(PathBuf::from(add_root_for_windows("/dir/a1.ts")), true, window, cx)
             })
             .await
             .unwrap();
         let tasks_picker = open_spawn_tasks(&workspace, cx);
-        assert_eq!(
-            task_names(&tasks_picker, cx),
+        let expected = if cfg!(windows) {
+            vec![
+                "Another task from file C:/dir\\a1.ts",
+                "TypeScript task from file C:/dir\\a1.ts",
+                "Task without variables",
+            ]
+        } else {
             vec![
                 "Another task from file /dir/a1.ts",
                 "TypeScript task from file /dir/a1.ts",
                 "Task without variables",
-            ],
-            "Should open spawn TypeScript tasks for the opened file, tasks with most template variables above, all groups sorted alphanumerically"
-        );
-        emulate_task_schedule(
-            tasks_picker,
-            &project,
-            "TypeScript task from file /dir/a1.ts",
-            cx,
-        );
-
-        let tasks_picker = open_spawn_tasks(&workspace, cx);
+            ]
+        };
         assert_eq!(
             task_names(&tasks_picker, cx),
-            vec!["TypeScript task from file /dir/a1.ts", "Another task from file /dir/a1.ts", "Task without variables"],
+            expected,
+            "Should open spawn TypeScript tasks for the opened file, tasks with most template variables above, all groups sorted alphanumerically"
+        );
+        let expected = if cfg!(windows) {
+            "TypeScript task from file C:/dir\\a1.ts"
+        } else {
+            "TypeScript task from file /dir/a1.ts"
+        };
+        emulate_task_schedule(tasks_picker, &project, expected, cx);
+
+        let tasks_picker = open_spawn_tasks(&workspace, cx);
+        let expected = if cfg!(windows) {
+            vec![
+                "TypeScript task from file C:/dir\\a1.ts",
+                "Another task from file C:/dir\\a1.ts",
+                "Task without variables",
+            ]
+        } else {
+            vec![
+                "TypeScript task from file /dir/a1.ts",
+                "Another task from file /dir/a1.ts",
+                "Task without variables",
+            ]
+        };
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            expected,
             "After spawning the task and getting it into the history, it should be up in the sort as recently used.
             Tasks with the same labels and context are deduplicated."
         );
@@ -991,19 +1013,29 @@ mod tests {
 
         let _ts_file_2 = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from("/dir/a2.ts"), true, window, cx)
+                workspace.open_abs_path(PathBuf::from(add_root_for_windows("/dir/a2.ts")), true, window, cx)
             })
             .await
             .unwrap();
         let tasks_picker = open_spawn_tasks(&workspace, cx);
-        assert_eq!(
-            task_names(&tasks_picker, cx),
+        let expected = if cfg!(windows) {
+            vec![
+                "TypeScript task from file C:/dir\\a1.ts",
+                "Another task from file C:/dir\\a2.ts",
+                "TypeScript task from file C:/dir\\a2.ts",
+                "Task without variables",
+            ]
+        } else {
             vec![
                 "TypeScript task from file /dir/a1.ts",
                 "Another task from file /dir/a2.ts",
                 "TypeScript task from file /dir/a2.ts",
-                "Task without variables"
-            ],
+                "Task without variables",
+            ]
+        };
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            expected,
             "Even when both TS files are open, should only show the history (on the top), and tasks, resolved for the current file"
         );
         tasks_picker.update(cx, |_, cx| {
@@ -1029,19 +1061,29 @@ mod tests {
         emulate_task_schedule(tasks_picker, &project, "Rust task", cx);
         let _ts_file_2 = workspace
             .update_in(cx, |workspace, window, cx| {
-                workspace.open_abs_path(PathBuf::from("/dir/a2.ts"), true, window, cx)
+                workspace.open_abs_path(PathBuf::from(add_root_for_windows("/dir/a2.ts")), true, window, cx)
             })
             .await
             .unwrap();
         let tasks_picker = open_spawn_tasks(&workspace, cx);
-        assert_eq!(
-            task_names(&tasks_picker, cx),
+        let expected = if cfg!(windows) {
+            vec![
+                "TypeScript task from file C:/dir\\a1.ts",
+                "Another task from file C:/dir\\a2.ts",
+                "TypeScript task from file C:/dir\\a2.ts",
+                "Task without variables",
+            ]
+        } else {
             vec![
                 "TypeScript task from file /dir/a1.ts",
                 "Another task from file /dir/a2.ts",
                 "TypeScript task from file /dir/a2.ts",
-                "Task without variables"
-            ],
+                "Task without variables",
+            ]
+        };
+        assert_eq!(
+            task_names(&tasks_picker, cx),
+            expected,
             "After closing all but *.rs tabs, running a Rust task and switching back to TS tasks, \
             same TS spawn history should be restored"
         );
