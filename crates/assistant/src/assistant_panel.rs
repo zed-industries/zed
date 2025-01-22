@@ -5,9 +5,10 @@ use crate::{
 };
 use anyhow::{anyhow, Result};
 use assistant_context_editor::{
-    AssistantPanelDelegate, Context, ContextEditor, ContextEditorToolbarItem,
-    ContextEditorToolbarItemEvent, ContextId, ContextStore, ContextStoreEvent, InsertDraggedFiles,
-    SlashCommandCompletionProvider, ToggleModelSelector, DEFAULT_TAB_TITLE,
+    make_lsp_adapter_delegate, AssistantPanelDelegate, Context, ContextEditor,
+    ContextEditorToolbarItem, ContextEditorToolbarItemEvent, ContextId, ContextStore,
+    ContextStoreEvent, InsertDraggedFiles, SlashCommandCompletionProvider, ToggleModelSelector,
+    DEFAULT_TAB_TITLE,
 };
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
@@ -22,12 +23,11 @@ use gpui::{
     ParentElement, Pixels, Render, SharedString, StatefulInteractiveElement, Styled, Subscription,
     Task, UpdateGlobal, View, WeakView,
 };
-use language::{LanguageRegistry, LspAdapterDelegate};
+use language::LanguageRegistry;
 use language_model::{
     LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID,
 };
 use language_model_selector::LanguageModelSelector;
-use project::lsp_store::LocalLspAdapterDelegate;
 use project::Project;
 use prompt_library::{open_prompt_library, PromptBuilder, PromptLibrary};
 use search::{buffer_search::DivRegistrar, BufferSearchBar};
@@ -1547,28 +1547,4 @@ impl Item for ConfigurationView {
     fn tab_content_text(&self, _cx: &WindowContext) -> Option<SharedString> {
         Some("Configuration".into())
     }
-}
-
-fn make_lsp_adapter_delegate(
-    project: &Model<Project>,
-    cx: &mut AppContext,
-) -> Result<Option<Arc<dyn LspAdapterDelegate>>> {
-    project.update(cx, |project, cx| {
-        // TODO: Find the right worktree.
-        let Some(worktree) = project.worktrees(cx).next() else {
-            return Ok(None::<Arc<dyn LspAdapterDelegate>>);
-        };
-        let http_client = project.client().http_client().clone();
-        project.lsp_store().update(cx, |_, cx| {
-            Ok(Some(LocalLspAdapterDelegate::new(
-                project.languages().clone(),
-                project.environment(),
-                cx.weak_model(),
-                &worktree,
-                http_client,
-                project.fs().clone(),
-                cx,
-            ) as Arc<dyn LspAdapterDelegate>))
-        })
-    })
 }

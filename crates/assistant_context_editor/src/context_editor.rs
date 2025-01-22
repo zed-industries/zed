@@ -35,6 +35,7 @@ use language_model::{LanguageModelImage, LanguageModelRegistry, LanguageModelToo
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use multi_buffer::MultiBufferRow;
 use picker::Picker;
+use project::lsp_store::LocalLspAdapterDelegate;
 use project::{Project, Worktree};
 use rope::Point;
 use serde::{Deserialize, Serialize};
@@ -3532,6 +3533,30 @@ pub fn humanize_token_count(count: usize) -> String {
         }
         _ => format!("{}k", (count + 500) / 1000),
     }
+}
+
+pub fn make_lsp_adapter_delegate(
+    project: &Model<Project>,
+    cx: &mut AppContext,
+) -> Result<Option<Arc<dyn LspAdapterDelegate>>> {
+    project.update(cx, |project, cx| {
+        // TODO: Find the right worktree.
+        let Some(worktree) = project.worktrees(cx).next() else {
+            return Ok(None::<Arc<dyn LspAdapterDelegate>>);
+        };
+        let http_client = project.client().http_client().clone();
+        project.lsp_store().update(cx, |_, cx| {
+            Ok(Some(LocalLspAdapterDelegate::new(
+                project.languages().clone(),
+                project.environment(),
+                cx.weak_model(),
+                &worktree,
+                http_client,
+                project.fs().clone(),
+                cx,
+            ) as Arc<dyn LspAdapterDelegate>))
+        })
+    })
 }
 
 #[cfg(test)]

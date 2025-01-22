@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use assistant_context_editor::ContextEditor;
+use assistant_context_editor::{make_lsp_adapter_delegate, ContextEditor};
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
@@ -12,9 +12,7 @@ use gpui::{
     FocusHandle, FocusableView, FontWeight, Model, Pixels, Task, View, ViewContext, WeakView,
     WindowContext,
 };
-use language::{LanguageRegistry, LspAdapterDelegate};
-use project::lsp_store::LocalLspAdapterDelegate;
-use project::Project;
+use language::LanguageRegistry;
 use prompt_library::PromptBuilder;
 use settings::Settings;
 use time::UtcOffset;
@@ -710,28 +708,4 @@ impl Render for AssistantPanel {
                 ActiveView::History => parent.child(self.history.clone()),
             })
     }
-}
-
-fn make_lsp_adapter_delegate(
-    project: &Model<Project>,
-    cx: &mut AppContext,
-) -> Result<Option<Arc<dyn LspAdapterDelegate>>> {
-    project.update(cx, |project, cx| {
-        // TODO: Find the right worktree.
-        let Some(worktree) = project.worktrees(cx).next() else {
-            return Ok(None::<Arc<dyn LspAdapterDelegate>>);
-        };
-        let http_client = project.client().http_client().clone();
-        project.lsp_store().update(cx, |_, cx| {
-            Ok(Some(LocalLspAdapterDelegate::new(
-                project.languages().clone(),
-                project.environment(),
-                cx.weak_model(),
-                &worktree,
-                http_client,
-                project.fs().clone(),
-                cx,
-            ) as Arc<dyn LspAdapterDelegate>))
-        })
-    })
 }
