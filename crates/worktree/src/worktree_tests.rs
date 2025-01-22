@@ -2646,7 +2646,9 @@ async fn test_git_status_postprocessing(cx: &mut TestAppContext) {
 
     let root = temp_tree(json!({
         "project": {
-            "sub": {},
+            "sub": {
+                "u.txt": "",
+            },
             "a.txt": "",
         },
     }));
