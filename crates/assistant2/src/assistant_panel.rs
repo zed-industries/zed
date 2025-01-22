@@ -1,7 +1,10 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
-use anyhow::Result;
-use assistant_context_editor::{make_lsp_adapter_delegate, ContextEditor, ContextHistory};
+use anyhow::{anyhow, Result};
+use assistant_context_editor::{
+    make_lsp_adapter_delegate, AssistantPanelDelegate, ContextEditor, ContextHistory,
+};
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
@@ -13,6 +16,7 @@ use gpui::{
     WindowContext,
 };
 use language::LanguageRegistry;
+use project::Project;
 use prompt_library::PromptBuilder;
 use settings::Settings;
 use time::UtcOffset;
@@ -29,6 +33,7 @@ use crate::thread_store::ThreadStore;
 use crate::{NewPromptEditor, NewThread, OpenHistory, OpenPromptEditorHistory, ToggleFocus};
 
 pub fn init(cx: &mut AppContext) {
+    <dyn AssistantPanelDelegate>::set_global(Arc::new(ConcreteAssistantPanelDelegate), cx);
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace
@@ -50,15 +55,13 @@ pub fn init(cx: &mut AppContext) {
                 .register_action(|workspace, _: &NewPromptEditor, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(cx);
-                        panel.update(cx, |panel, cx| panel.new_prompt_editor(workspace, cx));
+                        panel.update(cx, |panel, cx| panel.new_prompt_editor(cx));
                     }
                 })
                 .register_action(|workspace, _: &OpenPromptEditorHistory, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         workspace.focus_panel::<AssistantPanel>(cx);
-                        panel.update(cx, |panel, cx| {
-                            panel.open_prompt_editor_history(workspace, cx)
-                        });
+                        panel.update(cx, |panel, cx| panel.open_prompt_editor_history(cx));
                     }
                 });
         },
@@ -75,6 +78,7 @@ enum ActiveView {
 
 pub struct AssistantPanel {
     workspace: WeakView<Workspace>,
+    project: Model<Project>,
     fs: Arc<dyn Fs>,
     language_registry: Arc<LanguageRegistry>,
     thread_store: Model<ThreadStore>,
@@ -137,7 +141,8 @@ impl AssistantPanel {
     ) -> Self {
         let thread = thread_store.update(cx, |this, cx| this.create_thread(cx));
         let fs = workspace.app_state().fs.clone();
-        let language_registry = workspace.project().read(cx).languages().clone();
+        let project = workspace.project().clone();
+        let language_registry = project.read(cx).languages().clone();
         let workspace = workspace.weak_handle();
         let weak_self = cx.view().downgrade();
 
@@ -154,6 +159,7 @@ impl AssistantPanel {
         Self {
             active_view: ActiveView::Thread,
             workspace: workspace.clone(),
+            project,
             fs: fs.clone(),
             language_registry: language_registry.clone(),
             thread_store: thread_store.clone(),
@@ -223,21 +229,22 @@ impl AssistantPanel {
         self.message_editor.focus_handle(cx).focus(cx);
     }
 
-    fn new_prompt_editor(&mut self, workspace: &mut Workspace, cx: &mut ViewContext<Self>) {
+    fn new_prompt_editor(&mut self, cx: &mut ViewContext<Self>) {
         self.active_view = ActiveView::PromptEditor;
 
-        let project = workspace.project().clone();
         let context = self
             .context_store
             .update(cx, |context_store, cx| context_store.create(cx));
-        let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err().flatten();
+        let lsp_adapter_delegate = make_lsp_adapter_delegate(&self.project, cx)
+            .log_err()
+            .flatten();
 
         self.context_editor = Some(cx.new_view(|cx| {
             ContextEditor::for_context(
                 context,
                 self.fs.clone(),
                 self.workspace.clone(),
-                project,
+                self.project.clone(),
                 lsp_adapter_delegate,
                 cx,
             )
@@ -254,15 +261,11 @@ impl AssistantPanel {
         cx.notify();
     }
 
-    fn open_prompt_editor_history(
-        &mut self,
-        workspace: &mut Workspace,
-        cx: &mut ViewContext<Self>,
-    ) {
+    fn open_prompt_editor_history(&mut self, cx: &mut ViewContext<Self>) {
         self.active_view = ActiveView::PromptEditorHistory;
         self.context_history = Some(cx.new_view(|cx| {
             ContextHistory::new(
-                workspace.project().clone(),
+                self.project.clone(),
                 self.context_store.clone(),
                 self.workspace.clone(),
                 cx,
@@ -274,6 +277,42 @@ impl AssistantPanel {
         }
 
         cx.notify();
+    }
+
+    fn open_saved_prompt_editor(
+        &mut self,
+        path: PathBuf,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        let context = self
+            .context_store
+            .update(cx, |store, cx| store.open_local_context(path.clone(), cx));
+        let fs = self.fs.clone();
+        let project = self.project.clone();
+        let workspace = self.workspace.clone();
+
+        let lsp_adapter_delegate = make_lsp_adapter_delegate(&project, cx).log_err().flatten();
+
+        cx.spawn(|this, mut cx| async move {
+            let context = context.await?;
+            this.update(&mut cx, |this, cx| {
+                let editor = cx.new_view(|cx| {
+                    ContextEditor::for_context(
+                        context,
+                        fs,
+                        workspace,
+                        project,
+                        lsp_adapter_delegate,
+                        cx,
+                    )
+                });
+                this.active_view = ActiveView::PromptEditor;
+                this.context_editor = Some(editor);
+
+                anyhow::Ok(())
+            })??;
+            Ok(())
+        })
     }
 
     pub(crate) fn open_thread(&mut self, thread_id: &ThreadId, cx: &mut ViewContext<Self>) {
@@ -756,5 +795,48 @@ impl Render for AssistantPanel {
                 ActiveView::PromptEditor => parent.children(self.context_editor.clone()),
                 ActiveView::PromptEditorHistory => parent.children(self.context_history.clone()),
             })
+    }
+}
+
+struct ConcreteAssistantPanelDelegate;
+
+impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
+    fn active_context_editor(
+        &self,
+        workspace: &mut Workspace,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Option<View<ContextEditor>> {
+        let panel = workspace.panel::<AssistantPanel>(cx)?;
+        panel.update(cx, |panel, _cx| panel.context_editor.clone())
+    }
+
+    fn open_saved_context(
+        &self,
+        workspace: &mut Workspace,
+        path: std::path::PathBuf,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<()>> {
+        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return Task::ready(Err(anyhow!("Assistant panel not found")));
+        };
+
+        panel.update(cx, |panel, cx| panel.open_saved_prompt_editor(path, cx))
+    }
+
+    fn open_remote_context(
+        &self,
+        workspace: &mut Workspace,
+        context_id: assistant_context_editor::ContextId,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<View<ContextEditor>>> {
+        todo!()
+    }
+
+    fn quote_selection(
+        &self,
+        workspace: &mut Workspace,
+        creases: Vec<(String, String)>,
+        cx: &mut ViewContext<Workspace>,
+    ) {
     }
 }

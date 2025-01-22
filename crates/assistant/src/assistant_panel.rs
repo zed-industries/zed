@@ -1342,7 +1342,6 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
             return;
         };
 
-        // Activate the panel
         if !panel.focus_handle(cx).contains_focused(cx) {
             workspace.toggle_panel_focus::<AssistantPanel>(cx);
         }
