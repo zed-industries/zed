@@ -125,11 +125,16 @@ impl CodeContextMenu {
         &self,
         style: &EditorStyle,
         max_height_in_lines: u32,
+        y_flipped: bool,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement {
         match self {
-            CodeContextMenu::Completions(menu) => menu.render(style, max_height_in_lines, cx),
-            CodeContextMenu::CodeActions(menu) => menu.render(style, max_height_in_lines, cx),
+            CodeContextMenu::Completions(menu) => {
+                menu.render(style, max_height_in_lines, y_flipped, cx)
+            }
+            CodeContextMenu::CodeActions(menu) => {
+                menu.render(style, max_height_in_lines, y_flipped, cx)
+            }
         }
     }
 
@@ -268,23 +273,12 @@ impl CompletionsMenu {
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        self.update_selection_index(0, provider, cx);
-    }
-
-    fn select_prev(
-        &mut self,
-        provider: Option<&dyn CompletionProvider>,
-        cx: &mut ViewContext<Editor>,
-    ) {
-        self.update_selection_index(self.prev_match_index(), provider, cx);
-    }
-
-    fn select_next(
-        &mut self,
-        provider: Option<&dyn CompletionProvider>,
-        cx: &mut ViewContext<Editor>,
-    ) {
-        self.update_selection_index(self.next_match_index(), provider, cx);
+        let index = if self.scroll_handle.y_flipped() {
+            self.entries.borrow().len() - 1
+        } else {
+            0
+        };
+        self.update_selection_index(index, provider, cx);
     }
 
     fn select_last(
@@ -292,7 +286,37 @@ impl CompletionsMenu {
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        let index = self.entries.borrow().len() - 1;
+        let index = if self.scroll_handle.y_flipped() {
+            0
+        } else {
+            self.entries.borrow().len() - 1
+        };
+        self.update_selection_index(index, provider, cx);
+    }
+
+    fn select_prev(
+        &mut self,
+        provider: Option<&dyn CompletionProvider>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let index = if self.scroll_handle.y_flipped() {
+            self.next_match_index()
+        } else {
+            self.prev_match_index()
+        };
+        self.update_selection_index(index, provider, cx);
+    }
+
+    fn select_next(
+        &mut self,
+        provider: Option<&dyn CompletionProvider>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let index = if self.scroll_handle.y_flipped() {
+            self.prev_match_index()
+        } else {
+            self.next_match_index()
+        };
         self.update_selection_index(index, provider, cx);
     }
 
@@ -336,6 +360,11 @@ impl CompletionsMenu {
             }
             _ => {
                 entries.insert(0, hint);
+                // When `y_flipped`, need to scroll to bring it into view.
+                if self.selected_item == 0 {
+                    self.scroll_handle
+                        .scroll_to_item(self.selected_item, ScrollStrategy::Top);
+                }
             }
         }
     }
@@ -439,6 +468,7 @@ impl CompletionsMenu {
         &self,
         style: &EditorStyle,
         max_height_in_lines: u32,
+        y_flipped: bool,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement {
         let completions = self.completions.borrow_mut();
@@ -664,6 +694,7 @@ impl CompletionsMenu {
         .occlude()
         .max_h(max_height_in_lines as f32 * cx.line_height())
         .track_scroll(self.scroll_handle.clone())
+        .y_flipped(y_flipped)
         .with_width_from_item(widest_completion_ix)
         .with_sizing_behavior(ListSizingBehavior::Infer);
 
@@ -981,39 +1012,63 @@ pub struct CodeActionsMenu {
 
 impl CodeActionsMenu {
     fn select_first(&mut self, cx: &mut ViewContext<Editor>) {
-        self.selected_item = 0;
+        self.selected_item = if self.scroll_handle.y_flipped() {
+            self.actions.len() - 1
+        } else {
+            0
+        };
+        self.scroll_handle
+            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
+        cx.notify()
+    }
+
+    fn select_last(&mut self, cx: &mut ViewContext<Editor>) {
+        self.selected_item = if self.scroll_handle.y_flipped() {
+            0
+        } else {
+            self.actions.len() - 1
+        };
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
         cx.notify()
     }
 
     fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
-        if self.selected_item > 0 {
-            self.selected_item -= 1;
+        self.selected_item = if self.scroll_handle.y_flipped() {
+            self.next_match_index()
         } else {
-            self.selected_item = self.actions.len() - 1;
-        }
+            self.prev_match_index()
+        };
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
         cx.notify();
     }
 
     fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
-        if self.selected_item + 1 < self.actions.len() {
-            self.selected_item += 1;
+        self.selected_item = if self.scroll_handle.y_flipped() {
+            self.prev_match_index()
         } else {
-            self.selected_item = 0;
-        }
+            self.next_match_index()
+        };
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
         cx.notify();
     }
 
-    fn select_last(&mut self, cx: &mut ViewContext<Editor>) {
-        self.selected_item = self.actions.len() - 1;
-        self.scroll_handle
-            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        cx.notify()
+    fn prev_match_index(&self) -> usize {
+        if self.selected_item > 0 {
+            self.selected_item - 1
+        } else {
+            self.actions.len() - 1
+        }
+    }
+
+    fn next_match_index(&self) -> usize {
+        if self.selected_item + 1 < self.actions.len() {
+            self.selected_item + 1
+        } else {
+            0
+        }
     }
 
     fn visible(&self) -> bool {
@@ -1032,6 +1087,7 @@ impl CodeActionsMenu {
         &self,
         _style: &EditorStyle,
         max_height_in_lines: u32,
+        y_flipped: bool,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement {
         let actions = self.actions.clone();
@@ -1107,6 +1163,7 @@ impl CodeActionsMenu {
         .occlude()
         .max_h(max_height_in_lines as f32 * cx.line_height())
         .track_scroll(self.scroll_handle.clone())
+        .y_flipped(y_flipped)
         .with_width_from_item(
             self.actions
                 .iter()

@@ -3136,10 +3136,10 @@ impl EditorElement {
         let available_above = bottom_y_when_flipped - text_hitbox.top();
         let available_below = text_hitbox.bottom() - target_position.y;
         let y_overflows_below = unconstrained_max_height > available_below;
-        let mut y_is_flipped = y_overflows_below && available_above > available_below;
+        let mut y_flipped = y_overflows_below && available_above > available_below;
         let mut height = cmp::min(
             unconstrained_max_height,
-            if y_is_flipped {
+            if y_flipped {
                 available_above
             } else {
                 available_below
@@ -3151,16 +3151,16 @@ impl EditorElement {
             let available_above = bottom_y_when_flipped;
             let available_below = viewport_bounds.bottom() - target_position.y;
             if available_below > 3. * line_height {
-                y_is_flipped = false;
+                y_flipped = false;
                 height = min_height;
             } else if available_above > 3. * line_height {
-                y_is_flipped = true;
+                y_flipped = true;
                 height = min_height;
             } else if available_above > available_below {
-                y_is_flipped = true;
+                y_flipped = true;
                 height = available_above;
             } else {
-                y_is_flipped = false;
+                y_flipped = false;
                 height = available_below;
             }
         }
@@ -3169,7 +3169,7 @@ impl EditorElement {
 
         // TODO(mgsloan): use viewport_bounds.width as a max width when rendering menu.
         let Some(mut menu_element) = self.editor.update(cx, |editor, cx| {
-            editor.render_context_menu(&self.style, max_height_in_lines, cx)
+            editor.render_context_menu(&self.style, max_height_in_lines, y_flipped, cx)
         }) else {
             return;
         };
@@ -3181,7 +3181,7 @@ impl EditorElement {
             x: target_position
                 .x
                 .min((viewport_bounds.right() - menu_size.width).max(Pixels::ZERO)),
-            y: if y_is_flipped {
+            y: if y_flipped {
                 bottom_y_when_flipped - menu_size.height
             } else {
                 target_position.y
@@ -3192,7 +3192,7 @@ impl EditorElement {
         // Layout documentation aside
         let menu_bounds = Bounds::new(menu_position, menu_size);
         let max_menu_size = size(menu_size.width, unconstrained_max_height);
-        let max_menu_bounds = if y_is_flipped {
+        let max_menu_bounds = if y_flipped {
             Bounds::new(
                 point(
                     menu_position.x,
@@ -3205,7 +3205,7 @@ impl EditorElement {
         };
         self.layout_context_menu_aside(
             text_hitbox,
-            y_is_flipped,
+            y_flipped,
             menu_position,
             menu_bounds,
             max_menu_bounds,
@@ -3220,7 +3220,7 @@ impl EditorElement {
     fn layout_context_menu_aside(
         &self,
         text_hitbox: &Hitbox,
-        y_is_flipped: bool,
+        y_flipped: bool,
         menu_position: gpui::Point<Pixels>,
         menu_bounds: Bounds<Pixels>,
         max_menu_bounds: Bounds<Pixels>,
@@ -3231,7 +3231,7 @@ impl EditorElement {
     ) {
         let mut extend_amount = Edges::all(MENU_GAP);
         // Extend to include the cursored line to avoid overlapping it.
-        if y_is_flipped {
+        if y_flipped {
             extend_amount.bottom = line_height;
         } else {
             extend_amount.top = line_height;
@@ -3280,13 +3280,13 @@ impl EditorElement {
             let fit_within = |available: Edges<Pixels>, wanted: Size<Pixels>| {
                 // Prefer to fit on the same side of the line as the menu, then on the other side of
                 // the line.
-                if !y_is_flipped && wanted.height < available.bottom {
+                if !y_flipped && wanted.height < available.bottom {
                     Some(bottom_position)
-                } else if !y_is_flipped && wanted.height < available.top {
+                } else if !y_flipped && wanted.height < available.top {
                     Some(top_position)
-                } else if y_is_flipped && wanted.height < available.top {
+                } else if y_flipped && wanted.height < available.top {
                     Some(top_position)
-                } else if y_is_flipped && wanted.height < available.bottom {
+                } else if y_flipped && wanted.height < available.bottom {
                     Some(bottom_position)
                 } else {
                     None
