@@ -73,7 +73,7 @@ use zed_predict_tos::ZedPredictTos;
 
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
-    CompletionEntry, CompletionsMenu, ContextMenuOrigin,
+    CompletionEntry, CompletionsMenu, ContextMenuOrigin, InlineCompletionVisibilityChange,
 };
 use git::blame::GitBlame;
 use gpui::{
@@ -2037,12 +2037,13 @@ impl Editor {
                     drop(context_menu);
 
                     let query = Self::completion_query(buffer, cursor_position);
-                    cx.spawn(move |this, mut cx| async move {
-                        completion_menu
-                            .filter(query.as_deref(), cx.background_executor().clone())
+                    cx.spawn_in(window, move |this, mut cx| async move {
+                        let prior_selection_type = completion_menu.selection_type();
+                        let inline_completion_visibility_change = completion_menu
+                            .filter(query.as_deref(), Some(prior_selection_type), &cx)
                             .await;
 
-                        this.update(&mut cx, |this, cx| {
+                        this.update_in(&mut cx, |this, window, cx| {
                             let mut context_menu = this.context_menu.borrow_mut();
                             let Some(CodeContextMenu::Completions(menu)) = context_menu.as_ref()
                             else {
@@ -2055,6 +2056,13 @@ impl Editor {
 
                             *context_menu = Some(CodeContextMenu::Completions(completion_menu));
                             drop(context_menu);
+
+                            this.handle_inline_completion_visibility_change(
+                                inline_completion_visibility_change,
+                                window,
+                                cx,
+                            );
+
                             cx.notify();
                         })
                     })
@@ -3860,11 +3868,27 @@ impl Editor {
         let id = post_inc(&mut self.next_completion_id);
         let task = cx.spawn_in(window, |editor, mut cx| {
             async move {
-                editor.update(&mut cx, |this, _| {
+                let prior_selection_type = editor.update(&mut cx, |this, _| {
                     this.completion_tasks.retain(|(task_id, _)| *task_id >= id);
+                    match this.context_menu.borrow().as_ref() {
+                        Some(CodeContextMenu::Completions(prev_menu)) => {
+                            Some(prev_menu.selection_type())
+                        }
+                        _ => None,
+                    }
                 })?;
                 let completions = completions.await.log_err();
                 let menu = if let Some(completions) = completions {
+                    let inline_completion_menu_hint = editor
+                        .update_in(&mut cx, |editor, window, cx| {
+                            if editor.show_inline_completions_in_menu(cx) {
+                                editor.inline_completion_menu_hint(window, cx)
+                            } else {
+                                None
+                            }
+                        })
+                        .ok()
+                        .flatten();
                     let mut menu = CompletionsMenu::new(
                         id,
                         sort_completions,
@@ -3872,12 +3896,15 @@ impl Editor {
                         position,
                         buffer.clone(),
                         completions.into(),
+                        inline_completion_menu_hint,
                     );
 
-                    menu.filter(query.as_deref(), cx.background_executor().clone())
+                    let inline_completion_visibility_change = menu
+                        .filter(query.as_deref(), prior_selection_type, &mut cx)
                         .await;
 
-                    menu.visible().then_some(menu)
+                    menu.visible()
+                        .then_some((menu, inline_completion_visibility_change))
                 } else {
                     None
                 };
@@ -3894,19 +3921,21 @@ impl Editor {
                     }
 
                     if editor.focus_handle.is_focused(window) && menu.is_some() {
-                        let mut menu = menu.unwrap();
+                        let (mut menu, inline_completion_visibility_change) = menu.unwrap();
                         menu.resolve_visible_completions(editor.completion_provider.as_deref(), cx);
 
-                        if editor.show_inline_completions_in_menu(cx) {
-                            if let Some(hint) = editor.inline_completion_menu_hint(window, cx) {
-                                menu.show_inline_completion_hint(hint);
-                            }
-                        } else {
+                        if !editor.show_inline_completions_in_menu(cx) {
                             editor.discard_inline_completion(false, cx);
                         }
 
                         *editor.context_menu.borrow_mut() =
                             Some(CodeContextMenu::Completions(menu));
+
+                        editor.handle_inline_completion_visibility_change(
+                            inline_completion_visibility_change,
+                            window,
+                            cx,
+                        );
 
                         cx.notify();
                     } else if editor.completion_tasks.len() <= 1 {
@@ -4989,6 +5018,39 @@ impl Editor {
         self.active_inline_completion.is_some()
     }
 
+    pub fn handle_inline_completion_visibility_change(
+        &mut self,
+        change: InlineCompletionVisibilityChange,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match change {
+            InlineCompletionVisibilityChange::Unchanged => {}
+            InlineCompletionVisibilityChange::Hide => {
+                self.hide_active_inline_completion(cx);
+            }
+            InlineCompletionVisibilityChange::Show => {
+                // TODO: May be more efficient to have this store the info needed to show, instead
+                // of recomputing.
+                self.update_visible_inline_completion(window, cx);
+            }
+        }
+    }
+
+    fn hide_active_inline_completion(&mut self, cx: &mut Context<Self>) {
+        let should_clear = match &mut self.active_inline_completion {
+            Some(ref mut active_inline_completion) => {
+                let inlay_ids = std::mem::take(&mut active_inline_completion.inlay_ids);
+                Some(inlay_ids)
+            }
+            _ => None,
+        };
+        if let Some(inlay_ids) = should_clear {
+            self.splice_inlays(inlay_ids, Default::default(), cx);
+            self.clear_highlights::<InlineCompletionHighlight>(cx);
+        }
+    }
+
     fn take_active_inline_completion(
         &mut self,
         cx: &mut Context<Self>,
@@ -5136,11 +5198,16 @@ impl Editor {
 
         if self.show_inline_completions_in_menu(cx) && self.has_active_completions_menu() {
             if let Some(hint) = self.inline_completion_menu_hint(window, cx) {
-                match self.context_menu.borrow_mut().as_mut() {
+                let should_be_visible = match self.context_menu.borrow_mut().as_mut() {
                     Some(CodeContextMenu::Completions(menu)) => {
-                        menu.show_inline_completion_hint(hint);
+                        menu.show_inline_completion_hint(hint)
                     }
-                    _ => {}
+                    _ => true,
+                };
+                if !should_be_visible {
+                    // TODO: Inefficient to hide the splices / highlights that were just inserted
+                    // above.
+                    self.hide_active_inline_completion(cx);
                 }
             }
         }
@@ -7694,11 +7761,17 @@ impl Editor {
 
         if self
             .context_menu
-            .borrow_mut()
-            .as_mut()
-            .map(|menu| menu.select_first(self.completion_provider.as_deref(), cx))
-            .unwrap_or(false)
+            .borrow()
+            .as_ref()
+            .map_or(false, |context_menu| context_menu.visible())
         {
+            let change = self
+                .context_menu
+                .borrow_mut()
+                .as_mut()
+                .unwrap()
+                .select_first(self.completion_provider.as_deref(), cx);
+            self.handle_inline_completion_visibility_change(change, window, cx);
             return;
         }
 
@@ -7813,11 +7886,17 @@ impl Editor {
 
         if self
             .context_menu
-            .borrow_mut()
-            .as_mut()
-            .map(|menu| menu.select_last(self.completion_provider.as_deref(), cx))
-            .unwrap_or(false)
+            .borrow()
+            .as_ref()
+            .map_or(false, |context_menu| context_menu.visible())
         {
+            let change = self
+                .context_menu
+                .borrow_mut()
+                .as_mut()
+                .unwrap()
+                .select_last(self.completion_provider.as_deref(), cx);
+            self.handle_inline_completion_visibility_change(change, window, cx);
             return;
         }
 
@@ -7865,60 +7944,78 @@ impl Editor {
         });
     }
 
-    pub fn context_menu_select_initial_lsp_completion(&mut self, cx: &mut Context<Self>) {
+    pub fn context_menu_set_selection(
+        &mut self,
+        index: usize,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let mut change = InlineCompletionVisibilityChange::Unchanged;
         if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
             match context_menu {
                 CodeContextMenu::Completions(completions_menu) => {
-                    completions_menu
-                        .select_initial_lsp_completion(self.completion_provider.as_deref(), cx);
+                    change = completions_menu.set_selection(
+                        index,
+                        self.completion_provider.as_deref(),
+                        cx,
+                    );
                 }
                 CodeContextMenu::CodeActions(_) => {}
             }
         }
+        self.handle_inline_completion_visibility_change(change, window, cx);
     }
 
     pub fn context_menu_first(
         &mut self,
         _: &ContextMenuFirst,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let mut change = InlineCompletionVisibilityChange::Unchanged;
         if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
-            context_menu.select_first(self.completion_provider.as_deref(), cx);
+            change = context_menu.select_first(self.completion_provider.as_deref(), cx);
         }
+        self.handle_inline_completion_visibility_change(change, window, cx);
     }
 
     pub fn context_menu_prev(
         &mut self,
         _: &ContextMenuPrev,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let mut change = InlineCompletionVisibilityChange::Unchanged;
         if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
-            context_menu.select_prev(self.completion_provider.as_deref(), cx);
+            change = context_menu.select_prev(self.completion_provider.as_deref(), cx);
         }
+        self.handle_inline_completion_visibility_change(change, window, cx);
     }
 
     pub fn context_menu_next(
         &mut self,
         _: &ContextMenuNext,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let mut change = InlineCompletionVisibilityChange::Unchanged;
         if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
-            context_menu.select_next(self.completion_provider.as_deref(), cx);
+            change = context_menu.select_next(self.completion_provider.as_deref(), cx);
         }
+        self.handle_inline_completion_visibility_change(change, window, cx);
     }
 
     pub fn context_menu_last(
         &mut self,
         _: &ContextMenuLast,
-        _window: &mut Window,
+        window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let mut change = InlineCompletionVisibilityChange::Unchanged;
         if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
-            context_menu.select_last(self.completion_provider.as_deref(), cx);
+            change = context_menu.select_last(self.completion_provider.as_deref(), cx);
         }
+        self.handle_inline_completion_visibility_change(change, window, cx);
     }
 
     pub fn move_to_previous_word_start(

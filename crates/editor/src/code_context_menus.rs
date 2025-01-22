@@ -1,7 +1,7 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
     div, pulsating_between, px, uniform_list, Animation, AnimationExt, AnyElement,
-    BackgroundExecutor, Div, Entity, FontWeight, Hsla, ListSizingBehavior, ScrollStrategy,
+    AsyncWindowContext, Div, Entity, FontWeight, Hsla, ListSizingBehavior, ScrollStrategy,
     SharedString, Size, StrikethroughStyle, StyledText, TextStyleRefinement,
     UniformListScrollHandle, WeakEntity,
 };
@@ -43,20 +43,26 @@ pub enum CodeContextMenu {
     CodeActions(CodeActionsMenu),
 }
 
+#[must_use]
+#[derive(Debug, Clone, Copy)]
+pub enum InlineCompletionVisibilityChange {
+    Unchanged,
+    Hide,
+    Show,
+}
+
 impl CodeContextMenu {
     pub fn select_first(
         &mut self,
         provider: Option<&dyn CompletionProvider>,
         cx: &mut Context<Editor>,
-    ) -> bool {
-        if self.visible() {
-            match self {
-                CodeContextMenu::Completions(menu) => menu.select_first(provider, cx),
-                CodeContextMenu::CodeActions(menu) => menu.select_first(cx),
+    ) -> InlineCompletionVisibilityChange {
+        match self {
+            CodeContextMenu::Completions(menu) => menu.select_first(provider, cx),
+            CodeContextMenu::CodeActions(menu) => {
+                menu.select_first(cx);
+                InlineCompletionVisibilityChange::Unchanged
             }
-            true
-        } else {
-            false
         }
     }
 
@@ -64,15 +70,13 @@ impl CodeContextMenu {
         &mut self,
         provider: Option<&dyn CompletionProvider>,
         cx: &mut Context<Editor>,
-    ) -> bool {
-        if self.visible() {
-            match self {
-                CodeContextMenu::Completions(menu) => menu.select_prev(provider, cx),
-                CodeContextMenu::CodeActions(menu) => menu.select_prev(cx),
+    ) -> InlineCompletionVisibilityChange {
+        match self {
+            CodeContextMenu::Completions(menu) => menu.select_prev(provider, cx),
+            CodeContextMenu::CodeActions(menu) => {
+                menu.select_prev(cx);
+                InlineCompletionVisibilityChange::Unchanged
             }
-            true
-        } else {
-            false
         }
     }
 
@@ -80,15 +84,13 @@ impl CodeContextMenu {
         &mut self,
         provider: Option<&dyn CompletionProvider>,
         cx: &mut Context<Editor>,
-    ) -> bool {
-        if self.visible() {
-            match self {
-                CodeContextMenu::Completions(menu) => menu.select_next(provider, cx),
-                CodeContextMenu::CodeActions(menu) => menu.select_next(cx),
+    ) -> InlineCompletionVisibilityChange {
+        match self {
+            CodeContextMenu::Completions(menu) => menu.select_next(provider, cx),
+            CodeContextMenu::CodeActions(menu) => {
+                menu.select_next(cx);
+                InlineCompletionVisibilityChange::Unchanged
             }
-            true
-        } else {
-            false
         }
     }
 
@@ -96,15 +98,13 @@ impl CodeContextMenu {
         &mut self,
         provider: Option<&dyn CompletionProvider>,
         cx: &mut Context<Editor>,
-    ) -> bool {
-        if self.visible() {
-            match self {
-                CodeContextMenu::Completions(menu) => menu.select_last(provider, cx),
-                CodeContextMenu::CodeActions(menu) => menu.select_last(cx),
+    ) -> InlineCompletionVisibilityChange {
+        match self {
+            CodeContextMenu::Completions(menu) => menu.select_last(provider, cx),
+            CodeContextMenu::CodeActions(menu) => {
+                menu.select_last(cx);
+                InlineCompletionVisibilityChange::Unchanged
             }
-            true
-        } else {
-            false
         }
     }
 
@@ -181,6 +181,12 @@ pub(crate) enum CompletionEntry {
     InlineCompletionHint(InlineCompletionMenuHint),
 }
 
+#[derive(Clone, Debug)]
+pub enum SelectionType {
+    InlineCompletionSelected,
+    LspCompletionSelected,
+}
+
 impl CompletionsMenu {
     pub fn new(
         id: CompletionId,
@@ -189,12 +195,17 @@ impl CompletionsMenu {
         initial_position: Anchor,
         buffer: Entity<Buffer>,
         completions: Box<[Completion]>,
+        hint: Option<InlineCompletionMenuHint>,
     ) -> Self {
         let match_candidates = completions
             .iter()
             .enumerate()
             .map(|(id, completion)| StringMatchCandidate::new(id, &completion.label.filter_text()))
             .collect();
+        let entries = match hint {
+            Some(hint) => vec![CompletionEntry::InlineCompletionHint(hint)],
+            None => Vec::new(),
+        };
 
         Self {
             id,
@@ -204,7 +215,7 @@ impl CompletionsMenu {
             show_completion_documentation,
             completions: RefCell::new(completions).into(),
             match_candidates,
-            entries: RefCell::new(Vec::new()).into(),
+            entries: RefCell::new(entries).into(),
             selected_item: 0,
             scroll_handle: UniformListScrollHandle::new(),
             resolve_completions: true,
@@ -274,67 +285,91 @@ impl CompletionsMenu {
         &mut self,
         provider: Option<&dyn CompletionProvider>,
         cx: &mut Context<Editor>,
-    ) {
+    ) -> InlineCompletionVisibilityChange {
         let index = if self.scroll_handle.y_flipped() {
             self.entries.borrow().len() - 1
         } else {
             0
         };
-        self.update_selection_index(index, provider, cx);
+        self.set_selection(index, provider, cx)
     }
 
-    fn select_last(&mut self, provider: Option<&dyn CompletionProvider>, cx: &mut Context<Editor>) {
+    fn select_last(
+        &mut self,
+        provider: Option<&dyn CompletionProvider>,
+        cx: &mut Context<Editor>,
+    ) -> InlineCompletionVisibilityChange {
         let index = if self.scroll_handle.y_flipped() {
             0
         } else {
             self.entries.borrow().len() - 1
         };
-        self.update_selection_index(index, provider, cx);
+        self.set_selection(index, provider, cx)
     }
 
-    fn select_prev(&mut self, provider: Option<&dyn CompletionProvider>, cx: &mut Context<Editor>) {
+    fn select_prev(
+        &mut self,
+        provider: Option<&dyn CompletionProvider>,
+        cx: &mut Context<Editor>,
+    ) -> InlineCompletionVisibilityChange {
         let index = if self.scroll_handle.y_flipped() {
             self.next_match_index()
         } else {
             self.prev_match_index()
         };
-        self.update_selection_index(index, provider, cx);
+        self.set_selection(index, provider, cx)
     }
 
-    fn select_next(&mut self, provider: Option<&dyn CompletionProvider>, cx: &mut Context<Editor>) {
+    fn select_next(
+        &mut self,
+        provider: Option<&dyn CompletionProvider>,
+        cx: &mut Context<Editor>,
+    ) -> InlineCompletionVisibilityChange {
         let index = if self.scroll_handle.y_flipped() {
             self.prev_match_index()
         } else {
             self.next_match_index()
         };
-        self.update_selection_index(index, provider, cx);
+        self.set_selection(index, provider, cx)
     }
 
-    pub fn select_initial_lsp_completion(
+    pub fn set_selection(
         &mut self,
+        index: usize,
         provider: Option<&dyn CompletionProvider>,
         cx: &mut Context<Editor>,
-    ) {
-        let index = if self.inline_completion_present() {
-            1
-        } else {
-            0
-        };
-        self.update_selection_index(index, provider, cx);
-    }
-
-    fn update_selection_index(
-        &mut self,
-        match_index: usize,
-        provider: Option<&dyn CompletionProvider>,
-        cx: &mut Context<Editor>,
-    ) {
-        if self.selected_item != match_index {
-            self.selected_item = match_index;
+    ) -> InlineCompletionVisibilityChange {
+        if self.selected_item != index {
+            let entries_count = self.entries.borrow().len();
+            if index >= entries_count {
+                log::error!("index {index} is out of bounds, entries_count = {entries_count}");
+                return InlineCompletionVisibilityChange::Unchanged;
+            }
+            let inline_completion_was_visible = self.inline_completion_visible_in_buffer();
+            self.selected_item = index;
             self.scroll_handle
                 .scroll_to_item(self.selected_item, ScrollStrategy::Top);
             self.resolve_visible_completions(provider, cx);
             cx.notify();
+            self.inline_completion_visibility_change(inline_completion_was_visible)
+        } else {
+            InlineCompletionVisibilityChange::Unchanged
+        }
+    }
+
+    fn inline_completion_visibility_change(
+        &self,
+        was_visible: bool,
+    ) -> InlineCompletionVisibilityChange {
+        let is_visible = self.inline_completion_visible_in_buffer();
+        if is_visible == was_visible {
+            InlineCompletionVisibilityChange::Unchanged
+        } else {
+            if is_visible {
+                InlineCompletionVisibilityChange::Show
+            } else {
+                InlineCompletionVisibilityChange::Hide
+            }
         }
     }
 
@@ -354,17 +389,25 @@ impl CompletionsMenu {
         }
     }
 
-    pub fn show_inline_completion_hint(&mut self, hint: InlineCompletionMenuHint) {
+    pub fn show_inline_completion_hint(&mut self, hint: InlineCompletionMenuHint) -> bool {
         let hint = CompletionEntry::InlineCompletionHint(hint);
         if self.inline_completion_present() {
             self.entries.borrow_mut()[0] = hint;
         } else {
             self.entries.borrow_mut().insert(0, hint);
-            // When `y_flipped`, need to scroll to bring it into view.
-            if self.selected_item == 0 {
-                self.scroll_handle
-                    .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-            }
+            self.selected_item =
+                (self.selected_item + 1).min(self.entries.borrow().len().saturating_sub(1));
+        }
+        self.inline_completion_visible_in_buffer()
+    }
+
+    /// Get whether whether LSP completion or inline completion is selected. Used to preserve this
+    /// across instances of the context menu.
+    pub fn selection_type(&self) -> SelectionType {
+        if self.inline_completion_selected() {
+            SelectionType::InlineCompletionSelected
+        } else {
+            SelectionType::LspCompletionSelected
         }
     }
 
@@ -381,7 +424,7 @@ impl CompletionsMenu {
             })
     }
 
-    fn inline_completion_selected_and_loaded(&self) -> bool {
+    fn inline_completion_visible_in_buffer(&self) -> bool {
         self.selected_item == 0
             && self.entries.borrow().first().map_or(false, |entry| {
                 matches!(
@@ -479,7 +522,13 @@ impl CompletionsMenu {
     }
 
     pub fn visible(&self) -> bool {
-        !self.entries.borrow().is_empty()
+        if self.entries.borrow().is_empty() {
+            return false;
+        }
+        if self.entries.borrow().len() == 1 {
+            return !self.inline_completion_present();
+        }
+        return true;
     }
 
     fn origin(&self, cursor_position: DisplayPoint) -> ContextMenuOrigin {
@@ -522,7 +571,7 @@ impl CompletionsMenu {
             .map(|(ix, _)| ix);
         drop(completions);
 
-        let translucent = self.inline_completion_selected_and_loaded();
+        let translucent = self.inline_completion_visible_in_buffer();
         if translucent {
             max_height_in_lines = max_height_in_lines.min(2);
         }
@@ -656,8 +705,7 @@ impl CompletionsMenu {
                                         .on_click(cx.listener(move |editor, _event, window, cx| {
                                             cx.stop_propagation();
                                             if translucent {
-                                                editor
-                                                    .context_menu_select_initial_lsp_completion(cx);
+                                                editor.context_menu_set_selection(1, window, cx);
                                             } else if let Some(task) = editor.confirm_completion(
                                                 &ConfirmCompletion {
                                                     item_ix: Some(item_ix),
@@ -841,9 +889,12 @@ impl CompletionsMenu {
         )
     }
 
-    pub async fn filter(&mut self, query: Option<&str>, executor: BackgroundExecutor) {
-        let inline_completion_was_selected = self.inline_completion_selected();
-
+    pub async fn filter(
+        &mut self,
+        query: Option<&str>,
+        prior_selection_type: Option<SelectionType>,
+        cx: &AsyncWindowContext,
+    ) -> InlineCompletionVisibilityChange {
         let mut matches = if let Some(query) = query {
             fuzzy::match_strings(
                 &self.match_candidates,
@@ -851,7 +902,7 @@ impl CompletionsMenu {
                 query.chars().any(|c| c.is_uppercase()),
                 100,
                 &Default::default(),
-                executor,
+                cx.background_executor().clone(),
             )
             .await
         } else {
@@ -937,11 +988,23 @@ impl CompletionsMenu {
         }
         drop(completions);
 
+        let should_select_inline_completion = match prior_selection_type {
+            // When there's just one entry for the inline completion, this is the initial load of the
+            // menu. In that case, the inline completion should be selected if it's loaded, otherwise
+            // the LSP completion should be selected. The rationale for this is to avoid "perceptual
+            // data races" where the user is attempting to confirm the inline completion, and the LSP
+            // completion arrives asynchronously during this.
+            None if self.entries.borrow().len() == 1 => self.inline_completion_visible_in_buffer(),
+            None => self.inline_completion_selected(),
+            Some(SelectionType::InlineCompletionSelected) => true,
+            Some(SelectionType::LspCompletionSelected) => false,
+        };
+
         let mut entries = self.entries.borrow_mut();
         let new_selection = if let Some(CompletionEntry::InlineCompletionHint(_)) = entries.first()
         {
             entries.truncate(1);
-            if inline_completion_was_selected || matches.is_empty() {
+            if should_select_inline_completion || matches.is_empty() {
                 0
             } else {
                 1
@@ -951,9 +1014,18 @@ impl CompletionsMenu {
             0
         };
         entries.extend(matches.into_iter().map(CompletionEntry::Match));
+        drop(entries);
+
         self.selected_item = new_selection;
-        self.scroll_handle
-            .scroll_to_item(new_selection, ScrollStrategy::Top);
+        // Scroll to 0 even if the LSP completion is the only one selected. This keeps the display
+        // consistent when y_flipped.
+        self.scroll_handle.scroll_to_item(0, ScrollStrategy::Top);
+        if self.inline_completion_visible_in_buffer() {
+            // TODO: Inefficient: This will cause a re-show even though often it's already shown.
+            InlineCompletionVisibilityChange::Show
+        } else {
+            InlineCompletionVisibilityChange::Hide
+        }
     }
 }
 
