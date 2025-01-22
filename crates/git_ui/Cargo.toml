@@ -32,8 +32,6 @@ ui.workspace = true
 util.workspace = true
 workspace.workspace = true
 picker.workspace = true
-feature_flags.workspace = true
-smol.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 windows.workspace = true
