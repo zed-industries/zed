@@ -648,13 +648,91 @@ impl ContextProvider for ContextProviderWithTasks {
 #[cfg(test)]
 mod tests {
     use gpui::TestAppContext;
-    use pretty_assertions::assert_eq;
+    use pretty_assertions::{assert_eq, assert_matches};
     use serde_json::json;
 
     use crate::task_store::TaskStore;
 
     use super::test_inventory::*;
     use super::*;
+
+    #[gpui::test]
+    async fn test_pre_task_graph_sorted_correctly(cx: &mut TestAppContext) {
+        init_test(cx);
+        let inventory = cx.update(Inventory::new);
+
+        let common_source = TaskSourceKind::AbsPath {
+            id_base: "global task.json".into(),
+            abs_path: paths::tasks_file().into(),
+        };
+
+        let tasks: [(_, _, &[_]); 4] = [
+            (common_source.clone(), "task 1", &["task 2", "task 4"]),
+            (common_source.clone(), "task 2", &["task 4"]),
+            (common_source.clone(), "task 3", &["task 1", "task 2"]),
+            (common_source.clone(), "task 4", &[]),
+        ];
+
+        let tasks_json = serde_json::to_string(&serde_json::Value::Array(
+            tasks
+                .iter()
+                .map(|(_, label, pre)| {
+                    json!({
+                        "label": label,
+                        "command": "echo",
+                        "args": vec![label],
+                        "pre": pre
+                    })
+                })
+                .collect_vec(),
+        ))
+        .unwrap();
+
+        cx.run_until_parked();
+
+        inventory.update(cx, |inventory, _| {
+            inventory
+                .update_file_based_tasks(None, Some(&tasks_json))
+                .unwrap();
+        });
+
+        let task_cx = TaskContext::default();
+
+        let base_task = inventory.update(cx, |inventory, cx| {
+            inventory
+                .list_tasks(None, None, None, cx)
+                .iter()
+                .filter(|(_, task)| task.label.as_str() == tasks[2].1)
+                .map(|(kind, task)| {
+                    (
+                        kind.clone(),
+                        task.resolve_task(&kind.to_id_base(), &task_cx).unwrap(),
+                    )
+                })
+                .collect_vec()
+                .last()
+                .unwrap()
+                .clone()
+        });
+
+        let pre_task_list = inventory.update(cx, |inventory, _| {
+            inventory
+                .build_pre_task_list(&base_task.1, None, &task_cx)
+                .unwrap()
+        });
+
+        let mut sorted_labels = pre_task_list
+            .iter()
+            .map(|(_, task)| task.original_task().label.as_str())
+            .collect_vec();
+
+        sorted_labels.push(base_task.1.original_task().label.as_str());
+
+        assert_matches!(
+            sorted_labels.as_slice(),
+            ["task 4", "task 2", "task 1", "task 3"]
+        );
+    }
 
     #[gpui::test]
     async fn test_task_list_sorting(cx: &mut TestAppContext) {
