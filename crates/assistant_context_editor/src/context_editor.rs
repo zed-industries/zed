@@ -121,6 +121,13 @@ pub trait AssistantPanelDelegate {
         cx: &mut ViewContext<Workspace>,
     ) -> Option<View<ContextEditor>>;
 
+    fn open_saved_context(
+        &self,
+        workspace: &mut Workspace,
+        path: PathBuf,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<()>>;
+
     fn open_remote_context(
         &self,
         workspace: &mut Workspace,

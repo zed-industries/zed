@@ -50,7 +50,6 @@ menu.workspace = true
 multi_buffer.workspace = true
 parking_lot.workspace = true
 paths.workspace = true
-picker.workspace = true
 project.workspace = true
 prompt_library.workspace = true
 proto.workspace = true
