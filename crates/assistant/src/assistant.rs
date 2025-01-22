@@ -1,5 +1,6 @@
 #![cfg_attr(target_os = "windows", allow(unused, dead_code))]
 
+mod assistant_configuration;
 pub mod assistant_panel;
 mod inline_assistant;
 pub mod slash_command_settings;
