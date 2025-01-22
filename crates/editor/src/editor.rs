@@ -5701,8 +5701,8 @@ impl Editor {
             // If the selection is empty and the cursor is before a closing delimiter, then move
             // the cursor 1 column to the right (tabout/tab-out).
             let settings = buffer.settings_at(cursor, cx);
-            let use_tabout = settings.use_tabout;
-            if use_tabout && cursor.column != snapshot.line_len(MultiBufferRow(cursor.row)) {
+            let use_tab_out = settings.use_tab_out;
+            if use_tab_out && cursor.column != snapshot.line_len(MultiBufferRow(cursor.row)) {
                 if let Some(next_char) = snapshot.chars_at(cursor).next() {
                     let is_before_closing_delimiter =
                         matches!(next_char, ')' | '}' | ']' | '\'' | '\"' | ';');

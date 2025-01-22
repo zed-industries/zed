@@ -1091,8 +1091,8 @@ TBD: Add Python Ruff source.organizeImports example
 ## Tab-out
 
 - Description: Whether to tab-out of parentheses, brackets, braces, single or double quotes when pressing tab.
-- Setting: `use_tabout`
-- Default: `true`
+- Setting: `use_tab_out`
+- Default: `false`
 
 **Options**
 
