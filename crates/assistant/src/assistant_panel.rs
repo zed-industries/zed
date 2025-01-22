@@ -1,7 +1,6 @@
 use crate::assistant_configuration::{ConfigurationView, ConfigurationViewEvent};
 use crate::{
-    terminal_inline_assistant::TerminalInlineAssistant, DeployHistory, DeployPromptLibrary,
-    InlineAssistant, NewContext,
+    terminal_inline_assistant::TerminalInlineAssistant, DeployHistory, InlineAssistant, NewContext,
 };
 use anyhow::{anyhow, Result};
 use assistant_context_editor::{
@@ -38,7 +37,7 @@ use workspace::{
     dock::{DockPosition, Panel, PanelEvent},
     pane, DraggedSelection, Pane, ShowConfiguration, ToggleZoom, Workspace,
 };
-use zed_actions::assistant::{InlineAssist, ToggleFocus};
+use zed_actions::assistant::{DeployPromptLibrary, InlineAssist, ToggleFocus};
 
 pub fn init(cx: &mut AppContext) {
     workspace::FollowableViewRegistry::register::<ContextEditor>(cx);

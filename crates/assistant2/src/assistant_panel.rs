@@ -4,28 +4,30 @@ use std::sync::Arc;
 use anyhow::{anyhow, Result};
 use assistant_context_editor::{
     make_lsp_adapter_delegate, AssistantPanelDelegate, ContextEditor, ContextHistory,
+    SlashCommandCompletionProvider,
 };
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
 use client::zed_urls;
+use editor::Editor;
 use fs::Fs;
 use gpui::{
     prelude::*, px, svg, Action, AnyElement, AppContext, AsyncWindowContext, Corner, EventEmitter,
-    FocusHandle, FocusableView, FontWeight, Model, Pixels, Subscription, Task, View, ViewContext,
-    WeakView, WindowContext,
+    FocusHandle, FocusableView, FontWeight, Model, Pixels, Subscription, Task, UpdateGlobal, View,
+    ViewContext, WeakView, WindowContext,
 };
 use language::LanguageRegistry;
 use language_model::LanguageModelRegistry;
 use project::Project;
-use prompt_library::PromptBuilder;
+use prompt_library::{open_prompt_library, PromptBuilder, PromptLibrary};
 use settings::{update_settings_file, Settings};
 use time::UtcOffset;
 use ui::{prelude::*, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip};
 use util::ResultExt as _;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
-use zed_actions::assistant::ToggleFocus;
+use zed_actions::assistant::{DeployPromptLibrary, ToggleFocus};
 
 use crate::active_thread::ActiveThread;
 use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
@@ -33,7 +35,10 @@ use crate::message_editor::MessageEditor;
 use crate::thread::{Thread, ThreadError, ThreadId};
 use crate::thread_history::{PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
-use crate::{NewPromptEditor, NewThread, OpenConfiguration, OpenHistory, OpenPromptEditorHistory};
+use crate::{
+    InlineAssistant, NewPromptEditor, NewThread, OpenConfiguration, OpenHistory,
+    OpenPromptEditorHistory,
+};
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -278,6 +283,22 @@ impl AssistantPanel {
         if let Some(context_editor) = self.context_editor.as_ref() {
             context_editor.focus_handle(cx).focus(cx);
         }
+    }
+
+    fn deploy_prompt_library(&mut self, _: &DeployPromptLibrary, cx: &mut ViewContext<Self>) {
+        open_prompt_library(
+            self.language_registry.clone(),
+            Box::new(PromptLibraryInlineAssist::new(self.workspace.clone())),
+            Arc::new(|| {
+                Box::new(SlashCommandCompletionProvider::new(
+                    Arc::new(SlashCommandWorkingSet::default()),
+                    None,
+                    None,
+                ))
+            }),
+            cx,
+        )
+        .detach_and_log_err(cx);
     }
 
     fn open_history(&mut self, cx: &mut ViewContext<Self>) {
@@ -857,6 +878,7 @@ impl Render for AssistantPanel {
             .on_action(cx.listener(|this, _: &OpenHistory, cx| {
                 this.open_history(cx);
             }))
+            .on_action(cx.listener(Self::deploy_prompt_library))
             .child(self.render_toolbar(cx))
             .map(|parent| match self.active_view {
                 ActiveView::Thread => parent
@@ -873,6 +895,37 @@ impl Render for AssistantPanel {
                 ActiveView::PromptEditorHistory => parent.children(self.context_history.clone()),
                 ActiveView::Configuration => parent.children(self.configuration.clone()),
             })
+    }
+}
+
+struct PromptLibraryInlineAssist {
+    workspace: WeakView<Workspace>,
+}
+
+impl PromptLibraryInlineAssist {
+    pub fn new(workspace: WeakView<Workspace>) -> Self {
+        Self { workspace }
+    }
+}
+
+impl prompt_library::InlineAssistDelegate for PromptLibraryInlineAssist {
+    fn assist(
+        &self,
+        prompt_editor: &View<Editor>,
+        _initial_prompt: Option<String>,
+        cx: &mut ViewContext<PromptLibrary>,
+    ) {
+        InlineAssistant::update_global(cx, |assistant, cx| {
+            assistant.assist(&prompt_editor, self.workspace.clone(), None, cx)
+        })
+    }
+
+    fn focus_assistant_panel(
+        &self,
+        workspace: &mut Workspace,
+        cx: &mut ViewContext<Workspace>,
+    ) -> bool {
+        workspace.focus_panel::<AssistantPanel>(cx).is_some()
     }
 }
 

@@ -82,7 +82,7 @@ pub mod assistant {
     use schemars::JsonSchema;
     use serde::Deserialize;
 
-    actions!(assistant, [ToggleFocus]);
+    actions!(assistant, [ToggleFocus, DeployPromptLibrary]);
 
     #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema)]
     pub struct InlineAssist {
