@@ -230,7 +230,9 @@ impl AssistantPanel {
             )
         }));
 
-        cx.notify();
+        if let Some(context_editor) = self.context_editor.as_ref() {
+            context_editor.focus_handle(cx).focus(cx);
+        }
     }
 
     fn open_history(&mut self, cx: &mut ViewContext<Self>) {
