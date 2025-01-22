@@ -5482,7 +5482,9 @@ where
 
         let overshoot = *position - self.diff_transforms.start().0 .0;
         let mut excerpt_position = self.diff_transforms.start().1 .0;
-        excerpt_position.add_assign(&overshoot);
+        if let Some(DiffTransform::BufferContent { .. }) = self.diff_transforms.item() {
+            excerpt_position.add_assign(&overshoot);
+        }
 
         self.excerpts
             .seek_forward(&ExcerptDimension(excerpt_position), Bias::Right, &());
