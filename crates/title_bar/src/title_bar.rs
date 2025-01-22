@@ -198,10 +198,11 @@ impl Render for TitleBar {
                             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
                             .child(
                                 h_flex()
+                                    .h_5()
                                     .rounded_md()
                                     .border_1()
                                     .border_color(
-                                        cx.theme().colors().editor_foreground.opacity(0.5),
+                                        cx.theme().colors().editor_foreground.opacity(0.3),
                                     )
                                     .overflow_hidden()
                                     .child(
@@ -210,13 +211,13 @@ impl Render for TitleBar {
                                             .px_1()
                                             .items_center()
                                             .gap_1p5()
-                                            .bg(cx.theme().colors().text_accent.opacity(0.05))
+                                            .bg(cx.theme().colors().text_accent.opacity(0.04))
                                             .hover(|style| {
                                                 style.bg(cx.theme().colors().element_hover)
                                             })
                                             .border_r_1()
                                             .border_color(
-                                                cx.theme().colors().editor_foreground.opacity(0.2),
+                                                cx.theme().colors().editor_foreground.opacity(0.1),
                                             )
                                             .child(
                                                 Icon::new(IconName::ZedPredict)
@@ -224,7 +225,7 @@ impl Render for TitleBar {
                                             )
                                             .child(
                                                 h_flex()
-                                                    .gap_1()
+                                                    .gap_0p5()
                                                     .child(
                                                         Label::new("Introducing:")
                                                             .size(LabelSize::Small)
@@ -238,7 +239,7 @@ impl Render for TitleBar {
                                     )
                                     .child(
                                         IconButton::new("share", IconName::Close)
-                                            .icon_size(IconSize::XSmall),
+                                            .icon_size(IconSize::Indicator),
                                     ),
                             ),
                     )
