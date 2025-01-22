@@ -2165,11 +2165,30 @@ impl MultiBuffer {
         let mut excerpt_edits = Vec::new();
         for range in ranges.iter() {
             let range = range.to_point(&snapshot);
-            let start = snapshot.anchor_before(Point::new(range.start.row, 0));
-            let end = snapshot.anchor_before(Point::new(
+
+            let mut start = snapshot.anchor_before(Point::new(range.start.row, 0));
+            let mut end = snapshot.anchor_before(Point::new(
                 range.end.row,
                 snapshot.line_len(MultiBufferRow(range.end.row)),
             ));
+
+            if let Some(diff_hunk) = snapshot.diff_hunks_in_range(range.clone()).next() {
+                if diff_hunk.row_range.start.0 <= range.start.row
+                    && diff_hunk.row_range.end.0 >= range.end.row
+                {
+                    dbg!(&range, diff_hunk.row_range);
+                    start = Anchor::in_buffer(
+                        diff_hunk.excerpt_id,
+                        diff_hunk.buffer_id,
+                        diff_hunk.buffer_range.start,
+                    );
+                    end = Anchor::in_buffer(
+                        diff_hunk.excerpt_id,
+                        diff_hunk.buffer_id,
+                        diff_hunk.buffer_range.end,
+                    );
+                }
+            };
             let start = snapshot.excerpt_offset_for_anchor(&start);
             let end = snapshot.excerpt_offset_for_anchor(&end);
             excerpt_edits.push(text::Edit {
