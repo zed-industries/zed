@@ -2171,12 +2171,29 @@ impl MultiBuffer {
                 range.end.row,
                 snapshot.line_len(MultiBufferRow(range.end.row)),
             ));
+            let peek_end = if range.end.row < snapshot.max_row().0 {
+                Point::new(range.end.row + 1, 0)
+            } else {
+                range.end
+            };
 
-            if let Some(diff_hunk) = snapshot.diff_hunks_in_range(range.clone()).next() {
+            if let Some(diff_hunk) = snapshot.diff_hunks_in_range(range.start..peek_end).next() {
                 if diff_hunk.row_range.start.0 <= range.start.row
                     && diff_hunk.row_range.end.0 >= range.end.row
                 {
-                    dbg!(&range, diff_hunk.row_range);
+                    start = Anchor::in_buffer(
+                        diff_hunk.excerpt_id,
+                        diff_hunk.buffer_id,
+                        diff_hunk.buffer_range.start,
+                    );
+                    end = Anchor::in_buffer(
+                        diff_hunk.excerpt_id,
+                        diff_hunk.buffer_id,
+                        diff_hunk.buffer_range.end,
+                    );
+                } else if diff_hunk.row_range.start.0 == peek_end.row
+                    && diff_hunk.row_range.end.0 == peek_end.row
+                {
                     start = Anchor::in_buffer(
                         diff_hunk.excerpt_id,
                         diff_hunk.buffer_id,
