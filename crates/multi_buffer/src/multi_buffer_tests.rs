@@ -500,9 +500,9 @@ fn test_diff_hunks_in_range(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
-fn test_diff_hunks_edited_inserted(cx: &mut AppContext) {
-    let base_text = "one\ntwo\nfour\n";
-    let text = "one\ntwo\nTHREE\nfour\n";
+fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
+    let base_text = "one\ntwo\nfour\nfive\nsix\nseven\n";
+    let text = "one\ntwo\nTHREE\nfour\nfive\nseven\n";
     let buffer = cx.new_model(|cx| Buffer::local(text, cx));
     let change_set = cx.new_model(|cx| {
         let mut change_set = BufferChangeSet::new(&buffer, cx);
@@ -511,40 +511,44 @@ fn test_diff_hunks_edited_inserted(cx: &mut AppContext) {
         change_set
     });
     let multibuffer = cx.new_model(|cx| MultiBuffer::singleton(buffer.clone(), cx));
-    multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.add_change_set(change_set, cx);
-    });
-    cx.background_executor().run_until_parked();
-    multibuffer.update(cx, |multibuffer, cx| {
-        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+
+    let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.add_change_set(change_set.clone(), cx);
+        (multibuffer.snapshot(cx), multibuffer.subscribe())
     });
 
-    let snapshot = multibuffer.read(cx).snapshot(cx);
-    let actual_text = snapshot.text();
-    let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
-    let actual_diff = format_diff(&actual_text, &actual_row_infos, &Default::default());
-    pretty_assertions::assert_eq!(
-        actual_diff,
+    cx.executor().run_until_parked();
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.set_all_hunks_expanded(cx);
+    });
+
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
         indoc! {
             "
               one
               two
             + THREE
               four
+              five
+            - six
+              seven
             "
         },
     );
 
-    buffer.update(cx, |buffer, cx| {
-        buffer.edit([(Point::new(2, 0)..Point::new(2, 0), "__\n__")], None, cx);
+    // Insert a newline within an insertion hunk
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.edit([(Point::new(2, 0)..Point::new(2, 0), "__\n__")], None, cx);
     });
-
-    let snapshot = multibuffer.read(cx).snapshot(cx);
-    let actual_text = snapshot.text();
-    let actual_row_infos = snapshot.row_infos(MultiBufferRow(0)).collect::<Vec<_>>();
-    let actual_diff = format_diff(&actual_text, &actual_row_infos, &Default::default());
-    pretty_assertions::assert_eq!(
-        actual_diff,
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
         indoc! {
             "
               one
@@ -552,6 +556,30 @@ fn test_diff_hunks_edited_inserted(cx: &mut AppContext) {
             + __
             + __THREE
               four
+              five
+            - six
+              seven
+            "
+        },
+    );
+
+    // Delete the newline before a deleted hunk.
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.edit([(Point::new(5, 4)..Point::new(6, 0), "")], None, cx);
+    });
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc! {
+            "
+              one
+              two
+            + __
+            + __THREE
+              four
+              fiveseven
             "
         },
     );
