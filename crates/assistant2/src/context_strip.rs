@@ -118,6 +118,10 @@ impl ContextStrip {
     }
 
     fn suggested_thread(&self, cx: &ViewContext<Self>) -> Option<SuggestedContext> {
+        if !self.context_picker.read(cx).allow_threads() {
+            return None;
+        }
+
         let workspace = self.workspace.upgrade()?;
         let active_thread = workspace
             .read(cx)
