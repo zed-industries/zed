@@ -2646,20 +2646,19 @@ async fn test_git_status_postprocessing(cx: &mut TestAppContext) {
 
     let root = temp_tree(json!({
         "project": {
-            "sub": {
-                "u.txt": "",
-            },
+            "sub": {},
             "a.txt": "",
         },
     }));
 
     let work_dir = root.path().join("project");
     let repo = git_init(work_dir.as_path());
-    // a.txt exists in HEAD and the working copy but is delete in the index.
-    // `sub` is untracked.
+    // a.txt exists in HEAD and the working copy but is deleted in the index.
     git_add("a.txt", &repo);
     git_commit("Initial commit", &repo);
     git_remove_index("a.txt".as_ref(), &repo);
+    // `sub` is a nested git repository.
+    let _sub = git_init(&work_dir.join("sub"));
 
     let tree = Worktree::local(
         root.path(),
