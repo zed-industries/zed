@@ -211,7 +211,6 @@ impl Render for TitleBar {
                                             .child(
                                                 h_flex()
                                                     .h_full()
-                                                    .px_1()
                                                     .items_center()
                                                     .gap_1p5()
                                                     .child(
@@ -228,7 +227,7 @@ impl Render for TitleBar {
                                                             )
                                                             .child(
                                                                 Label::new(
-                                                                    "Zed AI's Edit Predictions",
+                                                                    "Zed AI's Edit Prediction",
                                                                 )
                                                                 .size(LabelSize::Small),
                                                             ),
@@ -251,8 +250,15 @@ impl Render for TitleBar {
                                             }),
                                     )
                                     .child(
-                                        IconButton::new("close", IconName::Close)
-                                            .icon_size(IconSize::Indicator),
+                                        div()
+                                            .border_l_1()
+                                            .border_color(
+                                                cx.theme().colors().editor_foreground.opacity(0.1),
+                                            )
+                                            .child(
+                                                IconButton::new("close", IconName::Close)
+                                                    .icon_size(IconSize::Indicator),
+                                            ),
                                     ),
                             ),
                     )

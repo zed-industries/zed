@@ -16512,6 +16512,8 @@ dependencies = [
  "client",
  "gpui",
  "menu",
+ "settings",
+ "theme",
  "ui",
  "workspace",
 ]

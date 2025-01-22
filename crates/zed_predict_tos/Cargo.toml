@@ -18,6 +18,8 @@ test-support = []
 [dependencies]
 client.workspace = true
 gpui.workspace = true
+menu.workspace = true
+settings.workspace = true
+theme.workspace = true
 ui.workspace = true
 workspace.workspace = true
-menu.workspace = true
