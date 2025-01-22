@@ -1,9 +1,11 @@
 //! AI service Terms of Service acceptance modal.
 
+use std::time::Duration;
+
 use client::UserStore;
 use gpui::{
-    svg, AppContext, ClickEvent, DismissEvent, EventEmitter, FocusHandle, FocusableView, Model,
-    MouseDownEvent, Render, View,
+    ease_in_out, svg, Animation, AnimationExt as _, AppContext, ClickEvent, DismissEvent,
+    EventEmitter, FocusHandle, FocusableView, Model, MouseDownEvent, Render, View,
 };
 use settings::Settings;
 use ui::{prelude::*, TintColor};
@@ -130,18 +132,36 @@ impl Render for ZedPredictTos {
                     })),
             )
             .child({
-                let tab = |_n: u8| {
-                    h_flex()
-                        .px_4()
-                        .py_0p5()
-                        .bg(cx.theme().colors().editor_background)
-                        .border_1()
-                        .border_color(cx.theme().colors().text_accent.opacity(0.4))
-                        .rounded_md()
-                        .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                        .text_size(TextSize::XSmall.rems(cx))
-                        .text_color(cx.theme().colors().text)
-                        .child("tab")
+                let tab = |n: usize| {
+                    let text_color = cx.theme().colors().text;
+                    let border_color = cx.theme().colors().text_accent.opacity(0.4);
+
+                    h_flex().child(
+                        h_flex()
+                            .px_4()
+                            .py_0p5()
+                            .bg(cx.theme().colors().editor_background)
+                            .border_1()
+                            .border_color(border_color)
+                            .rounded_md()
+                            .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+                            .text_size(TextSize::XSmall.rems(cx))
+                            .text_color(text_color)
+                            .child("tab")
+                            .with_animation(
+                                ElementId::Integer(n),
+                                Animation::new(Duration::from_millis(1800)).repeat(),
+                                move |tab, delta| {
+                                    let delta = (delta - 0.15 * n as f32) / 0.7;
+                                    let delta = 1.0 - (0.5 - delta).abs() * 2.;
+                                    let delta = ease_in_out(delta.clamp(0., 1.));
+                                    let delta = 0.1 + 0.9 * delta;
+
+                                    tab.border_color(border_color.opacity(delta))
+                                        .text_color(text_color.opacity(delta))
+                                },
+                            ),
+                    )
                 };
 
                 v_flex()
