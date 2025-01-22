@@ -154,12 +154,24 @@ impl TaskTemplate {
             None => None,
         }
         .or(cx.cwd.clone());
-        let human_readable_label = substitute_all_template_variables_in_str(
+        let full_label = substitute_all_template_variables_in_str(
             &self.label,
-            &truncated_variables,
+            &task_variables,
             &variable_names,
             &mut substituted_variables,
-        )?
+        )?;
+        const MAX_LABEL_LENGTH: usize = 64;
+
+        let human_readable_label = if full_label.len() < MAX_LABEL_LENGTH {
+            substitute_all_template_variables_in_str(
+                &self.label,
+                &truncated_variables,
+                &variable_names,
+                &mut substituted_variables,
+            )?
+        } else {
+            full_label.clone()
+        }
         .lines()
         .fold(String::new(), |mut string, line| {
             if string.is_empty() {
@@ -170,12 +182,7 @@ impl TaskTemplate {
             }
             string
         });
-        let full_label = substitute_all_template_variables_in_str(
-            &self.label,
-            &task_variables,
-            &variable_names,
-            &mut substituted_variables,
-        )?;
+
         let command = substitute_all_template_variables_in_str(
             &self.command,
             &task_variables,
