@@ -458,7 +458,8 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 }
 
 // todo(windows)
-// Disable this test on Windows for now.
+// Disable this test on Windows for now. Because this test runs forever on Windows.
+// Reenable this test when we figure out why.
 #[gpui::test]
 #[cfg(not(target_os = "windows"))]
 async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
