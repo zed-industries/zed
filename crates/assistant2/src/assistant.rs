@@ -28,7 +28,7 @@ use prompt_library::{PromptBuilder, PromptLoadingParams};
 use settings::Settings as _;
 use util::ResultExt;
 
-pub use crate::assistant_panel::AssistantPanel;
+pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
 
 actions!(
