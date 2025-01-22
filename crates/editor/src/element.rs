@@ -1628,9 +1628,10 @@ impl EditorElement {
 
             if let Some(inline_completion) = editor.active_inline_completion.as_ref() {
                 match &inline_completion.completion {
-                    InlineCompletion::Edit(edits)
-                        if single_line_edit(&edits, buffer_snapshot).is_some() =>
-                    {
+                    InlineCompletion::Edit {
+                        edits,
+                        edit_preview: _,
+                    } if single_line_edit(&edits, buffer_snapshot).is_some() => {
                         padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS
                     }
                     _ => {}
