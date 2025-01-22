@@ -196,6 +196,57 @@ impl Render for TitleBar {
                             .gap_1()
                             .pr_1()
                             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
+                            .child(
+                                h_flex()
+                                    .rounded_md()
+                                    .border_1()
+                                    .border_color(
+                                        cx.theme().colors().editor_foreground.opacity(0.5),
+                                    )
+                                    .overflow_hidden()
+                                    .child(
+                                        h_flex()
+                                            .h_full()
+                                            .px_1()
+                                            .items_center()
+                                            .gap_1p5()
+                                            .bg(cx.theme().colors().text_accent.opacity(0.05))
+                                            .hover(|style| {
+                                                style.bg(cx.theme().colors().element_hover)
+                                            })
+                                            .border_r_1()
+                                            .border_color(
+                                                cx.theme().colors().editor_foreground.opacity(0.2),
+                                            )
+                                            .child(
+                                                Icon::new(IconName::ZedPredict)
+                                                    .size(IconSize::Small),
+                                            )
+                                            .child(
+                                                h_flex()
+                                                    .gap_1()
+                                                    .child(
+                                                        Label::new("Introducing:")
+                                                            .size(LabelSize::Small)
+                                                            .color(Color::Muted),
+                                                    )
+                                                    .child(
+                                                        Label::new("Zed AI's Edit Predictions")
+                                                            .size(LabelSize::Small),
+                                                    ),
+                                            ),
+                                    )
+                                    .child(
+                                        IconButton::new("share", IconName::Close)
+                                            .icon_size(IconSize::XSmall),
+                                    ),
+                            ),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .pr_1()
+                            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
                             .children(self.render_call_controls(cx))
                             .map(|el| {
                                 let status = self.client.status();
