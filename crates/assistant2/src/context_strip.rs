@@ -118,6 +118,10 @@ impl ContextStrip {
     }
 
     fn suggested_thread(&self, cx: &ViewContext<Self>) -> Option<SuggestedContext> {
+        if !self.context_picker.read(cx).allow_threads() {
+            return None;
+        }
+
         let workspace = self.workspace.upgrade()?;
         let active_thread = workspace
             .read(cx)
@@ -432,7 +436,7 @@ impl Render for ContextStrip {
                 }
             })
             .children(context.iter().enumerate().map(|(i, context)| {
-                ContextPill::new_added(
+                ContextPill::added(
                     context.clone(),
                     dupe_names.contains(&context.name),
                     self.focused_index == Some(i),
@@ -454,7 +458,7 @@ impl Render for ContextStrip {
             }))
             .when_some(suggested_context, |el, suggested| {
                 el.child(
-                    ContextPill::new_suggested(
+                    ContextPill::suggested(
                         suggested.name().clone(),
                         suggested.icon_path(),
                         suggested.kind(),

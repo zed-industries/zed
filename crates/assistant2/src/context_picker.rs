@@ -89,7 +89,7 @@ impl ContextPicker {
                 ContextKind::Directory,
                 ContextKind::FetchedUrl,
             ];
-            if self.thread_store.is_some() {
+            if self.allow_threads() {
                 context_kinds.push(ContextKind::Thread);
             }
 
@@ -130,6 +130,11 @@ impl ContextPicker {
         .detach();
 
         menu
+    }
+
+    /// Whether threads are allowed as context.
+    pub fn allow_threads(&self) -> bool {
+        self.thread_store.is_some()
     }
 
     fn select_kind(&mut self, kind: ContextKind, cx: &mut ViewContext<Self>) {
