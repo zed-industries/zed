@@ -2660,7 +2660,8 @@ impl MultiBuffer {
                     buffer.anchor_before(edit_buffer_start)..buffer.anchor_after(edit_buffer_end);
 
                 for hunk in diff.hunks_intersecting_range(edit_anchor_range, buffer) {
-                    if !hunk.buffer_range.start.is_valid(buffer) {
+                    let hunk_anchor = hunk.buffer_range.start;
+                    if !hunk_anchor.is_valid(buffer) {
                         continue;
                     }
 
@@ -2695,13 +2696,12 @@ impl MultiBuffer {
 
                     // For every existing hunk, determine if it was previously expanded
                     // and if it should currently be expanded.
-                    let mut was_previously_expanded =
-                        old_expanded_hunks.contains(&hunk.buffer_range.start);
+                    let mut was_previously_expanded = old_expanded_hunks.contains(&hunk_anchor);
                     if old_diff_transforms.start().0 == hunk_excerpt_old_start {
-                        was_previously_expanded |= old_diff_transforms
-                            .item()
-                            .and_then(DiffTransform::hunk_anchor)
-                            .is_some();
+                        was_previously_expanded |=
+                            old_diff_transforms.item().map_or(false, |transform| {
+                                transform.hunk_anchor() == Some(hunk_anchor)
+                            });
                     }
 
                     let should_expand_hunk = match &change_kind {
@@ -2743,8 +2743,8 @@ impl MultiBuffer {
                                 DiffTransform::DeletedHunk {
                                     base_text_byte_range: hunk.diff_base_byte_range.clone(),
                                     summary: base_text_summary,
-                                    hunk_anchor: hunk.buffer_range.start,
                                     buffer_id: excerpt.buffer_id,
+                                    hunk_anchor,
                                     has_trailing_newline,
                                 },
                                 &(),

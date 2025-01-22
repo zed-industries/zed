@@ -1855,8 +1855,8 @@ impl ReferenceMultibuffer {
                         }
                         cmp::Ordering::Equal => {
                             let hunk_range = hunk.buffer_range.to_offset(&buffer);
-                            return hunk_range.end > excerpt_range.start
-                                && hunk_range.start < excerpt_range.end;
+                            return hunk_range.end >= excerpt_range.start
+                                && hunk_range.start <= excerpt_range.end;
                         }
                         cmp::Ordering::Greater => break,
                     }
