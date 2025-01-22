@@ -3324,6 +3324,7 @@ fn git_commit(msg: &'static str, repo: &git2::Repository) {
 }
 
 #[track_caller]
+#[cfg_attr(target_os = "windows", allow(unused))]
 fn git_stash(repo: &mut git2::Repository) {
     use git2::Signature;
 
@@ -3333,6 +3334,7 @@ fn git_stash(repo: &mut git2::Repository) {
 }
 
 #[track_caller]
+#[cfg_attr(target_os = "windows", allow(unused))]
 fn git_reset(offset: usize, repo: &git2::Repository) {
     let head = repo.head().expect("Couldn't get repo head");
     let object = head.peel(git2::ObjectType::Commit).unwrap();
