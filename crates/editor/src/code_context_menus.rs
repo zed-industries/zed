@@ -865,18 +865,22 @@ impl CompletionsMenu {
         drop(completions);
 
         let mut entries = self.entries.borrow_mut();
-        if let Some(CompletionEntry::InlineCompletionHint(_)) = entries.first() {
+        let new_selection = if let Some(CompletionEntry::InlineCompletionHint(_)) = entries.first()
+        {
             entries.truncate(1);
             if inline_completion_was_selected || matches.is_empty() {
-                self.selected_item = 0;
+                0
             } else {
-                self.selected_item = 1;
+                1
             }
         } else {
             entries.truncate(0);
-            self.selected_item = 0;
-        }
+            0
+        };
         entries.extend(matches.into_iter().map(CompletionEntry::Match));
+        self.selected_item = new_selection;
+        self.scroll_handle
+            .scroll_to_item(new_selection, ScrollStrategy::Top);
     }
 }
 

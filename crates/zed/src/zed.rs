@@ -399,6 +399,7 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
                 _ = timeout => false,
             }
         };
+
         let git_panel = if git_ui_enabled {
             Some(git_ui::git_panel::GitPanel::load(workspace_handle.clone(), cx.clone()).await?)
         } else {

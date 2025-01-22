@@ -482,11 +482,17 @@ enum InlineCompletionText {
     Edit(HighlightedEdits),
 }
 
+pub(crate) enum EditDisplayMode {
+    TabAccept,
+    DiffPopover,
+    Inline,
+}
+
 enum InlineCompletion {
     Edit {
         edits: Vec<(Range<Anchor>, String)>,
         edit_preview: Option<EditPreview>,
-        single_line: bool,
+        display_mode: EditDisplayMode,
     },
     Move(Anchor),
 }
@@ -4933,13 +4939,23 @@ impl Editor {
 
             invalidation_row_range = edit_start_row..edit_end_row;
 
-            let single_line = first_edit_start_point.row == last_edit_end_point.row
-                && !edits.iter().any(|(_, edit)| edit.contains('\n'));
+            let display_mode = if all_edits_insertions_or_deletions(&edits, &multibuffer) {
+                if provider.show_tab_accept_marker()
+                    && first_edit_start_point.row == last_edit_end_point.row
+                    && !edits.iter().any(|(_, edit)| edit.contains('\n'))
+                {
+                    EditDisplayMode::TabAccept
+                } else {
+                    EditDisplayMode::Inline
+                }
+            } else {
+                EditDisplayMode::DiffPopover
+            };
 
             completion = InlineCompletion::Edit {
                 edits,
-                single_line,
                 edit_preview: inline_completion.edit_preview,
+                display_mode,
             };
         };
 
@@ -4984,7 +5000,7 @@ impl Editor {
                 InlineCompletion::Edit {
                     edits,
                     edit_preview,
-                    single_line: _,
+                    display_mode: _,
                 } => edit_preview
                     .as_ref()
                     .and_then(|edit_preview| {
@@ -15225,3 +15241,31 @@ pub struct KillRing(ClipboardItem);
 impl Global for KillRing {}
 
 const UPDATE_DEBOUNCE: Duration = Duration::from_millis(50);
+
+fn all_edits_insertions_or_deletions(
+    edits: &Vec<(Range<Anchor>, String)>,
+    snapshot: &MultiBufferSnapshot,
+) -> bool {
+    let mut all_insertions = true;
+    let mut all_deletions = true;
+
+    for (range, new_text) in edits.iter() {
+        let range_is_empty = range.to_offset(&snapshot).is_empty();
+        let text_is_empty = new_text.is_empty();
+
+        if range_is_empty != text_is_empty {
+            if range_is_empty {
+                all_deletions = false;
+            } else {
+                all_insertions = false;
+            }
+        } else {
+            return false;
+        }
+
+        if !all_insertions && !all_deletions {
+            return false;
+        }
+    }
+    all_insertions || all_deletions
+}
