@@ -1343,6 +1343,90 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+fn test_repeatedly_expand_a_diff_hunk(cx: &mut TestAppContext) {
+    let text = indoc!(
+        "
+        one
+        TWO
+        THREE
+        four
+        FIVE
+        six
+        "
+    );
+    let base_text = indoc!(
+        "
+        one
+        four
+        six
+        "
+    );
+
+    let buffer = cx.new_model(|cx| Buffer::local(text, cx));
+    let change_set =
+        cx.new_model(|cx| BufferChangeSet::new_with_base_text(base_text.to_string(), &buffer, cx));
+    cx.run_until_parked();
+
+    let multibuffer = cx.new_model(|cx| {
+        let mut multibuffer = MultiBuffer::singleton(buffer.clone(), cx);
+        multibuffer.add_change_set(change_set.clone(), cx);
+        multibuffer
+    });
+
+    let (mut snapshot, mut subscription) = multibuffer.update(cx, |multibuffer, cx| {
+        (multibuffer.snapshot(cx), multibuffer.subscribe())
+    });
+
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.expand_diff_hunks(vec![Anchor::min()..Anchor::max()], cx);
+    });
+
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+              one
+            + TWO
+            + THREE
+              four
+            + FIVE
+              six
+            "
+        ),
+    );
+
+    // Regression test: expanding diff hunks that are already expanded should not change anything.
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.expand_diff_hunks(
+            vec![
+                snapshot.anchor_before(Point::new(2, 0))..snapshot.anchor_before(Point::new(2, 0)),
+            ],
+            cx,
+        );
+    });
+
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc!(
+            "
+              one
+            + TWO
+            + THREE
+              four
+            + FIVE
+              six
+            "
+        ),
+    );
+}
+
+#[gpui::test]
 fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
     let base_text_1 = indoc!(
         "

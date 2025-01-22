@@ -2557,8 +2557,7 @@ impl MultiBuffer {
             }
 
             // Compute the end of the edit in output coordinates.
-            let edit_end_overshoot =
-                (edit.old.end.saturating_sub(old_diff_transforms.start().0)).value;
+            let edit_end_overshoot = (edit.old.end - old_diff_transforms.start().0).value;
             let edit_old_end = old_diff_transforms.start().1 + edit_end_overshoot;
             let edit_new_end = new_diff_transforms.summary().output.len;
             let output_edit = Edit {
@@ -2754,10 +2753,6 @@ impl MultiBuffer {
                         if !hunk_buffer_range.is_empty() {
                             *end_of_current_insert =
                                 Some((hunk_excerpt_end.min(excerpt_end), hunk.buffer_range.start));
-                        }
-
-                        if was_previously_expanded {
-                            old_diff_transforms.next(&());
                         }
                     }
                 }
