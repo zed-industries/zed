@@ -432,7 +432,7 @@ impl Render for ContextStrip {
                 }
             })
             .children(context.iter().enumerate().map(|(i, context)| {
-                ContextPill::new_added(
+                ContextPill::added(
                     context.clone(),
                     dupe_names.contains(&context.name),
                     self.focused_index == Some(i),
@@ -454,7 +454,7 @@ impl Render for ContextStrip {
             }))
             .when_some(suggested_context, |el, suggested| {
                 el.child(
-                    ContextPill::new_suggested(
+                    ContextPill::suggested(
                         suggested.name().clone(),
                         suggested.icon_path(),
                         suggested.kind(),
