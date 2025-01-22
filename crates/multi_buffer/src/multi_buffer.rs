@@ -2809,19 +2809,23 @@ impl MultiBuffer {
         )) = edit_start_transform.zip(excerpts.item())
         {
             let buffer = &excerpt.buffer;
-            let excerpt_start = *excerpts.start();
-            let excerpt_end = excerpt_start + ExcerptOffset::new(excerpt.text_summary.len);
-            let excerpt_buffer_start = excerpt.range.context.start.to_offset(buffer);
-            let mut edit_buffer_end =
-                excerpt_buffer_start + edit.new.end.value.saturating_sub(excerpt_start.value);
-            let edit_buffer_end_point = buffer.offset_to_point(edit_buffer_end);
-            if edit_buffer_end_point.column != 0 {
-                edit_buffer_end = buffer.point_to_offset(edit_buffer_end_point + Point::new(1, 0));
-                let edit_end =
-                    excerpt_start + ExcerptOffset::new(edit_buffer_end - excerpt_buffer_start);
-                *end_of_current_insert = Some((edit_end.min(excerpt_end), *inserted_hunk_anchor));
-            } else {
-                *end_of_current_insert = Some((edit.new.end, *inserted_hunk_anchor));
+            if inserted_hunk_anchor.is_valid(buffer) {
+                let excerpt_start = *excerpts.start();
+                let excerpt_end = excerpt_start + ExcerptOffset::new(excerpt.text_summary.len);
+                let excerpt_buffer_start = excerpt.range.context.start.to_offset(buffer);
+                let mut edit_buffer_end =
+                    excerpt_buffer_start + edit.new.end.value.saturating_sub(excerpt_start.value);
+                let edit_buffer_end_point = buffer.offset_to_point(edit_buffer_end);
+                if edit_buffer_end_point.column != 0 {
+                    edit_buffer_end =
+                        buffer.point_to_offset(edit_buffer_end_point + Point::new(1, 0));
+                    let edit_end =
+                        excerpt_start + ExcerptOffset::new(edit_buffer_end - excerpt_buffer_start);
+                    *end_of_current_insert =
+                        Some((edit_end.min(excerpt_end), *inserted_hunk_anchor));
+                } else {
+                    *end_of_current_insert = Some((edit.new.end, *inserted_hunk_anchor));
+                }
             }
         }
     }
