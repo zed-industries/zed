@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use anyhow::Result;
-use assistant_context_editor::{make_lsp_adapter_delegate, ContextEditor};
+use assistant_context_editor::{make_lsp_adapter_delegate, ContextEditor, ContextHistory};
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
 use assistant_tool::ToolWorkingSet;
@@ -26,7 +26,7 @@ use crate::message_editor::MessageEditor;
 use crate::thread::{Thread, ThreadError, ThreadId};
 use crate::thread_history::{PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
-use crate::{NewPromptEditor, NewThread, OpenHistory, ToggleFocus};
+use crate::{NewPromptEditor, NewThread, OpenHistory, OpenPromptEditorHistory, ToggleFocus};
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -52,6 +52,14 @@ pub fn init(cx: &mut AppContext) {
                         workspace.focus_panel::<AssistantPanel>(cx);
                         panel.update(cx, |panel, cx| panel.new_prompt_editor(workspace, cx));
                     }
+                })
+                .register_action(|workspace, _: &OpenPromptEditorHistory, cx| {
+                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                        workspace.focus_panel::<AssistantPanel>(cx);
+                        panel.update(cx, |panel, cx| {
+                            panel.open_prompt_editor_history(workspace, cx)
+                        });
+                    }
                 });
         },
     )
@@ -62,6 +70,7 @@ enum ActiveView {
     Thread,
     PromptEditor,
     History,
+    PromptEditorHistory,
 }
 
 pub struct AssistantPanel {
@@ -73,11 +82,13 @@ pub struct AssistantPanel {
     message_editor: View<MessageEditor>,
     context_store: Model<assistant_context_editor::ContextStore>,
     context_editor: Option<View<ContextEditor>>,
+    context_history: Option<View<ContextHistory>>,
     tools: Arc<ToolWorkingSet>,
     local_timezone: UtcOffset,
     active_view: ActiveView,
     history: View<ThreadHistory>,
     new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
+    open_history_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     width: Option<Pixels>,
     height: Option<Pixels>,
 }
@@ -158,6 +169,7 @@ impl AssistantPanel {
             message_editor,
             context_store,
             context_editor: None,
+            context_history: None,
             tools,
             local_timezone: UtcOffset::from_whole_seconds(
                 chrono::Local::now().offset().local_minus_utc(),
@@ -165,6 +177,7 @@ impl AssistantPanel {
             .unwrap(),
             history: cx.new_view(|cx| ThreadHistory::new(weak_self, thread_store, cx)),
             new_item_context_menu_handle: PopoverMenuHandle::default(),
+            open_history_context_menu_handle: PopoverMenuHandle::default(),
             width: None,
             height: None,
         }
@@ -241,6 +254,28 @@ impl AssistantPanel {
         cx.notify();
     }
 
+    fn open_prompt_editor_history(
+        &mut self,
+        workspace: &mut Workspace,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.active_view = ActiveView::PromptEditorHistory;
+        self.context_history = Some(cx.new_view(|cx| {
+            ContextHistory::new(
+                workspace.project().clone(),
+                self.context_store.clone(),
+                self.workspace.clone(),
+                cx,
+            )
+        }));
+
+        if let Some(context_history) = self.context_history.as_ref() {
+            context_history.focus_handle(cx).focus(cx);
+        }
+
+        cx.notify();
+    }
+
     pub(crate) fn open_thread(&mut self, thread_id: &ThreadId, cx: &mut ViewContext<Self>) {
         let Some(thread) = self
             .thread_store
@@ -285,8 +320,21 @@ impl FocusableView for AssistantPanel {
     fn focus_handle(&self, cx: &AppContext) -> FocusHandle {
         match self.active_view {
             ActiveView::Thread => self.message_editor.focus_handle(cx),
-            ActiveView::PromptEditor => self.context_editor.as_ref().unwrap().focus_handle(cx),
             ActiveView::History => self.history.focus_handle(cx),
+            ActiveView::PromptEditor => {
+                if let Some(context_editor) = self.context_editor.as_ref() {
+                    context_editor.focus_handle(cx)
+                } else {
+                    cx.focus_handle()
+                }
+            }
+            ActiveView::PromptEditorHistory => {
+                if let Some(context_history) = self.context_history.as_ref() {
+                    context_history.focus_handle(cx)
+                } else {
+                    cx.focus_handle()
+                }
+            }
         }
     }
 }
@@ -369,8 +417,6 @@ impl Panel for AssistantPanel {
 
 impl AssistantPanel {
     fn render_toolbar(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let focus_handle = self.focus_handle(cx);
-
         let thread = self.thread.read(cx);
 
         let title = match self.active_view {
@@ -390,7 +436,8 @@ impl AssistantPanel {
                     SharedString::from(context_editor.read(cx).title(cx).to_string())
                 })
                 .unwrap_or_else(|| SharedString::from("Loading Summary…")),
-            ActiveView::History => "History".into(),
+            ActiveView::History => "History / Thread".into(),
+            ActiveView::PromptEditorHistory => "History / Prompt Editor".into(),
         };
 
         h_flex()
@@ -412,7 +459,7 @@ impl AssistantPanel {
                     .border_color(cx.theme().colors().border)
                     .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
-                        PopoverMenu::new("assistant-toolbar-popover-menu")
+                        PopoverMenu::new("assistant-toolbar-new-popover-menu")
                             .trigger(
                                 IconButton::new("new", IconName::Plus)
                                     .icon_size(IconSize::Small)
@@ -429,22 +476,23 @@ impl AssistantPanel {
                             }),
                     )
                     .child(
-                        IconButton::new("open-history", IconName::HistoryRerun)
-                            .icon_size(IconSize::Small)
-                            .style(ButtonStyle::Subtle)
-                            .tooltip({
-                                let focus_handle = focus_handle.clone();
-                                move |cx| {
-                                    Tooltip::for_action_in(
-                                        "Open History",
-                                        &OpenHistory,
-                                        &focus_handle,
-                                        cx,
-                                    )
-                                }
-                            })
-                            .on_click(move |_event, cx| {
-                                cx.dispatch_action(OpenHistory.boxed_clone());
+                        PopoverMenu::new("assistant-toolbar-history-popover-menu")
+                            .trigger(
+                                IconButton::new("open-history", IconName::HistoryRerun)
+                                    .icon_size(IconSize::Small)
+                                    .style(ButtonStyle::Subtle)
+                                    .tooltip(|cx| Tooltip::text("History…", cx)),
+                            )
+                            .anchor(Corner::TopRight)
+                            .with_handle(self.open_history_context_menu_handle.clone())
+                            .menu(move |cx| {
+                                Some(ContextMenu::build(cx, |menu, _| {
+                                    menu.action("Thread History", OpenHistory.boxed_clone())
+                                        .action(
+                                            "Prompt Editor History",
+                                            OpenPromptEditorHistory.boxed_clone(),
+                                        )
+                                }))
                             }),
                     )
                     .child(
@@ -704,8 +752,9 @@ impl Render for AssistantPanel {
                             .child(self.message_editor.clone()),
                     )
                     .children(self.render_last_error(cx)),
-                ActiveView::PromptEditor => parent.children(self.context_editor.clone()),
                 ActiveView::History => parent.child(self.history.clone()),
+                ActiveView::PromptEditor => parent.children(self.context_editor.clone()),
+                ActiveView::PromptEditorHistory => parent.children(self.context_history.clone()),
             })
     }
 }
