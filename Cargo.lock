@@ -13394,6 +13394,7 @@ dependencies = [
  "windows 0.58.0",
  "workspace",
  "zed_actions",
+ "zed_predict_tos",
 ]
 
 [[package]]

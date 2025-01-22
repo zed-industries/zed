@@ -36,6 +36,7 @@ use ui::{
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
 use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
+use zed_predict_tos::ZedPredictTos;
 
 #[cfg(feature = "stories")]
 pub use stories::*;
@@ -206,39 +207,51 @@ impl Render for TitleBar {
                                     )
                                     .overflow_hidden()
                                     .child(
-                                        h_flex()
-                                            .h_full()
-                                            .px_1()
-                                            .items_center()
-                                            .gap_1p5()
-                                            .bg(cx.theme().colors().text_accent.opacity(0.04))
-                                            .hover(|style| {
-                                                style.bg(cx.theme().colors().element_hover)
-                                            })
-                                            .border_r_1()
-                                            .border_color(
-                                                cx.theme().colors().editor_foreground.opacity(0.1),
-                                            )
-                                            .child(
-                                                Icon::new(IconName::ZedPredict)
-                                                    .size(IconSize::Small),
-                                            )
+                                        ButtonLike::new("try-zed-predict")
                                             .child(
                                                 h_flex()
-                                                    .gap_0p5()
+                                                    .h_full()
+                                                    .px_1()
+                                                    .items_center()
+                                                    .gap_1p5()
                                                     .child(
-                                                        Label::new("Introducing:")
-                                                            .size(LabelSize::Small)
-                                                            .color(Color::Muted),
+                                                        Icon::new(IconName::ZedPredict)
+                                                            .size(IconSize::Small),
                                                     )
                                                     .child(
-                                                        Label::new("Zed AI's Edit Predictions")
-                                                            .size(LabelSize::Small),
+                                                        h_flex()
+                                                            .gap_0p5()
+                                                            .child(
+                                                                Label::new("Introducing:")
+                                                                    .size(LabelSize::Small)
+                                                                    .color(Color::Muted),
+                                                            )
+                                                            .child(
+                                                                Label::new(
+                                                                    "Zed AI's Edit Predictions",
+                                                                )
+                                                                .size(LabelSize::Small),
+                                                            ),
                                                     ),
-                                            ),
+                                            )
+                                            .on_click({
+                                                let workspace = self.workspace.clone();
+                                                let user_store = self.user_store.clone();
+                                                move |_, cx| {
+                                                    let Some(workspace) = workspace.upgrade()
+                                                    else {
+                                                        return;
+                                                    };
+                                                    ZedPredictTos::toggle(
+                                                        workspace,
+                                                        user_store.clone(),
+                                                        cx,
+                                                    );
+                                                }
+                                            }),
                                     )
                                     .child(
-                                        IconButton::new("share", IconName::Close)
+                                        IconButton::new("close", IconName::Close)
                                             .icon_size(IconSize::Indicator),
                                     ),
                             ),

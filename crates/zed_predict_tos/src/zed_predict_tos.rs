@@ -99,6 +99,22 @@ impl Render for ZedPredictTos {
             .on_any_mouse_down(cx.listener(|this, _: &MouseDownEvent, cx| {
                 cx.focus(&this.focus_handle);
             }))
+            .child({
+                let tab = |_n: u8| {
+                    h_flex()
+                        .px_10()
+                        .bg(cx.theme().colors().text_accent.opacity(0.15))
+                        .border_1()
+                        .border_color(cx.theme().colors().text_accent.opacity(0.8))
+                        .rounded_md()
+                        .child(
+                            Label::new("tab")
+                                .color(Color::Muted),
+                        )
+                };
+
+                v_flex().items_center().gap_3().w_full().child(tab(0).ml_neg_32()).child(tab(1)).child(tab(2).ml_32())
+            })
             .child(
                 h_flex()
                     .w_full()
