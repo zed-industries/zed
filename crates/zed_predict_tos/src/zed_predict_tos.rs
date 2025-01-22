@@ -8,7 +8,7 @@ use gpui::{
     EventEmitter, FocusHandle, FocusableView, Model, MouseDownEvent, Render, View,
 };
 use settings::Settings;
-use ui::{prelude::*, TintColor};
+use ui::{prelude::*, ButtonLike, TintColor};
 use workspace::{ModalView, Workspace};
 
 /// Terms of acceptance for AI inline prediction.
@@ -16,7 +16,6 @@ pub struct ZedPredictTos {
     focus_handle: FocusHandle,
     user_store: Model<UserStore>,
     workspace: View<Workspace>,
-    viewed: bool,
 }
 
 impl ZedPredictTos {
@@ -26,7 +25,6 @@ impl ZedPredictTos {
         cx: &mut ViewContext<Self>,
     ) -> Self {
         ZedPredictTos {
-            viewed: false,
             focus_handle: cx.focus_handle(),
             user_store,
             workspace,
@@ -44,7 +42,6 @@ impl ZedPredictTos {
     }
 
     fn view_terms(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
-        self.viewed = true;
         cx.open_url("https://zed.dev/terms-of-service");
         cx.notify();
     }
@@ -86,12 +83,6 @@ impl ModalView for ZedPredictTos {}
 
 impl Render for ZedPredictTos {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let description = if self.viewed {
-            "After accepting the ToS, Zed will be set as your inline completions provider."
-        } else {
-            "To start using Edit Predictions, please read and accept our Terms of Service."
-        };
-
         v_flex()
             .w_96()
             .p_4()
@@ -150,7 +141,7 @@ impl Render for ZedPredictTos {
                             .child("tab")
                             .with_animation(
                                 ElementId::Integer(n),
-                                Animation::new(Duration::from_millis(1800)).repeat(),
+                                Animation::new(Duration::from_millis(2400)).repeat(),
                                 move |tab, delta| {
                                     let delta = (delta - 0.15 * n as f32) / 0.7;
                                     let delta = 1.0 - (0.5 - delta).abs() * 2.;
@@ -175,40 +166,65 @@ impl Render for ZedPredictTos {
             .child(
                 v_flex()
                     .mt_2()
-                    .gap_0p5()
-                    .items_center()
+                    .gap_1()
                     .child(
-                        h_flex().child(
-                            Label::new("Zed AI")
-                                .size(LabelSize::Small)
-                                .color(Color::Muted),
-                        ),
+                        v_flex()
+                            .w_full()
+                            .items_center()
+                            .gap_0p5()
+                            .child(
+                                h_flex().child(
+                                    Label::new("Zed AI")
+                                        .size(LabelSize::Small)
+                                        .color(Color::Muted),
+                                ),
+                            )
+                            .child(h_flex().child(Headline::new("Edit Prediction"))),
                     )
-                    .child(h_flex().child(Headline::new("Edit Prediction")))
-                    .child(Label::new(description).color(Color::Muted)),
+                    .child(
+                        v_flex()
+                            .w_full()
+                            .items_center()
+                            .gap_0()
+                            .child(
+                                h_flex().child(
+                                    Label::new("To start using Edit Predictions, please read")
+                                        .color(Color::Muted),
+                                ),
+                            )
+                            .child(
+                                h_flex()
+                                    .child(Label::new("and accept our").color(Color::Muted))
+                                    .child(
+                                        ButtonLike::new("tos-link")
+                                            .child(
+                                                h_flex()
+                                                    .gap_1()
+                                                    .child(
+                                                        Label::new("Terms of Service.")
+                                                            .underline(true),
+                                                    )
+                                                    .child(
+                                                        Icon::new(IconName::ExternalLink)
+                                                            .size(IconSize::Indicator),
+                                                    ),
+                                            )
+                                            .on_click(cx.listener(Self::view_terms)),
+                                    ),
+                            ),
+                    ),
             )
             .child(
                 v_flex()
                     .mt_2()
                     .gap_1()
                     .w_full()
-                    .child(if self.viewed {
-                        Button::new(
-                            "accept-tos",
-                            "Accept the Terms of Service and Start Using It",
-                        )
-                        .style(ButtonStyle::Tinted(TintColor::Accent))
-                        .full_width()
-                        .on_click(cx.listener(Self::accept_terms))
-                    } else {
-                        Button::new("view-tos", "Read Terms of Service")
+                    .child(
+                        Button::new("accept-tos", "Accept Terms of Service and Enable")
                             .style(ButtonStyle::Tinted(TintColor::Accent))
-                            .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::XSmall)
-                            .icon_position(IconPosition::End)
                             .full_width()
-                            .on_click(cx.listener(Self::view_terms))
-                    })
+                            .on_click(cx.listener(Self::accept_terms)),
+                    )
                     .child(
                         Button::new("cancel", "Cancel")
                             .full_width()
