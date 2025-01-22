@@ -17,8 +17,8 @@ use cocoa::{
     },
     base::{id, nil},
     foundation::{
-        NSArray, NSAutoreleasePool, NSDictionary, NSFastEnumeration, NSInteger, NSPoint, NSRect,
-        NSSize, NSString, NSUInteger,
+        NSArray, NSAutoreleasePool, NSDictionary, NSFastEnumeration, NSInteger, NSNotFound,
+        NSPoint, NSRect, NSSize, NSString, NSUInteger,
     },
 };
 use core_graphics::display::{CGDirectDisplayID, CGPoint, CGRect};
@@ -225,6 +225,11 @@ unsafe fn build_classes() {
         decl.add_method(
             sel!(acceptsFirstMouse:),
             accepts_first_mouse as extern "C" fn(&Object, Sel, id) -> BOOL,
+        );
+
+        decl.add_method(
+            sel!(characterIndexForPoint:),
+            character_index_for_point as extern "C" fn(&Object, Sel, NSPoint) -> u64,
         );
 
         decl.register()
@@ -1829,6 +1834,10 @@ extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
     let mut lock = window_state.as_ref().lock();
     lock.first_mouse = true;
     YES
+}
+
+extern "C" fn character_index_for_point(_this: &Object, _: Sel, _position: NSPoint) -> u64 {
+    NSNotFound as u64
 }
 
 extern "C" fn dragging_entered(this: &Object, _: Sel, dragging_info: id) -> NSDragOperation {
