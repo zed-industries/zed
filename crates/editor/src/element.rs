@@ -3411,10 +3411,10 @@ impl EditorElement {
                 }
 
                 if all_edits_insertions_or_deletions(edits, &editor_snapshot.buffer_snapshot) {
-                    if let (true, Some((range, _))) = (single_line, edits.first()) {
-                        let mut element = inline_completion_tab_indicator("Accept", None, cx);
-
+                    if *single_line {
+                        let range = &edits.first()?.0;
                         let target_display_point = range.end.to_display_point(editor_snapshot);
+
                         let target_line_end = DisplayPoint::new(
                             target_display_point.row(),
                             editor_snapshot.line_len(target_display_point.row()),
@@ -3422,6 +3422,8 @@ impl EditorElement {
                         let origin = self.editor.update(cx, |editor, cx| {
                             editor.display_to_pixel_point(target_line_end, editor_snapshot, cx)
                         })?;
+
+                        let mut element = inline_completion_tab_indicator("Accept", None, cx);
 
                         element.prepaint_as_root(
                             text_bounds.origin + origin + point(PADDING_X, px(0.)),
