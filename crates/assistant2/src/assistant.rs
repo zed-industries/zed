@@ -25,9 +25,8 @@ use command_palette_hooks::CommandPaletteFilter;
 use feature_flags::{Assistant2FeatureFlag, FeatureFlagAppExt};
 use fs::Fs;
 use gpui::{actions, AppContext};
-use prompt_library::{PromptBuilder, PromptLoadingParams};
+use prompt_library::PromptBuilder;
 use settings::Settings as _;
-use util::ResultExt;
 
 pub use crate::assistant_panel::{AssistantPanel, ConcreteAssistantPanelDelegate};
 pub use crate::inline_assistant::InlineAssistant;
@@ -60,20 +59,15 @@ actions!(
 const NAMESPACE: &str = "assistant2";
 
 /// Initializes the `assistant2` crate.
-pub fn init(fs: Arc<dyn Fs>, client: Arc<Client>, stdout_is_a_pty: bool, cx: &mut AppContext) {
+pub fn init(
+    fs: Arc<dyn Fs>,
+    client: Arc<Client>,
+    prompt_builder: Arc<PromptBuilder>,
+    cx: &mut AppContext,
+) {
     AssistantSettings::register(cx);
     assistant_panel::init(cx);
 
-    let prompt_builder = PromptBuilder::new(Some(PromptLoadingParams {
-        fs: fs.clone(),
-        repo_path: stdout_is_a_pty
-            .then(|| std::env::current_dir().log_err())
-            .flatten(),
-        cx,
-    }))
-    .log_err()
-    .map(Arc::new)
-    .unwrap_or_else(|| Arc::new(PromptBuilder::new(None).unwrap()));
     inline_assistant::init(
         fs.clone(),
         prompt_builder.clone(),

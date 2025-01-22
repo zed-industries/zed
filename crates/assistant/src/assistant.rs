@@ -19,11 +19,10 @@ use gpui::{actions, AppContext, Global, UpdateGlobal};
 use language_model::{
     LanguageModelId, LanguageModelProviderId, LanguageModelRegistry, LanguageModelResponseMessage,
 };
-use prompt_library::{PromptBuilder, PromptLoadingParams};
+use prompt_library::PromptBuilder;
 use semantic_index::{CloudEmbeddingProvider, SemanticDb};
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
-use util::ResultExt;
 
 pub use crate::assistant_panel::{AssistantPanel, AssistantPanelEvent};
 pub(crate) use crate::inline_assistant::*;
@@ -93,9 +92,9 @@ impl Assistant {
 pub fn init(
     fs: Arc<dyn Fs>,
     client: Arc<Client>,
-    stdout_is_a_pty: bool,
+    prompt_builder: Arc<PromptBuilder>,
     cx: &mut AppContext,
-) -> Arc<PromptBuilder> {
+) {
     cx.set_global(Assistant::default());
     AssistantSettings::register(cx);
     SlashCommandSettings::register(cx);
@@ -135,16 +134,6 @@ pub fn init(
     assistant_panel::init(cx);
     context_server::init(cx);
 
-    let prompt_builder = PromptBuilder::new(Some(PromptLoadingParams {
-        fs: fs.clone(),
-        repo_path: stdout_is_a_pty
-            .then(|| std::env::current_dir().log_err())
-            .flatten(),
-        cx,
-    }))
-    .log_err()
-    .map(Arc::new)
-    .unwrap_or_else(|| Arc::new(PromptBuilder::new(None).unwrap()));
     register_slash_commands(Some(prompt_builder.clone()), cx);
     inline_assistant::init(
         fs.clone(),
@@ -175,8 +164,6 @@ pub fn init(
         });
     })
     .detach();
-
-    prompt_builder
 }
 
 fn init_language_model_settings(cx: &mut AppContext) {
