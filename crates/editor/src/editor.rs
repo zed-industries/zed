@@ -5255,11 +5255,12 @@ impl Editor {
         &self,
         style: &EditorStyle,
         max_height_in_lines: u32,
+        y_flipped: bool,
         cx: &mut ViewContext<Editor>,
     ) -> Option<AnyElement> {
         self.context_menu.borrow().as_ref().and_then(|menu| {
             if menu.visible() {
-                Some(menu.render(style, max_height_in_lines, cx))
+                Some(menu.render(style, max_height_in_lines, y_flipped, cx))
             } else {
                 None
             }
@@ -10642,17 +10643,18 @@ impl Editor {
         cx.notify();
     }
 
-    pub fn exchange_mark(&mut self, _: &actions::ExchangeMark, cx: &mut ViewContext<Self>) {
-        if self.selection_mark_mode {
-            self.change_selections(None, cx, |s| {
-                s.move_with(|_, sel| {
-                    if sel.start != sel.end {
-                        sel.reversed = !sel.reversed
-                    }
-                });
-            })
-        }
-        self.selection_mark_mode = true;
+    pub fn swap_selection_ends(
+        &mut self,
+        _: &actions::SwapSelectionEnds,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.change_selections(None, cx, |s| {
+            s.move_with(|_, sel| {
+                if sel.start != sel.end {
+                    sel.reversed = !sel.reversed
+                }
+            });
+        });
         cx.notify();
     }
 

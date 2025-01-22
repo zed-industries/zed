@@ -6,6 +6,7 @@ use ui::{Color, Icon, IconName, IntoElement};
 
 pub mod git_panel;
 mod git_panel_settings;
+pub mod repository_selector;
 
 pub fn init(cx: &mut AppContext) {
     GitPanelSettings::register(cx);

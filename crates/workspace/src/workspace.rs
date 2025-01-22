@@ -47,9 +47,7 @@ use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
-use notifications::{
-    simple_message_notification::MessageNotification, DetachAndPromptErr, NotificationHandle,
-};
+use notifications::{simple_message_notification::MessageNotification, DetachAndPromptErr};
 pub use pane::*;
 pub use pane_group::*;
 pub use persistence::{
@@ -785,7 +783,7 @@ pub struct Workspace {
     status_bar: View<StatusBar>,
     modal_layer: View<ModalLayer>,
     titlebar_item: Option<AnyView>,
-    notifications: Vec<(NotificationId, Box<dyn NotificationHandle>)>,
+    notifications: Vec<(NotificationId, AnyView)>,
     project: Model<Project>,
     follower_states: HashMap<PeerId, FollowerState>,
     last_leaders_by_pane: HashMap<WeakView<Pane>, PeerId>,
@@ -1059,6 +1057,7 @@ impl Workspace {
 
         cx.defer(|this, cx| {
             this.update_window_title(cx);
+            this.show_initial_notifications(cx);
         });
         Workspace {
             weak_self: weak_handle.clone(),
@@ -3640,7 +3639,7 @@ impl Workspace {
                     .children(
                         self.notifications
                             .iter()
-                            .map(|(_, notification)| notification.to_any()),
+                            .map(|(_, notification)| notification.clone().into_any()),
                     ),
             )
         }
@@ -4895,7 +4894,7 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
             if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
                 struct DatabaseFailedNotification;
 
-                workspace.show_notification_once(
+                workspace.show_notification(
                     NotificationId::unique::<DatabaseFailedNotification>(),
                     cx,
                     |cx| {

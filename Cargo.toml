@@ -7,6 +7,7 @@ members = [
     "crates/assets",
     "crates/assistant",
     "crates/assistant2",
+    "crates/assistant_context_editor",
     "crates/assistant_settings",
     "crates/assistant_slash_command",
     "crates/assistant_slash_commands",
@@ -204,6 +205,7 @@ anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }
 assistant2 = { path = "crates/assistant2" }
+assistant_context_editor = { path = "crates/assistant_context_editor" }
 assistant_settings = { path = "crates/assistant_settings" }
 assistant_slash_command = { path = "crates/assistant_slash_command" }
 assistant_slash_commands = { path = "crates/assistant_slash_commands" }
@@ -487,6 +489,7 @@ strum = { version = "0.26.0", features = ["derive"] }
 subtle = "2.5.0"
 sys-locale = "0.3.1"
 sysinfo = "0.31.0"
+take-until = "0.2.0"
 tempfile = "3.9.0"
 thiserror = "1.0.29"
 tiktoken-rs = "0.6.0"
