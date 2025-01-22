@@ -251,14 +251,16 @@ impl AssistantPanel {
             .flatten();
 
         self.context_editor = Some(cx.new_view(|cx| {
-            ContextEditor::for_context(
+            let mut editor = ContextEditor::for_context(
                 context,
                 self.fs.clone(),
                 self.workspace.clone(),
                 self.project.clone(),
                 lsp_adapter_delegate,
                 cx,
-            )
+            );
+            editor.insert_default_prompt(cx);
+            editor
         }));
 
         if let Some(context_editor) = self.context_editor.as_ref() {
