@@ -8,6 +8,7 @@ TryExec=$APP_CLI
 StartupNotify=$DO_STARTUP_NOTIFY
 Exec=$APP_CLI $APP_ARGS
 Icon=$APP_ICON
+StartupWMClass=dev.zed.Zed
 Categories=Utility;TextEditor;Development;IDE;
 Keywords=zed;
 MimeType=text/plain;application/x-zerosize;x-scheme-handler/zed;
