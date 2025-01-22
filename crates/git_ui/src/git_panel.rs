@@ -549,11 +549,10 @@ impl GitPanel {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
-        if let Err(e) = active_repository.commit(self.err_sender.clone(), cx) {
-            self.show_err_toast("commit error", e, cx);
-        };
-        self.commit_editor
-            .update(cx, |editor, cx| editor.set_text("", cx));
+        if !active_repository.can_commit(false, cx) {
+            return;
+        }
+        active_repository.commit(self.err_sender.clone(), cx);
     }
 
     /// Commit all changes, regardless of whether they are staged or not
@@ -561,11 +560,10 @@ impl GitPanel {
         let Some(active_repository) = self.active_repository.as_ref() else {
             return;
         };
-        if let Err(e) = active_repository.commit_all(self.err_sender.clone(), cx) {
-            self.show_err_toast("commit all error", e, cx);
-        };
-        self.commit_editor
-            .update(cx, |editor, cx| editor.set_text("", cx));
+        if !active_repository.can_commit(true, cx) {
+            return;
+        }
+        active_repository.commit_all(self.err_sender.clone(), cx);
     }
 
     fn fill_co_authors(&mut self, _: &FillCoAuthors, cx: &mut ViewContext<Self>) {
@@ -906,15 +904,15 @@ impl GitPanel {
     pub fn render_commit_editor(&self, cx: &ViewContext<Self>) -> impl IntoElement {
         let editor = self.commit_editor.clone();
         let editor_focus_handle = editor.read(cx).focus_handle(cx).clone();
-        let (can_commit, can_commit_all) = self.active_repository.as_ref().map_or_else(
-            || (false, false),
-            |active_repository| {
-                (
-                    active_repository.can_commit(false, cx),
-                    active_repository.can_commit(true, cx),
-                )
-            },
-        );
+        let (can_commit, can_commit_all) =
+            self.active_repository
+                .as_ref()
+                .map_or((false, false), |active_repository| {
+                    (
+                        active_repository.can_commit(false, cx),
+                        active_repository.can_commit(true, cx),
+                    )
+                });
 
         let focus_handle_1 = self.focus_handle(cx).clone();
         let focus_handle_2 = self.focus_handle(cx).clone();
