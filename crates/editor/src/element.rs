@@ -356,6 +356,8 @@ impl EditorElement {
         register_action(view, cx, Editor::unfold_all);
         register_action(view, cx, Editor::unfold_at);
         register_action(view, cx, Editor::fold_selected_ranges);
+        register_action(view, cx, Editor::set_mark);
+        register_action(view, cx, Editor::swap_selection_ends);
         register_action(view, cx, Editor::show_completions);
         register_action(view, cx, Editor::toggle_code_actions);
         register_action(view, cx, Editor::open_excerpts);
@@ -1590,6 +1592,7 @@ impl EditorElement {
         &self,
         display_row: DisplayRow,
         display_snapshot: &DisplaySnapshot,
+        buffer_snapshot: &MultiBufferSnapshot,
         line_layout: &LineWithInvisibles,
         crease_trailer: Option<&CreaseTrailerLayout>,
         em_width: Pixels,
@@ -1615,7 +1618,28 @@ impl EditorElement {
         let display_point = DisplayPoint::new(display_row, 0);
         let buffer_row = MultiBufferRow(display_point.to_point(display_snapshot).row);
 
-        let blame = self.editor.read(cx).blame.clone()?;
+        let editor = self.editor.read(cx);
+        let blame = editor.blame.clone()?;
+        let padding = {
+            const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
+            const INLINE_ACCEPT_SUGGESTION_EM_WIDTHS: f32 = 14.;
+
+            let mut padding = INLINE_BLAME_PADDING_EM_WIDTHS;
+
+            if let Some(inline_completion) = editor.active_inline_completion.as_ref() {
+                match &inline_completion.completion {
+                    InlineCompletion::Edit(edits)
+                        if single_line_edit(&edits, buffer_snapshot).is_some() =>
+                    {
+                        padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS
+                    }
+                    _ => {}
+                }
+            }
+
+            padding * em_width
+        };
+
         let blame_entry = blame
             .update(cx, |blame, cx| {
                 blame.blame_for_rows([Some(buffer_row)], cx).next()
@@ -1629,14 +1653,13 @@ impl EditorElement {
             + line_height * (display_row.as_f32() - scroll_pixel_position.y / line_height);
 
         let start_x = {
-            const INLINE_BLAME_PADDING_EM_WIDTHS: f32 = 6.;
-
             let line_end = if let Some(crease_trailer) = crease_trailer {
                 crease_trailer.bounds.right()
             } else {
                 content_origin.x - scroll_pixel_position.x + line_layout.width
             };
-            let padded_line_end = line_end + em_width * INLINE_BLAME_PADDING_EM_WIDTHS;
+
+            let padded_line_end = line_end + padding;
 
             let min_column_in_pixels = ProjectSettings::get_global(cx)
                 .git
@@ -3113,10 +3136,10 @@ impl EditorElement {
         let available_above = bottom_y_when_flipped - text_hitbox.top();
         let available_below = text_hitbox.bottom() - target_position.y;
         let y_overflows_below = unconstrained_max_height > available_below;
-        let mut y_is_flipped = y_overflows_below && available_above > available_below;
+        let mut y_flipped = y_overflows_below && available_above > available_below;
         let mut height = cmp::min(
             unconstrained_max_height,
-            if y_is_flipped {
+            if y_flipped {
                 available_above
             } else {
                 available_below
@@ -3128,16 +3151,16 @@ impl EditorElement {
             let available_above = bottom_y_when_flipped;
             let available_below = viewport_bounds.bottom() - target_position.y;
             if available_below > 3. * line_height {
-                y_is_flipped = false;
+                y_flipped = false;
                 height = min_height;
             } else if available_above > 3. * line_height {
-                y_is_flipped = true;
+                y_flipped = true;
                 height = min_height;
             } else if available_above > available_below {
-                y_is_flipped = true;
+                y_flipped = true;
                 height = available_above;
             } else {
-                y_is_flipped = false;
+                y_flipped = false;
                 height = available_below;
             }
         }
@@ -3146,7 +3169,7 @@ impl EditorElement {
 
         // TODO(mgsloan): use viewport_bounds.width as a max width when rendering menu.
         let Some(mut menu_element) = self.editor.update(cx, |editor, cx| {
-            editor.render_context_menu(&self.style, max_height_in_lines, cx)
+            editor.render_context_menu(&self.style, max_height_in_lines, y_flipped, cx)
         }) else {
             return;
         };
@@ -3158,7 +3181,7 @@ impl EditorElement {
             x: target_position
                 .x
                 .min((viewport_bounds.right() - menu_size.width).max(Pixels::ZERO)),
-            y: if y_is_flipped {
+            y: if y_flipped {
                 bottom_y_when_flipped - menu_size.height
             } else {
                 target_position.y
@@ -3169,7 +3192,7 @@ impl EditorElement {
         // Layout documentation aside
         let menu_bounds = Bounds::new(menu_position, menu_size);
         let max_menu_size = size(menu_size.width, unconstrained_max_height);
-        let max_menu_bounds = if y_is_flipped {
+        let max_menu_bounds = if y_flipped {
             Bounds::new(
                 point(
                     menu_position.x,
@@ -3182,7 +3205,7 @@ impl EditorElement {
         };
         self.layout_context_menu_aside(
             text_hitbox,
-            y_is_flipped,
+            y_flipped,
             menu_position,
             menu_bounds,
             max_menu_bounds,
@@ -3197,7 +3220,7 @@ impl EditorElement {
     fn layout_context_menu_aside(
         &self,
         text_hitbox: &Hitbox,
-        y_is_flipped: bool,
+        y_flipped: bool,
         menu_position: gpui::Point<Pixels>,
         menu_bounds: Bounds<Pixels>,
         max_menu_bounds: Bounds<Pixels>,
@@ -3208,7 +3231,7 @@ impl EditorElement {
     ) {
         let mut extend_amount = Edges::all(MENU_GAP);
         // Extend to include the cursored line to avoid overlapping it.
-        if y_is_flipped {
+        if y_flipped {
             extend_amount.bottom = line_height;
         } else {
             extend_amount.top = line_height;
@@ -3257,13 +3280,13 @@ impl EditorElement {
             let fit_within = |available: Edges<Pixels>, wanted: Size<Pixels>| {
                 // Prefer to fit on the same side of the line as the menu, then on the other side of
                 // the line.
-                if !y_is_flipped && wanted.height < available.bottom {
+                if !y_flipped && wanted.height < available.bottom {
                     Some(bottom_position)
-                } else if !y_is_flipped && wanted.height < available.top {
+                } else if !y_flipped && wanted.height < available.top {
                     Some(top_position)
-                } else if y_is_flipped && wanted.height < available.top {
+                } else if y_flipped && wanted.height < available.top {
                     Some(top_position)
-                } else if y_is_flipped && wanted.height < available.bottom {
+                } else if y_flipped && wanted.height < available.bottom {
                     Some(bottom_position)
                 } else {
                     None
@@ -3324,49 +3347,23 @@ impl EditorElement {
 
         match &active_inline_completion.completion {
             InlineCompletion::Move(target_position) => {
-                let tab_kbd = h_flex()
-                    .px_0p5()
-                    .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
-                    .text_size(TextSize::XSmall.rems(cx))
-                    .text_color(cx.theme().colors().text.opacity(0.8))
-                    .child("tab");
-
-                let icon_container = div().mt(px(2.5)); // For optical alignment
-
-                let container_element = h_flex()
-                    .items_center()
-                    .py_0p5()
-                    .px_1()
-                    .gap_1()
-                    .bg(cx.theme().colors().editor_subheader_background)
-                    .border_1()
-                    .border_color(cx.theme().colors().text_accent.opacity(0.2))
-                    .rounded_md()
-                    .shadow_sm();
-
                 let target_display_point = target_position.to_display_point(editor_snapshot);
                 if target_display_point.row().as_f32() < scroll_top {
-                    let mut element = container_element
-                        .child(tab_kbd)
-                        .child(Label::new("Jump to Edit").size(LabelSize::Small))
-                        .child(
-                            icon_container
-                                .child(Icon::new(IconName::ArrowUp).size(IconSize::Small)),
-                        )
-                        .into_any();
+                    let mut element = inline_completion_tab_indicator(
+                        "Jump to Edit",
+                        Some(IconName::ArrowUp),
+                        cx,
+                    );
                     let size = element.layout_as_root(AvailableSpace::min_size(), cx);
                     let offset = point((text_bounds.size.width - size.width) / 2., PADDING_Y);
                     element.prepaint_at(text_bounds.origin + offset, cx);
                     Some(element)
                 } else if (target_display_point.row().as_f32() + 1.) > scroll_bottom {
-                    let mut element = container_element
-                        .child(tab_kbd)
-                        .child(Label::new("Jump to Edit").size(LabelSize::Small))
-                        .child(
-                            icon_container
-                                .child(Icon::new(IconName::ArrowDown).size(IconSize::Small)),
-                        )
-                        .into_any();
+                    let mut element = inline_completion_tab_indicator(
+                        "Jump to Edit",
+                        Some(IconName::ArrowDown),
+                        cx,
+                    );
                     let size = element.layout_as_root(AvailableSpace::min_size(), cx);
                     let offset = point(
                         (text_bounds.size.width - size.width) / 2.,
@@ -3375,10 +3372,7 @@ impl EditorElement {
                     element.prepaint_at(text_bounds.origin + offset, cx);
                     Some(element)
                 } else {
-                    let mut element = container_element
-                        .child(tab_kbd)
-                        .child(Label::new("Jump to Edit").size(LabelSize::Small))
-                        .into_any();
+                    let mut element = inline_completion_tab_indicator("Jump to Edit", None, cx);
 
                     let target_line_end = DisplayPoint::new(
                         target_display_point.row(),
@@ -3419,9 +3413,28 @@ impl EditorElement {
                     return None;
                 }
 
-                if !hard_to_spot_single_edit(&edits, &editor_snapshot.buffer_snapshot)
-                    && all_edits_insertions_or_deletions(edits, &editor_snapshot.buffer_snapshot)
-                {
+                if let Some(range) = single_line_edit(&edits, &editor_snapshot.buffer_snapshot) {
+                    let mut element = inline_completion_tab_indicator("Accept", None, cx);
+
+                    let target_display_point = range.end.to_display_point(editor_snapshot);
+                    let target_line_end = DisplayPoint::new(
+                        target_display_point.row(),
+                        editor_snapshot.line_len(target_display_point.row()),
+                    );
+                    let origin = self.editor.update(cx, |editor, cx| {
+                        editor.display_to_pixel_point(target_line_end, editor_snapshot, cx)
+                    })?;
+
+                    element.prepaint_as_root(
+                        text_bounds.origin + origin + point(PADDING_X, px(0.)),
+                        AvailableSpace::min_size(),
+                        cx,
+                    );
+
+                    return Some(element);
+                }
+
+                if all_edits_insertions_or_deletions(edits, &editor_snapshot.buffer_snapshot) {
                     return None;
                 }
 
@@ -5201,23 +5214,55 @@ fn header_jump_data(
     }
 }
 
-/// Returns true if there's a single edit, that's either a single character
-/// insertion or a single line deletion.
-fn hard_to_spot_single_edit(
-    edits: &[(Range<Anchor>, String)],
+fn inline_completion_tab_indicator(
+    label: impl Into<SharedString>,
+    icon: Option<IconName>,
+    cx: &WindowContext,
+) -> AnyElement {
+    let tab_kbd = h_flex()
+        .px_0p5()
+        .font(theme::ThemeSettings::get_global(cx).buffer_font.clone())
+        .text_size(TextSize::XSmall.rems(cx))
+        .text_color(cx.theme().colors().text)
+        .child("tab");
+
+    let padding_right = if icon.is_some() { px(4.) } else { px(8.) };
+
+    h_flex()
+        .py_0p5()
+        .pl_1()
+        .pr(padding_right)
+        .gap_1()
+        .bg(cx.theme().colors().text_accent.opacity(0.15))
+        .border_1()
+        .border_color(cx.theme().colors().text_accent.opacity(0.8))
+        .rounded_md()
+        .shadow_sm()
+        .child(tab_kbd)
+        .child(Label::new(label).size(LabelSize::Small))
+        .when_some(icon, |element, icon| {
+            element.child(
+                div()
+                    .mt(px(1.5))
+                    .child(Icon::new(icon).size(IconSize::Small)),
+            )
+        })
+        .into_any()
+}
+
+fn single_line_edit<'a>(
+    edits: &'a [(Range<Anchor>, String)],
     snapshot: &MultiBufferSnapshot,
-) -> bool {
-    if let [(range, new_text)] = edits {
-        match new_text.len() {
-            0 => {
-                let range = range.to_point(&snapshot);
-                range.start.row == range.end.row
-            }
-            1 => true,
-            _ => false,
-        }
+) -> Option<&'a Range<Anchor>> {
+    let [(range, _)] = edits else {
+        return None;
+    };
+
+    let point_range = range.to_point(&snapshot);
+    if point_range.start.row == point_range.end.row {
+        Some(range)
     } else {
-        false
+        None
     }
 }
 
@@ -6505,6 +6550,7 @@ impl Element for EditorElement {
                             inline_blame = self.layout_inline_blame(
                                 display_row,
                                 &snapshot.display_snapshot,
+                                &snapshot.buffer_snapshot,
                                 line_layout,
                                 crease_trailer_layout,
                                 em_width,

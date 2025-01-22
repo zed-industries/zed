@@ -25,7 +25,7 @@ use smol::{
 };
 use text::ReplicaId;
 use util::{paths::SanitizedPath, ResultExt};
-use worktree::{Entry, ProjectEntryId, Worktree, WorktreeId, WorktreeSettings};
+use worktree::{Entry, ProjectEntryId, UpdatedEntriesSet, Worktree, WorktreeId, WorktreeSettings};
 
 use crate::{search::SearchQuery, ProjectPath};
 
@@ -63,6 +63,9 @@ pub enum WorktreeStoreEvent {
     WorktreeReleased(EntityId, WorktreeId),
     WorktreeOrderChanged,
     WorktreeUpdateSent(Model<Worktree>),
+    WorktreeUpdatedEntries(WorktreeId, UpdatedEntriesSet),
+    WorktreeUpdatedGitRepositories(WorktreeId),
+    WorktreeDeletedEntry(WorktreeId, ProjectEntryId),
 }
 
 impl EventEmitter<WorktreeStoreEvent> for WorktreeStore {}
@@ -364,6 +367,26 @@ impl WorktreeStore {
         self.send_project_updates(cx);
 
         let handle_id = worktree.entity_id();
+        cx.subscribe(worktree, |_, worktree, event, cx| {
+            let worktree_id = worktree.update(cx, |worktree, _| worktree.id());
+            match event {
+                worktree::Event::UpdatedEntries(changes) => {
+                    cx.emit(WorktreeStoreEvent::WorktreeUpdatedEntries(
+                        worktree.read(cx).id(),
+                        changes.clone(),
+                    ));
+                }
+                worktree::Event::UpdatedGitRepositories(_) => {
+                    cx.emit(WorktreeStoreEvent::WorktreeUpdatedGitRepositories(
+                        worktree_id,
+                    ));
+                }
+                worktree::Event::DeletedEntry(id) => {
+                    cx.emit(WorktreeStoreEvent::WorktreeDeletedEntry(worktree_id, *id))
+                }
+            }
+        })
+        .detach();
         cx.observe_release(worktree, move |this, worktree, cx| {
             cx.emit(WorktreeStoreEvent::WorktreeReleased(
                 handle_id,

@@ -79,6 +79,7 @@ uuid.workspace = true
 
 [dev-dependencies]
 assistant = { workspace = true, features = ["test-support"] }
+assistant_context_editor.workspace = true
 assistant_slash_command.workspace = true
 assistant_tool.workspace = true
 async-trait.workspace = true

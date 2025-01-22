@@ -372,14 +372,13 @@ name = "assistant"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assistant_context_editor",
  "assistant_settings",
  "assistant_slash_command",
  "assistant_slash_commands",
  "assistant_tool",
  "async-watch",
- "chrono",
  "client",
- "clock",
  "collections",
  "command_palette_hooks",
  "context_server",
@@ -390,7 +389,6 @@ dependencies = [
  "feature_flags",
  "fs",
  "futures 0.3.31",
- "fuzzy",
  "gpui",
  "indexed_docs",
  "indoc",
@@ -403,30 +401,23 @@ dependencies = [
  "lsp",
  "menu",
  "multi_buffer",
- "open_ai",
  "parking_lot",
  "paths",
- "picker",
  "pretty_assertions",
  "project",
  "prompt_library",
  "proto",
  "rand 0.8.5",
- "regex",
  "rope",
- "rpc",
  "schemars",
  "search",
  "semantic_index",
  "serde",
- "serde_json",
  "serde_json_lenient",
  "settings",
  "similar",
- "smallvec",
  "smol",
  "streaming_diff",
- "strum",
  "telemetry",
  "telemetry_events",
  "terminal",
@@ -437,7 +428,6 @@ dependencies = [
  "ui",
  "unindent",
  "util",
- "uuid",
  "workspace",
  "zed_actions",
 ]
@@ -447,7 +437,9 @@ name = "assistant2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assistant_context_editor",
  "assistant_settings",
+ "assistant_slash_command",
  "assistant_tool",
  "async-watch",
  "chrono",
@@ -503,6 +495,62 @@ dependencies = [
  "uuid",
  "workspace",
  "zed_actions",
+]
+
+[[package]]
+name = "assistant_context_editor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "assistant_settings",
+ "assistant_slash_command",
+ "assistant_slash_commands",
+ "assistant_tool",
+ "chrono",
+ "client",
+ "clock",
+ "collections",
+ "context_server",
+ "editor",
+ "feature_flags",
+ "fs",
+ "futures 0.3.31",
+ "fuzzy",
+ "gpui",
+ "indexed_docs",
+ "language",
+ "language_model",
+ "language_model_selector",
+ "language_models",
+ "languages",
+ "log",
+ "multi_buffer",
+ "open_ai",
+ "parking_lot",
+ "paths",
+ "picker",
+ "pretty_assertions",
+ "project",
+ "prompt_library",
+ "rand 0.8.5",
+ "regex",
+ "rope",
+ "rpc",
+ "serde",
+ "serde_json",
+ "settings",
+ "smallvec",
+ "smol",
+ "strum",
+ "telemetry_events",
+ "text",
+ "theme",
+ "tree-sitter-md",
+ "ui",
+ "unindent",
+ "util",
+ "uuid",
+ "workspace",
 ]
 
 [[package]]
@@ -2640,6 +2688,7 @@ dependencies = [
  "anthropic",
  "anyhow",
  "assistant",
+ "assistant_context_editor",
  "assistant_slash_command",
  "assistant_tool",
  "async-stripe",
@@ -5196,8 +5245,8 @@ dependencies = [
  "futures 0.3.31",
  "git",
  "gpui",
- "language",
  "menu",
+ "picker",
  "project",
  "schemars",
  "serde",
@@ -5209,7 +5258,6 @@ dependencies = [
  "util",
  "windows 0.58.0",
  "workspace",
- "worktree",
 ]
 
 [[package]]
@@ -6998,7 +7046,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc2f4eb4bc735547cfed7c0a4922cbd04a4655978c09b54f1f7b228750664c34"
 dependencies = [
  "cfg-if",
- "windows-targets 0.48.5",
+ "windows-targets 0.52.6",
 ]
 
 [[package]]
@@ -9465,9 +9513,9 @@ dependencies = [
 
 [[package]]
 name = "pin-project-lite"
-version = "0.2.15"
+version = "0.2.16"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "915a1e146535de9163f3987b8944ed8cf49a18bb0056bcebcdcece385cece4ff"
+checksum = "3b3cff922bd51709b605d9ead9aa71031d81447142d828eb4a6eba76fe619f9b"
 
 [[package]]
 name = "pin-utils"
@@ -13327,6 +13375,7 @@ dependencies = [
  "client",
  "collections",
  "feature_flags",
+ "git_ui",
  "gpui",
  "http_client",
  "notifications",
@@ -15219,7 +15268,7 @@ version = "0.1.9"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "cf221c93e13a30d793f7645a0e7762c55d169dbb0a49671918a2319d289b10bb"
 dependencies = [
- "windows-sys 0.48.0",
+ "windows-sys 0.59.0",
 ]
 
 [[package]]
@@ -16228,6 +16277,7 @@ dependencies = [
  "assets",
  "assistant",
  "assistant2",
+ "assistant_context_editor",
  "assistant_settings",
  "assistant_tools",
  "async-watch",

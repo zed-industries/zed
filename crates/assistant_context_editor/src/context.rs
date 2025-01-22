@@ -1,14 +1,11 @@
 #[cfg(test)]
 mod context_tests;
 
-use crate::{
-    slash_command::SlashCommandLine, AssistantEdit, AssistantPatch, AssistantPatchStatus,
-    MessageId, MessageStatus,
-};
+use crate::patch::{AssistantEdit, AssistantPatch, AssistantPatchStatus};
 use anyhow::{anyhow, Context as _, Result};
 use assistant_slash_command::{
-    SlashCommandContent, SlashCommandEvent, SlashCommandOutputSection, SlashCommandResult,
-    SlashCommandWorkingSet,
+    SlashCommandContent, SlashCommandEvent, SlashCommandLine, SlashCommandOutputSection,
+    SlashCommandResult, SlashCommandWorkingSet,
 };
 use assistant_slash_commands::FileCommandMetadata;
 use assistant_tool::ToolWorkingSet;
@@ -22,8 +19,6 @@ use gpui::{
     AppContext, Context as _, EventEmitter, Model, ModelContext, RenderImage, SharedString,
     Subscription, Task,
 };
-use prompt_library::PromptBuilder;
-
 use language::{AnchorRangeExt, Bias, Buffer, LanguageRegistry, OffsetRangeExt, Point, ToOffset};
 use language_model::{
     LanguageModel, LanguageModelCacheConfiguration, LanguageModelCompletionEvent,
@@ -38,6 +33,7 @@ use language_models::{
 use open_ai::Model as OpenAiModel;
 use paths::contexts_dir;
 use project::Project;
+use prompt_library::PromptBuilder;
 use serde::{Deserialize, Serialize};
 use smallvec::SmallVec;
 use std::{
@@ -52,9 +48,9 @@ use std::{
 };
 use telemetry_events::{AssistantEvent, AssistantKind, AssistantPhase};
 use text::{BufferSnapshot, ToPoint};
+use ui::IconName;
 use util::{post_inc, ResultExt, TryFutureExt};
 use uuid::Uuid;
-use workspace::ui::IconName;
 
 #[derive(Clone, Eq, PartialEq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct ContextId(String);
@@ -70,6 +66,64 @@ impl ContextId {
 
     pub fn to_proto(&self) -> String {
         self.0.clone()
+    }
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+pub struct MessageId(pub clock::Lamport);
+
+impl MessageId {
+    pub fn as_u64(self) -> u64 {
+        self.0.as_u64()
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+pub enum MessageStatus {
+    Pending,
+    Done,
+    Error(SharedString),
+    Canceled,
+}
+
+impl MessageStatus {
+    pub fn from_proto(status: proto::ContextMessageStatus) -> MessageStatus {
+        match status.variant {
+            Some(proto::context_message_status::Variant::Pending(_)) => MessageStatus::Pending,
+            Some(proto::context_message_status::Variant::Done(_)) => MessageStatus::Done,
+            Some(proto::context_message_status::Variant::Error(error)) => {
+                MessageStatus::Error(error.message.into())
+            }
+            Some(proto::context_message_status::Variant::Canceled(_)) => MessageStatus::Canceled,
+            None => MessageStatus::Pending,
+        }
+    }
+
+    pub fn to_proto(&self) -> proto::ContextMessageStatus {
+        match self {
+            MessageStatus::Pending => proto::ContextMessageStatus {
+                variant: Some(proto::context_message_status::Variant::Pending(
+                    proto::context_message_status::Pending {},
+                )),
+            },
+            MessageStatus::Done => proto::ContextMessageStatus {
+                variant: Some(proto::context_message_status::Variant::Done(
+                    proto::context_message_status::Done {},
+                )),
+            },
+            MessageStatus::Error(message) => proto::ContextMessageStatus {
+                variant: Some(proto::context_message_status::Variant::Error(
+                    proto::context_message_status::Error {
+                        message: message.to_string(),
+                    },
+                )),
+            },
+            MessageStatus::Canceled => proto::ContextMessageStatus {
+                variant: Some(proto::context_message_status::Variant::Canceled(
+                    proto::context_message_status::Canceled {},
+                )),
+            },
+        }
     }
 }
 
@@ -423,7 +477,7 @@ pub struct MessageCacheMetadata {
 pub struct MessageMetadata {
     pub role: Role,
     pub status: MessageStatus,
-    pub(crate) timestamp: clock::Lamport,
+    pub timestamp: clock::Lamport,
     #[serde(skip)]
     pub cache: Option<MessageCacheMetadata>,
 }
@@ -544,8 +598,8 @@ pub struct Context {
     parsed_slash_commands: Vec<ParsedSlashCommand>,
     invoked_slash_commands: HashMap<InvokedSlashCommandId, InvokedSlashCommand>,
     edits_since_last_parse: language::Subscription,
-    pub(crate) slash_commands: Arc<SlashCommandWorkingSet>,
-    pub(crate) tools: Arc<ToolWorkingSet>,
+    slash_commands: Arc<SlashCommandWorkingSet>,
+    tools: Arc<ToolWorkingSet>,
     slash_command_output_sections: Vec<SlashCommandOutputSection<language::Anchor>>,
     pending_tool_uses_by_id: HashMap<LanguageModelToolUseId, PendingToolUse>,
     message_anchors: Vec<MessageAnchor>,
@@ -788,6 +842,14 @@ impl Context {
             context: self.version.clone(),
             buffer: self.buffer.read(cx).version(),
         }
+    }
+
+    pub fn slash_commands(&self) -> &Arc<SlashCommandWorkingSet> {
+        &self.slash_commands
+    }
+
+    pub fn tools(&self) -> &Arc<ToolWorkingSet> {
+        &self.tools
     }
 
     pub fn set_capability(
@@ -1048,11 +1110,7 @@ impl Context {
         self.summary.as_ref()
     }
 
-    pub(crate) fn patch_containing(
-        &self,
-        position: Point,
-        cx: &AppContext,
-    ) -> Option<&AssistantPatch> {
+    pub fn patch_containing(&self, position: Point, cx: &AppContext) -> Option<&AssistantPatch> {
         let buffer = self.buffer.read(cx);
         let index = self.patches.binary_search_by(|patch| {
             let patch_range = patch.range.to_point(&buffer);
@@ -1075,7 +1133,7 @@ impl Context {
         self.patches.iter().map(|patch| patch.range.clone())
     }
 
-    pub(crate) fn patch_for_range(
+    pub fn patch_for_range(
         &self,
         range: &Range<language::Anchor>,
         cx: &AppContext,
@@ -1165,7 +1223,7 @@ impl Context {
         }
     }
 
-    pub(crate) fn token_count(&self) -> Option<usize> {
+    pub fn token_count(&self) -> Option<usize> {
         self.token_count
     }
 
@@ -2246,7 +2304,10 @@ impl Context {
 
         let mut request = self.to_completion_request(request_type, cx);
 
-        if cx.has_flag::<ToolUseFeatureFlag>() {
+        // Don't attach tools for now; we'll be removing tool use from
+        // Assistant1 shortly.
+        #[allow(clippy::overly_complex_bool_expr)]
+        if false && cx.has_flag::<ToolUseFeatureFlag>() {
             request.tools = self
                 .tools
                 .tools(cx)
@@ -2879,7 +2940,7 @@ impl Context {
         self.message_anchors.insert(insertion_ix, new_anchor);
     }
 
-    pub(super) fn summarize(&mut self, replace_old: bool, cx: &mut ModelContext<Self>) {
+    pub fn summarize(&mut self, replace_old: bool, cx: &mut ModelContext<Self>) {
         let Some(provider) = LanguageModelRegistry::read_global(cx).active_provider() else {
             return;
         };
@@ -3118,7 +3179,7 @@ impl Context {
         });
     }
 
-    pub(crate) fn custom_summary(&mut self, custom_summary: String, cx: &mut ModelContext<Self>) {
+    pub fn custom_summary(&mut self, custom_summary: String, cx: &mut ModelContext<Self>) {
         let timestamp = self.next_timestamp();
         let summary = self.summary.get_or_insert(ContextSummary::default());
         summary.timestamp = timestamp;

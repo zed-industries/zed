@@ -706,6 +706,7 @@ pub struct Editor {
     next_scroll_position: NextScrollCursorCenterTopBottom,
     addons: HashMap<TypeId, Box<dyn Addon>>,
     registered_buffers: HashMap<BufferId, OpenLspBufferHandle>,
+    selection_mark_mode: bool,
     toggle_fold_multiple_buffers: Task<()>,
     _scroll_cursor_center_top_bottom_task: Task<()>,
 }
@@ -1364,6 +1365,7 @@ impl Editor {
             addons: HashMap::default(),
             registered_buffers: HashMap::default(),
             _scroll_cursor_center_top_bottom_task: Task::ready(()),
+            selection_mark_mode: false,
             toggle_fold_multiple_buffers: Task::ready(()),
             text_style_refinement: None,
         };
@@ -1456,13 +1458,8 @@ impl Editor {
             key_context.add("inline_completion");
         }
 
-        if !self
-            .selections
-            .disjoint
-            .iter()
-            .all(|selection| selection.start == selection.end)
-        {
-            key_context.add("selection");
+        if self.selection_mark_mode {
+            key_context.add("selection_mode");
         }
 
         key_context
@@ -2477,6 +2474,8 @@ impl Editor {
     }
 
     pub fn cancel(&mut self, _: &Cancel, cx: &mut ViewContext<Self>) {
+        self.selection_mark_mode = false;
+
         if self.clear_expanded_diff_hunks(cx) {
             cx.notify();
             return;
@@ -5247,11 +5246,12 @@ impl Editor {
         &self,
         style: &EditorStyle,
         max_height_in_lines: u32,
+        y_flipped: bool,
         cx: &mut ViewContext<Editor>,
     ) -> Option<AnyElement> {
         self.context_menu.borrow().as_ref().and_then(|menu| {
             if menu.visible() {
-                Some(menu.render(style, max_height_in_lines, cx))
+                Some(menu.render(style, max_height_in_lines, y_flipped, cx))
             } else {
                 None
             }
@@ -10622,6 +10622,33 @@ impl Editor {
         }
     }
 
+    pub fn set_mark(&mut self, _: &actions::SetMark, cx: &mut ViewContext<Self>) {
+        if self.selection_mark_mode {
+            self.change_selections(None, cx, |s| {
+                s.move_with(|_, sel| {
+                    sel.collapse_to(sel.head(), SelectionGoal::None);
+                });
+            })
+        }
+        self.selection_mark_mode = true;
+        cx.notify();
+    }
+
+    pub fn swap_selection_ends(
+        &mut self,
+        _: &actions::SwapSelectionEnds,
+        cx: &mut ViewContext<Self>,
+    ) {
+        self.change_selections(None, cx, |s| {
+            s.move_with(|_, sel| {
+                if sel.start != sel.end {
+                    sel.reversed = !sel.reversed
+                }
+            });
+        });
+        cx.notify();
+    }
+
     pub fn toggle_fold(&mut self, _: &actions::ToggleFold, cx: &mut ViewContext<Self>) {
         if self.is_singleton(cx) {
             let selection = self.selections.newest::<Point>(cx);
@@ -15244,7 +15271,6 @@ fn check_multiline_range(buffer: &Buffer, range: Range<usize>) -> Range<usize> {
         range.start..range.start
     }
 }
-
 pub struct KillRing(ClipboardItem);
 impl Global for KillRing {}
 
