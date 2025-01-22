@@ -438,7 +438,9 @@ name = "assistant2"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "assistant_context_editor",
  "assistant_settings",
+ "assistant_slash_command",
  "assistant_tool",
  "async-watch",
  "chrono",
