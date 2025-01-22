@@ -2145,13 +2145,8 @@ impl MultiBuffer {
             let end = snapshot.len().min(end + 1);
             cursor.seek(&start, Bias::Right, &());
             while *cursor.start() < end {
-                match cursor.item() {
-                    Some(DiffTransform::DeletedHunk { .. })
-                    | Some(DiffTransform::BufferContent {
-                        inserted_hunk_anchor: Some(_),
-                        ..
-                    }) => return true,
-                    _ => {}
+                if cursor.item().and_then(DiffTransform::hunk_anchor).is_some() {
+                    return true;
                 }
                 cursor.next(&());
             }
