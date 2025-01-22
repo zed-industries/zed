@@ -520,6 +520,14 @@ pub enum MenuInlineCompletionsPolicy {
     ByProvider,
 }
 
+#[must_use]
+#[derive(Debug, Clone, Copy)]
+pub enum InlineCompletionVisibilityChange {
+    Unchanged,
+    Hide,
+    Show,
+}
+
 #[derive(Copy, Clone, Eq, PartialEq, PartialOrd, Ord, Debug, Default)]
 struct EditorActionId(usize);
 
@@ -4987,6 +4995,39 @@ impl Editor {
 
     pub fn has_active_inline_completion(&self) -> bool {
         self.active_inline_completion.is_some()
+    }
+
+    pub fn handle_inline_completion_visibility_change(
+        &mut self,
+        change: InlineCompletionVisibilityChange,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match change {
+            InlineCompletionVisibilityChange::Unchanged => {}
+            InlineCompletionVisibilityChange::Hide => {
+                self.hide_active_inline_completion(cx);
+            }
+            InlineCompletionVisibilityChange::Show => {
+                // TODO: May be more efficient to have this store the info needed to show, instead
+                // of recomputing.
+                self.update_visible_inline_completion(window, cx);
+            }
+        }
+    }
+
+    fn hide_active_inline_completion(&mut self, cx: &mut Context<Self>) {
+        let should_clear = match &mut self.active_inline_completion {
+            Some(ref mut active_inline_completion) => {
+                let inlay_ids = std::mem::take(&mut active_inline_completion.inlay_ids);
+                Some(inlay_ids)
+            }
+            _ => None,
+        };
+        if let Some(inlay_ids) = should_clear {
+            self.splice_inlays(inlay_ids, Default::default(), cx);
+            self.clear_highlights::<InlineCompletionHighlight>(cx);
+        }
     }
 
     fn take_active_inline_completion(
