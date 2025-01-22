@@ -2123,7 +2123,7 @@ pub(crate) fn parse_completion_text_edit(
         }
 
         lsp::CompletionTextEdit::InsertAndReplace(edit) => {
-            let range = range_from_lsp(edit.insert);
+            let range = range_from_lsp(edit.replace);
 
             let start = snapshot.clip_point_utf16(range.start, Bias::Left);
             let end = snapshot.clip_point_utf16(range.end, Bias::Left);
