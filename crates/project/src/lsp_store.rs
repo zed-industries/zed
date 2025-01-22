@@ -699,6 +699,9 @@ impl LocalLspStore {
                                         anyhow::Ok(())
                                     })??;
                                 }
+                                "workspace/didChangeConfiguration" => {
+                                    // Ignore payload since we notify clients of setting changes unconditionally, relying on them pulling the latest settings.
+                                }
                                 _ => log::warn!("unhandled capability registration: {reg:?}"),
                             }
                         }
