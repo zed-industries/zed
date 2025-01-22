@@ -108,6 +108,7 @@ pub struct TitleBar {
     should_move: bool,
     application_menu: Option<View<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
+    git_ui_enabled: bool,
 }
 
 impl Render for TitleBar {
@@ -289,7 +290,7 @@ impl TitleBar {
         subscriptions.push(cx.observe_window_activation(Self::window_activation_changed));
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
-        Self {
+        let title_bar = Self {
             platform_style,
             content: div().id(id.into()),
             children: SmallVec::new(),
@@ -301,7 +302,29 @@ impl TitleBar {
             user_store,
             client,
             _subscriptions: subscriptions,
-        }
+            git_ui_enabled: false,
+        };
+
+        title_bar.check_git_ui_enabled(cx);
+
+        title_bar
+    }
+
+    fn check_git_ui_enabled(&self, cx: &mut ViewContext<Self>) {
+        let git_ui_feature_flag = cx.wait_for_flag::<feature_flags::GitUiFeatureFlag>();
+
+        let weak_self = cx.view().downgrade();
+        cx.spawn(|_, mut cx| async move {
+            let enabled = git_ui::git_ui_enabled(git_ui_feature_flag).await;
+            if let Some(this) = weak_self.upgrade() {
+                this.update(&mut cx, |this, cx| {
+                    this.git_ui_enabled = enabled;
+                    cx.notify();
+                })
+                .ok();
+            }
+        })
+        .detach();
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -484,9 +507,14 @@ impl TitleBar {
         &self,
         cx: &mut ViewContext<Self>,
     ) -> Option<impl IntoElement> {
-        // TODO what to render if no active repository?
+        if !self.git_ui_enabled {
+            return None;
+        }
+
         let active_repository = self.project.read(cx).active_repository(cx)?;
         let display_name = active_repository.display_name(self.project.read(cx), cx);
+
+        // TODO: what to render if no active repository?
         Some(RepositorySelectorPopoverMenu::new(
             self.repository_selector.clone(),
             ButtonLike::new("active-repository")

@@ -389,16 +389,8 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             workspace.add_panel(notification_panel, cx);
         })?;
 
-        let git_ui_enabled = {
-            let mut git_ui_feature_flag = git_ui_feature_flag.fuse();
-            let mut timeout =
-                FutureExt::fuse(smol::Timer::after(std::time::Duration::from_secs(5)));
+        let git_ui_enabled = git_ui::git_ui_enabled(git_ui_feature_flag).await;
 
-            select_biased! {
-                is_git_ui_enabled = git_ui_feature_flag => is_git_ui_enabled,
-                _ = timeout => false,
-            }
-        };
         let git_panel = if git_ui_enabled {
             Some(git_ui::git_panel::GitPanel::load(workspace_handle.clone(), cx.clone()).await?)
         } else {

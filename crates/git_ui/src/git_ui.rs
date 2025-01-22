@@ -1,4 +1,6 @@
 use ::settings::Settings;
+use feature_flags::WaitForFlag;
+use futures::{select_biased, FutureExt};
 use git::status::FileStatus;
 use git_panel_settings::GitPanelSettings;
 use gpui::{AppContext, Hsla};
@@ -10,6 +12,17 @@ pub mod repository_selector;
 
 pub fn init(cx: &mut AppContext) {
     GitPanelSettings::register(cx);
+}
+
+// TODO: Remove this before launching Git UI
+pub async fn git_ui_enabled(flag: WaitForFlag) -> bool {
+    let mut git_ui_feature_flag = flag.fuse();
+    let mut timeout = FutureExt::fuse(smol::Timer::after(std::time::Duration::from_secs(5)));
+
+    select_biased! {
+        is_git_ui_enabled = git_ui_feature_flag => is_git_ui_enabled,
+        _ = timeout => false,
+    }
 }
 
 const ADDED_COLOR: Hsla = Hsla {
