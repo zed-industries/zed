@@ -2152,11 +2152,8 @@ impl MultiBuffer {
             let start = start.saturating_sub(1);
             let end = snapshot.len().min(end + 1);
             cursor.seek(&start, Bias::Right, &());
-            while *cursor.start() < end {
-                if cursor.item().and_then(DiffTransform::hunk_anchor).is_some() {
-                    return true;
-                }
-                cursor.next(&());
+            if *cursor.start() < end {
+                return cursor.item().and_then(DiffTransform::hunk_anchor).is_some();
             }
         }
         false
