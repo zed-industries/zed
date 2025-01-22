@@ -170,3 +170,51 @@ rm ~/.local/zed.app/lib/libcrypto.so.1.1
 ```
 
 This will force zed to fallback to the system `libssl` and `libcrypto` libraries.
+
+### NVIDIA Optimus Rendering Issues
+
+If you are using a system with NVIDIA Optimus (a hybrid graphics setup common in laptops with both integrated and discrete NVIDIA GPUs), Zed may fail to render properly or show a corrupted screen. This occurs because Zed defaults to using the integrated GPU instead of the discrete NVIDIA GPU.
+
+If the workarounds don't work, you encounter further issues or have suggestions for improving Zed's compatibility with NVIDIA Optimus setups, please contribute to the discussion in [#22900](https://github.com/zed-industries/zed/issues/22900).
+
+#### Workarounds
+
+1. **Using GNOME's Integrated Menu**  
+   GNOME provides a built-in option to launch applications using the dedicated GPU. This is the simplest and most user-friendly method for most users.
+
+   - Right-click on the Zed application icon (e.g., in the applications menu or dock).
+   - Select **Launch using Dedicated Graphics Card**.
+   - Zed will now use the NVIDIA GPU for rendering.
+
+   This method is equivalent to running Zed with the `__NV_PRIME_RENDER_OFFLOAD=1` environment variable but is more intuitive and integrated into the desktop environment.
+
+2. **Using `__NV_PRIME_RENDER_OFFLOAD` (Manual Method)**  
+   If you prefer to launch Zed from the terminal or a script, you can force it to use the NVIDIA GPU with the following command:
+
+   ```sh
+   __NV_PRIME_RENDER_OFFLOAD=1 zed
+   ```
+
+   This ensures that Zed uses the NVIDIA GPU for rendering, resolving the issue.
+
+#### Additional Context
+
+Zed leverages the Vulkan API for GPU-accelerated rendering, which requires a compatible GPU. On systems with NVIDIA Optimus, the Vulkan API may not automatically select the discrete GPU, leading to rendering issues. The workarounds above explicitly direct Zed to use the NVIDIA GPU.
+
+#### High-Level Context: Managing Dual-GPU Setups on Linux
+
+Managing dual-GPU laptops with NVIDIA Optimus on Linux has evolved significantly over the years. Here’s a brief overview of the key developments:
+
+- **Bumblebee**: An early project that allowed manual GPU switching using commands like `optirun` or `primusrun`. It required user intervention and did not support automatic switching.
+- **vga_switcheroo**: Introduced in Linux kernel 2.6.34 (2010), this subsystem allowed GPU switching but typically required restarting the X server, making it inconvenient for dynamic use.
+- **NVIDIA PRIME and PRIME Render Offload**: Introduced in 2013 and enhanced in 2019, PRIME Render Offload allows offloading rendering to the discrete GPU for specific applications. This is the technology behind the `__NV_PRIME_RENDER_OFFLOAD=1` workaround.
+- **GNOME Integrated Menu**: GNOME provides a user-friendly option to launch applications with the dedicated GPU, simplifying the process for end users.
+
+As of now, **automatic GPU switching** (where the system seamlessly transitions between GPUs based on workload) is not fully supported on Linux. Users must manually select the appropriate GPU for their tasks. Tools like GNOME's integrated menu simplify this process but still require user input.
+
+#### Suggestions for Improvement
+
+- **Automatic GPU Detection**: Implement automatic feature detection and selection of the appropriate GPU
+- **User Feedback**: Provide clear feedback to users if their GPU setup is unsupported, along with guidance on how to resolve the issue (this section of readme).
+
+
