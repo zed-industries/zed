@@ -2199,9 +2199,7 @@ impl MultiBuffer {
                         diff_hunk.buffer_id,
                         diff_hunk.buffer_range.end,
                     );
-                } else if diff_hunk.row_range.start.0 == peek_end.row
-                    && diff_hunk.row_range.end.0 == peek_end.row
-                {
+                } else if diff_hunk.row_range.start.0 == peek_end.row {
                     start = Anchor::in_buffer(
                         diff_hunk.excerpt_id,
                         diff_hunk.buffer_id,
