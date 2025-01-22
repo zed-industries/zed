@@ -313,18 +313,19 @@ impl PickerDelegate for TasksModalDelegate {
 
         self.workspace
             .update(cx, |workspace, cx| {
-                let pre_tasks = self.task_store
-                    .read(cx)
-                    .task_inventory()
-                    .map_or(vec![], |inventory| {
-                        inventory
-                            .read(cx)
-                            .build_pre_task_list(&task, &task_source_kind, &self.task_context)
-                            .unwrap_or(vec![])
-                            .into_iter()
-                            .map(|(_, task)| task)
-                            .collect_vec()
-                    });
+                let pre_tasks =
+                    self.task_store
+                        .read(cx)
+                        .task_inventory()
+                        .map_or(vec![], |inventory| {
+                            inventory
+                                .read(cx)
+                                .build_pre_task_list(&task, &task_source_kind, &self.task_context)
+                                .unwrap_or(vec![])
+                                .into_iter()
+                                .map(|(_, task)| task)
+                                .collect_vec()
+                        });
 
                 schedule_resolved_tasks(
                     workspace,

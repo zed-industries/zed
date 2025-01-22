@@ -115,8 +115,8 @@ impl Inventory {
         task_context: &TaskContext,
     ) -> anyhow::Result<Vec<(TaskSourceKind, ResolvedTask)>> {
         let worktree = match task_source {
-            TaskSourceKind::Worktree { id, .. } => Some(id.clone()),
-            _ => None
+            TaskSourceKind::Worktree { id, .. } => Some(*id),
+            _ => None,
         };
 
         let tasks_in_scope = self
@@ -130,10 +130,9 @@ impl Inventory {
             .unique_by(|(kind, task)| (kind.clone(), task.resolved_label.clone()))
             .collect_vec();
 
-        if let None = tasks_in_scope
-            .iter()
-            .find(|(source, task)| task.resolved_label == base_task.resolved_label && source == task_source)
-        {
+        if let None = tasks_in_scope.iter().find(|(source, task)| {
+            task.resolved_label == base_task.resolved_label && source == task_source
+        }) {
             return Err(anyhow::anyhow!(
                 "couldn't find with label {} in available tasks",
                 base_task.resolved_label
@@ -346,18 +345,13 @@ impl Inventory {
             .global
             .clone()
             .into_iter()
-            .map(|template| {
-                (
-                    Self::global_task_source(),
-                    template,
-                )
-            })
+            .map(|template| (Self::global_task_source(), template))
     }
 
     fn global_task_source() -> TaskSourceKind {
         TaskSourceKind::AbsPath {
             id_base: Cow::Borrowed("global tasks.json"),
-            abs_path: paths::tasks_file().clone()
+            abs_path: paths::tasks_file().clone(),
         }
     }
 
@@ -780,17 +774,21 @@ mod tests {
         let worktree_task_source = TaskSourceKind::Worktree {
             id: worktree_id,
             directory_in_worktree: worktree_path.clone(),
-            id_base: "local worktree tasks from directory \".zed\"".into()
+            id_base: "local worktree tasks from directory \".zed\"".into(),
         };
 
         let worktree_tasks: [(_, _, &[_]); 4] = [
             (worktree_task_source.clone(), "task 1", &["task 4"]),
             (worktree_task_source.clone(), "task 2", &["task 5"]),
-            (worktree_task_source.clone(), "task 3", &["task 1", "task 2"]),
+            (
+                worktree_task_source.clone(),
+                "task 3",
+                &["task 1", "task 2"],
+            ),
             (worktree_task_source.clone(), "task 4", &[]),
         ];
 
-        let worktree_task_json =  serde_json::to_string(&serde_json::Value::Array(
+        let worktree_task_json = serde_json::to_string(&serde_json::Value::Array(
             worktree_tasks
                 .iter()
                 .map(|(_, label, pre)| {
@@ -810,7 +808,7 @@ mod tests {
         inventory.update(cx, |inventory, _| {
             let worktree_location = SettingsLocation {
                 worktree_id,
-                path: &worktree_path
+                path: &worktree_path,
             };
 
             inventory
@@ -852,7 +850,10 @@ mod tests {
             .map(|(kind, task)| (kind.clone(), task.original_task().label.as_str()))
             .collect_vec();
 
-        sorted_labels.push((base_task.0.clone(), base_task.1.original_task().label.as_str()));
+        sorted_labels.push((
+            base_task.0.clone(),
+            base_task.1.original_task().label.as_str(),
+        ));
 
         assert!(!sorted_labels.contains(&(global_task_source.clone(), "task 1")));
         assert!(sorted_labels.contains(&(global_task_source.clone(), "task 5")));
