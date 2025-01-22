@@ -8,7 +8,7 @@ use assistant_tool::ToolWorkingSet;
 use client::zed_urls;
 use fs::Fs;
 use gpui::{
-    prelude::*, px, svg, Action, AnyElement, AppContext, AsyncWindowContext, EventEmitter,
+    prelude::*, px, svg, Action, AnyElement, AppContext, AsyncWindowContext, Corner, EventEmitter,
     FocusHandle, FocusableView, FontWeight, Model, Pixels, Task, View, ViewContext, WeakView,
     WindowContext,
 };
@@ -18,7 +18,7 @@ use project::Project;
 use prompt_library::PromptBuilder;
 use settings::Settings;
 use time::UtcOffset;
-use ui::{prelude::*, KeyBinding, Tab, Tooltip};
+use ui::{prelude::*, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip};
 use util::ResultExt as _;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
@@ -79,6 +79,7 @@ pub struct AssistantPanel {
     local_timezone: UtcOffset,
     active_view: ActiveView,
     history: View<ThreadHistory>,
+    new_item_context_menu_handle: PopoverMenuHandle<ContextMenu>,
     width: Option<Pixels>,
     height: Option<Pixels>,
 }
@@ -165,6 +166,7 @@ impl AssistantPanel {
             )
             .unwrap(),
             history: cx.new_view(|cx| ThreadHistory::new(weak_self, thread_store, cx)),
+            new_item_context_menu_handle: PopoverMenuHandle::default(),
             width: None,
             height: None,
         }
@@ -412,22 +414,20 @@ impl AssistantPanel {
                     .border_color(cx.theme().colors().border)
                     .gap(DynamicSpacing::Base02.rems(cx))
                     .child(
-                        IconButton::new("new-thread", IconName::Plus)
-                            .icon_size(IconSize::Small)
-                            .style(ButtonStyle::Subtle)
-                            .tooltip({
-                                let focus_handle = focus_handle.clone();
-                                move |cx| {
-                                    Tooltip::for_action_in(
-                                        "New Thread",
-                                        &NewThread,
-                                        &focus_handle,
-                                        cx,
-                                    )
-                                }
-                            })
-                            .on_click(move |_event, cx| {
-                                cx.dispatch_action(NewThread.boxed_clone());
+                        PopoverMenu::new("assistant-toolbar-popover-menu")
+                            .trigger(
+                                IconButton::new("new", IconName::Plus)
+                                    .icon_size(IconSize::Small)
+                                    .style(ButtonStyle::Subtle)
+                                    .tooltip(|cx| Tooltip::text("New…", cx)),
+                            )
+                            .anchor(Corner::TopRight)
+                            .with_handle(self.new_item_context_menu_handle.clone())
+                            .menu(move |cx| {
+                                Some(ContextMenu::build(cx, |menu, _| {
+                                    menu.action("New Thread", NewThread.boxed_clone())
+                                        .action("New Prompt Editor", NewPromptEditor.boxed_clone())
+                                }))
                             }),
                     )
                     .child(
