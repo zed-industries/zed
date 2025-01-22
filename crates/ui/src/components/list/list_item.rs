@@ -42,6 +42,7 @@ pub struct ListItem {
     outlined: bool,
     overflow_x: bool,
     focused: Option<bool>,
+    opacity: f32,
 }
 
 impl ListItem {
@@ -67,6 +68,7 @@ impl ListItem {
             outlined: false,
             overflow_x: false,
             focused: None,
+            opacity: 1.0,
         }
     }
 
@@ -158,6 +160,11 @@ impl ListItem {
         self.focused = Some(focused);
         self
     }
+
+    pub fn opacity(mut self, opacity: f32) -> Self {
+        self.opacity = opacity;
+        self
+    }
 }
 
 impl Disableable for ListItem {
@@ -186,6 +193,7 @@ impl RenderOnce for ListItem {
             .id(self.id)
             .w_full()
             .relative()
+            .opacity(self.opacity)
             // When an item is inset draw the indent spacing outside of the item
             .when(self.inset, |this| {
                 this.ml(self.indent_level as f32 * self.indent_step_size)

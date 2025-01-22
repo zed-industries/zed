@@ -7865,6 +7865,18 @@ impl Editor {
         });
     }
 
+    pub fn context_menu_select_initial_lsp_completion(&mut self, cx: &mut Context<Self>) {
+        if let Some(context_menu) = self.context_menu.borrow_mut().as_mut() {
+            match context_menu {
+                CodeContextMenu::Completions(completions_menu) => {
+                    completions_menu
+                        .select_initial_lsp_completion(self.completion_provider.as_deref(), cx);
+                }
+                CodeContextMenu::CodeActions(_) => {}
+            }
+        }
+    }
+
     pub fn context_menu_first(
         &mut self,
         _: &ContextMenuFirst,

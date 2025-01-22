@@ -2,6 +2,7 @@
 
 use crate::prelude::*;
 use crate::v_flex;
+use crate::ElevationIndex;
 use gpui::{
     div, AnyElement, App, Element, IntoElement, ParentElement, Pixels, RenderOnce, Styled, Window,
 };
@@ -41,19 +42,44 @@ pub const POPOVER_Y_PADDING: Pixels = px(8.);
 pub struct Popover {
     children: SmallVec<[AnyElement; 2]>,
     aside: Option<AnyElement>,
+    elision: PopoverElision,
+}
+
+pub enum PopoverElision {
+    None,
+    TranslucentWithCroppedTop,
+    TranslucentWithCroppedBottom,
 }
 
 impl RenderOnce for Popover {
     fn render(self, _: &mut Window, cx: &mut App) -> impl IntoElement {
+        let inner = v_flex()
+            .rounded_lg()
+            .border_1()
+            .py(POPOVER_Y_PADDING / 2.)
+            .children(self.children);
+        let inner = match self.elision {
+            PopoverElision::None => inner
+                .bg(cx.theme().colors().elevated_surface_background)
+                .border_color(cx.theme().colors().border_variant)
+                .shadow(ElevationIndex::ElevatedSurface.shadow()),
+            PopoverElision::TranslucentWithCroppedBottom => inner
+                .bg(cx.theme().colors().elevated_surface_background.opacity(0.5))
+                .border_color(cx.theme().colors().border_variant.opacity(0.5))
+                .rounded_bl_none()
+                .rounded_br_none()
+                .border_b(px(0.)),
+            PopoverElision::TranslucentWithCroppedTop => inner
+                .bg(cx.theme().colors().elevated_surface_background.opacity(0.5))
+                .border_color(cx.theme().colors().border_variant.opacity(0.5))
+                .rounded_tl_none()
+                .rounded_tr_none()
+                .border_t(px(0.)),
+        };
         div()
             .flex()
             .gap_1()
-            .child(
-                v_flex()
-                    .elevation_2(cx)
-                    .py(POPOVER_Y_PADDING / 2.)
-                    .children(self.children),
-            )
+            .child(inner)
             .when_some(self.aside, |this, aside| {
                 this.child(
                     v_flex()
@@ -77,6 +103,7 @@ impl Popover {
         Self {
             children: SmallVec::new(),
             aside: None,
+            elision: PopoverElision::None,
         }
     }
 
@@ -85,6 +112,14 @@ impl Popover {
         Self: Sized,
     {
         self.aside = Some(aside.into_element().into_any());
+        self
+    }
+
+    pub fn elision(mut self, elision: PopoverElision) -> Self
+    where
+        Self: Sized,
+    {
+        self.elision = elision;
         self
     }
 }
