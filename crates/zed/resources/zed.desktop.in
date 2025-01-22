@@ -11,6 +11,7 @@ Icon=$APP_ICON
 Categories=Utility;TextEditor;Development;IDE;
 Keywords=zed;
 MimeType=text/plain;application/x-zerosize;x-scheme-handler/zed;
+StartupWMClass=dev.zed.Zed
 Actions=NewWorkspace;
 
 [Desktop Action NewWorkspace]
