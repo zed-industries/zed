@@ -7,9 +7,10 @@ use settings::{Settings, SettingsSources};
 use ui::{prelude::*, Button, LabelSize};
 use workspace::{ItemHandle, StatusItemView, Workspace};
 
-#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema)]
+#[derive(Clone, Debug, Serialize, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "snake_case")]
 pub enum ImageFileSizeUnitType {
+    #[default]
     Binary,
     Decimal,
 }
@@ -27,11 +28,6 @@ impl Settings for ImageFileSizeUnitType {
     }
 }
 
-impl Default for ImageFileSizeUnitType {
-    fn default() -> Self {
-        ImageFileSizeUnitType::Binary
-    }
-}
 
 pub struct ImageInfo {
     width: Option<u32>,
