@@ -403,7 +403,6 @@ dependencies = [
  "multi_buffer",
  "parking_lot",
  "paths",
- "picker",
  "pretty_assertions",
  "project",
  "prompt_library",

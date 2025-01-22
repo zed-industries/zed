@@ -1,4 +1,3 @@
-use crate::context_history::ContextHistory;
 use crate::{
     terminal_inline_assistant::TerminalInlineAssistant, DeployHistory, DeployPromptLibrary,
     InlineAssistant, NewContext, ToggleFocus,
@@ -6,9 +5,9 @@ use crate::{
 use anyhow::{anyhow, Result};
 use assistant_context_editor::{
     make_lsp_adapter_delegate, AssistantPanelDelegate, Context, ContextEditor,
-    ContextEditorToolbarItem, ContextEditorToolbarItemEvent, ContextId, ContextStore,
-    ContextStoreEvent, InsertDraggedFiles, SlashCommandCompletionProvider, ToggleModelSelector,
-    DEFAULT_TAB_TITLE,
+    ContextEditorToolbarItem, ContextEditorToolbarItemEvent, ContextHistory, ContextId,
+    ContextStore, ContextStoreEvent, InsertDraggedFiles, SlashCommandCompletionProvider,
+    ToggleModelSelector, DEFAULT_TAB_TITLE,
 };
 use assistant_settings::{AssistantDockPosition, AssistantSettings};
 use assistant_slash_command::SlashCommandWorkingSet;
@@ -966,12 +965,11 @@ impl AssistantPanel {
                 pane.activate_item(history_item_ix, true, true, cx);
             });
         } else {
-            let assistant_panel = cx.view().downgrade();
             let history = cx.new_view(|cx| {
                 ContextHistory::new(
                     self.project.clone(),
                     self.context_store.clone(),
-                    assistant_panel,
+                    self.workspace.clone(),
                     cx,
                 )
             });
@@ -1306,6 +1304,19 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
     ) -> Option<View<ContextEditor>> {
         let panel = workspace.panel::<AssistantPanel>(cx)?;
         panel.read(cx).active_context_editor(cx)
+    }
+
+    fn open_saved_context(
+        &self,
+        workspace: &mut Workspace,
+        path: PathBuf,
+        cx: &mut ViewContext<Workspace>,
+    ) -> Task<Result<()>> {
+        let Some(panel) = workspace.panel::<AssistantPanel>(cx) else {
+            return Task::ready(Err(anyhow!("no Assistant panel found")));
+        };
+
+        panel.update(cx, |panel, cx| panel.open_saved_context(path, cx))
     }
 
     fn open_remote_context(

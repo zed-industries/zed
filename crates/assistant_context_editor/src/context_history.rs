@@ -1,8 +1,5 @@
 use std::sync::Arc;
 
-use assistant_context_editor::{
-    ContextStore, RemoteContextMetadata, SavedContextMetadata, DEFAULT_TAB_TITLE,
-};
 use gpui::{
     AppContext, EventEmitter, FocusHandle, FocusableView, Model, Subscription, Task, View, WeakView,
 };
@@ -10,9 +7,12 @@ use picker::{Picker, PickerDelegate};
 use project::Project;
 use ui::utils::{format_distance_from_now, DateTimeType};
 use ui::{prelude::*, Avatar, ListItem, ListItemSpacing};
-use workspace::Item;
+use workspace::{Item, Workspace};
 
-use crate::AssistantPanel;
+use crate::{
+    AssistantPanelDelegate, ContextStore, RemoteContextMetadata, SavedContextMetadata,
+    DEFAULT_TAB_TITLE,
+};
 
 #[derive(Clone)]
 pub enum ContextMetadata {
@@ -27,14 +27,14 @@ enum SavedContextPickerEvent {
 pub struct ContextHistory {
     picker: View<Picker<SavedContextPickerDelegate>>,
     _subscriptions: Vec<Subscription>,
-    assistant_panel: WeakView<AssistantPanel>,
+    workspace: WeakView<Workspace>,
 }
 
 impl ContextHistory {
     pub fn new(
         project: Model<Project>,
         context_store: Model<ContextStore>,
-        assistant_panel: WeakView<AssistantPanel>,
+        workspace: WeakView<Workspace>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         let picker = cx.new_view(|cx| {
@@ -46,7 +46,7 @@ impl ContextHistory {
             .max_height(None)
         });
 
-        let _subscriptions = vec![
+        let subscriptions = vec![
             cx.observe(&context_store, |this, _, cx| {
                 this.picker.update(cx, |picker, cx| picker.refresh(cx));
             }),
@@ -55,8 +55,8 @@ impl ContextHistory {
 
         Self {
             picker,
-            _subscriptions,
-            assistant_panel,
+            _subscriptions: subscriptions,
+            workspace,
         }
     }
 
@@ -67,16 +67,21 @@ impl ContextHistory {
         cx: &mut ViewContext<Self>,
     ) {
         let SavedContextPickerEvent::Confirmed(context) = event;
-        self.assistant_panel
-            .update(cx, |assistant_panel, cx| match context {
+
+        let Some(assistant_panel_delegate) = <dyn AssistantPanelDelegate>::try_global(cx) else {
+            return;
+        };
+
+        self.workspace
+            .update(cx, |workspace, cx| match context {
                 ContextMetadata::Remote(metadata) => {
-                    assistant_panel
-                        .open_remote_context(metadata.id.clone(), cx)
+                    assistant_panel_delegate
+                        .open_remote_context(workspace, metadata.id.clone(), cx)
                         .detach_and_log_err(cx);
                 }
                 ContextMetadata::Saved(metadata) => {
-                    assistant_panel
-                        .open_saved_context(metadata.path.clone(), cx)
+                    assistant_panel_delegate
+                        .open_saved_context(workspace, metadata.path.clone(), cx)
                         .detach_and_log_err(cx);
                 }
             })
