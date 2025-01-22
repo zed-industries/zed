@@ -368,6 +368,7 @@ fn prompt_and_open_paths(
 
 pub fn init(app_state: Arc<AppState>, cx: &mut AppContext) {
     init_settings(cx);
+    notifications::init(cx);
     theme_preview::init(cx);
 
     cx.on_action(Workspace::close_global);
@@ -1056,6 +1057,7 @@ impl Workspace {
 
         cx.defer(|this, cx| {
             this.update_window_title(cx);
+            this.show_initial_notifications(cx);
         });
         Workspace {
             weak_self: weak_handle.clone(),
