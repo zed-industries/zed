@@ -362,11 +362,6 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             workspace_handle.clone(),
             cx.clone(),
         );
-        let assistant_panel = assistant::AssistantPanel::load(
-            workspace_handle.clone(),
-            prompt_builder.clone(),
-            cx.clone(),
-        );
 
         let (
             project_panel,
@@ -375,7 +370,6 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             channels_panel,
             chat_panel,
             notification_panel,
-            assistant_panel,
         ) = futures::try_join!(
             project_panel,
             outline_panel,
@@ -383,7 +377,6 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             channels_panel,
             chat_panel,
             notification_panel,
-            assistant_panel,
         )?;
 
         workspace_handle.update(&mut cx, |workspace, cx| {
@@ -393,7 +386,6 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
             workspace.add_panel(channels_panel, cx);
             workspace.add_panel(chat_panel, cx);
             workspace.add_panel(notification_panel, cx);
-            workspace.add_panel(assistant_panel, cx)
         })?;
 
         let git_ui_enabled = {
@@ -429,27 +421,50 @@ fn initialize_panels(prompt_builder: Arc<PromptBuilder>, cx: &mut ViewContext<Wo
                 _ = timeout => false,
             }
         };
-        let assistant2_panel = if is_assistant2_enabled {
-            Some(
-                assistant2::AssistantPanel::load(
-                    workspace_handle.clone(),
-                    prompt_builder,
-                    cx.clone(),
-                )
-                .await?,
+
+        let (assistant_panel, assistant2_panel) = if is_assistant2_enabled {
+            let assistant2_panel = assistant2::AssistantPanel::load(
+                workspace_handle.clone(),
+                prompt_builder,
+                cx.clone(),
             )
+            .await?;
+
+            (None, Some(assistant2_panel))
         } else {
-            None
+            let assistant_panel = assistant::AssistantPanel::load(
+                workspace_handle.clone(),
+                prompt_builder.clone(),
+                cx.clone(),
+            )
+            .await?;
+
+            (Some(assistant_panel), None)
         };
+
         workspace_handle.update(&mut cx, |workspace, cx| {
             if let Some(assistant2_panel) = assistant2_panel {
                 workspace.add_panel(assistant2_panel, cx);
             }
 
+            if let Some(assistant_panel) = assistant_panel {
+                workspace.add_panel(assistant_panel, cx);
+            }
+
+            // Register the actions that are shared between `assistant` and `assistant2`.
+            //
+            // We need to do this here instead of within the individual `init`
+            // functions so that we only register the actions once.
+            //
+            // Once we ship `assistant2` we can push this back down into `assistant2::assistant_panel::init`.
             if is_assistant2_enabled {
-                workspace.register_action(assistant2::InlineAssistant::inline_assist);
+                workspace
+                    .register_action(assistant2::AssistantPanel::toggle_focus)
+                    .register_action(assistant2::InlineAssistant::inline_assist);
             } else {
-                workspace.register_action(assistant::AssistantPanel::inline_assist);
+                workspace
+                    .register_action(assistant::AssistantPanel::toggle_focus)
+                    .register_action(assistant::AssistantPanel::inline_assist);
             }
         })?;
 

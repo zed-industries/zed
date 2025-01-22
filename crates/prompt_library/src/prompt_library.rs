@@ -27,7 +27,7 @@ use ui::{
 };
 use util::{ResultExt, TryFutureExt};
 use workspace::Workspace;
-use zed_actions::InlineAssist;
+use zed_actions::assistant::InlineAssist;
 
 pub use crate::prompt_store::*;
 pub use crate::prompts::*;

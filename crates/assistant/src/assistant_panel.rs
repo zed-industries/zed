@@ -1,6 +1,6 @@
 use crate::{
     terminal_inline_assistant::TerminalInlineAssistant, DeployHistory, DeployPromptLibrary,
-    InlineAssistant, NewContext, ToggleFocus,
+    InlineAssistant, NewContext,
 };
 use anyhow::{anyhow, Result};
 use assistant_context_editor::{
@@ -42,7 +42,7 @@ use workspace::{
     item::Item,
     pane, DraggedSelection, Pane, ShowConfiguration, ToggleZoom, Workspace,
 };
-use zed_actions::InlineAssist;
+use zed_actions::assistant::{InlineAssist, ToggleFocus};
 
 pub fn init(cx: &mut AppContext) {
     <dyn AssistantPanelDelegate>::set_global(Arc::new(ConcreteAssistantPanelDelegate), cx);
@@ -51,14 +51,6 @@ pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace
-                .register_action(|workspace, _: &ToggleFocus, cx| {
-                    let settings = AssistantSettings::get_global(cx);
-                    if !settings.enabled {
-                        return;
-                    }
-
-                    workspace.toggle_panel_focus::<AssistantPanel>(cx);
-                })
                 .register_action(ContextEditor::quote_selection)
                 .register_action(ContextEditor::insert_selection)
                 .register_action(ContextEditor::copy_code)
@@ -339,6 +331,19 @@ impl AssistantPanel {
         };
         this.new_context(cx);
         this
+    }
+
+    pub fn toggle_focus(
+        workspace: &mut Workspace,
+        _: &ToggleFocus,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let settings = AssistantSettings::get_global(cx);
+        if !settings.enabled {
+            return;
+        }
+
+        workspace.toggle_panel_focus::<Self>(cx);
     }
 
     fn watch_client_status(client: Arc<Client>, cx: &mut ViewContext<Self>) -> Task<()> {

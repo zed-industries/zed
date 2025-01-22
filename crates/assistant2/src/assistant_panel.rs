@@ -24,22 +24,20 @@ use ui::{prelude::*, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Ta
 use util::ResultExt as _;
 use workspace::dock::{DockPosition, Panel, PanelEvent};
 use workspace::Workspace;
+use zed_actions::assistant::ToggleFocus;
 
 use crate::active_thread::ActiveThread;
 use crate::message_editor::MessageEditor;
 use crate::thread::{Thread, ThreadError, ThreadId};
 use crate::thread_history::{PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
-use crate::{NewPromptEditor, NewThread, OpenHistory, OpenPromptEditorHistory, ToggleFocus};
+use crate::{NewPromptEditor, NewThread, OpenHistory, OpenPromptEditorHistory};
 
 pub fn init(cx: &mut AppContext) {
     <dyn AssistantPanelDelegate>::set_global(Arc::new(ConcreteAssistantPanelDelegate), cx);
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace
-                .register_action(|workspace, _: &ToggleFocus, cx| {
-                    workspace.toggle_panel_focus::<AssistantPanel>(cx);
-                })
                 .register_action(|workspace, _: &NewThread, cx| {
                     if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
                         panel.update(cx, |panel, cx| panel.new_thread(cx));
@@ -187,6 +185,19 @@ impl AssistantPanel {
             width: None,
             height: None,
         }
+    }
+
+    pub fn toggle_focus(
+        workspace: &mut Workspace,
+        _: &ToggleFocus,
+        cx: &mut ViewContext<Workspace>,
+    ) {
+        let settings = AssistantSettings::get_global(cx);
+        if !settings.enabled {
+            return;
+        }
+
+        workspace.toggle_panel_focus::<Self>(cx);
     }
 
     pub(crate) fn local_timezone(&self) -> UtcOffset {
@@ -438,7 +449,7 @@ impl Panel for AssistantPanel {
             return None;
         }
 
-        Some(IconName::ZedAssistant2)
+        Some(IconName::ZedAssistant)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {

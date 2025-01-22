@@ -31,7 +31,6 @@ use crate::slash_command_settings::SlashCommandSettings;
 actions!(
     assistant,
     [
-        ToggleFocus,
         InsertActivePrompt,
         DeployHistory,
         DeployPromptLibrary,
