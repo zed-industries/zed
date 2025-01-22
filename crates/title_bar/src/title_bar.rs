@@ -15,7 +15,7 @@ use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
-use feature_flags::{FeatureFlagAppExt, ZedPro};
+use feature_flags::{FeatureFlagAppExt, GitUiFeatureFlag, ZedPro};
 use git_ui::repository_selector::RepositorySelector;
 use git_ui::repository_selector::RepositorySelectorPopoverMenu;
 use gpui::{
@@ -27,6 +27,7 @@ use project::Project;
 use rpc::proto;
 use settings::Settings as _;
 use smallvec::SmallVec;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
@@ -108,7 +109,7 @@ pub struct TitleBar {
     should_move: bool,
     application_menu: Option<View<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
-    git_ui_enabled: bool,
+    git_ui_enabled: Arc<AtomicBool>,
 }
 
 impl Render for TitleBar {
@@ -290,7 +291,15 @@ impl TitleBar {
         subscriptions.push(cx.observe_window_activation(Self::window_activation_changed));
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
-        let title_bar = Self {
+        let is_git_ui_enabled = Arc::new(AtomicBool::new(false));
+        subscriptions.push(cx.observe_flag::<GitUiFeatureFlag, _>({
+            let is_git_ui_enabled = is_git_ui_enabled.clone();
+            move |enabled, _cx| {
+                is_git_ui_enabled.store(enabled, Ordering::SeqCst);
+            }
+        }));
+
+        Self {
             platform_style,
             content: div().id(id.into()),
             children: SmallVec::new(),
@@ -302,29 +311,8 @@ impl TitleBar {
             user_store,
             client,
             _subscriptions: subscriptions,
-            git_ui_enabled: false,
-        };
-
-        title_bar.check_git_ui_enabled(cx);
-
-        title_bar
-    }
-
-    fn check_git_ui_enabled(&self, cx: &mut ViewContext<Self>) {
-        let git_ui_feature_flag = cx.wait_for_flag::<feature_flags::GitUiFeatureFlag>();
-
-        let weak_self = cx.view().downgrade();
-        cx.spawn(|_, mut cx| async move {
-            let enabled = git_ui::git_ui_enabled(git_ui_feature_flag).await;
-            if let Some(this) = weak_self.upgrade() {
-                this.update(&mut cx, |this, cx| {
-                    this.git_ui_enabled = enabled;
-                    cx.notify();
-                })
-                .ok();
-            }
-        })
-        .detach();
+            git_ui_enabled: is_git_ui_enabled,
+        }
     }
 
     #[cfg(not(target_os = "windows"))]
@@ -507,7 +495,7 @@ impl TitleBar {
         &self,
         cx: &mut ViewContext<Self>,
     ) -> Option<impl IntoElement> {
-        if !self.git_ui_enabled {
+        if !self.git_ui_enabled.load(Ordering::SeqCst) {
             return None;
         }
 
