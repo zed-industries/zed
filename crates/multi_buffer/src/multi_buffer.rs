@@ -785,15 +785,19 @@ impl MultiBuffer {
 
             cursor.seek_forward(&range.start);
             let start_region = cursor.region().expect("start offset out of bounds");
-            let start_overshoot = range.start - start_region.range.start;
-            let buffer_start = start_region.buffer_range.start + start_overshoot;
 
             cursor.seek_forward(&range.end);
             let mut end_region = cursor.region().expect("end offset out of bounds");
-            if end_region.range.start == range.end && end_region.range.start > 0 {
+            if end_region.range.start == range.end
+                && end_region.range.start > start_region.range.start
+                && !end_region.is_main_buffer
+            {
                 cursor.prev();
                 end_region = cursor.region().unwrap();
             }
+
+            let start_overshoot = range.start - start_region.range.start;
+            let buffer_start = start_region.buffer_range.start + start_overshoot;
             let end_overshoot = range.end - end_region.range.start;
             let buffer_end = end_region.buffer_range.start + end_overshoot;
 

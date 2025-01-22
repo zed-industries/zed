@@ -583,6 +583,58 @@ fn test_editing_text_in_diff_hunks(cx: &mut TestAppContext) {
             "
         },
     );
+
+    multibuffer.update(cx, |multibuffer, cx| multibuffer.undo(cx));
+    change_set.update(cx, |change_set, cx| {
+        change_set.recalculate_diff_sync(
+            base_text.into(),
+            buffer.read(cx).text_snapshot(),
+            true,
+            cx,
+        );
+    });
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc! {
+            "
+              one
+              two
+            + __
+            + __THREE
+              four
+              five
+            - six
+              seven
+            "
+        },
+    );
+
+    // Cannot (yet) insert at the beginning of a deleted hunk.
+    // (because it would put the newline in the wrong place)
+    multibuffer.update(cx, |multibuffer, cx| {
+        multibuffer.edit([(Point::new(6, 0)..Point::new(6, 0), "\n")], None, cx);
+    });
+    assert_new_snapshot(
+        &multibuffer,
+        &mut snapshot,
+        &mut subscription,
+        cx,
+        indoc! {
+            "
+              one
+              two
+            + __
+            + __THREE
+              four
+              five
+            - six
+              seven
+            "
+        },
+    );
 }
 
 #[gpui::test]
