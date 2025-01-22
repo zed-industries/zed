@@ -1671,8 +1671,16 @@ impl ReferenceMultibuffer {
         }
         for hunk in diff.hunks_intersecting_range(range, &buffer) {
             let hunk_range = hunk.buffer_range.to_offset(&buffer);
-            let hunk_precedes_excerpt = hunk_range.end <= excerpt_range.start;
-            let hunk_follows_excerpt = hunk_range.start >= excerpt_range.end;
+            let hunk_precedes_excerpt = hunk
+                .buffer_range
+                .end
+                .cmp(&excerpt.range.start, &buffer)
+                .is_le();
+            let hunk_follows_excerpt = hunk
+                .buffer_range
+                .start
+                .cmp(&excerpt.range.end, &buffer)
+                .is_ge();
             if hunk_precedes_excerpt || hunk_follows_excerpt {
                 continue;
             }
@@ -1973,8 +1981,8 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
                     let range = snapshot.anchor_in_excerpt(excerpt.id, start).unwrap()
                         ..snapshot.anchor_in_excerpt(excerpt.id, end).unwrap();
 
-                    multibuffer.expand_diff_hunks(vec![range], cx);
                     reference.expand_diff_hunks(excerpt.id, start..end, cx);
+                    multibuffer.expand_diff_hunks(vec![range], cx);
                 });
             }
             56..=85 if needs_diff_calculation => {
