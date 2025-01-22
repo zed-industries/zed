@@ -1024,6 +1024,10 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         true
     }
 
+    fn show_tab_accept_marker() -> bool {
+        true
+    }
+
     fn is_enabled(
         &self,
         buffer: &Model<Buffer>,

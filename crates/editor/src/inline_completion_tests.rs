@@ -288,7 +288,7 @@ fn assert_editor_active_edit_completion(
 
         if let InlineCompletion::Edit {
             edits,
-            single_line: _,
+            accept_marker: _,
         } = &completion_state.completion
         {
             assert(editor.buffer().read(cx).snapshot(cx), edits);
