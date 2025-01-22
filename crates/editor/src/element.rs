@@ -18,12 +18,13 @@ use crate::{
     mouse_context_menu::{self, MenuPosition, MouseContextMenu},
     scroll::{axis_pair, scroll_amount::ScrollAmount, AxisPair},
     BlockId, ChunkReplacement, CursorShape, CustomBlockId, DisplayPoint, DisplayRow,
-    DocumentHighlightRead, DocumentHighlightWrite, Editor, EditorMode, EditorSettings,
-    EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions, HalfPageDown,
-    HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, InlineCompletion, JumpData, LineDown,
-    LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase, Selection,
-    SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR, FILE_HEADER_HEIGHT,
-    GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN, MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
+    DocumentHighlightRead, DocumentHighlightWrite, EditDisplayMode, Editor, EditorMode,
+    EditorSettings, EditorSnapshot, EditorStyle, ExpandExcerpts, FocusedBlock, GutterDimensions,
+    HalfPageDown, HalfPageUp, HandleInput, HoveredCursor, HoveredHunk, InlineCompletion, JumpData,
+    LineDown, LineUp, OpenExcerpts, PageDown, PageUp, Point, RowExt, RowRangeExt, SelectPhase,
+    Selection, SoftWrap, StickyHeaderExcerpt, ToPoint, ToggleFold, CURSORS_VISIBLE_FOR,
+    FILE_HEADER_HEIGHT, GIT_BLAME_MAX_AUTHOR_CHARS_DISPLAYED, MAX_LINE_LEN,
+    MULTI_BUFFER_EXCERPT_HEADER_HEIGHT,
 };
 use client::ParticipantIndex;
 use collections::{BTreeMap, HashMap, HashSet};
@@ -50,7 +51,7 @@ use language::{
 use lsp::DiagnosticSeverity;
 use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptInfo, ExpandExcerptDirection, MultiBufferPoint,
-    MultiBufferRow, MultiBufferSnapshot, ToOffset,
+    MultiBufferRow, ToOffset,
 };
 use project::project_settings::{GitGutterSetting, ProjectSettings};
 use settings::Settings;
@@ -1628,7 +1629,8 @@ impl EditorElement {
             if let Some(inline_completion) = editor.active_inline_completion.as_ref() {
                 match &inline_completion.completion {
                     InlineCompletion::Edit {
-                        single_line: true, ..
+                        display_mode: EditDisplayMode::TabAccept,
+                        ..
                     } => padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS,
                     _ => {}
                 }
@@ -3386,7 +3388,10 @@ impl EditorElement {
                     Some(element)
                 }
             }
-            InlineCompletion::Edit { edits, single_line } => {
+            InlineCompletion::Edit {
+                edits,
+                display_mode,
+            } => {
                 if self.editor.read(cx).has_active_completions_menu() {
                     return None;
                 }
@@ -3410,8 +3415,8 @@ impl EditorElement {
                     return None;
                 }
 
-                if all_edits_insertions_or_deletions(edits, &editor_snapshot.buffer_snapshot) {
-                    if *single_line {
+                match display_mode {
+                    EditDisplayMode::TabAccept => {
                         let range = &edits.first()?.0;
                         let target_display_point = range.end.to_display_point(editor_snapshot);
 
@@ -3433,8 +3438,8 @@ impl EditorElement {
 
                         return Some(element);
                     }
-
-                    return None;
+                    EditDisplayMode::Inline => return None,
+                    EditDisplayMode::DiffPopover => {}
                 }
 
                 let crate::InlineCompletionText::Edit { text, highlights } =
@@ -5247,34 +5252,6 @@ fn inline_completion_tab_indicator(
             )
         })
         .into_any()
-}
-
-fn all_edits_insertions_or_deletions(
-    edits: &Vec<(Range<Anchor>, String)>,
-    snapshot: &MultiBufferSnapshot,
-) -> bool {
-    let mut all_insertions = true;
-    let mut all_deletions = true;
-
-    for (range, new_text) in edits.iter() {
-        let range_is_empty = range.to_offset(&snapshot).is_empty();
-        let text_is_empty = new_text.is_empty();
-
-        if range_is_empty != text_is_empty {
-            if range_is_empty {
-                all_deletions = false;
-            } else {
-                all_insertions = false;
-            }
-        } else {
-            return false;
-        }
-
-        if !all_insertions && !all_deletions {
-            return false;
-        }
-    }
-    all_insertions || all_deletions
 }
 
 #[allow(clippy::too_many_arguments)]
