@@ -1,4 +1,5 @@
 mod active_thread;
+mod assistant_configuration;
 mod assistant_model_selector;
 mod assistant_panel;
 mod buffer_codegen;
@@ -41,6 +42,7 @@ actions!(
         RemoveAllContext,
         OpenHistory,
         OpenPromptEditorHistory,
+        OpenConfiguration,
         RemoveSelectedThread,
         Chat,
         ChatMode,

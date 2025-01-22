@@ -12,13 +12,14 @@ use client::zed_urls;
 use fs::Fs;
 use gpui::{
     prelude::*, px, svg, Action, AnyElement, AppContext, AsyncWindowContext, Corner, EventEmitter,
-    FocusHandle, FocusableView, FontWeight, Model, Pixels, Task, View, ViewContext, WeakView,
-    WindowContext,
+    FocusHandle, FocusableView, FontWeight, Model, Pixels, Subscription, Task, View, ViewContext,
+    WeakView, WindowContext,
 };
 use language::LanguageRegistry;
+use language_model::LanguageModelRegistry;
 use project::Project;
 use prompt_library::PromptBuilder;
-use settings::Settings;
+use settings::{update_settings_file, Settings};
 use time::UtcOffset;
 use ui::{prelude::*, ContextMenu, KeyBinding, PopoverMenu, PopoverMenuHandle, Tab, Tooltip};
 use util::ResultExt as _;
@@ -27,11 +28,12 @@ use workspace::Workspace;
 use zed_actions::assistant::ToggleFocus;
 
 use crate::active_thread::ActiveThread;
+use crate::assistant_configuration::{AssistantConfiguration, AssistantConfigurationEvent};
 use crate::message_editor::MessageEditor;
 use crate::thread::{Thread, ThreadError, ThreadId};
 use crate::thread_history::{PastThread, ThreadHistory};
 use crate::thread_store::ThreadStore;
-use crate::{NewPromptEditor, NewThread, OpenHistory, OpenPromptEditorHistory};
+use crate::{NewPromptEditor, NewThread, OpenConfiguration, OpenHistory, OpenPromptEditorHistory};
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(
@@ -60,6 +62,12 @@ pub fn init(cx: &mut AppContext) {
                         workspace.focus_panel::<AssistantPanel>(cx);
                         panel.update(cx, |panel, cx| panel.open_prompt_editor_history(cx));
                     }
+                })
+                .register_action(|workspace, _: &OpenConfiguration, cx| {
+                    if let Some(panel) = workspace.panel::<AssistantPanel>(cx) {
+                        workspace.focus_panel::<AssistantPanel>(cx);
+                        panel.update(cx, |panel, cx| panel.open_configuration(cx));
+                    }
                 });
         },
     )
@@ -71,6 +79,7 @@ enum ActiveView {
     PromptEditor,
     History,
     PromptEditorHistory,
+    Configuration,
 }
 
 pub struct AssistantPanel {
@@ -84,6 +93,8 @@ pub struct AssistantPanel {
     context_store: Model<assistant_context_editor::ContextStore>,
     context_editor: Option<View<ContextEditor>>,
     context_history: Option<View<ContextHistory>>,
+    configuration: Option<View<AssistantConfiguration>>,
+    configuration_subscription: Option<Subscription>,
     tools: Arc<ToolWorkingSet>,
     local_timezone: UtcOffset,
     active_view: ActiveView,
@@ -173,6 +184,8 @@ impl AssistantPanel {
             context_store,
             context_editor: None,
             context_history: None,
+            configuration: None,
+            configuration_subscription: None,
             tools,
             local_timezone: UtcOffset::from_whole_seconds(
                 chrono::Local::now().offset().local_minus_utc(),
@@ -357,6 +370,46 @@ impl AssistantPanel {
         self.message_editor.focus_handle(cx).focus(cx);
     }
 
+    pub(crate) fn open_configuration(&mut self, cx: &mut ViewContext<Self>) {
+        self.active_view = ActiveView::Configuration;
+        self.configuration = Some(cx.new_view(AssistantConfiguration::new));
+
+        if let Some(configuration) = self.configuration.as_ref() {
+            self.configuration_subscription =
+                Some(cx.subscribe(configuration, Self::handle_assistant_configuration_event));
+
+            configuration.focus_handle(cx).focus(cx);
+        }
+    }
+
+    fn handle_assistant_configuration_event(
+        &mut self,
+        _view: View<AssistantConfiguration>,
+        event: &AssistantConfigurationEvent,
+        cx: &mut ViewContext<Self>,
+    ) {
+        match event {
+            AssistantConfigurationEvent::NewThread(provider) => {
+                if LanguageModelRegistry::read_global(cx)
+                    .active_provider()
+                    .map_or(true, |active_provider| {
+                        active_provider.id() != provider.id()
+                    })
+                {
+                    if let Some(model) = provider.provided_models(cx).first().cloned() {
+                        update_settings_file::<AssistantSettings>(
+                            self.fs.clone(),
+                            cx,
+                            move |settings, _| settings.set_model(model),
+                        );
+                    }
+                }
+
+                self.new_thread(cx);
+            }
+        }
+    }
+
     pub(crate) fn active_thread(&self, cx: &AppContext) -> Model<Thread> {
         self.thread.read(cx).thread.clone()
     }
@@ -382,6 +435,13 @@ impl FocusableView for AssistantPanel {
             ActiveView::PromptEditorHistory => {
                 if let Some(context_history) = self.context_history.as_ref() {
                     context_history.focus_handle(cx)
+                } else {
+                    cx.focus_handle()
+                }
+            }
+            ActiveView::Configuration => {
+                if let Some(configuration) = self.configuration.as_ref() {
+                    configuration.focus_handle(cx)
                 } else {
                     cx.focus_handle()
                 }
@@ -493,6 +553,7 @@ impl AssistantPanel {
                 .unwrap_or_else(|| SharedString::from("Loading Summary…")),
             ActiveView::History => "History / Thread".into(),
             ActiveView::PromptEditorHistory => "History / Prompt Editor".into(),
+            ActiveView::Configuration => "Configuration".into(),
         };
 
         h_flex()
@@ -555,8 +616,8 @@ impl AssistantPanel {
                             .icon_size(IconSize::Small)
                             .style(ButtonStyle::Subtle)
                             .tooltip(move |cx| Tooltip::text("Configure Assistant", cx))
-                            .on_click(move |_event, _cx| {
-                                println!("Configure Assistant");
+                            .on_click(move |_event, cx| {
+                                cx.dispatch_action(OpenConfiguration.boxed_clone());
                             }),
                     ),
             )
@@ -810,6 +871,7 @@ impl Render for AssistantPanel {
                 ActiveView::History => parent.child(self.history.clone()),
                 ActiveView::PromptEditor => parent.children(self.context_editor.clone()),
                 ActiveView::PromptEditorHistory => parent.children(self.context_history.clone()),
+                ActiveView::Configuration => parent.children(self.configuration.clone()),
             })
     }
 }
