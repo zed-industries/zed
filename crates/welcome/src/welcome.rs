@@ -26,7 +26,7 @@ actions!(welcome, [ResetHints]);
 
 pub const FIRST_OPEN: &str = "first_open";
 pub const DOCS_URL: &str = "https://zed.dev/docs/";
-const BOOK_ONBOARDING: &str = "https://dub.sh/zed-onboarding";
+const BOOK_ONBOARDING: &str = "https://dub.sh/zed-c-onboarding";
 
 pub fn init(cx: &mut AppContext) {
     BaseKeymap::register(cx);
