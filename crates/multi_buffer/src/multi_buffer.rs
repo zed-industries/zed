@@ -4970,8 +4970,11 @@ impl MultiBufferSnapshot {
                     let region = cursor.region()?;
                     let start_row = region.range.start.row + indent_guide.start_row
                         - region.buffer_range.start.row;
-                    let end_row = region.range.start.row + indent_guide.end_row
+                    let mut end_row = region.range.start.row + indent_guide.end_row
                         - region.buffer_range.start.row;
+                    if region.range.end != self.max_point() {
+                        end_row = end_row.min(region.range.end.row.saturating_sub(1));
+                    }
                     return Some(MultiBufferIndentGuide {
                         multibuffer_row_range: MultiBufferRow(start_row)..MultiBufferRow(end_row),
                         buffer: indent_guide,

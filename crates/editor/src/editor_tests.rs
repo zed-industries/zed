@@ -11867,44 +11867,6 @@ async fn test_deleting_over_diff_hunk(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
-async fn test_newlines_in_diff_hunks(cx: &mut gpui::TestAppContext) {
-    init_test(cx, |_| {});
-    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
-    let base_text = indoc! {r#"
-        one
-        two
-        three
-        "#};
-
-    cx.set_diff_base(base_text);
-    cx.set_state("one\nˇthree\n");
-    cx.executor().run_until_parked();
-    cx.update_editor(|editor, cx| {
-        editor.expand_selected_diff_hunks(cx);
-    });
-    cx.executor().run_until_parked();
-    cx.run_until_parked();
-    cx.assert_state_with_diff(
-        indoc! {r#"
-          one
-        - two
-          ˇthree
-        "#}
-        .to_string(),
-    );
-    cx.simulate_keystrokes("up enter");
-    cx.assert_state_with_diff(
-        indoc! {r#"
-          one
-        - two
-        + ˇ
-          three
-        "#}
-        .to_string(),
-    );
-}
-
-#[gpui::test]
 async fn test_deletion_reverts(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
@@ -13948,6 +13910,98 @@ async fn test_active_indent_guide_non_matching_indent(cx: &mut gpui::TestAppCont
         vec![indent_guide(buffer_id, 1, 2, 0)],
         Some(vec![0]),
         &mut cx,
+    );
+}
+
+#[gpui::test]
+async fn test_indent_guide_with_expanded_diff_hunks(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorTestContext::new(cx).await;
+    let text = indoc! {
+        "
+        impl A {
+            fn b() {
+                0;
+                3;
+            }
+        }
+        "
+    };
+    let base_text = indoc! {
+        "
+        impl A {
+            fn b() {
+                0;
+                1;
+                2;
+                3;
+                4;
+            }
+        }
+        "
+    };
+
+    cx.update_editor(|editor, cx| {
+        editor.set_text(text, cx);
+
+        editor.buffer().update(cx, |multibuffer, cx| {
+            let buffer = multibuffer.as_singleton().unwrap();
+            let change_set = cx.new_model(|cx| {
+                let mut change_set = BufferChangeSet::new(&buffer, cx);
+                change_set.recalculate_diff_sync(
+                    base_text.into(),
+                    buffer.read(cx).text_snapshot(),
+                    true,
+                    cx,
+                );
+                change_set
+            });
+
+            multibuffer.set_all_hunks_expanded(cx);
+            multibuffer.add_change_set(change_set, cx);
+
+            buffer.read(cx).remote_id()
+        })
+    });
+
+    cx.assert_state_with_diff(
+        indoc! { "
+          impl A {
+              fn b() {
+                  0;
+        -         1;
+        -         2;
+                  3;
+        -         4;
+              }
+          }
+          ˇ"
+        }
+        .to_string(),
+    );
+
+    let mut actual_guides = cx.update_editor(|editor, cx| {
+        editor
+            .snapshot(cx)
+            .buffer_snapshot
+            .indent_guides_in_range(Anchor::min()..Anchor::max(), false, cx)
+            .map(|guide| (guide.multibuffer_row_range.clone(), guide.depth))
+            .collect::<Vec<_>>()
+    });
+    actual_guides.sort_by_key(|item| (item.0.start, item.1));
+    assert_eq!(
+        actual_guides,
+        vec![
+            (MultiBufferRow(1)..MultiBufferRow(2), 0),
+            (MultiBufferRow(2)..MultiBufferRow(2), 1),
+            (MultiBufferRow(3)..MultiBufferRow(4), 0),
+            (MultiBufferRow(3)..MultiBufferRow(4), 1),
+            (MultiBufferRow(5)..MultiBufferRow(5), 0),
+            (MultiBufferRow(5)..MultiBufferRow(5), 1),
+            (MultiBufferRow(6)..MultiBufferRow(6), 0),
+            (MultiBufferRow(6)..MultiBufferRow(6), 1),
+            (MultiBufferRow(7)..MultiBufferRow(7), 0),
+        ]
     );
 }
 

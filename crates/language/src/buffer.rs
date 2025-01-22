@@ -3679,18 +3679,7 @@ impl BufferSnapshot {
         })
     }
 
-    pub fn indent_guides_in_range<T: ToPoint>(
-        &self,
-        range: Range<T>,
-        ignore_disabled_for_language: bool,
-        cx: &AppContext,
-    ) -> Vec<IndentGuide> {
-        let start = range.start.to_point(self);
-        let end = range.end.to_point(self);
-        self.indent_guides_in_range_impl(start..end, ignore_disabled_for_language, cx)
-    }
-
-    pub fn indent_guides_in_range_impl(
+    pub fn indent_guides_in_range(
         &self,
         range: Range<Point>,
         ignore_disabled_for_language: bool,
@@ -3706,7 +3695,7 @@ impl BufferSnapshot {
 
         let start_row = range.start.row;
         let end_row = range.end.row;
-        let row_range = start_row..end_row + 1;
+        let row_range = start_row..end_row;
 
         let mut row_indents = self.line_indents_in_row_range(row_range.clone());
 
@@ -3853,7 +3842,7 @@ impl BufferSnapshot {
             }
 
             let mut non_empty_line_below = None;
-            for (row, indent) in self.text.line_indents_in_row_range((buffer_row + 1)..end) {
+            for (row, indent) in self.text.line_indents_in_row_range((buffer_row)..end) {
                 accessed_row_counter += 1;
                 if accessed_row_counter == YIELD_INTERVAL {
                     accessed_row_counter = 0;
@@ -3903,7 +3892,7 @@ impl BufferSnapshot {
         let (start_row, start_indent_size) = start_indent?;
 
         let mut end_indent = (end, None);
-        for (row, indent) in self.text.line_indents_in_row_range((buffer_row + 1)..end) {
+        for (row, indent) in self.text.line_indents_in_row_range((buffer_row)..end) {
             accessed_row_counter += 1;
             if accessed_row_counter == YIELD_INTERVAL {
                 accessed_row_counter = 0;
