@@ -41,6 +41,7 @@ actions!(
         ToggleModelSelector,
         RemoveAllContext,
         OpenHistory,
+        OpenPromptEditorHistory,
         RemoveSelectedThread,
         Chat,
         ChatMode,
