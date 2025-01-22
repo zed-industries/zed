@@ -228,6 +228,53 @@ async fn test_close_selected_item(cx: &mut gpui::TestAppContext) {
     assert_tab_switcher_is_closed(workspace, cx);
 }
 
+#[gpui::test]
+async fn test_close_preserves_selected_position(cx: &mut gpui::TestAppContext) {
+    let app_state = init_test(cx);
+    app_state
+        .fs
+        .as_fake()
+        .insert_tree(
+            "/root",
+            json!({
+                "1.txt": "First file",
+                "2.txt": "Second file",
+                "3.txt": "Third file",
+            }),
+        )
+        .await;
+
+    let project = Project::test(app_state.fs.clone(), ["/root".as_ref()], cx).await;
+    let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+
+    let tab_1 = open_buffer("1.txt", &workspace, cx).await;
+    let tab_2 = open_buffer("2.txt", &workspace, cx).await;
+    let tab_3 = open_buffer("3.txt", &workspace, cx).await;
+
+    let tab_switcher = open_tab_switcher(false, &workspace, cx);
+    tab_switcher.update(cx, |tab_switcher, _| {
+        assert_eq!(tab_switcher.delegate.matches.len(), 3);
+        assert_match_at_position(tab_switcher, 0, tab_3.boxed_clone());
+        assert_match_selection(tab_switcher, 1, tab_2.boxed_clone());
+        assert_match_at_position(tab_switcher, 2, tab_1.boxed_clone());
+    });
+
+    // Verify that if the selected tab was closed, tab at the same position is selected.
+    cx.dispatch_action(CloseSelectedItem);
+    tab_switcher.update(cx, |tab_switcher, _| {
+        assert_eq!(tab_switcher.delegate.matches.len(), 2);
+        assert_match_at_position(tab_switcher, 0, tab_3.boxed_clone());
+        assert_match_selection(tab_switcher, 1, tab_1.boxed_clone());
+    });
+
+    // But if the position is no longer valid, fall back to the position above.
+    cx.dispatch_action(CloseSelectedItem);
+    tab_switcher.update(cx, |tab_switcher, _| {
+        assert_eq!(tab_switcher.delegate.matches.len(), 1);
+        assert_match_selection(tab_switcher, 0, tab_3.boxed_clone());
+    });
+}
+
 fn init_test(cx: &mut TestAppContext) -> Arc<AppState> {
     cx.update(|cx| {
         let state = AppState::test(cx);

@@ -1,8 +1,8 @@
 use crate::{
-    humanize_token_count, AssistantPanel, AssistantPanelEvent, CycleNextInlineAssist,
-    CyclePreviousInlineAssist, RequestType,
+    AssistantPanel, AssistantPanelEvent, CycleNextInlineAssist, CyclePreviousInlineAssist,
 };
 use anyhow::{anyhow, Context as _, Result};
+use assistant_context_editor::{humanize_token_count, RequestType};
 use assistant_settings::AssistantSettings;
 use client::{telemetry::Telemetry, ErrorExt};
 use collections::{hash_map, HashMap, HashSet, VecDeque};
@@ -1728,7 +1728,7 @@ impl PromptEditor {
     }
 
     fn placeholder_text(codegen: &Codegen, cx: &WindowContext) -> String {
-        let context_keybinding = text_for_action(&crate::ToggleFocus, cx)
+        let context_keybinding = text_for_action(&zed_actions::assistant::ToggleFocus, cx)
             .map(|keybinding| format!(" • {keybinding} for context"))
             .unwrap_or_default();
 

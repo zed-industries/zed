@@ -1757,7 +1757,6 @@ impl<'a> BlockChunks<'a> {
 pub struct StickyHeaderExcerpt<'a> {
     pub excerpt: &'a ExcerptInfo,
     pub next_excerpt_controls_present: bool,
-    // TODO az remove option
     pub next_buffer_row: Option<u32>,
 }
 

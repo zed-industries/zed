@@ -43,6 +43,7 @@ enum ContextPickerMode {
 pub(super) struct ContextPicker {
     mode: ContextPickerMode,
     workspace: WeakView<Workspace>,
+    editor: WeakView<Editor>,
     context_store: WeakModel<ContextStore>,
     thread_store: Option<WeakModel<ThreadStore>>,
     confirm_behavior: ConfirmBehavior,
@@ -53,6 +54,7 @@ impl ContextPicker {
         workspace: WeakView<Workspace>,
         thread_store: Option<WeakModel<ThreadStore>>,
         context_store: WeakModel<ContextStore>,
+        editor: WeakView<Editor>,
         confirm_behavior: ConfirmBehavior,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -61,6 +63,7 @@ impl ContextPicker {
             workspace,
             context_store,
             thread_store,
+            editor,
             confirm_behavior,
         }
     }
@@ -92,7 +95,18 @@ impl ContextPicker {
                 .map(|(ix, entry)| self.recent_menu_item(context_picker.clone(), ix, entry));
 
             let menu = menu
-                .when(has_recent, |menu| menu.label("Recent"))
+                .when(has_recent, |menu| {
+                    menu.custom_row(|_| {
+                        div()
+                            .mb_1()
+                            .child(
+                                Label::new("Recent")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            )
+                            .into_any_element()
+                    })
+                })
                 .extend(recent_entries)
                 .when(has_recent, |menu| menu.separator())
                 .extend(ContextKind::all().into_iter().map(kind_entry));
@@ -120,6 +134,7 @@ impl ContextPicker {
                     FileContextPicker::new(
                         context_picker.clone(),
                         self.workspace.clone(),
+                        self.editor.clone(),
                         self.context_store.clone(),
                         self.confirm_behavior,
                         cx,

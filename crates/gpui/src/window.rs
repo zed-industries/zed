@@ -3090,8 +3090,7 @@ impl<'a> WindowContext<'a> {
     /// binding for the action (last binding added to the keymap).
     pub fn keystroke_text_for(&self, action: &dyn Action) -> String {
         self.bindings_for_action(action)
-            .into_iter()
-            .next()
+            .last()
             .map(|binding| {
                 binding
                     .keystrokes()
@@ -3744,8 +3743,8 @@ impl<'a> WindowContext<'a> {
         actions
     }
 
-    /// Returns key bindings that invoke an action on the currently focused element, in precedence
-    /// order (reverse of the order they were added to the keymap).
+    /// Returns key bindings that invoke an action on the currently focused element. Bindings are
+    /// returned in the order they were added. For display, the last binding should take precedence.
     pub fn bindings_for_action(&self, action: &dyn Action) -> Vec<KeyBinding> {
         self.window
             .rendered_frame
@@ -3757,15 +3756,15 @@ impl<'a> WindowContext<'a> {
     }
 
     /// Returns key bindings that invoke the given action on the currently focused element, without
-    /// checking context. Bindings are returned returned in precedence order (reverse of the order
-    /// they were added to the keymap).
+    /// checking context. Bindings are returned in the order they were added. For display, the last
+    /// binding should take precedence.
     pub fn all_bindings_for_input(&self, input: &[Keystroke]) -> Vec<KeyBinding> {
         RefCell::borrow(&self.keymap).all_bindings_for_input(input)
     }
 
     /// Returns any bindings that would invoke an action on the given focus handle if it were
-    /// focused. Bindings are returned returned in precedence order (reverse of the order
-    /// they were added to the keymap).
+    /// focused. Bindings are returned in the order they were added. For display, the last binding
+    /// should take precedence.
     pub fn bindings_for_action_in(
         &self,
         action: &dyn Action,
