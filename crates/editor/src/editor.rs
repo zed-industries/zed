@@ -486,6 +486,7 @@ enum InlineCompletion {
     Edit {
         edits: Vec<(Range<Anchor>, String)>,
         edit_preview: Option<EditPreview>,
+        single_line: bool,
     },
     Move(Anchor),
 }
@@ -4883,16 +4884,12 @@ impl Editor {
         }
 
         let first_edit_start = edits.first().unwrap().0.start;
-        let edit_start_row = first_edit_start
-            .to_point(&multibuffer)
-            .row
-            .saturating_sub(2);
+        let first_edit_start_point = first_edit_start.to_point(&multibuffer);
+        let edit_start_row = first_edit_start_point.row.saturating_sub(2);
 
         let last_edit_end = edits.last().unwrap().0.end;
-        let edit_end_row = cmp::min(
-            multibuffer.max_point().row,
-            last_edit_end.to_point(&multibuffer).row + 2,
-        );
+        let last_edit_end_point = last_edit_end.to_point(&multibuffer);
+        let edit_end_row = cmp::min(multibuffer.max_point().row, last_edit_end_point.row + 2);
 
         let cursor_row = cursor.to_point(&multibuffer).row;
 
@@ -4935,8 +4932,13 @@ impl Editor {
             }
 
             invalidation_row_range = edit_start_row..edit_end_row;
+
+            let single_line = first_edit_start_point.row == last_edit_end_point.row
+                && !edits.iter().any(|(_, edit)| edit.contains('\n'));
+
             completion = InlineCompletion::Edit {
                 edits,
+                single_line,
                 edit_preview: inline_completion.edit_preview,
             };
         };
@@ -4982,6 +4984,7 @@ impl Editor {
                 InlineCompletion::Edit {
                     edits,
                     edit_preview,
+                    single_line: _,
                 } => edit_preview
                     .as_ref()
                     .and_then(|edit_preview| {

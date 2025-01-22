@@ -1592,7 +1592,6 @@ impl EditorElement {
         &self,
         display_row: DisplayRow,
         display_snapshot: &DisplaySnapshot,
-        buffer_snapshot: &MultiBufferSnapshot,
         line_layout: &LineWithInvisibles,
         crease_trailer: Option<&CreaseTrailerLayout>,
         em_width: Pixels,
@@ -1629,11 +1628,8 @@ impl EditorElement {
             if let Some(inline_completion) = editor.active_inline_completion.as_ref() {
                 match &inline_completion.completion {
                     InlineCompletion::Edit {
-                        edits,
-                        edit_preview: _,
-                    } if single_line_edit(&edits, buffer_snapshot).is_some() => {
-                        padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS
-                    }
+                        single_line: true, ..
+                    } => padding += INLINE_ACCEPT_SUGGESTION_EM_WIDTHS,
                     _ => {}
                 }
             }
@@ -3393,6 +3389,7 @@ impl EditorElement {
             InlineCompletion::Edit {
                 edits,
                 edit_preview,
+                single_line,
             } => {
                 if self.editor.read(cx).has_active_completions_menu() {
                     return None;
@@ -3417,28 +3414,30 @@ impl EditorElement {
                     return None;
                 }
 
-                if let Some(range) = single_line_edit(&edits, &editor_snapshot.buffer_snapshot) {
-                    let mut element = inline_completion_tab_indicator("Accept", None, cx);
-
-                    let target_display_point = range.end.to_display_point(editor_snapshot);
-                    let target_line_end = DisplayPoint::new(
-                        target_display_point.row(),
-                        editor_snapshot.line_len(target_display_point.row()),
-                    );
-                    let origin = self.editor.update(cx, |editor, cx| {
-                        editor.display_to_pixel_point(target_line_end, editor_snapshot, cx)
-                    })?;
-
-                    element.prepaint_as_root(
-                        text_bounds.origin + origin + point(PADDING_X, px(0.)),
-                        AvailableSpace::min_size(),
-                        cx,
-                    );
-
-                    return Some(element);
-                }
-
                 if all_edits_insertions_or_deletions(edits, &editor_snapshot.buffer_snapshot) {
+                    if *single_line {
+                        let range = &edits.first()?.0;
+                        let target_display_point = range.end.to_display_point(editor_snapshot);
+
+                        let target_line_end = DisplayPoint::new(
+                            target_display_point.row(),
+                            editor_snapshot.line_len(target_display_point.row()),
+                        );
+                        let origin = self.editor.update(cx, |editor, cx| {
+                            editor.display_to_pixel_point(target_line_end, editor_snapshot, cx)
+                        })?;
+
+                        let mut element = inline_completion_tab_indicator("Accept", None, cx);
+
+                        element.prepaint_as_root(
+                            text_bounds.origin + origin + point(PADDING_X, px(0.)),
+                            AvailableSpace::min_size(),
+                            cx,
+                        );
+
+                        return Some(element);
+                    }
+
                     return None;
                 }
 
@@ -5251,22 +5250,6 @@ fn inline_completion_tab_indicator(
         .into_any()
 }
 
-fn single_line_edit<'a>(
-    edits: &'a [(Range<Anchor>, String)],
-    snapshot: &MultiBufferSnapshot,
-) -> Option<&'a Range<Anchor>> {
-    let [(range, _)] = edits else {
-        return None;
-    };
-
-    let point_range = range.to_point(&snapshot);
-    if point_range.start.row == point_range.end.row {
-        Some(range)
-    } else {
-        None
-    }
-}
-
 fn all_edits_insertions_or_deletions(
     edits: &Vec<(Range<Anchor>, String)>,
     snapshot: &MultiBufferSnapshot,
@@ -6551,7 +6534,6 @@ impl Element for EditorElement {
                             inline_blame = self.layout_inline_blame(
                                 display_row,
                                 &snapshot.display_snapshot,
-                                &snapshot.buffer_snapshot,
                                 line_layout,
                                 crease_trailer_layout,
                                 em_width,
