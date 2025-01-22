@@ -226,10 +226,8 @@ impl Render for TitleBar {
                                                                     .color(Color::Muted),
                                                             )
                                                             .child(
-                                                                Label::new(
-                                                                    "Zed AI's Edit Prediction",
-                                                                )
-                                                                .size(LabelSize::Small),
+                                                                Label::new("Edit Prediction")
+                                                                    .size(LabelSize::Small),
                                                             ),
                                                     ),
                                             )

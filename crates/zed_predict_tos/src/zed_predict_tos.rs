@@ -46,6 +46,11 @@ impl ZedPredictTos {
         cx.notify();
     }
 
+    fn view_blog(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
+        cx.open_url("https://zed.dev/blog/"); // TODO Add the link when live
+        cx.notify();
+    }
+
     fn accept_terms(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
         let task = self
             .user_store
@@ -130,7 +135,7 @@ impl Render for ZedPredictTos {
                     .child(
                         v_flex()
                             .child(
-                                Label::new("Introducing Zed AI")
+                                Label::new("Introducing Zed AI's")
                                     .size(LabelSize::Small)
                                     .color(Color::Muted),
                             )
@@ -155,7 +160,7 @@ impl Render for ZedPredictTos {
                                     .child("tab")
                                     .with_animation(
                                         ElementId::Integer(n),
-                                        Animation::new(Duration::from_millis(2400)).repeat(),
+                                        Animation::new(Duration::from_secs(2)).repeat(),
                                         move |tab, delta| {
                                             let delta = (delta - 0.15 * n as f32) / 0.7;
                                             let delta = 1.0 - (0.5 - delta).abs() * 2.;
@@ -190,7 +195,7 @@ impl Render for ZedPredictTos {
             .child(
                 v_flex()
                     .mt_2()
-                    .gap_1()
+                    .gap_2()
                     .w_full()
                     .child(
                         Button::new("accept-tos", "Tab to Accept and Enable")
@@ -199,12 +204,33 @@ impl Render for ZedPredictTos {
                             .on_click(cx.listener(Self::accept_terms)),
                     )
                     .child(
-                        Button::new("view-tos", "Terms of Service")
-                            .full_width()
-                            .icon(IconName::ArrowUpRight)
-                            .icon_size(IconSize::Indicator)
-                            .icon_color(Color::Muted)
-                            .on_click(cx.listener(Self::view_terms)),
+                        h_flex()
+                            .w_full()
+                            .gap_1()
+                            .child(
+                                div()
+                                    .w_full()
+                                    .child(
+                                        Button::new("view-tos", "Terms of Service")
+                                            .full_width()
+                                            .icon(IconName::ArrowUpRight)
+                                            .icon_size(IconSize::Indicator)
+                                            .icon_color(Color::Muted)
+                                            .on_click(cx.listener(Self::view_terms)),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .w_full()
+                                    .child(
+                                        Button::new("blog-post", "Read the Blog Post")
+                                            .full_width()
+                                            .icon(IconName::ArrowUpRight)
+                                            .icon_size(IconSize::Indicator)
+                                            .icon_color(Color::Muted)
+                                            .on_click(cx.listener(Self::view_blog)),
+                                    ),
+                            ),
                     )
             )
     }
