@@ -17,10 +17,6 @@ runs:
       shell: pwsh
       run: ./script/clear-target-dir-if-larger-than.ps1 100
 
-    - name: Test cargo clean
-      shell: pwsh
-      run: cargo clean
-
     - name: Run tests
       shell: pwsh
       run: cargo nextest run --workspace --no-fail-fast
