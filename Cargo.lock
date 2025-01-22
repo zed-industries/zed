@@ -7396,7 +7396,6 @@ dependencies = [
  "serde",
  "serde_json",
  "smol",
- "text",
  "util",
 ]
 
@@ -9833,7 +9832,6 @@ dependencies = [
  "log",
  "lsp",
  "node_runtime",
- "once_cell",
  "parking_lot",
  "pathdiff",
  "paths",
