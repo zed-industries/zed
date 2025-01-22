@@ -37,6 +37,7 @@ pub struct ImageInfo {
     width: Option<u32>,
     height: Option<u32>,
     file_size: Option<u64>,
+    format: Option<String>,
     color_type: Option<String>,
     _observe_active_image: Option<Subscription>,
 }
@@ -52,6 +53,7 @@ impl ImageInfo {
             width: None,
             height: None,
             file_size: None,
+            format: None,
             color_type: None,
             _observe_active_image: None,
         }
@@ -64,12 +66,14 @@ impl ImageInfo {
             self.width = Some(meta.width);
             self.height = Some(meta.height);
             self.file_size = Some(meta.file_size);
+            self.format = Some(meta.format.clone());
             self.color_type = Some(meta.color_type.to_string());
         } else {
             self.width = None;
             self.height = None;
             self.file_size = None;
-            self.color_type = None;
+            self.format = None;
+            self.color_type = None
         }
         cx.notify();
     }
@@ -100,26 +104,21 @@ impl ImageInfo {
 
 impl Render for ImageInfo {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let mut text = String::new();
         let unit_type = ImageFileSizeUnitType::get_global(cx);
 
-        if let (Some(width), Some(height)) = (self.width, self.height) {
-            text.push_str(&format!("{}×{}", width, height));
-        }
+        let components = [
+            self.width
+                .and_then(|w| self.height.map(|h| format!("{}x{}", w, h))),
+            self.file_size.map(|s| self.format_file_size(s, unit_type)),
+            self.color_type.clone(),
+            self.format.clone(),
+        ];
 
-        if let Some(size) = self.file_size {
-            if !text.is_empty() {
-                text.push_str(" • ");
-            }
-            text.push_str(&Self::format_file_size(self, size, unit_type));
-        }
-
-        if let Some(color_type) = &self.color_type {
-            if !text.is_empty() {
-                text.push_str(" • ");
-            }
-            text.push_str(color_type);
-        }
+        let text = components
+            .into_iter()
+            .flatten()
+            .collect::<Vec<_>>()
+            .join(" • ");
 
         div().when(!text.is_empty(), |el| {
             el.child(Button::new("image-metadata", text).label_size(LabelSize::Small))

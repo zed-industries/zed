@@ -9,7 +9,7 @@ use gpui::{
     hash, prelude::*, AppContext, AsyncAppContext, EventEmitter, Img, Model, ModelContext,
     Subscription, Task, WeakModel,
 };
-use image::{ColorType, GenericImageView};
+use image::{ExtendedColorType, GenericImageView, ImageFormat, ImageReader};
 use language::{DiskState, File};
 use rpc::{AnyProtoClient, ErrorExt as _};
 use std::ffi::OsStr;
@@ -53,7 +53,8 @@ pub struct ImageItemMeta {
     pub width: u32,
     pub height: u32,
     pub file_size: u64,
-    pub color_type: &'static str,
+    pub color_type: String,
+    pub format: String,
 }
 
 pub struct ImageItem {
@@ -64,18 +65,29 @@ pub struct ImageItem {
     pub image_meta: Option<ImageItemMeta>,
 }
 
-fn image_color_type_description(color_type: ColorType) -> &'static str {
-    match color_type {
-        ColorType::L8 => "Grayscale (8-bit)",
-        ColorType::La8 => "Grayscale with Alpha (8-bit)",
-        ColorType::Rgba8 => "RGBA (32-bit color)",
-        ColorType::Rgb8 => "RGB (24-bit color)",
-        ColorType::Rgb16 => "RGB (48-bit color)",
-        ColorType::Rgba16 => "RGBA (64-bit color)",
-        ColorType::L16 => "Grayscale (16-bit)",
-        ColorType::La16 => "Grayscale with Alpha (16-bit)",
+fn image_color_type_description(color_type: ExtendedColorType) -> String {
+    let (channels, bits_per_channel) = match color_type {
+        ExtendedColorType::L8 => (1, 8),
+        ExtendedColorType::L16 => (1, 16),
+        ExtendedColorType::La8 => (2, 8),
+        ExtendedColorType::La16 => (2, 16),
+        ExtendedColorType::Rgb8 => (3, 8),
+        ExtendedColorType::Rgb16 => (3, 16),
+        ExtendedColorType::Rgba8 => (4, 8),
+        ExtendedColorType::Rgba16 => (4, 16),
+        ExtendedColorType::A8 => (1, 8),
+        ExtendedColorType::Bgr8 => (3, 8),
+        ExtendedColorType::Bgra8 => (4, 8),
+        ExtendedColorType::Cmyk8 => (4, 8),
 
-        _ => "unknown color type",
+        _ => (0, 0),
+    };
+
+    if channels == 0 {
+        "unknown color type".to_string()
+    } else {
+        let bits_per_pixel = channels * bits_per_channel;
+        format!("{} channels, {} bits per pixel", channels, bits_per_pixel)
     }
 }
 
@@ -116,23 +128,46 @@ impl ImageItem {
             anyhow::bail!("File does not exist at path: {:?}", path);
         }
 
+        let fs = project
+            .update(cx, |project, _| project.fs().clone())
+            .context("Failed to get filesystem")?;
+
+        let img_bytes = fs
+            .load_bytes(&path)
+            .await
+            .context("Could not load image bytes")?;
+        let img_format = image::guess_format(&img_bytes).context("Could not guess image format")?;
+
+        let img_format_str = match img_format {
+            ImageFormat::Png => "PNG",
+            ImageFormat::Jpeg => "JPEG",
+            ImageFormat::Gif => "GIF",
+            ImageFormat::WebP => "WebP",
+            ImageFormat::Tiff => "TIFF",
+            ImageFormat::Bmp => "BMP",
+            ImageFormat::Ico => "ICO",
+            ImageFormat::Avif => "Avif",
+
+            _ => "Unknown",
+        };
+
         let path_clone = path.clone();
-        let image_result =
-            smol::unblock(move || image::open(&path_clone).context("Failed to open image")).await?;
+        let image_result = smol::unblock(move || ImageReader::open(&path_clone)?.decode()).await?;
 
         let img = image_result;
         let dimensions_result = smol::unblock(move || {
             let dimensions = img.dimensions();
-            let img_color_type = image_color_type_description(img.color());
-            Ok::<_, anyhow::Error>((dimensions.0, dimensions.1, img_color_type))
+            let img_color_type = image_color_type_description(img.color().into());
+            Ok::<_, anyhow::Error>((
+                dimensions.0,
+                dimensions.1,
+                img_format_str.to_string(),
+                img_color_type,
+            ))
         })
         .await?;
 
-        let (width, height, color_type) = dimensions_result;
-
-        let fs = project
-            .update(cx, move |project, _| project.fs().clone())
-            .context("Failed to get filesystem")?;
+        let (width, height, format, color_type) = dimensions_result;
 
         let file_metadata = fs
             .metadata(path.as_path())
@@ -145,6 +180,7 @@ impl ImageItem {
             width,
             height,
             file_size,
+            format,
             color_type,
         })
     }
