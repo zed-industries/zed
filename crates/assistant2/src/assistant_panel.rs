@@ -373,12 +373,24 @@ impl AssistantPanel {
 
         let thread = self.thread.read(cx);
 
-        let title = if thread.is_empty() {
-            thread.summary_or_default(cx)
-        } else {
-            thread
-                .summary(cx)
-                .unwrap_or_else(|| SharedString::from("Loading Summary…"))
+        let title = match self.active_view {
+            ActiveView::Thread => {
+                if thread.is_empty() {
+                    thread.summary_or_default(cx)
+                } else {
+                    thread
+                        .summary(cx)
+                        .unwrap_or_else(|| SharedString::from("Loading Summary…"))
+                }
+            }
+            ActiveView::PromptEditor => self
+                .context_editor
+                .as_ref()
+                .map(|context_editor| {
+                    SharedString::from(context_editor.read(cx).title(cx).to_string())
+                })
+                .unwrap_or_else(|| SharedString::from("Loading Summary…")),
+            ActiveView::History => "History".into(),
         };
 
         h_flex()
