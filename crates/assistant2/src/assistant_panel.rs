@@ -825,18 +825,18 @@ impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
 
     fn open_remote_context(
         &self,
-        workspace: &mut Workspace,
-        context_id: assistant_context_editor::ContextId,
-        cx: &mut ViewContext<Workspace>,
+        _workspace: &mut Workspace,
+        _context_id: assistant_context_editor::ContextId,
+        _cx: &mut ViewContext<Workspace>,
     ) -> Task<Result<View<ContextEditor>>> {
-        todo!()
+        Task::ready(Err(anyhow!("opening remote context not implemented")))
     }
 
     fn quote_selection(
         &self,
-        workspace: &mut Workspace,
-        creases: Vec<(String, String)>,
-        cx: &mut ViewContext<Workspace>,
+        _workspace: &mut Workspace,
+        _creases: Vec<(String, String)>,
+        _cx: &mut ViewContext<Workspace>,
     ) {
     }
 }
