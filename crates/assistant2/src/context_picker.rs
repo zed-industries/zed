@@ -77,22 +77,21 @@ impl ContextPicker {
         let context_picker = cx.view().clone();
 
         let menu = ContextMenu::build(cx, move |menu, cx| {
-            let kind_entry = |kind: &'static ContextKind| {
-                let context_picker = context_picker.clone();
-
-                ContextMenuEntry::new(kind.label())
-                    .icon(kind.icon())
-                    .handler(move |cx| {
-                        context_picker.update(cx, |this, cx| this.select_kind(*kind, cx))
-                    })
-            };
-
             let recent = self.recent_entries(cx);
             let has_recent = !recent.is_empty();
             let recent_entries = recent
                 .into_iter()
                 .enumerate()
                 .map(|(ix, entry)| self.recent_menu_item(context_picker.clone(), ix, entry));
+
+            let mut context_kinds = vec![
+                ContextKind::File,
+                ContextKind::Directory,
+                ContextKind::FetchedUrl,
+            ];
+            if self.thread_store.is_some() {
+                context_kinds.push(ContextKind::Thread);
+            }
 
             let menu = menu
                 .when(has_recent, |menu| {
@@ -109,7 +108,15 @@ impl ContextPicker {
                 })
                 .extend(recent_entries)
                 .when(has_recent, |menu| menu.separator())
-                .extend(ContextKind::all().into_iter().map(kind_entry));
+                .extend(context_kinds.into_iter().map(|kind| {
+                    let context_picker = context_picker.clone();
+
+                    ContextMenuEntry::new(kind.label())
+                        .icon(kind.icon())
+                        .handler(move |cx| {
+                            context_picker.update(cx, |this, cx| this.select_kind(kind, cx))
+                        })
+                }));
 
             match self.confirm_behavior {
                 ConfirmBehavior::KeepOpen => menu.keep_open_on_confirm(),
