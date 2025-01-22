@@ -11867,6 +11867,44 @@ async fn test_deleting_over_diff_hunk(cx: &mut gpui::TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_newlines_in_diff_hunks(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    let base_text = indoc! {r#"
+        one
+        two
+        three
+        "#};
+
+    cx.set_diff_base(base_text);
+    cx.set_state("one\nˇthree\n");
+    cx.executor().run_until_parked();
+    cx.update_editor(|editor, cx| {
+        editor.expand_selected_diff_hunks(cx);
+    });
+    cx.executor().run_until_parked();
+    cx.run_until_parked();
+    cx.assert_state_with_diff(
+        indoc! {r#"
+          one
+        - two
+          ˇthree
+        "#}
+        .to_string(),
+    );
+    cx.simulate_keystrokes("up enter");
+    cx.assert_state_with_diff(
+        indoc! {r#"
+          one
+        - two
+        + ˇ
+          three
+        "#}
+        .to_string(),
+    );
+}
+
+#[gpui::test]
 async fn test_deletion_reverts(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
     let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
