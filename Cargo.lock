@@ -16275,6 +16275,7 @@ dependencies = [
  "assets",
  "assistant",
  "assistant2",
+ "assistant_context_editor",
  "assistant_settings",
  "assistant_tools",
  "async-watch",

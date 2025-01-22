@@ -45,8 +45,6 @@ use workspace::{
 use zed_actions::assistant::{InlineAssist, ToggleFocus};
 
 pub fn init(cx: &mut AppContext) {
-    <dyn AssistantPanelDelegate>::set_global(Arc::new(ConcreteAssistantPanelDelegate), cx);
-
     workspace::FollowableViewRegistry::register::<ContextEditor>(cx);
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
@@ -1299,7 +1297,7 @@ impl prompt_library::InlineAssistDelegate for PromptLibraryInlineAssist {
     }
 }
 
-struct ConcreteAssistantPanelDelegate;
+pub struct ConcreteAssistantPanelDelegate;
 
 impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
     fn active_context_editor(

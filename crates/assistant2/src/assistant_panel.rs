@@ -34,7 +34,6 @@ use crate::thread_store::ThreadStore;
 use crate::{NewPromptEditor, NewThread, OpenHistory, OpenPromptEditorHistory};
 
 pub fn init(cx: &mut AppContext) {
-    <dyn AssistantPanelDelegate>::set_global(Arc::new(ConcreteAssistantPanelDelegate), cx);
     cx.observe_new_views(
         |workspace: &mut Workspace, _cx: &mut ViewContext<Workspace>| {
             workspace
@@ -811,7 +810,7 @@ impl Render for AssistantPanel {
     }
 }
 
-struct ConcreteAssistantPanelDelegate;
+pub struct ConcreteAssistantPanelDelegate;
 
 impl AssistantPanelDelegate for ConcreteAssistantPanelDelegate {
     fn active_context_editor(
