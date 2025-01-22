@@ -16,7 +16,6 @@ use project::git::RepositoryHandle;
 use project::{Fs, Project, ProjectPath};
 use serde::{Deserialize, Serialize};
 use settings::Settings as _;
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::{collections::HashSet, ops::Range, path::PathBuf, sync::Arc, time::Duration, usize};
 use theme::ThemeSettings;
 use ui::{
@@ -91,7 +90,7 @@ pub struct GitPanel {
     scrollbar_state: ScrollbarState,
     selected_entry: Option<usize>,
     show_scrollbar: bool,
-    rebuild_requested: Arc<AtomicBool>,
+    update_visible_entries_task: Task<()>,
     commit_editor: View<Editor>,
     visible_entries: Vec<GitListEntry>,
     all_staged: Option<bool>,
@@ -167,33 +166,11 @@ impl GitPanel {
 
             let scroll_handle = UniformListScrollHandle::new();
 
-            let rebuild_requested = Arc::new(AtomicBool::new(false));
-            let flag = rebuild_requested.clone();
-            let handle = cx.view().downgrade();
-            cx.spawn(|_, mut cx| async move {
-                loop {
-                    cx.background_executor().timer(UPDATE_DEBOUNCE).await;
-                    if flag.load(Ordering::Relaxed) {
-                        if let Some(this) = handle.upgrade() {
-                            this.update(&mut cx, |this, cx| {
-                                this.update_visible_entries(cx);
-                                let active_repository = this.active_repository.as_ref();
-                                this.commit_editor =
-                                    cx.new_view(|cx| commit_message_editor(active_repository, cx));
-                            })
-                            .ok();
-                        }
-                        flag.store(false, Ordering::Relaxed);
-                    }
-                }
-            })
-            .detach();
-
             if let Some(git_state) = git_state {
                 cx.subscribe(&git_state, move |this, git_state, event, cx| match event {
                     project::git::Event::RepositoriesUpdated => {
                         this.active_repository = git_state.read(cx).active_repository();
-                        this.schedule_update();
+                        this.schedule_update(cx);
                     }
                 })
                 .detach();
@@ -210,16 +187,16 @@ impl GitPanel {
                 selected_entry: None,
                 show_scrollbar: false,
                 hide_scrollbar_task: None,
+                update_visible_entries_task: Task::ready(()),
                 active_repository,
                 scroll_handle,
                 fs,
-                rebuild_requested,
                 commit_editor,
                 project,
                 err_sender,
                 workspace,
             };
-            git_panel.schedule_update();
+            git_panel.schedule_update(cx);
             git_panel.show_scrollbar = git_panel.should_show_scrollbar(cx);
             git_panel
         });
@@ -689,8 +666,20 @@ impl GitPanel {
         }
     }
 
-    fn schedule_update(&mut self) {
-        self.rebuild_requested.store(true, Ordering::Relaxed);
+    fn schedule_update(&mut self, cx: &mut ViewContext<Self>) {
+        let handle = cx.view().downgrade();
+        self.update_visible_entries_task = cx.spawn(|_, mut cx| async move {
+            cx.background_executor().timer(UPDATE_DEBOUNCE).await;
+            if let Some(this) = handle.upgrade() {
+                this.update(&mut cx, |this, cx| {
+                    this.update_visible_entries(cx);
+                    let active_repository = this.active_repository.as_ref();
+                    this.commit_editor =
+                        cx.new_view(|cx| commit_message_editor(active_repository, cx));
+                })
+                .ok();
+            }
+        });
     }
 
     fn update_visible_entries(&mut self, cx: &mut ViewContext<Self>) {
