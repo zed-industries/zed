@@ -23,7 +23,7 @@ use vim_mode_setting::VimModeSetting;
 use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
-use zed_actions::{outline::ToggleOutline, InlineAssist};
+use zed_actions::{assistant::InlineAssist, outline::ToggleOutline};
 
 pub struct QuickActionBar {
     _inlay_hints_enabled_subscription: Option<Subscription>,

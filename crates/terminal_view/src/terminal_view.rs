@@ -56,7 +56,7 @@ use anyhow::Context;
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
 use smol::Timer;
-use zed_actions::InlineAssist;
+use zed_actions::assistant::InlineAssist;
 
 use std::{
     cmp,

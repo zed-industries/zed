@@ -77,12 +77,20 @@ pub mod theme_selector {
     impl_actions!(theme_selector, [Toggle]);
 }
 
-#[derive(Clone, Default, Deserialize, PartialEq, JsonSchema)]
-pub struct InlineAssist {
-    pub prompt: Option<String>,
-}
+pub mod assistant {
+    use gpui::{actions, impl_actions};
+    use schemars::JsonSchema;
+    use serde::Deserialize;
 
-impl_actions!(assistant, [InlineAssist]);
+    actions!(assistant, [ToggleFocus]);
+
+    #[derive(Clone, Default, Deserialize, PartialEq, JsonSchema)]
+    pub struct InlineAssist {
+        pub prompt: Option<String>,
+    }
+
+    impl_actions!(assistant, [InlineAssist]);
+}
 
 #[derive(PartialEq, Clone, Deserialize, Default, JsonSchema)]
 pub struct OpenRecent {
