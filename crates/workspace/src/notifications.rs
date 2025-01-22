@@ -163,11 +163,13 @@ impl Workspace {
     }
 
     pub fn show_initial_notifications(&mut self, cx: &mut ViewContext<Self>) {
-        for (id, build_notification) in cx
-            .global::<GlobalAppNotifications>()
-            .app_notifications
-            .clone()
-        {
+        // Allow absence of the global so that tests don't need to initialize it.
+        let app_notifications = cx
+            .try_global::<GlobalAppNotifications>()
+            .iter()
+            .flat_map(|global| global.app_notifications.iter().cloned())
+            .collect::<Vec<_>>();
+        for (id, build_notification) in app_notifications {
             self.show_notification_without_handling_dismiss_events(&id, cx, |cx| {
                 build_notification(cx)
             });
