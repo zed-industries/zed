@@ -1837,6 +1837,10 @@ extern "C" fn accepts_first_mouse(this: &Object, _: Sel, _: id) -> BOOL {
 }
 
 extern "C" fn character_index_for_point(_this: &Object, _: Sel, _position: NSPoint) -> u64 {
+    // TODO: We need to calculate if, and if so where, the user has clicked inside a text field
+    // and return the offset of the selected character inside the text buffer.
+    // This seems to be mainly used with specific input methods.
+    // See #22939 for an example on how to trigger this.
     NSNotFound as u64
 }
 
