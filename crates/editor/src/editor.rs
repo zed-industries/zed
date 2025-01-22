@@ -486,7 +486,10 @@ enum InlineCompletionText {
 }
 
 enum InlineCompletion {
-    Edit(Vec<(Range<Anchor>, String)>),
+    Edit {
+        edits: Vec<(Range<Anchor>, String)>,
+        single_line: bool,
+    },
     Move(Anchor),
 }
 
@@ -4686,7 +4689,10 @@ impl Editor {
                     selections.select_anchor_ranges([position..position]);
                 });
             }
-            InlineCompletion::Edit(edits) => {
+            InlineCompletion::Edit {
+                edits,
+                single_line: _,
+            } => {
                 if let Some(provider) = self.inline_completion_provider() {
                     provider.accept(cx);
                 }
@@ -4733,7 +4739,10 @@ impl Editor {
                     selections.select_anchor_ranges([position..position]);
                 });
             }
-            InlineCompletion::Edit(edits) => {
+            InlineCompletion::Edit {
+                edits,
+                single_line: _,
+            } => {
                 // Find an insertion that starts at the cursor position.
                 let snapshot = self.buffer.read(cx).snapshot(cx);
                 let cursor_offset = self.selections.newest::<usize>(cx).head();
@@ -4883,16 +4892,12 @@ impl Editor {
         }
 
         let first_edit_start = edits.first().unwrap().0.start;
-        let edit_start_row = first_edit_start
-            .to_point(&multibuffer)
-            .row
-            .saturating_sub(2);
+        let first_edit_start_point = first_edit_start.to_point(&multibuffer);
+        let edit_start_row = first_edit_start_point.row.saturating_sub(2);
 
         let last_edit_end = edits.last().unwrap().0.end;
-        let edit_end_row = cmp::min(
-            multibuffer.max_point().row,
-            last_edit_end.to_point(&multibuffer).row + 2,
-        );
+        let last_edit_end_point = last_edit_end.to_point(&multibuffer);
+        let edit_end_row = cmp::min(multibuffer.max_point().row, last_edit_end_point.row + 2);
 
         let cursor_row = cursor.to_point(&multibuffer).row;
 
@@ -4935,7 +4940,11 @@ impl Editor {
             }
 
             invalidation_row_range = edit_start_row..edit_end_row;
-            completion = InlineCompletion::Edit(edits);
+
+            let single_line = first_edit_start_point.row == last_edit_end_point.row
+                && !edits.iter().any(|(_, edit)| edit.contains('\n'));
+
+            completion = InlineCompletion::Edit { edits, single_line };
         };
 
         let invalidation_range = multibuffer
@@ -4976,9 +4985,10 @@ impl Editor {
             let editor_snapshot = self.snapshot(cx);
 
             let text = match &self.active_inline_completion.as_ref()?.completion {
-                InlineCompletion::Edit(edits) => {
-                    inline_completion_edit_text(&editor_snapshot, edits, true, cx)
-                }
+                InlineCompletion::Edit {
+                    edits,
+                    single_line: _,
+                } => inline_completion_edit_text(&editor_snapshot, edits, true, cx),
                 InlineCompletion::Move(target) => {
                     let target_point =
                         target.to_point(&editor_snapshot.display_snapshot.buffer_snapshot);
