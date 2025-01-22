@@ -397,8 +397,12 @@ impl Panel for AssistantPanel {
         "AssistantPanel2"
     }
 
-    fn position(&self, _cx: &WindowContext) -> DockPosition {
-        DockPosition::Right
+    fn position(&self, cx: &WindowContext) -> DockPosition {
+        match AssistantSettings::get_global(cx).dock {
+            AssistantDockPosition::Left => DockPosition::Left,
+            AssistantDockPosition::Bottom => DockPosition::Bottom,
+            AssistantDockPosition::Right => DockPosition::Right,
+        }
     }
 
     fn position_is_valid(&self, _: DockPosition) -> bool {
