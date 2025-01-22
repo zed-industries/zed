@@ -1,9 +1,10 @@
 use std::sync::Arc;
 
 use collections::HashMap;
-use gpui::{AnyView, AppContext, EventEmitter, FocusHandle, FocusableView, Subscription};
+use gpui::{Action, AnyView, AppContext, EventEmitter, FocusHandle, FocusableView, Subscription};
 use language_model::{LanguageModelProvider, LanguageModelProviderId, LanguageModelRegistry};
 use ui::{prelude::*, ElevationIndex};
+use zed_actions::assistant::DeployPromptLibrary;
 
 pub struct AssistantConfiguration {
     focus_handle: FocusHandle,
@@ -143,6 +144,19 @@ impl Render for AssistantConfiguration {
             .bg(cx.theme().colors().editor_background)
             .size_full()
             .overflow_y_scroll()
+            .child(
+                h_flex().p(DynamicSpacing::Base16.rems(cx)).child(
+                    Button::new("open-prompt-library", "Open Prompt Library")
+                        .style(ButtonStyle::Filled)
+                        .full_width()
+                        .icon(IconName::Book)
+                        .icon_size(IconSize::Small)
+                        .icon_position(IconPosition::Start)
+                        .on_click(|_event, cx| {
+                            cx.dispatch_action(DeployPromptLibrary.boxed_clone())
+                        }),
+                ),
+            )
             .child(
                 v_flex()
                     .p(DynamicSpacing::Base16.rems(cx))

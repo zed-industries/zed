@@ -33,7 +33,6 @@ actions!(
     [
         InsertActivePrompt,
         DeployHistory,
-        DeployPromptLibrary,
         NewContext,
         CycleNextInlineAssist,
         CyclePreviousInlineAssist
