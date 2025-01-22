@@ -13,5 +13,6 @@
     "mode": "system",
     "light": "One Light",
     "dark": "One Dark"
-  }
+  },
+  "use_tabout": false
 }
