@@ -885,12 +885,26 @@ impl Window {
     /// Indicate that a view has changed, which will invoke any observers and also mark the window as dirty.
     /// If this view or any of its ancestors are *cached*, notifying it will cause it or its ancestors to be redrawn.
     /// Note that this method will always cause a redraw, the entire window is refreshed if view_id is None.
-    pub(crate) fn notify(&mut self, entity_id: Option<EntityId>, cx: &mut AppContext) {
+    pub(crate) fn notify(
+        &mut self,
+        notify_effect: bool,
+        entity_id: Option<EntityId>,
+        cx: &mut AppContext,
+    ) {
         let Some(view_id) = entity_id else {
             self.refresh();
             return;
         };
 
+        self.mark_entity_dirty(view_id);
+
+        if notify_effect && self.draw_phase == DrawPhase::None {
+            self.dirty.set(true);
+            cx.push_effect(Effect::Notify { emitter: view_id });
+        }
+    }
+
+    fn mark_entity_dirty(&mut self, view_id: EntityId) {
         // Mark ancestor views as dirty. If already in the `dirty_views` set, then all its ancestors
         // should already be dirty.
         for view_id in self
@@ -903,11 +917,6 @@ impl Window {
             if !self.dirty_views.insert(view_id) {
                 break;
             }
-        }
-
-        if self.draw_phase == DrawPhase::None {
-            self.dirty.set(true);
-            cx.push_effect(Effect::Notify { emitter: view_id });
         }
     }
 
@@ -1210,7 +1219,7 @@ impl Window {
     /// If called from within a view, it will notify that view on the next frame. Otherwise, it will refresh the entire window.
     pub fn request_animation_frame(&self) {
         let parent_id = self.parent_view_id();
-        self.on_next_frame(move |window, cx| window.notify(parent_id, cx));
+        self.on_next_frame(move |window, cx| window.notify(true, parent_id, cx));
     }
 
     /// Spawn the future returned by the given closure on the application thread pool.
@@ -1447,6 +1456,7 @@ impl Window {
     /// the contents of the new [Scene], use [present].
     #[profiling::function]
     pub fn draw(&mut self, cx: &mut AppContext) {
+        self.invalidate_entities(cx);
         cx.entities.clear_accessed();
         self.dirty.set(false);
         self.requested_autoscroll = None;
@@ -1455,7 +1465,6 @@ impl Window {
         if let Some(input_handler) = self.platform_window.take_input_handler() {
             self.rendered_frame.input_handlers.push(Some(input_handler));
         }
-
         self.draw_roots(cx);
         self.dirty_views.clear();
         self.next_frame.window_active = self.active.get();
@@ -1523,9 +1532,17 @@ impl Window {
         let mut entities = mem::take(entities_ref.deref_mut());
         drop(entities_ref);
         let handle = self.handle;
-        cx.observe_for_refreshes(handle, &entities);
+        cx.observe_for_refreshes(handle, self.dirty.clone(), &entities);
         let mut entities_ref = cx.entities.accessed_entities.borrow_mut();
         mem::swap(&mut entities, entities_ref.deref_mut());
+    }
+
+    fn invalidate_entities(&mut self, cx: &mut AppContext) {
+        let mut views = mem::take(cx.entities_to_invalidate.entry(self.handle.id).or_default());
+        for entity in views.drain() {
+            self.mark_entity_dirty(entity);
+        }
+        cx.entities_to_invalidate.insert(self.handle.id, views);
     }
 
     #[profiling::function]
@@ -2024,7 +2041,7 @@ impl Window {
                         task.await;
 
                         cx.on_next_frame(move |window, cx| {
-                            window.notify(parent_id, cx);
+                            window.notify(true, parent_id, cx);
                         });
                     }
                 })

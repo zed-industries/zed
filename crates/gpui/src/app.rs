@@ -1,6 +1,6 @@
 use std::{
     any::{type_name, TypeId},
-    cell::{Ref, RefCell, RefMut},
+    cell::{Cell, Ref, RefCell, RefMut},
     marker::PhantomData,
     ops::{Deref, DerefMut},
     path::{Path, PathBuf},
@@ -24,6 +24,7 @@ use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
 pub use entity_map::*;
 use http_client::HttpClient;
 pub use model_context::*;
+use smallvec::SmallVec;
 #[cfg(any(test, feature = "test-support"))]
 pub use test_context::*;
 use util::ResultExt;
@@ -262,8 +263,9 @@ pub struct AppContext {
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
     pub(crate) prompt_builder: Option<PromptBuilder>,
-    pub(crate) refresh_observers: FxHashMap<WindowId, Vec<Subscription>>,
-
+    pub(crate) dirty_bits: FxHashMap<EntityId, FxHashMap<WindowId, Rc<Cell<bool>>>>,
+    pub(crate) entities_to_invalidate: FxHashMap<WindowId, FxHashSet<EntityId>>,
+    pub(crate) tracked_entities: FxHashMap<WindowId, FxHashSet<EntityId>>,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
     pub(crate) name: Option<&'static str>,
 }
@@ -315,7 +317,9 @@ impl AppContext {
                 pending_notifications: FxHashSet::default(),
                 pending_global_notifications: FxHashSet::default(),
                 observers: SubscriberSet::new(),
-                refresh_observers: FxHashMap::default(),
+                tracked_entities: FxHashMap::default(),
+                dirty_bits: FxHashMap::default(),
+                entities_to_invalidate: FxHashMap::default(),
                 event_listeners: SubscriberSet::new(),
                 release_listeners: SubscriberSet::new(),
                 keystroke_observers: SubscriberSet::new(),
@@ -456,26 +460,26 @@ impl AppContext {
     pub(crate) fn observe_for_refreshes(
         &mut self,
         window_handle: AnyWindowHandle,
+        dirty_bit: Rc<Cell<bool>>,
         entities: &FxHashSet<EntityId>,
     ) {
-        let mut observers =
-            std::mem::take(self.refresh_observers.entry(window_handle.id).or_default());
-        observers.clear();
-        observers.extend(entities.iter().map(|entity_id| {
-            let entity_id = *entity_id;
-            self.new_observer(
-                entity_id,
-                Box::new(move |cx| {
-                    window_handle
-                        .update(cx, |_, window, cx| {
-                            window.notify(Some(entity_id), cx);
-                        })
-                        .ok();
-                    false
-                }),
-            )
-        }));
-        self.refresh_observers.insert(window_handle.id, observers);
+        let mut tracked_entities =
+            std::mem::take(self.tracked_entities.entry(window_handle.id).or_default());
+        for entity in tracked_entities.iter() {
+            self.dirty_bits.entry(*entity).and_modify(|windows| {
+                windows.remove(&window_handle.id);
+            });
+        }
+        for entity in entities.iter() {
+            self.dirty_bits
+                .entry(*entity)
+                .or_default()
+                .insert(window_handle.id, dirty_bit.clone());
+        }
+        tracked_entities.clear();
+        tracked_entities.extend(entities.iter().copied());
+        self.tracked_entities
+            .insert(window_handle.id, tracked_entities);
     }
 
     pub(crate) fn new_observer(&mut self, key: EntityId, value: Handler) -> Subscription {
@@ -868,6 +872,7 @@ impl AppContext {
                     .values()
                     .filter_map(|window| {
                         let window = window.as_ref()?;
+                        // Windows aren't being marked dirty by vim code;
                         window.dirty.get().then_some(window.handle)
                     })
                     .collect::<Vec<_>>()
@@ -1547,6 +1552,28 @@ impl AppContext {
             self.pending_effects
                 .push_back(Effect::Notify { emitter: entity_id });
         }
+
+        // ISSUE WITH THIS APPROACH:
+        // conceptually it's very shaky, as we're doing this to get
+        // an eager draw on key events, which in turn relies on window
+        // state to process the view path, to correctly draw.
+        // Can we do it as a first step of draw()?
+        // `process pending notify paths` or something?
+        // Still need to eagerly update the dirty bit OR pick some other mechanism
+        // for that code path.............
+        let mut windows = SmallVec::<[WindowId; 1]>::new();
+        if let Some(dirty_bits) = self.dirty_bits.get(&entity_id) {
+            for (window, bit) in dirty_bits.iter() {
+                bit.set(true);
+                windows.push(*window);
+            }
+        }
+        for window in windows {
+            self.entities_to_invalidate
+                .entry(window)
+                .or_default()
+                .insert(entity_id);
+        }
     }
 
     /// Get the name for this App.
@@ -1683,6 +1710,21 @@ pub(crate) enum Effect {
         tid: TypeId,
         window: Option<WindowId>,
     },
+}
+
+impl std::fmt::Debug for Effect {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Effect::Notify { emitter } => write!(f, "Notify({})", emitter),
+            Effect::Emit { emitter, .. } => write!(f, "Emit({:?})", emitter),
+            Effect::RefreshWindows => write!(f, "RefreshWindows"),
+            Effect::NotifyGlobalObservers { global_type } => {
+                write!(f, "NotifyGlobalObservers({:?})", global_type)
+            }
+            Effect::Defer { .. } => write!(f, "Defer(..)"),
+            Effect::ModelCreated { entity, .. } => write!(f, "ModelCreated({:?})", entity),
+        }
+    }
 }
 
 /// Wraps a global variable value during `update_global` while the value has been moved to the stack.

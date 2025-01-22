@@ -3356,7 +3356,9 @@ impl Editor {
 
             this.change_selections(Some(Autoscroll::fit()), window, cx, |s| {
                 s.select_anchors(selection_anchors);
-            })
+            });
+
+            cx.notify();
         });
     }
 
