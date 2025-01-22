@@ -2043,17 +2043,21 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
                 }
             }
 
-            if open_range.start >= offset && line_range.contains(&open_range.start) {
-                let distance = open_range.start - offset;
+            if (open_range.contains(&offset) || open_range.start >= offset)
+                && line_range.contains(&open_range.start)
+            {
+                let distance = open_range.start.saturating_sub(offset);
                 if distance < closest_distance {
-                    closest_pair_destination = Some(close_range.end - 1);
+                    closest_pair_destination = Some(close_range.start);
                     closest_distance = distance;
                     continue;
                 }
             }
 
-            if close_range.start >= offset && line_range.contains(&close_range.start) {
-                let distance = close_range.start - offset;
+            if (close_range.contains(&offset) || close_range.start >= offset)
+                && line_range.contains(&close_range.start)
+            {
+                let distance = close_range.start.saturating_sub(offset);
                 if distance < closest_distance {
                     closest_pair_destination = Some(open_range.start);
                     closest_distance = distance;
