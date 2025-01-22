@@ -30,11 +30,6 @@ pub fn schedule_task(
     if let Some(spawn_in_terminal) =
         task_to_resolve.resolve_task(&task_source_kind.to_id_base(), task_cx)
     {
-        let worktree = match task_source_kind {
-            TaskSourceKind::Worktree { id, .. } => Some(id),
-            _ => None,
-        };
-
         let pre_tasks = workspace
             .project()
             .read(cx)
@@ -44,7 +39,7 @@ pub fn schedule_task(
             .map_or(vec![], |inventory| {
                 inventory
                     .read(cx)
-                    .build_pre_task_list(&spawn_in_terminal, worktree, task_cx)
+                    .build_pre_task_list(&spawn_in_terminal, &task_source_kind, task_cx)
                     .unwrap_or(vec![])
                     .into_iter()
                     .map(|(_, task)| task)

@@ -111,9 +111,14 @@ impl Inventory {
     pub fn build_pre_task_list(
         &self,
         base_task: &ResolvedTask,
-        worktree: Option<WorktreeId>,
+        task_source: &TaskSourceKind,
         task_context: &TaskContext,
     ) -> anyhow::Result<Vec<(TaskSourceKind, ResolvedTask)>> {
+        let worktree = match task_source {
+            TaskSourceKind::Worktree { id, .. } => Some(id.clone()),
+            _ => None
+        };
+
         let tasks_in_scope = self
             .worktree_templates_from_settings(worktree)
             .chain(self.global_templates_from_settings())
@@ -122,12 +127,12 @@ impl Inventory {
                 task.resolve_task(&base_id, task_context)
                     .map(|task| (kind, task))
             })
-            .unique_by(|(_, task)| task.resolved_label.clone())
+            .unique_by(|(kind, task)| (kind.clone(), task.resolved_label.clone()))
             .collect_vec();
 
         if let None = tasks_in_scope
             .iter()
-            .find(|(_, task)| task.resolved_label == base_task.resolved_label)
+            .find(|(source, task)| task.resolved_label == base_task.resolved_label && source == task_source)
         {
             return Err(anyhow::anyhow!(
                 "couldn't find with label {} in available tasks",
@@ -141,7 +146,7 @@ impl Inventory {
             .enumerate()
             .map(|(idx, (source, task))| {
                 (
-                    task.resolved_label.as_str(),
+                    (source, task.resolved_label.as_str()),
                     (
                         idx as u32,
                         source,
@@ -164,18 +169,25 @@ impl Inventory {
 
         let mut dep_graph = Graph::new();
 
-        for (_, (node_idx, _, pre, _)) in &nodes {
+        for ((source, _), (node_idx, _, pre, _)) in &nodes {
             dep_graph.add_node(*node_idx);
 
             for pre_label in pre {
-                if let Some((pre_node_idx, _, _, _)) = nodes.get(*pre_label) {
-                    dep_graph.add_edge(*node_idx, *pre_node_idx);
+                if let Some(node) = nodes.get(&(*source, *pre_label)) {
+                    dep_graph.add_edge(*node_idx, node.0);
+                } else if let Some(node) = nodes.get(&(&Self::global_task_source(), *pre_label)) {
+                    dep_graph.add_edge(*node_idx, node.0)
                 }
             }
         }
 
+        let base_task_node = nodes
+            .get(&(task_source, base_task.resolved_label.as_str()))
+            .unwrap()
+            .0;
+
         dep_graph
-            .subgraph(nodes.get(base_task.resolved_label.as_str()).unwrap().0)
+            .subgraph(base_task_node)
             .topo_sort()
             .map(|tasks| {
                 tasks
@@ -183,7 +195,7 @@ impl Inventory {
                     .rev()
                     .take(tasks.len() - 1)
                     .filter_map(|idx| {
-                        let task = nodes.get(*indexes.get(idx)?)?;
+                        let task = nodes.get(indexes.get(idx)?)?;
                         Some((task.1.clone(), task.3.clone()))
                     })
                     .collect_vec()
@@ -336,13 +348,17 @@ impl Inventory {
             .into_iter()
             .map(|template| {
                 (
-                    TaskSourceKind::AbsPath {
-                        id_base: Cow::Borrowed("global tasks.json"),
-                        abs_path: paths::tasks_file().clone(),
-                    },
+                    Self::global_task_source(),
                     template,
                 )
             })
+    }
+
+    fn global_task_source() -> TaskSourceKind {
+        TaskSourceKind::AbsPath {
+            id_base: Cow::Borrowed("global tasks.json"),
+            abs_path: paths::tasks_file().clone()
+        }
     }
 
     fn worktree_templates_from_settings(
@@ -661,10 +677,7 @@ mod tests {
         init_test(cx);
         let inventory = cx.update(Inventory::new);
 
-        let common_source = TaskSourceKind::AbsPath {
-            id_base: "global task.json".into(),
-            abs_path: paths::tasks_file().into(),
-        };
+        let common_source = Inventory::global_task_source();
 
         let tasks: [(_, _, &[_]); 4] = [
             (common_source.clone(), "task 1", &["task 2", "task 4"]),
@@ -717,7 +730,7 @@ mod tests {
 
         let pre_task_list = inventory.update(cx, |inventory, _| {
             inventory
-                .build_pre_task_list(&base_task.1, None, &task_cx)
+                .build_pre_task_list(&base_task.1, &base_task.0, &task_cx)
                 .unwrap()
         });
 
@@ -732,6 +745,121 @@ mod tests {
             sorted_labels.as_slice(),
             ["task 4", "task 2", "task 1", "task 3"]
         );
+    }
+
+    #[gpui::test]
+    async fn test_resolves_label_collision_from_worktree_first(cx: &mut TestAppContext) {
+        init_test(cx);
+        let inventory = cx.update(Inventory::new);
+
+        let global_task_source = Inventory::global_task_source();
+
+        let global_tasks: [(_, _, &[&str]); 2] = [
+            (global_task_source.clone(), "task 1", &[]),
+            (global_task_source.clone(), "task 5", &[]),
+        ];
+
+        let global_task_json = serde_json::to_string(&serde_json::Value::Array(
+            global_tasks
+                .iter()
+                .map(|(_, label, pre)| {
+                    json!({
+                        "label": label,
+                        "command": "echo",
+                        "pre": pre,
+                        "args": vec![label],
+                    })
+                })
+                .collect_vec(),
+        ))
+        .unwrap();
+
+        let worktree_id = WorktreeId::from_usize(1);
+        let worktree_path = PathBuf::from(".zed");
+
+        let worktree_task_source = TaskSourceKind::Worktree {
+            id: worktree_id,
+            directory_in_worktree: worktree_path.clone(),
+            id_base: "local worktree tasks from directory \".zed\"".into()
+        };
+
+        let worktree_tasks: [(_, _, &[_]); 4] = [
+            (worktree_task_source.clone(), "task 1", &["task 4"]),
+            (worktree_task_source.clone(), "task 2", &["task 5"]),
+            (worktree_task_source.clone(), "task 3", &["task 1", "task 2"]),
+            (worktree_task_source.clone(), "task 4", &[]),
+        ];
+
+        let worktree_task_json =  serde_json::to_string(&serde_json::Value::Array(
+            worktree_tasks
+                .iter()
+                .map(|(_, label, pre)| {
+                    json!({
+                        "label": label,
+                        "command": "echo",
+                        "pre": pre,
+                        "args": vec![label],
+                    })
+                })
+                .collect_vec(),
+        ))
+        .unwrap();
+
+        cx.run_until_parked();
+
+        inventory.update(cx, |inventory, _| {
+            let worktree_location = SettingsLocation {
+                worktree_id,
+                path: &worktree_path
+            };
+
+            inventory
+                .update_file_based_tasks(Some(worktree_location), Some(&worktree_task_json))
+                .unwrap();
+
+            inventory
+                .update_file_based_tasks(None, Some(&global_task_json))
+                .unwrap();
+        });
+
+        let task_cx = TaskContext::default();
+
+        let base_task = inventory.update(cx, |inventory, cx| {
+            inventory
+                .list_tasks(None, None, Some(worktree_id), cx)
+                .iter()
+                .filter(|(_, task)| task.label.as_str() == worktree_tasks[2].1)
+                .map(|(kind, task)| {
+                    (
+                        kind.clone(),
+                        task.resolve_task(&kind.to_id_base(), &task_cx).unwrap(),
+                    )
+                })
+                .collect_vec()
+                .last()
+                .unwrap()
+                .clone()
+        });
+
+        let pre_task_list = inventory.update(cx, |inventory, _| {
+            inventory
+                .build_pre_task_list(&base_task.1, &base_task.0, &task_cx)
+                .unwrap()
+        });
+
+        let mut sorted_labels = pre_task_list
+            .iter()
+            .map(|(kind, task)| (kind.clone(), task.original_task().label.as_str()))
+            .collect_vec();
+
+        sorted_labels.push((base_task.0.clone(), base_task.1.original_task().label.as_str()));
+
+        assert!(!sorted_labels.contains(&(global_task_source.clone(), "task 1")));
+        assert!(sorted_labels.contains(&(global_task_source.clone(), "task 5")));
+        assert!(sorted_labels.contains(&(worktree_task_source.clone(), "task 1")));
+        assert!(sorted_labels.contains(&(worktree_task_source.clone(), "task 2")));
+        assert!(sorted_labels.contains(&(worktree_task_source.clone(), "task 3")));
+        assert!(sorted_labels.contains(&(worktree_task_source.clone(), "task 4")));
     }
 
     #[gpui::test]

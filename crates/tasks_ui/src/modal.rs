@@ -313,21 +313,13 @@ impl PickerDelegate for TasksModalDelegate {
 
         self.workspace
             .update(cx, |workspace, cx| {
-                let worktree = match task_source_kind {
-                    TaskSourceKind::Worktree { id, .. } => Some(id),
-                    _ => None,
-                };
-
-                let pre_tasks = workspace
-                    .project()
-                    .read(cx)
-                    .task_store()
+                let pre_tasks = self.task_store
                     .read(cx)
                     .task_inventory()
                     .map_or(vec![], |inventory| {
                         inventory
                             .read(cx)
-                            .build_pre_task_list(&task, worktree, &self.task_context)
+                            .build_pre_task_list(&task, &task_source_kind, &self.task_context)
                             .unwrap_or(vec![])
                             .into_iter()
                             .map(|(_, task)| task)

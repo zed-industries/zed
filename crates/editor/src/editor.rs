@@ -5326,11 +5326,6 @@ impl Editor {
 
             workspace
                 .update(&mut cx, |workspace, cx| {
-                    let worktree = match task_source_kind {
-                        TaskSourceKind::Worktree { id, .. } => Some(id),
-                        _ => None,
-                    };
-
                     let pre_tasks = workspace
                         .project()
                         .read(cx)
@@ -5340,7 +5335,7 @@ impl Editor {
                         .map_or(vec![], |inventory| {
                             inventory
                                 .read(cx)
-                                .build_pre_task_list(&resolved_task, worktree, &context)
+                                .build_pre_task_list(&resolved_task, &task_source_kind, &context)
                                 .unwrap_or(vec![])
                                 .into_iter()
                                 .map(|(_, task)| task)
