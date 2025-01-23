@@ -2804,9 +2804,7 @@ async fn test_preview_edits_interpolate(cx: &mut TestAppContext) {
 
     let edits = construct_edits(&buffer, [(Point::new(1, 4)..Point::new(1, 4), "first")], cx);
     let edit_preview = buffer
-        .read_with(cx, |buffer, cx| {
-            buffer.preview_edits(edits.clone(), cx)
-        })
+        .read_with(cx, |buffer, cx| buffer.preview_edits(edits.clone(), cx))
         .await;
 
     let highlighted_edits =
