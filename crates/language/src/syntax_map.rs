@@ -263,7 +263,7 @@ impl SyntaxSnapshot {
         self.layers.is_empty()
     }
 
-    fn interpolate(&mut self, text: &BufferSnapshot) {
+    pub fn interpolate(&mut self, text: &BufferSnapshot) {
         let edits = text
             .anchored_edits_since::<(usize, Point)>(&self.interpolated_version)
             .collect::<Vec<_>>();

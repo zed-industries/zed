@@ -128,6 +128,14 @@ impl InnerTreeNode {
     }
 }
 
+/// Determines how the list of adapters to query should be constructed.
+pub(crate) enum AdapterQuery<'a> {
+    /// Search for roots of all adapters associated with a given language name.
+    Language(&'a LanguageName),
+    /// Search for roots of adapter with a given name.
+    Adapter(&'a LanguageServerName),
+}
+
 impl LanguageServerTree {
     pub(crate) fn new(
         project_tree: Model<ProjectTree>,
@@ -159,7 +167,7 @@ impl LanguageServerTree {
     pub(crate) fn get<'a>(
         &'a mut self,
         path: ProjectPath,
-        language_name: &LanguageName,
+        query: AdapterQuery<'_>,
         delegate: Arc<dyn LspAdapterDelegate>,
         cx: &mut AppContext,
     ) -> impl Iterator<Item = LanguageServerTreeNode> + 'a {
@@ -167,7 +175,15 @@ impl LanguageServerTree {
             worktree_id: path.worktree_id,
             path: &path.path,
         };
-        let adapters = self.adapters_for_language(settings_location, language_name, cx);
+        let adapters = match query {
+            AdapterQuery::Language(language_name) => {
+                self.adapters_for_language(settings_location, language_name, cx)
+            }
+            AdapterQuery::Adapter(language_server_name) => IndexMap::from_iter(
+                self.adapter_for_name(language_server_name)
+                    .map(|adapter| (adapter, (LspSettings::default(), BTreeSet::new()))),
+            ),
+        };
         self.get_with_adapters(path, adapters, delegate, cx)
     }
 
@@ -231,6 +247,10 @@ impl LanguageServerTree {
         })
     }
 
+    fn adapter_for_name(&self, name: &LanguageServerName) -> Option<AdapterWrapper> {
+        self.languages.adapter_for_name(name).map(AdapterWrapper)
+    }
+
     fn adapters_for_language(
         &self,
         settings_location: SettingsLocation,
@@ -286,6 +306,20 @@ impl LanguageServerTree {
                 ))
             })
             .collect::<IndexMap<_, _>>();
+        // After starting all the language servers, reorder them to reflect the desired order
+        // based on the settings.
+        //
+        // This is done, in part, to ensure that language servers loaded at different points
+        // (e.g., native vs extension) still end up in the right order at the end, rather than
+        // it being based on which language server happened to be loaded in first.
+        self.languages.reorder_language_servers(
+            &language_name,
+            adapters_with_settings
+                .keys()
+                .map(|wrapper| wrapper.0.clone())
+                .collect(),
+        );
+
         adapters_with_settings
     }
 
