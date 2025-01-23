@@ -120,13 +120,10 @@ impl ThreadStore {
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
         let (metadata, thread) = thread.update(cx, |thread, cx| {
-            let metadata = SavedThreadMetadata {
-                id: thread.id().clone(),
+            let id = thread.id().clone();
+            let thread = SavedThread {
                 summary: thread.summary_or_default(),
                 updated_at: thread.updated_at().clone(),
-            };
-
-            let thread = SavedThread {
                 messages: thread
                     .messages()
                     .map(|message| SavedMessage {
@@ -137,7 +134,7 @@ impl ThreadStore {
                     .collect(),
             };
 
-            (metadata, thread)
+            (id, thread)
         });
 
         let database_future = self.database_future.clone();
@@ -245,6 +242,8 @@ pub struct SavedThreadMetadata {
 
 #[derive(Serialize, Deserialize)]
 struct SavedThread {
+    pub summary: SharedString,
+    pub updated_at: DateTime<Utc>,
     pub messages: Vec<SavedMessage>,
 }
 
@@ -258,7 +257,7 @@ struct SavedMessage {
 struct ThreadsDatabase {
     executor: BackgroundExecutor,
     env: heed::Env,
-    threads: Database<SerdeBincode<SavedThreadMetadata>, SerdeBincode<SavedThread>>,
+    threads: Database<SerdeBincode<ThreadId>, SerdeBincode<SavedThread>>,
 }
 
 impl ThreadsDatabase {
@@ -291,26 +290,26 @@ impl ThreadsDatabase {
         self.executor.spawn(async move {
             let txn = env.read_txn()?;
             let mut iter = threads.iter(&txn)?;
-            let mut keys = Vec::new();
-            while let Some((key, _value)) = iter.next().transpose()? {
-                keys.push(key);
+            let mut threads = Vec::new();
+            while let Some((key, value)) = iter.next().transpose()? {
+                threads.push(SavedThreadMetadata {
+                    id: key,
+                    summary: value.summary,
+                    updated_at: value.updated_at,
+                });
             }
 
-            Ok(keys)
+            Ok(threads)
         })
     }
 
-    pub fn save_thread(
-        &self,
-        metadata: SavedThreadMetadata,
-        thread: SavedThread,
-    ) -> Task<Result<()>> {
+    pub fn save_thread(&self, id: ThreadId, thread: SavedThread) -> Task<Result<()>> {
         let env = self.env.clone();
         let threads = self.threads;
 
         self.executor.spawn(async move {
             let mut txn = env.write_txn()?;
-            threads.put(&mut txn, &metadata, &thread)?;
+            threads.put(&mut txn, &id, &thread)?;
             txn.commit()?;
             Ok(())
         })
