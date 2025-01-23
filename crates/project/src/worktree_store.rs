@@ -1,4 +1,5 @@
 use std::{
+    io::{BufRead, BufReader},
     path::{Path, PathBuf},
     pin::pin,
     sync::{atomic::AtomicUsize, Arc},
@@ -985,7 +986,6 @@ impl WorktreeStore {
                     }
 
                     repo.change_branch(&new_branch)?;
-
                     Ok(())
                 });
 
@@ -1020,6 +1020,20 @@ impl WorktreeStore {
             let Some(file) = fs.open_sync(&abs_path).await.log_err() else {
                 continue;
             };
+
+            let mut file = BufReader::new(file);
+            let file_start = file.fill_buf()?;
+
+            if let Err(Some(starting_position)) =
+                std::str::from_utf8(file_start).map_err(|e| e.error_len())
+            {
+                // Before attempting to match the file content, throw away files that have invalid UTF-8 sequences early on;
+                // That way we can still match files in a streaming fashion without having look at "obviously binary" files.
+                return Err(anyhow!(
+                    "Invalid UTF-8 sequence at position {starting_position}"
+                ));
+            }
+
             if query.detect(file).unwrap_or(false) {
                 entry.respond.send(entry.path).await?
             }
