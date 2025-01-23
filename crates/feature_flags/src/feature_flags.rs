@@ -43,10 +43,6 @@ pub struct Assistant2FeatureFlag;
 
 impl FeatureFlag for Assistant2FeatureFlag {
     const NAME: &'static str = "assistant2";
-
-    fn enabled_for_staff() -> bool {
-        false
-    }
 }
 
 pub struct ToolUseFeatureFlag;
@@ -59,9 +55,9 @@ impl FeatureFlag for ToolUseFeatureFlag {
     }
 }
 
-pub struct ZetaFeatureFlag;
-impl FeatureFlag for ZetaFeatureFlag {
-    const NAME: &'static str = "zeta";
+pub struct PredictEditsFeatureFlag;
+impl FeatureFlag for PredictEditsFeatureFlag {
+    const NAME: &'static str = "predict-edits";
 }
 
 pub struct GitUiFeatureFlag;

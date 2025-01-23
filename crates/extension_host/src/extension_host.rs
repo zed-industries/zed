@@ -142,6 +142,8 @@ impl Global for GlobalExtensionStore {}
 pub struct ExtensionIndex {
     pub extensions: BTreeMap<Arc<str>, ExtensionIndexEntry>,
     pub themes: BTreeMap<Arc<str>, ExtensionIndexThemeEntry>,
+    #[serde(default)]
+    pub icon_themes: BTreeMap<Arc<str>, ExtensionIndexIconThemeEntry>,
     pub languages: BTreeMap<LanguageName, ExtensionIndexLanguageEntry>,
 }
 
@@ -153,6 +155,12 @@ pub struct ExtensionIndexEntry {
 
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Deserialize, Serialize)]
 pub struct ExtensionIndexThemeEntry {
+    pub extension: Arc<str>,
+    pub path: PathBuf,
+}
+
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug, Deserialize, Serialize)]
+pub struct ExtensionIndexIconThemeEntry {
     pub extension: Arc<str>,
     pub path: PathBuf,
 }
@@ -1022,6 +1030,17 @@ impl ExtensionStore {
                 }
             })
             .collect::<Vec<_>>();
+        let icon_themes_to_remove = old_index
+            .icon_themes
+            .iter()
+            .filter_map(|(name, entry)| {
+                if extensions_to_unload.contains(&entry.extension) {
+                    Some(name.clone().into())
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
         let languages_to_remove = old_index
             .languages
             .iter()
@@ -1050,6 +1069,7 @@ impl ExtensionStore {
         self.wasm_extensions
             .retain(|(extension, _)| !extensions_to_unload.contains(&extension.id));
         self.proxy.remove_user_themes(themes_to_remove);
+        self.proxy.remove_icon_themes(icon_themes_to_remove);
         self.proxy
             .remove_languages(&languages_to_remove, &grammars_to_remove);
 
@@ -1060,6 +1080,7 @@ impl ExtensionStore {
             .collect::<Vec<_>>();
         let mut grammars_to_add = Vec::new();
         let mut themes_to_add = Vec::new();
+        let mut icon_themes_to_add = Vec::new();
         let mut snippets_to_add = Vec::new();
         for extension_id in &extensions_to_load {
             let Some(extension) = new_index.extensions.get(extension_id) else {
@@ -1078,6 +1099,17 @@ impl ExtensionStore {
                 path.extend([Path::new(extension_id.as_ref()), theme_path.as_path()]);
                 path
             }));
+            icon_themes_to_add.extend(extension.manifest.icon_themes.iter().map(
+                |icon_theme_path| {
+                    let mut path = self.installed_dir.clone();
+                    path.extend([Path::new(extension_id.as_ref()), icon_theme_path.as_path()]);
+
+                    let mut icons_root_path = self.installed_dir.clone();
+                    icons_root_path.extend([Path::new(extension_id.as_ref())]);
+
+                    (path, icons_root_path)
+                },
+            ));
             snippets_to_add.extend(extension.manifest.snippets.iter().map(|snippets_path| {
                 let mut path = self.installed_dir.clone();
                 path.extend([Path::new(extension_id.as_ref()), snippets_path.as_path()]);
@@ -1142,6 +1174,13 @@ impl ExtensionStore {
                         for theme_path in themes_to_add.into_iter() {
                             proxy
                                 .load_user_theme(theme_path, fs.clone())
+                                .await
+                                .log_err();
+                        }
+
+                        for (icon_theme_path, icons_root_path) in icon_themes_to_add.into_iter() {
+                            proxy
+                                .load_icon_theme(icon_theme_path, icons_root_path, fs.clone())
                                 .await
                                 .log_err();
                         }
@@ -1356,6 +1395,38 @@ impl ExtensionStore {
                     index.themes.insert(
                         theme_name.into(),
                         ExtensionIndexThemeEntry {
+                            extension: extension_id.clone(),
+                            path: relative_path.clone(),
+                        },
+                    );
+                }
+            }
+        }
+
+        if let Ok(mut icon_theme_paths) = fs.read_dir(&extension_dir.join("icon_themes")).await {
+            while let Some(icon_theme_path) = icon_theme_paths.next().await {
+                let icon_theme_path = icon_theme_path?;
+                let Ok(relative_path) = icon_theme_path.strip_prefix(&extension_dir) else {
+                    continue;
+                };
+
+                let Some(icon_theme_families) = proxy
+                    .list_icon_theme_names(icon_theme_path.clone(), fs.clone())
+                    .await
+                    .log_err()
+                else {
+                    continue;
+                };
+
+                let relative_path = relative_path.to_path_buf();
+                if !extension_manifest.icon_themes.contains(&relative_path) {
+                    extension_manifest.icon_themes.push(relative_path.clone());
+                }
+
+                for icon_theme_name in icon_theme_families {
+                    index.icon_themes.insert(
+                        icon_theme_name.into(),
+                        ExtensionIndexIconThemeEntry {
                             extension: extension_id.clone(),
                             path: relative_path.clone(),
                         },

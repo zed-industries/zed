@@ -43,6 +43,8 @@ pub struct User {
     pub id: UserId,
     pub github_login: String,
     pub avatar_uri: SharedUri,
+    pub name: Option<String>,
+    pub email: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -120,6 +122,9 @@ pub enum Event {
     },
     ShowContacts,
     ParticipantIndicesChanged,
+    TermsStatusUpdated {
+        accepted: bool,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -208,10 +213,24 @@ impl UserStore {
                                             staff,
                                         );
 
-                                        this.update(cx, |this, _| {
-                                            this.set_current_user_accepted_tos_at(
-                                                info.accepted_tos_at,
-                                            );
+                                        this.update(cx, |this, cx| {
+                                            let accepted_tos_at = {
+                                                #[cfg(debug_assertions)]
+                                                if std::env::var("ZED_IGNORE_ACCEPTED_TOS").is_ok()
+                                                {
+                                                    None
+                                                } else {
+                                                    info.accepted_tos_at
+                                                }
+
+                                                #[cfg(not(debug_assertions))]
+                                                info.accepted_tos_at
+                                            };
+
+                                            this.set_current_user_accepted_tos_at(accepted_tos_at);
+                                            cx.emit(Event::TermsStatusUpdated {
+                                                accepted: accepted_tos_at.is_some(),
+                                            });
                                         })
                                     } else {
                                         anyhow::Ok(())
@@ -702,8 +721,9 @@ impl UserStore {
                     .await
                     .context("error accepting tos")?;
 
-                this.update(&mut cx, |this, _| {
-                    this.set_current_user_accepted_tos_at(Some(response.accepted_tos_at))
+                this.update(&mut cx, |this, cx| {
+                    this.set_current_user_accepted_tos_at(Some(response.accepted_tos_at));
+                    cx.emit(Event::TermsStatusUpdated { accepted: true });
                 })
             } else {
                 Err(anyhow!("client not found"))
@@ -798,6 +818,8 @@ impl User {
             id: message.id,
             github_login: message.github_login,
             avatar_uri: message.avatar_url.into(),
+            name: message.name,
+            email: message.email,
         })
     }
 }

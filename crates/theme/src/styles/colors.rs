@@ -57,8 +57,6 @@ pub struct ThemeColors {
     pub element_disabled: Hsla,
     /// Background Color. Used for the area that shows where a dragged element will be dropped.
     pub drop_target_background: Hsla,
-    /// Border Color. Used to show the area that shows where a dragged element will be dropped.
-    // pub drop_target_border: Hsla,
     /// Used for the background of a ghost element that should have the same background as the surface it's on.
     ///
     /// Elements might include: Buttons, Inputs, Checkboxes, Radio Buttons...
@@ -140,16 +138,12 @@ pub struct ThemeColors {
     pub scrollbar_track_background: Hsla,
     /// The border color of the scrollbar track.
     pub scrollbar_track_border: Hsla,
-    // /// The opacity of the scrollbar status marks, like diagnostic states and git status.
-    // todo()
-    // pub scrollbar_status_opacity: Hsla,
 
     // ===
     // Editor
     // ===
     pub editor_foreground: Hsla,
     pub editor_background: Hsla,
-    // pub editor_inactive_background: Hsla,
     pub editor_gutter_background: Hsla,
     pub editor_subheader_background: Hsla,
     pub editor_active_line_background: Hsla,
@@ -158,6 +152,8 @@ pub struct ThemeColors {
     pub editor_line_number: Hsla,
     /// Text Color. Used for the text of the line number in the editor gutter when the line is highlighted.
     pub editor_active_line_number: Hsla,
+    /// Text Color. Used for the text of the line number in the editor gutter when the line is hovered over.
+    pub editor_hover_line_number: Hsla,
     /// Text Color. Used to mark invisible characters in the editor.
     ///
     /// Example: spaces, tabs, carriage returns, etc.

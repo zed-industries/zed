@@ -1,10 +1,12 @@
+mod completion_diff_element;
 mod rate_completion_modal;
 
+pub(crate) use completion_diff_element::*;
 pub use rate_completion_modal::*;
 
 use anyhow::{anyhow, Context as _, Result};
 use arrayvec::ArrayVec;
-use client::Client;
+use client::{Client, UserStore};
 use collections::{HashMap, HashSet, VecDeque};
 use futures::AsyncReadExt;
 use gpui::{
@@ -72,6 +74,7 @@ pub struct InlineCompletion {
     id: InlineCompletionId,
     path: Arc<Path>,
     excerpt_range: Range<usize>,
+    cursor_offset: usize,
     edits: Arc<[(Range<Anchor>, String)]>,
     snapshot: BufferSnapshot,
     input_outline: Arc<str>,
@@ -155,11 +158,12 @@ pub struct Zeta {
     client: Arc<Client>,
     events: VecDeque<Event>,
     registered_buffers: HashMap<gpui::EntityId, RegisteredBuffer>,
-    recent_completions: VecDeque<InlineCompletion>,
+    shown_completions: VecDeque<InlineCompletion>,
     rated_completions: HashSet<InlineCompletionId>,
-    shown_completions: HashSet<InlineCompletionId>,
     llm_token: LlmApiToken,
     _llm_token_subscription: Subscription,
+    tos_accepted: bool, // Terms of service accepted
+    _user_store_subscription: Subscription,
 }
 
 impl Zeta {
@@ -167,9 +171,13 @@ impl Zeta {
         cx.try_global::<ZetaGlobal>().map(|global| global.0.clone())
     }
 
-    pub fn register(client: Arc<Client>, cx: &mut AppContext) -> Model<Self> {
+    pub fn register(
+        client: Arc<Client>,
+        user_store: Model<UserStore>,
+        cx: &mut AppContext,
+    ) -> Model<Self> {
         Self::global(cx).unwrap_or_else(|| {
-            let model = cx.new_model(|cx| Self::new(client, cx));
+            let model = cx.new_model(|cx| Self::new(client, user_store, cx));
             cx.set_global(ZetaGlobal(model.clone()));
             model
         })
@@ -179,15 +187,14 @@ impl Zeta {
         self.events.clear();
     }
 
-    fn new(client: Arc<Client>, cx: &mut ModelContext<Self>) -> Self {
+    fn new(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut ModelContext<Self>) -> Self {
         let refresh_llm_token_listener = language_models::RefreshLlmTokenListener::global(cx);
 
         Self {
             client,
             events: VecDeque::new(),
-            recent_completions: VecDeque::new(),
+            shown_completions: VecDeque::new(),
             rated_completions: HashSet::default(),
-            shown_completions: HashSet::default(),
             registered_buffers: HashMap::default(),
             llm_token: LlmApiToken::default(),
             _llm_token_subscription: cx.subscribe(
@@ -202,11 +209,21 @@ impl Zeta {
                     .detach_and_log_err(cx);
                 },
             ),
+            tos_accepted: user_store
+                .read(cx)
+                .current_user_has_accepted_terms()
+                .unwrap_or(false),
+            _user_store_subscription: cx.subscribe(&user_store, |this, _, event, _| match event {
+                client::user::Event::TermsStatusUpdated { accepted } => {
+                    this.tos_accepted = *accepted;
+                }
+                _ => {}
+            }),
         }
     }
 
     fn push_event(&mut self, event: Event) {
-        const MAX_EVENT_COUNT: usize = 20;
+        const MAX_EVENT_COUNT: usize = 16;
 
         if let Some(Event::BufferChange {
             new_snapshot: last_new_snapshot,
@@ -232,8 +249,8 @@ impl Zeta {
         }
 
         self.events.push_back(event);
-        if self.events.len() > MAX_EVENT_COUNT {
-            self.events.pop_front();
+        if self.events.len() >= MAX_EVENT_COUNT {
+            self.events.drain(..MAX_EVENT_COUNT / 2);
         }
     }
 
@@ -292,13 +309,13 @@ impl Zeta {
         let events = self.events.clone();
         let path = snapshot
             .file()
-            .map(|f| f.path().clone())
+            .map(|f| Arc::from(f.full_path(cx).as_path()))
             .unwrap_or_else(|| Arc::from(Path::new("untitled")));
 
         let client = self.client.clone();
         let llm_token = self.llm_token.clone();
 
-        cx.spawn(|this, mut cx| async move {
+        cx.spawn(|_, cx| async move {
             let request_sent_at = Instant::now();
 
             let (input_events, input_excerpt, input_outline) = cx
@@ -337,10 +354,11 @@ impl Zeta {
             let output_excerpt = response.output_excerpt;
             log::debug!("completion response: {}", output_excerpt);
 
-            let inline_completion = Self::process_completion_response(
+            Self::process_completion_response(
                 output_excerpt,
                 &snapshot,
                 excerpt_range,
+                offset,
                 path,
                 input_outline,
                 input_events,
@@ -348,20 +366,7 @@ impl Zeta {
                 request_sent_at,
                 &cx,
             )
-            .await?;
-
-            this.update(&mut cx, |this, cx| {
-                this.recent_completions
-                    .push_front(inline_completion.clone());
-                if this.recent_completions.len() > 50 {
-                    let completion = this.recent_completions.pop_back().unwrap();
-                    this.shown_completions.remove(&completion.id);
-                    this.rated_completions.remove(&completion.id);
-                }
-                cx.notify();
-            })?;
-
-            Ok(inline_completion)
+            .await
         })
     }
 
@@ -494,8 +499,8 @@ and then another
             }
 
             zeta.update(&mut cx, |zeta, _cx| {
-                zeta.recent_completions.get_mut(2).unwrap().edits = Arc::new([]);
-                zeta.recent_completions.get_mut(3).unwrap().edits = Arc::new([]);
+                zeta.shown_completions.get_mut(2).unwrap().edits = Arc::new([]);
+                zeta.shown_completions.get_mut(3).unwrap().edits = Arc::new([]);
             })
             .ok();
         })
@@ -578,6 +583,7 @@ and then another
         output_excerpt: String,
         snapshot: &BufferSnapshot,
         excerpt_range: Range<usize>,
+        cursor_offset: usize,
         path: Arc<Path>,
         input_outline: String,
         input_events: String,
@@ -637,6 +643,7 @@ and then another
                 id: InlineCompletionId::new(),
                 path,
                 excerpt_range,
+                cursor_offset,
                 edits: edits.into(),
                 snapshot: snapshot.clone(),
                 input_outline: input_outline.into(),
@@ -719,12 +726,13 @@ and then another
         self.rated_completions.contains(&completion_id)
     }
 
-    pub fn was_completion_shown(&self, completion_id: InlineCompletionId) -> bool {
-        self.shown_completions.contains(&completion_id)
-    }
-
-    pub fn completion_shown(&mut self, completion_id: InlineCompletionId) {
-        self.shown_completions.insert(completion_id);
+    pub fn completion_shown(&mut self, completion: &InlineCompletion, cx: &mut ModelContext<Self>) {
+        self.shown_completions.push_front(completion.clone());
+        if self.shown_completions.len() > 50 {
+            let completion = self.shown_completions.pop_back().unwrap();
+            self.rated_completions.remove(&completion.id);
+        }
+        cx.notify();
     }
 
     pub fn rate_completion(
@@ -748,12 +756,12 @@ and then another
         cx.notify();
     }
 
-    pub fn recent_completions(&self) -> impl DoubleEndedIterator<Item = &InlineCompletion> {
-        self.recent_completions.iter()
+    pub fn shown_completions(&self) -> impl DoubleEndedIterator<Item = &InlineCompletion> {
+        self.shown_completions.iter()
     }
 
-    pub fn recent_completions_len(&self) -> usize {
-        self.recent_completions.len()
+    pub fn shown_completions_len(&self) -> usize {
+        self.shown_completions.len()
     }
 
     fn report_changes_for_buffer(
@@ -1001,11 +1009,11 @@ impl ZetaInlineCompletionProvider {
 
 impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvider {
     fn name() -> &'static str {
-        "zeta"
+        "zed-predict"
     }
 
     fn display_name() -> &'static str {
-        "Zeta"
+        "Zed Predict"
     }
 
     fn show_completions_in_menu() -> bool {
@@ -1013,6 +1021,10 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
     }
 
     fn show_completions_in_normal_mode() -> bool {
+        true
+    }
+
+    fn show_tab_accept_marker() -> bool {
         true
     }
 
@@ -1029,6 +1041,10 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         settings.inline_completions_enabled(language.as_ref(), file.map(|f| f.path().as_ref()), cx)
     }
 
+    fn needs_terms_acceptance(&self, cx: &AppContext) -> bool {
+        !self.zeta.read(cx).tos_accepted
+    }
+
     fn is_refreshing(&self) -> bool {
         !self.pending_completions.is_empty()
     }
@@ -1040,6 +1056,10 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
         debounce: bool,
         cx: &mut ModelContext<Self>,
     ) {
+        if !self.zeta.read(cx).tos_accepted {
+            return;
+        }
+
         let pending_completion_id = self.next_pending_completion_id;
         self.next_pending_completion_id += 1;
 
@@ -1077,14 +1097,14 @@ impl inline_completion::InlineCompletionProvider for ZetaInlineCompletionProvide
                     if let Some(old_completion) = this.current_completion.as_ref() {
                         let snapshot = buffer.read(cx).snapshot();
                         if new_completion.should_replace_completion(&old_completion, &snapshot) {
-                            this.zeta.update(cx, |zeta, _cx| {
-                                zeta.completion_shown(new_completion.completion.id)
+                            this.zeta.update(cx, |zeta, cx| {
+                                zeta.completion_shown(&new_completion.completion, cx);
                             });
                             this.current_completion = Some(new_completion);
                         }
                     } else {
-                        this.zeta.update(cx, |zeta, _cx| {
-                            zeta.completion_shown(new_completion.completion.id)
+                        this.zeta.update(cx, |zeta, cx| {
+                            zeta.completion_shown(&new_completion.completion, cx);
                         });
                         this.current_completion = Some(new_completion);
                     }
@@ -1217,6 +1237,7 @@ mod tests {
             snapshot: buffer.read(cx).snapshot(),
             id: InlineCompletionId::new(),
             excerpt_range: 0..0,
+            cursor_offset: 0,
             input_outline: "".into(),
             input_events: "".into(),
             input_excerpt: "".into(),
@@ -1344,8 +1365,9 @@ mod tests {
             RefreshLlmTokenListener::register(client.clone(), cx);
         });
         let server = FakeServer::for_client(42, &client, cx).await;
+        let user_store = cx.new_model(|cx| UserStore::new(client.clone(), cx));
+        let zeta = cx.new_model(|cx| Zeta::new(client, user_store, cx));
 
-        let zeta = cx.new_model(|cx| Zeta::new(client, cx));
         let buffer = cx.new_model(|cx| Buffer::local(buffer_content, cx));
         let cursor = buffer.read_with(cx, |buffer, _| buffer.anchor_before(Point::new(1, 0)));
         let completion_task =

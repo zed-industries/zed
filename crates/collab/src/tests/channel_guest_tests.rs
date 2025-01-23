@@ -108,7 +108,7 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
     assert!(project_b.read_with(cx_b, |project, cx| project.is_read_only(cx)));
     assert!(editor_b.update(cx_b, |e, cx| e.read_only(cx)));
     cx_b.update(|cx_b| {
-        assert!(room_b.read_with(cx_b, |room, cx| !room.can_use_microphone(cx)));
+        assert!(room_b.read_with(cx_b, |room, _| !room.can_use_microphone()));
     });
     assert!(room_b
         .update(cx_b, |room, cx| room.share_microphone(cx))
@@ -136,7 +136,7 @@ async fn test_channel_guest_promotion(cx_a: &mut TestAppContext, cx_b: &mut Test
 
     // B sees themselves as muted, and can unmute.
     cx_b.update(|cx_b| {
-        assert!(room_b.read_with(cx_b, |room, cx| room.can_use_microphone(cx)));
+        assert!(room_b.read_with(cx_b, |room, _| room.can_use_microphone()));
     });
     room_b.read_with(cx_b, |room, _| assert!(room.is_muted()));
     room_b.update(cx_b, |room, cx| room.toggle_mute(cx));
@@ -174,7 +174,7 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     server
         .app_state
         .db
-        .get_or_create_user_by_github_account("user_b", 100, None, Utc::now(), None)
+        .get_or_create_user_by_github_account("user_b", 100, None, None, Utc::now(), None)
         .await
         .unwrap();
 
@@ -231,7 +231,7 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
         .read(ActiveCall::global)
         .update(cx_b, |call, _| call.room().unwrap().clone());
     cx_b.update(|cx_b| {
-        assert!(room_b.read_with(cx_b, |room, cx| !room.can_use_microphone(cx)));
+        assert!(room_b.read_with(cx_b, |room, _| !room.can_use_microphone()));
     });
 
     // A tries to grant write access to B, but cannot because B has not
@@ -251,7 +251,7 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     cx_a.run_until_parked();
     assert!(room_b.read_with(cx_b, |room, _| !room.can_share_projects()));
     cx_b.update(|cx_b| {
-        assert!(room_b.read_with(cx_b, |room, cx| !room.can_use_microphone(cx)));
+        assert!(room_b.read_with(cx_b, |room, _| !room.can_use_microphone()));
     });
 
     // A tries to grant write access to B, but cannot because B has not
@@ -271,14 +271,14 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     cx_a.run_until_parked();
     assert!(room_b.read_with(cx_b, |room, _| !room.can_share_projects()));
     cx_b.update(|cx_b| {
-        assert!(room_b.read_with(cx_b, |room, cx| room.can_use_microphone(cx)));
+        assert!(room_b.read_with(cx_b, |room, _| room.can_use_microphone()));
     });
 
     // User B signs the zed CLA.
     server
         .app_state
         .db
-        .add_contributor("user_b", 100, None, Utc::now(), None)
+        .add_contributor("user_b", 100, None, None, Utc::now(), None)
         .await
         .unwrap();
 
@@ -298,6 +298,6 @@ async fn test_channel_requires_zed_cla(cx_a: &mut TestAppContext, cx_b: &mut Tes
     cx_a.run_until_parked();
     assert!(room_b.read_with(cx_b, |room, _| room.can_share_projects()));
     cx_b.update(|cx_b| {
-        assert!(room_b.read_with(cx_b, |room, cx| room.can_use_microphone(cx)));
+        assert!(room_b.read_with(cx_b, |room, _| room.can_use_microphone()));
     });
 }

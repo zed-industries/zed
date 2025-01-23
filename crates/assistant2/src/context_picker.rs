@@ -14,7 +14,7 @@ use gpui::{
 use project::ProjectPath;
 use thread_context_picker::{render_thread_context_entry, ThreadContextEntry};
 use ui::{prelude::*, ContextMenu, ContextMenuEntry, ContextMenuItem};
-use workspace::Workspace;
+use workspace::{notifications::NotifyResultExt, Workspace};
 
 use crate::context::ContextKind;
 use crate::context_picker::directory_context_picker::DirectoryContextPicker;
@@ -43,6 +43,7 @@ enum ContextPickerMode {
 pub(super) struct ContextPicker {
     mode: ContextPickerMode,
     workspace: WeakView<Workspace>,
+    editor: WeakView<Editor>,
     context_store: WeakModel<ContextStore>,
     thread_store: Option<WeakModel<ThreadStore>>,
     confirm_behavior: ConfirmBehavior,
@@ -53,6 +54,7 @@ impl ContextPicker {
         workspace: WeakView<Workspace>,
         thread_store: Option<WeakModel<ThreadStore>>,
         context_store: WeakModel<ContextStore>,
+        editor: WeakView<Editor>,
         confirm_behavior: ConfirmBehavior,
         cx: &mut ViewContext<Self>,
     ) -> Self {
@@ -61,28 +63,20 @@ impl ContextPicker {
             workspace,
             context_store,
             thread_store,
+            editor,
             confirm_behavior,
         }
     }
 
-    pub fn reset_mode(&mut self, cx: &mut ViewContext<Self>) {
-        self.mode = ContextPickerMode::Default(self.build(cx));
+    pub fn init(&mut self, cx: &mut ViewContext<Self>) {
+        self.mode = ContextPickerMode::Default(self.build_menu(cx));
+        cx.notify();
     }
 
-    fn build(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
+    fn build_menu(&mut self, cx: &mut ViewContext<Self>) -> View<ContextMenu> {
         let context_picker = cx.view().clone();
 
-        ContextMenu::build(cx, move |menu, cx| {
-            let kind_entry = |kind: &'static ContextKind| {
-                let context_picker = context_picker.clone();
-
-                ContextMenuEntry::new(kind.label())
-                    .icon(kind.icon())
-                    .handler(move |cx| {
-                        context_picker.update(cx, |this, cx| this.select_kind(*kind, cx))
-                    })
-            };
-
+        let menu = ContextMenu::build(cx, move |menu, cx| {
             let recent = self.recent_entries(cx);
             let has_recent = !recent.is_empty();
             let recent_entries = recent
@@ -90,11 +84,57 @@ impl ContextPicker {
                 .enumerate()
                 .map(|(ix, entry)| self.recent_menu_item(context_picker.clone(), ix, entry));
 
-            menu.when(has_recent, |menu| menu.label("Recent"))
+            let mut context_kinds = vec![
+                ContextKind::File,
+                ContextKind::Directory,
+                ContextKind::FetchedUrl,
+            ];
+            if self.allow_threads() {
+                context_kinds.push(ContextKind::Thread);
+            }
+
+            let menu = menu
+                .when(has_recent, |menu| {
+                    menu.custom_row(|_| {
+                        div()
+                            .mb_1()
+                            .child(
+                                Label::new("Recent")
+                                    .color(Color::Muted)
+                                    .size(LabelSize::Small),
+                            )
+                            .into_any_element()
+                    })
+                })
                 .extend(recent_entries)
                 .when(has_recent, |menu| menu.separator())
-                .extend(ContextKind::all().into_iter().map(kind_entry))
+                .extend(context_kinds.into_iter().map(|kind| {
+                    let context_picker = context_picker.clone();
+
+                    ContextMenuEntry::new(kind.label())
+                        .icon(kind.icon())
+                        .handler(move |cx| {
+                            context_picker.update(cx, |this, cx| this.select_kind(kind, cx))
+                        })
+                }));
+
+            match self.confirm_behavior {
+                ConfirmBehavior::KeepOpen => menu.keep_open_on_confirm(),
+                ConfirmBehavior::Close => menu,
+            }
+        });
+
+        cx.subscribe(&menu, move |_, _, _: &DismissEvent, cx| {
+            cx.emit(DismissEvent);
         })
+        .detach();
+
+        menu
+    }
+
+    /// Whether threads are allowed as context.
+    pub fn allow_threads(&self) -> bool {
+        self.thread_store.is_some()
     }
 
     fn select_kind(&mut self, kind: ContextKind, cx: &mut ViewContext<Self>) {
@@ -106,6 +146,7 @@ impl ContextPicker {
                     FileContextPicker::new(
                         context_picker.clone(),
                         self.workspace.clone(),
+                        self.editor.clone(),
                         self.context_store.clone(),
                         self.confirm_behavior,
                         cx,
@@ -213,25 +254,8 @@ impl ContextPicker {
             context_store.add_file_from_path(project_path.clone(), cx)
         });
 
-        let workspace = self.workspace.clone();
-
-        cx.spawn(|_, mut cx| async move {
-            match task.await {
-                Ok(_) => {
-                    return anyhow::Ok(());
-                }
-                Err(err) => {
-                    let Some(workspace) = workspace.upgrade() else {
-                        return anyhow::Ok(());
-                    };
-
-                    workspace.update(&mut cx, |workspace, cx| {
-                        workspace.show_error(&err, cx);
-                    })
-                }
-            }
-        })
-        .detach_and_log_err(cx);
+        cx.spawn(|_, mut cx| async move { task.await.notify_async_err(&mut cx) })
+            .detach();
 
         cx.notify();
     }

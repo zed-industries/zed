@@ -1,9 +1,7 @@
-use crate::assistant_settings::AssistantSettings;
-use crate::{
-    humanize_token_count, prompts::PromptBuilder, AssistantPanel, AssistantPanelEvent, RequestType,
-    DEFAULT_CONTEXT_LINES,
-};
+use crate::{AssistantPanel, AssistantPanelEvent, DEFAULT_CONTEXT_LINES};
 use anyhow::{Context as _, Result};
+use assistant_context_editor::{humanize_token_count, RequestType};
+use assistant_settings::AssistantSettings;
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
 use editor::{
@@ -22,6 +20,7 @@ use language_model::{
 };
 use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use language_models::report_assistant_event;
+use prompt_library::PromptBuilder;
 use settings::{update_settings_file, Settings};
 use std::{
     cmp,
@@ -741,7 +740,7 @@ impl PromptEditor {
     }
 
     fn placeholder_text(cx: &WindowContext) -> String {
-        let context_keybinding = text_for_action(&crate::ToggleFocus, cx)
+        let context_keybinding = text_for_action(&zed_actions::assistant::ToggleFocus, cx)
             .map(|keybinding| format!(" • {keybinding} for context"))
             .unwrap_or_default();
 

@@ -23,7 +23,7 @@ use parking_lot::RwLock;
 use slotmap::SlotMap;
 
 pub use async_context::*;
-use collections::{FxHashMap, FxHashSet, VecDeque};
+use collections::{FxHashMap, FxHashSet, HashMap, VecDeque};
 pub use entity_map::*;
 use http_client::HttpClient;
 pub use model_context::*;
@@ -32,11 +32,11 @@ pub use test_context::*;
 use util::ResultExt;
 
 use crate::{
-    current_platform, hash, init_app_menus, Action, ActionRegistry, Any, AnyView, AnyWindowHandle,
-    Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, Context, DispatchPhase,
-    DisplayId, Entity, EventEmitter, FocusHandle, FocusId, ForegroundExecutor, Global, KeyBinding,
-    Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions, Pixels, Platform,
-    PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
+    current_platform, hash, init_app_menus, Action, ActionBuildError, ActionRegistry, Any, AnyView,
+    AnyWindowHandle, Asset, AssetSource, BackgroundExecutor, Bounds, ClipboardItem, Context,
+    DispatchPhase, DisplayId, Entity, EventEmitter, FocusHandle, FocusId, ForegroundExecutor,
+    Global, KeyBinding, Keymap, Keystroke, LayoutId, Menu, MenuItem, OwnedMenu, PathPromptOptions,
+    Pixels, Platform, PlatformDisplay, Point, PromptBuilder, PromptHandle, PromptLevel, Render,
     RenderablePromptHandle, Reservation, ScreenCaptureSource, SharedString, SubscriberSet,
     Subscription, SvgRenderer, Task, TextSystem, View, ViewContext, Window, WindowAppearance,
     WindowContext, WindowHandle, WindowId,
@@ -147,7 +147,7 @@ impl App {
         self
     }
 
-    /// Set the http client for the application
+    /// Sets the HTTP client for the application.
     pub fn with_http_client(self, http_client: Arc<dyn HttpClient>) -> Self {
         let mut context_lock = self.0.borrow_mut();
         context_lock.http_client = http_client;
@@ -682,22 +682,26 @@ impl AppContext {
         self.platform.open_url(url);
     }
 
-    /// register_url_scheme requests that the given scheme (e.g. `zed` for `zed://` urls)
-    /// is opened by the current app.
-    /// On some platforms (e.g. macOS) you may be able to register URL schemes as part of app
-    /// distribution, but this method exists to let you register schemes at runtime.
+    /// Registers the given URL scheme (e.g. `zed` for `zed://` urls) to be
+    /// opened by the current app.
+    ///
+    /// On some platforms (e.g. macOS) you may be able to register URL schemes
+    /// as part of app distribution, but this method exists to let you register
+    /// schemes at runtime.
     pub fn register_url_scheme(&self, scheme: &str) -> Task<Result<()>> {
         self.platform.register_url_scheme(scheme)
     }
 
     /// Returns the full pathname of the current app bundle.
-    /// If the app is not being run from a bundle, returns an error.
+    ///
+    /// Returns an error if the app is not being run from a bundle.
     pub fn app_path(&self) -> Result<PathBuf> {
         self.platform.app_path()
     }
 
     /// On Linux, returns the name of the compositor in use.
-    /// Is blank on other platforms.
+    ///
+    /// Returns an empty string on other platforms.
     pub fn compositor_name(&self) -> &'static str {
         self.platform.compositor_name()
     }
@@ -708,6 +712,7 @@ impl AppContext {
     }
 
     /// Displays a platform modal for selecting paths.
+    ///
     /// When one or more paths are selected, they'll be relayed asynchronously via the returned oneshot channel.
     /// If cancelled, a `None` will be relayed instead.
     /// May return an error on Linux if the file picker couldn't be opened.
@@ -719,6 +724,7 @@ impl AppContext {
     }
 
     /// Displays a platform modal for selecting a new path where a file can be saved.
+    ///
     /// The provided directory will be used to set the initial location.
     /// When a path is selected, it is relayed asynchronously via the returned oneshot channel.
     /// If cancelled, a `None` will be relayed instead.
@@ -745,22 +751,22 @@ impl AppContext {
         self.platform.should_auto_hide_scrollbars()
     }
 
-    /// Restart the application.
+    /// Restarts the application.
     pub fn restart(&self, binary_path: Option<PathBuf>) {
         self.platform.restart(binary_path)
     }
 
-    /// Updates the http client assigned to GPUI
-    pub fn set_http_client(&mut self, new_client: Arc<dyn HttpClient>) {
-        self.http_client = new_client;
-    }
-
-    /// Returns the http client assigned to GPUI
+    /// Returns the HTTP client for the application.
     pub fn http_client(&self) -> Arc<dyn HttpClient> {
         self.http_client.clone()
     }
 
-    /// Returns the SVG renderer GPUI uses
+    /// Sets the HTTP client for the application.
+    pub fn set_http_client(&mut self, new_client: Arc<dyn HttpClient>) {
+        self.http_client = new_client;
+    }
+
+    /// Returns the SVG renderer used by the application.
     pub fn svg_renderer(&self) -> SvgRenderer {
         self.svg_renderer.clone()
     }
@@ -1214,20 +1220,26 @@ impl AppContext {
         &self,
         name: &str,
         data: Option<serde_json::Value>,
-    ) -> Result<Box<dyn Action>> {
+    ) -> std::result::Result<Box<dyn Action>, ActionBuildError> {
         self.actions.build_action(name, data)
     }
 
-    /// Get a list of all action names that have been registered.
-    /// in the application. Note that registration only allows for
-    /// actions to be built dynamically, and is unrelated to binding
-    /// actions in the element tree.
+    /// Get all action names that have been registered. Note that registration only allows for
+    /// actions to be built dynamically, and is unrelated to binding actions in the element tree.
     pub fn all_action_names(&self) -> &[SharedString] {
         self.actions.all_action_names()
     }
 
+    /// Get all non-internal actions that have been registered, along with their schemas.
+    pub fn action_schemas(
+        &self,
+        generator: &mut schemars::gen::SchemaGenerator,
+    ) -> Vec<(SharedString, Option<schemars::schema::Schema>)> {
+        self.actions.action_schemas(generator)
+    }
+
     /// Get a list of all deprecated action aliases and their canonical names.
-    pub fn action_deprecations(&self) -> &[(SharedString, SharedString)] {
+    pub fn action_deprecations(&self) -> &HashMap<SharedString, SharedString> {
         self.actions.action_deprecations()
     }
 
@@ -1623,11 +1635,10 @@ pub struct AnyTooltip {
     /// The absolute position of the mouse when the tooltip was deployed.
     pub mouse_position: Point<Pixels>,
 
-    /// Whether the tooltitp can be hovered or not.
-    pub hoverable: bool,
-
-    /// Bounds of the element that triggered the tooltip appearance.
-    pub origin_bounds: Bounds<Pixels>,
+    /// Given the bounds of the tooltip, checks whether the tooltip should still be visible and
+    /// updates its state accordingly. This is needed atop the hovered element's mouse move handler
+    /// to handle the case where the element is not painted (e.g. via use of `visible_on_hover`).
+    pub check_visible_and_update: Rc<dyn Fn(Bounds<Pixels>, &mut WindowContext) -> bool>,
 }
 
 /// A keystroke event, and potentially the associated action

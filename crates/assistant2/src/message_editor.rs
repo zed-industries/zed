@@ -1,20 +1,19 @@
 use std::sync::Arc;
 
+use editor::actions::MoveUp;
 use editor::{Editor, EditorElement, EditorEvent, EditorStyle};
 use fs::Fs;
 use gpui::{
-    AppContext, DismissEvent, FocusableView, Model, Subscription, TextStyle, View, WeakModel,
-    WeakView,
+    pulsating_between, Animation, AnimationExt, AppContext, DismissEvent, FocusableView, Model,
+    Subscription, TextStyle, View, WeakModel, WeakView,
 };
 use language_model::{LanguageModelRegistry, LanguageModelRequestTool};
 use language_model_selector::LanguageModelSelector;
 use rope::Point;
 use settings::Settings;
-use theme::{get_ui_font_size, ThemeSettings};
-use ui::{
-    prelude::*, ButtonLike, ElevationIndex, KeyBinding, PopoverMenu, PopoverMenuHandle,
-    SwitchWithLabel,
-};
+use std::time::Duration;
+use theme::ThemeSettings;
+use ui::{prelude::*, ButtonLike, KeyBinding, PopoverMenu, PopoverMenuHandle, Switch, TintColor};
 use workspace::Workspace;
 
 use crate::assistant_model_selector::AssistantModelSelector;
@@ -23,7 +22,7 @@ use crate::context_store::{refresh_context_store_text, ContextStore};
 use crate::context_strip::{ContextStrip, ContextStripEvent, SuggestContextKind};
 use crate::thread::{RequestKind, Thread};
 use crate::thread_store::ThreadStore;
-use crate::{Chat, RemoveAllContext, ToggleContextPicker, ToggleModelSelector};
+use crate::{Chat, ChatMode, RemoveAllContext, ToggleContextPicker, ToggleModelSelector};
 
 pub struct MessageEditor {
     thread: Model<Thread>,
@@ -54,7 +53,7 @@ impl MessageEditor {
 
         let editor = cx.new_view(|cx| {
             let mut editor = Editor::auto_height(10, cx);
-            editor.set_placeholder_text("Ask anything…", cx);
+            editor.set_placeholder_text("Ask anything, @ to mention, ↑ to select", cx);
             editor.set_show_indent_guides(false, cx);
 
             editor
@@ -65,6 +64,7 @@ impl MessageEditor {
                 workspace.clone(),
                 Some(thread_store.clone()),
                 context_store.downgrade(),
+                editor.downgrade(),
                 ConfirmBehavior::Close,
                 cx,
             )
@@ -74,8 +74,8 @@ impl MessageEditor {
             ContextStrip::new(
                 context_store.clone(),
                 workspace.clone(),
+                editor.downgrade(),
                 Some(thread_store.clone()),
-                editor.focus_handle(cx),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::File,
                 cx,
@@ -115,6 +115,11 @@ impl MessageEditor {
 
     fn toggle_model_selector(&mut self, _: &ToggleModelSelector, cx: &mut ViewContext<Self>) {
         self.model_selector_menu_handle.toggle(cx)
+    }
+
+    fn toggle_chat_mode(&mut self, _: &ChatMode, cx: &mut ViewContext<Self>) {
+        self.use_tools = !self.use_tools;
+        cx.notify();
     }
 
     fn toggle_context_picker(&mut self, _: &ToggleContextPicker, cx: &mut ViewContext<Self>) {
@@ -221,11 +226,28 @@ impl MessageEditor {
     fn handle_context_strip_event(
         &mut self,
         _context_strip: View<ContextStrip>,
-        ContextStripEvent::PickerDismissed: &ContextStripEvent,
+        event: &ContextStripEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        let editor_focus_handle = self.editor.focus_handle(cx);
-        cx.focus(&editor_focus_handle);
+        match event {
+            ContextStripEvent::PickerDismissed
+            | ContextStripEvent::BlurredEmpty
+            | ContextStripEvent::BlurredDown => {
+                let editor_focus_handle = self.editor.focus_handle(cx);
+                cx.focus(&editor_focus_handle);
+            }
+            ContextStripEvent::BlurredUp => {}
+        }
+    }
+
+    fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
+        if self.context_picker_menu_handle.is_deployed()
+            || self.inline_context_picker_menu_handle.is_deployed()
+        {
+            cx.propagate();
+        } else {
+            cx.focus_view(&self.context_strip);
+        }
     }
 }
 
@@ -242,6 +264,8 @@ impl Render for MessageEditor {
         let focus_handle = self.editor.focus_handle(cx);
         let inline_context_picker = self.inline_context_picker.clone();
         let bg_color = cx.theme().colors().editor_background;
+        let is_streaming_completion = self.thread.read(cx).is_streaming();
+        let button_width = px(64.);
 
         v_flex()
             .key_context("MessageEditor")
@@ -249,6 +273,8 @@ impl Render for MessageEditor {
             .on_action(cx.listener(Self::toggle_model_selector))
             .on_action(cx.listener(Self::toggle_context_picker))
             .on_action(cx.listener(Self::remove_all_context))
+            .on_action(cx.listener(Self::move_up))
+            .on_action(cx.listener(Self::toggle_chat_mode))
             .size_full()
             .gap_2()
             .p_2()
@@ -281,46 +307,102 @@ impl Render for MessageEditor {
                     })
                     .child(
                         PopoverMenu::new("inline-context-picker")
-                            .menu(move |_cx| Some(inline_context_picker.clone()))
+                            .menu(move |cx| {
+                                inline_context_picker.update(cx, |this, cx| {
+                                    this.init(cx);
+                                });
+
+                                Some(inline_context_picker.clone())
+                            })
                             .attach(gpui::Corner::TopLeft)
                             .anchor(gpui::Corner::BottomLeft)
                             .offset(gpui::Point {
                                 x: px(0.0),
-                                y: (-get_ui_font_size(cx) * 2) - px(4.0),
+                                y: px(-ThemeSettings::clamp_font_size(
+                                    ThemeSettings::get_global(cx).ui_font_size,
+                                )
+                                .0 * 2.0)
+                                    - px(4.0),
                             })
                             .with_handle(self.inline_context_picker_menu_handle.clone()),
                     )
                     .child(
                         h_flex()
                             .justify_between()
-                            .child(SwitchWithLabel::new(
-                                "use-tools",
-                                Label::new("Tools").size(LabelSize::Small),
-                                self.use_tools.into(),
-                                cx.listener(|this, selection, _cx| {
-                                    this.use_tools = match selection {
-                                        ToggleState::Selected => true,
-                                        ToggleState::Unselected | ToggleState::Indeterminate => {
-                                            false
-                                        }
-                                    };
-                                }),
-                            ))
                             .child(
-                                h_flex().gap_1().child(self.model_selector.clone()).child(
-                                    ButtonLike::new("chat")
+                                Switch::new("use-tools", self.use_tools.into())
+                                    .label("Tools")
+                                    .on_click(cx.listener(|this, selection, _cx| {
+                                        this.use_tools = match selection {
+                                            ToggleState::Selected => true,
+                                            ToggleState::Unselected
+                                            | ToggleState::Indeterminate => false,
+                                        };
+                                    }))
+                                    .key_binding(KeyBinding::for_action_in(
+                                        &ChatMode,
+                                        &focus_handle,
+                                        cx,
+                                    )),
+                            )
+                            .child(h_flex().gap_1().child(self.model_selector.clone()).child(
+                                if is_streaming_completion {
+                                    ButtonLike::new("cancel-generation")
+                                        .width(button_width.into())
+                                        .style(ButtonStyle::Tinted(TintColor::Accent))
+                                        .child(
+                                            h_flex()
+                                                .w_full()
+                                                .justify_between()
+                                                .child(
+                                                    Label::new("Cancel")
+                                                        .size(LabelSize::Small)
+                                                        .with_animation(
+                                                            "pulsating-label",
+                                                            Animation::new(Duration::from_secs(2))
+                                                                .repeat()
+                                                                .with_easing(pulsating_between(
+                                                                    0.4, 0.8,
+                                                                )),
+                                                            |label, delta| label.alpha(delta),
+                                                        ),
+                                                )
+                                                .children(
+                                                    KeyBinding::for_action_in(
+                                                        &editor::actions::Cancel,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                    .map(|binding| binding.into_any_element()),
+                                                ),
+                                        )
+                                        .on_click(move |_event, cx| {
+                                            focus_handle
+                                                .dispatch_action(&editor::actions::Cancel, cx);
+                                        })
+                                } else {
+                                    ButtonLike::new("submit-message")
+                                        .width(button_width.into())
                                         .style(ButtonStyle::Filled)
-                                        .layer(ElevationIndex::ModalSurface)
-                                        .child(Label::new("Submit").size(LabelSize::Small))
-                                        .children(
-                                            KeyBinding::for_action_in(&Chat, &focus_handle, cx)
-                                                .map(|binding| binding.into_any_element()),
+                                        .child(
+                                            h_flex()
+                                                .w_full()
+                                                .justify_between()
+                                                .child(Label::new("Submit").size(LabelSize::Small))
+                                                .children(
+                                                    KeyBinding::for_action_in(
+                                                        &Chat,
+                                                        &focus_handle,
+                                                        cx,
+                                                    )
+                                                    .map(|binding| binding.into_any_element()),
+                                                ),
                                         )
                                         .on_click(move |_event, cx| {
                                             focus_handle.dispatch_action(&Chat, cx);
-                                        }),
-                                ),
-                            ),
+                                        })
+                                },
+                            )),
                     ),
             )
     }

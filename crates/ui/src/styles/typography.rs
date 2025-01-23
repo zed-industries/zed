@@ -1,5 +1,6 @@
 use gpui::{
-    div, rems, IntoElement, ParentElement, Rems, RenderOnce, SharedString, Styled, WindowContext,
+    div, rems, AppContext, IntoElement, ParentElement, Rems, RenderOnce, SharedString, Styled,
+    WindowContext,
 };
 use settings::Settings;
 use theme::{ActiveTheme, ThemeSettings};
@@ -81,7 +82,7 @@ pub trait StyledTypography: Styled + Sized {
     /// or other places that text needs to match the user's buffer font size.
     fn text_buffer(self, cx: &WindowContext) -> Self {
         let settings = ThemeSettings::get_global(cx);
-        self.text_size(settings.buffer_font_size(cx))
+        self.text_size(settings.buffer_font_size())
     }
 }
 
@@ -130,7 +131,7 @@ pub enum TextSize {
 
 impl TextSize {
     /// Returns the text size in rems.
-    pub fn rems(self, cx: &WindowContext) -> Rems {
+    pub fn rems(self, cx: &AppContext) -> Rems {
         let theme_settings = ThemeSettings::get_global(cx);
 
         match self {

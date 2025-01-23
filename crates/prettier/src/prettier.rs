@@ -282,8 +282,15 @@ impl Prettier {
             cx.clone(),
         )
         .context("prettier server creation")?;
+
         let server = cx
-            .update(|cx| executor.spawn(server.initialize(None, cx)))?
+            .update(|cx| {
+                let params = server.default_initialize_params(cx);
+                let configuration = lsp::DidChangeConfigurationParams {
+                    settings: Default::default(),
+                };
+                executor.spawn(server.initialize(params, configuration.into(), cx))
+            })?
             .await
             .context("prettier server initialization")?;
         Ok(Self::Real(RealPrettier {

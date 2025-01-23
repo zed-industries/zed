@@ -1,17 +1,27 @@
+use std::collections::BTreeSet;
+use std::ops::Range;
 use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use editor::actions::FoldAt;
+use editor::display_map::{Crease, FoldId};
+use editor::scroll::Autoscroll;
+use editor::{Anchor, Editor, FoldPlaceholder, ToPoint};
 use file_icons::FileIcons;
 use fuzzy::PathMatch;
 use gpui::{
-    AppContext, DismissEvent, FocusHandle, FocusableView, Stateful, Task, View, WeakModel, WeakView,
+    AnyElement, AppContext, DismissEvent, Empty, FocusHandle, FocusableView, Stateful, Task, View,
+    WeakModel, WeakView,
 };
+use multi_buffer::{MultiBufferPoint, MultiBufferRow};
 use picker::{Picker, PickerDelegate};
 use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
-use ui::{prelude::*, ListItem, Tooltip};
+use rope::Point;
+use text::SelectionGoal;
+use ui::{prelude::*, ButtonLike, Disclosure, ElevationIndex, ListItem, Tooltip};
 use util::ResultExt as _;
-use workspace::Workspace;
+use workspace::{notifications::NotifyResultExt, Workspace};
 
 use crate::context_picker::{ConfirmBehavior, ContextPicker};
 use crate::context_store::{ContextStore, FileInclusion};
@@ -24,6 +34,7 @@ impl FileContextPicker {
     pub fn new(
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
+        editor: WeakView<Editor>,
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
         cx: &mut ViewContext<Self>,
@@ -31,6 +42,7 @@ impl FileContextPicker {
         let delegate = FileContextPickerDelegate::new(
             context_picker,
             workspace,
+            editor,
             context_store,
             confirm_behavior,
         );
@@ -55,6 +67,7 @@ impl Render for FileContextPicker {
 pub struct FileContextPickerDelegate {
     context_picker: WeakView<ContextPicker>,
     workspace: WeakView<Workspace>,
+    editor: WeakView<Editor>,
     context_store: WeakModel<ContextStore>,
     confirm_behavior: ConfirmBehavior,
     matches: Vec<PathMatch>,
@@ -65,12 +78,14 @@ impl FileContextPickerDelegate {
     pub fn new(
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
+        editor: WeakView<Editor>,
         context_store: WeakModel<ContextStore>,
         confirm_behavior: ConfirmBehavior,
     ) -> Self {
         Self {
             context_picker,
             workspace,
+            editor,
             context_store,
             confirm_behavior,
             matches: Vec::new(),
@@ -196,10 +211,99 @@ impl PickerDelegate for FileContextPickerDelegate {
             return;
         };
 
+        let Some(file_name) = mat
+            .path
+            .file_name()
+            .map(|os_str| os_str.to_string_lossy().into_owned())
+        else {
+            return;
+        };
+
+        let full_path = mat.path.display().to_string();
+
         let project_path = ProjectPath {
             worktree_id: WorktreeId::from_usize(mat.worktree_id),
             path: mat.path.clone(),
         };
+
+        let Some(editor) = self.editor.upgrade() else {
+            return;
+        };
+
+        editor.update(cx, |editor, cx| {
+            editor.transact(cx, |editor, cx| {
+                // Move empty selections left by 1 column to select the `@`s, so they get overwritten when we insert.
+                {
+                    let mut selections = editor.selections.all::<MultiBufferPoint>(cx);
+
+                    for selection in selections.iter_mut() {
+                        if selection.is_empty() {
+                            let old_head = selection.head();
+                            let new_head = MultiBufferPoint::new(
+                                old_head.row,
+                                old_head.column.saturating_sub(1),
+                            );
+                            selection.set_head(new_head, SelectionGoal::None);
+                        }
+                    }
+
+                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
+                }
+
+                let start_anchors = {
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    editor
+                        .selections
+                        .all::<Point>(cx)
+                        .into_iter()
+                        .map(|selection| snapshot.anchor_before(selection.start))
+                        .collect::<Vec<_>>()
+                };
+
+                editor.insert(&full_path, cx);
+
+                let end_anchors = {
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    editor
+                        .selections
+                        .all::<Point>(cx)
+                        .into_iter()
+                        .map(|selection| snapshot.anchor_after(selection.end))
+                        .collect::<Vec<_>>()
+                };
+
+                editor.insert("\n", cx); // Needed to end the fold
+
+                let placeholder = FoldPlaceholder {
+                    render: render_fold_icon_button(IconName::File, file_name.into()),
+                    ..Default::default()
+                };
+
+                let render_trailer = move |_row, _unfold, _cx: &mut WindowContext| Empty.into_any();
+
+                let buffer = editor.buffer().read(cx).snapshot(cx);
+                let mut rows_to_fold = BTreeSet::new();
+                let crease_iter = start_anchors
+                    .into_iter()
+                    .zip(end_anchors)
+                    .map(|(start, end)| {
+                        rows_to_fold.insert(MultiBufferRow(start.to_point(&buffer).row));
+
+                        Crease::inline(
+                            start..end,
+                            placeholder.clone(),
+                            fold_toggle("tool-use"),
+                            render_trailer,
+                        )
+                    });
+
+                editor.insert_creases(crease_iter, cx);
+
+                for buffer_row in rows_to_fold {
+                    editor.fold_at(&FoldAt { buffer_row }, cx);
+                }
+            });
+        });
 
         let Some(task) = self
             .context_store
@@ -211,36 +315,22 @@ impl PickerDelegate for FileContextPickerDelegate {
             return;
         };
 
-        let workspace = self.workspace.clone();
         let confirm_behavior = self.confirm_behavior;
         cx.spawn(|this, mut cx| async move {
-            match task.await {
-                Ok(()) => {
-                    this.update(&mut cx, |this, cx| match confirm_behavior {
-                        ConfirmBehavior::KeepOpen => {}
-                        ConfirmBehavior::Close => this.delegate.dismissed(cx),
-                    })?;
-                }
-                Err(err) => {
-                    let Some(workspace) = workspace.upgrade() else {
-                        return anyhow::Ok(());
-                    };
-
-                    workspace.update(&mut cx, |workspace, cx| {
-                        workspace.show_error(&err, cx);
-                    })?;
-                }
+            match task.await.notify_async_err(&mut cx) {
+                None => anyhow::Ok(()),
+                Some(()) => this.update(&mut cx, |this, cx| match confirm_behavior {
+                    ConfirmBehavior::KeepOpen => {}
+                    ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                }),
             }
-
-            anyhow::Ok(())
         })
         .detach_and_log_err(cx);
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         self.context_picker
-            .update(cx, |this, cx| {
-                this.reset_mode(cx);
+            .update(cx, |_, cx| {
                 cx.emit(DismissEvent);
             })
             .ok();
@@ -347,4 +437,34 @@ pub fn render_file_context_entry(
                 .tooltip(move |cx| Tooltip::text(format!("in {dir_name}"), cx))
             }
         })
+}
+
+fn render_fold_icon_button(
+    icon: IconName,
+    label: SharedString,
+) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut WindowContext) -> AnyElement> {
+    Arc::new(move |fold_id, _fold_range, _cx| {
+        ButtonLike::new(fold_id)
+            .style(ButtonStyle::Filled)
+            .layer(ElevationIndex::ElevatedSurface)
+            .child(Icon::new(icon))
+            .child(Label::new(label.clone()).single_line())
+            .into_any_element()
+    })
+}
+
+fn fold_toggle(
+    name: &'static str,
+) -> impl Fn(
+    MultiBufferRow,
+    bool,
+    Arc<dyn Fn(bool, &mut WindowContext) + Send + Sync>,
+    &mut WindowContext,
+) -> AnyElement {
+    move |row, is_folded, fold, _cx| {
+        Disclosure::new((name, row.0 as u64), !is_folded)
+            .toggle_state(is_folded)
+            .on_click(move |_e, cx| fold(!is_folded, cx))
+            .into_any_element()
+    }
 }

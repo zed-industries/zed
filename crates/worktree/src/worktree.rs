@@ -18,10 +18,12 @@ use futures::{
     FutureExt as _, Stream, StreamExt,
 };
 use fuzzy::CharBag;
-use git::GitHostingProviderRegistry;
 use git::{
-    repository::{GitFileStatus, GitRepository, RepoPath},
-    COOKIES, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE,
+    repository::{GitRepository, RepoPath},
+    status::{
+        FileStatus, GitSummary, StatusCode, TrackedStatus, UnmergedStatus, UnmergedStatusCode,
+    },
+    GitHostingProviderRegistry, COOKIES, DOT_GIT, FSMONITOR_DAEMON, GITIGNORE,
 };
 use gpui::{
     AppContext, AsyncAppContext, BackgroundExecutor, Context, EventEmitter, Model, ModelContext,
@@ -193,8 +195,8 @@ pub struct RepositoryEntry {
     ///     - my_sub_folder_1/project_root/changed_file_1
     ///     - my_sub_folder_2/changed_file_2
     pub(crate) statuses_by_path: SumTree<StatusEntry>,
-    pub(crate) work_directory_id: ProjectEntryId,
-    pub(crate) work_directory: WorkDirectory,
+    pub work_directory_id: ProjectEntryId,
+    pub work_directory: WorkDirectory,
     pub(crate) branch: Option<Arc<str>>,
 }
 
@@ -225,6 +227,20 @@ impl RepositoryEntry {
         self.statuses_by_path.iter().cloned()
     }
 
+    pub fn status_len(&self) -> usize {
+        self.statuses_by_path.summary().item_summary.count
+    }
+
+    pub fn status_summary(&self) -> GitSummary {
+        self.statuses_by_path.summary().item_summary
+    }
+
+    pub fn status_for_path(&self, path: &RepoPath) -> Option<StatusEntry> {
+        self.statuses_by_path
+            .get(&PathKey(path.0.clone()), &())
+            .cloned()
+    }
+
     pub fn initial_update(&self) -> proto::RepositoryEntry {
         proto::RepositoryEntry {
             work_directory_id: self.work_directory_id.to_proto(),
@@ -232,10 +248,7 @@ impl RepositoryEntry {
             updated_statuses: self
                 .statuses_by_path
                 .iter()
-                .map(|entry| proto::StatusEntry {
-                    repo_path: entry.repo_path.to_string_lossy().to_string(),
-                    status: git_status_to_proto(entry.status),
-                })
+                .map(|entry| entry.to_proto())
                 .collect(),
             removed_statuses: Default::default(),
         }
@@ -2354,7 +2367,7 @@ impl Snapshot {
         Some(removed_entry.path)
     }
 
-    pub fn status_for_file(&self, path: impl AsRef<Path>) -> Option<GitFileStatus> {
+    pub fn status_for_file(&self, path: impl AsRef<Path>) -> Option<FileStatus> {
         let path = path.as_ref();
         self.repository_for_path(path).and_then(|repo| {
             let repo_path = repo.relativize(path).unwrap();
@@ -2574,8 +2587,19 @@ impl Snapshot {
             .map(|repo| repo.status().collect())
     }
 
-    pub fn repositories(&self) -> impl Iterator<Item = &RepositoryEntry> {
-        self.repositories.iter()
+    pub fn repositories(&self) -> &SumTree<RepositoryEntry> {
+        &self.repositories
+    }
+
+    pub fn repositories_with_abs_paths(
+        &self,
+    ) -> impl '_ + Iterator<Item = (&RepositoryEntry, PathBuf)> {
+        let base = self.abs_path();
+        self.repositories.iter().map(|repo| {
+            let path = repo.work_directory.location_in_repo.as_deref();
+            let path = path.unwrap_or(repo.work_directory.as_ref());
+            (repo, base.join(path))
+        })
     }
 
     /// Get the repository whose work directory corresponds to the given path.
@@ -2609,7 +2633,7 @@ impl Snapshot {
         entries: impl 'a + Iterator<Item = &'a Entry>,
     ) -> impl 'a + Iterator<Item = (&'a Entry, Option<&'a RepositoryEntry>)> {
         let mut containing_repos = Vec::<&RepositoryEntry>::new();
-        let mut repositories = self.repositories().peekable();
+        let mut repositories = self.repositories().iter().peekable();
         entries.map(move |entry| {
             while let Some(repository) = containing_repos.last() {
                 if repository.directory_contains(&entry.path) {
@@ -3626,26 +3650,42 @@ pub type UpdatedGitRepositoriesSet = Arc<[(Arc<Path>, GitRepositoryChange)]>;
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct StatusEntry {
     pub repo_path: RepoPath,
-    pub status: GitFileStatus,
+    pub status: FileStatus,
 }
 
 impl StatusEntry {
+    pub fn is_staged(&self) -> Option<bool> {
+        self.status.is_staged()
+    }
+
     fn to_proto(&self) -> proto::StatusEntry {
+        let simple_status = match self.status {
+            FileStatus::Ignored | FileStatus::Untracked => proto::GitStatus::Added as i32,
+            FileStatus::Unmerged { .. } => proto::GitStatus::Conflict as i32,
+            FileStatus::Tracked(TrackedStatus {
+                index_status,
+                worktree_status,
+            }) => tracked_status_to_proto(if worktree_status != StatusCode::Unmodified {
+                worktree_status
+            } else {
+                index_status
+            }),
+        };
         proto::StatusEntry {
             repo_path: self.repo_path.to_proto(),
-            status: git_status_to_proto(self.status),
+            simple_status,
+            status: Some(status_to_proto(self.status)),
         }
     }
 }
 
 impl TryFrom<proto::StatusEntry> for StatusEntry {
     type Error = anyhow::Error;
+
     fn try_from(value: proto::StatusEntry) -> Result<Self, Self::Error> {
-        Ok(Self {
-            repo_path: RepoPath(Path::new(&value.repo_path).into()),
-            status: git_status_from_proto(Some(value.status))
-                .ok_or_else(|| anyhow!("Unable to parse status value {}", value.status))?,
-        })
+        let repo_path = RepoPath(Path::new(&value.repo_path).into());
+        let status = status_from_proto(value.simple_status, value.status)?;
+        Ok(Self { repo_path, status })
     }
 }
 
@@ -3711,43 +3751,13 @@ impl sum_tree::KeyedItem for RepositoryEntry {
     }
 }
 
-impl sum_tree::Summary for GitStatuses {
-    type Context = ();
-
-    fn zero(_: &Self::Context) -> Self {
-        Default::default()
-    }
-
-    fn add_summary(&mut self, rhs: &Self, _: &Self::Context) {
-        *self += *rhs;
-    }
-}
-
 impl sum_tree::Item for StatusEntry {
-    type Summary = PathSummary<GitStatuses>;
+    type Summary = PathSummary<GitSummary>;
 
     fn summary(&self, _: &<Self::Summary as Summary>::Context) -> Self::Summary {
         PathSummary {
             max_path: self.repo_path.0.clone(),
-            item_summary: match self.status {
-                GitFileStatus::Added => GitStatuses {
-                    added: 1,
-                    ..Default::default()
-                },
-                GitFileStatus::Modified => GitStatuses {
-                    modified: 1,
-                    ..Default::default()
-                },
-                GitFileStatus::Conflict => GitStatuses {
-                    conflict: 1,
-                    ..Default::default()
-                },
-                GitFileStatus::Deleted => Default::default(),
-                GitFileStatus::Untracked => GitStatuses {
-                    untracked: 1,
-                    ..Default::default()
-                },
-            },
+            item_summary: self.status.summary(),
         }
     }
 }
@@ -3760,69 +3770,12 @@ impl sum_tree::KeyedItem for StatusEntry {
     }
 }
 
-#[derive(Clone, Debug, Default, Copy, PartialEq, Eq)]
-pub struct GitStatuses {
-    added: usize,
-    modified: usize,
-    conflict: usize,
-    untracked: usize,
-}
-
-impl GitStatuses {
-    pub fn to_status(&self) -> Option<GitFileStatus> {
-        if self.conflict > 0 {
-            Some(GitFileStatus::Conflict)
-        } else if self.modified > 0 {
-            Some(GitFileStatus::Modified)
-        } else if self.added > 0 || self.untracked > 0 {
-            Some(GitFileStatus::Added)
-        } else {
-            None
-        }
-    }
-}
-
-impl std::ops::Add<Self> for GitStatuses {
-    type Output = Self;
-
-    fn add(self, rhs: Self) -> Self {
-        GitStatuses {
-            added: self.added + rhs.added,
-            modified: self.modified + rhs.modified,
-            conflict: self.conflict + rhs.conflict,
-            untracked: self.untracked + rhs.untracked,
-        }
-    }
-}
-
-impl std::ops::AddAssign for GitStatuses {
-    fn add_assign(&mut self, rhs: Self) {
-        self.added += rhs.added;
-        self.modified += rhs.modified;
-        self.conflict += rhs.conflict;
-        self.untracked += rhs.untracked;
-    }
-}
-
-impl std::ops::Sub for GitStatuses {
-    type Output = GitStatuses;
-
-    fn sub(self, rhs: Self) -> Self::Output {
-        GitStatuses {
-            added: self.added - rhs.added,
-            modified: self.modified - rhs.modified,
-            conflict: self.conflict - rhs.conflict,
-            untracked: self.untracked - rhs.untracked,
-        }
-    }
-}
-
-impl<'a> sum_tree::Dimension<'a, PathSummary<GitStatuses>> for GitStatuses {
+impl<'a> sum_tree::Dimension<'a, PathSummary<GitSummary>> for GitSummary {
     fn zero(_cx: &()) -> Self {
         Default::default()
     }
 
-    fn add_summary(&mut self, summary: &'a PathSummary<GitStatuses>, _: &()) {
+    fn add_summary(&mut self, summary: &'a PathSummary<GitSummary>, _: &()) {
         *self += summary.item_summary
     }
 }
@@ -4222,7 +4175,7 @@ impl BackgroundScanner {
 
         let root_path = self.state.lock().snapshot.abs_path.clone();
         let root_canonical_path = match self.fs.canonicalize(root_path.as_path()).await {
-            Ok(path) => path,
+            Ok(path) => SanitizedPath::from(path),
             Err(err) => {
                 log::error!("failed to canonicalize root path: {}", err);
                 return true;
@@ -4233,9 +4186,9 @@ impl BackgroundScanner {
             .iter()
             .map(|path| {
                 if path.file_name().is_some() {
-                    root_canonical_path.join(path)
+                    root_canonical_path.as_path().join(path).to_path_buf()
                 } else {
-                    root_canonical_path.clone()
+                    root_canonical_path.as_path().to_path_buf()
                 }
             })
             .collect::<Vec<_>>();
@@ -4250,7 +4203,7 @@ impl BackgroundScanner {
         }
 
         self.reload_entries_for_paths(
-            root_path.into(),
+            root_path,
             root_canonical_path,
             &request.relative_paths,
             abs_paths,
@@ -4264,7 +4217,7 @@ impl BackgroundScanner {
     async fn process_events(&self, mut abs_paths: Vec<PathBuf>) {
         let root_path = self.state.lock().snapshot.abs_path.clone();
         let root_canonical_path = match self.fs.canonicalize(root_path.as_path()).await {
-            Ok(path) => path,
+            Ok(path) => SanitizedPath::from(path),
             Err(err) => {
                 let new_path = self
                     .state
@@ -4297,6 +4250,7 @@ impl BackgroundScanner {
         abs_paths.sort_unstable();
         abs_paths.dedup_by(|a, b| a.starts_with(b));
         abs_paths.retain(|abs_path| {
+            let abs_path = SanitizedPath::from(abs_path);
             let snapshot = &self.state.lock().snapshot;
             {
                 let mut is_git_related = false;
@@ -4308,7 +4262,7 @@ impl BackgroundScanner {
                     FsMonitor
                 }
                 let mut fsmonitor_parse_state = None;
-                if let Some(dot_git_abs_path) = abs_path
+                if let Some(dot_git_abs_path) = abs_path.as_path()
                     .ancestors()
                     .find(|ancestor| {
                         let file_name = ancestor.file_name();
@@ -4381,7 +4335,7 @@ impl BackgroundScanner {
         let (scan_job_tx, scan_job_rx) = channel::unbounded();
         log::debug!("received fs events {:?}", relative_paths);
         self.reload_entries_for_paths(
-            root_path.into(),
+            root_path,
             root_canonical_path,
             &relative_paths,
             abs_paths,
@@ -4740,8 +4694,8 @@ impl BackgroundScanner {
     /// All list arguments should be sorted before calling this function
     async fn reload_entries_for_paths(
         &self,
-        root_abs_path: Arc<Path>,
-        root_canonical_path: PathBuf,
+        root_abs_path: SanitizedPath,
+        root_canonical_path: SanitizedPath,
         relative_paths: &[Arc<Path>],
         abs_paths: Vec<PathBuf>,
         scan_queue_tx: Option<Sender<ScanJob>>,
@@ -4769,7 +4723,7 @@ impl BackgroundScanner {
                             }
                         }
 
-                        anyhow::Ok(Some((metadata, canonical_path)))
+                        anyhow::Ok(Some((metadata, SanitizedPath::from(canonical_path))))
                     } else {
                         Ok(None)
                     }
@@ -4820,8 +4774,8 @@ impl BackgroundScanner {
 
                 for (repo_path, status) in &*status.entries {
                     paths.remove_repo_path(repo_path);
-                    if cursor.seek_forward(&PathTarget::Path(&repo_path), Bias::Left, &()) {
-                        if cursor.item().unwrap().status == *status {
+                    if cursor.seek_forward(&PathTarget::Path(repo_path), Bias::Left, &()) {
+                        if &cursor.item().unwrap().status == status {
                             continue;
                         }
                     }
@@ -4866,7 +4820,7 @@ impl BackgroundScanner {
         }
 
         for (path, metadata) in relative_paths.iter().zip(metadata.into_iter()) {
-            let abs_path: Arc<Path> = root_abs_path.join(path).into();
+            let abs_path: Arc<Path> = root_abs_path.as_path().join(path).into();
             match metadata {
                 Ok(Some((metadata, canonical_path))) => {
                     let ignore_stack = state
@@ -4879,7 +4833,7 @@ impl BackgroundScanner {
                         self.next_entry_id.as_ref(),
                         state.snapshot.root_char_bag,
                         if metadata.is_symlink {
-                            Some(canonical_path.into())
+                            Some(canonical_path.as_path().to_path_buf().into())
                         } else {
                             None
                         },
@@ -5672,14 +5626,14 @@ impl<'a> Default for TraversalProgress<'a> {
 #[derive(Debug, Clone, Copy)]
 pub struct GitEntryRef<'a> {
     pub entry: &'a Entry,
-    pub git_status: Option<GitFileStatus>,
+    pub git_summary: GitSummary,
 }
 
 impl<'a> GitEntryRef<'a> {
     pub fn to_owned(&self) -> GitEntry {
         GitEntry {
             entry: self.entry.clone(),
-            git_status: self.git_status,
+            git_summary: self.git_summary,
         }
     }
 }
@@ -5701,14 +5655,14 @@ impl<'a> AsRef<Entry> for GitEntryRef<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct GitEntry {
     pub entry: Entry,
-    pub git_status: Option<GitFileStatus>,
+    pub git_summary: GitSummary,
 }
 
 impl GitEntry {
     pub fn to_ref(&self) -> GitEntryRef {
         GitEntryRef {
             entry: &self.entry,
-            git_status: self.git_status,
+            git_summary: self.git_summary,
         }
     }
 }
@@ -5730,7 +5684,7 @@ impl AsRef<Entry> for GitEntry {
 /// Walks the worktree entries and their associated git statuses.
 pub struct GitTraversal<'a> {
     traversal: Traversal<'a>,
-    current_entry_status: Option<GitFileStatus>,
+    current_entry_summary: Option<GitSummary>,
     repo_location: Option<(
         &'a RepositoryEntry,
         Cursor<'a, StatusEntry, PathProgress<'a>>,
@@ -5739,7 +5693,7 @@ pub struct GitTraversal<'a> {
 
 impl<'a> GitTraversal<'a> {
     fn synchronize_statuses(&mut self, reset: bool) {
-        self.current_entry_status = None;
+        self.current_entry_summary = None;
 
         let Some(entry) = self.traversal.cursor.item() else {
             return;
@@ -5764,14 +5718,16 @@ impl<'a> GitTraversal<'a> {
         if entry.is_dir() {
             let mut statuses = statuses.clone();
             statuses.seek_forward(&PathTarget::Path(repo_path.as_ref()), Bias::Left, &());
-            let summary: GitStatuses =
+            let summary =
                 statuses.summary(&PathTarget::Successor(repo_path.as_ref()), Bias::Left, &());
 
-            self.current_entry_status = summary.to_status();
+            self.current_entry_summary = Some(summary);
         } else if entry.is_file() {
             // For a file entry, park the cursor on the corresponding status
             if statuses.seek_forward(&PathTarget::Path(repo_path.as_ref()), Bias::Left, &()) {
-                self.current_entry_status = Some(statuses.item().unwrap().status);
+                self.current_entry_summary = Some(statuses.item().unwrap().status.into());
+            } else {
+                self.current_entry_summary = Some(GitSummary::UNCHANGED);
             }
         }
     }
@@ -5807,10 +5763,9 @@ impl<'a> GitTraversal<'a> {
     }
 
     pub fn entry(&self) -> Option<GitEntryRef<'a>> {
-        Some(GitEntryRef {
-            entry: self.traversal.cursor.item()?,
-            git_status: self.current_entry_status,
-        })
+        let entry = self.traversal.cursor.item()?;
+        let git_summary = self.current_entry_summary.unwrap_or(GitSummary::UNCHANGED);
+        Some(GitEntryRef { entry, git_summary })
     }
 }
 
@@ -5861,7 +5816,7 @@ impl<'a> Traversal<'a> {
     pub fn with_git_statuses(self) -> GitTraversal<'a> {
         let mut this = GitTraversal {
             traversal: self,
-            current_entry_status: None,
+            current_entry_summary: None,
             repo_location: None,
         };
         this.synchronize_statuses(true);
@@ -5980,10 +5935,10 @@ impl<'a, 'b, S: Summary> SeekTarget<'a, PathSummary<S>, TraversalProgress<'a>> f
     }
 }
 
-impl<'a, 'b> SeekTarget<'a, PathSummary<GitStatuses>, (TraversalProgress<'a>, GitStatuses)>
+impl<'a, 'b> SeekTarget<'a, PathSummary<GitSummary>, (TraversalProgress<'a>, GitSummary)>
     for PathTarget<'b>
 {
-    fn cmp(&self, cursor_location: &(TraversalProgress<'a>, GitStatuses), _: &()) -> Ordering {
+    fn cmp(&self, cursor_location: &(TraversalProgress<'a>, GitSummary), _: &()) -> Ordering {
         self.cmp_path(&cursor_location.0.max_path)
     }
 }
@@ -6136,24 +6091,135 @@ impl<'a> TryFrom<(&'a CharBag, &PathMatcher, proto::Entry)> for Entry {
     }
 }
 
-fn git_status_from_proto(git_status: Option<i32>) -> Option<GitFileStatus> {
-    git_status.and_then(|status| {
-        proto::GitStatus::from_i32(status).map(|status| match status {
-            proto::GitStatus::Added => GitFileStatus::Added,
-            proto::GitStatus::Modified => GitFileStatus::Modified,
-            proto::GitStatus::Conflict => GitFileStatus::Conflict,
-            proto::GitStatus::Deleted => GitFileStatus::Deleted,
-        })
-    })
+fn status_from_proto(
+    simple_status: i32,
+    status: Option<proto::GitFileStatus>,
+) -> anyhow::Result<FileStatus> {
+    use proto::git_file_status::Variant;
+
+    let Some(variant) = status.and_then(|status| status.variant) else {
+        let code = proto::GitStatus::from_i32(simple_status)
+            .ok_or_else(|| anyhow!("Invalid git status code: {simple_status}"))?;
+        let result = match code {
+            proto::GitStatus::Added => TrackedStatus {
+                worktree_status: StatusCode::Added,
+                index_status: StatusCode::Unmodified,
+            }
+            .into(),
+            proto::GitStatus::Modified => TrackedStatus {
+                worktree_status: StatusCode::Modified,
+                index_status: StatusCode::Unmodified,
+            }
+            .into(),
+            proto::GitStatus::Conflict => UnmergedStatus {
+                first_head: UnmergedStatusCode::Updated,
+                second_head: UnmergedStatusCode::Updated,
+            }
+            .into(),
+            proto::GitStatus::Deleted => TrackedStatus {
+                worktree_status: StatusCode::Deleted,
+                index_status: StatusCode::Unmodified,
+            }
+            .into(),
+            _ => return Err(anyhow!("Invalid code for simple status: {simple_status}")),
+        };
+        return Ok(result);
+    };
+
+    let result = match variant {
+        Variant::Untracked(_) => FileStatus::Untracked,
+        Variant::Ignored(_) => FileStatus::Ignored,
+        Variant::Unmerged(unmerged) => {
+            let [first_head, second_head] =
+                [unmerged.first_head, unmerged.second_head].map(|head| {
+                    let code = proto::GitStatus::from_i32(head)
+                        .ok_or_else(|| anyhow!("Invalid git status code: {head}"))?;
+                    let result = match code {
+                        proto::GitStatus::Added => UnmergedStatusCode::Added,
+                        proto::GitStatus::Updated => UnmergedStatusCode::Updated,
+                        proto::GitStatus::Deleted => UnmergedStatusCode::Deleted,
+                        _ => return Err(anyhow!("Invalid code for unmerged status: {code:?}")),
+                    };
+                    Ok(result)
+                });
+            let [first_head, second_head] = [first_head?, second_head?];
+            UnmergedStatus {
+                first_head,
+                second_head,
+            }
+            .into()
+        }
+        Variant::Tracked(tracked) => {
+            let [index_status, worktree_status] = [tracked.index_status, tracked.worktree_status]
+                .map(|status| {
+                    let code = proto::GitStatus::from_i32(status)
+                        .ok_or_else(|| anyhow!("Invalid git status code: {status}"))?;
+                    let result = match code {
+                        proto::GitStatus::Modified => StatusCode::Modified,
+                        proto::GitStatus::TypeChanged => StatusCode::TypeChanged,
+                        proto::GitStatus::Added => StatusCode::Added,
+                        proto::GitStatus::Deleted => StatusCode::Deleted,
+                        proto::GitStatus::Renamed => StatusCode::Renamed,
+                        proto::GitStatus::Copied => StatusCode::Copied,
+                        proto::GitStatus::Unmodified => StatusCode::Unmodified,
+                        _ => return Err(anyhow!("Invalid code for tracked status: {code:?}")),
+                    };
+                    Ok(result)
+                });
+            let [index_status, worktree_status] = [index_status?, worktree_status?];
+            TrackedStatus {
+                index_status,
+                worktree_status,
+            }
+            .into()
+        }
+    };
+    Ok(result)
 }
 
-fn git_status_to_proto(status: GitFileStatus) -> i32 {
-    match status {
-        GitFileStatus::Added => proto::GitStatus::Added as i32,
-        GitFileStatus::Modified => proto::GitStatus::Modified as i32,
-        GitFileStatus::Conflict => proto::GitStatus::Conflict as i32,
-        GitFileStatus::Deleted => proto::GitStatus::Deleted as i32,
-        GitFileStatus::Untracked => proto::GitStatus::Added as i32, // TODO
+fn status_to_proto(status: FileStatus) -> proto::GitFileStatus {
+    use proto::git_file_status::{Tracked, Unmerged, Variant};
+
+    let variant = match status {
+        FileStatus::Untracked => Variant::Untracked(Default::default()),
+        FileStatus::Ignored => Variant::Ignored(Default::default()),
+        FileStatus::Unmerged(UnmergedStatus {
+            first_head,
+            second_head,
+        }) => Variant::Unmerged(Unmerged {
+            first_head: unmerged_status_to_proto(first_head),
+            second_head: unmerged_status_to_proto(second_head),
+        }),
+        FileStatus::Tracked(TrackedStatus {
+            index_status,
+            worktree_status,
+        }) => Variant::Tracked(Tracked {
+            index_status: tracked_status_to_proto(index_status),
+            worktree_status: tracked_status_to_proto(worktree_status),
+        }),
+    };
+    proto::GitFileStatus {
+        variant: Some(variant),
+    }
+}
+
+fn unmerged_status_to_proto(code: UnmergedStatusCode) -> i32 {
+    match code {
+        UnmergedStatusCode::Added => proto::GitStatus::Added as _,
+        UnmergedStatusCode::Deleted => proto::GitStatus::Deleted as _,
+        UnmergedStatusCode::Updated => proto::GitStatus::Updated as _,
+    }
+}
+
+fn tracked_status_to_proto(code: StatusCode) -> i32 {
+    match code {
+        StatusCode::Added => proto::GitStatus::Added as _,
+        StatusCode::Deleted => proto::GitStatus::Deleted as _,
+        StatusCode::Modified => proto::GitStatus::Modified as _,
+        StatusCode::Renamed => proto::GitStatus::Renamed as _,
+        StatusCode::TypeChanged => proto::GitStatus::TypeChanged as _,
+        StatusCode::Copied => proto::GitStatus::Copied as _,
+        StatusCode::Unmodified => proto::GitStatus::Unmodified as _,
     }
 }
 

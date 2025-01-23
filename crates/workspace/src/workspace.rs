@@ -47,9 +47,7 @@ use itertools::Itertools;
 use language::{LanguageRegistry, Rope};
 pub use modal_layer::*;
 use node_runtime::NodeRuntime;
-use notifications::{
-    simple_message_notification::MessageNotification, DetachAndPromptErr, NotificationHandle,
-};
+use notifications::{simple_message_notification::MessageNotification, DetachAndPromptErr};
 pub use pane::*;
 pub use pane_group::*;
 pub use persistence::{
@@ -61,10 +59,9 @@ use persistence::{
     SerializedWindowBounds, DB,
 };
 use postage::stream::Stream;
-use project::{
-    DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree, WorktreeId,
-};
+use project::{DirectoryLister, Project, ProjectEntryId, ProjectPath, ResolvedPath, Worktree};
 use remote::{ssh_session::ConnectionIdentifier, SshClientDelegate, SshConnectionOptions};
+use schemars::JsonSchema;
 use serde::Deserialize;
 use session::AppSession;
 use settings::Settings;
@@ -119,9 +116,6 @@ static ZED_WINDOW_POSITION: LazyLock<Option<Point<Pixels>>> = LazyLock::new(|| {
         .and_then(parse_pixel_position_env_var)
 });
 
-#[derive(Clone, PartialEq)]
-pub struct RemoveWorktreeFromProject(pub WorktreeId);
-
 actions!(assistant, [ShowConfiguration]);
 
 actions!(
@@ -129,6 +123,8 @@ actions!(
     [
         ActivateNextPane,
         ActivatePreviousPane,
+        ActivateNextWindow,
+        ActivatePreviousWindow,
         AddFolderToProject,
         ClearAllNotifications,
         CloseAllDocks,
@@ -137,6 +133,7 @@ actions!(
         CopyRelativePath,
         Feedback,
         FollowNextCollaborator,
+        MoveFocusedPanelToNextPosition,
         NewCenterTerminal,
         NewFile,
         NewFileSplitVertical,
@@ -165,64 +162,64 @@ pub struct OpenPaths {
     pub paths: Vec<PathBuf>,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct ActivatePane(pub usize);
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct ActivatePaneInDirection(pub SplitDirection);
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct SwapPaneInDirection(pub SplitDirection);
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct MoveItemToPane {
     pub destination: usize,
     #[serde(default = "default_true")]
     pub focus: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct MoveItemToPaneInDirection {
     pub direction: SplitDirection,
     #[serde(default = "default_true")]
     pub focus: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct SaveAll {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct Save {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseAllItemsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, Default, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseInactiveTabsAndPanes {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct SendKeystrokes(pub String);
 
-#[derive(Clone, Deserialize, PartialEq, Default)]
+#[derive(Clone, Deserialize, PartialEq, Default, JsonSchema)]
 pub struct Reload {
     pub binary_path: Option<PathBuf>,
 }
 
 action_as!(project_symbols, ToggleProjectSymbols as Toggle);
 
-#[derive(Default, PartialEq, Eq, Clone, serde::Deserialize)]
+#[derive(Default, PartialEq, Eq, Clone, Deserialize, JsonSchema)]
 pub struct ToggleFileFinder {
     #[serde(default)]
     pub separate_history: bool,
@@ -299,7 +296,7 @@ impl PartialEq for Toast {
     }
 }
 
-#[derive(Debug, Default, Clone, Deserialize, PartialEq)]
+#[derive(Debug, Default, Clone, Deserialize, PartialEq, JsonSchema)]
 pub struct OpenTerminal {
     pub working_directory: PathBuf,
 }
@@ -786,7 +783,7 @@ pub struct Workspace {
     status_bar: View<StatusBar>,
     modal_layer: View<ModalLayer>,
     titlebar_item: Option<AnyView>,
-    notifications: Vec<(NotificationId, Box<dyn NotificationHandle>)>,
+    notifications: Vec<(NotificationId, AnyView)>,
     project: Model<Project>,
     follower_states: HashMap<PeerId, FollowerState>,
     last_leaders_by_pane: HashMap<WeakView<Pane>, PeerId>,
@@ -1060,6 +1057,7 @@ impl Workspace {
 
         cx.defer(|this, cx| {
             this.update_window_title(cx);
+            this.show_initial_notifications(cx);
         });
         Workspace {
             weak_self: weak_handle.clone(),
@@ -1753,6 +1751,29 @@ impl Workspace {
         .detach_and_log_err(cx)
     }
 
+    pub fn move_focused_panel_to_next_position(
+        &mut self,
+        _: &MoveFocusedPanelToNextPosition,
+        cx: &mut ViewContext<Self>,
+    ) {
+        let docks = [&self.left_dock, &self.bottom_dock, &self.right_dock];
+        let active_dock = docks
+            .into_iter()
+            .find(|dock| dock.focus_handle(cx).contains_focused(cx));
+
+        if let Some(dock) = active_dock {
+            dock.update(cx, |dock, cx| {
+                let active_panel = dock
+                    .active_panel()
+                    .filter(|panel| panel.focus_handle(cx).contains_focused(cx));
+
+                if let Some(panel) = active_panel {
+                    panel.move_to_next_position(cx);
+                }
+            })
+        }
+    }
+
     pub fn prepare_to_close(
         &mut self,
         close_intent: CloseIntent,
@@ -2300,6 +2321,19 @@ impl Workspace {
                 Ok(())
             }))
         }
+    }
+
+    pub fn is_dock_at_position_open(
+        &self,
+        position: DockPosition,
+        cx: &mut ViewContext<Self>,
+    ) -> bool {
+        let dock = match position {
+            DockPosition::Left => &self.left_dock,
+            DockPosition::Bottom => &self.bottom_dock,
+            DockPosition::Right => &self.right_dock,
+        };
+        dock.read(cx).is_open()
     }
 
     pub fn toggle_dock(&mut self, dock_side: DockPosition, cx: &mut ViewContext<Self>) {
@@ -3605,7 +3639,7 @@ impl Workspace {
                     .children(
                         self.notifications
                             .iter()
-                            .map(|(_, notification)| notification.to_any()),
+                            .map(|(_, notification)| notification.clone().into_any()),
                     ),
             )
         }
@@ -4076,7 +4110,7 @@ impl Workspace {
         }
     }
 
-    fn active_call(&self) -> Option<&Model<ActiveCall>> {
+    pub fn active_call(&self) -> Option<&Model<ActiveCall>> {
         self.active_call.as_ref().map(|(call, _)| call)
     }
 
@@ -4483,6 +4517,7 @@ impl Workspace {
             .on_action(cx.listener(Self::close_window))
             .on_action(cx.listener(Self::activate_pane_at_index))
             .on_action(cx.listener(Self::move_item_to_pane_at_index))
+            .on_action(cx.listener(Self::move_focused_panel_to_next_position))
             .on_action(cx.listener(|workspace, _: &Unfollow, cx| {
                 let pane = workspace.active_pane().clone();
                 workspace.unfollow_in_pane(&pane, cx);
@@ -4508,6 +4543,12 @@ impl Workspace {
             .on_action(
                 cx.listener(|workspace, _: &ActivateNextPane, cx| workspace.activate_next_pane(cx)),
             )
+            .on_action(cx.listener(|workspace, _: &ActivateNextWindow, cx| {
+                workspace.activate_next_window(cx)
+            }))
+            .on_action(cx.listener(|workspace, _: &ActivatePreviousWindow, cx| {
+                workspace.activate_previous_window(cx)
+            }))
             .on_action(
                 cx.listener(|workspace, action: &ActivatePaneInDirection, cx| {
                     workspace.activate_pane_in_direction(action.0, cx)
@@ -4666,6 +4707,39 @@ impl Workspace {
     pub fn zoomed_item(&self) -> Option<&AnyWeakView> {
         self.zoomed.as_ref()
     }
+
+    pub fn activate_next_window(&mut self, cx: &mut ViewContext<Self>) {
+        let Some(current_window_id) = cx.active_window().map(|a| a.window_id()) else {
+            return;
+        };
+        let windows = cx.windows();
+        let Some(next_window) = windows
+            .iter()
+            .cycle()
+            .skip_while(|window| window.window_id() != current_window_id)
+            .nth(1)
+        else {
+            return;
+        };
+        next_window.update(cx, |_, cx| cx.activate_window()).ok();
+    }
+
+    pub fn activate_previous_window(&mut self, cx: &mut ViewContext<Self>) {
+        let Some(current_window_id) = cx.active_window().map(|a| a.window_id()) else {
+            return;
+        };
+        let windows = cx.windows();
+        let Some(prev_window) = windows
+            .iter()
+            .rev()
+            .cycle()
+            .skip_while(|window| window.window_id() != current_window_id)
+            .nth(1)
+        else {
+            return;
+        };
+        prev_window.update(cx, |_, cx| cx.activate_window()).ok();
+    }
 }
 
 fn leader_border_for_pane(
@@ -4820,7 +4894,7 @@ fn notify_if_database_failed(workspace: WindowHandle<Workspace>, cx: &mut AsyncA
             if (*db::ALL_FILE_DB_FAILED).load(std::sync::atomic::Ordering::Acquire) {
                 struct DatabaseFailedNotification;
 
-                workspace.show_notification_once(
+                workspace.show_notification(
                     NotificationId::unique::<DatabaseFailedNotification>(),
                     cx,
                     |cx| {
@@ -7959,6 +8033,68 @@ mod tests {
             );
             assert!(dirty_regular_buffer.read(cx).is_dirty);
             assert!(dirty_regular_buffer_2.read(cx).is_dirty);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_move_focused_panel_to_next_position(cx: &mut gpui::TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+        let project = Project::test(fs, [], cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project, cx));
+
+        // Add a new panel to the right dock, opening the dock and setting the
+        // focus to the new panel.
+        let panel = workspace.update(cx, |workspace, cx| {
+            let panel = cx.new_view(|cx| TestPanel::new(DockPosition::Right, cx));
+            workspace.add_panel(panel.clone(), cx);
+
+            workspace
+                .right_dock()
+                .update(cx, |right_dock, cx| right_dock.set_open(true, cx));
+
+            workspace.toggle_panel_focus::<TestPanel>(cx);
+
+            panel
+        });
+
+        // Dispatch the `MoveFocusedPanelToNextPosition` action, moving the
+        // panel to the next valid position which, in this case, is the left
+        // dock.
+        cx.dispatch_action(MoveFocusedPanelToNextPosition);
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.left_dock().read(cx).is_open());
+            assert_eq!(panel.read(cx).position, DockPosition::Left);
+        });
+
+        // Dispatch the `MoveFocusedPanelToNextPosition` action, moving the
+        // panel to the next valid position which, in this case, is the bottom
+        // dock.
+        cx.dispatch_action(MoveFocusedPanelToNextPosition);
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.bottom_dock().read(cx).is_open());
+            assert_eq!(panel.read(cx).position, DockPosition::Bottom);
+        });
+
+        // Dispatch the `MoveFocusedPanelToNextPosition` action again, this time
+        // around moving the panel to its initial position, the right dock.
+        cx.dispatch_action(MoveFocusedPanelToNextPosition);
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert_eq!(panel.read(cx).position, DockPosition::Right);
+        });
+
+        // Remove focus from the panel, ensuring that, if the panel is not
+        // focused, the `MoveFocusedPanelToNextPosition` action does not update
+        // the panel's position, so the panel is still in the right dock.
+        workspace.update(cx, |workspace, cx| {
+            workspace.toggle_panel_focus::<TestPanel>(cx);
+        });
+
+        cx.dispatch_action(MoveFocusedPanelToNextPosition);
+        workspace.update(cx, |workspace, cx| {
+            assert!(workspace.right_dock().read(cx).is_open());
+            assert_eq!(panel.read(cx).position, DockPosition::Right);
         });
     }
 

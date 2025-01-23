@@ -393,6 +393,8 @@ impl DispatchTree {
         false
     }
 
+    /// Returns key bindings that invoke an action on the currently focused element. Bindings are
+    /// returned in the order they were added. For display, the last binding should take precedence.
     pub fn bindings_for_action(
         &self,
         action: &dyn Action,

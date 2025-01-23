@@ -3705,7 +3705,6 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
     "});
 
     // Test multiple line, single selection case
-    // Test code hack that covers the fact that to_case crate doesn't support '\n' as a word boundary
     cx.set_state(indoc! {"
         «The quick brown
         fox jumps over
@@ -3719,7 +3718,6 @@ async fn test_manipulate_text(cx: &mut TestAppContext) {
     "});
 
     // Test multiple line, single selection case
-    // Test code hack that covers the fact that to_case crate doesn't support '\n' as a word boundary
     cx.set_state(indoc! {"
         «The quick brown
         fox jumps over
@@ -6841,7 +6839,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     let fs = FakeFs::new(cx.executor());
     fs.insert_file("/file.rs", Default::default()).await;
 
-    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+    let project = Project::test(fs, ["/".as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
@@ -7195,7 +7193,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
     let fs = FakeFs::new(cx.executor());
     fs.insert_file("/file.rs", Default::default()).await;
 
-    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+    let project = Project::test(fs, ["/".as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
@@ -7329,7 +7327,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     let fs = FakeFs::new(cx.executor());
     fs.insert_file("/file.rs", Default::default()).await;
 
-    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
+    let project = Project::test(fs, ["/".as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(Arc::new(Language::new(
@@ -8437,6 +8435,247 @@ async fn test_completion(cx: &mut gpui::TestAppContext) {
     cx.assert_editor_state("editor.closeˇ");
     handle_resolve_completion_request(&mut cx, None).await;
     apply_additional_edits.await.unwrap();
+}
+
+#[gpui::test]
+async fn test_multiline_completion(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+
+    let fs = FakeFs::new(cx.executor());
+    fs.insert_tree(
+        "/a",
+        json!({
+            "main.ts": "a",
+        }),
+    )
+    .await;
+
+    let project = Project::test(fs, ["/a".as_ref()], cx).await;
+    let language_registry = project.read_with(cx, |project, _| project.languages().clone());
+    let typescript_language = Arc::new(Language::new(
+        LanguageConfig {
+            name: "TypeScript".into(),
+            matcher: LanguageMatcher {
+                path_suffixes: vec!["ts".to_string()],
+                ..LanguageMatcher::default()
+            },
+            line_comments: vec!["// ".into()],
+            ..LanguageConfig::default()
+        },
+        Some(tree_sitter_typescript::LANGUAGE_TYPESCRIPT.into()),
+    ));
+    language_registry.add(typescript_language.clone());
+    let mut fake_servers = language_registry.register_fake_lsp(
+        "TypeScript",
+        FakeLspAdapter {
+            capabilities: lsp::ServerCapabilities {
+                completion_provider: Some(lsp::CompletionOptions {
+                    trigger_characters: Some(vec![".".to_string(), ":".to_string()]),
+                    ..lsp::CompletionOptions::default()
+                }),
+                signature_help_provider: Some(lsp::SignatureHelpOptions::default()),
+                ..lsp::ServerCapabilities::default()
+            },
+            // Emulate vtsls label generation
+            label_for_completion: Some(Box::new(|item, _| {
+                let text = if let Some(description) = item
+                    .label_details
+                    .as_ref()
+                    .and_then(|label_details| label_details.description.as_ref())
+                {
+                    format!("{} {}", item.label, description)
+                } else if let Some(detail) = &item.detail {
+                    format!("{} {}", item.label, detail)
+                } else {
+                    item.label.clone()
+                };
+                let len = text.len();
+                Some(language::CodeLabel {
+                    text,
+                    runs: Vec::new(),
+                    filter_range: 0..len,
+                })
+            })),
+            ..FakeLspAdapter::default()
+        },
+    );
+    let workspace = cx.add_window(|cx| Workspace::test_new(project.clone(), cx));
+    let cx = &mut VisualTestContext::from_window(*workspace, cx);
+    let worktree_id = workspace
+        .update(cx, |workspace, cx| {
+            workspace.project().update(cx, |project, cx| {
+                project.worktrees(cx).next().unwrap().read(cx).id()
+            })
+        })
+        .unwrap();
+    let _buffer = project
+        .update(cx, |project, cx| {
+            project.open_local_buffer_with_lsp("/a/main.ts", cx)
+        })
+        .await
+        .unwrap();
+    let editor = workspace
+        .update(cx, |workspace, cx| {
+            workspace.open_path((worktree_id, "main.ts"), None, true, cx)
+        })
+        .unwrap()
+        .await
+        .unwrap()
+        .downcast::<Editor>()
+        .unwrap();
+    let fake_server = fake_servers.next().await.unwrap();
+
+    let multiline_label = "StickyHeaderExcerpt {\n            excerpt,\n            next_excerpt_controls_present,\n            next_buffer_row,\n        }: StickyHeaderExcerpt<'_>,";
+    let multiline_label_2 = "a\nb\nc\n";
+    let multiline_detail = "[]struct {\n\tSignerId\tstruct {\n\t\tIssuer\t\t\tstring\t`json:\"issuer\"`\n\t\tSubjectSerialNumber\"`\n}}";
+    let multiline_description = "d\ne\nf\n";
+    let multiline_detail_2 = "g\nh\ni\n";
+
+    let mut completion_handle =
+        fake_server.handle_request::<lsp::request::Completion, _, _>(move |params, _| async move {
+            Ok(Some(lsp::CompletionResponse::Array(vec![
+                lsp::CompletionItem {
+                    label: multiline_label.to_string(),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range {
+                            start: lsp::Position {
+                                line: params.text_document_position.position.line,
+                                character: params.text_document_position.position.character,
+                            },
+                            end: lsp::Position {
+                                line: params.text_document_position.position.line,
+                                character: params.text_document_position.position.character,
+                            },
+                        },
+                        new_text: "new_text_1".to_string(),
+                    })),
+                    ..lsp::CompletionItem::default()
+                },
+                lsp::CompletionItem {
+                    label: "single line label 1".to_string(),
+                    detail: Some(multiline_detail.to_string()),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range {
+                            start: lsp::Position {
+                                line: params.text_document_position.position.line,
+                                character: params.text_document_position.position.character,
+                            },
+                            end: lsp::Position {
+                                line: params.text_document_position.position.line,
+                                character: params.text_document_position.position.character,
+                            },
+                        },
+                        new_text: "new_text_2".to_string(),
+                    })),
+                    ..lsp::CompletionItem::default()
+                },
+                lsp::CompletionItem {
+                    label: "single line label 2".to_string(),
+                    label_details: Some(lsp::CompletionItemLabelDetails {
+                        description: Some(multiline_description.to_string()),
+                        detail: None,
+                    }),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range {
+                            start: lsp::Position {
+                                line: params.text_document_position.position.line,
+                                character: params.text_document_position.position.character,
+                            },
+                            end: lsp::Position {
+                                line: params.text_document_position.position.line,
+                                character: params.text_document_position.position.character,
+                            },
+                        },
+                        new_text: "new_text_2".to_string(),
+                    })),
+                    ..lsp::CompletionItem::default()
+                },
+                lsp::CompletionItem {
+                    label: multiline_label_2.to_string(),
+                    detail: Some(multiline_detail_2.to_string()),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range {
+                            start: lsp::Position {
+                                line: params.text_document_position.position.line,
+                                character: params.text_document_position.position.character,
+                            },
+                            end: lsp::Position {
+                                line: params.text_document_position.position.line,
+                                character: params.text_document_position.position.character,
+                            },
+                        },
+                        new_text: "new_text_3".to_string(),
+                    })),
+                    ..lsp::CompletionItem::default()
+                },
+                lsp::CompletionItem {
+                    label: "Label with many     spaces and \t but without newlines".to_string(),
+                    detail: Some(
+                        "Details with many     spaces and \t but without newlines".to_string(),
+                    ),
+                    text_edit: Some(lsp::CompletionTextEdit::Edit(lsp::TextEdit {
+                        range: lsp::Range {
+                            start: lsp::Position {
+                                line: params.text_document_position.position.line,
+                                character: params.text_document_position.position.character,
+                            },
+                            end: lsp::Position {
+                                line: params.text_document_position.position.line,
+                                character: params.text_document_position.position.character,
+                            },
+                        },
+                        new_text: "new_text_4".to_string(),
+                    })),
+                    ..lsp::CompletionItem::default()
+                },
+            ])))
+        });
+
+    editor.update(cx, |editor, cx| {
+        editor.focus(cx);
+        editor.move_to_end(&MoveToEnd, cx);
+        editor.handle_input(".", cx);
+    });
+    cx.run_until_parked();
+    completion_handle.next().await.unwrap();
+
+    editor.update(cx, |editor, _| {
+        assert!(editor.context_menu_visible());
+        if let Some(CodeContextMenu::Completions(menu)) = editor.context_menu.borrow_mut().as_ref()
+        {
+            let completion_labels = menu
+                .completions
+                .borrow()
+                .iter()
+                .map(|c| c.label.text.clone())
+                .collect::<Vec<_>>();
+            assert_eq!(
+                completion_labels,
+                &[
+                    "StickyHeaderExcerpt { excerpt, next_excerpt_controls_present, next_buffer_row, }: StickyHeaderExcerpt<'_>,",
+                    "single line label 1 []struct { SignerId struct { Issuer string `json:\"issuer\"` SubjectSerialNumber\"` }}",
+                    "single line label 2 d e f ",
+                    "a b c g h i ",
+                    "Label with many     spaces and \t but without newlines Details with many     spaces and \t but without newlines",
+                ],
+                "Completion items should have their labels without newlines, also replacing excessive whitespaces. Completion items without newlines should not be altered.",
+            );
+
+            for completion in menu
+                .completions
+                .borrow()
+                .iter() {
+                    assert_eq!(
+                        completion.label.filter_range,
+                        0..completion.label.text.len(),
+                        "Adjusted completion items should still keep their filter ranges for the entire label. Item: {completion:?}"
+                    );
+                }
+
+        } else {
+            panic!("expected completion menu to be open");
+        }
+    });
 }
 
 #[gpui::test]
@@ -10249,6 +10488,7 @@ async fn test_move_to_enclosing_bracket(cx: &mut gpui::TestAppContext) {
     let mut cx = EditorLspTestContext::new_typescript(Default::default(), cx).await;
     let mut assert = |before, after| {
         let _state_context = cx.set_state(before);
+        cx.run_until_parked();
         cx.update_editor(|editor, cx| {
             editor.move_to_enclosing_bracket(&MoveToEnclosingBracket, cx)
         });
@@ -10502,7 +10742,6 @@ async fn test_language_server_restart_due_to_settings_change(cx: &mut gpui::Test
         0,
         "Should not restart LSP server on an unrelated LSP settings change"
     );
-
     update_test_project_settings(cx, |project_settings| {
         project_settings.lsp.insert(
             language_server_name.into(),
@@ -14734,7 +14973,14 @@ fn test_inline_completion_text_with_deletions(cx: &mut TestAppContext) {
 #[gpui::test]
 async fn test_rename_with_duplicate_edits(cx: &mut gpui::TestAppContext) {
     init_test(cx, |_| {});
-    let mut cx = EditorLspTestContext::new_rust(lsp::ServerCapabilities::default(), cx).await;
+    let capabilities = lsp::ServerCapabilities {
+        rename_provider: Some(lsp::OneOf::Right(lsp::RenameOptions {
+            prepare_provider: Some(true),
+            work_done_progress_options: Default::default(),
+        })),
+        ..Default::default()
+    };
+    let mut cx = EditorLspTestContext::new_rust(capabilities, cx).await;
 
     cx.set_state(indoc! {"
         struct Fˇoo {}
@@ -14750,10 +14996,25 @@ async fn test_rename_with_duplicate_edits(cx: &mut gpui::TestAppContext) {
         );
     });
 
-    cx.update_editor(|e, cx| e.rename(&Rename, cx))
-        .expect("Rename was not started")
-        .await
-        .expect("Rename failed");
+    let mut prepare_rename_handler =
+        cx.handle_request::<lsp::request::PrepareRenameRequest, _, _>(move |_, _, _| async move {
+            Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range {
+                start: lsp::Position {
+                    line: 0,
+                    character: 7,
+                },
+                end: lsp::Position {
+                    line: 0,
+                    character: 10,
+                },
+            })))
+        });
+    let prepare_rename_task = cx
+        .update_editor(|e, cx| e.rename(&Rename, cx))
+        .expect("Prepare rename was not started");
+    prepare_rename_handler.next().await.unwrap();
+    prepare_rename_task.await.expect("Prepare rename failed");
+
     let mut rename_handler =
         cx.handle_request::<lsp::request::Rename, _, _>(move |url, _, _| async move {
             let edit = lsp::TextEdit {
@@ -14774,14 +15035,75 @@ async fn test_rename_with_duplicate_edits(cx: &mut gpui::TestAppContext) {
                 std::collections::HashMap::from_iter(Some((url, vec![edit.clone(), edit]))),
             )))
         });
-    cx.update_editor(|e, cx| e.confirm_rename(&ConfirmRename, cx))
-        .expect("Confirm rename was not started")
-        .await
-        .expect("Confirm rename failed");
+    let rename_task = cx
+        .update_editor(|e, cx| e.confirm_rename(&ConfirmRename, cx))
+        .expect("Confirm rename was not started");
     rename_handler.next().await.unwrap();
+    rename_task.await.expect("Confirm rename failed");
     cx.run_until_parked();
 
     // Despite two edits, only one is actually applied as those are identical
+    cx.assert_editor_state(indoc! {"
+        struct FooRenamedˇ {}
+    "});
+}
+
+#[gpui::test]
+async fn test_rename_without_prepare(cx: &mut gpui::TestAppContext) {
+    init_test(cx, |_| {});
+    // These capabilities indicate that the server does not support prepare rename.
+    let capabilities = lsp::ServerCapabilities {
+        rename_provider: Some(lsp::OneOf::Left(true)),
+        ..Default::default()
+    };
+    let mut cx = EditorLspTestContext::new_rust(capabilities, cx).await;
+
+    cx.set_state(indoc! {"
+        struct Fˇoo {}
+    "});
+
+    cx.update_editor(|editor, cx| {
+        let highlight_range = Point::new(0, 7)..Point::new(0, 10);
+        let highlight_range = highlight_range.to_anchors(&editor.buffer().read(cx).snapshot(cx));
+        editor.highlight_background::<DocumentHighlightRead>(
+            &[highlight_range],
+            |c| c.editor_document_highlight_read_background,
+            cx,
+        );
+    });
+
+    cx.update_editor(|e, cx| e.rename(&Rename, cx))
+        .expect("Prepare rename was not started")
+        .await
+        .expect("Prepare rename failed");
+
+    let mut rename_handler =
+        cx.handle_request::<lsp::request::Rename, _, _>(move |url, _, _| async move {
+            let edit = lsp::TextEdit {
+                range: lsp::Range {
+                    start: lsp::Position {
+                        line: 0,
+                        character: 7,
+                    },
+                    end: lsp::Position {
+                        line: 0,
+                        character: 10,
+                    },
+                },
+                new_text: "FooRenamed".to_string(),
+            };
+            Ok(Some(lsp::WorkspaceEdit::new(
+                std::collections::HashMap::from_iter(Some((url, vec![edit]))),
+            )))
+        });
+    let rename_task = cx
+        .update_editor(|e, cx| e.confirm_rename(&ConfirmRename, cx))
+        .expect("Confirm rename was not started");
+    rename_handler.next().await.unwrap();
+    rename_task.await.expect("Confirm rename failed");
+    cx.run_until_parked();
+
+    // Correct range is renamed, as `surrounding_word` is used to find it.
     cx.assert_editor_state(indoc! {"
         struct FooRenamedˇ {}
     "});

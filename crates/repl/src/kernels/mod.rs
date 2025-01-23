@@ -69,7 +69,7 @@ impl KernelSpecification {
         };
 
         file_icons::FileIcons::get(cx)
-            .get_type_icon(&lang_name.to_lowercase())
+            .get_icon_for_type(&lang_name.to_lowercase(), cx)
             .map(Icon::from_path)
             .unwrap_or(Icon::new(IconName::ReplNeutral))
     }

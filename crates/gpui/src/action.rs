@@ -1,9 +1,12 @@
 use crate::SharedString;
-use anyhow::{anyhow, Context, Result};
+use anyhow::{anyhow, Result};
 use collections::HashMap;
 pub use no_action::{is_no_action, NoAction};
 use serde_json::json;
-use std::any::{Any, TypeId};
+use std::{
+    any::{Any, TypeId},
+    fmt::Display,
+};
 
 /// Actions are used to implement keyboard-driven UI.
 /// When you declare an action, you can bind keys to the action in the keymap and
@@ -63,6 +66,16 @@ pub trait Action: 'static + Send {
     where
         Self: Sized;
 
+    /// Optional JSON schema for the action's input data.
+    fn action_json_schema(
+        _: &mut schemars::gen::SchemaGenerator,
+    ) -> Option<schemars::schema::Schema>
+    where
+        Self: Sized,
+    {
+        None
+    }
+
     /// A list of alternate, deprecated names for this action.
     fn deprecated_aliases() -> &'static [&'static str]
     where
@@ -87,19 +100,60 @@ impl dyn Action {
     }
 }
 
+/// Error type for `Keystroke::parse`. This is used instead of `anyhow::Error` so that Zed can use
+/// markdown to display it.
+#[derive(Debug)]
+pub enum ActionBuildError {
+    /// Indicates that an action with this name has not been registered.
+    NotFound {
+        /// Name of the action that was not found.
+        name: String,
+    },
+    /// Indicates that an error occurred while building the action, typically a JSON deserialization
+    /// error.
+    BuildError {
+        /// Name of the action that was attempting to be built.
+        name: String,
+        /// Error that occurred while building the action.
+        error: anyhow::Error,
+    },
+}
+
+impl std::error::Error for ActionBuildError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ActionBuildError::NotFound { .. } => None,
+            ActionBuildError::BuildError { error, .. } => error.source(),
+        }
+    }
+}
+
+impl Display for ActionBuildError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ActionBuildError::NotFound { name } => {
+                write!(f, "Didn't find an action named \"{name}\"")
+            }
+            ActionBuildError::BuildError { name, error } => {
+                write!(f, "Error while building action \"{name}\": {error}")
+            }
+        }
+    }
+}
+
 type ActionBuilder = fn(json: serde_json::Value) -> anyhow::Result<Box<dyn Action>>;
 
 pub(crate) struct ActionRegistry {
-    builders_by_name: HashMap<SharedString, ActionBuilder>,
+    by_name: HashMap<SharedString, ActionData>,
     names_by_type_id: HashMap<TypeId, SharedString>,
     all_names: Vec<SharedString>, // So we can return a static slice.
-    deprecations: Vec<(SharedString, SharedString)>,
+    deprecations: HashMap<SharedString, SharedString>,
 }
 
 impl Default for ActionRegistry {
     fn default() -> Self {
         let mut this = ActionRegistry {
-            builders_by_name: Default::default(),
+            by_name: Default::default(),
             names_by_type_id: Default::default(),
             all_names: Default::default(),
             deprecations: Default::default(),
@@ -111,19 +165,25 @@ impl Default for ActionRegistry {
     }
 }
 
-/// This type must be public so that our macros can build it in other crates.
-/// But this is an implementation detail and should not be used directly.
-#[doc(hidden)]
-pub type MacroActionBuilder = fn() -> ActionData;
+struct ActionData {
+    pub build: ActionBuilder,
+    pub json_schema: fn(&mut schemars::gen::SchemaGenerator) -> Option<schemars::schema::Schema>,
+}
 
 /// This type must be public so that our macros can build it in other crates.
 /// But this is an implementation detail and should not be used directly.
 #[doc(hidden)]
-pub struct ActionData {
+pub type MacroActionBuilder = fn() -> MacroActionData;
+
+/// This type must be public so that our macros can build it in other crates.
+/// But this is an implementation detail and should not be used directly.
+#[doc(hidden)]
+pub struct MacroActionData {
     pub name: &'static str,
     pub aliases: &'static [&'static str],
     pub type_id: TypeId,
     pub build: ActionBuilder,
+    pub json_schema: fn(&mut schemars::gen::SchemaGenerator) -> Option<schemars::schema::Schema>,
 }
 
 /// This constant must be public to be accessible from other crates.
@@ -143,20 +203,35 @@ impl ActionRegistry {
 
     #[cfg(test)]
     pub(crate) fn load_action<A: Action>(&mut self) {
-        self.insert_action(ActionData {
+        self.insert_action(MacroActionData {
             name: A::debug_name(),
             aliases: A::deprecated_aliases(),
             type_id: TypeId::of::<A>(),
             build: A::build,
+            json_schema: A::action_json_schema,
         });
     }
 
-    fn insert_action(&mut self, action: ActionData) {
+    fn insert_action(&mut self, action: MacroActionData) {
         let name: SharedString = action.name.into();
-        self.builders_by_name.insert(name.clone(), action.build);
+        self.by_name.insert(
+            name.clone(),
+            ActionData {
+                build: action.build,
+                json_schema: action.json_schema,
+            },
+        );
         for &alias in action.aliases {
-            self.builders_by_name.insert(alias.into(), action.build);
-            self.deprecations.push((alias.into(), name.clone()));
+            let alias: SharedString = alias.into();
+            self.by_name.insert(
+                alias.clone(),
+                ActionData {
+                    build: action.build,
+                    json_schema: action.json_schema,
+                },
+            );
+            self.deprecations.insert(alias.clone(), name.clone());
+            self.all_names.push(alias);
         }
         self.names_by_type_id.insert(action.type_id, name.clone());
         self.all_names.push(name);
@@ -170,7 +245,7 @@ impl ActionRegistry {
             .ok_or_else(|| anyhow!("no action type registered for {:?}", type_id))?
             .clone();
 
-        self.build_action(&name, None)
+        Ok(self.build_action(&name, None)?)
     }
 
     /// Construct an action based on its name and optional JSON parameters sourced from the keymap.
@@ -178,39 +253,70 @@ impl ActionRegistry {
         &self,
         name: &str,
         params: Option<serde_json::Value>,
-    ) -> Result<Box<dyn Action>> {
+    ) -> std::result::Result<Box<dyn Action>, ActionBuildError> {
         let build_action = self
-            .builders_by_name
+            .by_name
             .get(name)
-            .ok_or_else(|| anyhow!("no action type registered for {}", name))?;
-        (build_action)(params.unwrap_or_else(|| json!({})))
-            .with_context(|| format!("Attempting to build action {}", name))
+            .ok_or_else(|| ActionBuildError::NotFound {
+                name: name.to_owned(),
+            })?
+            .build;
+        (build_action)(params.unwrap_or_else(|| json!({}))).map_err(|e| {
+            ActionBuildError::BuildError {
+                name: name.to_owned(),
+                error: e,
+            }
+        })
     }
 
     pub fn all_action_names(&self) -> &[SharedString] {
         self.all_names.as_slice()
     }
 
-    pub fn action_deprecations(&self) -> &[(SharedString, SharedString)] {
-        self.deprecations.as_slice()
+    pub fn action_schemas(
+        &self,
+        generator: &mut schemars::gen::SchemaGenerator,
+    ) -> Vec<(SharedString, Option<schemars::schema::Schema>)> {
+        // Use the order from all_names so that the resulting schema has sensible order.
+        self.all_names
+            .iter()
+            .map(|name| {
+                let action_data = self
+                    .by_name
+                    .get(name)
+                    .expect("All actions in all_names should be registered");
+                (name.clone(), (action_data.json_schema)(generator))
+            })
+            .collect::<Vec<_>>()
+    }
+
+    pub fn action_deprecations(&self) -> &HashMap<SharedString, SharedString> {
+        &self.deprecations
     }
 }
 
-/// Defines unit structs that can be used as actions.
+/// Defines and registers unit structs that can be used as actions.
+///
 /// To use more complex data types as actions, use `impl_actions!`
 #[macro_export]
 macro_rules! actions {
     ($namespace:path, [ $($name:ident),* $(,)? ]) => {
         $(
-            #[doc = "The `"]
+            // Unfortunately rust-analyzer doesn't display the name due to
+            // https://github.com/rust-lang/rust-analyzer/issues/8092
             #[doc = stringify!($name)]
-            #[doc = "` action, see [`gpui::actions!`]"]
+            #[doc = "action generated by `gpui::actions!`"]
             #[derive(::std::clone::Clone,::std::cmp::PartialEq, ::std::default::Default)]
             pub struct $name;
 
             gpui::__impl_action!($namespace, $name, $name,
                 fn build(_: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
                     Ok(Box::new(Self))
+                },
+                fn action_json_schema(
+                    _: &mut gpui::private::schemars::gen::SchemaGenerator,
+                ) -> Option<gpui::private::schemars::schema::Schema> {
+                    None
                 }
             );
 
@@ -219,18 +325,20 @@ macro_rules! actions {
     };
 }
 
-/// Defines a unit struct that can be used as an actions, with a name
-/// that differs from it's type name.
+/// Defines and registers a unit struct that can be used as an actions, with a name that differs
+/// from it's type name.
 ///
-/// To use more complex data types as actions, and rename them use
-/// `impl_action_as!`
+/// To use more complex data types as actions, and rename them use `impl_action_as!`
 #[macro_export]
 macro_rules! action_as {
     ($namespace:path, $name:ident as $visual_name:ident) => {
-        #[doc = "The `"]
+        // Unfortunately rust-analyzer doesn't display the name due to
+        // https://github.com/rust-lang/rust-analyzer/issues/8092
         #[doc = stringify!($name)]
-        #[doc = "` action, see [`gpui::actions!`]"]
-        #[derive(::std::clone::Clone, ::std::cmp::PartialEq, ::std::default::Default)]
+        #[doc = "action generated by `gpui::action_as!`"]
+        #[derive(
+            ::std::clone::Clone, ::std::default::Default, ::std::fmt::Debug, ::std::cmp::PartialEq,
+        )]
         pub struct $name;
 
         gpui::__impl_action!(
@@ -241,6 +349,11 @@ macro_rules! action_as {
                 _: gpui::private::serde_json::Value,
             ) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
                 Ok(Box::new(Self))
+            },
+            fn action_json_schema(
+                generator: &mut gpui::private::schemars::gen::SchemaGenerator,
+            ) -> Option<gpui::private::schemars::schema::Schema> {
+                None
             }
         );
 
@@ -248,21 +361,17 @@ macro_rules! action_as {
     };
 }
 
-/// Defines a unit struct that can be used as an action, with some deprecated aliases.
+/// Defines and registers a unit struct that can be used as an action, with some deprecated aliases.
 #[macro_export]
-macro_rules! action_aliases {
-    ($namespace:path, $name:ident, [$($alias:ident),* $(,)?]) => {
-        #[doc = "The `"]
+macro_rules! action_with_deprecated_aliases {
+    ($namespace:path, $name:ident, [$($alias:literal),* $(,)?]) => {
+        // Unfortunately rust-analyzer doesn't display the name due to
+        // https://github.com/rust-lang/rust-analyzer/issues/8092
         #[doc = stringify!($name)]
-        #[doc = "` action, see [`gpui::actions!`]"]
+        #[doc = "action, generated by `gpui::action_with_deprecated_aliases!`"]
         #[derive(
-            ::std::cmp::PartialEq,
-            ::std::clone::Clone,
-            ::std::default::Default,
-            ::std::fmt::Debug,
-            gpui::private::serde_derive::Deserialize,
+            ::std::clone::Clone, ::std::default::Default, ::std::fmt::Debug, ::std::cmp::PartialEq,
         )]
-        #[serde(crate = "gpui::private::serde")]
         pub struct $name;
 
         gpui::__impl_action!(
@@ -274,9 +383,15 @@ macro_rules! action_aliases {
             ) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
                 Ok(Box::new(Self))
             },
+            fn action_json_schema(
+                generator: &mut gpui::private::schemars::gen::SchemaGenerator,
+            ) -> Option<gpui::private::schemars::schema::Schema> {
+                None
+
+            },
             fn deprecated_aliases() -> &'static [&'static str] {
                 &[
-                    $(concat!(stringify!($namespace), "::", stringify!($alias))),*
+                    $($alias),*
                 ]
             }
         );
@@ -285,7 +400,11 @@ macro_rules! action_aliases {
     };
 }
 
-/// Implements the Action trait for any struct that implements Clone, Default, PartialEq, and serde_deserialize::Deserialize
+/// Registers the action and implements the Action trait for any struct that implements Clone,
+/// Default, PartialEq, serde_deserialize::Deserialize, and schemars::JsonSchema.
+///
+/// Fields and variants that don't make sense for user configuration should be annotated with
+/// #[serde(skip)].
 #[macro_export]
 macro_rules! impl_actions {
     ($namespace:path, [ $($name:ident),* $(,)? ]) => {
@@ -293,6 +412,13 @@ macro_rules! impl_actions {
             gpui::__impl_action!($namespace, $name, $name,
                 fn build(value: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
                     Ok(std::boxed::Box::new(gpui::private::serde_json::from_value::<Self>(value)?))
+                },
+                fn action_json_schema(
+                    generator: &mut gpui::private::schemars::gen::SchemaGenerator,
+                ) -> Option<gpui::private::schemars::schema::Schema> {
+                    Some(<Self as gpui::private::schemars::JsonSchema>::json_schema(
+                        generator,
+                    ))
                 }
             );
 
@@ -301,8 +427,41 @@ macro_rules! impl_actions {
     };
 }
 
-/// Implements the Action trait for a struct that implements Clone, Default, PartialEq, and serde_deserialize::Deserialize
-/// Allows you to rename the action visually, without changing the struct's name
+/// Implements the Action trait for internal action structs that implement Clone, Default,
+/// PartialEq. The purpose of this is to conveniently define values that can be passed in `dyn
+/// Action`.
+///
+/// These actions are internal and so are not registered and do not support deserialization.
+#[macro_export]
+macro_rules! impl_internal_actions {
+    ($namespace:path, [ $($name:ident),* $(,)? ]) => {
+        $(
+            gpui::__impl_action!($namespace, $name, $name,
+                fn build(value: gpui::private::serde_json::Value) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
+                    gpui::Result::Err(gpui::private::anyhow::anyhow!(
+                        concat!(
+                            stringify!($namespace),
+                            "::",
+                            stringify!($visual_name),
+                            " is an internal action, so cannot be built from JSON."
+                        )))
+                },
+                fn action_json_schema(
+                    generator: &mut gpui::private::schemars::gen::SchemaGenerator,
+                ) -> Option<gpui::private::schemars::schema::Schema> {
+                    None
+                }
+            );
+        )*
+    };
+}
+
+/// Implements the Action trait for a struct that implements Clone, Default, PartialEq, and
+/// serde_deserialize::Deserialize. Allows you to rename the action visually, without changing the
+/// struct's name.
+///
+/// Fields and variants that don't make sense for user configuration should be annotated with
+/// #[serde(skip)].
 #[macro_export]
 macro_rules! impl_action_as {
     ($namespace:path, $name:ident as $visual_name:tt ) => {
@@ -315,6 +474,13 @@ macro_rules! impl_action_as {
             ) -> gpui::Result<::std::boxed::Box<dyn gpui::Action>> {
                 Ok(std::boxed::Box::new(
                     gpui::private::serde_json::from_value::<Self>(value)?,
+                ))
+            },
+            fn action_json_schema(
+                generator: &mut gpui::private::schemars::gen::SchemaGenerator,
+            ) -> Option<gpui::private::schemars::schema::Schema> {
+                Some(<Self as gpui::private::schemars::JsonSchema>::json_schema(
+                    generator,
                 ))
             }
         );

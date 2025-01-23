@@ -9,6 +9,7 @@ use editor::{
 use gpui::{actions, impl_actions, px, ViewContext};
 use language::{CharKind, Point, Selection, SelectionGoal};
 use multi_buffer::MultiBufferRow;
+use schemars::JsonSchema;
 use serde::Deserialize;
 use std::ops::Range;
 use workspace::searchable::Direction;
@@ -139,105 +140,105 @@ pub enum Motion {
     },
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct NextWordStart {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct NextWordEnd {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct PreviousWordStart {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct PreviousWordEnd {
     #[serde(default)]
     ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NextSubwordStart {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct NextSubwordEnd {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PreviousSubwordStart {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct PreviousSubwordEnd {
     #[serde(default)]
     pub(crate) ignore_punctuation: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Up {
     #[serde(default)]
     pub(crate) display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct Down {
     #[serde(default)]
     pub(crate) display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct FirstNonWhitespace {
     #[serde(default)]
     display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct EndOfLine {
     #[serde(default)]
     display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct StartOfLine {
     #[serde(default)]
     pub(crate) display_lines: bool,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct UnmatchedForward {
     #[serde(default)]
     char: char,
 }
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 struct UnmatchedBackward {
     #[serde(default)]
@@ -2042,17 +2043,21 @@ fn matching(map: &DisplaySnapshot, display_point: DisplayPoint) -> DisplayPoint 
                 }
             }
 
-            if open_range.start >= offset && line_range.contains(&open_range.start) {
-                let distance = open_range.start - offset;
+            if (open_range.contains(&offset) || open_range.start >= offset)
+                && line_range.contains(&open_range.start)
+            {
+                let distance = open_range.start.saturating_sub(offset);
                 if distance < closest_distance {
-                    closest_pair_destination = Some(close_range.end - 1);
+                    closest_pair_destination = Some(close_range.start);
                     closest_distance = distance;
                     continue;
                 }
             }
 
-            if close_range.start >= offset && line_range.contains(&close_range.start) {
-                let distance = close_range.start - offset;
+            if (close_range.contains(&offset) || close_range.start >= offset)
+                && line_range.contains(&close_range.start)
+            {
+                let distance = close_range.start.saturating_sub(offset);
                 if distance < closest_distance {
                     closest_pair_destination = Some(open_range.start);
                     closest_distance = distance;

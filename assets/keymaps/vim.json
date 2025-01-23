@@ -4,25 +4,25 @@
     "bindings": {
       "i": ["vim::PushOperator", { "Object": { "around": false } }],
       "a": ["vim::PushOperator", { "Object": { "around": true } }],
-      "h": "vim::Left",
       "left": "vim::Left",
+      "h": "vim::Left",
       "backspace": "vim::Backspace",
-      "j": "vim::Down",
       "down": "vim::Down",
       "ctrl-j": "vim::Down",
-      "enter": "vim::NextLineStart",
+      "j": "vim::Down",
       "ctrl-m": "vim::NextLineStart",
       "+": "vim::NextLineStart",
+      "enter": "vim::NextLineStart",
       "-": "vim::PreviousLineStart",
-      "tab": "vim::Tab",
       "shift-tab": "vim::Tab",
-      "k": "vim::Up",
+      "tab": "vim::Tab",
       "up": "vim::Up",
-      "l": "vim::Right",
+      "k": "vim::Up",
       "right": "vim::Right",
+      "l": "vim::Right",
       "space": "vim::Space",
-      "$": "vim::EndOfLine",
       "end": "vim::EndOfLine",
+      "$": "vim::EndOfLine",
       "^": "vim::FirstNonWhitespace",
       "_": "vim::StartOfLineDownward",
       "g _": "vim::EndOfLineDownward",
@@ -188,8 +188,8 @@
   {
     "context": "vim_mode == normal",
     "bindings": {
-      "escape": "editor::Cancel",
       "ctrl-[": "editor::Cancel",
+      "escape": "editor::Cancel",
       ":": "command_palette::Toggle",
       ".": "vim::Repeat",
       "c": ["vim::PushOperator", "Change"],
@@ -221,12 +221,13 @@
       ">": ["vim::PushOperator", "Indent"],
       "<": ["vim::PushOperator", "Outdent"],
       "=": ["vim::PushOperator", "AutoIndent"],
+      "!": ["vim::PushOperator", "ShellCommand"],
       "g u": ["vim::PushOperator", "Lowercase"],
       "g shift-u": ["vim::PushOperator", "Uppercase"],
       "g ~": ["vim::PushOperator", "OppositeCase"],
       "\"": ["vim::PushOperator", "Register"],
-      "g q": ["vim::PushOperator", "Rewrap"],
       "g w": ["vim::PushOperator", "Rewrap"],
+      "g q": ["vim::PushOperator", "Rewrap"],
       "ctrl-pagedown": "pane::ActivateNextItem",
       "ctrl-pageup": "pane::ActivatePrevItem",
       "insert": "vim::InsertBefore",
@@ -253,8 +254,8 @@
       ":": "vim::VisualCommand",
       "u": "vim::ConvertToLowerCase",
       "shift-u": "vim::ConvertToUpperCase",
-      "o": "vim::OtherEnd",
       "shift-o": "vim::OtherEnd",
+      "o": "vim::OtherEnd",
       "d": "vim::VisualDelete",
       "x": "vim::VisualDelete",
       "shift-d": "vim::VisualDeleteLine",
@@ -263,10 +264,10 @@
       "shift-y": "vim::VisualYankLine",
       "p": "vim::Paste",
       "shift-p": ["vim::Paste", { "preserveClipboard": true }],
-      "s": "vim::Substitute",
-      "shift-s": "vim::SubstituteLine",
-      "shift-r": "vim::SubstituteLine",
       "c": "vim::Substitute",
+      "s": "vim::Substitute",
+      "shift-r": "vim::SubstituteLine",
+      "shift-s": "vim::SubstituteLine",
       "~": "vim::ChangeCase",
       "*": ["vim::MoveToNext", { "partialWord": true }],
       "#": ["vim::MoveToPrev", { "partialWord": true }],
@@ -282,11 +283,12 @@
       "g shift-j": "vim::JoinLinesNoWhitespace",
       "r": ["vim::PushOperator", "Replace"],
       "ctrl-c": ["vim::SwitchMode", "Normal"],
-      "escape": ["vim::SwitchMode", "Normal"],
       "ctrl-[": ["vim::SwitchMode", "Normal"],
+      "escape": ["vim::SwitchMode", "Normal"],
       ">": "vim::Indent",
       "<": "vim::Outdent",
       "=": "vim::AutoIndent",
+      "!": "vim::ShellCommand",
       "i": ["vim::PushOperator", { "Object": { "around": false } }],
       "a": ["vim::PushOperator", { "Object": { "around": true } }],
       "g c": "vim::ToggleComments",
@@ -300,9 +302,9 @@
   {
     "context": "vim_mode == insert",
     "bindings": {
-      "escape": "vim::NormalBefore",
       "ctrl-c": "vim::NormalBefore",
       "ctrl-[": "vim::NormalBefore",
+      "escape": "vim::NormalBefore",
       "ctrl-x": null,
       "ctrl-x ctrl-o": "editor::ShowCompletions",
       "ctrl-x ctrl-a": "assistant::InlineAssist", // zed specific
@@ -350,9 +352,9 @@
   {
     "context": "vim_mode == replace",
     "bindings": {
-      "escape": "vim::NormalBefore",
       "ctrl-c": "vim::NormalBefore",
       "ctrl-[": "vim::NormalBefore",
+      "escape": "vim::NormalBefore",
       "ctrl-k": ["vim::PushOperator", { "Digraph": {} }],
       "ctrl-v": ["vim::PushOperator", { "Literal": {} }],
       "ctrl-shift-v": "editor::Paste", // note: this is *very* similar to ctrl-v in vim, but ctrl-shift-v on linux is the typical shortcut for paste when ctrl-v is already in use.
@@ -369,9 +371,9 @@
     "bindings": {
       "tab": "vim::Tab",
       "enter": "vim::Enter",
-      "escape": "vim::ClearOperators",
       "ctrl-c": "vim::ClearOperators",
       "ctrl-[": "vim::ClearOperators",
+      "escape": "vim::ClearOperators",
       "ctrl-k": ["vim::PushOperator", { "Digraph": {} }],
       "ctrl-v": ["vim::PushOperator", { "Literal": {} }],
       "ctrl-q": ["vim::PushOperator", { "Literal": {} }]
@@ -380,9 +382,9 @@
   {
     "context": "vim_mode == operator",
     "bindings": {
-      "escape": "vim::ClearOperators",
       "ctrl-c": "vim::ClearOperators",
       "ctrl-[": "vim::ClearOperators",
+      "escape": "vim::ClearOperators",
       "g c": "vim::Comment"
     }
   },
@@ -391,6 +393,9 @@
     "bindings": {
       "w": "vim::Word",
       "shift-w": ["vim::Word", { "ignorePunctuation": true }],
+      // Subword TextObject
+      // "w": "vim::Subword",
+      // "shift-w": ["vim::Subword", { "ignorePunctuation": true }],
       "t": "vim::Tag",
       "s": "vim::Sentence",
       "p": "vim::Paragraph",
@@ -496,6 +501,12 @@
     }
   },
   {
+    "context": "vim_operator == sh",
+    "bindings": {
+      "!": "vim::CurrentLine"
+    }
+  },
+  {
     "context": "vim_operator == gc",
     "bindings": {
       "c": "vim::CurrentLine"
@@ -560,14 +571,14 @@
       "ctrl-w right": ["workspace::ActivatePaneInDirection", "Right"],
       "ctrl-w up": ["workspace::ActivatePaneInDirection", "Up"],
       "ctrl-w down": ["workspace::ActivatePaneInDirection", "Down"],
-      "ctrl-w h": ["workspace::ActivatePaneInDirection", "Left"],
-      "ctrl-w l": ["workspace::ActivatePaneInDirection", "Right"],
-      "ctrl-w k": ["workspace::ActivatePaneInDirection", "Up"],
-      "ctrl-w j": ["workspace::ActivatePaneInDirection", "Down"],
       "ctrl-w ctrl-h": ["workspace::ActivatePaneInDirection", "Left"],
       "ctrl-w ctrl-l": ["workspace::ActivatePaneInDirection", "Right"],
       "ctrl-w ctrl-k": ["workspace::ActivatePaneInDirection", "Up"],
       "ctrl-w ctrl-j": ["workspace::ActivatePaneInDirection", "Down"],
+      "ctrl-w h": ["workspace::ActivatePaneInDirection", "Left"],
+      "ctrl-w l": ["workspace::ActivatePaneInDirection", "Right"],
+      "ctrl-w k": ["workspace::ActivatePaneInDirection", "Up"],
+      "ctrl-w j": ["workspace::ActivatePaneInDirection", "Down"],
       "ctrl-w shift-left": ["workspace::SwapPaneInDirection", "Left"],
       "ctrl-w shift-right": ["workspace::SwapPaneInDirection", "Right"],
       "ctrl-w shift-up": ["workspace::SwapPaneInDirection", "Up"],
@@ -592,19 +603,19 @@
       "ctrl-w ctrl-p": "workspace::ActivatePreviousPane",
       "ctrl-w shift-w": "workspace::ActivatePreviousPane",
       "ctrl-w ctrl-shift-w": "workspace::ActivatePreviousPane",
-      "ctrl-w v": "pane::SplitVertical",
       "ctrl-w ctrl-v": "pane::SplitVertical",
-      "ctrl-w s": "pane::SplitHorizontal",
+      "ctrl-w v": "pane::SplitVertical",
       "ctrl-w shift-s": "pane::SplitHorizontal",
       "ctrl-w ctrl-s": "pane::SplitHorizontal",
-      "ctrl-w c": "pane::CloseAllItems",
+      "ctrl-w s": "pane::SplitHorizontal",
       "ctrl-w ctrl-c": "pane::CloseAllItems",
-      "ctrl-w q": "pane::CloseAllItems",
+      "ctrl-w c": "pane::CloseAllItems",
       "ctrl-w ctrl-q": "pane::CloseAllItems",
-      "ctrl-w o": "workspace::CloseInactiveTabsAndPanes",
+      "ctrl-w q": "pane::CloseAllItems",
       "ctrl-w ctrl-o": "workspace::CloseInactiveTabsAndPanes",
-      "ctrl-w n": "workspace::NewFileSplitHorizontal",
-      "ctrl-w ctrl-n": "workspace::NewFileSplitHorizontal"
+      "ctrl-w o": "workspace::CloseInactiveTabsAndPanes",
+      "ctrl-w ctrl-n": "workspace::NewFileSplitHorizontal",
+      "ctrl-w n": "workspace::NewFileSplitHorizontal"
     }
   },
   {

@@ -1,10 +1,10 @@
 mod project_panel_settings;
 mod utils;
 
+use anyhow::{anyhow, Context as _, Result};
 use client::{ErrorCode, ErrorExt};
-use language::DiagnosticSeverity;
-use settings::{Settings, SettingsStore};
-
+use collections::{hash_map, BTreeSet, HashMap};
+use command_palette_hooks::CommandPaletteFilter;
 use db::kvp::KEY_VALUE_STORE;
 use editor::{
     items::{
@@ -15,11 +15,7 @@ use editor::{
     Editor, EditorEvent, EditorSettings, ShowScrollbar,
 };
 use file_icons::FileIcons;
-
-use anyhow::{anyhow, Context as _, Result};
-use collections::{hash_map, BTreeSet, HashMap};
-use command_palette_hooks::CommandPaletteFilter;
-use git::repository::GitFileStatus;
+use git::status::GitSummary;
 use gpui::{
     actions, anchored, deferred, div, impl_actions, point, px, size, uniform_list, Action,
     AnyElement, AppContext, AssetSource, AsyncWindowContext, Bounds, ClipboardItem, DismissEvent,
@@ -30,6 +26,7 @@ use gpui::{
     VisualContext as _, WeakView, WindowContext,
 };
 use indexmap::IndexMap;
+use language::DiagnosticSeverity;
 use menu::{Confirm, SelectFirst, SelectLast, SelectNext, SelectPrev};
 use project::{
     relativize_path, Entry, EntryKind, Fs, Project, ProjectEntryId, ProjectPath, Worktree,
@@ -38,7 +35,9 @@ use project::{
 use project_panel_settings::{
     ProjectPanelDockPosition, ProjectPanelSettings, ShowDiagnostics, ShowIndentGuides,
 };
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use settings::{Settings, SettingsStore};
 use smallvec::SmallVec;
 use std::any::TypeId;
 use std::{
@@ -82,6 +81,7 @@ pub struct ProjectPanel {
     /// project entries (and all non-leaf nodes are guaranteed to be directories).
     ancestors: HashMap<ProjectEntryId, FoldedAncestors>,
     last_worktree_root_id: Option<ProjectEntryId>,
+    last_selection_drag_over_entry: Option<ProjectEntryId>,
     last_external_paths_drag_over_entry: Option<ProjectEntryId>,
     expanded_dir_ids: HashMap<WorktreeId, Vec<ProjectEntryId>>,
     unfolded_dir_ids: HashSet<ProjectEntryId>,
@@ -105,6 +105,7 @@ pub struct ProjectPanel {
     // We keep track of the mouse down state on entries so we don't flash the UI
     // in case a user clicks to open a file.
     mouse_down: bool,
+    hover_expand_task: Option<Task<()>>,
 }
 
 #[derive(Clone, Debug)]
@@ -146,19 +147,19 @@ struct EntryDetails {
     is_cut: bool,
     filename_text_color: Color,
     diagnostic_severity: Option<DiagnosticSeverity>,
-    git_status: Option<GitFileStatus>,
+    git_status: GitSummary,
     is_private: bool,
     worktree_id: WorktreeId,
     canonical_path: Option<Box<Path>>,
 }
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize)]
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
 struct Delete {
     #[serde(default)]
     pub skip_prompt: bool,
 }
 
-#[derive(PartialEq, Clone, Default, Debug, Deserialize)]
+#[derive(PartialEq, Clone, Default, Debug, Deserialize, JsonSchema)]
 struct Trash {
     #[serde(default)]
     pub skip_prompt: bool,
@@ -269,7 +270,7 @@ fn get_item_color(cx: &ViewContext<ProjectPanel>) -> ItemColors {
         default: colors.panel_background,
         hover: colors.ghost_element_hover,
         drag_over: colors.drop_target_background,
-        marked_active: colors.ghost_element_selected,
+        marked_active: colors.element_selected,
         focused: colors.panel_focused_border,
     }
 }
@@ -381,6 +382,7 @@ impl ProjectPanel {
                 ancestors: Default::default(),
                 last_worktree_root_id: Default::default(),
                 last_external_paths_drag_over_entry: None,
+                last_selection_drag_over_entry: None,
                 expanded_dir_ids: Default::default(),
                 unfolded_dir_ids: Default::default(),
                 selection: None,
@@ -403,6 +405,7 @@ impl ProjectPanel {
                 diagnostics: Default::default(),
                 scroll_handle,
                 mouse_down: false,
+                hover_expand_task: None,
             };
             this.update_visible_entries(None, cx);
 
@@ -1585,9 +1588,7 @@ impl ProjectPanel {
                         }
                     }))
                     && entry.is_file()
-                    && entry
-                        .git_status
-                        .is_some_and(|status| matches!(status, GitFileStatus::Modified))
+                    && entry.git_summary.index.modified + entry.git_summary.worktree.modified > 0
             },
             cx,
         );
@@ -1665,9 +1666,7 @@ impl ProjectPanel {
                         }
                     }))
                     && entry.is_file()
-                    && entry
-                        .git_status
-                        .is_some_and(|status| matches!(status, GitFileStatus::Modified))
+                    && entry.git_summary.index.modified + entry.git_summary.worktree.modified > 0
             },
             cx,
         );
@@ -2369,7 +2368,8 @@ impl ProjectPanel {
                     let depth = old_ancestors
                         .get(&entry.id)
                         .map(|ancestor| ancestor.current_ancestor_depth)
-                        .unwrap_or_default();
+                        .unwrap_or_default()
+                        .min(auto_folded_ancestors.len());
                     if let Some(edit_state) = &mut self.edit_state {
                         if edit_state.entry_id == entry.id {
                             edit_state.depth = depth;
@@ -2418,7 +2418,7 @@ impl ProjectPanel {
                             char_bag: entry.char_bag,
                             is_fifo: entry.is_fifo,
                         },
-                        git_status: entry.git_status,
+                        git_summary: entry.git_summary,
                     });
                 }
                 let worktree_abs_path = worktree.read(cx).abs_path();
@@ -2816,7 +2816,9 @@ impl ProjectPanel {
                         .collect()
                 });
                 for entry in visible_worktree_entries[entry_range].iter() {
-                    let status = git_status_setting.then_some(entry.git_status).flatten();
+                    let status = git_status_setting
+                        .then_some(entry.git_summary)
+                        .unwrap_or_default();
                     let is_expanded = expanded_entry_ids.binary_search(&entry.id).is_ok();
                     let icon = match entry.kind {
                         EntryKind::File => {
@@ -3272,13 +3274,13 @@ impl ProjectPanel {
             marked_selections: selections,
         };
 
-        let default_color = if is_marked {
+        let bg_color = if is_marked || is_active {
             item_colors.marked_active
         } else {
             item_colors.default
         };
 
-        let bg_hover_color = if self.mouse_down || is_marked {
+        let bg_hover_color = if self.mouse_down || is_marked || is_active {
             item_colors.marked_active
         } else if !is_active {
             item_colors.hover
@@ -3289,10 +3291,15 @@ impl ProjectPanel {
         let border_color =
             if !self.mouse_down && is_active && self.focus_handle.contains_focused(cx) {
                 item_colors.focused
-            } else if self.mouse_down && is_marked || is_active {
-                item_colors.marked_active
             } else {
-                item_colors.default
+                bg_color
+            };
+
+        let border_hover_color =
+            if !self.mouse_down && is_active && self.focus_handle.contains_focused(cx) {
+                item_colors.focused
+            } else {
+                bg_hover_color
             };
 
         div()
@@ -3300,11 +3307,11 @@ impl ProjectPanel {
             .group(GROUP_NAME)
             .cursor_pointer()
             .rounded_none()
-            .bg(default_color)
+            .bg(bg_color)
             .border_1()
             .border_r_2()
             .border_color(border_color)
-            .hover(|style| style.bg(bg_hover_color))
+            .hover(|style| style.bg(bg_hover_color).border_color(border_hover_color))
             .when(is_local, |div| {
                 div.on_drag_move::<ExternalPaths>(cx.listener(
                     move |this, event: &DragMoveEvent<ExternalPaths>, cx| {
@@ -3359,6 +3366,44 @@ impl ProjectPanel {
                     },
                 ))
             })
+            .on_drag_move::<DraggedSelection>(cx.listener(
+                move |this, event: &DragMoveEvent<DraggedSelection>, cx| {
+                    if event.bounds.contains(&event.event.position) {
+                        if this.last_selection_drag_over_entry == Some(entry_id) {
+                            return;
+                        }
+                        this.last_selection_drag_over_entry = Some(entry_id);
+                        this.hover_expand_task.take();
+
+                        if !kind.is_dir()
+                            || this
+                                .expanded_dir_ids
+                                .get(&details.worktree_id)
+                                .map_or(false, |ids| ids.binary_search(&entry_id).is_ok())
+                        {
+                            return;
+                        }
+
+                        let bounds = event.bounds;
+                        this.hover_expand_task = Some(cx.spawn(|this, mut cx| async move {
+                            cx.background_executor()
+                                .timer(Duration::from_millis(500))
+                                .await;
+                            this.update(&mut cx, |this, cx| {
+                                this.hover_expand_task.take();
+                                if this.last_selection_drag_over_entry == Some(entry_id)
+                                    && bounds.contains(&cx.mouse_position())
+                                {
+                                    this.expand_entry(worktree_id, entry_id, cx);
+                                    this.update_visible_entries(Some((worktree_id, entry_id)), cx);
+                                    cx.notify();
+                                }
+                            })
+                            .ok();
+                        }));
+                    }
+                },
+            ))
             .on_drag(dragged_selection, move |selection, click_offset, cx| {
                 cx.new_view(|_| DraggedProjectEntryView {
                     details: details.clone(),
@@ -3371,6 +3416,7 @@ impl ProjectPanel {
             .drag_over::<DraggedSelection>(move |style, _, _| style.bg(item_colors.drag_over))
             .on_drop(cx.listener(move |this, selections: &DraggedSelection, cx| {
                 this.hover_scroll_task.take();
+                this.hover_expand_task.take();
                 this.drag_onto(selections, entry_id, kind.is_file(), cx);
             }))
             .on_mouse_down(
@@ -3471,11 +3517,9 @@ impl ProjectPanel {
                         )
                     })
                     .child(if let Some(icon) = &icon {
-                        // Check if there's a diagnostic severity and get the decoration color
                         if let Some((_, decoration_color)) =
                             entry_diagnostic_aware_icon_decoration_and_color(diagnostic_severity)
                         {
-                            // Determine if the diagnostic is a warning
                             let is_warning = diagnostic_severity
                                 .map(|severity| matches!(severity, DiagnosticSeverity::WARNING))
                                 .unwrap_or(false);
@@ -3493,7 +3537,7 @@ impl ProjectPanel {
                                             } else {
                                                 IconDecorationKind::Dot
                                             },
-                                            default_color,
+                                            bg_color,
                                             cx,
                                         )
                                         .group_name(Some(GROUP_NAME.into()))

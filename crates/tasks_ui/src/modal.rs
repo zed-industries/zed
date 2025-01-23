@@ -350,7 +350,7 @@ impl PickerDelegate for TasksModalDelegate {
             TaskSourceKind::AbsPath { .. } => Some(Icon::new(IconName::Settings)),
             TaskSourceKind::Worktree { .. } => Some(Icon::new(IconName::FileTree)),
             TaskSourceKind::Language { name } => file_icons::FileIcons::get(cx)
-                .get_type_icon(&name.to_lowercase())
+                .get_icon_for_type(&name.to_lowercase(), cx)
                 .map(Icon::from_path),
         }
         .map(|icon| icon.color(Color::Muted).size(IconSize::Small));

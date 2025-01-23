@@ -270,9 +270,10 @@ impl<T: 'static> PromptEditor<T> {
             PromptEditorMode::Terminal { .. } => "Generate",
         };
 
-        let assistant_panel_keybinding = ui::text_for_action(&crate::ToggleFocus, cx)
-            .map(|keybinding| format!("{keybinding} to chat ― "))
-            .unwrap_or_default();
+        let assistant_panel_keybinding =
+            ui::text_for_action(&zed_actions::assistant::ToggleFocus, cx)
+                .map(|keybinding| format!("{keybinding} to chat ― "))
+                .unwrap_or_default();
 
         format!("{action}… ({assistant_panel_keybinding}↓↑ for history)")
     }
@@ -415,6 +416,8 @@ impl<T: 'static> PromptEditor<T> {
                     editor.move_to_end(&Default::default(), cx)
                 });
             }
+        } else {
+            cx.focus_view(&self.context_strip);
         }
     }
 
@@ -738,11 +741,18 @@ impl<T: 'static> PromptEditor<T> {
     fn handle_context_strip_event(
         &mut self,
         _context_strip: View<ContextStrip>,
-        ContextStripEvent::PickerDismissed: &ContextStripEvent,
+        event: &ContextStripEvent,
         cx: &mut ViewContext<Self>,
     ) {
-        let editor_focus_handle = self.editor.focus_handle(cx);
-        cx.focus(&editor_focus_handle);
+        match event {
+            ContextStripEvent::PickerDismissed
+            | ContextStripEvent::BlurredEmpty
+            | ContextStripEvent::BlurredUp => {
+                let editor_focus_handle = self.editor.focus_handle(cx);
+                cx.focus(&editor_focus_handle);
+            }
+            ContextStripEvent::BlurredDown => {}
+        }
     }
 }
 
@@ -825,8 +835,8 @@ impl PromptEditor<BufferCodegen> {
             ContextStrip::new(
                 context_store.clone(),
                 workspace.clone(),
+                prompt_editor.downgrade(),
                 thread_store.clone(),
-                prompt_editor.focus_handle(cx),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
                 cx,
@@ -977,8 +987,8 @@ impl PromptEditor<TerminalCodegen> {
             ContextStrip::new(
                 context_store.clone(),
                 workspace.clone(),
+                prompt_editor.downgrade(),
                 thread_store.clone(),
-                prompt_editor.focus_handle(cx),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
                 cx,

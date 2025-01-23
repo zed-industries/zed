@@ -1,8 +1,8 @@
 use fuzzy::{StringMatch, StringMatchCandidate};
 use gpui::{
-    div, px, uniform_list, AnyElement, BackgroundExecutor, Div, FontWeight, ListSizingBehavior,
-    Model, ScrollStrategy, SharedString, Size, StrikethroughStyle, StyledText,
-    UniformListScrollHandle, ViewContext, WeakView,
+    div, pulsating_between, px, uniform_list, Animation, AnimationExt, AnyElement,
+    BackgroundExecutor, Div, FontWeight, ListSizingBehavior, Model, ScrollStrategy, SharedString,
+    Size, StrikethroughStyle, StyledText, UniformListScrollHandle, ViewContext, WeakView,
 };
 use language::Buffer;
 use language::{CodeLabel, Documentation};
@@ -10,6 +10,8 @@ use lsp::LanguageServerId;
 use multi_buffer::{Anchor, ExcerptId};
 use ordered_float::OrderedFloat;
 use project::{CodeAction, Completion, TaskSourceKind};
+use settings::Settings;
+use std::time::Duration;
 use std::{
     cell::RefCell,
     cmp::{min, Reverse},
@@ -123,11 +125,16 @@ impl CodeContextMenu {
         &self,
         style: &EditorStyle,
         max_height_in_lines: u32,
+        y_flipped: bool,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement {
         match self {
-            CodeContextMenu::Completions(menu) => menu.render(style, max_height_in_lines, cx),
-            CodeContextMenu::CodeActions(menu) => menu.render(style, max_height_in_lines, cx),
+            CodeContextMenu::Completions(menu) => {
+                menu.render(style, max_height_in_lines, y_flipped, cx)
+            }
+            CodeContextMenu::CodeActions(menu) => {
+                menu.render(style, max_height_in_lines, y_flipped, cx)
+            }
         }
     }
 
@@ -266,23 +273,12 @@ impl CompletionsMenu {
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        self.update_selection_index(0, provider, cx);
-    }
-
-    fn select_prev(
-        &mut self,
-        provider: Option<&dyn CompletionProvider>,
-        cx: &mut ViewContext<Editor>,
-    ) {
-        self.update_selection_index(self.prev_match_index(), provider, cx);
-    }
-
-    fn select_next(
-        &mut self,
-        provider: Option<&dyn CompletionProvider>,
-        cx: &mut ViewContext<Editor>,
-    ) {
-        self.update_selection_index(self.next_match_index(), provider, cx);
+        let index = if self.scroll_handle.y_flipped() {
+            self.entries.borrow().len() - 1
+        } else {
+            0
+        };
+        self.update_selection_index(index, provider, cx);
     }
 
     fn select_last(
@@ -290,7 +286,37 @@ impl CompletionsMenu {
         provider: Option<&dyn CompletionProvider>,
         cx: &mut ViewContext<Editor>,
     ) {
-        let index = self.entries.borrow().len() - 1;
+        let index = if self.scroll_handle.y_flipped() {
+            0
+        } else {
+            self.entries.borrow().len() - 1
+        };
+        self.update_selection_index(index, provider, cx);
+    }
+
+    fn select_prev(
+        &mut self,
+        provider: Option<&dyn CompletionProvider>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let index = if self.scroll_handle.y_flipped() {
+            self.next_match_index()
+        } else {
+            self.prev_match_index()
+        };
+        self.update_selection_index(index, provider, cx);
+    }
+
+    fn select_next(
+        &mut self,
+        provider: Option<&dyn CompletionProvider>,
+        cx: &mut ViewContext<Editor>,
+    ) {
+        let index = if self.scroll_handle.y_flipped() {
+            self.prev_match_index()
+        } else {
+            self.next_match_index()
+        };
         self.update_selection_index(index, provider, cx);
     }
 
@@ -333,8 +359,12 @@ impl CompletionsMenu {
                 entries[0] = hint;
             }
             _ => {
-                self.selected_item += 1;
                 entries.insert(0, hint);
+                // When `y_flipped`, need to scroll to bring it into view.
+                if self.selected_item == 0 {
+                    self.scroll_handle
+                        .scroll_to_item(self.selected_item, ScrollStrategy::Top);
+                }
             }
         }
     }
@@ -438,6 +468,7 @@ impl CompletionsMenu {
         &self,
         style: &EditorStyle,
         max_height_in_lines: u32,
+        y_flipped: bool,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement {
         let completions = self.completions.borrow_mut();
@@ -461,10 +492,9 @@ impl CompletionsMenu {
 
                     len
                 }
-                CompletionEntry::InlineCompletionHint(InlineCompletionMenuHint {
-                    provider_name,
-                    ..
-                }) => provider_name.len(),
+                CompletionEntry::InlineCompletionHint(hint) => {
+                    "Zed AI / ".chars().count() + hint.label().chars().count()
+                }
             })
             .map(|(ix, _)| ix);
         drop(completions);
@@ -488,6 +518,12 @@ impl CompletionsMenu {
                     .enumerate()
                     .map(|(ix, mat)| {
                         let item_ix = start_ix + ix;
+                        let buffer_font = theme::ThemeSettings::get_global(cx).buffer_font.clone();
+                        let base_label = h_flex()
+                            .gap_1()
+                            .child(div().font(buffer_font.clone()).child("Zed AI"))
+                            .child(div().px_0p5().child("/").opacity(0.2));
+
                         match mat {
                             CompletionEntry::Match(mat) => {
                                 let candidate_id = mat.candidate_id;
@@ -571,20 +607,76 @@ impl CompletionsMenu {
                                         .end_slot::<Label>(documentation_label),
                                 )
                             }
-                            CompletionEntry::InlineCompletionHint(InlineCompletionMenuHint {
-                                provider_name,
-                                ..
-                            }) => div().min_w(px(250.)).max_w(px(500.)).child(
+                            CompletionEntry::InlineCompletionHint(
+                                hint @ InlineCompletionMenuHint::None,
+                            ) => div().min_w(px(250.)).max_w(px(500.)).child(
                                 ListItem::new("inline-completion")
                                     .inset(true)
                                     .toggle_state(item_ix == selected_item)
                                     .start_slot(Icon::new(IconName::ZedPredict))
                                     .child(
-                                        StyledText::new(format!(
-                                            "{} Completion",
-                                            SharedString::new_static(provider_name)
-                                        ))
-                                        .with_highlights(&style.text, None),
+                                        base_label.child(
+                                            StyledText::new(hint.label())
+                                                .with_highlights(&style.text, None),
+                                        ),
+                                    ),
+                            ),
+                            CompletionEntry::InlineCompletionHint(
+                                hint @ InlineCompletionMenuHint::Loading,
+                            ) => div().min_w(px(250.)).max_w(px(500.)).child(
+                                ListItem::new("inline-completion")
+                                    .inset(true)
+                                    .toggle_state(item_ix == selected_item)
+                                    .start_slot(Icon::new(IconName::ZedPredict))
+                                    .child(base_label.child({
+                                        let text_style = style.text.clone();
+                                        StyledText::new(hint.label())
+                                            .with_highlights(&text_style, None)
+                                            .with_animation(
+                                                "pulsating-label",
+                                                Animation::new(Duration::from_secs(1))
+                                                    .repeat()
+                                                    .with_easing(pulsating_between(0.4, 0.8)),
+                                                move |text, delta| {
+                                                    let mut text_style = text_style.clone();
+                                                    text_style.color =
+                                                        text_style.color.opacity(delta);
+                                                    text.with_highlights(&text_style, None)
+                                                },
+                                            )
+                                    })),
+                            ),
+                            CompletionEntry::InlineCompletionHint(
+                                hint @ InlineCompletionMenuHint::PendingTermsAcceptance,
+                            ) => div().min_w(px(250.)).max_w(px(500.)).child(
+                                ListItem::new("inline-completion")
+                                    .inset(true)
+                                    .toggle_state(item_ix == selected_item)
+                                    .start_slot(Icon::new(IconName::ZedPredict))
+                                    .child(
+                                        base_label.child(
+                                            StyledText::new(hint.label())
+                                                .with_highlights(&style.text, None),
+                                        ),
+                                    )
+                                    .on_click(cx.listener(move |editor, _event, cx| {
+                                        cx.stop_propagation();
+                                        editor.toggle_zed_predict_tos(cx);
+                                    })),
+                            ),
+
+                            CompletionEntry::InlineCompletionHint(
+                                hint @ InlineCompletionMenuHint::Loaded { .. },
+                            ) => div().min_w(px(250.)).max_w(px(500.)).child(
+                                ListItem::new("inline-completion")
+                                    .inset(true)
+                                    .toggle_state(item_ix == selected_item)
+                                    .start_slot(Icon::new(IconName::ZedPredict))
+                                    .child(
+                                        base_label.child(
+                                            StyledText::new(hint.label())
+                                                .with_highlights(&style.text, None),
+                                        ),
                                     )
                                     .on_click(cx.listener(move |editor, _event, cx| {
                                         cx.stop_propagation();
@@ -602,6 +694,7 @@ impl CompletionsMenu {
         .occlude()
         .max_h(max_height_in_lines as f32 * cx.line_height())
         .track_scroll(self.scroll_handle.clone())
+        .y_flipped(y_flipped)
         .with_width_from_item(widest_completion_ix)
         .with_sizing_behavior(ListSizingBehavior::Infer);
 
@@ -641,19 +734,20 @@ impl CompletionsMenu {
                     Documentation::Undocumented => return None,
                 }
             }
-            CompletionEntry::InlineCompletionHint(hint) => match &hint.text {
-                InlineCompletionText::Edit { text, highlights } => div()
-                    .mx_1()
-                    .rounded(px(6.))
-                    .bg(cx.theme().colors().editor_background)
-                    .border_1()
-                    .border_color(cx.theme().colors().border_variant)
-                    .child(
-                        gpui::StyledText::new(text.clone())
-                            .with_highlights(&style.text, highlights.clone()),
-                    ),
-                InlineCompletionText::Move(text) => div().child(text.clone()),
-            },
+            CompletionEntry::InlineCompletionHint(InlineCompletionMenuHint::Loaded { text }) => {
+                match text {
+                    InlineCompletionText::Edit { text, highlights } => div()
+                        .mx_1()
+                        .rounded_md()
+                        .bg(cx.theme().colors().editor_background)
+                        .child(
+                            gpui::StyledText::new(text.clone())
+                                .with_highlights(&style.text, highlights.clone()),
+                        ),
+                    InlineCompletionText::Move(text) => div().child(text.clone()),
+                }
+            }
+            CompletionEntry::InlineCompletionHint(_) => return None,
         };
 
         Some(
@@ -771,18 +865,22 @@ impl CompletionsMenu {
         drop(completions);
 
         let mut entries = self.entries.borrow_mut();
-        if let Some(CompletionEntry::InlineCompletionHint(_)) = entries.first() {
+        let new_selection = if let Some(CompletionEntry::InlineCompletionHint(_)) = entries.first()
+        {
             entries.truncate(1);
-            if inline_completion_was_selected {
-                self.selected_item = 0;
+            if inline_completion_was_selected || matches.is_empty() {
+                0
             } else {
-                self.selected_item = 1;
+                1
             }
         } else {
             entries.truncate(0);
-            self.selected_item = 0;
-        }
+            0
+        };
         entries.extend(matches.into_iter().map(CompletionEntry::Match));
+        self.selected_item = new_selection;
+        self.scroll_handle
+            .scroll_to_item(new_selection, ScrollStrategy::Top);
     }
 }
 
@@ -918,39 +1016,63 @@ pub struct CodeActionsMenu {
 
 impl CodeActionsMenu {
     fn select_first(&mut self, cx: &mut ViewContext<Editor>) {
-        self.selected_item = 0;
+        self.selected_item = if self.scroll_handle.y_flipped() {
+            self.actions.len() - 1
+        } else {
+            0
+        };
+        self.scroll_handle
+            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
+        cx.notify()
+    }
+
+    fn select_last(&mut self, cx: &mut ViewContext<Editor>) {
+        self.selected_item = if self.scroll_handle.y_flipped() {
+            0
+        } else {
+            self.actions.len() - 1
+        };
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
         cx.notify()
     }
 
     fn select_prev(&mut self, cx: &mut ViewContext<Editor>) {
-        if self.selected_item > 0 {
-            self.selected_item -= 1;
+        self.selected_item = if self.scroll_handle.y_flipped() {
+            self.next_match_index()
         } else {
-            self.selected_item = self.actions.len() - 1;
-        }
+            self.prev_match_index()
+        };
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
         cx.notify();
     }
 
     fn select_next(&mut self, cx: &mut ViewContext<Editor>) {
-        if self.selected_item + 1 < self.actions.len() {
-            self.selected_item += 1;
+        self.selected_item = if self.scroll_handle.y_flipped() {
+            self.prev_match_index()
         } else {
-            self.selected_item = 0;
-        }
+            self.next_match_index()
+        };
         self.scroll_handle
             .scroll_to_item(self.selected_item, ScrollStrategy::Top);
         cx.notify();
     }
 
-    fn select_last(&mut self, cx: &mut ViewContext<Editor>) {
-        self.selected_item = self.actions.len() - 1;
-        self.scroll_handle
-            .scroll_to_item(self.selected_item, ScrollStrategy::Top);
-        cx.notify()
+    fn prev_match_index(&self) -> usize {
+        if self.selected_item > 0 {
+            self.selected_item - 1
+        } else {
+            self.actions.len() - 1
+        }
+    }
+
+    fn next_match_index(&self) -> usize {
+        if self.selected_item + 1 < self.actions.len() {
+            self.selected_item + 1
+        } else {
+            0
+        }
     }
 
     fn visible(&self) -> bool {
@@ -969,6 +1091,7 @@ impl CodeActionsMenu {
         &self,
         _style: &EditorStyle,
         max_height_in_lines: u32,
+        y_flipped: bool,
         cx: &mut ViewContext<Editor>,
     ) -> AnyElement {
         let actions = self.actions.clone();
@@ -1044,6 +1167,7 @@ impl CodeActionsMenu {
         .occlude()
         .max_h(max_height_in_lines as f32 * cx.line_height())
         .track_scroll(self.scroll_handle.clone())
+        .y_flipped(y_flipped)
         .with_width_from_item(
             self.actions
                 .iter()

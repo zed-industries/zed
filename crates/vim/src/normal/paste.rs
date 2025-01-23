@@ -1,16 +1,16 @@
-use std::cmp;
-
 use editor::{display_map::ToDisplayPoint, movement, scroll::Autoscroll, DisplayPoint, RowExt};
 use gpui::{impl_actions, ViewContext};
 use language::{Bias, SelectionGoal};
+use schemars::JsonSchema;
 use serde::Deserialize;
+use std::cmp;
 
 use crate::{
     state::{Mode, Register},
     Vim,
 };
 
-#[derive(Clone, Deserialize, PartialEq)]
+#[derive(Clone, Deserialize, JsonSchema, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct Paste {
     #[serde(default)]
