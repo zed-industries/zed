@@ -121,12 +121,12 @@ impl ThreadStore {
             let id = thread.id().clone();
             let thread = SavedThread {
                 summary: thread.summary_or_default(),
-                updated_at: thread.updated_at().clone(),
+                updated_at: thread.updated_at(),
                 messages: thread
                     .messages()
                     .map(|message| SavedMessage {
-                        id: message.id.clone(),
-                        role: message.role.clone(),
+                        id: message.id,
+                        role: message.role,
                         text: message.text.clone(),
                     })
                     .collect(),
