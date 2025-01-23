@@ -1,4 +1,4 @@
-use crate::{collab_panel, ChatPanelSettings};
+use crate::{collab_panel, ChatPanelButton, ChatPanelSettings};
 use anyhow::Result;
 use call::{room, ActiveCall};
 use channel::{ChannelChat, ChannelChatEvent, ChannelMessage, ChannelMessageId, ChannelStore};
@@ -1096,7 +1096,7 @@ impl FocusableView for ChatPanel {
 }
 
 impl Panel for ChatPanel {
-    fn position(&self, cx: &gpui::WindowContext) -> DockPosition {
+    fn position(&self, cx: &WindowContext) -> DockPosition {
         ChatPanelSettings::get_global(cx).dock
     }
 
@@ -1112,7 +1112,7 @@ impl Panel for ChatPanel {
         );
     }
 
-    fn size(&self, cx: &gpui::WindowContext) -> Pixels {
+    fn size(&self, cx: &WindowContext) -> Pixels {
         self.width
             .unwrap_or_else(|| ChatPanelSettings::get_global(cx).default_width)
     }
@@ -1135,7 +1135,20 @@ impl Panel for ChatPanel {
     }
 
     fn icon(&self, cx: &WindowContext) -> Option<ui::IconName> {
-        Some(ui::IconName::MessageBubbles).filter(|_| ChatPanelSettings::get_global(cx).button)
+        let show_icon = match ChatPanelSettings::get_global(cx).button {
+            ChatPanelButton::Never => false,
+            ChatPanelButton::Always => true,
+            ChatPanelButton::WhenInCall => {
+                let is_in_call = ActiveCall::global(cx)
+                    .read(cx)
+                    .room()
+                    .map_or(false, |room| room.read(cx).contains_guests());
+
+                self.active || is_in_call
+            }
+        };
+
+        show_icon.then(|| ui::IconName::MessageBubbles)
     }
 
     fn icon_tooltip(&self, _cx: &WindowContext) -> Option<&'static str> {
@@ -1151,6 +1164,10 @@ impl Panel for ChatPanel {
             .read(cx)
             .room()
             .is_some_and(|room| room.read(cx).contains_guests())
+    }
+
+    fn activation_priority(&self) -> u32 {
+        7
     }
 }
 
@@ -1177,6 +1194,8 @@ mod tests {
                 github_login: "fgh".into(),
                 avatar_uri: "avatar_fgh".into(),
                 id: 103,
+                name: None,
+                email: None,
             }),
             nonce: 5,
             mentions: vec![(ranges[0].clone(), 101), (ranges[1].clone(), 102)],
@@ -1231,6 +1250,8 @@ mod tests {
                 github_login: "fgh".into(),
                 avatar_uri: "avatar_fgh".into(),
                 id: 103,
+                name: None,
+                email: None,
             }),
             nonce: 5,
             mentions: Vec::new(),
@@ -1278,6 +1299,8 @@ mod tests {
                 github_login: "fgh".into(),
                 avatar_uri: "avatar_fgh".into(),
                 id: 103,
+                name: None,
+                email: None,
             }),
             nonce: 5,
             mentions: Vec::new(),

@@ -1,8 +1,8 @@
 [package]
 name = "theme_selector"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -13,7 +13,6 @@ path = "src/theme_selector.rs"
 doctest = false
 
 [dependencies]
-client.workspace = true
 fs.workspace = true
 fuzzy.workspace = true
 gpui.workspace = true
@@ -21,6 +20,7 @@ log.workspace = true
 picker.workspace = true
 serde.workspace = true
 settings.workspace = true
+telemetry.workspace = true
 theme.workspace = true
 ui.workspace = true
 util.workspace = true

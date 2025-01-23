@@ -15,6 +15,7 @@ pub use crate::provider::cloud::LlmApiToken;
 pub use crate::provider::cloud::RefreshLlmTokenListener;
 use crate::provider::copilot_chat::CopilotChatLanguageModelProvider;
 use crate::provider::google::GoogleLanguageModelProvider;
+use crate::provider::lmstudio::LmStudioLanguageModelProvider;
 use crate::provider::ollama::OllamaLanguageModelProvider;
 use crate::provider::open_ai::OpenAiLanguageModelProvider;
 pub use crate::settings::*;
@@ -53,6 +54,10 @@ fn register_language_model_providers(
     );
     registry.register_provider(
         OllamaLanguageModelProvider::new(client.http_client(), cx),
+        cx,
+    );
+    registry.register_provider(
+        LmStudioLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
     registry.register_provider(

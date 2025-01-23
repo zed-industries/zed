@@ -30,7 +30,7 @@ use editor::Bias;
 use editor::Editor;
 use editor::{display_map::ToDisplayPoint, movement};
 use gpui::{actions, ViewContext};
-use language::{Point, SelectionGoal};
+use language::{Point, SelectionGoal, ToPoint};
 use log::error;
 use multi_buffer::MultiBufferRow;
 
@@ -44,6 +44,8 @@ actions!(
         InsertLineAbove,
         InsertLineBelow,
         InsertAtPrevious,
+        JoinLines,
+        JoinLinesNoWhitespace,
         DeleteLeft,
         DeleteRight,
         ChangeToEndOfLine,
@@ -53,8 +55,8 @@ actions!(
         ChangeCase,
         ConvertToUpperCase,
         ConvertToLowerCase,
-        JoinLines,
         ToggleComments,
+        ShowLocation,
         Undo,
         Redo,
     ]
@@ -74,6 +76,7 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     Vim::action(editor, cx, Vim::yank_line);
     Vim::action(editor, cx, Vim::toggle_comments);
     Vim::action(editor, cx, Vim::paste);
+    Vim::action(editor, cx, Vim::show_location);
 
     Vim::action(editor, cx, |vim, _: &DeleteLeft, cx| {
         vim.record_current_action(cx);
@@ -108,25 +111,11 @@ pub(crate) fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
         );
     });
     Vim::action(editor, cx, |vim, _: &JoinLines, cx| {
-        vim.record_current_action(cx);
-        let mut times = Vim::take_count(cx).unwrap_or(1);
-        if vim.mode.is_visual() {
-            times = 1;
-        } else if times > 1 {
-            // 2J joins two lines together (same as J or 1J)
-            times -= 1;
-        }
+        vim.join_lines_impl(true, cx);
+    });
 
-        vim.update_editor(cx, |_, editor, cx| {
-            editor.transact(cx, |editor, cx| {
-                for _ in 0..times {
-                    editor.join_lines(&Default::default(), cx)
-                }
-            })
-        });
-        if vim.mode.is_visual() {
-            vim.switch_mode(Mode::Normal, true, cx)
-        }
+    Vim::action(editor, cx, |vim, _: &JoinLinesNoWhitespace, cx| {
+        vim.join_lines_impl(false, cx);
     });
 
     Vim::action(editor, cx, |vim, _: &Undo, cx| {
@@ -173,6 +162,7 @@ impl Vim {
             Some(Operator::AutoIndent) => {
                 self.indent_motion(motion, times, IndentDirection::Auto, cx)
             }
+            Some(Operator::ShellCommand) => self.shell_command_motion(motion, times, cx),
             Some(Operator::Lowercase) => {
                 self.change_case_motion(motion, times, CaseTarget::Lowercase, cx)
             }
@@ -207,6 +197,9 @@ impl Vim {
                 }
                 Some(Operator::AutoIndent) => {
                     self.indent_object(object, around, IndentDirection::Auto, cx)
+                }
+                Some(Operator::ShellCommand) => {
+                    self.shell_command_object(object, around, cx);
                 }
                 Some(Operator::Rewrap) => self.rewrap_object(object, around, cx),
                 Some(Operator::Lowercase) => {
@@ -401,9 +394,70 @@ impl Vim {
         });
     }
 
+    fn join_lines_impl(&mut self, insert_whitespace: bool, cx: &mut ViewContext<Self>) {
+        self.record_current_action(cx);
+        let mut times = Vim::take_count(cx).unwrap_or(1);
+        if self.mode.is_visual() {
+            times = 1;
+        } else if times > 1 {
+            // 2J joins two lines together (same as J or 1J)
+            times -= 1;
+        }
+
+        self.update_editor(cx, |_, editor, cx| {
+            editor.transact(cx, |editor, cx| {
+                for _ in 0..times {
+                    editor.join_lines_impl(insert_whitespace, cx)
+                }
+            })
+        });
+        if self.mode.is_visual() {
+            self.switch_mode(Mode::Normal, true, cx)
+        }
+    }
+
     fn yank_line(&mut self, _: &YankLine, cx: &mut ViewContext<Self>) {
         let count = Vim::take_count(cx);
         self.yank_motion(motion::Motion::CurrentLine, count, cx)
+    }
+
+    fn show_location(&mut self, _: &ShowLocation, cx: &mut ViewContext<Self>) {
+        let count = Vim::take_count(cx);
+        self.update_editor(cx, |vim, editor, cx| {
+            let selection = editor.selections.newest_anchor();
+            if let Some((_, buffer, _)) = editor.active_excerpt(cx) {
+                let filename = if let Some(file) = buffer.read(cx).file() {
+                    if count.is_some() {
+                        if let Some(local) = file.as_local() {
+                            local.abs_path(cx).to_string_lossy().to_string()
+                        } else {
+                            file.full_path(cx).to_string_lossy().to_string()
+                        }
+                    } else {
+                        file.path().to_string_lossy().to_string()
+                    }
+                } else {
+                    "[No Name]".into()
+                };
+                let buffer = buffer.read(cx);
+                let snapshot = buffer.snapshot();
+                let lines = buffer.max_point().row + 1;
+                let current_line = selection.head().text_anchor.to_point(&snapshot).row;
+                let percentage = current_line as f32 / lines as f32;
+                let modified = if buffer.is_dirty() { " [modified]" } else { "" };
+                vim.status_label = Some(
+                    format!(
+                        "{}{} {} lines --{:.0}%--",
+                        filename,
+                        modified,
+                        lines,
+                        percentage * 100.0,
+                    )
+                    .into(),
+                );
+                cx.notify();
+            }
+        });
     }
 
     fn toggle_comments(&mut self, _: &ToggleComments, cx: &mut ViewContext<Self>) {

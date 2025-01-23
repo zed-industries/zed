@@ -22,11 +22,7 @@ impl Delegate {
                 .iter()
                 .copied()
                 .enumerate()
-                .map(|(id, string)| StringMatchCandidate {
-                    id,
-                    char_bag: string.into(),
-                    string: string.into(),
-                })
+                .map(|(id, string)| StringMatchCandidate::new(id, string))
                 .collect(),
             matches: vec![],
             selected_ix: 0,
@@ -49,7 +45,7 @@ impl PickerDelegate for Delegate {
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut gpui::ViewContext<Picker<Self>>,
+        _cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
         let candidate_ix = self.matches.get(ix)?;
         // TASK: Make StringMatchCandidate::string a SharedString
@@ -59,7 +55,7 @@ impl PickerDelegate for Delegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(Label::new(candidate)),
         )
     }
@@ -68,12 +64,12 @@ impl PickerDelegate for Delegate {
         self.selected_ix
     }
 
-    fn set_selected_index(&mut self, ix: usize, cx: &mut gpui::ViewContext<Picker<Self>>) {
+    fn set_selected_index(&mut self, ix: usize, cx: &mut ViewContext<Picker<Self>>) {
         self.selected_ix = ix;
         cx.notify();
     }
 
-    fn confirm(&mut self, secondary: bool, _cx: &mut gpui::ViewContext<Picker<Self>>) {
+    fn confirm(&mut self, secondary: bool, _cx: &mut ViewContext<Picker<Self>>) {
         let candidate_ix = self.matches[self.selected_ix];
         let candidate = self.candidates[candidate_ix].string.clone();
 
@@ -84,15 +80,11 @@ impl PickerDelegate for Delegate {
         }
     }
 
-    fn dismissed(&mut self, cx: &mut gpui::ViewContext<Picker<Self>>) {
+    fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         cx.quit();
     }
 
-    fn update_matches(
-        &mut self,
-        query: String,
-        cx: &mut gpui::ViewContext<Picker<Self>>,
-    ) -> Task<()> {
+    fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
         let candidates = self.candidates.clone();
         self.matches = cx
             .background_executor()
@@ -198,7 +190,7 @@ impl PickerStory {
 }
 
 impl Render for PickerStory {
-    fn render(&mut self, cx: &mut gpui::ViewContext<Self>) -> impl IntoElement {
+    fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         div()
             .bg(cx.theme().styles.colors.background)
             .size_full()

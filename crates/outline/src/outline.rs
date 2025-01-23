@@ -4,9 +4,7 @@ use std::{
     sync::Arc,
 };
 
-use editor::{
-    actions::ToggleOutline, scroll::Autoscroll, Anchor, AnchorRangeExt, Editor, EditorMode,
-};
+use editor::{scroll::Autoscroll, Anchor, AnchorRangeExt, Editor, EditorMode};
 use fuzzy::StringMatch;
 use gpui::{
     div, rems, AppContext, DismissEvent, EventEmitter, FocusHandle, FocusableView, HighlightStyle,
@@ -24,9 +22,22 @@ use workspace::{DismissDecision, ModalView};
 
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(OutlineView::register).detach();
+    zed_actions::outline::TOGGLE_OUTLINE
+        .set(|view, cx| {
+            let Ok(view) = view.downcast::<Editor>() else {
+                return;
+            };
+
+            toggle(view, &Default::default(), cx);
+        })
+        .ok();
 }
 
-pub fn toggle(editor: View<Editor>, _: &ToggleOutline, cx: &mut WindowContext) {
+pub fn toggle(
+    editor: View<Editor>,
+    _: &zed_actions::outline::ToggleOutline,
+    cx: &mut WindowContext,
+) {
     let outline = editor
         .read(cx)
         .buffer()
@@ -280,7 +291,7 @@ impl PickerDelegate for OutlineViewDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(
                     div()
                         .text_ui(cx)
@@ -314,7 +325,7 @@ pub fn render_item<T>(
         font_family: settings.buffer_font.family.clone(),
         font_features: settings.buffer_font.features.clone(),
         font_fallbacks: settings.buffer_font.fallbacks.clone(),
-        font_size: settings.buffer_font_size(cx).into(),
+        font_size: settings.buffer_font_size().into(),
         font_weight: settings.buffer_font.weight,
         line_height: relative(1.),
         ..Default::default()
@@ -459,7 +470,7 @@ mod tests {
         workspace: &View<Workspace>,
         cx: &mut VisualTestContext,
     ) -> View<Picker<OutlineViewDelegate>> {
-        cx.dispatch_action(ToggleOutline);
+        cx.dispatch_action(zed_actions::outline::ToggleOutline);
         workspace.update(cx, |workspace, cx| {
             workspace
                 .active_modal::<OutlineView>(cx)

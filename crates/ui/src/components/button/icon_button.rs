@@ -22,6 +22,7 @@ pub struct IconButton {
     icon_size: IconSize,
     icon_color: Color,
     selected_icon: Option<IconName>,
+    alpha: Option<f32>,
 }
 
 impl IconButton {
@@ -33,6 +34,7 @@ impl IconButton {
             icon_size: IconSize::default(),
             icon_color: Color::Default,
             selected_icon: None,
+            alpha: None,
         };
         this.base.base = this.base.base.debug_selector(|| format!("ICON-{:?}", icon));
         this
@@ -53,6 +55,11 @@ impl IconButton {
         self
     }
 
+    pub fn alpha(mut self, alpha: f32) -> Self {
+        self.alpha = Some(alpha);
+        self
+    }
+
     pub fn selected_icon(mut self, icon: impl Into<Option<IconName>>) -> Self {
         self.selected_icon = icon.into();
         self
@@ -66,9 +73,9 @@ impl Disableable for IconButton {
     }
 }
 
-impl Selectable for IconButton {
-    fn selected(mut self, selected: bool) -> Self {
-        self.base = self.base.selected(selected);
+impl Toggleable for IconButton {
+    fn toggle_state(mut self, selected: bool) -> Self {
+        self.base = self.base.toggle_state(selected);
         self
     }
 }
@@ -146,6 +153,7 @@ impl RenderOnce for IconButton {
         let is_selected = self.base.selected;
         let selected_style = self.base.selected_style;
 
+        let color = self.icon_color.color(cx).opacity(self.alpha.unwrap_or(1.0));
         self.base
             .map(|this| match self.shape {
                 IconButtonShape::Square => {
@@ -157,11 +165,11 @@ impl RenderOnce for IconButton {
             .child(
                 ButtonIcon::new(self.icon)
                     .disabled(is_disabled)
-                    .selected(is_selected)
+                    .toggle_state(is_selected)
                     .selected_icon(self.selected_icon)
                     .when_some(selected_style, |this, style| this.selected_style(style))
                     .size(self.icon_size)
-                    .color(self.icon_color),
+                    .color(Color::Custom(color)),
             )
     }
 }

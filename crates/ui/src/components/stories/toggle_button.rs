@@ -68,7 +68,7 @@ impl Render for ToggleButtonStory {
                                 ToggleButton::new(2, "Banana")
                                     .style(ButtonStyle::Filled)
                                     .size(ButtonSize::Large)
-                                    .selected(true)
+                                    .toggle_state(true)
                                     .middle(),
                             )
                             .child(

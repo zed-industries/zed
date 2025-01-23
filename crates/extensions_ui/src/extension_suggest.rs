@@ -19,6 +19,7 @@ const SUGGESTIONS_BY_EXTENSION_ID: &[(&str, &[&str])] = &[
     ("clojure", &["bb", "clj", "cljc", "cljs", "edn"]),
     ("neocmake", &["CMakeLists.txt", "cmake"]),
     ("csharp", &["cs"]),
+    ("cython", &["pyx", "pxd", "pxi"]),
     ("dart", &["dart"]),
     ("dockerfile", &["Dockerfile"]),
     ("elisp", &["el"]),
@@ -174,7 +175,7 @@ pub(crate) fn suggest(buffer: Model<Buffer>, cx: &mut ViewContext<Workspace>) {
                     "Do you want to install the recommended '{}' extension for '{}' files?",
                     extension_id, file_name_or_extension
                 ))
-                .with_click_message("Yes")
+                .with_click_message("Yes, install extension")
                 .on_click({
                     let extension_id = extension_id.clone();
                     move |cx| {
@@ -185,7 +186,7 @@ pub(crate) fn suggest(buffer: Model<Buffer>, cx: &mut ViewContext<Workspace>) {
                         });
                     }
                 })
-                .with_secondary_click_message("No")
+                .with_secondary_click_message("No, don't install it")
                 .on_secondary_click(move |cx| {
                     let key = language_extension_key(&extension_id);
                     db::write_and_log(cx, move || {

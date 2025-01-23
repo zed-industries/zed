@@ -1,10 +1,10 @@
 [package]
 name = "gpui"
 version = "0.1.0"
-edition = "2021"
+edition.workspace = true
 authors = ["Nathan Sobo <nathan@zed.dev>"]
 description = "Zed's GPU-accelerated UI framework"
-publish = false
+publish.workspace = true
 license = "Apache-2.0"
 
 [lints]
@@ -22,7 +22,7 @@ test-support = [
     "x11",
 ]
 runtime_shaders = []
-macos-blade = ["blade-graphics", "blade-macros", "blade-util", "bytemuck"]
+macos-blade = ["blade-graphics", "blade-macros", "blade-util", "bytemuck", "objc2", "objc2-metal"]
 wayland = [
     "blade-graphics",
     "blade-macros",
@@ -118,12 +118,12 @@ util = { workspace = true, features = ["test-support"] }
 http_client = { workspace = true, features = ["test-support"] }
 unicode-segmentation.workspace = true
 
-[build-dependencies]
+[target.'cfg(target_os = "windows")'.build-dependencies]
 embed-resource = "3.0"
 
 [target.'cfg(target_os = "macos")'.build-dependencies]
 bindgen = "0.70.0"
-cbindgen = { version = "0.27.0", default-features = false }
+cbindgen = { version = "0.28.0", default-features = false }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1"
@@ -132,12 +132,15 @@ core-foundation.workspace = true
 core-foundation-sys = "0.8"
 core-graphics = "0.23"
 core-text = "20.1"
-font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "40391b7", optional = true}
+font-kit = { git = "https://github.com/zed-industries/font-kit", rev = "40391b7", optional = true }
 foreign-types = "0.5"
 log.workspace = true
 media.workspace = true
-metal = "0.29"
 objc = "0.2"
+objc2 = { version = "0.5", optional = true }
+objc2-metal = { version = "0.2", optional = true }
+#TODO: replace with "objc2"
+metal.workspace = true
 
 [target.'cfg(any(target_os = "linux", target_os = "freebsd", target_os = "macos"))'.dependencies]
 pathfinder_geometry = "0.5"
@@ -145,7 +148,7 @@ pathfinder_geometry = "0.5"
 [target.'cfg(any(target_os = "linux", target_os = "freebsd"))'.dependencies]
 # Always used
 flume = "0.11"
-oo7 = "0.3.0"
+oo7 = { git = "https://github.com/zed-industries/oo7", branch = "avoid-crypto-panic" }
 
 # Used in both windowing options
 ashpd = { workspace = true, optional = true }

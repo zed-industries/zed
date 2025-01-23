@@ -7,20 +7,27 @@ mod window_controls;
 mod stories;
 
 use crate::application_menu::ApplicationMenu;
+
+#[cfg(not(target_os = "macos"))]
+use crate::application_menu::{NavigateApplicationMenuInDirection, OpenApplicationMenu};
+
 use crate::platforms::{platform_linux, platform_mac, platform_windows};
 use auto_update::AutoUpdateStatus;
 use call::ActiveCall;
 use client::{Client, UserStore};
-use feature_flags::{FeatureFlagAppExt, ZedPro};
+use feature_flags::{FeatureFlagAppExt, GitUiFeatureFlag, ZedPro};
+use git_ui::repository_selector::RepositorySelector;
+use git_ui::repository_selector::RepositorySelectorPopoverMenu;
 use gpui::{
     actions, div, px, Action, AnyElement, AppContext, Decorations, Element, InteractiveElement,
     Interactivity, IntoElement, Model, MouseButton, ParentElement, Render, Stateful,
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
-use project::{Project, RepositoryEntry};
+use project::Project;
 use rpc::proto;
 use settings::Settings as _;
 use smallvec::SmallVec;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use theme::ActiveTheme;
 use ui::{
@@ -37,7 +44,7 @@ pub use stories::*;
 const MAX_PROJECT_NAME_LENGTH: usize = 40;
 const MAX_BRANCH_NAME_LENGTH: usize = 40;
 
-const BOOK_ONBOARDING: &str = "https://dub.sh/zed-onboarding";
+const BOOK_ONBOARDING: &str = "https://dub.sh/zed-c-onboarding";
 
 actions!(
     collab,
@@ -53,7 +60,39 @@ actions!(
 pub fn init(cx: &mut AppContext) {
     cx.observe_new_views(|workspace: &mut Workspace, cx| {
         let item = cx.new_view(|cx| TitleBar::new("title-bar", workspace, cx));
-        workspace.set_titlebar_item(item.into(), cx)
+        workspace.set_titlebar_item(item.into(), cx);
+
+        #[cfg(not(target_os = "macos"))]
+        workspace.register_action(|workspace, action: &OpenApplicationMenu, cx| {
+            if let Some(titlebar) = workspace
+                .titlebar_item()
+                .and_then(|item| item.downcast::<TitleBar>().ok())
+            {
+                titlebar.update(cx, |titlebar, cx| {
+                    if let Some(ref menu) = titlebar.application_menu {
+                        menu.update(cx, |menu, cx| menu.open_menu(action, cx));
+                    }
+                });
+            }
+        });
+
+        #[cfg(not(target_os = "macos"))]
+        workspace.register_action(
+            |workspace, action: &NavigateApplicationMenuInDirection, cx| {
+                if let Some(titlebar) = workspace
+                    .titlebar_item()
+                    .and_then(|item| item.downcast::<TitleBar>().ok())
+                {
+                    titlebar.update(cx, |titlebar, cx| {
+                        if let Some(ref menu) = titlebar.application_menu {
+                            menu.update(cx, |menu, cx| {
+                                menu.navigate_menus_in_direction(action, cx)
+                            });
+                        }
+                    });
+                }
+            },
+        );
     })
     .detach();
 }
@@ -62,6 +101,7 @@ pub struct TitleBar {
     platform_style: PlatformStyle,
     content: Stateful<Div>,
     children: SmallVec<[AnyElement; 2]>,
+    repository_selector: View<RepositorySelector>,
     project: Model<Project>,
     user_store: Model<UserStore>,
     client: Arc<Client>,
@@ -69,6 +109,7 @@ pub struct TitleBar {
     should_move: bool,
     application_menu: Option<View<ApplicationMenu>>,
     _subscriptions: Vec<Subscription>,
+    git_ui_enabled: Arc<AtomicBool>,
 }
 
 impl Render for TitleBar {
@@ -134,10 +175,21 @@ impl Render for TitleBar {
                     .child(
                         h_flex()
                             .gap_1()
-                            .when_some(self.application_menu.clone(), |this, menu| this.child(menu))
-                            .children(self.render_project_host(cx))
-                            .child(self.render_project_name(cx))
-                            .children(self.render_project_branch(cx))
+                            .map(|title_bar| {
+                                let mut render_project_items = true;
+                                title_bar
+                                    .when_some(self.application_menu.clone(), |title_bar, menu| {
+                                        render_project_items = !menu.read(cx).all_menus_shown();
+                                        title_bar.child(menu)
+                                    })
+                                    .when(render_project_items, |title_bar| {
+                                        title_bar
+                                            .children(self.render_project_host(cx))
+                                            .child(self.render_project_name(cx))
+                                            .children(self.render_current_repository(cx))
+                                            .children(self.render_project_branch(cx))
+                                    })
+                            })
                             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation()),
                     )
                     .child(self.render_collaborator_list(cx))
@@ -216,7 +268,13 @@ impl TitleBar {
 
         let platform_style = PlatformStyle::platform();
         let application_menu = match platform_style {
-            PlatformStyle::Mac => None,
+            PlatformStyle::Mac => {
+                if option_env!("ZED_USE_CROSS_PLATFORM_MENU").is_some() {
+                    Some(cx.new_view(ApplicationMenu::new))
+                } else {
+                    None
+                }
+            }
             PlatformStyle::Linux | PlatformStyle::Windows => {
                 Some(cx.new_view(ApplicationMenu::new))
             }
@@ -233,17 +291,27 @@ impl TitleBar {
         subscriptions.push(cx.observe_window_activation(Self::window_activation_changed));
         subscriptions.push(cx.observe(&user_store, |_, _, cx| cx.notify()));
 
+        let is_git_ui_enabled = Arc::new(AtomicBool::new(false));
+        subscriptions.push(cx.observe_flag::<GitUiFeatureFlag, _>({
+            let is_git_ui_enabled = is_git_ui_enabled.clone();
+            move |enabled, _cx| {
+                is_git_ui_enabled.store(enabled, Ordering::SeqCst);
+            }
+        }));
+
         Self {
             platform_style,
             content: div().id(id.into()),
             children: SmallVec::new(),
             application_menu,
+            repository_selector: cx.new_view(|cx| RepositorySelector::new(project.clone(), cx)),
             workspace: workspace.weak_handle(),
             should_move: false,
             project,
             user_store,
             client,
             _subscriptions: subscriptions,
+            git_ui_enabled: is_git_ui_enabled,
         }
     }
 
@@ -303,21 +371,24 @@ impl TitleBar {
         Some(
             ButtonLike::new("ssh-server-icon")
                 .child(
-                    IconWithIndicator::new(
-                        Icon::new(IconName::Server)
-                            .size(IconSize::XSmall)
-                            .color(icon_color),
-                        Some(Indicator::dot().color(indicator_color)),
-                    )
-                    .indicator_border_color(Some(cx.theme().colors().title_bar_background))
-                    .into_any_element(),
-                )
-                .child(
-                    div()
+                    h_flex()
+                        .gap_2()
                         .max_w_32()
-                        .overflow_hidden()
-                        .text_ellipsis()
-                        .child(Label::new(nickname.clone()).size(LabelSize::Small)),
+                        .child(
+                            IconWithIndicator::new(
+                                Icon::new(IconName::Server)
+                                    .size(IconSize::XSmall)
+                                    .color(icon_color),
+                                Some(Indicator::dot().color(indicator_color)),
+                            )
+                            .indicator_border_color(Some(cx.theme().colors().title_bar_background))
+                            .into_any_element(),
+                        )
+                        .child(
+                            Label::new(nickname.clone())
+                                .size(LabelSize::Small)
+                                .text_ellipsis(),
+                        ),
                 )
                 .tooltip(move |cx| {
                     Tooltip::with_meta("Remote Project", Some(&OpenRemote), meta.clone(), cx)
@@ -419,6 +490,44 @@ impl TitleBar {
             }))
     }
 
+    // NOTE: Not sure we want to keep this in the titlebar, but for while we are working on Git it is helpful in the short term
+    pub fn render_current_repository(
+        &self,
+        cx: &mut ViewContext<Self>,
+    ) -> Option<impl IntoElement> {
+        if !self.git_ui_enabled.load(Ordering::SeqCst) {
+            return None;
+        }
+
+        let active_repository = self.project.read(cx).active_repository(cx)?;
+        let display_name = active_repository.display_name(self.project.read(cx), cx);
+
+        // TODO: what to render if no active repository?
+        Some(RepositorySelectorPopoverMenu::new(
+            self.repository_selector.clone(),
+            ButtonLike::new("active-repository")
+                .style(ButtonStyle::Subtle)
+                .child(
+                    h_flex().w_full().gap_0p5().child(
+                        div()
+                            .overflow_x_hidden()
+                            .flex_grow()
+                            .whitespace_nowrap()
+                            .child(
+                                h_flex()
+                                    .gap_1()
+                                    .child(
+                                        Label::new(display_name)
+                                            .size(LabelSize::Small)
+                                            .color(Color::Muted),
+                                    )
+                                    .into_any_element(),
+                            ),
+                    ),
+                ),
+        ))
+    }
+
     pub fn render_project_branch(&self, cx: &mut ViewContext<Self>) -> Option<impl IntoElement> {
         let entry = {
             let mut names_and_branches =
@@ -432,7 +541,7 @@ impl TitleBar {
         let workspace = self.workspace.upgrade()?;
         let branch_name = entry
             .as_ref()
-            .and_then(RepositoryEntry::branch)
+            .and_then(|entry| entry.branch())
             .map(|branch| util::truncate_and_trailoff(&branch, MAX_BRANCH_NAME_LENGTH))?;
         Some(
             Button::new("project_branch_trigger", branch_name)
@@ -615,7 +724,7 @@ impl TitleBar {
                         .style(ButtonStyle::Subtle)
                         .tooltip(move |cx| Tooltip::text("Toggle User Menu", cx)),
                 )
-                .anchor(gpui::AnchorCorner::TopRight)
+                .anchor(gpui::Corner::TopRight)
         } else {
             PopoverMenu::new("user-menu")
                 .menu(|cx| {

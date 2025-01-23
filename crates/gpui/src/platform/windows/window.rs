@@ -27,7 +27,7 @@ use windows::{
     },
 };
 
-use crate::platform::blade::BladeRenderer;
+use crate::platform::blade::{BladeContext, BladeRenderer};
 use crate::*;
 
 pub(crate) struct WindowsWindow(pub Rc<WindowsWindowStatePtr>);
@@ -38,7 +38,7 @@ pub struct WindowsWindowState {
     pub fullscreen_restore_bounds: Bounds<Pixels>,
     pub border_offset: WindowBorderOffset,
     pub scale_factor: f32,
-    pub is_minimized: Option<bool>,
+    pub restore_from_minimized: Option<Box<dyn FnMut(RequestFrameOptions)>>,
 
     pub callbacks: Callbacks,
     pub input_handler: Option<PlatformInputHandler>,
@@ -69,6 +69,7 @@ pub(crate) struct WindowsWindowStatePtr {
     pub(crate) windows_version: WindowsVersion,
     pub(crate) validation_number: usize,
     pub(crate) main_receiver: flume::Receiver<Runnable>,
+    pub(crate) main_thread_id_win32: u32,
 }
 
 impl WindowsWindowState {
@@ -78,6 +79,7 @@ impl WindowsWindowState {
         cs: &CREATESTRUCTW,
         current_cursor: HCURSOR,
         display: WindowsDisplay,
+        gpu_context: &BladeContext,
     ) -> Result<Self> {
         let scale_factor = {
             let monitor_dpi = unsafe { GetDpiForWindow(hwnd) } as f32;
@@ -93,8 +95,8 @@ impl WindowsWindowState {
             size: logical_size,
         };
         let border_offset = WindowBorderOffset::default();
-        let is_minimized = None;
-        let renderer = windows_renderer::windows_renderer(hwnd, transparent)?;
+        let restore_from_minimized = None;
+        let renderer = windows_renderer::init(gpu_context, hwnd, transparent)?;
         let callbacks = Callbacks::default();
         let input_handler = None;
         let system_key_handled = false;
@@ -111,7 +113,7 @@ impl WindowsWindowState {
             fullscreen_restore_bounds,
             border_offset,
             scale_factor,
-            is_minimized,
+            restore_from_minimized,
             callbacks,
             input_handler,
             system_key_handled,
@@ -227,6 +229,7 @@ impl WindowsWindowStatePtr {
             cs,
             context.current_cursor,
             context.display,
+            context.gpu_context,
         )?);
 
         Ok(Rc::new_cyclic(|this| Self {
@@ -240,6 +243,7 @@ impl WindowsWindowStatePtr {
             windows_version: context.windows_version,
             validation_number: context.validation_number,
             main_receiver: context.main_receiver.clone(),
+            main_thread_id_win32: context.main_thread_id_win32,
         }))
     }
 
@@ -340,7 +344,7 @@ pub(crate) struct Callbacks {
     pub(crate) appearance_changed: Option<Box<dyn FnMut()>>,
 }
 
-struct WindowCreateContext {
+struct WindowCreateContext<'a> {
     inner: Option<Result<Rc<WindowsWindowStatePtr>>>,
     handle: AnyWindowHandle,
     hide_title_bar: bool,
@@ -352,6 +356,8 @@ struct WindowCreateContext {
     windows_version: WindowsVersion,
     validation_number: usize,
     main_receiver: flume::Receiver<Runnable>,
+    gpu_context: &'a BladeContext,
+    main_thread_id_win32: u32,
 }
 
 impl WindowsWindow {
@@ -359,6 +365,7 @@ impl WindowsWindow {
         handle: AnyWindowHandle,
         params: WindowParams,
         creation_info: WindowCreationInfo,
+        gpu_context: &BladeContext,
     ) -> Result<Self> {
         let WindowCreationInfo {
             icon,
@@ -367,6 +374,7 @@ impl WindowsWindow {
             windows_version,
             validation_number,
             main_receiver,
+            main_thread_id_win32,
         } = creation_info;
         let classname = register_wnd_class(icon);
         let hide_title_bar = params
@@ -410,6 +418,8 @@ impl WindowsWindow {
             windows_version,
             validation_number,
             main_receiver,
+            gpu_context,
+            main_thread_id_win32,
         };
         let lpparam = Some(&context as *const _ as *const _);
         let creation_result = unsafe {
@@ -770,7 +780,7 @@ impl PlatformWindow for WindowsWindow {
         self.0.hwnd
     }
 
-    fn gpu_specs(&self) -> Option<GPUSpecs> {
+    fn gpu_specs(&self) -> Option<GpuSpecs> {
         Some(self.0.state.borrow().renderer.gpu_specs())
     }
 
@@ -1068,7 +1078,7 @@ unsafe extern "system" fn wnd_proc(
         let weak = Box::new(Rc::downgrade(creation_result.as_ref().unwrap()));
         unsafe { set_window_long(hwnd, GWLP_USERDATA, Box::into_raw(weak) as isize) };
         ctx.inner = Some(creation_result);
-        return LRESULT(1);
+        return unsafe { DefWindowProcW(hwnd, msg, wparam, lparam) };
     }
     let ptr = unsafe { get_window_long(hwnd, GWLP_USERDATA) } as *mut Weak<WindowsWindowStatePtr>;
     if ptr.is_null() {
@@ -1236,38 +1246,24 @@ fn set_window_composition_attribute(hwnd: HWND, color: Option<Color>, state: u32
 }
 
 mod windows_renderer {
-    use std::{num::NonZeroIsize, sync::Arc};
-
-    use blade_graphics as gpu;
+    use crate::platform::blade::{BladeContext, BladeRenderer, BladeSurfaceConfig};
     use raw_window_handle as rwh;
+    use std::num::NonZeroIsize;
     use windows::Win32::{Foundation::HWND, UI::WindowsAndMessaging::GWLP_HINSTANCE};
 
-    use crate::{
-        get_window_long,
-        platform::blade::{BladeRenderer, BladeSurfaceConfig},
-    };
+    use crate::get_window_long;
 
-    pub(super) fn windows_renderer(hwnd: HWND, transparent: bool) -> anyhow::Result<BladeRenderer> {
+    pub(super) fn init(
+        context: &BladeContext,
+        hwnd: HWND,
+        transparent: bool,
+    ) -> anyhow::Result<BladeRenderer> {
         let raw = RawWindow { hwnd };
-        let gpu: Arc<gpu::Context> = Arc::new(
-            unsafe {
-                gpu::Context::init_windowed(
-                    &raw,
-                    gpu::ContextDesc {
-                        validation: false,
-                        capture: false,
-                        overlay: false,
-                    },
-                )
-            }
-            .map_err(|e| anyhow::anyhow!("{:?}", e))?,
-        );
         let config = BladeSurfaceConfig {
-            size: gpu::Extent::default(),
+            size: Default::default(),
             transparent,
         };
-
-        Ok(BladeRenderer::new(gpu, config))
+        BladeRenderer::new(context, &raw, config)
     }
 
     struct RawWindow {

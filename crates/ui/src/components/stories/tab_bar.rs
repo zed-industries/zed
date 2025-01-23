@@ -13,7 +13,7 @@ impl Render for TabBarStory {
         let tabs = (0..tab_count)
             .map(|index| {
                 Tab::new(index)
-                    .selected(index == selected_tab_index)
+                    .toggle_state(index == selected_tab_index)
                     .position(if index == 0 {
                         TabPosition::First
                     } else if index == tab_count - 1 {

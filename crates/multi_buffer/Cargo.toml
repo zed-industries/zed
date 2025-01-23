@@ -1,8 +1,8 @@
 [package]
 name = "multi_buffer"
 version = "0.1.0"
-edition = "2021"
-publish = false
+edition.workspace = true
+publish.workspace = true
 license = "GPL-3.0-or-later"
 
 [lints]
@@ -39,6 +39,7 @@ smallvec.workspace = true
 sum_tree.workspace = true
 text.workspace = true
 theme.workspace = true
+tree-sitter.workspace = true
 util.workspace = true
 
 [dev-dependencies]

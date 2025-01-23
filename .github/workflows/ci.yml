@@ -7,14 +7,10 @@ on:
       - "v[0-9]+.[0-9]+.x"
     tags:
       - "v*"
-    paths-ignore:
-      - "docs/**"
+
   pull_request:
     branches:
       - "**"
-    paths-ignore:
-      - "docs/**/*"
-      - ".github/workflows/community_*"
 
 concurrency:
   # Allow only one workflow per any non-`main` branch.
@@ -25,7 +21,6 @@ env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
   RUST_BACKTRACE: 1
-  RUSTFLAGS: "-D warnings"
 
 jobs:
   migration_checks:
@@ -81,6 +76,10 @@ jobs:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
 
+      # To support writing comments that they will certainly be revisited.
+      - name: Check for todo! and FIXME comments
+        run: script/check-todos
+
       - name: Run style checks
         uses: ./.github/actions/check_style
 
@@ -101,6 +100,11 @@ jobs:
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
         with:
           clean: false
+
+      - name: Configure CI
+        run: |
+          mkdir -p ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
 
       - name: cargo clippy
         run: ./script/clippy
@@ -133,6 +137,11 @@ jobs:
           cargo build -p remote_server
           script/check-rust-livekit-macos
 
+      # Since the macOS runners are stateful, so we need to remove the config file to prevent potential bug.
+      - name: Clean CI config file
+        if: always()
+        run: rm -rf ./../.cargo
+
   linux_tests:
     timeout-minutes: 60
     name: (Linux) Run Clippy and tests
@@ -149,13 +158,18 @@ jobs:
           clean: false
 
       - name: Cache dependencies
-        uses: swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaab # v2
+        uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-provider: "buildjet"
 
       - name: Install Linux dependencies
         run: ./script/linux
+
+      - name: Configure CI
+        run: |
+          mkdir -p ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
 
       - name: cargo clippy
         run: ./script/clippy
@@ -167,6 +181,14 @@ jobs:
         run: |
           cargo build -p zed
           cargo check -p workspace
+
+      # Even the Linux runner is not stateful, in theory there is no need to do this cleanup.
+      # But, to avoid potential issues in the future if we choose to use a stateful Linux runner and forget to add code
+      # to clean up the config file, I’ve included the cleanup code here as a precaution.
+      # While it’s not strictly necessary at this moment, I believe it’s better to err on the side of caution.
+      - name: Clean CI config file
+        if: always()
+        run: rm -rf ./../.cargo
 
   build_remote_server:
     timeout-minutes: 60
@@ -184,7 +206,7 @@ jobs:
           clean: false
 
       - name: Cache dependencies
-        uses: swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaab # v2
+        uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-provider: "buildjet"
@@ -192,8 +214,17 @@ jobs:
       - name: Install Clang & Mold
         run: ./script/remote-server && ./script/install-mold 2.34.0
 
+      - name: Configure CI
+        run: |
+          mkdir -p ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
+
       - name: Build Remote Server
         run: cargo build -p remote_server
+
+      - name: Clean CI config file
+        if: always()
+        run: rm -rf ./../.cargo
 
   # todo(windows): Actually run the tests
   windows_tests:
@@ -211,10 +242,15 @@ jobs:
           clean: false
 
       - name: Cache dependencies
-        uses: swatinem/rust-cache@82a92a6e8fbeee089604da2575dc567ae9ddeaab # v2
+        uses: swatinem/rust-cache@f0deed1e0edfc6a9be95417288c0e1099b1eeec3 # v2
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-provider: "github"
+
+      - name: Configure CI
+        run: |
+          mkdir -p ./../.cargo
+          cp ./.cargo/ci-config.toml ./../.cargo/config.toml
 
       - name: cargo clippy
         # Windows can't run shell scripts, so we need to use `cargo xtask`.
@@ -223,8 +259,13 @@ jobs:
       - name: Build Zed
         run: cargo build
 
+      # Since the Windows runners are stateful, so we need to remove the config file to prevent potential bug.
+      - name: Clean CI config file
+        if: always()
+        run: Remove-Item -Path "./../.cargo" -Recurse -Force
+
   bundle-mac:
-    timeout-minutes: 60
+    timeout-minutes: 120
     name: Create a macOS bundle
     runs-on:
       - self-hosted
@@ -276,9 +317,6 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Generate license file
-        run: script/generate-licenses
-
       - name: Create macOS app bundle
         run: script/bundle-mac
 
@@ -289,14 +327,14 @@ jobs:
           mv target/x86_64-apple-darwin/release/Zed.dmg target/x86_64-apple-darwin/release/Zed-x86_64.dmg
 
       - name: Upload app bundle (aarch64) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-aarch64.dmg
           path: target/aarch64-apple-darwin/release/Zed-aarch64.dmg
 
       - name: Upload app bundle (x86_64) to workflow run if main branch or specific label
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: Zed_${{ github.event.pull_request.head.sha || github.sha }}-x86_64.dmg
@@ -316,9 +354,9 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-  bundle-linux:
+  bundle-linux-x86_x64:
     timeout-minutes: 60
-    name: Create a Linux bundle
+    name: Linux x86_x64 release bundle
     runs-on:
       - buildjet-16vcpu-ubuntu-2004
     if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
@@ -326,6 +364,8 @@ jobs:
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
+      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
+      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -345,7 +385,7 @@ jobs:
         run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-x86_64-unknown-linux-gnu.tar.gz
@@ -364,7 +404,7 @@ jobs:
 
   bundle-linux-aarch64: # this runs on ubuntu22.04
     timeout-minutes: 60
-    name: Create arm64 Linux bundle
+    name: Linux arm64 release bundle
     runs-on:
       - buildjet-16vcpu-ubuntu-2204-arm
     if: ${{ startsWith(github.ref, 'refs/tags/v') || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
@@ -372,6 +412,8 @@ jobs:
     env:
       ZED_CLIENT_CHECKSUM_SEED: ${{ secrets.ZED_CLIENT_CHECKSUM_SEED }}
       ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON: ${{ secrets.ZED_CLOUD_PROVIDER_ADDITIONAL_MODELS_JSON }}
+      DIGITALOCEAN_SPACES_ACCESS_KEY: ${{ secrets.DIGITALOCEAN_SPACES_ACCESS_KEY }}
+      DIGITALOCEAN_SPACES_SECRET_KEY: ${{ secrets.DIGITALOCEAN_SPACES_SECRET_KEY }}
     steps:
       - name: Checkout repo
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4
@@ -391,7 +433,7 @@ jobs:
         run: script/bundle-linux
 
       - name: Upload Linux bundle to workflow run if main branch or specific label
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4
+        uses: actions/upload-artifact@65c4c4a1ddee5b72f698fdd19549f0f0fb45cf08 # v4
         if: ${{ github.ref == 'refs/heads/main' }} || contains(github.event.pull_request.labels.*.name, 'run-bundling') }}
         with:
           name: zed-${{ github.event.pull_request.head.sha || github.sha }}-aarch64-unknown-linux-gnu.tar.gz
@@ -411,7 +453,7 @@ jobs:
   auto-release-preview:
     name: Auto release preview
     if: ${{ startsWith(github.ref, 'refs/tags/v') && endsWith(github.ref, '-pre') && !endsWith(github.ref, '.0-pre') }}
-    needs: [bundle-mac, bundle-linux, bundle-linux-aarch64]
+    needs: [bundle-mac, bundle-linux-x86_x64, bundle-linux-aarch64]
     runs-on:
       - self-hosted
       - bundle

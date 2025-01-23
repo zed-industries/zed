@@ -131,7 +131,7 @@ impl PickerDelegate for OpenPathDelegate {
                                 .iter()
                                 .enumerate()
                                 .map(|(ix, path)| {
-                                    StringMatchCandidate::new(ix, path.to_string_lossy().into())
+                                    StringMatchCandidate::new(ix, &path.to_string_lossy())
                                 })
                                 .collect::<Vec<_>>();
 
@@ -283,7 +283,7 @@ impl PickerDelegate for OpenPathDelegate {
             ListItem::new(ix)
                 .spacing(ListItemSpacing::Sparse)
                 .inset(true)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(LabelLike::new().child(candidate.string.clone())),
         )
     }

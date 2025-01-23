@@ -28,6 +28,7 @@ minor_branch_name="v${major}.${minor}.x"
 prev_minor_branch_name="v${major}.${prev_minor}.x"
 next_minor_branch_name="v${major}.${next_minor}.x"
 preview_tag_name="v${major}.${minor}.${patch}-pre"
+bump_main_branch_name="set-minor-version-to-${major}.${next_minor}"
 
 git fetch origin ${prev_minor_branch_name}:${prev_minor_branch_name}
 git fetch origin --tags
@@ -65,7 +66,7 @@ git checkout -q ${prev_minor_branch_name}
 git clean -q -dff
 stable_tag_name="v$(script/get-crate-version zed)"
 if git show-ref --quiet refs/tags/${stable_tag_name}; then
-  echo "tag ${preview_tag_name} already exists"
+  echo "tag ${stable_tag_name} already exists"
   exit 1
 fi
 old_prev_minor_sha=$(git rev-parse HEAD)
@@ -83,29 +84,40 @@ git tag ${preview_tag_name}
 echo "Preparing main for version ${next_minor_branch_name}..."
 git checkout -q main
 git clean -q -dff
-old_main_sha=$(git rev-parse HEAD)
+git checkout -q -b ${bump_main_branch_name}
 cargo set-version --package zed --bump minor
 cargo check -q
+
 git commit -q --all --message "${next_minor_branch_name} dev"
 
-cat <<MESSAGE
-Prepared new Zed versions locally.
+git checkout -q main
 
-To push this:
+cat <<MESSAGE
+Prepared new Zed versions locally. You will need to push the branches and open a PR for the change to main.
+
+# To push and open a PR to update main:
 
     git push origin \\
       ${preview_tag_name} \\
       ${stable_tag_name} \\
       ${minor_branch_name} \\
       ${prev_minor_branch_name} \\
-      main
+      ${bump_main_branch_name}
 
-To undo this:
+    echo -e "Release Notes:\n\n-N/A" | gh pr create \\
+      --title "Bump Zed to v${major}.${next_minor}" \\
+      --body-file "-" \\
+      --base main \\
+      --head ${bump_main_branch_name} \\
+      --web
 
-    git reset --hard ${old_main_sha} && git push -f . \\
+# To undo this push:
+
+    git push -f . \\
       :${preview_tag_name} \\
       :${stable_tag_name} \\
       :${minor_branch_name} \\
+      :${bump_main_branch_name} \\
       ${old_prev_minor_sha}:${prev_minor_branch_name}
 
 MESSAGE

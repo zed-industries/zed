@@ -3,27 +3,28 @@
   {
     "use_key_equivalents": true,
     "bindings": {
-      "up": "menu::SelectPrev",
-      "shift-tab": "menu::SelectPrev",
       "home": "menu::SelectFirst",
-      "pageup": "menu::SelectFirst",
       "shift-pageup": "menu::SelectFirst",
-      "ctrl-p": "menu::SelectPrev",
-      "down": "menu::SelectNext",
-      "tab": "menu::SelectNext",
-      "end": "menu::SelectLast",
-      "pagedown": "menu::SelectLast",
-      "shift-pagedown": "menu::SelectFirst",
-      "ctrl-n": "menu::SelectNext",
+      "pageup": "menu::SelectFirst",
       "cmd-up": "menu::SelectFirst",
+      "end": "menu::SelectLast",
+      "shift-pagedown": "menu::SelectLast",
+      "pagedown": "menu::SelectLast",
       "cmd-down": "menu::SelectLast",
+      "tab": "menu::SelectNext",
+      "ctrl-n": "menu::SelectNext",
+      "down": "menu::SelectNext",
+      "shift-tab": "menu::SelectPrev",
+      "ctrl-p": "menu::SelectPrev",
+      "up": "menu::SelectPrev",
       "enter": "menu::Confirm",
       "ctrl-enter": "menu::SecondaryConfirm",
       "cmd-enter": "menu::SecondaryConfirm",
-      "escape": "menu::Cancel",
-      "cmd-escape": "menu::Cancel",
       "ctrl-escape": "menu::Cancel",
+      "cmd-escape": "menu::Cancel",
       "ctrl-c": "menu::Cancel",
+      "escape": "menu::Cancel",
+      "alt-shift-enter": "menu::Restart",
       "cmd-shift-w": "workspace::CloseWindow",
       "shift-escape": "workspace::ToggleZoom",
       "cmd-o": "workspace::Open",
@@ -36,7 +37,10 @@
       "cmd-h": "zed::Hide",
       "alt-cmd-h": "zed::HideOthers",
       "cmd-m": "zed::Minimize",
-      "ctrl-cmd-f": "zed::ToggleFullScreen"
+      "fn-f": "zed::ToggleFullScreen",
+      "ctrl-cmd-f": "zed::ToggleFullScreen",
+      "ctrl-shift-z": "zeta::RateCompletions",
+      "ctrl-shift-i": "inline_completion::ToggleMenu"
     }
   },
   {
@@ -44,18 +48,18 @@
     "use_key_equivalents": true,
     "bindings": {
       "escape": "editor::Cancel",
-      "backspace": "editor::Backspace",
       "shift-backspace": "editor::Backspace",
       "ctrl-h": "editor::Backspace",
-      "delete": "editor::Delete",
+      "backspace": "editor::Backspace",
       "ctrl-d": "editor::Delete",
+      "delete": "editor::Delete",
       "tab": "editor::Tab",
       "shift-tab": "editor::TabPrev",
       "ctrl-t": "editor::Transpose",
       "ctrl-k": "editor::KillRingCut",
       "ctrl-y": "editor::KillRingYank",
-      "cmd-k q": "editor::Rewrap",
       "cmd-k cmd-q": "editor::Rewrap",
+      "cmd-k q": "editor::Rewrap",
       "cmd-backspace": "editor::DeleteToBeginningOfLine",
       "cmd-delete": "editor::DeleteToEndOfLine",
       "alt-backspace": "editor::DeleteToPreviousWordStart",
@@ -66,34 +70,33 @@
       "cmd-v": "editor::Paste",
       "cmd-z": "editor::Undo",
       "cmd-shift-z": "editor::Redo",
-      "ctrl-shift-z": "zeta::RateCompletions",
       "up": "editor::MoveUp",
       "ctrl-up": "editor::MoveToStartOfParagraph",
       "pageup": "editor::MovePageUp",
       "shift-pageup": "editor::SelectPageUp",
       "cmd-pageup": "editor::PageUp",
       "ctrl-pageup": "editor::LineUp",
-      "home": "editor::MoveToBeginningOfLine",
       "down": "editor::MoveDown",
       "ctrl-down": "editor::MoveToEndOfParagraph",
       "pagedown": "editor::MovePageDown",
       "shift-pagedown": "editor::SelectPageDown",
       "cmd-pagedown": "editor::PageDown",
       "ctrl-pagedown": "editor::LineDown",
-      "end": "editor::MoveToEndOfLine",
-      "left": "editor::MoveLeft",
-      "right": "editor::MoveRight",
       "ctrl-p": "editor::MoveUp",
       "ctrl-n": "editor::MoveDown",
       "ctrl-b": "editor::MoveLeft",
+      "left": "editor::MoveLeft",
       "ctrl-f": "editor::MoveRight",
+      "right": "editor::MoveRight",
       "ctrl-l": "editor::ScrollCursorCenter",
       "alt-left": "editor::MoveToPreviousWordStart",
       "alt-right": "editor::MoveToNextWordEnd",
       "cmd-left": "editor::MoveToBeginningOfLine",
       "ctrl-a": "editor::MoveToBeginningOfLine",
+      "home": "editor::MoveToBeginningOfLine",
       "cmd-right": "editor::MoveToEndOfLine",
       "ctrl-e": "editor::MoveToEndOfLine",
+      "end": "editor::MoveToEndOfLine",
       "cmd-up": "editor::MoveToBeginning",
       "cmd-down": "editor::MoveToEnd",
       "shift-up": "editor::SelectUp",
@@ -136,8 +139,8 @@
     "context": "Editor && mode == full",
     "use_key_equivalents": true,
     "bindings": {
-      "enter": "editor::Newline",
       "shift-enter": "editor::Newline",
+      "enter": "editor::Newline",
       "cmd-enter": "editor::NewlineBelow",
       "cmd-shift-enter": "editor::NewlineAbove",
       "cmd-k z": "editor::ToggleSoftWrap",
@@ -156,7 +159,7 @@
     "bindings": {
       "alt-tab": "editor::NextInlineCompletion",
       "alt-shift-tab": "editor::PreviousInlineCompletion",
-      "ctrl-right": "editor::AcceptPartialInlineCompletion"
+      "ctrl-cmd-right": "editor::AcceptPartialInlineCompletion"
     }
   },
   {
@@ -195,9 +198,10 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-k c": "assistant::CopyCode",
+      "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-g": "search::SelectNextMatch",
       "cmd-shift-g": "search::SelectPrevMatch",
-      "cmd-shift-m": "assistant::ToggleModelSelector",
+      "cmd-alt-/": "assistant::ToggleModelSelector",
       "cmd-k h": "assistant::DeployHistory",
       "cmd-k l": "assistant::DeployPromptLibrary",
       "cmd-n": "assistant::NewContext"
@@ -223,7 +227,12 @@
     "use_key_equivalents": true,
     "bindings": {
       "cmd-n": "assistant2::NewThread",
-      "cmd-shift-h": "assistant2::OpenHistory"
+      "cmd-alt-p": "assistant2::NewPromptEditor",
+      "cmd-shift-h": "assistant2::OpenHistory",
+      "cmd-alt-/": "assistant2::ToggleModelSelector",
+      "cmd-shift-a": "assistant2::ToggleContextPicker",
+      "cmd-e": "assistant2::ChatMode",
+      "cmd-alt-e": "assistant2::RemoveAllContext"
     }
   },
   {
@@ -231,6 +240,24 @@
     "use_key_equivalents": true,
     "bindings": {
       "enter": "assistant2::Chat"
+    }
+  },
+  {
+    "context": "ContextStrip",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "assistant2::FocusUp",
+      "right": "assistant2::FocusRight",
+      "left": "assistant2::FocusLeft",
+      "down": "assistant2::FocusDown",
+      "backspace": "assistant2::RemoveFocusedContext",
+      "enter": "assistant2::AcceptSuggestedContext"
+    }
+  },
+  {
+    "context": "ThreadHistory",
+    "bindings": {
+      "backspace": "assistant2::RemoveSelectedThread"
     }
   },
   {
@@ -315,15 +342,17 @@
     "context": "Pane",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-{": "pane::ActivatePrevItem",
-      "cmd-}": "pane::ActivateNextItem",
       "alt-cmd-left": "pane::ActivatePrevItem",
+      "cmd-{": "pane::ActivatePrevItem",
       "alt-cmd-right": "pane::ActivateNextItem",
+      "cmd-}": "pane::ActivateNextItem",
       "ctrl-shift-pageup": "pane::SwapItemLeft",
       "ctrl-shift-pagedown": "pane::SwapItemRight",
       "cmd-w": "pane::CloseActiveItem",
       "alt-cmd-t": ["pane::CloseInactiveItems", { "close_pinned": false }],
       "ctrl-alt-cmd-w": "workspace::CloseInactiveTabsAndPanes",
+      "cmd-k e": ["pane::CloseItemsToTheLeft", { "close_pinned": false }],
+      "cmd-k t": ["pane::CloseItemsToTheRight", { "close_pinned": false }],
       "cmd-k u": ["pane::CloseCleanItems", { "close_pinned": false }],
       "cmd-k cmd-w": ["pane::CloseAllItems", { "close_pinned": false }],
       "cmd-f": "project_search::ToggleFocus",
@@ -346,10 +375,10 @@
     "bindings": {
       "cmd-[": "editor::Outdent",
       "cmd-]": "editor::Indent",
-      "cmd-alt-up": "editor::AddSelectionAbove", // Insert cursor above
-      "cmd-ctrl-p": "editor::AddSelectionAbove",
-      "cmd-alt-down": "editor::AddSelectionBelow", // Insert cursor below
-      "cmd-ctrl-n": "editor::AddSelectionBelow",
+      "cmd-ctrl-p": "editor::AddSelectionAbove", // Insert cursor above
+      "cmd-alt-up": "editor::AddSelectionAbove",
+      "cmd-ctrl-n": "editor::AddSelectionBelow", // Insert cursor below
+      "cmd-alt-down": "editor::AddSelectionBelow",
       "cmd-shift-k": "editor::DeleteLine",
       "alt-up": "editor::MoveLineUp",
       "alt-down": "editor::MoveLineDown",
@@ -376,8 +405,8 @@
       "shift-f12": "editor::GoToImplementation",
       "alt-cmd-f12": "editor::GoToTypeDefinitionSplit",
       "alt-shift-f12": "editor::FindAllReferences",
-      "ctrl-m": "editor::MoveToEnclosingBracket",
       "cmd-|": "editor::MoveToEnclosingBracket",
+      "ctrl-m": "editor::MoveToEnclosingBracket",
       "alt-cmd-[": "editor::Fold",
       "alt-cmd-]": "editor::UnfoldLines",
       "cmd-k cmd-l": "editor::ToggleFold",
@@ -394,6 +423,8 @@
       "cmd-k cmd-9": ["editor::FoldAtLevel", { "level": 9 }],
       "cmd-k cmd-0": "editor::FoldAll",
       "cmd-k cmd-j": "editor::UnfoldAll",
+      // Using `ctrl-space` in Zed requires disabling the macOS global shortcut.
+      // System Preferences->Keyboard->Keyboard Shortcuts->Input Sources->Select the previous input source (uncheck)
       "ctrl-space": "editor::ShowCompletions",
       "cmd-.": "editor::ToggleCodeActions",
       "cmd-k r": "editor::RevealInFileManager",
@@ -428,8 +459,7 @@
       "ctrl-0": "pane::ActivateLastItem",
       "ctrl--": "pane::GoBack",
       "ctrl-shift--": "pane::GoForward",
-      "cmd-shift-t": "pane::ReopenClosedItem",
-      "cmd-shift-f": "project_search::ToggleFocus"
+      "cmd-shift-f": "pane::DeploySearch"
     }
   },
   {
@@ -445,7 +475,6 @@
       "cmd-s": "workspace::Save",
       "cmd-k s": "workspace::SaveWithoutFormat",
       "cmd-shift-s": "workspace::SaveAs",
-      "cmd-n": "workspace::NewFile",
       "cmd-shift-n": "workspace::NewWindow",
       "ctrl-`": "terminal_panel::ToggleFocus",
       "cmd-1": ["workspace::ActivatePane", 0],
@@ -463,6 +492,7 @@
       "alt-cmd-y": "workspace::CloseAllDocks",
       "cmd-shift-f": "pane::DeploySearch",
       "cmd-shift-h": ["pane::DeploySearch", { "replace_enabled": true }],
+      "cmd-shift-t": "pane::ReopenClosedItem",
       "cmd-k cmd-s": "zed::OpenKeymap",
       "cmd-k cmd-t": "theme_selector::Toggle",
       "cmd-t": "project_symbols::Toggle",
@@ -471,7 +501,7 @@
       "ctrl-shift-tab": ["tab_switcher::Toggle", { "select_last": true }],
       "cmd-shift-p": "command_palette::Toggle",
       "cmd-shift-m": "diagnostics::Deploy",
-      "cmd-shift-e": "pane::RevealInProjectPanel",
+      "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-shift-b": "outline_panel::ToggleFocus",
       "cmd-?": "assistant::ToggleFocus",
       "cmd-alt-s": "workspace::SaveAll",
@@ -492,10 +522,12 @@
     "context": "Workspace && !Terminal",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-n": "workspace::NewFile",
       "cmd-shift-r": "task::Spawn",
       "cmd-alt-r": "task::Rerun",
-      "alt-t": "task::Spawn",
-      "alt-shift-t": "task::Spawn"
+      "ctrl-alt-shift-r": ["task::Spawn", { "reveal_target": "center" }]
+      // also possible to spawn tasks by name:
+      // "foo-bar": ["task::Spawn", { "task_name": "MyTask", "reveal_target": "dock" }]
     }
   },
   // Bindings from Sublime Text
@@ -541,18 +573,12 @@
     "context": "Editor && showing_completions",
     "use_key_equivalents": true,
     "bindings": {
-      "enter": "editor::ConfirmCompletion"
-    }
-  },
-  {
-    "context": "Editor && !inline_completion && showing_completions",
-    "use_key_equivalents": true,
-    "bindings": {
+      "enter": "editor::ConfirmCompletion",
       "tab": "editor::ComposeCompletion"
     }
   },
   {
-    "context": "Editor && inline_completion",
+    "context": "Editor && inline_completion && !showing_completions",
     "use_key_equivalents": true,
     "bindings": {
       "tab": "editor::AcceptInlineCompletion"
@@ -595,6 +621,7 @@
       "alt-enter": "editor::OpenExcerpts",
       "shift-enter": "editor::ExpandExcerpts",
       "cmd-k enter": "editor::OpenExcerptsSplit",
+      "cmd-shift-e": "pane::RevealInProjectPanel",
       "cmd-f8": "editor::GoToHunk",
       "cmd-shift-f8": "editor::GoToPrevHunk",
       "ctrl-enter": "assistant::InlineAssist"
@@ -612,6 +639,9 @@
     "context": "PromptEditor",
     "use_key_equivalents": true,
     "bindings": {
+      "cmd-shift-a": "assistant2::ToggleContextPicker",
+      "cmd-alt-/": "assistant2::ToggleModelSelector",
+      "cmd-alt-e": "assistant2::RemoveAllContext",
       "ctrl-[": "assistant::CyclePreviousInlineAssist",
       "ctrl-]": "assistant::CycleNextInlineAssist"
     }
@@ -662,7 +692,6 @@
       "cmd-delete": ["project_panel::Delete", { "skip_prompt": false }],
       "alt-cmd-r": "project_panel::RevealInFileManager",
       "ctrl-shift-enter": "project_panel::OpenWithSystem",
-      "cmd-shift-e": "project_panel::ToggleFocus",
       "cmd-alt-backspace": ["project_panel::Delete", { "skip_prompt": false }],
       "cmd-shift-f": "project_panel::NewSearchInDirectory",
       "shift-down": "menu::SelectNext",
@@ -675,6 +704,38 @@
     "use_key_equivalents": true,
     "bindings": {
       "space": "project_panel::Open"
+    }
+  },
+  {
+    "context": "GitPanel && !CommitEditor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "git_panel::Close"
+    }
+  },
+  {
+    "context": "GitPanel && ChangesList",
+    "use_key_equivalents": true,
+    "bindings": {
+      "up": "menu::SelectPrev",
+      "down": "menu::SelectNext",
+      "cmd-up": "menu::SelectFirst",
+      "cmd-down": "menu::SelectLast",
+      "enter": "menu::Confirm",
+      "space": "git::ToggleStaged",
+      "cmd-shift-space": "git::StageAll",
+      "ctrl-shift-space": "git::UnstageAll",
+      "alt-down": "git_panel::FocusEditor"
+    }
+  },
+  {
+    "context": "GitPanel && CommitEditor > Editor",
+    "use_key_equivalents": true,
+    "bindings": {
+      "alt-up": "git_panel::FocusChanges",
+      "escape": "git_panel::FocusChanges",
+      "cmd-enter": "git::CommitChanges",
+      "cmd-alt-enter": "git::CommitAllChanges"
     }
   },
   {
@@ -747,9 +808,9 @@
     "context": "TabSwitcher",
     "use_key_equivalents": true,
     "bindings": {
+      "ctrl-shift-tab": "menu::SelectPrev",
       "ctrl-up": "menu::SelectPrev",
       "ctrl-down": "menu::SelectNext",
-      "ctrl-shift-tab": "menu::SelectPrev",
       "ctrl-backspace": "tab_switcher::CloseSelectedItem"
     }
   },
@@ -762,6 +823,7 @@
       "cmd-v": "terminal::Paste",
       "cmd-a": "editor::SelectAll",
       "cmd-k": "terminal::Clear",
+      "cmd-n": "workspace::NewTerminal",
       "ctrl-enter": "assistant::InlineAssist",
       // Some nice conveniences
       "cmd-backspace": ["terminal::SendText", "\u0015"],
@@ -779,16 +841,16 @@
       "escape": ["terminal::SendKeystroke", "escape"],
       "enter": ["terminal::SendKeystroke", "enter"],
       "ctrl-c": ["terminal::SendKeystroke", "ctrl-c"],
-      "cmd-up": "terminal::ScrollPageUp",
-      "cmd-down": "terminal::ScrollPageDown",
       "shift-pageup": "terminal::ScrollPageUp",
+      "cmd-up": "terminal::ScrollPageUp",
       "shift-pagedown": "terminal::ScrollPageDown",
+      "cmd-down": "terminal::ScrollPageDown",
       "shift-up": "terminal::ScrollLineUp",
       "shift-down": "terminal::ScrollLineDown",
-      "cmd-home": "terminal::ScrollToTop",
-      "cmd-end": "terminal::ScrollToBottom",
       "shift-home": "terminal::ScrollToTop",
+      "cmd-home": "terminal::ScrollToTop",
       "shift-end": "terminal::ScrollToBottom",
+      "cmd-end": "terminal::ScrollToBottom",
       "ctrl-shift-space": "terminal::ToggleViMode",
       "ctrl-k up": "pane::SplitUp",
       "ctrl-k down": "pane::SplitDown",
@@ -800,7 +862,8 @@
     "context": "RateCompletionModal",
     "use_key_equivalents": true,
     "bindings": {
-      "cmd-enter": "zeta::ThumbsUp",
+      "cmd-shift-enter": "zeta::ThumbsUpActiveCompletion",
+      "cmd-shift-backspace": "zeta::ThumbsDownActiveCompletion",
       "shift-down": "zeta::NextEdit",
       "shift-up": "zeta::PreviousEdit",
       "right": "zeta::PreviewCompletion"
@@ -813,6 +876,13 @@
       "escape": "zeta::FocusCompletions",
       "cmd-shift-enter": "zeta::ThumbsUpActiveCompletion",
       "cmd-shift-backspace": "zeta::ThumbsDownActiveCompletion"
+    }
+  },
+  {
+    "context": "ZedPredictTos",
+    "use_key_equivalents": true,
+    "bindings": {
+      "escape": "menu::Cancel"
     }
   }
 ]

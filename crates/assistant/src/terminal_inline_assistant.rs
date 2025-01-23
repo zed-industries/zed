@@ -1,9 +1,7 @@
-use crate::assistant_settings::AssistantSettings;
-use crate::{
-    humanize_token_count, prompts::PromptBuilder, AssistantPanel, AssistantPanelEvent, RequestType,
-    DEFAULT_CONTEXT_LINES,
-};
+use crate::{AssistantPanel, AssistantPanelEvent, DEFAULT_CONTEXT_LINES};
 use anyhow::{Context as _, Result};
+use assistant_context_editor::{humanize_token_count, RequestType};
+use assistant_settings::AssistantSettings;
 use client::telemetry::Telemetry;
 use collections::{HashMap, VecDeque};
 use editor::{
@@ -20,8 +18,9 @@ use language::Buffer;
 use language_model::{
     LanguageModelRegistry, LanguageModelRequest, LanguageModelRequestMessage, Role,
 };
-use language_model_selector::LanguageModelSelector;
+use language_model_selector::{LanguageModelSelector, LanguageModelSelectorPopoverMenu};
 use language_models::report_assistant_event;
+use prompt_library::PromptBuilder;
 use settings::{update_settings_file, Settings};
 use std::{
     cmp,
@@ -476,9 +475,9 @@ enum PromptEditorEvent {
 
 struct PromptEditor {
     id: TerminalInlineAssistId,
-    fs: Arc<dyn Fs>,
     height_in_lines: u8,
     editor: View<Editor>,
+    language_model_selector: View<LanguageModelSelector>,
     edited_since_done: bool,
     prompt_history: VecDeque<String>,
     prompt_history_ix: Option<usize>,
@@ -614,17 +613,8 @@ impl Render for PromptEditor {
                     .w_12()
                     .justify_center()
                     .gap_2()
-                    .child(LanguageModelSelector::new(
-                        {
-                            let fs = self.fs.clone();
-                            move |model, cx| {
-                                update_settings_file::<AssistantSettings>(
-                                    fs.clone(),
-                                    cx,
-                                    move |settings, _| settings.set_model(model.clone()),
-                                );
-                            }
-                        },
+                    .child(LanguageModelSelectorPopoverMenu::new(
+                        self.language_model_selector.clone(),
                         IconButton::new("context", IconName::SettingsAlt)
                             .shape(IconButtonShape::Square)
                             .icon_size(IconSize::Small)
@@ -718,6 +708,19 @@ impl PromptEditor {
             id,
             height_in_lines: 1,
             editor: prompt_editor,
+            language_model_selector: cx.new_view(|cx| {
+                let fs = fs.clone();
+                LanguageModelSelector::new(
+                    move |model, cx| {
+                        update_settings_file::<AssistantSettings>(
+                            fs.clone(),
+                            cx,
+                            move |settings, _| settings.set_model(model.clone()),
+                        );
+                    },
+                    cx,
+                )
+            }),
             edited_since_done: false,
             prompt_history,
             prompt_history_ix: None,
@@ -725,7 +728,6 @@ impl PromptEditor {
             _codegen_subscription: cx.observe(&codegen, Self::handle_codegen_changed),
             editor_subscriptions: Vec::new(),
             codegen,
-            fs,
             pending_token_count: Task::ready(Ok(())),
             token_count: None,
             _token_count_subscriptions: token_count_subscriptions,
@@ -738,7 +740,7 @@ impl PromptEditor {
     }
 
     fn placeholder_text(cx: &WindowContext) -> String {
-        let context_keybinding = text_for_action(&crate::ToggleFocus, cx)
+        let context_keybinding = text_for_action(&zed_actions::assistant::ToggleFocus, cx)
             .map(|keybinding| format!(" • {keybinding} for context"))
             .unwrap_or_default();
 

@@ -21,7 +21,7 @@ impl Render for IconButtonStory {
 
         let selected_button = StoryItem::new(
             "Selected",
-            IconButton::new("selected_icon_button", IconName::Hash).selected(true),
+            IconButton::new("selected_icon_button", IconName::Hash).toggle_state(true),
         )
         .description("Displays an icon button that is selected.")
         .usage(
@@ -33,7 +33,7 @@ impl Render for IconButtonStory {
         let selected_with_selected_icon = StoryItem::new(
             "Selected with `selected_icon`",
             IconButton::new("selected_with_selected_icon_button", IconName::AudioOn)
-                .selected(true)
+                .toggle_state(true)
                 .selected_icon(IconName::AudioOff),
         )
         .description(
@@ -89,7 +89,7 @@ impl Render for IconButtonStory {
         let selected_with_tooltip_button = StoryItem::new(
             "Selected with `tooltip`",
             IconButton::new("selected_with_tooltip_button", IconName::InlayHint)
-                .selected(true)
+                .toggle_state(true)
                 .tooltip(|cx| Tooltip::text("Toggle inlay hints", cx)),
         )
         .description("Displays a selected icon button with tooltip.")

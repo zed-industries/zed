@@ -1,12 +1,16 @@
-use std::cell::{RefCell, RefMut};
-use std::hash::Hash;
-use std::os::fd::{AsRawFd, BorrowedFd};
-use std::path::PathBuf;
-use std::rc::{Rc, Weak};
-use std::time::{Duration, Instant};
+use std::{
+    cell::{RefCell, RefMut},
+    hash::Hash,
+    os::fd::{AsRawFd, BorrowedFd},
+    path::PathBuf,
+    rc::{Rc, Weak},
+    time::{Duration, Instant},
+};
 
-use calloop::timer::{TimeoutAction, Timer};
-use calloop::{EventLoop, LoopHandle};
+use calloop::{
+    timer::{TimeoutAction, Timer},
+    EventLoop, LoopHandle,
+};
 use calloop_wayland_source::WaylandSource;
 use collections::HashMap;
 use filedescriptor::Pipe;
@@ -64,30 +68,28 @@ use xkbcommon::xkb::{self, Keycode, KEYMAP_COMPILE_NO_FLAGS};
 
 use super::display::WaylandDisplay;
 use super::window::{ImeInput, WaylandWindowStatePtr};
-use crate::platform::linux::wayland::clipboard::{
-    Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE,
-};
-use crate::platform::linux::wayland::cursor::Cursor;
-use crate::platform::linux::wayland::serial::{SerialKind, SerialTracker};
-use crate::platform::linux::wayland::window::WaylandWindow;
-use crate::platform::linux::xdg_desktop_portal::{Event as XDPEvent, XDPEventSource};
-use crate::platform::linux::LinuxClient;
+
 use crate::platform::linux::{
     get_xkb_compose_state, is_within_click_distance, open_uri_internal, read_fd,
     reveal_path_internal,
+    wayland::{
+        clipboard::{Clipboard, DataOffer, FILE_LIST_MIME_TYPE, TEXT_MIME_TYPE},
+        cursor::Cursor,
+        serial::{SerialKind, SerialTracker},
+        window::WaylandWindow,
+    },
+    xdg_desktop_portal::{Event as XDPEvent, XDPEventSource},
+    LinuxClient,
 };
-use crate::platform::PlatformWindow;
+use crate::platform::{blade::BladeContext, PlatformWindow};
 use crate::{
-    point, px, size, Bounds, DevicePixels, FileDropEvent, ForegroundExecutor, MouseExitEvent, Size,
-    DOUBLE_CLICK_INTERVAL, SCROLL_LINES,
+    point, px, size, AnyWindowHandle, Bounds, CursorStyle, DevicePixels, DisplayId, FileDropEvent,
+    ForegroundExecutor, KeyDownEvent, KeyUpEvent, Keystroke, LinuxCommon, Modifiers,
+    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseExitEvent, MouseMoveEvent,
+    MouseUpEvent, NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScaledPixels,
+    ScrollDelta, ScrollWheelEvent, Size, TouchPhase, WindowParams, DOUBLE_CLICK_INTERVAL,
+    SCROLL_LINES,
 };
-use crate::{
-    AnyWindowHandle, CursorStyle, DisplayId, KeyDownEvent, KeyUpEvent, Keystroke, Modifiers,
-    ModifiersChangedEvent, MouseButton, MouseDownEvent, MouseMoveEvent, MouseUpEvent,
-    NavigationDirection, Pixels, PlatformDisplay, PlatformInput, Point, ScaledPixels, ScrollDelta,
-    ScrollWheelEvent, TouchPhase,
-};
-use crate::{LinuxCommon, WindowParams};
 
 /// Used to convert evdev scancode to xkb scancode
 const MIN_KEYCODE: u32 = 8;
@@ -186,6 +188,7 @@ pub struct Output {
 pub(crate) struct WaylandClientState {
     serial_tracker: SerialTracker,
     globals: Globals,
+    gpu_context: BladeContext,
     wl_seat: wl_seat::WlSeat, // TODO: Multi seat support
     wl_pointer: Option<wl_pointer::WlPointer>,
     wl_keyboard: Option<wl_keyboard::WlKeyboard>,
@@ -459,6 +462,8 @@ impl WaylandClient {
             })
             .unwrap();
 
+        let gpu_context = BladeContext::new().expect("Unable to init GPU context");
+
         let seat = seat.unwrap();
         let globals = Globals::new(
             globals,
@@ -512,6 +517,7 @@ impl WaylandClient {
         let mut state = Rc::new(RefCell::new(WaylandClientState {
             serial_tracker: SerialTracker::new(),
             globals,
+            gpu_context,
             wl_seat: seat,
             wl_pointer: None,
             wl_keyboard: None,
@@ -582,6 +588,19 @@ impl WaylandClient {
 }
 
 impl LinuxClient for WaylandClient {
+    fn keyboard_layout(&self) -> String {
+        let state = self.0.borrow();
+        if let Some(keymap_state) = &state.keymap_state {
+            let layout_idx = keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
+            keymap_state
+                .get_keymap()
+                .layout_get_name(layout_idx)
+                .to_string()
+        } else {
+            "unknown".to_string()
+        }
+    }
+
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>> {
         self.0
             .borrow()
@@ -627,6 +646,7 @@ impl LinuxClient for WaylandClient {
         let (window, surface_id) = WaylandWindow::new(
             handle,
             state.globals.clone(),
+            &state.gpu_context,
             WaylandClientStatePtr(Rc::downgrade(&self.0)),
             params,
             state.common.appearance,
@@ -1132,6 +1152,13 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 };
                 state.keymap_state = Some(xkb::State::new(&keymap));
                 state.compose_state = get_xkb_compose_state(&xkb_context);
+
+                if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take() {
+                    drop(state);
+                    callback();
+                    state = client.borrow_mut();
+                    state.common.callbacks.keyboard_layout_change = Some(callback);
+                }
             }
             wl_keyboard::Event::Enter { surface, .. } => {
                 state.keyboard_focused_window = get_window(&mut state, &surface.id());
@@ -1169,8 +1196,20 @@ impl Dispatch<wl_keyboard::WlKeyboard, ()> for WaylandClientStatePtr {
                 let focused_window = state.keyboard_focused_window.clone();
 
                 let keymap_state = state.keymap_state.as_mut().unwrap();
+                let old_layout =
+                    keymap_state.serialize_layout(xkbcommon::xkb::STATE_LAYOUT_EFFECTIVE);
                 keymap_state.update_mask(mods_depressed, mods_latched, mods_locked, 0, 0, group);
                 state.modifiers = Modifiers::from_xkb(keymap_state);
+
+                if group != old_layout {
+                    if let Some(mut callback) = state.common.callbacks.keyboard_layout_change.take()
+                    {
+                        drop(state);
+                        callback();
+                        state = client.borrow_mut();
+                        state.common.callbacks.keyboard_layout_change = Some(callback);
+                    }
+                }
 
                 let Some(focused_window) = focused_window else {
                     return;

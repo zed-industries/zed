@@ -467,6 +467,12 @@ List of `string` values
 "current_line_highlight": "all"
 ```
 
+## LSP Highlight Debounce
+
+- Description: The debounce delay before querying highlights from the language server based on the current cursor location.
+- Setting: `lsp_highlight_debounce`
+- Default: `75`
+
 ## Cursor Blink
 
 - Description: Whether or not the cursor blinks.
@@ -528,7 +534,11 @@ List of `string` values
   "git_diff": true,
   "search_results": true,
   "selected_symbol": true,
-  "diagnostics": true
+  "diagnostics": "all",
+  "axes": {
+    "horizontal": true,
+    "vertical": true,
+  },
 },
 ```
 
@@ -614,8 +624,81 @@ List of `string` values
 
 ### Diagnostics
 
-- Description: Whether to show diagnostic indicators in the scrollbar.
+- Description: Which diagnostic indicators to show in the scrollbar.
 - Setting: `diagnostics`
+- Default: `all`
+
+**Options**
+
+1. Show all diagnostics:
+
+```json
+{
+  "diagnostics": "all"
+}
+```
+
+2. Do not show any diagnostics:
+
+```json
+{
+  "diagnostics": "none"
+}
+```
+
+3. Show only errors:
+
+```json
+{
+  "diagnostics": "error"
+}
+```
+
+4. Show only errors and warnings:
+
+```json
+{
+  "diagnostics": "warning"
+}
+```
+
+5. Show only errors, warnings, and information:
+
+```json
+{
+  "diagnostics": "information"
+}
+```
+
+### Axes
+
+- Description: Forcefully enable or disable the scrollbar for each axis
+- Setting: `axes`
+- Default:
+
+```json
+"scrollbar": {
+  "axes": {
+    "horizontal": true,
+    "vertical": true,
+  },
+}
+```
+
+#### Horizontal
+
+- Description: When false, forcefully disables the horizontal scrollbar. Otherwise, obey other settings.
+- Setting: `horizontal`
+- Default: `true`
+
+**Options**
+
+`boolean` values
+
+#### Vertical
+
+- Description: When false, forcefully disables the vertical scrollbar. Otherwise, obey other settings.
+- Setting: `vertical`
 - Default: `true`
 
 **Options**
@@ -913,10 +996,12 @@ WARNING: `{buffer_path}` should not be used to direct your formatter to read fro
 ```json
 {
   "formatter": [
-    {"language_server": {"name": "rust-analyzer"}},
-    {"external": {
-      "command": "sed",
-      "arguments": ["-e", "s/ *$//"]
+    { "language_server": { "name": "rust-analyzer" } },
+    {
+      "external": {
+        "command": "sed",
+        "arguments": ["-e", "s/ *$//"]
+      }
     }
   ]
 }
@@ -1592,6 +1677,7 @@ Or to set a `socks5` proxy:
 2. `prefer_line` (deprecated, same as `none`)
 3. `editor_width` to wrap lines that overflow the editor width
 4. `preferred_line_length` to wrap lines that overflow `preferred_line_length` config value
+5. `bounded` to wrap lines at the minimum of `editor_width` and `preferred_line_length`
 
 ## Wrap Guides (Vertical Rulers)
 
@@ -1678,7 +1764,10 @@ List of `integer` column numbers
     "toolbar": {
       "breadcrumbs": true
     },
-    "working_directory": "current_project_directory"
+    "working_directory": "current_project_directory",
+    "scrollbar": {
+      "show": null
+    }
   }
 }
 ```
@@ -2178,6 +2267,7 @@ Run the `theme selector: toggle` action in the command palette to see a current 
     "button": true,
     "default_width": 240,
     "dock": "left",
+    "entry_spacing": "comfortable",
     "file_icons": true,
     "folder_icons": true,
     "git_status": true,
@@ -2216,6 +2306,30 @@ Run the `theme selector: toggle` action in the command palette to see a current 
 ```json
 {
   "dock": "right"
+}
+```
+
+### Entry Spacing
+
+- Description: Spacing between worktree entries
+- Setting: `entry_spacing`
+- Default: `comfortable`
+
+**Options**
+
+1. Comfortable entry spacing
+
+```json
+{
+  "entry_spacing": "comfortable"
+}
+```
+
+2. Standard entry spacing
+
+```json
+{
+  "entry_spacing": "standard"
 }
 ```
 

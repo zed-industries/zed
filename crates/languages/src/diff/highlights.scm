@@ -1,3 +1,5 @@
+(comment) @comment
+
 [
   (addition)
   (new_file)
@@ -12,4 +14,35 @@
 
 (location) @attribute
 
-(command) @function
+(command
+  "diff" @function
+  (argument) @variable.parameter)
+
+(filename) @string.special.path
+
+(mode) @number
+
+([
+  ".."
+  "+"
+  "++"
+  "+++"
+  "++++"
+  "-"
+  "--"
+  "---"
+  "----"
+] @punctuation.special)
+
+[
+  (binary_change)
+  (similarity)
+  (file_change)
+] @label
+
+(index
+  "index" @keyword)
+
+(similarity
+  (score) @number
+  "%" @number)

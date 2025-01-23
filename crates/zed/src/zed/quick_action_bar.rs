@@ -1,16 +1,16 @@
 mod markdown_preview;
 mod repl_menu;
 
-use assistant::assistant_settings::AssistantSettings;
 use assistant::AssistantPanel;
+use assistant_settings::AssistantSettings;
 use editor::actions::{
     AddSelectionAbove, AddSelectionBelow, DuplicateLineDown, GoToDiagnostic, GoToHunk,
     GoToPrevDiagnostic, GoToPrevHunk, MoveLineDown, MoveLineUp, SelectAll, SelectLargerSyntaxNode,
-    SelectNext, SelectSmallerSyntaxNode, ToggleGoToLine, ToggleOutline,
+    SelectNext, SelectSmallerSyntaxNode, ToggleGoToLine,
 };
 use editor::{Editor, EditorSettings};
 use gpui::{
-    Action, AnchorCorner, ClickEvent, ElementId, EventEmitter, FocusHandle, FocusableView,
+    Action, ClickEvent, Corner, ElementId, EventEmitter, FocusHandle, FocusableView,
     InteractiveElement, ParentElement, Render, Styled, Subscription, View, ViewContext, WeakView,
 };
 use search::{buffer_search, BufferSearchBar};
@@ -23,7 +23,7 @@ use vim_mode_setting::VimModeSetting;
 use workspace::{
     item::ItemHandle, ToolbarItemEvent, ToolbarItemLocation, ToolbarItemView, Workspace,
 };
-use zed_actions::InlineAssist;
+use zed_actions::{assistant::InlineAssist, outline::ToggleOutline};
 
 pub struct QuickActionBar {
     _inlay_hints_enabled_subscription: Option<Subscription>,
@@ -94,24 +94,18 @@ impl Render for QuickActionBar {
             git_blame_inline_enabled,
             show_git_blame_gutter,
             auto_signature_help_enabled,
-        ) = {
-            let editor = editor.read(cx);
-            let selection_menu_enabled = editor.selection_menu_enabled(cx);
-            let inlay_hints_enabled = editor.inlay_hints_enabled();
-            let supports_inlay_hints = editor.supports_inlay_hints(cx);
-            let git_blame_inline_enabled = editor.git_blame_inline_enabled();
-            let show_git_blame_gutter = editor.show_git_blame_gutter();
-            let auto_signature_help_enabled = editor.auto_signature_help_enabled(cx);
-
+            inline_completions_enabled,
+        ) = editor.update(cx, |editor, cx| {
             (
-                selection_menu_enabled,
-                inlay_hints_enabled,
-                supports_inlay_hints,
-                git_blame_inline_enabled,
-                show_git_blame_gutter,
-                auto_signature_help_enabled,
+                editor.selection_menu_enabled(cx),
+                editor.inlay_hints_enabled(),
+                editor.supports_inlay_hints(cx),
+                editor.git_blame_inline_enabled(),
+                editor.show_git_blame_gutter(),
+                editor.auto_signature_help_enabled(cx),
+                editor.inline_completions_enabled(cx),
             )
-        };
+        });
 
         let focus_handle = editor.read(cx).focus_handle(cx);
 
@@ -162,13 +156,13 @@ impl Render for QuickActionBar {
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
-                        .selected(self.toggle_selections_handle.is_deployed())
+                        .toggle_state(self.toggle_selections_handle.is_deployed())
                         .when(!self.toggle_selections_handle.is_deployed(), |this| {
                             this.tooltip(|cx| Tooltip::text("Selection Controls", cx))
                         }),
                 )
                 .with_handle(self.toggle_selections_handle.clone())
-                .anchor(AnchorCorner::TopRight)
+                .anchor(Corner::TopRight)
                 .menu(move |cx| {
                     let focus = focus.clone();
                     let menu = ContextMenu::build(cx, move |menu, _| {
@@ -212,12 +206,12 @@ impl Render for QuickActionBar {
                         .shape(IconButtonShape::Square)
                         .icon_size(IconSize::Small)
                         .style(ButtonStyle::Subtle)
-                        .selected(self.toggle_settings_handle.is_deployed())
+                        .toggle_state(self.toggle_settings_handle.is_deployed())
                         .when(!self.toggle_settings_handle.is_deployed(), |this| {
                             this.tooltip(|cx| Tooltip::text("Editor Controls", cx))
                         }),
                 )
-                .anchor(AnchorCorner::TopRight)
+                .anchor(Corner::TopRight)
                 .with_handle(self.toggle_settings_handle.clone())
                 .menu(move |cx| {
                     let menu = ContextMenu::build(cx, |mut menu, _| {
@@ -275,6 +269,26 @@ impl Render for QuickActionBar {
                                         .update(cx, |editor, cx| {
                                             editor.toggle_auto_signature_help_menu(
                                                 &editor::actions::ToggleAutoSignatureHelp,
+                                                cx,
+                                            );
+                                        })
+                                        .ok();
+                                }
+                            },
+                        );
+
+                        menu = menu.toggleable_entry(
+                            "Inline Completions",
+                            inline_completions_enabled,
+                            IconPosition::Start,
+                            Some(editor::actions::ToggleInlineCompletions.boxed_clone()),
+                            {
+                                let editor = editor.clone();
+                                move |cx| {
+                                    editor
+                                        .update(cx, |editor, cx| {
+                                            editor.toggle_inline_completions(
+                                                &editor::actions::ToggleInlineCompletions,
                                                 cx,
                                             );
                                         })
@@ -349,7 +363,7 @@ impl Render for QuickActionBar {
 
         h_flex()
             .id("quick action bar")
-            .gap(DynamicSpacing::Base06.rems(cx))
+            .gap(DynamicSpacing::Base04.rems(cx))
             .children(self.render_repl_menu(cx))
             .children(self.render_toggle_markdown_preview(self.workspace.clone(), cx))
             .children(search_button)
@@ -407,7 +421,7 @@ impl RenderOnce for QuickActionBarButton {
             .shape(IconButtonShape::Square)
             .icon_size(IconSize::Small)
             .style(ButtonStyle::Subtle)
-            .selected(self.toggled)
+            .toggle_state(self.toggled)
             .tooltip(move |cx| {
                 Tooltip::for_action_in(tooltip.clone(), &*action, &self.focus_handle, cx)
             })
@@ -427,16 +441,19 @@ impl ToolbarItemView for QuickActionBar {
 
             if let Some(editor) = active_item.downcast::<Editor>() {
                 let mut inlay_hints_enabled = editor.read(cx).inlay_hints_enabled();
-                let mut supports_inlay_hints = editor.read(cx).supports_inlay_hints(cx);
+                let mut supports_inlay_hints =
+                    editor.update(cx, |this, cx| this.supports_inlay_hints(cx));
                 self._inlay_hints_enabled_subscription =
                     Some(cx.observe(&editor, move |_, editor, cx| {
-                        let editor = editor.read(cx);
-                        let new_inlay_hints_enabled = editor.inlay_hints_enabled();
-                        let new_supports_inlay_hints = editor.supports_inlay_hints(cx);
-                        let should_notify = inlay_hints_enabled != new_inlay_hints_enabled
-                            || supports_inlay_hints != new_supports_inlay_hints;
-                        inlay_hints_enabled = new_inlay_hints_enabled;
-                        supports_inlay_hints = new_supports_inlay_hints;
+                        let mut should_notify = false;
+                        editor.update(cx, |editor, cx| {
+                            let new_inlay_hints_enabled = editor.inlay_hints_enabled();
+                            let new_supports_inlay_hints = editor.supports_inlay_hints(cx);
+                            should_notify = inlay_hints_enabled != new_inlay_hints_enabled
+                                || supports_inlay_hints != new_supports_inlay_hints;
+                            inlay_hints_enabled = new_inlay_hints_enabled;
+                            supports_inlay_hints = new_supports_inlay_hints;
+                        });
                         if should_notify {
                             cx.notify()
                         }

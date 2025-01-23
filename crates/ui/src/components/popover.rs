@@ -3,9 +3,12 @@
 use crate::prelude::*;
 use crate::v_flex;
 use gpui::{
-    div, AnyElement, Element, IntoElement, ParentElement, RenderOnce, Styled, WindowContext,
+    div, AnyElement, Element, IntoElement, ParentElement, Pixels, RenderOnce, Styled, WindowContext,
 };
 use smallvec::SmallVec;
+
+/// Y height added beyond the size of the contents.
+pub const POPOVER_Y_PADDING: Pixels = px(8.);
 
 /// A popover is used to display a menu or show some options.
 ///
@@ -45,7 +48,12 @@ impl RenderOnce for Popover {
         div()
             .flex()
             .gap_1()
-            .child(v_flex().elevation_2(cx).py_1().children(self.children))
+            .child(
+                v_flex()
+                    .elevation_2(cx)
+                    .py(POPOVER_Y_PADDING / 2.)
+                    .children(self.children),
+            )
             .when_some(self.aside, |this, aside| {
                 this.child(
                     v_flex()

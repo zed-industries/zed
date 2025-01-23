@@ -1,7 +1,7 @@
 use crate::{
     item::{
         ActivateOnClose, ClosePosition, Item, ItemHandle, ItemSettings, PreviewTabsSettings,
-        ShowDiagnostics, TabContentParams, WeakItemHandle,
+        ShowDiagnostics, TabContentParams, TabTooltipContent, WeakItemHandle,
     },
     move_item,
     notifications::NotifyResultExt,
@@ -14,17 +14,18 @@ use anyhow::Result;
 use collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
-    actions, anchored, deferred, impl_actions, prelude::*, Action, AnchorCorner, AnyElement,
-    AppContext, AsyncWindowContext, ClickEvent, ClipboardItem, Div, DragMoveEvent, EntityId,
+    actions, anchored, deferred, impl_actions, prelude::*, Action, AnyElement, AppContext,
+    AsyncWindowContext, ClickEvent, ClipboardItem, Corner, Div, DragMoveEvent, EntityId,
     EventEmitter, ExternalPaths, FocusHandle, FocusOutEvent, FocusableView, KeyContext, Model,
     MouseButton, MouseDownEvent, NavigationDirection, Pixels, Point, PromptLevel, Render,
-    ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakView,
-    WindowContext,
+    ScrollHandle, Subscription, Task, View, ViewContext, VisualContext, WeakFocusHandle, WeakModel,
+    WeakView, WindowContext,
 };
 use itertools::Itertools;
 use language::DiagnosticSeverity;
 use parking_lot::Mutex;
 use project::{Project, ProjectEntryId, ProjectPath, WorktreeId};
+use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::{Settings, SettingsStore};
 use std::{
@@ -71,7 +72,7 @@ impl DraggedSelection {
     }
 }
 
-#[derive(PartialEq, Clone, Copy, Deserialize, Debug)]
+#[derive(Clone, Copy, PartialEq, Debug, Deserialize, JsonSchema)]
 #[serde(rename_all = "camelCase")]
 pub enum SaveIntent {
     /// write all files (even if unchanged)
@@ -92,16 +93,16 @@ pub enum SaveIntent {
     Skip,
 }
 
-#[derive(Clone, Deserialize, PartialEq, Debug)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 pub struct ActivateItem(pub usize);
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseActiveItem {
     pub save_intent: Option<SaveIntent>,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseInactiveItems {
     pub save_intent: Option<SaveIntent>,
@@ -109,7 +110,7 @@ pub struct CloseInactiveItems {
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseAllItems {
     pub save_intent: Option<SaveIntent>,
@@ -117,34 +118,35 @@ pub struct CloseAllItems {
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseCleanItems {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseItemsToTheRight {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct CloseItemsToTheLeft {
     #[serde(default)]
     pub close_pinned: bool,
 }
 
-#[derive(Clone, PartialEq, Debug, Deserialize, Default)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 #[serde(rename_all = "camelCase")]
 pub struct RevealInProjectPanel {
+    #[serde(skip)]
     pub entry_id: Option<u64>,
 }
 
-#[derive(Default, PartialEq, Clone, Deserialize)]
+#[derive(Clone, PartialEq, Debug, Deserialize, JsonSchema, Default)]
 pub struct DeploySearch {
     #[serde(default)]
     pub replace_enabled: bool,
@@ -206,6 +208,7 @@ pub enum Event {
     },
     ActivateItem {
         local: bool,
+        focus_changed: bool,
     },
     Remove {
         focus_on_pane: Option<View<Pane>>,
@@ -236,7 +239,7 @@ impl fmt::Debug for Event {
                 .debug_struct("AddItem")
                 .field("item", &item.item_id())
                 .finish(),
-            Event::ActivateItem { local } => f
+            Event::ActivateItem { local, .. } => f
                 .debug_struct("ActivateItem")
                 .field("local", local)
                 .finish(),
@@ -286,7 +289,7 @@ pub struct Pane {
     nav_history: NavHistory,
     toolbar: View<Toolbar>,
     pub(crate) workspace: WeakView<Workspace>,
-    project: Model<Project>,
+    project: WeakModel<Project>,
     drag_split_direction: Option<SplitDirection>,
     can_drop_predicate: Option<Arc<dyn Fn(&dyn Any, &mut WindowContext) -> bool>>,
     custom_drop_handle:
@@ -411,7 +414,7 @@ impl Pane {
             tab_bar_scroll_handle: ScrollHandle::new(),
             drag_split_direction: None,
             workspace,
-            project,
+            project: project.downgrade(),
             can_drop_predicate,
             custom_drop_handle: None,
             can_split_predicate: None,
@@ -432,7 +435,7 @@ impl Pane {
                                     .icon_size(IconSize::Small)
                                     .tooltip(|cx| Tooltip::text("New...", cx)),
                             )
-                            .anchor(AnchorCorner::TopRight)
+                            .anchor(Corner::TopRight)
                             .with_handle(pane.new_item_context_menu_handle.clone())
                             .menu(move |cx| {
                                 Some(ContextMenu::build(cx, |menu, _| {
@@ -465,7 +468,7 @@ impl Pane {
                                     .icon_size(IconSize::Small)
                                     .tooltip(|cx| Tooltip::text("Split Pane", cx)),
                             )
-                            .anchor(AnchorCorner::TopRight)
+                            .anchor(Corner::TopRight)
                             .with_handle(pane.split_item_context_menu_handle.clone())
                             .menu(move |cx| {
                                 ContextMenu::build(cx, |menu, _| {
@@ -481,7 +484,7 @@ impl Pane {
                         let zoomed = pane.is_zoomed();
                         IconButton::new("toggle_zoom", IconName::Maximize)
                             .icon_size(IconSize::Small)
-                            .selected(zoomed)
+                            .toggle_state(zoomed)
                             .selected_icon(IconName::Minimize)
                             .on_click(cx.listener(|pane, _, cx| {
                                 pane.toggle_zoom(&crate::ToggleZoom, cx);
@@ -622,9 +625,12 @@ impl Pane {
     }
 
     fn update_diagnostics(&mut self, cx: &mut ViewContext<Self>) {
+        let Some(project) = self.project.upgrade() else {
+            return;
+        };
         let show_diagnostics = ItemSettings::get_global(cx).show_diagnostics;
         self.diagnostics = if show_diagnostics != ShowDiagnostics::Off {
-            self.project
+            project
                 .read(cx)
                 .diagnostic_summaries(false, cx)
                 .filter_map(|(project_path, _, diagnostic_summary)| {
@@ -638,9 +644,9 @@ impl Pane {
                         None
                     }
                 })
-                .collect::<HashMap<_, _>>()
+                .collect()
         } else {
-            Default::default()
+            HashMap::default()
         }
     }
 
@@ -896,9 +902,14 @@ impl Pane {
         destination_index: Option<usize>,
         cx: &mut ViewContext<Self>,
     ) {
+        self.close_items_over_max_tabs(cx);
+
         if item.is_singleton(cx) {
             if let Some(&entry_id) = item.project_entry_ids(cx).first() {
-                let project = self.project.read(cx);
+                let Some(project) = self.project.upgrade() else {
+                    return;
+                };
+                let project = project.read(cx);
                 if let Some(project_path) = project.path_for_entry(entry_id, cx) {
                     let abs_path = project.absolute_path(&project_path, cx);
                     self.nav_history
@@ -1084,9 +1095,6 @@ impl Pane {
                     prev_item.deactivated(cx);
                 }
             }
-            cx.emit(Event::ActivateItem {
-                local: activate_pane,
-            });
 
             if let Some(newly_active_item) = self.items.get(index) {
                 self.activation_history
@@ -1105,6 +1113,11 @@ impl Pane {
             if focus_item {
                 self.focus_active_item(cx);
             }
+
+            cx.emit(Event::ActivateItem {
+                local: activate_pane,
+                focus_changed: focus_item,
+            });
 
             if !self.is_tab_pinned(index) {
                 self.tab_bar_scroll_handle
@@ -1232,12 +1245,13 @@ impl Pane {
         }
         let active_item_id = self.items[self.active_item_index].item_id();
         let non_closeable_items = self.get_non_closeable_item_ids(action.close_pinned);
-        Some(self.close_items_to_the_left_by_id(active_item_id, non_closeable_items, cx))
+        Some(self.close_items_to_the_left_by_id(active_item_id, action, non_closeable_items, cx))
     }
 
     pub fn close_items_to_the_left_by_id(
         &mut self,
         item_id: EntityId,
+        action: &CloseItemsToTheLeft,
         non_closeable_items: Vec<EntityId>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
@@ -1247,7 +1261,9 @@ impl Pane {
             .map(|item| item.item_id())
             .collect();
         self.close_items(cx, SaveIntent::Close, move |item_id| {
-            item_ids.contains(&item_id) && !non_closeable_items.contains(&item_id)
+            item_ids.contains(&item_id)
+                && !action.close_pinned
+                && !non_closeable_items.contains(&item_id)
         })
     }
 
@@ -1261,12 +1277,13 @@ impl Pane {
         }
         let active_item_id = self.items[self.active_item_index].item_id();
         let non_closeable_items = self.get_non_closeable_item_ids(action.close_pinned);
-        Some(self.close_items_to_the_right_by_id(active_item_id, non_closeable_items, cx))
+        Some(self.close_items_to_the_right_by_id(active_item_id, action, non_closeable_items, cx))
     }
 
     pub fn close_items_to_the_right_by_id(
         &mut self,
         item_id: EntityId,
+        action: &CloseItemsToTheRight,
         non_closeable_items: Vec<EntityId>,
         cx: &mut ViewContext<Self>,
     ) -> Task<Result<()>> {
@@ -1277,7 +1294,9 @@ impl Pane {
             .map(|item| item.item_id())
             .collect();
         self.close_items(cx, SaveIntent::Close, move |item_id| {
-            item_ids.contains(&item_id) && !non_closeable_items.contains(&item_id)
+            item_ids.contains(&item_id)
+                && !action.close_pinned
+                && !non_closeable_items.contains(&item_id)
         })
     }
 
@@ -1296,6 +1315,43 @@ impl Pane {
             action.save_intent.unwrap_or(SaveIntent::Close),
             |item_id| !non_closeable_items.contains(&item_id),
         ))
+    }
+
+    pub fn close_items_over_max_tabs(&mut self, cx: &mut ViewContext<Self>) {
+        let Some(max_tabs) = WorkspaceSettings::get_global(cx).max_tabs.map(|i| i.get()) else {
+            return;
+        };
+
+        // Reduce over the activation history to get every dirty items up to max_tabs
+        // count.
+        let mut index_list = Vec::new();
+        let mut items_len = self.items_len();
+        let mut indexes: HashMap<EntityId, usize> = HashMap::default();
+        for (index, item) in self.items.iter().enumerate() {
+            indexes.insert(item.item_id(), index);
+        }
+        for entry in self.activation_history.iter() {
+            if items_len < max_tabs {
+                break;
+            }
+            let Some(&index) = indexes.get(&entry.entity_id) else {
+                continue;
+            };
+            if let Some(true) = self.items.get(index).map(|item| item.is_dirty(cx)) {
+                continue;
+            }
+
+            index_list.push(index);
+            items_len -= 1;
+        }
+        // The sort and reverse is necessary since we remove items
+        // using their index position, hence removing from the end
+        // of the list first to avoid changing indexes.
+        index_list.sort_unstable();
+        index_list
+            .iter()
+            .rev()
+            .for_each(|&index| self._remove_item(index, false, false, None, cx));
     }
 
     pub(super) fn file_names_for_prompt(
@@ -1429,7 +1485,7 @@ impl Pane {
                     // Always propose to save singleton files without any project paths: those cannot be saved via multibuffer, as require a file path selection modal.
                     || cx
                         .update(|cx| {
-                            item_to_close.is_dirty(cx)
+                            item_to_close.can_save(cx) && item_to_close.is_dirty(cx)
                                 && item_to_close.is_singleton(cx)
                                 && item_to_close.project_path(cx).is_none()
                         })
@@ -1891,7 +1947,7 @@ impl Pane {
         }
     }
 
-    fn toggle_pin_tab(&mut self, _: &TogglePinTab, cx: &mut ViewContext<'_, Self>) {
+    fn toggle_pin_tab(&mut self, _: &TogglePinTab, cx: &mut ViewContext<Self>) {
         if self.items.is_empty() {
             return;
         }
@@ -1903,12 +1959,16 @@ impl Pane {
         }
     }
 
-    fn pin_tab_at(&mut self, ix: usize, cx: &mut ViewContext<'_, Self>) {
+    fn pin_tab_at(&mut self, ix: usize, cx: &mut ViewContext<Self>) {
         maybe!({
             let pane = cx.view().clone();
             let destination_index = self.pinned_tab_count.min(ix);
             self.pinned_tab_count += 1;
             let id = self.item_for_index(ix)?.item_id();
+
+            if self.is_active_preview_item(id) {
+                self.set_preview_item_id(None, cx);
+            }
 
             self.workspace
                 .update(cx, |_, cx| {
@@ -1920,7 +1980,7 @@ impl Pane {
         });
     }
 
-    fn unpin_tab_at(&mut self, ix: usize, cx: &mut ViewContext<'_, Self>) {
+    fn unpin_tab_at(&mut self, ix: usize, cx: &mut ViewContext<Self>) {
         maybe!({
             let pane = cx.view().clone();
             self.pinned_tab_count = self.pinned_tab_count.checked_sub(1)?;
@@ -1952,7 +2012,7 @@ impl Pane {
         item: &dyn ItemHandle,
         detail: usize,
         focus_handle: &FocusHandle,
-        cx: &mut ViewContext<'_, Pane>,
+        cx: &mut ViewContext<Pane>,
     ) -> impl IntoElement {
         let is_active = ix == self.active_item_index;
         let is_preview = self
@@ -2038,7 +2098,7 @@ impl Pane {
                 ClosePosition::Left => ui::TabCloseSide::Start,
                 ClosePosition::Right => ui::TabCloseSide::End,
             })
-            .selected(is_active)
+            .toggle_state(is_active)
             .on_click(
                 cx.listener(move |pane: &mut Self, _, cx| pane.activate_item(ix, true, true, cx)),
             )
@@ -2091,8 +2151,11 @@ impl Pane {
                 this.drag_split_direction = None;
                 this.handle_external_paths_drop(paths, cx)
             }))
-            .when_some(item.tab_tooltip_text(cx), |tab, text| {
-                tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
+            .when_some(item.tab_tooltip_content(cx), |tab, content| match content {
+                TabTooltipContent::Text(text) => {
+                    tab.tooltip(move |cx| Tooltip::text(text.clone(), cx))
+                }
+                TabTooltipContent::Custom(element_fn) => tab.tooltip(move |cx| element_fn(cx)),
             })
             .start_slot::<Indicator>(indicator)
             .map(|this| {
@@ -2205,6 +2268,9 @@ impl Pane {
                             cx.handler_for(&pane, move |pane, cx| {
                                 pane.close_items_to_the_left_by_id(
                                     item_id,
+                                    &CloseItemsToTheLeft {
+                                        close_pinned: false,
+                                    },
                                     pane.get_non_closeable_item_ids(false),
                                     cx,
                                 )
@@ -2219,6 +2285,9 @@ impl Pane {
                             cx.handler_for(&pane, move |pane, cx| {
                                 pane.close_items_to_the_right_by_id(
                                     item_id,
+                                    &CloseItemsToTheRight {
+                                        close_pinned: false,
+                                    },
                                     pane.get_non_closeable_item_ids(false),
                                     cx,
                                 )
@@ -2326,11 +2395,13 @@ impl Pane {
                                     entry_id: Some(entry_id),
                                 })),
                                 cx.handler_for(&pane, move |pane, cx| {
-                                    pane.project.update(cx, |_, cx| {
-                                        cx.emit(project::Event::RevealInProjectPanel(
-                                            ProjectEntryId::from_proto(entry_id),
-                                        ))
-                                    });
+                                    pane.project
+                                        .update(cx, |_, cx| {
+                                            cx.emit(project::Event::RevealInProjectPanel(
+                                                ProjectEntryId::from_proto(entry_id),
+                                            ))
+                                        })
+                                        .ok();
                                 }),
                             )
                             .when_some(parent_abs_path, |menu, parent_abs_path| {
@@ -2357,7 +2428,7 @@ impl Pane {
         })
     }
 
-    fn render_tab_bar(&mut self, cx: &mut ViewContext<'_, Pane>) -> impl IntoElement {
+    fn render_tab_bar(&mut self, cx: &mut ViewContext<Pane>) -> impl IntoElement {
         let focus_handle = self.focus_handle.clone();
         let navigate_backward = IconButton::new("navigate_backward", IconName::ArrowLeft)
             .icon_size(IconSize::Small)
@@ -2467,12 +2538,7 @@ impl Pane {
 
     pub fn render_menu_overlay(menu: &View<ContextMenu>) -> Div {
         div().absolute().bottom_0().right_0().size_0().child(
-            deferred(
-                anchored()
-                    .anchor(AnchorCorner::TopRight)
-                    .child(menu.clone()),
-            )
-            .with_priority(1),
+            deferred(anchored().anchor(Corner::TopRight).child(menu.clone())).with_priority(1),
         )
     }
 
@@ -2538,12 +2604,7 @@ impl Pane {
         }
     }
 
-    fn handle_tab_drop(
-        &mut self,
-        dragged_tab: &DraggedTab,
-        ix: usize,
-        cx: &mut ViewContext<'_, Self>,
-    ) {
+    fn handle_tab_drop(&mut self, dragged_tab: &DraggedTab, ix: usize, cx: &mut ViewContext<Self>) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
             if let ControlFlow::Break(()) = custom_drop_handle(self, dragged_tab, cx) {
                 return;
@@ -2609,7 +2670,7 @@ impl Pane {
         &mut self,
         dragged_selection: &DraggedSelection,
         dragged_onto: Option<usize>,
-        cx: &mut ViewContext<'_, Self>,
+        cx: &mut ViewContext<Self>,
     ) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
             if let ControlFlow::Break(()) = custom_drop_handle(self, dragged_selection, cx) {
@@ -2627,7 +2688,7 @@ impl Pane {
         &mut self,
         project_entry_id: &ProjectEntryId,
         target: Option<usize>,
-        cx: &mut ViewContext<'_, Self>,
+        cx: &mut ViewContext<Self>,
     ) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
             if let ControlFlow::Break(()) = custom_drop_handle(self, project_entry_id, cx) {
@@ -2692,11 +2753,7 @@ impl Pane {
             .log_err();
     }
 
-    fn handle_external_paths_drop(
-        &mut self,
-        paths: &ExternalPaths,
-        cx: &mut ViewContext<'_, Self>,
-    ) {
+    fn handle_external_paths_drop(&mut self, paths: &ExternalPaths, cx: &mut ViewContext<Self>) {
         if let Some(custom_drop_handle) = self.custom_drop_handle.clone() {
             if let ControlFlow::Break(()) = custom_drop_handle(self, paths, cx) {
                 return;
@@ -2816,7 +2873,10 @@ impl Render for Pane {
 
         let should_display_tab_bar = self.should_display_tab_bar.clone();
         let display_tab_bar = should_display_tab_bar(cx);
-        let is_local = self.project.read(cx).is_local();
+        let Some(project) = self.project.upgrade() else {
+            return div().track_focus(&self.focus_handle(cx));
+        };
+        let is_local = project.read(cx).is_local();
 
         v_flex()
             .key_context(key_context)
@@ -2926,9 +2986,11 @@ impl Render for Pane {
                         .map(ProjectEntryId::from_proto)
                         .or_else(|| pane.active_item()?.project_entry_ids(cx).first().copied());
                     if let Some(entry_id) = entry_id {
-                        pane.project.update(cx, |_, cx| {
-                            cx.emit(project::Event::RevealInProjectPanel(entry_id))
-                        });
+                        pane.project
+                            .update(cx, |_, cx| {
+                                cx.emit(project::Event::RevealInProjectPanel(entry_id))
+                            })
+                            .ok();
                     }
                 }),
             )
@@ -2936,7 +2998,7 @@ impl Render for Pane {
                 pane.child(self.render_tab_bar(cx))
             })
             .child({
-                let has_worktrees = self.project.read(cx).worktrees(cx).next().is_some();
+                let has_worktrees = project.read(cx).worktrees(cx).next().is_some();
                 // main content
                 div()
                     .flex_1()
@@ -3041,8 +3103,14 @@ impl Render for Pane {
 
 impl ItemNavHistory {
     pub fn push<D: 'static + Send + Any>(&mut self, data: Option<D>, cx: &mut WindowContext) {
-        self.history
-            .push(data, self.item.clone(), self.is_preview, cx);
+        if self
+            .item
+            .upgrade()
+            .is_some_and(|item| item.include_in_nav_history())
+        {
+            self.history
+                .push(data, self.item.clone(), self.is_preview, cx);
+        }
     }
 
     pub fn pop_backward(&mut self, cx: &mut WindowContext) -> Option<NavigationEntry> {
@@ -3273,7 +3341,7 @@ impl Render for DraggedTab {
             cx,
         );
         Tab::new("")
-            .selected(self.is_active)
+            .toggle_state(self.is_active)
             .child(label)
             .render(cx)
             .font(ui_font)
@@ -3282,6 +3350,8 @@ impl Render for DraggedTab {
 
 #[cfg(test)]
 mod tests {
+    use std::num::NonZero;
+
     use super::*;
     use crate::item::test::{TestItem, TestProjectItem};
     use gpui::{TestAppContext, VisualTestContext};
@@ -3303,6 +3373,54 @@ mod tests {
                 .close_active_item(&CloseActiveItem { save_intent: None }, cx)
                 .is_none())
         });
+    }
+
+    #[gpui::test]
+    async fn test_add_item_capped_to_max_tabs(cx: &mut TestAppContext) {
+        init_test(cx);
+        let fs = FakeFs::new(cx.executor());
+
+        let project = Project::test(fs, None, cx).await;
+        let (workspace, cx) = cx.add_window_view(|cx| Workspace::test_new(project.clone(), cx));
+        let pane = workspace.update(cx, |workspace, _| workspace.active_pane().clone());
+
+        for i in 0..7 {
+            add_labeled_item(&pane, format!("{}", i).as_str(), false, cx);
+        }
+        set_max_tabs(cx, Some(5));
+        add_labeled_item(&pane, "7", false, cx);
+        // Remove items to respect the max tab cap.
+        assert_item_labels(&pane, ["3", "4", "5", "6", "7*"], cx);
+        pane.update(cx, |pane, cx| {
+            pane.activate_item(0, false, false, cx);
+        });
+        add_labeled_item(&pane, "X", false, cx);
+        // Respect activation order.
+        assert_item_labels(&pane, ["3", "X*", "5", "6", "7"], cx);
+
+        for i in 0..7 {
+            add_labeled_item(&pane, format!("D{}", i).as_str(), true, cx);
+        }
+        // Keeps dirty items, even over max tab cap.
+        assert_item_labels(
+            &pane,
+            ["D0^", "D1^", "D2^", "D3^", "D4^", "D5^", "D6*^"],
+            cx,
+        );
+
+        set_max_tabs(cx, None);
+        for i in 0..7 {
+            add_labeled_item(&pane, format!("N{}", i).as_str(), false, cx);
+        }
+        // No cap when max tabs is None.
+        assert_item_labels(
+            &pane,
+            [
+                "D0^", "D1^", "D2^", "D3^", "D4^", "D5^", "D6^", "N0", "N1", "N2", "N3", "N4",
+                "N5", "N6*",
+            ],
+            cx,
+        );
     }
 
     #[gpui::test]
@@ -3936,11 +4054,8 @@ mod tests {
 
         cx.executor().run_until_parked();
         cx.simulate_prompt_answer(2);
-        cx.executor().run_until_parked();
-        cx.simulate_prompt_answer(2);
-        cx.executor().run_until_parked();
         save.await.unwrap();
-        assert_item_labels(&pane, ["A*^", "B^", "C^"], cx);
+        assert_item_labels(&pane, [], cx);
     }
 
     #[gpui::test]
@@ -3981,6 +4096,14 @@ mod tests {
             theme::init(LoadThemes::JustBase, cx);
             crate::init_settings(cx);
             Project::init_settings(cx);
+        });
+    }
+
+    fn set_max_tabs(cx: &mut TestAppContext, value: Option<usize>) {
+        cx.update_global(|store: &mut SettingsStore, cx| {
+            store.update_user_settings::<WorkspaceSettings>(cx, |settings| {
+                settings.max_tabs = value.map(|v| NonZero::new(v).unwrap())
+            });
         });
     }
 

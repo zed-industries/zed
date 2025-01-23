@@ -49,17 +49,17 @@ impl PaintingViewer {
         let height = square_bounds.size.height;
         let horizontal_offset = height;
         let vertical_offset = px(30.);
-        let mut path = Path::new(square_bounds.lower_left());
+        let mut path = Path::new(square_bounds.bottom_left());
         path.curve_to(
             square_bounds.origin + point(horizontal_offset, vertical_offset),
             square_bounds.origin + point(px(0.0), vertical_offset),
         );
-        path.line_to(square_bounds.upper_right() + point(-horizontal_offset, vertical_offset));
+        path.line_to(square_bounds.top_right() + point(-horizontal_offset, vertical_offset));
         path.curve_to(
-            square_bounds.lower_right(),
-            square_bounds.upper_right() + point(px(0.0), vertical_offset),
+            square_bounds.bottom_right(),
+            square_bounds.top_right() + point(px(0.0), vertical_offset),
         );
-        path.line_to(square_bounds.lower_left());
+        path.line_to(square_bounds.bottom_left());
         lines.push(path);
 
         Self {

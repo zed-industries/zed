@@ -296,7 +296,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
                     .map(|(candidate_id, toolchain)| {
                         let path = Self::relativize_path(toolchain.path, &worktree_root_path);
                         let string = format!("{}{}", toolchain.name, path);
-                        StringMatchCandidate::new(candidate_id, string)
+                        StringMatchCandidate::new(candidate_id, &string)
                     })
                     .collect::<Vec<_>>();
                 match_strings(
@@ -345,7 +345,7 @@ impl PickerDelegate for ToolchainSelectorDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(HighlightedLabel::new(label, name_highlights))
                 .child(
                     HighlightedLabel::new(path, path_highlights)

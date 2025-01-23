@@ -6,7 +6,7 @@ use smallvec::SmallVec;
 use crate::{prelude::*, DynamicSpacing, ElevationIndex};
 
 /// A trait for buttons that can be Selected. Enables setting the [`ButtonStyle`] of a button when it is selected.
-pub trait SelectableButton: Selectable {
+pub trait SelectableButton: Toggleable {
     fn selected_style(self, style: ButtonStyle) -> Self;
 }
 
@@ -49,9 +49,9 @@ pub enum IconPosition {
 pub enum TintColor {
     #[default]
     Accent,
-    Negative,
+    Error,
     Warning,
-    Positive,
+    Success,
 }
 
 impl TintColor {
@@ -63,7 +63,7 @@ impl TintColor {
                 label_color: cx.theme().colors().text,
                 icon_color: cx.theme().colors().text,
             },
-            TintColor::Negative => ButtonLikeStyles {
+            TintColor::Error => ButtonLikeStyles {
                 background: cx.theme().status().error_background,
                 border_color: cx.theme().status().error_border,
                 label_color: cx.theme().colors().text,
@@ -75,7 +75,7 @@ impl TintColor {
                 label_color: cx.theme().colors().text,
                 icon_color: cx.theme().colors().text,
             },
-            TintColor::Positive => ButtonLikeStyles {
+            TintColor::Success => ButtonLikeStyles {
                 background: cx.theme().status().success_background,
                 border_color: cx.theme().status().success_border,
                 label_color: cx.theme().colors().text,
@@ -89,9 +89,9 @@ impl From<TintColor> for Color {
     fn from(tint: TintColor) -> Self {
         match tint {
             TintColor::Accent => Color::Accent,
-            TintColor::Negative => Color::Error,
+            TintColor::Error => Color::Error,
             TintColor::Warning => Color::Warning,
-            TintColor::Positive => Color::Success,
+            TintColor::Success => Color::Success,
         }
     }
 }
@@ -400,8 +400,8 @@ impl Disableable for ButtonLike {
     }
 }
 
-impl Selectable for ButtonLike {
-    fn selected(mut self, selected: bool) -> Self {
+impl Toggleable for ButtonLike {
+    fn toggle_state(mut self, selected: bool) -> Self {
         self.selected = selected;
         self
     }
@@ -487,6 +487,7 @@ impl RenderOnce for ButtonLike {
         self.base
             .h_flex()
             .id(self.id.clone())
+            .font_ui(cx)
             .group("")
             .flex_none()
             .h(self.height.unwrap_or(self.size.rems().into()))

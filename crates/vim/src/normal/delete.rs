@@ -28,25 +28,29 @@ impl Vim {
                         original_columns.insert(selection.id, original_head.column());
                         motion.expand_selection(map, selection, times, true, &text_layout_details);
 
+                        let start_point = selection.start.to_point(map);
+                        let next_line = map
+                            .buffer_snapshot
+                            .clip_point(Point::new(start_point.row + 1, 0), Bias::Left)
+                            .to_display_point(map);
                         match motion {
                             // Motion::NextWordStart on an empty line should delete it.
-                            Motion::NextWordStart { .. } => {
+                            Motion::NextWordStart { .. }
                                 if selection.is_empty()
                                     && map
                                         .buffer_snapshot
-                                        .line_len(MultiBufferRow(selection.start.to_point(map).row))
-                                        == 0
-                                {
-                                    selection.end = map
-                                        .buffer_snapshot
-                                        .clip_point(
-                                            Point::new(selection.start.to_point(map).row + 1, 0),
-                                            Bias::Left,
-                                        )
-                                        .to_display_point(map)
-                                }
+                                        .line_len(MultiBufferRow(start_point.row))
+                                        == 0 =>
+                            {
+                                selection.end = next_line
                             }
-                            Motion::EndOfDocument {} => {
+                            // Sentence motions, when done from start of line, include the newline
+                            Motion::SentenceForward | Motion::SentenceBackward
+                                if selection.start.column() == 0 =>
+                            {
+                                selection.end = next_line
+                            }
+                            Motion::EndOfDocument {} if times.is_none() => {
                                 // Deleting until the end of the document includes the last line, including
                                 // soft-wrapped lines.
                                 selection.end = map.max_point()
@@ -483,6 +487,41 @@ mod test {
     }
 
     #[gpui::test]
+    async fn test_delete_to_line(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.simulate(
+            "d 3 shift-g",
+            indoc! {"
+            The quick
+            brownˇ fox
+            jumps over
+            the lazy"},
+        )
+        .await
+        .assert_matches();
+        cx.simulate(
+            "d 3 shift-g",
+            indoc! {"
+            The quick
+            brown fox
+            jumps over
+            the lˇazy"},
+        )
+        .await
+        .assert_matches();
+        cx.simulate(
+            "d 2 shift-g",
+            indoc! {"
+            The quick
+            brown fox
+            jumps over
+            ˇ"},
+        )
+        .await
+        .assert_matches();
+    }
+
+    #[gpui::test]
     async fn test_delete_gg(cx: &mut gpui::TestAppContext) {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.simulate(
@@ -603,5 +642,63 @@ mod test {
         let mut cx = NeovimBackedTestContext::new(cx).await;
         cx.simulate("d t x", "ˇax").await.assert_matches();
         cx.simulate("d t x", "aˇx").await.assert_matches();
+    }
+
+    #[gpui::test]
+    async fn test_delete_sentence(cx: &mut gpui::TestAppContext) {
+        let mut cx = NeovimBackedTestContext::new(cx).await;
+        cx.simulate(
+            "d )",
+            indoc! {"
+            Fiˇrst. Second. Third.
+            Fourth.
+            "},
+        )
+        .await
+        .assert_matches();
+
+        cx.simulate(
+            "d )",
+            indoc! {"
+            First. Secˇond. Third.
+            Fourth.
+            "},
+        )
+        .await
+        .assert_matches();
+
+        // Two deletes
+        cx.simulate(
+            "d ) d )",
+            indoc! {"
+            First. Second. Thirˇd.
+            Fourth.
+            "},
+        )
+        .await
+        .assert_matches();
+
+        // Should delete whole line if done on first column
+        cx.simulate(
+            "d )",
+            indoc! {"
+            ˇFirst.
+            Fourth.
+            "},
+        )
+        .await
+        .assert_matches();
+
+        // Backwards it should also delete the whole first line
+        cx.simulate(
+            "d (",
+            indoc! {"
+            First.
+            ˇSecond.
+            Fourth.
+            "},
+        )
+        .await
+        .assert_matches();
     }
 }

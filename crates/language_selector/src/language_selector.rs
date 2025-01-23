@@ -112,7 +112,7 @@ impl LanguageSelectorDelegate {
                     .then_some(name)
             })
             .enumerate()
-            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, name))
+            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, &name))
             .collect::<Vec<_>>();
 
         Self {
@@ -281,7 +281,7 @@ impl PickerDelegate for LanguageSelectorDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .start_slot::<Icon>(language_icon)
                 .child(HighlightedLabel::new(label, mat.positions.clone())),
         )

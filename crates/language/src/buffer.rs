@@ -26,7 +26,7 @@ use fs::MTime;
 use futures::channel::oneshot;
 use gpui::{
     AnyElement, AppContext, Context as _, EventEmitter, HighlightStyle, Model, ModelContext,
-    Pixels, Task, TaskLabel, WindowContext,
+    Pixels, SharedString, Task, TaskLabel, WindowContext,
 };
 use lsp::LanguageServerId;
 use parking_lot::Mutex;
@@ -65,10 +65,10 @@ pub use text::{
     Subscription, TextDimension, TextSummary, ToOffset, ToOffsetUtf16, ToPoint, ToPointUtf16,
     Transaction, TransactionId, Unclipped,
 };
-use theme::SyntaxTheme;
+use theme::{ActiveTheme as _, SyntaxTheme};
 #[cfg(any(test, feature = "test-support"))]
 use util::RandomCharIter;
-use util::{debug_panic, RangeExt};
+use util::{debug_panic, maybe, RangeExt};
 
 #[cfg(any(test, feature = "test-support"))]
 pub use {tree_sitter_rust, tree_sitter_typescript};
@@ -256,7 +256,7 @@ pub async fn prepare_completion_documentation(
             }
 
             lsp::MarkupKind::Markdown => {
-                let parsed = parse_markdown(value, language_registry, language).await;
+                let parsed = parse_markdown(value, Some(language_registry), language).await;
                 Documentation::MultiLineMarkdown(parsed)
             }
         },
@@ -603,6 +603,162 @@ impl IndentGuide {
     }
 }
 
+#[derive(Clone)]
+pub struct EditPreview {
+    applied_edits_snapshot: text::BufferSnapshot,
+    syntax_snapshot: SyntaxSnapshot,
+}
+
+#[derive(Default, Clone, Debug)]
+pub struct HighlightedEdits {
+    pub text: SharedString,
+    pub highlights: Vec<(Range<usize>, HighlightStyle)>,
+}
+
+impl EditPreview {
+    pub fn highlight_edits(
+        &self,
+        current_snapshot: &BufferSnapshot,
+        edits: &[(Range<Anchor>, String)],
+        include_deletions: bool,
+        cx: &AppContext,
+    ) -> HighlightedEdits {
+        let mut text = String::new();
+        let mut highlights = Vec::new();
+        let Some(range) = self.compute_visible_range(edits, current_snapshot) else {
+            return HighlightedEdits::default();
+        };
+        let mut offset = range.start;
+        let mut delta = 0isize;
+
+        let status_colors = cx.theme().status();
+
+        for (range, edit_text) in edits {
+            let edit_range = range.to_offset(current_snapshot);
+            let new_edit_start = (edit_range.start as isize + delta) as usize;
+            let new_edit_range = new_edit_start..new_edit_start + edit_text.len();
+
+            let prev_range = offset..new_edit_start;
+
+            if !prev_range.is_empty() {
+                let start = text.len();
+                self.highlight_text(prev_range, &mut text, &mut highlights, None, cx);
+                offset += text.len() - start;
+            }
+
+            if include_deletions && !edit_range.is_empty() {
+                let start = text.len();
+                text.extend(current_snapshot.text_for_range(edit_range.clone()));
+                let end = text.len();
+
+                highlights.push((
+                    start..end,
+                    HighlightStyle {
+                        background_color: Some(status_colors.deleted_background),
+                        ..Default::default()
+                    },
+                ));
+            }
+
+            if !edit_text.is_empty() {
+                self.highlight_text(
+                    new_edit_range,
+                    &mut text,
+                    &mut highlights,
+                    Some(HighlightStyle {
+                        background_color: Some(status_colors.created_background),
+                        ..Default::default()
+                    }),
+                    cx,
+                );
+
+                offset += edit_text.len();
+            }
+
+            delta += edit_text.len() as isize - edit_range.len() as isize;
+        }
+
+        self.highlight_text(
+            offset..(range.end as isize + delta) as usize,
+            &mut text,
+            &mut highlights,
+            None,
+            cx,
+        );
+
+        HighlightedEdits {
+            text: text.into(),
+            highlights,
+        }
+    }
+
+    fn highlight_text(
+        &self,
+        range: Range<usize>,
+        text: &mut String,
+        highlights: &mut Vec<(Range<usize>, HighlightStyle)>,
+        override_style: Option<HighlightStyle>,
+        cx: &AppContext,
+    ) {
+        for chunk in self.highlighted_chunks(range) {
+            let start = text.len();
+            text.push_str(chunk.text);
+            let end = text.len();
+
+            if let Some(mut highlight_style) = chunk
+                .syntax_highlight_id
+                .and_then(|id| id.style(cx.theme().syntax()))
+            {
+                if let Some(override_style) = override_style {
+                    highlight_style.highlight(override_style);
+                }
+                highlights.push((start..end, highlight_style));
+            } else if let Some(override_style) = override_style {
+                highlights.push((start..end, override_style));
+            }
+        }
+    }
+
+    fn highlighted_chunks(&self, range: Range<usize>) -> BufferChunks {
+        let captures =
+            self.syntax_snapshot
+                .captures(range.clone(), &self.applied_edits_snapshot, |grammar| {
+                    grammar.highlights_query.as_ref()
+                });
+
+        let highlight_maps = captures
+            .grammars()
+            .iter()
+            .map(|grammar| grammar.highlight_map())
+            .collect();
+
+        BufferChunks::new(
+            self.applied_edits_snapshot.as_rope(),
+            range,
+            Some((captures, highlight_maps)),
+            false,
+            None,
+        )
+    }
+
+    fn compute_visible_range(
+        &self,
+        edits: &[(Range<Anchor>, String)],
+        snapshot: &BufferSnapshot,
+    ) -> Option<Range<usize>> {
+        let (first, _) = edits.first()?;
+        let (last, _) = edits.last()?;
+
+        let start = first.start.to_point(snapshot);
+        let end = last.end.to_point(snapshot);
+
+        // Ensure that the first line of the first edit and the last line of the last edit are always fully visible
+        let range = Point::new(start.row, 0)..Point::new(end.row, snapshot.line_len(end.row));
+
+        Some(range.to_offset(&snapshot))
+    }
+}
+
 impl Buffer {
     /// Create a new buffer with the given base text.
     pub fn local<T: Into<String>>(base_text: T, cx: &ModelContext<Self>) -> Self {
@@ -822,6 +978,33 @@ impl Buffer {
             branch.reparse(cx);
 
             branch
+        })
+    }
+
+    pub fn preview_edits(
+        &self,
+        edits: Arc<[(Range<Anchor>, String)]>,
+        cx: &AppContext,
+    ) -> Task<EditPreview> {
+        let registry = self.language_registry();
+        let language = self.language().cloned();
+
+        let mut branch_buffer = self.text.branch();
+        let mut syntax_snapshot = self.syntax_map.lock().snapshot();
+        cx.background_executor().spawn(async move {
+            if !edits.is_empty() {
+                branch_buffer.edit(edits.iter().cloned());
+                let snapshot = branch_buffer.snapshot();
+                syntax_snapshot.interpolate(&snapshot);
+
+                if let Some(language) = language {
+                    syntax_snapshot.reparse(&snapshot, registry, language);
+                }
+            }
+            EditPreview {
+                applied_edits_snapshot: branch_buffer.snapshot(),
+                syntax_snapshot,
+            }
         })
     }
 
@@ -2923,10 +3106,13 @@ impl BufferSnapshot {
         (start..end, word_kind)
     }
 
-    /// Returns the range for the closes syntax node enclosing the given range.
-    pub fn range_for_syntax_ancestor<T: ToOffset>(&self, range: Range<T>) -> Option<Range<usize>> {
+    /// Returns the closest syntax node enclosing the given range.
+    pub fn syntax_ancestor<'a, T: ToOffset>(
+        &'a self,
+        range: Range<T>,
+    ) -> Option<tree_sitter::Node<'a>> {
         let range = range.start.to_offset(self)..range.end.to_offset(self);
-        let mut result: Option<Range<usize>> = None;
+        let mut result: Option<tree_sitter::Node<'a>> = None;
         'outer: for layer in self
             .syntax
             .layers_for_range(range.clone(), &self.text, true)
@@ -2956,7 +3142,7 @@ impl BufferSnapshot {
             }
 
             let left_node = cursor.node();
-            let mut layer_result = left_node.byte_range();
+            let mut layer_result = left_node;
 
             // For an empty range, try to find another node immediately to the right of the range.
             if left_node.end_byte() == range.start {
@@ -2979,13 +3165,13 @@ impl BufferSnapshot {
                 // If both nodes are the same in that regard, favor the right one.
                 if let Some(right_node) = right_node {
                     if right_node.is_named() || !left_node.is_named() {
-                        layer_result = right_node.byte_range();
+                        layer_result = right_node;
                     }
                 }
             }
 
             if let Some(previous_result) = &result {
-                if previous_result.len() < layer_result.len() {
+                if previous_result.byte_range().len() < layer_result.byte_range().len() {
                     continue;
                 }
             }
@@ -3026,6 +3212,48 @@ impl BufferSnapshot {
             result
         });
         Some(items)
+    }
+
+    pub fn outline_range_containing<T: ToOffset>(&self, range: Range<T>) -> Option<Range<Point>> {
+        let range = range.to_offset(self);
+        let mut matches = self.syntax.matches(range.clone(), &self.text, |grammar| {
+            grammar.outline_config.as_ref().map(|c| &c.query)
+        });
+        let configs = matches
+            .grammars()
+            .iter()
+            .map(|g| g.outline_config.as_ref().unwrap())
+            .collect::<Vec<_>>();
+
+        while let Some(mat) = matches.peek() {
+            let config = &configs[mat.grammar_index];
+            let containing_item_node = maybe!({
+                let item_node = mat.captures.iter().find_map(|cap| {
+                    if cap.index == config.item_capture_ix {
+                        Some(cap.node)
+                    } else {
+                        None
+                    }
+                })?;
+
+                let item_byte_range = item_node.byte_range();
+                if item_byte_range.end < range.start || item_byte_range.start > range.end {
+                    None
+                } else {
+                    Some(item_node)
+                }
+            });
+
+            if let Some(item_node) = containing_item_node {
+                return Some(
+                    Point::from_ts_point(item_node.start_position())
+                        ..Point::from_ts_point(item_node.end_position()),
+                );
+            }
+
+            matches.advance();
+        }
+        None
     }
 
     pub fn outline_items_containing<T: ToOffset>(
@@ -3898,14 +4126,14 @@ impl BufferSnapshot {
     ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
     where
         T: 'a + Clone + ToOffset,
-        O: 'a + FromAnchor + Ord,
+        O: 'a + FromAnchor,
     {
         let mut iterators: Vec<_> = self
             .diagnostics
             .iter()
             .map(|(_, collection)| {
                 collection
-                    .range::<T, O>(search_range.clone(), self, true, reversed)
+                    .range::<T, text::Anchor>(search_range.clone(), self, true, reversed)
                     .peekable()
             })
             .collect();
@@ -3919,7 +4147,7 @@ impl BufferSnapshot {
                     let cmp = a
                         .range
                         .start
-                        .cmp(&b.range.start)
+                        .cmp(&b.range.start, self)
                         // when range is equal, sort by diagnostic severity
                         .then(a.diagnostic.severity.cmp(&b.diagnostic.severity))
                         // and stabilize order with group_id
@@ -3930,7 +4158,13 @@ impl BufferSnapshot {
                         cmp
                     }
                 })?;
-            iterators[next_ix].next()
+            iterators[next_ix]
+                .next()
+                .map(|DiagnosticEntry { range, diagnostic }| DiagnosticEntry {
+                    diagnostic,
+                    range: FromAnchor::from_anchor(&range.start, self)
+                        ..FromAnchor::from_anchor(&range.end, self),
+                })
         })
     }
 
@@ -3968,12 +4202,12 @@ impl BufferSnapshot {
     }
 
     /// Returns an iterator over the diagnostics for the given group.
-    pub fn diagnostic_group<'a, O>(
-        &'a self,
+    pub fn diagnostic_group<O>(
+        &self,
         group_id: usize,
-    ) -> impl 'a + Iterator<Item = DiagnosticEntry<O>>
+    ) -> impl Iterator<Item = DiagnosticEntry<O>> + '_
     where
-        O: 'a + FromAnchor,
+        O: FromAnchor + 'static,
     {
         self.diagnostics
             .iter()

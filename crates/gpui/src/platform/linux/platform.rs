@@ -1,61 +1,55 @@
-#![allow(unused)]
-
-use std::any::{type_name, Any};
-use std::cell::{self, RefCell};
-use std::env;
-use std::ffi::OsString;
-use std::fs::File;
-use std::io::Read;
-use std::ops::{Deref, DerefMut};
-use std::os::fd::{AsFd, AsRawFd, FromRawFd};
-use std::panic::{AssertUnwindSafe, Location};
-use std::rc::Weak;
 use std::{
+    env,
     path::{Path, PathBuf},
     process::Command,
     rc::Rc,
     sync::Arc,
+};
+#[cfg(any(feature = "wayland", feature = "x11"))]
+use std::{
+    ffi::OsString,
+    fs::File,
+    io::Read as _,
+    os::fd::{AsFd, AsRawFd, FromRawFd},
     time::Duration,
 };
 
 use anyhow::{anyhow, Context as _};
 use async_task::Runnable;
-use calloop::channel::Channel;
-use calloop::{EventLoop, LoopHandle, LoopSignal};
-use flume::{Receiver, Sender};
-use futures::{channel::oneshot, future::FutureExt};
-use parking_lot::Mutex;
-use util::ResultExt;
-
+use calloop::{channel::Channel, LoopSignal};
+use futures::channel::oneshot;
+use util::ResultExt as _;
 #[cfg(any(feature = "wayland", feature = "x11"))]
 use xkbcommon::xkb::{self, Keycode, Keysym, State};
 
-use crate::platform::NoopTextSystem;
 use crate::{
     px, Action, AnyWindowHandle, BackgroundExecutor, ClipboardItem, CursorStyle, DisplayId,
-    ForegroundExecutor, Keymap, Keystroke, LinuxDispatcher, Menu, MenuItem, Modifiers, OwnedMenu,
-    PathPromptOptions, Pixels, Platform, PlatformDisplay, PlatformInputHandler, PlatformTextSystem,
-    PlatformWindow, Point, PromptLevel, Result, ScreenCaptureSource, SemanticVersion, SharedString,
-    Size, Task, WindowAppearance, WindowOptions, WindowParams,
+    ForegroundExecutor, Keymap, LinuxDispatcher, Menu, MenuItem, OwnedMenu, PathPromptOptions,
+    Pixels, Platform, PlatformDisplay, PlatformTextSystem, PlatformWindow, Point, Result,
+    ScreenCaptureSource, Task, WindowAppearance, WindowParams,
 };
-
+#[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const SCROLL_LINES: f32 = 3.0;
 
 // Values match the defaults on GTK.
 // Taken from https://github.com/GNOME/gtk/blob/main/gtk/gtksettings.c#L320
+#[cfg(any(feature = "wayland", feature = "x11"))]
 pub(crate) const DOUBLE_CLICK_INTERVAL: Duration = Duration::from_millis(400);
 pub(crate) const DOUBLE_CLICK_DISTANCE: Pixels = px(5.0);
 pub(crate) const KEYRING_LABEL: &str = "zed-github-account";
 
+#[cfg(any(feature = "wayland", feature = "x11"))]
 const FILE_PICKER_PORTAL_MISSING: &str =
     "Couldn't open file picker due to missing xdg-desktop-portal implementation.";
 
 pub trait LinuxClient {
     fn compositor_name(&self) -> &'static str;
     fn with_common<R>(&self, f: impl FnOnce(&mut LinuxCommon) -> R) -> R;
+    fn keyboard_layout(&self) -> String;
     fn displays(&self) -> Vec<Rc<dyn PlatformDisplay>>;
-    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
+    #[allow(unused)]
     fn display(&self, id: DisplayId) -> Option<Rc<dyn PlatformDisplay>>;
+    fn primary_display(&self) -> Option<Rc<dyn PlatformDisplay>>;
 
     fn open_window(
         &self,
@@ -82,6 +76,7 @@ pub(crate) struct PlatformHandlers {
     pub(crate) app_menu_action: Option<Box<dyn FnMut(&dyn Action)>>,
     pub(crate) will_open_app_menu: Option<Box<dyn FnMut()>>,
     pub(crate) validate_app_menu_command: Option<Box<dyn FnMut(&dyn Action) -> bool>>,
+    pub(crate) keyboard_layout_change: Option<Box<dyn FnMut()>>,
 }
 
 pub(crate) struct LinuxCommon {
@@ -98,9 +93,9 @@ pub(crate) struct LinuxCommon {
 impl LinuxCommon {
     pub fn new(signal: LoopSignal) -> (Self, Channel<Runnable>) {
         let (main_sender, main_receiver) = calloop::channel::channel::<Runnable>();
+
         #[cfg(any(feature = "wayland", feature = "x11"))]
         let text_system = Arc::new(crate::CosmicTextSystem::new());
-
         #[cfg(not(any(feature = "wayland", feature = "x11")))]
         let text_system = Arc::new(crate::NoopTextSystem::new());
 
@@ -139,11 +134,11 @@ impl<P: LinuxClient + 'static> Platform for P {
     }
 
     fn keyboard_layout(&self) -> String {
-        "unknown".into()
+        self.keyboard_layout()
     }
 
-    fn on_keyboard_layout_change(&self, _callback: Box<dyn FnMut()>) {
-        // todo(linux)
+    fn on_keyboard_layout_change(&self, callback: Box<dyn FnMut()>) {
+        self.with_common(|common| common.callbacks.keyboard_layout_change = Some(callback));
     }
 
     fn run(&self, on_finish_launching: Box<dyn FnOnce()>) {
@@ -218,7 +213,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         }
     }
 
-    fn activate(&self, ignoring_other_apps: bool) {
+    fn activate(&self, _ignoring_other_apps: bool) {
         log::info!("activate is not implemented on Linux, ignoring the call")
     }
 
@@ -281,7 +276,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         let (done_tx, done_rx) = oneshot::channel();
 
         #[cfg(not(any(feature = "wayland", feature = "x11")))]
-        done_tx.send(Ok(None));
+        let _ = (done_tx.send(Ok(None)), options);
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
         self.foreground_executor()
@@ -306,7 +301,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                             ashpd::Error::PortalNotFound(_) => anyhow!(FILE_PICKER_PORTAL_MISSING),
                             err => err.into(),
                         };
-                        done_tx.send(Err(result));
+                        let _ = done_tx.send(Err(result));
                         return;
                     }
                 };
@@ -322,7 +317,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                     Err(ashpd::Error::Response(_)) => Ok(None),
                     Err(e) => Err(e.into()),
                 };
-                done_tx.send(result);
+                let _ = done_tx.send(result);
             })
             .detach();
         done_rx
@@ -332,7 +327,7 @@ impl<P: LinuxClient + 'static> Platform for P {
         let (done_tx, done_rx) = oneshot::channel();
 
         #[cfg(not(any(feature = "wayland", feature = "x11")))]
-        done_tx.send(Ok(None));
+        let _ = (done_tx.send(Ok(None)), directory);
 
         #[cfg(any(feature = "wayland", feature = "x11"))]
         self.foreground_executor()
@@ -356,7 +351,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                                 }
                                 err => err.into(),
                             };
-                            done_tx.send(Err(result));
+                            let _ = done_tx.send(Err(result));
                             return;
                         }
                     };
@@ -369,12 +364,17 @@ impl<P: LinuxClient + 'static> Platform for P {
                         Err(ashpd::Error::Response(_)) => Ok(None),
                         Err(e) => Err(e.into()),
                     };
-                    done_tx.send(result);
+                    let _ = done_tx.send(result);
                 }
             })
             .detach();
 
         done_rx
+    }
+
+    fn can_select_mixed_files_and_dirs(&self) -> bool {
+        // org.freedesktop.portal.FileChooser only supports "pick files" and "pick directories".
+        false
     }
 
     fn reveal_path(&self, path: &Path) {
@@ -426,7 +426,7 @@ impl<P: LinuxClient + 'static> Platform for P {
 
     fn app_path(&self) -> Result<PathBuf> {
         // get the path of the executable of the current process
-        let exe_path = std::env::current_exe()?;
+        let exe_path = env::current_exe()?;
         Ok(exe_path)
     }
 
@@ -440,9 +440,9 @@ impl<P: LinuxClient + 'static> Platform for P {
         self.with_common(|common| Some(common.menus.clone()))
     }
 
-    fn set_dock_menu(&self, menu: Vec<MenuItem>, keymap: &Keymap) {}
+    fn set_dock_menu(&self, _menu: Vec<MenuItem>, _keymap: &Keymap) {}
 
-    fn path_for_auxiliary_executable(&self, name: &str) -> Result<PathBuf> {
+    fn path_for_auxiliary_executable(&self, _name: &str) -> Result<PathBuf> {
         Err(anyhow::Error::msg(
             "Platform<LinuxPlatform>::path_for_auxiliary_executable is not implemented yet",
         ))
@@ -489,12 +489,7 @@ impl<P: LinuxClient + 'static> Platform for P {
                     let username = attributes
                         .get("username")
                         .ok_or_else(|| anyhow!("Cannot find username in stored credentials"))?;
-                    // oo7 panics if the retrieved secret can't be decrypted due to
-                    // unexpected padding.
-                    let secret = AssertUnwindSafe(item.secret())
-                        .catch_unwind()
-                        .await
-                        .map_err(|_| anyhow!("oo7 panicked while trying to read credentials"))??;
+                    let secret = item.secret().await?;
 
                     // we lose the zeroizing capabilities at this boundary,
                     // a current limitation GPUI's credentials api
@@ -614,6 +609,7 @@ pub(super) fn reveal_path_internal(
         .detach();
 }
 
+#[allow(unused)]
 pub(super) fn is_within_click_distance(a: Point<Pixels>, b: Point<Pixels>) -> bool {
     let diff = a - b;
     diff.x.abs() <= DOUBLE_CLICK_DISTANCE && diff.y.abs() <= DOUBLE_CLICK_DISTANCE
@@ -622,7 +618,7 @@ pub(super) fn is_within_click_distance(a: Point<Pixels>, b: Point<Pixels>) -> bo
 #[cfg(any(feature = "wayland", feature = "x11"))]
 pub(super) fn get_xkb_compose_state(cx: &xkb::Context) -> Option<xkb::compose::State> {
     let mut locales = Vec::default();
-    if let Some(locale) = std::env::var_os("LC_CTYPE") {
+    if let Some(locale) = env::var_os("LC_CTYPE") {
         locales.push(locale);
     }
     locales.push(OsString::from("C"));
@@ -650,12 +646,13 @@ pub(super) unsafe fn read_fd(mut fd: filedescriptor::FileDescriptor) -> Result<V
 }
 
 impl CursorStyle {
+    #[allow(unused)]
     pub(super) fn to_icon_name(&self) -> String {
         // Based on cursor names from https://gitlab.gnome.org/GNOME/adwaita-icon-theme (GNOME)
         // and https://github.com/KDE/breeze (KDE). Both of them seem to be also derived from
         // Web CSS cursor names: https://developer.mozilla.org/en-US/docs/Web/CSS/cursor#values
         match self {
-            CursorStyle::Arrow => "arrow",
+            CursorStyle::Arrow => "left_ptr",
             CursorStyle::IBeam => "text",
             CursorStyle::Crosshair => "crosshair",
             CursorStyle::ClosedHand => "grabbing",
@@ -682,10 +679,12 @@ impl CursorStyle {
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
-impl Keystroke {
-    pub(super) fn from_xkb(state: &State, modifiers: Modifiers, keycode: Keycode) -> Self {
-        let mut modifiers = modifiers;
-
+impl crate::Keystroke {
+    pub(super) fn from_xkb(
+        state: &State,
+        mut modifiers: crate::Modifiers,
+        keycode: Keycode,
+    ) -> Self {
         let key_utf32 = state.key_get_utf32(keycode);
         let key_utf8 = state.key_get_utf8(keycode);
         let key_sym = state.key_get_one_sym(keycode);
@@ -699,6 +698,12 @@ impl Keystroke {
             Keysym::KP_Next => "pagedown".to_owned(),
             Keysym::XF86_Back => "back".to_owned(),
             Keysym::XF86_Forward => "forward".to_owned(),
+            Keysym::XF86_Cut => "cut".to_owned(),
+            Keysym::XF86_Copy => "copy".to_owned(),
+            Keysym::XF86_Paste => "paste".to_owned(),
+            Keysym::XF86_New => "new".to_owned(),
+            Keysym::XF86_Open => "open".to_owned(),
+            Keysym::XF86_Save => "save".to_owned(),
 
             Keysym::comma => ",".to_owned(),
             Keysym::period => ".".to_owned(),
@@ -759,7 +764,7 @@ impl Keystroke {
         let key_char =
             (key_utf32 >= 32 && key_utf32 != 127 && !key_utf8.is_empty()).then_some(key_utf8);
 
-        Keystroke {
+        Self {
             modifiers,
             key,
             key_char,
@@ -776,7 +781,6 @@ impl Keystroke {
             Keysym::dead_acute => Some("´".to_owned()),
             Keysym::dead_circumflex => Some("^".to_owned()),
             Keysym::dead_tilde => Some("~".to_owned()),
-            Keysym::dead_perispomeni => Some("͂".to_owned()),
             Keysym::dead_macron => Some("¯".to_owned()),
             Keysym::dead_breve => Some("˘".to_owned()),
             Keysym::dead_abovedot => Some("˙".to_owned()),
@@ -794,9 +798,7 @@ impl Keystroke {
             Keysym::dead_horn => Some("̛".to_owned()),
             Keysym::dead_stroke => Some("̶̶".to_owned()),
             Keysym::dead_abovecomma => Some("̓̓".to_owned()),
-            Keysym::dead_psili => Some("᾿".to_owned()),
             Keysym::dead_abovereversedcomma => Some("ʽ".to_owned()),
-            Keysym::dead_dasia => Some("῾".to_owned()),
             Keysym::dead_doublegrave => Some("̏".to_owned()),
             Keysym::dead_belowring => Some("˳".to_owned()),
             Keysym::dead_belowmacron => Some("̱".to_owned()),
@@ -830,7 +832,7 @@ impl Keystroke {
 }
 
 #[cfg(any(feature = "wayland", feature = "x11"))]
-impl Modifiers {
+impl crate::Modifiers {
     pub(super) fn from_xkb(keymap_state: &State) -> Self {
         let shift = keymap_state.mod_name_is_active(xkb::MOD_NAME_SHIFT, xkb::STATE_MODS_EFFECTIVE);
         let alt = keymap_state.mod_name_is_active(xkb::MOD_NAME_ALT, xkb::STATE_MODS_EFFECTIVE);
@@ -838,7 +840,7 @@ impl Modifiers {
             keymap_state.mod_name_is_active(xkb::MOD_NAME_CTRL, xkb::STATE_MODS_EFFECTIVE);
         let platform =
             keymap_state.mod_name_is_active(xkb::MOD_NAME_LOGO, xkb::STATE_MODS_EFFECTIVE);
-        Modifiers {
+        Self {
             shift,
             alt,
             control,

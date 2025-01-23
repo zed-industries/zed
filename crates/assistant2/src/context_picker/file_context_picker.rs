@@ -1,20 +1,30 @@
-use std::fmt::Write as _;
-use std::ops::RangeInclusive;
-use std::path::{Path, PathBuf};
+use std::collections::BTreeSet;
+use std::ops::Range;
+use std::path::Path;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
 
+use editor::actions::FoldAt;
+use editor::display_map::{Crease, FoldId};
+use editor::scroll::Autoscroll;
+use editor::{Anchor, Editor, FoldPlaceholder, ToPoint};
+use file_icons::FileIcons;
 use fuzzy::PathMatch;
-use gpui::{AppContext, DismissEvent, FocusHandle, FocusableView, Task, View, WeakView};
+use gpui::{
+    AnyElement, AppContext, DismissEvent, Empty, FocusHandle, FocusableView, Stateful, Task, View,
+    WeakModel, WeakView,
+};
+use multi_buffer::{MultiBufferPoint, MultiBufferRow};
 use picker::{Picker, PickerDelegate};
-use project::{PathMatchCandidateSet, WorktreeId};
-use ui::{prelude::*, ListItem, ListItemSpacing};
+use project::{PathMatchCandidateSet, ProjectPath, WorktreeId};
+use rope::Point;
+use text::SelectionGoal;
+use ui::{prelude::*, ButtonLike, Disclosure, ElevationIndex, ListItem, Tooltip};
 use util::ResultExt as _;
-use workspace::Workspace;
+use workspace::{notifications::NotifyResultExt, Workspace};
 
-use crate::context::ContextKind;
-use crate::context_picker::ContextPicker;
-use crate::message_editor::MessageEditor;
+use crate::context_picker::{ConfirmBehavior, ContextPicker};
+use crate::context_store::{ContextStore, FileInclusion};
 
 pub struct FileContextPicker {
     picker: View<Picker<FileContextPickerDelegate>>,
@@ -24,10 +34,18 @@ impl FileContextPicker {
     pub fn new(
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
-        message_editor: WeakView<MessageEditor>,
+        editor: WeakView<Editor>,
+        context_store: WeakModel<ContextStore>,
+        confirm_behavior: ConfirmBehavior,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        let delegate = FileContextPickerDelegate::new(context_picker, workspace, message_editor);
+        let delegate = FileContextPickerDelegate::new(
+            context_picker,
+            workspace,
+            editor,
+            context_store,
+            confirm_behavior,
+        );
         let picker = cx.new_view(|cx| Picker::uniform_list(delegate, cx));
 
         Self { picker }
@@ -49,7 +67,9 @@ impl Render for FileContextPicker {
 pub struct FileContextPickerDelegate {
     context_picker: WeakView<ContextPicker>,
     workspace: WeakView<Workspace>,
-    message_editor: WeakView<MessageEditor>,
+    editor: WeakView<Editor>,
+    context_store: WeakModel<ContextStore>,
+    confirm_behavior: ConfirmBehavior,
     matches: Vec<PathMatch>,
     selected_index: usize,
 }
@@ -58,12 +78,16 @@ impl FileContextPickerDelegate {
     pub fn new(
         context_picker: WeakView<ContextPicker>,
         workspace: WeakView<Workspace>,
-        message_editor: WeakView<MessageEditor>,
+        editor: WeakView<Editor>,
+        context_store: WeakModel<ContextStore>,
+        confirm_behavior: ConfirmBehavior,
     ) -> Self {
         Self {
             context_picker,
             workspace,
-            message_editor,
+            editor,
+            context_store,
+            confirm_behavior,
             matches: Vec::new(),
             selected_index: 0,
         }
@@ -79,44 +103,37 @@ impl FileContextPickerDelegate {
         if query.is_empty() {
             let workspace = workspace.read(cx);
             let project = workspace.project().read(cx);
-            let entries = workspace.recent_navigation_history(Some(10), cx);
-
-            let entries = entries
+            let recent_matches = workspace
+                .recent_navigation_history(Some(10), cx)
                 .into_iter()
-                .map(|entries| entries.0)
-                .chain(project.worktrees(cx).flat_map(|worktree| {
-                    let worktree = worktree.read(cx);
-                    let id = worktree.id();
-                    worktree
-                        .child_entries(Path::new(""))
-                        .filter(|entry| entry.kind.is_file())
-                        .map(move |entry| project::ProjectPath {
-                            worktree_id: id,
-                            path: entry.path.clone(),
-                        })
-                }))
-                .collect::<Vec<_>>();
-
-            let path_prefix: Arc<str> = Arc::default();
-            Task::ready(
-                entries
-                    .into_iter()
-                    .filter_map(|entry| {
-                        let worktree = project.worktree_for_id(entry.worktree_id, cx)?;
-                        let mut full_path = PathBuf::from(worktree.read(cx).root_name());
-                        full_path.push(&entry.path);
-                        Some(PathMatch {
-                            score: 0.,
-                            positions: Vec::new(),
-                            worktree_id: entry.worktree_id.to_usize(),
-                            path: full_path.into(),
-                            path_prefix: path_prefix.clone(),
-                            distance_to_relative_ancestor: 0,
-                            is_dir: false,
-                        })
+                .filter_map(|(project_path, _)| {
+                    let worktree = project.worktree_for_id(project_path.worktree_id, cx)?;
+                    Some(PathMatch {
+                        score: 0.,
+                        positions: Vec::new(),
+                        worktree_id: project_path.worktree_id.to_usize(),
+                        path: project_path.path,
+                        path_prefix: worktree.read(cx).root_name().into(),
+                        distance_to_relative_ancestor: 0,
+                        is_dir: false,
                     })
-                    .collect(),
-            )
+                });
+
+            let file_matches = project.worktrees(cx).flat_map(|worktree| {
+                let worktree = worktree.read(cx);
+                let path_prefix: Arc<str> = worktree.root_name().into();
+                worktree.files(true, 0).map(move |entry| PathMatch {
+                    score: 0.,
+                    positions: Vec::new(),
+                    worktree_id: worktree.id().to_usize(),
+                    path: entry.path.clone(),
+                    path_prefix: path_prefix.clone(),
+                    distance_to_relative_ancestor: 0,
+                    is_dir: false,
+                })
+            });
+
+            Task::ready(recent_matches.chain(file_matches).collect())
         } else {
             let worktrees = workspace.read(cx).visible_worktrees(cx).collect::<Vec<_>>();
             let candidate_sets = worktrees
@@ -190,100 +207,264 @@ impl PickerDelegate for FileContextPickerDelegate {
     }
 
     fn confirm(&mut self, _secondary: bool, cx: &mut ViewContext<Picker<Self>>) {
-        let mat = &self.matches[self.selected_index];
+        let Some(mat) = self.matches.get(self.selected_index) else {
+            return;
+        };
 
-        let workspace = self.workspace.clone();
-        let Some(project) = workspace
-            .upgrade()
-            .map(|workspace| workspace.read(cx).project().clone())
+        let Some(file_name) = mat
+            .path
+            .file_name()
+            .map(|os_str| os_str.to_string_lossy().into_owned())
         else {
             return;
         };
-        let path = mat.path.clone();
-        let worktree_id = WorktreeId::from_usize(mat.worktree_id);
-        cx.spawn(|this, mut cx| async move {
-            let Some(open_buffer_task) = project
-                .update(&mut cx, |project, cx| {
-                    project.open_buffer((worktree_id, path.clone()), cx)
-                })
-                .ok()
-            else {
-                return anyhow::Ok(());
-            };
 
-            let buffer = open_buffer_task.await?;
+        let full_path = mat.path.display().to_string();
 
-            this.update(&mut cx, |this, cx| {
-                this.delegate
-                    .message_editor
-                    .update(cx, |message_editor, cx| {
-                        let mut text = String::new();
-                        text.push_str(&codeblock_fence_for_path(Some(&path), None));
-                        text.push_str(&buffer.read(cx).text());
-                        if !text.ends_with('\n') {
-                            text.push('\n');
+        let project_path = ProjectPath {
+            worktree_id: WorktreeId::from_usize(mat.worktree_id),
+            path: mat.path.clone(),
+        };
+
+        let Some(editor) = self.editor.upgrade() else {
+            return;
+        };
+
+        editor.update(cx, |editor, cx| {
+            editor.transact(cx, |editor, cx| {
+                // Move empty selections left by 1 column to select the `@`s, so they get overwritten when we insert.
+                {
+                    let mut selections = editor.selections.all::<MultiBufferPoint>(cx);
+
+                    for selection in selections.iter_mut() {
+                        if selection.is_empty() {
+                            let old_head = selection.head();
+                            let new_head = MultiBufferPoint::new(
+                                old_head.row,
+                                old_head.column.saturating_sub(1),
+                            );
+                            selection.set_head(new_head, SelectionGoal::None);
                         }
+                    }
 
-                        text.push_str("```\n");
+                    editor.change_selections(Some(Autoscroll::fit()), cx, |s| s.select(selections));
+                }
 
-                        message_editor.insert_context(
-                            ContextKind::File,
-                            path.to_string_lossy().to_string(),
-                            text,
-                        );
-                    })
-            })??;
+                let start_anchors = {
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    editor
+                        .selections
+                        .all::<Point>(cx)
+                        .into_iter()
+                        .map(|selection| snapshot.anchor_before(selection.start))
+                        .collect::<Vec<_>>()
+                };
 
-            anyhow::Ok(())
+                editor.insert(&full_path, cx);
+
+                let end_anchors = {
+                    let snapshot = editor.buffer().read(cx).snapshot(cx);
+                    editor
+                        .selections
+                        .all::<Point>(cx)
+                        .into_iter()
+                        .map(|selection| snapshot.anchor_after(selection.end))
+                        .collect::<Vec<_>>()
+                };
+
+                editor.insert("\n", cx); // Needed to end the fold
+
+                let placeholder = FoldPlaceholder {
+                    render: render_fold_icon_button(IconName::File, file_name.into()),
+                    ..Default::default()
+                };
+
+                let render_trailer = move |_row, _unfold, _cx: &mut WindowContext| Empty.into_any();
+
+                let buffer = editor.buffer().read(cx).snapshot(cx);
+                let mut rows_to_fold = BTreeSet::new();
+                let crease_iter = start_anchors
+                    .into_iter()
+                    .zip(end_anchors)
+                    .map(|(start, end)| {
+                        rows_to_fold.insert(MultiBufferRow(start.to_point(&buffer).row));
+
+                        Crease::inline(
+                            start..end,
+                            placeholder.clone(),
+                            fold_toggle("tool-use"),
+                            render_trailer,
+                        )
+                    });
+
+                editor.insert_creases(crease_iter, cx);
+
+                for buffer_row in rows_to_fold {
+                    editor.fold_at(&FoldAt { buffer_row }, cx);
+                }
+            });
+        });
+
+        let Some(task) = self
+            .context_store
+            .update(cx, |context_store, cx| {
+                context_store.add_file_from_path(project_path, cx)
+            })
+            .ok()
+        else {
+            return;
+        };
+
+        let confirm_behavior = self.confirm_behavior;
+        cx.spawn(|this, mut cx| async move {
+            match task.await.notify_async_err(&mut cx) {
+                None => anyhow::Ok(()),
+                Some(()) => this.update(&mut cx, |this, cx| match confirm_behavior {
+                    ConfirmBehavior::KeepOpen => {}
+                    ConfirmBehavior::Close => this.delegate.dismissed(cx),
+                }),
+            }
         })
         .detach_and_log_err(cx);
     }
 
     fn dismissed(&mut self, cx: &mut ViewContext<Picker<Self>>) {
         self.context_picker
-            .update(cx, |this, cx| {
-                this.reset_mode();
+            .update(cx, |_, cx| {
                 cx.emit(DismissEvent);
             })
-            .log_err();
+            .ok();
     }
 
     fn render_match(
         &self,
         ix: usize,
         selected: bool,
-        _cx: &mut ViewContext<Picker<Self>>,
+        cx: &mut ViewContext<Picker<Self>>,
     ) -> Option<Self::ListItem> {
-        let mat = &self.matches[ix];
+        let path_match = &self.matches[ix];
 
         Some(
             ListItem::new(ix)
                 .inset(true)
-                .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
-                .child(mat.path.to_string_lossy().to_string()),
+                .toggle_state(selected)
+                .child(render_file_context_entry(
+                    ElementId::NamedInteger("file-ctx-picker".into(), ix),
+                    &path_match.path,
+                    &path_match.path_prefix,
+                    self.context_store.clone(),
+                    cx,
+                )),
         )
     }
 }
 
-fn codeblock_fence_for_path(path: Option<&Path>, row_range: Option<RangeInclusive<u32>>) -> String {
-    let mut text = String::new();
-    write!(text, "```").unwrap();
+pub fn render_file_context_entry(
+    id: ElementId,
+    path: &Path,
+    path_prefix: &Arc<str>,
+    context_store: WeakModel<ContextStore>,
+    cx: &WindowContext,
+) -> Stateful<Div> {
+    let (file_name, directory) = if path == Path::new("") {
+        (SharedString::from(path_prefix.clone()), None)
+    } else {
+        let file_name = path
+            .file_name()
+            .unwrap_or_default()
+            .to_string_lossy()
+            .to_string()
+            .into();
 
-    if let Some(path) = path {
-        if let Some(extension) = path.extension().and_then(|ext| ext.to_str()) {
-            write!(text, "{} ", extension).unwrap();
+        let mut directory = format!("{}/", path_prefix);
+
+        if let Some(parent) = path.parent().filter(|parent| parent != &Path::new("")) {
+            directory.push_str(&parent.to_string_lossy());
+            directory.push('/');
         }
 
-        write!(text, "{}", path.display()).unwrap();
-    } else {
-        write!(text, "untitled").unwrap();
-    }
+        (file_name, Some(directory))
+    };
 
-    if let Some(row_range) = row_range {
-        write!(text, ":{}-{}", row_range.start() + 1, row_range.end() + 1).unwrap();
-    }
+    let added = context_store
+        .upgrade()
+        .and_then(|context_store| context_store.read(cx).will_include_file_path(path, cx));
 
-    text.push('\n');
-    text
+    let file_icon = FileIcons::get_icon(&path, cx)
+        .map(Icon::from_path)
+        .unwrap_or_else(|| Icon::new(IconName::File));
+
+    h_flex()
+        .id(id)
+        .gap_1()
+        .w_full()
+        .child(file_icon.size(IconSize::Small))
+        .child(
+            h_flex()
+                .gap_2()
+                .child(Label::new(file_name))
+                .children(directory.map(|directory| {
+                    Label::new(directory)
+                        .size(LabelSize::Small)
+                        .color(Color::Muted)
+                })),
+        )
+        .child(div().w_full())
+        .when_some(added, |el, added| match added {
+            FileInclusion::Direct(_) => el.child(
+                h_flex()
+                    .gap_1()
+                    .child(
+                        Icon::new(IconName::Check)
+                            .size(IconSize::Small)
+                            .color(Color::Success),
+                    )
+                    .child(Label::new("Added").size(LabelSize::Small)),
+            ),
+            FileInclusion::InDirectory(dir_name) => {
+                let dir_name = dir_name.to_string_lossy().into_owned();
+
+                el.child(
+                    h_flex()
+                        .gap_1()
+                        .child(
+                            Icon::new(IconName::Check)
+                                .size(IconSize::Small)
+                                .color(Color::Success),
+                        )
+                        .child(Label::new("Included").size(LabelSize::Small)),
+                )
+                .tooltip(move |cx| Tooltip::text(format!("in {dir_name}"), cx))
+            }
+        })
+}
+
+fn render_fold_icon_button(
+    icon: IconName,
+    label: SharedString,
+) -> Arc<dyn Send + Sync + Fn(FoldId, Range<Anchor>, &mut WindowContext) -> AnyElement> {
+    Arc::new(move |fold_id, _fold_range, _cx| {
+        ButtonLike::new(fold_id)
+            .style(ButtonStyle::Filled)
+            .layer(ElevationIndex::ElevatedSurface)
+            .child(Icon::new(icon))
+            .child(Label::new(label.clone()).single_line())
+            .into_any_element()
+    })
+}
+
+fn fold_toggle(
+    name: &'static str,
+) -> impl Fn(
+    MultiBufferRow,
+    bool,
+    Arc<dyn Fn(bool, &mut WindowContext) + Send + Sync>,
+    &mut WindowContext,
+) -> AnyElement {
+    move |row, is_folded, fold, _cx| {
+        Disclosure::new((name, row.0 as u64), !is_folded)
+            .toggle_state(is_folded)
+            .on_click(move |_e, cx| fold(!is_folded, cx))
+            .into_any_element()
+    }
 }

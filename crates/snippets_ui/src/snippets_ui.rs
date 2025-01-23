@@ -96,7 +96,7 @@ impl ScopeSelectorDelegate {
         let candidates = candidates
             .chain(languages)
             .enumerate()
-            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, name))
+            .map(|(candidate_id, name)| StringMatchCandidate::new(candidate_id, &name))
             .collect::<Vec<_>>();
 
         Self {
@@ -219,7 +219,7 @@ impl PickerDelegate for ScopeSelectorDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .child(HighlightedLabel::new(label, mat.positions.clone())),
         )
     }

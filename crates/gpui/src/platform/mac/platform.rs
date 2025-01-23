@@ -292,6 +292,7 @@ impl MacPlatform {
             } => {
                 let keystrokes = keymap
                     .bindings_for_action(action.as_ref())
+                    .rev()
                     .next()
                     .map(|binding| binding.keystrokes());
 
@@ -757,6 +758,10 @@ impl Platform for MacPlatform {
             .detach();
 
         done_rx
+    }
+
+    fn can_select_mixed_files_and_dirs(&self) -> bool {
+        true
     }
 
     fn reveal_path(&self, path: &Path) {

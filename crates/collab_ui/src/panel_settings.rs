@@ -1,6 +1,6 @@
 use gpui::Pixels;
 use schemars::JsonSchema;
-use serde_derive::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize};
 use settings::{Settings, SettingsSources};
 use workspace::dock::DockPosition;
 
@@ -11,11 +11,80 @@ pub struct CollaborationPanelSettings {
     pub default_width: Pixels,
 }
 
+#[derive(Clone, Copy, Default, Serialize, JsonSchema, Debug)]
+#[serde(rename_all = "snake_case")]
+pub enum ChatPanelButton {
+    Never,
+    Always,
+    #[default]
+    WhenInCall,
+}
+
+impl<'de> Deserialize<'de> for ChatPanelButton {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        struct Visitor;
+
+        impl<'de> serde::de::Visitor<'de> for Visitor {
+            type Value = ChatPanelButton;
+
+            fn expecting(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+                write!(
+                    f,
+                    r#"a boolean or one of "never", "always", "when_in_call""#
+                )
+            }
+
+            fn visit_bool<E>(self, b: bool) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                match b {
+                    false => Ok(ChatPanelButton::Never),
+                    true => Ok(ChatPanelButton::Always),
+                }
+            }
+
+            fn visit_str<E>(self, s: &str) -> Result<Self::Value, E>
+            where
+                E: serde::de::Error,
+            {
+                match s {
+                    "never" => Ok(ChatPanelButton::Never),
+                    "always" => Ok(ChatPanelButton::Always),
+                    "when_in_call" => Ok(ChatPanelButton::WhenInCall),
+                    _ => Err(E::unknown_variant(s, &["never", "always", "when_in_call"])),
+                }
+            }
+        }
+
+        deserializer.deserialize_any(Visitor)
+    }
+}
+
 #[derive(Deserialize, Debug)]
 pub struct ChatPanelSettings {
-    pub button: bool,
+    pub button: ChatPanelButton,
     pub dock: DockPosition,
     pub default_width: Pixels,
+}
+
+#[derive(Clone, Default, Serialize, Deserialize, JsonSchema, Debug)]
+pub struct ChatPanelSettingsContent {
+    /// When to show the panel button in the status bar.
+    ///
+    /// Default: only when in a call
+    pub button: Option<ChatPanelButton>,
+    /// Where to dock the panel.
+    ///
+    /// Default: right
+    pub dock: Option<DockPosition>,
+    /// Default width of the panel in pixels.
+    ///
+    /// Default: 240
+    pub default_width: Option<f32>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -66,7 +135,7 @@ impl Settings for CollaborationPanelSettings {
 impl Settings for ChatPanelSettings {
     const KEY: Option<&'static str> = Some("chat_panel");
 
-    type FileContent = PanelSettingsContent;
+    type FileContent = ChatPanelSettingsContent;
 
     fn load(
         sources: SettingsSources<Self::FileContent>,

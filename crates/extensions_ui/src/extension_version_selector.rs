@@ -113,13 +113,7 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
             .iter()
             .enumerate()
             .map(|(id, extension)| {
-                let text = format!("v{}", extension.manifest.version);
-
-                StringMatchCandidate {
-                    id,
-                    char_bag: text.as_str().into(),
-                    string: text,
-                }
+                StringMatchCandidate::new(id, &format!("v{}", extension.manifest.version))
             })
             .collect::<Vec<_>>();
 
@@ -210,7 +204,7 @@ impl PickerDelegate for ExtensionVersionSelectorDelegate {
             ListItem::new(ix)
                 .inset(true)
                 .spacing(ListItemSpacing::Sparse)
-                .selected(selected)
+                .toggle_state(selected)
                 .disabled(disabled)
                 .child(
                     HighlightedLabel::new(

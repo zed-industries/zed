@@ -61,7 +61,7 @@ struct CreateRemoteServer {
 }
 
 impl CreateRemoteServer {
-    fn new(cx: &mut WindowContext<'_>) -> Self {
+    fn new(cx: &mut WindowContext) -> Self {
         let address_editor = cx.new_view(Editor::single_line);
         address_editor.update(cx, |this, cx| {
             this.focus_handle(cx).focus(cx);
@@ -88,7 +88,7 @@ struct EditNicknameState {
 }
 
 impl EditNicknameState {
-    fn new(index: usize, cx: &mut WindowContext<'_>) -> Self {
+    fn new(index: usize, cx: &mut WindowContext) -> Self {
         let this = Self {
             index,
             editor: cx.new_view(Editor::single_line),
@@ -264,7 +264,7 @@ struct DefaultState {
     servers: Vec<ProjectEntry>,
 }
 impl DefaultState {
-    fn new(cx: &WindowContext<'_>) -> Self {
+    fn new(cx: &WindowContext) -> Self {
         let handle = ScrollHandle::new();
         let scrollbar = ScrollbarState::new(handle.clone());
         let add_new_server = NavigableEntry::new(&handle, cx);
@@ -309,7 +309,7 @@ enum Mode {
 }
 
 impl Mode {
-    fn default_mode(cx: &WindowContext<'_>) -> Self {
+    fn default_mode(cx: &WindowContext) -> Self {
         Self::Default(DefaultState::new(cx))
     }
 }
@@ -653,7 +653,7 @@ impl RemoteServerProjects {
                             }))
                             .child(
                                 ListItem::new(("new-remote-project", ix))
-                                    .selected(
+                                    .toggle_state(
                                         ssh_server.open_folder.focus_handle.contains_focused(cx),
                                     )
                                     .inset(true)
@@ -688,7 +688,7 @@ impl RemoteServerProjects {
                             }))
                             .child(
                                 ListItem::new(("server-options", ix))
-                                    .selected(
+                                    .toggle_state(
                                         ssh_server.configure.focus_handle.contains_focused(cx),
                                     )
                                     .inset(true)
@@ -772,7 +772,7 @@ impl RemoteServerProjects {
             }))
             .child(
                 ListItem::new((element_id_base, ix))
-                    .selected(navigation.focus_handle.contains_focused(cx))
+                    .toggle_state(navigation.focus_handle.contains_focused(cx))
                     .inset(true)
                     .spacing(ui::ListItemSpacing::Sparse)
                     .start_slot(
@@ -984,7 +984,7 @@ impl RemoteServerProjects {
                                 }))
                                 .child(
                                     ListItem::new("add-nickname")
-                                        .selected(entries[0].focus_handle.contains_focused(cx))
+                                        .toggle_state(entries[0].focus_handle.contains_focused(cx))
                                         .inset(true)
                                         .spacing(ui::ListItemSpacing::Sparse)
                                         .start_slot(Icon::new(IconName::Pencil).color(Color::Muted))
@@ -1003,7 +1003,7 @@ impl RemoteServerProjects {
                             fn callback(
                                 workspace: WeakView<Workspace>,
                                 connection_string: SharedString,
-                                cx: &mut WindowContext<'_>,
+                                cx: &mut WindowContext,
                             ) {
                                 cx.write_to_clipboard(ClipboardItem::new_string(
                                     connection_string.to_string(),
@@ -1043,7 +1043,7 @@ impl RemoteServerProjects {
                                 })
                                 .child(
                                     ListItem::new("copy-server-address")
-                                        .selected(entries[1].focus_handle.contains_focused(cx))
+                                        .toggle_state(entries[1].focus_handle.contains_focused(cx))
                                         .inset(true)
                                         .spacing(ui::ListItemSpacing::Sparse)
                                         .start_slot(Icon::new(IconName::Copy).color(Color::Muted))
@@ -1069,7 +1069,7 @@ impl RemoteServerProjects {
                                 remote_servers: View<RemoteServerProjects>,
                                 index: usize,
                                 connection_string: SharedString,
-                                cx: &mut WindowContext<'_>,
+                                cx: &mut WindowContext,
                             ) {
                                 let prompt_message =
                                     format!("Remove server `{}`?", connection_string);
@@ -1116,7 +1116,7 @@ impl RemoteServerProjects {
                                 }))
                                 .child(
                                     ListItem::new("remove-server")
-                                        .selected(entries[2].focus_handle.contains_focused(cx))
+                                        .toggle_state(entries[2].focus_handle.contains_focused(cx))
                                         .inset(true)
                                         .spacing(ui::ListItemSpacing::Sparse)
                                         .start_slot(Icon::new(IconName::Trash).color(Color::Error))
@@ -1144,7 +1144,7 @@ impl RemoteServerProjects {
                                 }))
                                 .child(
                                     ListItem::new("go-back")
-                                        .selected(entries[3].focus_handle.contains_focused(cx))
+                                        .toggle_state(entries[3].focus_handle.contains_focused(cx))
                                         .inset(true)
                                         .spacing(ui::ListItemSpacing::Sparse)
                                         .start_slot(
@@ -1233,7 +1233,7 @@ impl RemoteServerProjects {
             .anchor_scroll(state.add_new_server.scroll_anchor.clone())
             .child(
                 ListItem::new("register-remove-server-button")
-                    .selected(state.add_new_server.focus_handle.contains_focused(cx))
+                    .toggle_state(state.add_new_server.focus_handle.contains_focused(cx))
                     .inset(true)
                     .spacing(ui::ListItemSpacing::Sparse)
                     .start_slot(Icon::new(IconName::Plus).color(Color::Muted))
@@ -1252,7 +1252,11 @@ impl RemoteServerProjects {
                 cx.notify();
             }));
 
-        let ui::ScrollableHandle::NonUniform(scroll_handle) = scroll_state.scroll_handle() else {
+        let Some(scroll_handle) = scroll_state
+            .scroll_handle()
+            .as_any()
+            .downcast_ref::<ScrollHandle>()
+        else {
             unreachable!()
         };
 

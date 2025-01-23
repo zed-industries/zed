@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use util::{truncate_and_remove_front, ResultExt};
 
 use crate::{
-    ResolvedTask, Shell, SpawnInTerminal, TaskContext, TaskId, VariableName,
+    ResolvedTask, RevealTarget, Shell, SpawnInTerminal, TaskContext, TaskId, VariableName,
     ZED_VARIABLE_NAME_PREFIX,
 };
 
@@ -42,10 +42,16 @@ pub struct TaskTemplate {
     #[serde(default)]
     pub allow_concurrent_runs: bool,
     /// What to do with the terminal pane and tab, after the command was started:
-    /// * `always` — always show the terminal pane, add and focus the corresponding task's tab in it (default)
-    /// * `never` — avoid changing current terminal pane focus, but still add/reuse the task's tab there
+    /// * `always` — always show the task's pane, and focus the corresponding tab in it (default)
+    // * `no_focus` — always show the task's pane, add the task's tab in it, but don't focus it
+    // * `never` — do not alter focus, but still add/reuse the task's tab in its pane
     #[serde(default)]
     pub reveal: RevealStrategy,
+    /// Where to place the task's terminal item after starting the task.
+    /// * `dock` — in the terminal dock, "regular" terminal items' place (default).
+    /// * `center` — in the central pane group, "main" editor area.
+    #[serde(default)]
+    pub reveal_target: RevealTarget,
     /// What to do with the terminal pane and tab, after the command had finished:
     /// * `never` — do nothing when the command finishes (default)
     /// * `always` — always hide the terminal tab, hide the pane also if it was the last tab in it
@@ -70,12 +76,12 @@ pub struct TaskTemplate {
 #[derive(Default, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RevealStrategy {
-    /// Always show the terminal pane, add and focus the corresponding task's tab in it.
+    /// Always show the task's pane, and focus the corresponding tab in it.
     #[default]
     Always,
-    /// Always show the terminal pane, add the task's tab in it, but don't focus it.
+    /// Always show the task's pane, add the task's tab in it, but don't focus it.
     NoFocus,
-    /// Do not change terminal pane focus, but still add/reuse the task's tab there.
+    /// Do not alter focus, but still add/reuse the task's tab in its pane.
     Never,
 }
 
@@ -137,13 +143,13 @@ impl TaskTemplate {
         let truncated_variables = truncate_variables(&task_variables);
         let cwd = match self.cwd.as_deref() {
             Some(cwd) => {
-                let substitured_cwd = substitute_all_template_variables_in_str(
+                let substituted_cwd = substitute_all_template_variables_in_str(
                     cwd,
                     &task_variables,
                     &variable_names,
                     &mut substituted_variables,
                 )?;
-                Some(PathBuf::from(substitured_cwd))
+                Some(PathBuf::from(substituted_cwd))
             }
             None => None,
         }
@@ -235,6 +241,7 @@ impl TaskTemplate {
                 use_new_terminal: self.use_new_terminal,
                 allow_concurrent_runs: self.allow_concurrent_runs,
                 reveal: self.reveal,
+                reveal_target: self.reveal_target,
                 hide: self.hide,
                 shell: self.shell.clone(),
                 show_summary: self.show_summary,
@@ -563,7 +570,7 @@ mod tests {
                 spawn_in_terminal.label,
                 format!(
                     "test label for 1234 and …{}",
-                    &long_value[..=MAX_DISPLAY_VARIABLE_LENGTH]
+                    &long_value[long_value.len() - MAX_DISPLAY_VARIABLE_LENGTH..]
                 ),
                 "Human-readable label should have long substitutions trimmed"
             );
@@ -630,7 +637,7 @@ mod tests {
             label: "My task".into(),
             command: "echo".into(),
             args: vec!["$PATH".into()],
-            ..Default::default()
+            ..TaskTemplate::default()
         };
         let resolved_task = task
             .resolve_task(TEST_ID_BASE, &TaskContext::default())
@@ -648,7 +655,7 @@ mod tests {
             label: "My task".into(),
             command: "echo".into(),
             args: vec!["$ZED_VARIABLE".into()],
-            ..Default::default()
+            ..TaskTemplate::default()
         };
         assert!(task
             .resolve_task(TEST_ID_BASE, &TaskContext::default())

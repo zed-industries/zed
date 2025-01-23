@@ -22,6 +22,7 @@ use project::{
     search::SearchQuery,
     search_history::{SearchHistory, SearchHistoryCursor},
 };
+use schemars::JsonSchema;
 use serde::Deserialize;
 use settings::Settings;
 use std::sync::Arc;
@@ -43,7 +44,7 @@ use registrar::{ForDeployed, ForDismissed, SearchActionsRegistrar, WithResults};
 
 const MAX_BUFFER_SEARCH_HISTORY_SIZE: usize = 50;
 
-#[derive(PartialEq, Clone, Deserialize)]
+#[derive(PartialEq, Clone, Deserialize, JsonSchema)]
 pub struct Deploy {
     #[serde(default = "util::serde::default_true")]
     pub focus: bool,
@@ -209,9 +210,11 @@ impl Render for BufferSearchBar {
 
         let input_base_styles = || {
             h_flex()
+                .min_w_32()
                 .w(input_width)
                 .h_8()
-                .px_2()
+                .pl_2()
+                .pr_1()
                 .py_1()
                 .border_1()
                 .border_color(editor_border)
@@ -226,31 +229,37 @@ impl Render for BufferSearchBar {
                     .track_scroll(&self.editor_scroll_handle)
                     .child(self.render_text_input(&self.query_editor, text_color.color(cx), cx))
                     .when(!hide_inline_icons, |div| {
-                        div.children(supported_options.case.then(|| {
-                            self.render_search_option_button(
-                                SearchOptions::CASE_SENSITIVE,
-                                focus_handle.clone(),
-                                cx.listener(|this, _, cx| {
-                                    this.toggle_case_sensitive(&ToggleCaseSensitive, cx)
-                                }),
-                            )
-                        }))
-                        .children(supported_options.word.then(|| {
-                            self.render_search_option_button(
-                                SearchOptions::WHOLE_WORD,
-                                focus_handle.clone(),
-                                cx.listener(|this, _, cx| {
-                                    this.toggle_whole_word(&ToggleWholeWord, cx)
-                                }),
-                            )
-                        }))
-                        .children(supported_options.regex.then(|| {
-                            self.render_search_option_button(
-                                SearchOptions::REGEX,
-                                focus_handle.clone(),
-                                cx.listener(|this, _, cx| this.toggle_regex(&ToggleRegex, cx)),
-                            )
-                        }))
+                        div.child(
+                            h_flex()
+                                .gap_1()
+                                .children(supported_options.case.then(|| {
+                                    self.render_search_option_button(
+                                        SearchOptions::CASE_SENSITIVE,
+                                        focus_handle.clone(),
+                                        cx.listener(|this, _, cx| {
+                                            this.toggle_case_sensitive(&ToggleCaseSensitive, cx)
+                                        }),
+                                    )
+                                }))
+                                .children(supported_options.word.then(|| {
+                                    self.render_search_option_button(
+                                        SearchOptions::WHOLE_WORD,
+                                        focus_handle.clone(),
+                                        cx.listener(|this, _, cx| {
+                                            this.toggle_whole_word(&ToggleWholeWord, cx)
+                                        }),
+                                    )
+                                }))
+                                .children(supported_options.regex.then(|| {
+                                    self.render_search_option_button(
+                                        SearchOptions::REGEX,
+                                        focus_handle.clone(),
+                                        cx.listener(|this, _, cx| {
+                                            this.toggle_regex(&ToggleRegex, cx)
+                                        }),
+                                    )
+                                })),
+                        )
                     }),
             )
             .child(
@@ -271,7 +280,7 @@ impl Render for BufferSearchBar {
                             .on_click(cx.listener(|this, _: &ClickEvent, cx| {
                                 this.toggle_replace(&ToggleReplace, cx);
                             }))
-                            .selected(self.replace_enabled)
+                            .toggle_state(self.replace_enabled)
                             .tooltip({
                                 let focus_handle = focus_handle.clone();
                                 move |cx| {
@@ -299,7 +308,7 @@ impl Render for BufferSearchBar {
                             .on_click(cx.listener(|this, _: &ClickEvent, cx| {
                                 this.toggle_selection(&ToggleSelection, cx);
                             }))
-                            .selected(self.selection_search_enabled)
+                            .toggle_state(self.selection_search_enabled)
                             .tooltip({
                                 let focus_handle = focus_handle.clone();
                                 move |cx| {
@@ -332,7 +341,7 @@ impl Render for BufferSearchBar {
                     .child(
                         h_flex()
                             .pl_2()
-                            .ml_2()
+                            .ml_1()
                             .border_l_1()
                             .border_color(cx.theme().colors().border_variant)
                             .child(render_nav_button(
@@ -417,6 +426,7 @@ impl Render for BufferSearchBar {
         v_flex()
             .id("buffer_search")
             .gap_2()
+            .py(px(1.0))
             .track_scroll(&self.scroll_handle)
             .key_context(key_context)
             .capture_action(cx.listener(Self::tab))
@@ -527,6 +537,11 @@ impl BufferSearchBar {
         registrar.register_handler(ForDeployed(|this, action: &ToggleWholeWord, cx| {
             if this.supported_options().word {
                 this.toggle_whole_word(action, cx);
+            }
+        }));
+        registrar.register_handler(ForDeployed(|this, action: &ToggleRegex, cx| {
+            if this.supported_options().regex {
+                this.toggle_regex(action, cx);
             }
         }));
         registrar.register_handler(ForDeployed(|this, action: &ToggleSelection, cx| {
