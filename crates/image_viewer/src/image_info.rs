@@ -28,7 +28,6 @@ impl Settings for ImageFileSizeUnitType {
     }
 }
 
-
 pub struct ImageInfo {
     width: Option<u32>,
     height: Option<u32>,

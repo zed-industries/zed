@@ -1,6 +1,5 @@
 pub mod image_info;
 
-use std::path::PathBuf;
 use anyhow::Context as _;
 use editor::items::entry_git_aware_label_color;
 use gpui::{
@@ -9,6 +8,7 @@ use gpui::{
     Render, Styled, Task, View, ViewContext, VisualContext, WeakView, WindowContext,
 };
 use persistence::IMAGE_VIEWER;
+use std::path::PathBuf;
 use theme::Theme;
 use ui::prelude::*;
 
