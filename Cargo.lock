@@ -16510,7 +16510,9 @@ name = "zed_predict_onboarding"
 version = "0.1.0"
 dependencies = [
  "client",
+ "fs",
  "gpui",
+ "language",
  "menu",
  "settings",
  "theme",

@@ -441,6 +441,7 @@ fn main() {
         inline_completion_registry::init(
             app_state.client.clone(),
             app_state.user_store.clone(),
+            app_state.fs.clone(),
             cx,
         );
         let prompt_builder = assistant::init(

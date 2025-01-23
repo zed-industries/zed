@@ -23,6 +23,7 @@ use gpui::{
     Interactivity, IntoElement, Model, MouseButton, ParentElement, Render, Stateful,
     StatefulInteractiveElement, Styled, Subscription, View, ViewContext, VisualContext, WeakView,
 };
+use project::Fs;
 use project::Project;
 use rpc::proto;
 use settings::Settings as _;
@@ -104,6 +105,7 @@ pub struct TitleBar {
     repository_selector: View<RepositorySelector>,
     project: Model<Project>,
     user_store: Model<UserStore>,
+    fs: Arc<dyn Fs>,
     client: Arc<Client>,
     workspace: WeakView<Workspace>,
     should_move: bool,
@@ -234,6 +236,7 @@ impl Render for TitleBar {
                                             .on_click({
                                                 let workspace = self.workspace.clone();
                                                 let user_store = self.user_store.clone();
+                                                let fs = self.fs.clone();
                                                 move |_, cx| {
                                                     let Some(workspace) = workspace.upgrade()
                                                     else {
@@ -242,6 +245,7 @@ impl Render for TitleBar {
                                                     ZedPredictOnboarding::toggle(
                                                         workspace,
                                                         user_store.clone(),
+                                                        fs.clone(),
                                                         cx,
                                                     );
                                                 }
@@ -331,6 +335,7 @@ impl TitleBar {
         let project = workspace.project().clone();
         let user_store = workspace.app_state().user_store.clone();
         let client = workspace.app_state().client.clone();
+        let fs = workspace.app_state().fs.clone();
         let active_call = ActiveCall::global(cx);
 
         let platform_style = PlatformStyle::platform();
@@ -369,6 +374,7 @@ impl TitleBar {
             project,
             user_store,
             client,
+            fs,
             _subscriptions: subscriptions,
         }
     }

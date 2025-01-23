@@ -3838,7 +3838,14 @@ impl Editor {
             return;
         };
 
-        ZedPredictOnboarding::toggle(workspace, project.read(cx).user_store().clone(), cx);
+        let project = project.read(cx);
+
+        ZedPredictOnboarding::toggle(
+            workspace,
+            project.user_store().clone(),
+            project.fs().clone(),
+            cx,
+        );
     }
 
     fn do_completion(

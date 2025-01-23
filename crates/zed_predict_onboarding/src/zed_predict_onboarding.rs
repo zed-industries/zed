@@ -1,43 +1,52 @@
 //! AI service Terms of Service acceptance modal.
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use client::UserStore;
+use fs::Fs;
 use gpui::{
     ease_in_out, svg, Animation, AnimationExt as _, AppContext, ClickEvent, DismissEvent,
     EventEmitter, FocusHandle, FocusableView, Model, MouseDownEvent, Render, View,
 };
-use settings::Settings;
+use language::language_settings::{AllLanguageSettings, InlineCompletionProvider};
+use settings::{update_settings_file, Settings};
 use ui::{prelude::*, TintColor};
 use workspace::{ModalView, Workspace};
 
 /// Terms of acceptance for AI inline prediction.
 pub struct ZedPredictOnboarding {
-    focus_handle: FocusHandle,
-    user_store: Model<UserStore>,
     workspace: View<Workspace>,
+    user_store: Model<UserStore>,
+    fs: Arc<dyn Fs>,
+    focus_handle: FocusHandle,
 }
 
 impl ZedPredictOnboarding {
     fn new(
         workspace: View<Workspace>,
         user_store: Model<UserStore>,
+        fs: Arc<dyn Fs>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
         ZedPredictOnboarding {
-            focus_handle: cx.focus_handle(),
-            user_store,
             workspace,
+            user_store,
+            fs,
+            focus_handle: cx.focus_handle(),
         }
     }
+
     pub fn toggle(
         workspace: View<Workspace>,
         user_store: Model<UserStore>,
+        fs: Arc<dyn Fs>,
         cx: &mut WindowContext,
     ) {
         workspace.update(cx, |this, cx| {
             let workspace = cx.view().clone();
-            this.toggle_modal(cx, |cx| ZedPredictOnboarding::new(workspace, user_store, cx));
+            this.toggle_modal(cx, |cx| {
+                ZedPredictOnboarding::new(workspace, user_store, fs, cx)
+            });
         });
     }
 
@@ -51,7 +60,7 @@ impl ZedPredictOnboarding {
         cx.notify();
     }
 
-    fn accept_terms(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
+    fn accept_and_enable(&mut self, _: &ClickEvent, cx: &mut ViewContext<Self>) {
         let task = self
             .user_store
             .update(cx, |this, cx| this.accept_terms_of_service(cx));
@@ -60,7 +69,17 @@ impl ZedPredictOnboarding {
 
         cx.spawn(|this, mut cx| async move {
             match task.await {
-                Ok(_) => this.update(&mut cx, |_, cx| {
+                Ok(_) => this.update(&mut cx, |this, cx| {
+                    update_settings_file::<AllLanguageSettings>(
+                        this.fs.clone(),
+                        cx,
+                        move |file, _| {
+                            file.features
+                                .get_or_insert(Default::default())
+                                .inline_completion_provider = Some(InlineCompletionProvider::Zed);
+                        },
+                    );
+
                     cx.emit(DismissEvent);
                 }),
                 Err(err) => workspace.update(&mut cx, |this, cx| {
@@ -201,7 +220,7 @@ impl Render for ZedPredictOnboarding {
                         Button::new("accept-tos", "Tab to Accept and Enable")
                             .style(ButtonStyle::Tinted(TintColor::Accent))
                             .full_width()
-                            .on_click(cx.listener(Self::accept_terms)),
+                            .on_click(cx.listener(Self::accept_and_enable)),
                     )
                     .child(
                         h_flex()

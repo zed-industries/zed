@@ -5,6 +5,7 @@ use collections::HashMap;
 use copilot::{Copilot, CopilotCompletionProvider};
 use editor::{Editor, EditorMode};
 use feature_flags::{FeatureFlagAppExt, PredictEditsFeatureFlag};
+use fs::Fs;
 use gpui::{AnyWindowHandle, AppContext, Context, Model, ViewContext, WeakView};
 use language::language_settings::{all_language_settings, InlineCompletionProvider};
 use settings::SettingsStore;
@@ -12,7 +13,12 @@ use supermaven::{Supermaven, SupermavenCompletionProvider};
 use workspace::Workspace;
 use zed_predict_onboarding::ZedPredictOnboarding;
 
-pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
+pub fn init(
+    client: Arc<Client>,
+    user_store: Model<UserStore>,
+    fs: Arc<dyn Fs>,
+    cx: &mut AppContext,
+) {
     let editors: Rc<RefCell<HashMap<WeakView<Editor>, AnyWindowHandle>>> = Rc::default();
     cx.observe_new_views({
         let editors = editors.clone();
@@ -80,6 +86,7 @@ pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppConte
         let editors = editors.clone();
         let client = client.clone();
         let user_store = user_store.clone();
+        let fs = fs.clone();
         move |cx| {
             let new_provider = all_language_settings(None, cx).inline_completions.provider;
             if new_provider != provider {
@@ -112,7 +119,12 @@ pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppConte
 
                             window
                                 .update(cx, |_, cx| {
-                                    ZedPredictOnboarding::toggle(workspace, user_store.clone(), cx);
+                                    ZedPredictOnboarding::toggle(
+                                        workspace,
+                                        user_store.clone(),
+                                        fs.clone(),
+                                        cx,
+                                    );
                                 })
                                 .ok();
                         }

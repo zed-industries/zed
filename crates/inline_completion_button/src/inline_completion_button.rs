@@ -227,6 +227,7 @@ impl Render for InlineCompletionButton {
                 {
                     let workspace = self.workspace.clone();
                     let user_store = self.user_store.clone();
+                    let fs = self.fs.clone();
 
                     return div().child(
                         ButtonLike::new("zeta-pending-tos-icon")
@@ -249,10 +250,13 @@ impl Render for InlineCompletionButton {
                                 )
                             })
                             .on_click(cx.listener(move |_, _, cx| {
-                                let user_store = user_store.clone();
-
                                 if let Some(workspace) = workspace.upgrade() {
-                                    ZedPredictOnboarding::toggle(workspace, user_store, cx);
+                                    ZedPredictOnboarding::toggle(
+                                        workspace,
+                                        user_store.clone(),
+                                        fs.clone(),
+                                        cx,
+                                    );
                                 }
                             })),
                     );
