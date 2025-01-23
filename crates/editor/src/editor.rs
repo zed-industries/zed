@@ -1579,7 +1579,7 @@ impl Editor {
         self.buffer().read(cx).title(cx)
     }
 
-    pub fn snapshot(&mut self, cx: &mut WindowContext) -> EditorSnapshot {
+    pub fn snapshot(&self, cx: &mut WindowContext) -> EditorSnapshot {
         let git_blame_gutter_max_author_length = self
             .render_git_blame_gutter(cx)
             .then(|| {
@@ -5004,7 +5004,7 @@ impl Editor {
     }
 
     fn inline_completion_menu_hint(
-        &mut self,
+        &self,
         cx: &mut ViewContext<Self>,
     ) -> Option<InlineCompletionMenuHint> {
         let provider = self.inline_completion_provider()?;
@@ -6185,7 +6185,7 @@ impl Editor {
     }
 
     fn gather_revert_changes(
-        &mut self,
+        &self,
         selections: &[Selection<Point>],
         cx: &mut ViewContext<Editor>,
     ) -> HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>> {
@@ -6198,7 +6198,7 @@ impl Editor {
     }
 
     pub fn prepare_revert_change(
-        &mut self,
+        &self,
         revert_changes: &mut HashMap<BufferId, Vec<(Range<text::Anchor>, Rope)>>,
         hunk: &MultiBufferDiffHunk,
         cx: &AppContext,
@@ -11721,23 +11721,23 @@ impl Editor {
         self.show_git_blame_gutter
     }
 
-    pub fn render_git_blame_gutter(&mut self, cx: &mut WindowContext) -> bool {
+    pub fn render_git_blame_gutter(&self, cx: &WindowContext) -> bool {
         self.show_git_blame_gutter && self.has_blame_entries(cx)
     }
 
-    pub fn render_git_blame_inline(&mut self, cx: &mut WindowContext) -> bool {
+    pub fn render_git_blame_inline(&self, cx: &WindowContext) -> bool {
         self.show_git_blame_inline
             && self.focus_handle.is_focused(cx)
             && !self.newest_selection_head_on_empty_line(cx)
             && self.has_blame_entries(cx)
     }
 
-    fn has_blame_entries(&self, cx: &mut WindowContext) -> bool {
+    fn has_blame_entries(&self, cx: &WindowContext) -> bool {
         self.blame()
             .map_or(false, |blame| blame.read(cx).has_generated_entries())
     }
 
-    fn newest_selection_head_on_empty_line(&mut self, cx: &mut WindowContext) -> bool {
+    fn newest_selection_head_on_empty_line(&self, cx: &WindowContext) -> bool {
         let cursor_anchor = self.selections.newest_anchor().head();
 
         let snapshot = self.buffer.read(cx).snapshot(cx);
@@ -11746,7 +11746,7 @@ impl Editor {
         snapshot.line_len(buffer_row) == 0
     }
 
-    fn get_permalink_to_line(&mut self, cx: &mut ViewContext<Self>) -> Task<Result<url::Url>> {
+    fn get_permalink_to_line(&self, cx: &mut ViewContext<Self>) -> Task<Result<url::Url>> {
         let buffer_and_selection = maybe!({
             let selection = self.selections.newest::<Point>(cx);
             let selection_range = selection.range();
@@ -12030,10 +12030,7 @@ impl Editor {
     /// Merges all anchor ranges for all context types ever set, picking the last highlight added in case of a row conflict.
     /// Returns a map of display rows that are highlighted and their corresponding highlight color.
     /// Allows to ignore certain kinds of highlights.
-    pub fn highlighted_display_rows(
-        &mut self,
-        cx: &mut WindowContext,
-    ) -> BTreeMap<DisplayRow, Hsla> {
+    pub fn highlighted_display_rows(&self, cx: &mut WindowContext) -> BTreeMap<DisplayRow, Hsla> {
         let snapshot = self.snapshot(cx);
         let mut used_highlight_orders = HashMap::default();
         self.highlighted_rows
@@ -12147,7 +12144,7 @@ impl Editor {
 
     #[cfg(feature = "test-support")]
     pub fn all_text_background_highlights(
-        &mut self,
+        &self,
         cx: &mut ViewContext<Self>,
     ) -> Vec<(Range<DisplayPoint>, Hsla)> {
         let snapshot = self.snapshot(cx);
@@ -13204,7 +13201,7 @@ impl Editor {
     }
 
     pub fn to_pixel_point(
-        &mut self,
+        &self,
         source: multi_buffer::Anchor,
         editor_snapshot: &EditorSnapshot,
         cx: &mut ViewContext<Self>,
