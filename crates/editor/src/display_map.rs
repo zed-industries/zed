@@ -40,7 +40,8 @@ pub use crease_map::*;
 pub use fold_map::{Fold, FoldId, FoldPlaceholder, FoldPoint};
 use fold_map::{FoldMap, FoldSnapshot};
 use gpui::{
-    AnyElement, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels, UnderlineStyle,
+    AnyElement, AppContext, Font, HighlightStyle, LineLayout, Model, ModelContext, Pixels,
+    UnderlineStyle,
 };
 pub use inlay_map::Inlay;
 use inlay_map::{InlayMap, InlaySnapshot};
@@ -543,7 +544,7 @@ impl DisplayMap {
         self.block_map.read(snapshot, edits);
     }
 
-    fn tab_size(buffer: &Model<MultiBuffer>, cx: &mut ModelContext<Self>) -> NonZeroU32 {
+    fn tab_size(buffer: &Model<MultiBuffer>, cx: &AppContext) -> NonZeroU32 {
         let buffer = buffer.read(cx).as_singleton().map(|buffer| buffer.read(cx));
         let language = buffer
             .and_then(|buffer| buffer.language())

@@ -6,7 +6,7 @@ use git::{
     blame::{Blame, BlameEntry},
     parse_git_remote_url, GitHostingProvider, GitHostingProviderRegistry, Oid, PullRequest,
 };
-use gpui::{Model, ModelContext, Subscription, Task};
+use gpui::{AppContext, Model, ModelContext, Subscription, Task};
 use http_client::HttpClient;
 use language::{markdown, Bias, Buffer, BufferSnapshot, Edit, LanguageRegistry, ParsedMarkdown};
 use multi_buffer::MultiBufferRow;
@@ -195,7 +195,7 @@ impl GitBlame {
     pub fn blame_for_rows<'a>(
         &'a mut self,
         rows: impl 'a + IntoIterator<Item = Option<MultiBufferRow>>,
-        cx: &mut ModelContext<Self>,
+        cx: &AppContext,
     ) -> impl 'a + Iterator<Item = Option<BlameEntry>> {
         self.sync(cx);
 
@@ -207,7 +207,7 @@ impl GitBlame {
         })
     }
 
-    pub fn max_author_length(&mut self, cx: &mut ModelContext<Self>) -> usize {
+    pub fn max_author_length(&mut self, cx: &AppContext) -> usize {
         self.sync(cx);
 
         let mut max_author_length = 0;
@@ -240,7 +240,7 @@ impl GitBlame {
         }
     }
 
-    fn sync(&mut self, cx: &mut ModelContext<Self>) {
+    fn sync(&mut self, cx: &AppContext) {
         let edits = self.buffer_edits.consume();
         let new_snapshot = self.buffer.read(cx).snapshot();
 
