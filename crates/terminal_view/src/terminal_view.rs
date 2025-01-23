@@ -5,11 +5,7 @@ pub mod terminal_scrollbar;
 pub mod terminal_tab_tooltip;
 
 use collections::HashSet;
-use editor::{
-    actions::SelectAll,
-    scroll::{ScrollbarAutoHide},
-    Editor, EditorSettings,
-};
+use editor::{actions::SelectAll, scroll::ScrollbarAutoHide, Editor, EditorSettings};
 use futures::{stream::FuturesUnordered, StreamExt};
 use gpui::{
     anchored, deferred, div, impl_actions, AnyElement, AppContext, DismissEvent, EventEmitter,
@@ -885,7 +881,11 @@ fn subscribe_for_terminal_events(
                                             .downgrade()
                                             .update(&mut cx, |editor, cx| {
                                                 editor.go_to_singleton_buffer_point(
-                                                    language::Point::new(row.saturating_sub(1), col.saturating_sub(1)), cx
+                                                    language::Point::new(
+                                                        row.saturating_sub(1),
+                                                        col.saturating_sub(1),
+                                                    ),
+                                                    cx,
                                                 )
                                             })
                                             .log_err();

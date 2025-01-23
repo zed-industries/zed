@@ -9266,8 +9266,7 @@ impl Editor {
         let Some(buffer) = multibuffer.as_singleton() else {
             return;
         };
-        let Some(anchor) = multibuffer.buffer_point_to_anchor(&buffer, point, cx)
-        else {
+        let Some(anchor) = multibuffer.buffer_point_to_anchor(&buffer, point, cx) else {
             return;
         };
         self.change_selections(Some(Autoscroll::center()), cx, |s| {

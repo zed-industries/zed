@@ -13,7 +13,7 @@ use futures::channel::{mpsc, oneshot};
 use futures::future::join_all;
 use futures::{FutureExt, SinkExt, StreamExt};
 use gpui::{AppContext, AsyncAppContext, Global, WindowHandle};
-use language::{Point};
+use language::Point;
 use recent_projects::{open_ssh_project, SshSettings};
 use remote::SshConnectionOptions;
 use settings::Settings;

@@ -9,7 +9,7 @@ use futures::future::join_all;
 pub use open_path_prompt::OpenPathDelegate;
 
 use collections::HashMap;
-use editor::{Editor};
+use editor::Editor;
 use file_finder_settings::{FileFinderSettings, FileFinderWidth};
 use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
@@ -1162,10 +1162,7 @@ impl PickerDelegate for FileFinderDelegate {
                             active_editor
                                 .downgrade()
                                 .update(&mut cx, |editor, cx| {
-                                    editor.go_to_singleton_buffer_point(
-                                        Point::new(row, col),
-                                        cx,
-                                    );
+                                    editor.go_to_singleton_buffer_point(Point::new(row, col), cx);
                                 })
                                 .log_err();
                         }
