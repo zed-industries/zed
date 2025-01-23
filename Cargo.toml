@@ -400,7 +400,8 @@ fork = "0.2.0"
 futures = "0.3"
 futures-batch = "0.6.1"
 futures-lite = "1.13"
-git2 = { version = "0.19", default-features = false }
+# TODO: get back to regular versions when https://github.com/rust-lang/git2-rs/pull/1120 is released
+git2 = { git = "https://github.com/rust-lang/git2-rs", rev = "a3b90cb3756c1bb63e2317bf9cfa57838178de5c", default-features = false }
 globset = "0.4"
 handlebars = "4.3"
 heed = { version = "0.21.0", features = ["read-txn-no-tls"] }
