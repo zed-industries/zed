@@ -834,7 +834,17 @@ impl GitPanel {
                             false => git_panel.stage_all(&StageAll, cx),
                         })),
                     )
-                    .child(div().text_buffer(cx).text_ui_sm(cx).child(changes_string)),
+                    .child(
+                        div()
+                            .id("changes-checkbox-label")
+                            .text_buffer(cx)
+                            .text_ui_sm(cx)
+                            .child(changes_string)
+                            .on_click(cx.listener(move |git_panel, _, cx| match all_staged {
+                                true => git_panel.unstage_all(&UnstageAll, cx),
+                                false => git_panel.stage_all(&StageAll, cx),
+                            })),
+                    ),
             )
             .child(div().flex_grow())
             .child(
