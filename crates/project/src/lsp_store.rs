@@ -1868,7 +1868,11 @@ impl LocalLspStore {
         let Some(language) = buffer.language().cloned() else {
             return;
         };
-        let path: Arc<Path> = file.path().parent().map(Arc::from).unwrap_or_else(|| file.path().clone());;
+        let path: Arc<Path> = file
+            .path()
+            .parent()
+            .map(Arc::from)
+            .unwrap_or_else(|| file.path().clone());
         let Some(worktree) = self
             .worktree_store
             .read(cx)
