@@ -2154,6 +2154,7 @@ fn test_random_multibuffer(cx: &mut AppContext, mut rng: StdRng) {
                     let range = snapshot.anchor_in_excerpt(excerpt.id, start).unwrap()
                         ..snapshot.anchor_in_excerpt(excerpt.id, end).unwrap();
 
+                    log::info!("expanding diff hunks for excerpt {:?}", excerpt_ix);
                     reference.expand_diff_hunks(excerpt.id, start..end, cx);
                     multibuffer.expand_diff_hunks(vec![range], cx);
                 });

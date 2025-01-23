@@ -2217,6 +2217,7 @@ impl MultiBuffer {
             if let Some(diff_hunk) = snapshot.diff_hunks_in_range(range.start..peek_end).next() {
                 if diff_hunk.row_range.start.0 <= range.start.row
                     && diff_hunk.row_range.end.0 >= range.end.row
+                    && diff_hunk.excerpt_id == start.excerpt_id
                 {
                     start = Anchor::in_buffer(
                         diff_hunk.excerpt_id,
@@ -2228,7 +2229,9 @@ impl MultiBuffer {
                         diff_hunk.buffer_id,
                         diff_hunk.buffer_range.end,
                     );
-                } else if diff_hunk.row_range.start.0 == peek_end.row {
+                } else if diff_hunk.row_range.start.0 == peek_end.row
+                            && diff_hunk.excerpt_id == end.excerpt_id
+                {
                     start = Anchor::in_buffer(
                         diff_hunk.excerpt_id,
                         diff_hunk.buffer_id,
