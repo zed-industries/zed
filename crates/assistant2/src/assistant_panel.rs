@@ -432,7 +432,7 @@ impl AssistantPanel {
     }
 
     pub(crate) fn active_thread(&self, cx: &AppContext) -> Model<Thread> {
-        self.thread.read(cx).thread.clone()
+        self.thread.read(cx).thread().clone()
     }
 
     pub(crate) fn delete_thread(&mut self, thread_id: &ThreadId, cx: &mut ViewContext<Self>) {
