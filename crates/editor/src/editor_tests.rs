@@ -6839,7 +6839,7 @@ async fn test_document_format_during_save(cx: &mut gpui::TestAppContext) {
     let fs = FakeFs::new(cx.executor());
     fs.insert_file("/file.rs", Default::default()).await;
 
-    let project = Project::test(fs, ["/".as_ref()], cx).await;
+    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
@@ -7193,7 +7193,7 @@ async fn test_range_format_during_save(cx: &mut gpui::TestAppContext) {
     let fs = FakeFs::new(cx.executor());
     fs.insert_file("/file.rs", Default::default()).await;
 
-    let project = Project::test(fs, ["/".as_ref()], cx).await;
+    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(rust_lang());
@@ -7327,7 +7327,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     let fs = FakeFs::new(cx.executor());
     fs.insert_file("/file.rs", Default::default()).await;
 
-    let project = Project::test(fs, ["/".as_ref()], cx).await;
+    let project = Project::test(fs, ["/file.rs".as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(Arc::new(Language::new(
