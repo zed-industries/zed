@@ -137,6 +137,7 @@ impl StatusItemView for ImageInfo {
             self.height = None;
             self.file_size = None;
             self.color_type = None;
+            self.format = None;
             self._observe_active_image = None;
         }
         cx.notify();
