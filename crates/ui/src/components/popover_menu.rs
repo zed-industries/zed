@@ -178,6 +178,23 @@ impl<M: ManagedView> PopoverMenu<M> {
         self
     }
 
+    pub fn trigger_with_tooltip<T: PopoverTrigger + ButtonCommon>(
+        mut self,
+        t: T,
+        tooltip_builder: impl Fn(&mut WindowContext) -> AnyView + 'static,
+    ) -> Self {
+        self.child_builder = Some(Box::new(|menu, builder| {
+            let open = menu.borrow().is_some();
+            t.toggle_state(open)
+                .when_some(builder, |el, builder| {
+                    el.on_click(move |_, cx| show_menu(&builder, &menu, cx))
+                        .tooltip(move |cx| tooltip_builder(cx))
+                })
+                .into_any_element()
+        }));
+        self
+    }
+
     /// anchor defines which corner of the menu to anchor to the attachment point
     /// (by default the cursor position, but see attach)
     pub fn anchor(mut self, anchor: Corner) -> Self {
