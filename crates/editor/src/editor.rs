@@ -10679,6 +10679,7 @@ impl Editor {
                 }
             });
         });
+        self.request_autoscroll(Autoscroll::newest(), cx);
         cx.notify();
     }
 
