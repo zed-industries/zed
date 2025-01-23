@@ -644,7 +644,7 @@ and then another
                 input_outline: input_outline.into(),
                 input_events: input_events.into(),
                 input_excerpt: input_excerpt.into(),
-                output_excerpt: output_excerpt.into(),
+                output_excerpt,
                 request_sent_at,
                 response_received_at: Instant::now(),
             })
