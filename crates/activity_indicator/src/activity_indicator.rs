@@ -369,7 +369,7 @@ impl ActivityIndicator {
                             .size(IconSize::Small)
                             .into_any_element(),
                     ),
-                    message: "Checking for Zed updates…".to_string(),
+                    message: "Checking for updates…".to_string(),
                     on_click: Some(Arc::new(|this, cx| {
                         this.dismiss_error_message(&DismissErrorMessage, cx)
                     })),
@@ -380,7 +380,7 @@ impl ActivityIndicator {
                             .size(IconSize::Small)
                             .into_any_element(),
                     ),
-                    message: "Downloading Zed update…".to_string(),
+                    message: "Downloading update…".to_string(),
                     on_click: Some(Arc::new(|this, cx| {
                         this.dismiss_error_message(&DismissErrorMessage, cx)
                     })),
@@ -391,7 +391,7 @@ impl ActivityIndicator {
                             .size(IconSize::Small)
                             .into_any_element(),
                     ),
-                    message: "Installing Zed update…".to_string(),
+                    message: "Installing update…".to_string(),
                     on_click: Some(Arc::new(|this, cx| {
                         this.dismiss_error_message(&DismissErrorMessage, cx)
                     })),
