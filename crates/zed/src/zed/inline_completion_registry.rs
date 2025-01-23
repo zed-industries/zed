@@ -10,7 +10,7 @@ use language::language_settings::{all_language_settings, InlineCompletionProvide
 use settings::SettingsStore;
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 use workspace::Workspace;
-use zed_predict_tos::ZedPredictTos;
+use zed_predict_onboarding::ZedPredictOnboarding;
 
 pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppContext) {
     let editors: Rc<RefCell<HashMap<WeakView<Editor>, AnyWindowHandle>>> = Rc::default();
@@ -112,7 +112,7 @@ pub fn init(client: Arc<Client>, user_store: Model<UserStore>, cx: &mut AppConte
 
                             window
                                 .update(cx, |_, cx| {
-                                    ZedPredictTos::toggle(workspace, user_store.clone(), cx);
+                                    ZedPredictOnboarding::toggle(workspace, user_store.clone(), cx);
                                 })
                                 .ok();
                         }

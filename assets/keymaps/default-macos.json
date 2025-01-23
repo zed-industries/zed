@@ -879,7 +879,7 @@
     }
   },
   {
-    "context": "ZedPredictTos",
+    "context": "ZedPredictOnboarding",
     "use_key_equivalents": true,
     "bindings": {
       "escape": "menu::Cancel"

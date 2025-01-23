@@ -1,5 +1,5 @@
 [package]
-name = "zed_predict_tos"
+name = "zed_predict_onboarding"
 version = "0.1.0"
 edition = "2021"
 publish = false
@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/zed_predict_tos.rs"
+path = "src/zed_predict_onboarding.rs"
 doctest = false
 
 [features]

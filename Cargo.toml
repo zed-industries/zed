@@ -2,7 +2,7 @@
 resolver = "2"
 members = [
     "crates/activity_indicator",
-    "crates/zed_predict_tos",
+    "crates/zed_predict_onboarding",
     "crates/anthropic",
     "crates/assets",
     "crates/assistant",
@@ -200,7 +200,7 @@ edition = "2021"
 
 activity_indicator = { path = "crates/activity_indicator" }
 ai = { path = "crates/ai" }
-zed_predict_tos = { path = "crates/zed_predict_tos" }
+zed_predict_onboarding = { path = "crates/zed_predict_onboarding" }
 anthropic = { path = "crates/anthropic" }
 assets = { path = "crates/assets" }
 assistant = { path = "crates/assistant" }

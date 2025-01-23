@@ -12,19 +12,19 @@ use ui::{prelude::*, TintColor};
 use workspace::{ModalView, Workspace};
 
 /// Terms of acceptance for AI inline prediction.
-pub struct ZedPredictTos {
+pub struct ZedPredictOnboarding {
     focus_handle: FocusHandle,
     user_store: Model<UserStore>,
     workspace: View<Workspace>,
 }
 
-impl ZedPredictTos {
+impl ZedPredictOnboarding {
     fn new(
         workspace: View<Workspace>,
         user_store: Model<UserStore>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        ZedPredictTos {
+        ZedPredictOnboarding {
             focus_handle: cx.focus_handle(),
             user_store,
             workspace,
@@ -37,7 +37,7 @@ impl ZedPredictTos {
     ) {
         workspace.update(cx, |this, cx| {
             let workspace = cx.view().clone();
-            this.toggle_modal(cx, |cx| ZedPredictTos::new(workspace, user_store, cx));
+            this.toggle_modal(cx, |cx| ZedPredictOnboarding::new(workspace, user_store, cx));
         });
     }
 
@@ -76,17 +76,17 @@ impl ZedPredictTos {
     }
 }
 
-impl EventEmitter<DismissEvent> for ZedPredictTos {}
+impl EventEmitter<DismissEvent> for ZedPredictOnboarding {}
 
-impl FocusableView for ZedPredictTos {
+impl FocusableView for ZedPredictOnboarding {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl ModalView for ZedPredictTos {}
+impl ModalView for ZedPredictOnboarding {}
 
-impl Render for ZedPredictTos {
+impl Render for ZedPredictOnboarding {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .w_96()
@@ -98,7 +98,7 @@ impl Render for ZedPredictTos {
             .id("zed predict tos")
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::cancel))
-            .key_context("ZedPredictTos")
+            .key_context("ZedPredictOnboarding")
             .on_action(cx.listener(|_, _: &menu::Cancel, cx| {
                 cx.emit(DismissEvent);
             }))

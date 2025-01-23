@@ -36,7 +36,7 @@ use ui::{
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
 use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
-use zed_predict_tos::ZedPredictTos;
+use zed_predict_onboarding::ZedPredictOnboarding;
 
 #[cfg(feature = "stories")]
 pub use stories::*;
@@ -239,7 +239,7 @@ impl Render for TitleBar {
                                                     else {
                                                         return;
                                                     };
-                                                    ZedPredictTos::toggle(
+                                                    ZedPredictOnboarding::toggle(
                                                         workspace,
                                                         user_store.clone(),
                                                         cx,

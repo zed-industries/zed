@@ -70,7 +70,7 @@ pub use element::{
 };
 use futures::{future, FutureExt};
 use fuzzy::StringMatchCandidate;
-use zed_predict_tos::ZedPredictTos;
+use zed_predict_onboarding::ZedPredictOnboarding;
 
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
@@ -3833,12 +3833,12 @@ impl Editor {
         self.do_completion(action.item_ix, CompletionIntent::Compose, cx)
     }
 
-    fn toggle_zed_predict_tos(&mut self, cx: &mut ViewContext<Self>) {
+    fn toggle_zed_predict_onboarding(&mut self, cx: &mut ViewContext<Self>) {
         let (Some(workspace), Some(project)) = (self.workspace(), self.project.as_ref()) else {
             return;
         };
 
-        ZedPredictTos::toggle(workspace, project.read(cx).user_store().clone(), cx);
+        ZedPredictOnboarding::toggle(workspace, project.read(cx).user_store().clone(), cx);
     }
 
     fn do_completion(
@@ -3869,7 +3869,7 @@ impl Editor {
                     )) => {
                         drop(entries);
                         drop(context_menu);
-                        self.toggle_zed_predict_tos(cx);
+                        self.toggle_zed_predict_onboarding(cx);
                         return Some(Task::ready(Ok(())));
                     }
                     _ => {}
