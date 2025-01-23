@@ -810,6 +810,7 @@ impl Project {
                     languages.clone(),
                     ssh_proto.clone(),
                     SSH_PROJECT_ID,
+                    fs.clone(),
                     cx,
                 )
             });
@@ -983,6 +984,7 @@ impl Project {
                 languages.clone(),
                 client.clone().into(),
                 remote_id,
+                fs.clone(),
                 cx,
             );
             lsp_store.set_language_server_statuses_from_proto(response.payload.language_servers);
