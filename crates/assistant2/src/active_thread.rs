@@ -196,8 +196,13 @@ impl ActiveThread {
             ThreadEvent::ShowError(error) => {
                 self.last_error = Some(error.clone());
             }
-            ThreadEvent::StreamedCompletion => {}
-            ThreadEvent::SummaryChanged => {}
+            ThreadEvent::StreamedCompletion | ThreadEvent::SummaryChanged => {
+                self.thread_store
+                    .update(cx, |thread_store, cx| {
+                        thread_store.save_thread(&self.thread, cx)
+                    })
+                    .detach_and_log_err(cx);
+            }
             ThreadEvent::StreamedAssistantText(message_id, text) => {
                 if let Some(markdown) = self.rendered_messages_by_id.get_mut(&message_id) {
                     markdown.update(cx, |markdown, cx| {
