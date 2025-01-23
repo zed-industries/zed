@@ -281,7 +281,11 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                 TaskSourceKind::Worktree {
                     id: worktree_id,
                     directory_in_worktree: PathBuf::from(separator!("b/.zed")),
-                    id_base: separator!("local worktree tasks from directory \"b/.zed\"").into(),
+                    id_base: if cfg!(windows) {
+                        "local worktree tasks from directory \"b\\\\.zed\"".into()
+                    } else {
+                        "local worktree tasks from directory \"b/.zed\"".into()
+                    },
                 },
                 "cargo check".to_string(),
                 vec!["check".to_string()],
@@ -360,7 +364,11 @@ async fn test_managing_project_specific_settings(cx: &mut gpui::TestAppContext) 
                 TaskSourceKind::Worktree {
                     id: worktree_id,
                     directory_in_worktree: PathBuf::from(separator!("b/.zed")),
-                    id_base: separator!("local worktree tasks from directory \"b/.zed\"").into(),
+                    id_base: if cfg!(windows) {
+                        "local worktree tasks from directory \"b\\\\.zed\"".into()
+                    } else {
+                        "local worktree tasks from directory \"b/.zed\"".into()
+                    },
                 },
                 "cargo check".to_string(),
                 vec!["check".to_string()],

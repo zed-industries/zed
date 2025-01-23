@@ -107,7 +107,7 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
 
     let (picker, workspace, cx) = build_find_picker(project, cx);
 
-    let matching_abs_path = path!("/root/a/b/file2.txt");
+    let matching_abs_path = path!("/root/a/b/file2.txt").to_string();
     picker
         .update_in(cx, |picker, window, cx| {
             picker.delegate.update_matches(matching_abs_path, window, cx)
@@ -127,7 +127,7 @@ async fn test_absolute_paths(cx: &mut TestAppContext) {
         assert_eq!(active_editor.read(cx).title(cx), "file2.txt");
     });
 
-    let mismatching_abs_path = path!("/root/a/b/file1.txt");
+    let mismatching_abs_path = path!("/root/a/b/file1.txt").to_string();
     picker
         .update_in(cx, |picker, window, cx| {
             picker.delegate.update_matches(mismatching_abs_path, window, cx)
@@ -1385,7 +1385,11 @@ async fn test_selected_history_item_stays_selected_on_worktree_updated(cx: &mut 
 
     // Add more files to the worktree to trigger update matches
     for i in 0..5 {
-        let filename = path!(&format!("/test/{}.txt", 4 + i));
+        let filename = if cfg!(windows) {
+            format!("C:/test/{}.txt", 4 + i)
+        } else {
+            format!("/test/{}.txt", 4 + i)
+        };
         app_state
             .fs
             .create_file(Path::new(&filename), Default::default())

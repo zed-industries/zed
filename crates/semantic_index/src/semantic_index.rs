@@ -279,7 +279,7 @@ mod tests {
     use settings::SettingsStore;
     use smol::channel;
     use std::{future, path::Path, sync::Arc};
-    use util::{path, separator};
+    use util::separator;
 
     fn init_test(cx: &mut TestAppContext) {
         env_logger::try_init().ok();
