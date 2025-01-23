@@ -546,7 +546,7 @@ wasmtime-wasi = "24"
 which = "6.0.0"
 wit-component = "0.201"
 zstd = "0.11"
-metal = "0.30"
+metal = "0.31"
 
 [workspace.dependencies.async-stripe]
 git = "https://github.com/zed-industries/async-stripe"
