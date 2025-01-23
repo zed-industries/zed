@@ -139,7 +139,7 @@ impl MultiBufferDiffHunk {
 
 pub type MultiBufferPoint = Point;
 type ExcerptOffset = TypedOffset<Excerpt>;
-type ExcerptPoint = TypedPoint<Excerpt>;
+pub type ExcerptPoint = TypedPoint<Excerpt>;
 
 #[derive(Copy, Clone, Debug, Default, Eq, Ord, PartialOrd, PartialEq, Hash, serde::Deserialize)]
 #[serde(transparent)]
@@ -282,7 +282,7 @@ pub struct RowInfo {
 
 /// A slice into a [`Buffer`] that is being edited in a [`MultiBuffer`].
 #[derive(Clone)]
-struct Excerpt {
+pub struct Excerpt {
     /// The unique identifier for this excerpt
     id: ExcerptId,
     /// The location of the excerpt in the [`MultiBuffer`]
@@ -3726,6 +3726,25 @@ impl MultiBufferSnapshot {
         }
     }
 
+    pub fn excerpt_point_to_point(&self, point: ExcerptPoint) -> Point {
+        let mut cursor = self.cursor::<Point>();
+        cursor.seek_to_excerpt_position(point.value);
+        while cursor.region().is_some_and(|region| !region.is_main_buffer) {
+            cursor.next()
+        }
+        let Some(region) = cursor.region() else {
+            return self.max_point();
+        };
+
+        let buffer_excerpt_start = region.excerpt.range.context.start.to_point(&region.buffer);
+        let buffer_region_start = region.buffer_range.start;
+        let point_in_excerpt = region
+            .buffer
+            .clip_point(point.value - buffer_excerpt_start, Bias::Left); // singleton buffer coords
+        let point_in_region = point_in_excerpt - buffer_region_start; // excerpt coords
+        region.range.start + point_in_region
+    }
+
     pub fn row_infos(&self, start_row: MultiBufferRow) -> MultiBufferRows {
         let mut cursor = self.cursor::<Point>();
         cursor.seek(&Point::new(start_row.0, 0));
@@ -5497,6 +5516,13 @@ where
         if self.excerpts.item().is_none() && excerpt_position == self.excerpts.start().0 {
             self.excerpts.prev(&());
         }
+    }
+
+    fn seek_to_excerpt_position(&mut self, pos: D) {
+        self.cached_region.take();
+        self.excerpts.seek(&ExcerptDimension(pos), Bias::Right, &());
+        self.diff_transforms
+            .seek(&ExcerptDimension(pos), Bias::Right, &());
     }
 
     fn seek_to_buffer_position_in_current_excerpt(&mut self, position: &D) {

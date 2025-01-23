@@ -5304,6 +5304,7 @@ dependencies = [
  "indoc",
  "language",
  "menu",
+ "multi_buffer",
  "project",
  "rope",
  "schemars",
