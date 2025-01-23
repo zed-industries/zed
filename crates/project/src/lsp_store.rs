@@ -245,7 +245,7 @@ impl LocalLspStore {
             let language = language.clone();
             let key = key.clone();
             let adapter = adapter.clone();
-
+            let fs = self.fs.clone();
             cx.spawn(move |this, mut cx| async move {
                 let result = {
                     let delegate = delegate.clone();
@@ -261,13 +261,18 @@ impl LocalLspStore {
                         let workspace_config = adapter
                             .adapter
                             .clone()
-                            .workspace_configuration(&delegate, toolchains.clone(), &mut cx)
+                            .workspace_configuration(
+                                fs.as_ref(),
+                                &delegate,
+                                toolchains.clone(),
+                                &mut cx,
+                            )
                             .await?;
 
                         let mut initialization_options = adapter
                             .adapter
                             .clone()
-                            .initialization_options(&(delegate))
+                            .initialization_options(fs.as_ref(), &(delegate))
                             .await?;
 
                         match (&mut initialization_options, override_options) {
@@ -284,7 +289,13 @@ impl LocalLspStore {
                             adapter.adapter.prepare_initialize_params(params)
                         })??;
 
-                        Self::setup_lsp_messages(this.clone(), &language_server, delegate, adapter);
+                        Self::setup_lsp_messages(
+                            this.clone(),
+                            fs,
+                            &language_server,
+                            delegate,
+                            adapter,
+                        );
 
                         let did_change_configuration_params =
                             Arc::new(lsp::DidChangeConfigurationParams {
@@ -496,6 +507,7 @@ impl LocalLspStore {
 
     fn setup_lsp_messages(
         this: WeakModel<LspStore>,
+        fs: Arc<dyn Fs>,
         language_server: &LanguageServer,
         delegate: Arc<dyn LspAdapterDelegate>,
         adapter: Arc<CachedLspAdapter>,
@@ -529,15 +541,17 @@ impl LocalLspStore {
                 let adapter = adapter.adapter.clone();
                 let delegate = delegate.clone();
                 let this = this.clone();
+                let fs = fs.clone();
                 move |params, mut cx| {
                     let adapter = adapter.clone();
                     let delegate = delegate.clone();
                     let this = this.clone();
+                    let fs = fs.clone();
                     async move {
                         let toolchains =
                             this.update(&mut cx, |this, cx| this.toolchain_store(cx))?;
                         let workspace_config = adapter
-                            .workspace_configuration(&delegate, toolchains, &mut cx)
+                            .workspace_configuration(fs.as_ref(), &delegate, toolchains, &mut cx)
                             .await?;
                         Ok(params
                             .items
@@ -2954,7 +2968,10 @@ impl LspStore {
 
         let _maintain_workspace_config = {
             let (sender, receiver) = watch::channel();
-            (Self::maintain_workspace_config(receiver, cx), sender)
+            (
+                Self::maintain_workspace_config(fs.clone(), receiver, cx),
+                sender,
+            )
         };
         Self {
             mode: LspStoreMode::Local(LocalLspStore {
@@ -3017,6 +3034,7 @@ impl LspStore {
         })
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub(super) fn new_remote(
         buffer_store: Model<BufferStore>,
         worktree_store: Model<WorktreeStore>,
@@ -3024,6 +3042,7 @@ impl LspStore {
         languages: Arc<LanguageRegistry>,
         upstream_client: AnyProtoClient,
         project_id: u64,
+        fs: Arc<dyn Fs>,
         cx: &mut ModelContext<Self>,
     ) -> Self {
         cx.subscribe(&buffer_store, Self::on_buffer_store_event)
@@ -3032,7 +3051,7 @@ impl LspStore {
             .detach();
         let _maintain_workspace_config = {
             let (sender, receiver) = watch::channel();
-            (Self::maintain_workspace_config(receiver, cx), sender)
+            (Self::maintain_workspace_config(fs, receiver, cx), sender)
         };
         Self {
             mode: LspStoreMode::Remote(RemoteLspStore {
@@ -5125,6 +5144,7 @@ impl LspStore {
 
     pub(crate) async fn refresh_workspace_configurations(
         this: &WeakModel<Self>,
+        fs: Arc<dyn Fs>,
         mut cx: AsyncAppContext,
     ) {
         maybe!(async move {
@@ -5171,7 +5191,12 @@ impl LspStore {
                 .ok()?;
             for (adapter, server, delegate) in servers {
                 let settings = adapter
-                    .workspace_configuration(&delegate, toolchain_store.clone(), &mut cx)
+                    .workspace_configuration(
+                        fs.as_ref(),
+                        &delegate,
+                        toolchain_store.clone(),
+                        &mut cx,
+                    )
                     .await
                     .ok()?;
 
@@ -5194,6 +5219,7 @@ impl LspStore {
         }
     }
     fn maintain_workspace_config(
+        fs: Arc<dyn Fs>,
         external_refresh_requests: watch::Receiver<()>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
@@ -5208,7 +5234,7 @@ impl LspStore {
             futures::stream::select(settings_changed_rx, external_refresh_requests);
         cx.spawn(move |this, cx| async move {
             while let Some(()) = joint_future.next().await {
-                Self::refresh_workspace_configurations(&this, cx.clone()).await;
+                Self::refresh_workspace_configurations(&this, fs.clone(), cx.clone()).await;
             }
 
             drop(settings_observation);
@@ -8370,6 +8396,7 @@ impl LspAdapter for SshLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
+        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
         let Some(options) = &self.initialization_options else {
