@@ -1185,7 +1185,7 @@ impl GitPanel {
                 }),
             )
             .when(status_style == StatusStyle::Icon, |this| {
-                this.child(git_status_icon(status))
+                this.child(git_status_icon(status, cx))
             })
             .child(
                 h_flex()
