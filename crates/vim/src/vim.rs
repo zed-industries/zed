@@ -42,7 +42,7 @@ use state::{Mode, Operator, RecordedSelection, SearchState, VimGlobals};
 use std::{mem, ops::Range, sync::Arc};
 use surrounds::SurroundsType;
 use theme::ThemeSettings;
-use ui::{px, IntoElement, VisualContext};
+use ui::{px, IntoElement, SharedString, VisualContext};
 use vim_mode_setting::VimModeSetting;
 use workspace::{self, Pane, ResizeIntent, Workspace};
 
@@ -201,6 +201,7 @@ pub(crate) struct Vim {
     pub(crate) mode: Mode,
     pub last_mode: Mode,
     pub temp_mode: bool,
+    pub status_label: Option<SharedString>,
     pub exit_temporary_mode: bool,
 
     operator_stack: Vec<Operator>,
@@ -262,6 +263,7 @@ impl Vim {
             current_anchor: None,
             undo_modes: HashMap::default(),
 
+            status_label: None,
             selected_register: None,
             search: SearchState::default(),
 
@@ -519,6 +521,7 @@ impl Vim {
         let last_mode = self.mode;
         let prior_mode = self.last_mode;
         let prior_tx = self.current_tx;
+        self.status_label.take();
         self.last_mode = last_mode;
         self.mode = mode;
         self.operator_stack.clear();
