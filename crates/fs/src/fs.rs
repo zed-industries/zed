@@ -5,6 +5,7 @@ mod mac_watcher;
 pub mod fs_watcher;
 
 use anyhow::{anyhow, Context, Result};
+use git::repository::RepoPath;
 #[cfg(any(test, feature = "test-support"))]
 use git::status::FileStatus;
 use git::GitHostingProviderRegistry;
@@ -892,58 +893,7 @@ impl FakeFsState {
         target: &Path,
         follow_symlink: bool,
     ) -> Option<(Arc<Mutex<FakeFsEntry>>, PathBuf)> {
-        let mut path = target.to_path_buf();
-        let mut canonical_path = PathBuf::new();
-        let mut entry_stack = Vec::new();
-        'outer: loop {
-            let mut path_components = path.components().peekable();
-            let mut prefix = None;
-            while let Some(component) = path_components.next() {
-                match component {
-                    Component::Prefix(prefix_component) => prefix = Some(prefix_component),
-                    Component::RootDir => {
-                        entry_stack.clear();
-                        entry_stack.push(self.root.clone());
-                        canonical_path.clear();
-                        match prefix {
-                            Some(prefix_component) => {
-                                canonical_path = PathBuf::from(prefix_component.as_os_str());
-                                // Prefixes like `C:\\` are represented without their trailing slash, so we have to re-add it.
-                                canonical_path.push(std::path::MAIN_SEPARATOR_STR);
-                            }
-                            None => canonical_path = PathBuf::from(std::path::MAIN_SEPARATOR_STR),
-                        }
-                    }
-                    Component::CurDir => {}
-                    Component::ParentDir => {
-                        entry_stack.pop()?;
-                        canonical_path.pop();
-                    }
-                    Component::Normal(name) => {
-                        let current_entry = entry_stack.last().cloned()?;
-                        let current_entry = current_entry.lock();
-                        if let FakeFsEntry::Dir { entries, .. } = &*current_entry {
-                            let entry = entries.get(name.to_str().unwrap()).cloned()?;
-                            if path_components.peek().is_some() || follow_symlink {
-                                let entry = entry.lock();
-                                if let FakeFsEntry::Symlink { target, .. } = &*entry {
-                                    let mut target = target.clone();
-                                    target.extend(path_components);
-                                    path = target;
-                                    continue 'outer;
-                                }
-                            }
-                            entry_stack.push(entry.clone());
-                            canonical_path = canonical_path.join(name);
-                        } else {
-                            return None;
-                        }
-                    }
-                }
-            }
-            break;
-        }
-        Some((entry_stack.pop()?, canonical_path))
+        FakeFsEntry::try_read_path(&self.root, target, follow_symlink)
     }
 
     fn write_path<Fn, T>(&self, path: &Path, callback: Fn) -> Result<T>
@@ -1227,16 +1177,23 @@ impl FakeFs {
         F: FnOnce(&mut FakeGitRepositoryState),
     {
         let mut state = self.state.lock();
-        let entry = state.read_path(dot_git).unwrap();
-        let mut entry = entry.lock();
+        let dot_git_entry = state.read_path(dot_git).unwrap();
+        let mut dot_git_entry = dot_git_entry.lock();
+        let parent = dot_git.parent().expect(".git has no parent path");
+        let parent_entry = state.read_path(parent).unwrap();
 
-        if let FakeFsEntry::Dir { git_repo_state, .. } = &mut *entry {
-            let repo_state = git_repo_state.get_or_insert_with(|| {
-                Arc::new(Mutex::new(FakeGitRepositoryState::new(
-                    dot_git.to_path_buf(),
-                    state.git_event_tx.clone(),
-                )))
-            });
+        if let FakeFsEntry::Dir { git_repo_state, .. } = &mut *dot_git_entry {
+            let git_fs = FakeGitRepositoryFs {
+                dot_git_dir: dot_git.to_owned(),
+                entry: parent_entry,
+                event_emitter: state.git_event_tx.clone(),
+            };
+            let repo_state = git_repo_state
+                .get_or_insert_with(|| {
+                    Arc::new(Mutex::new(FakeGitRepositoryState::new(Arc::new(git_fs))))
+                })
+                .clone();
+            drop(dot_git_entry);
             let mut repo_state = repo_state.lock();
 
             f(&mut repo_state);
@@ -1276,7 +1233,7 @@ impl FakeFs {
             state.index_contents.extend(
                 head_state
                     .iter()
-                    .map(|(path, content)| (path.to_path_buf(), content.clone())),
+                    .map(|(path, content)| ((*path).into(), content.clone())),
             );
         });
     }
@@ -1284,11 +1241,9 @@ impl FakeFs {
     pub fn set_blame_for_repo(&self, dot_git: &Path, blames: Vec<(&Path, git::blame::Blame)>) {
         self.with_git_state(dot_git, true, |state| {
             state.blames.clear();
-            state.blames.extend(
-                blames
-                    .into_iter()
-                    .map(|(path, blame)| (path.to_path_buf(), blame)),
-            );
+            state
+                .blames
+                .extend(blames.into_iter().map(|(path, blame)| (path.into(), blame)));
         });
     }
 
@@ -1430,6 +1385,65 @@ impl FakeFsEntry {
         } else {
             Err(anyhow!("not a directory: {}", path.display()))
         }
+    }
+
+    fn try_read_path(
+        this: &Arc<Mutex<Self>>,
+        target: &Path,
+        follow_symlink: bool,
+    ) -> Option<(Arc<Mutex<FakeFsEntry>>, PathBuf)> {
+        let mut path = target.to_path_buf();
+        let mut canonical_path = PathBuf::new();
+        let mut entry_stack = Vec::new();
+        'outer: loop {
+            let mut path_components = path.components().peekable();
+            let mut prefix = None;
+            while let Some(component) = path_components.next() {
+                match component {
+                    Component::Prefix(prefix_component) => prefix = Some(prefix_component),
+                    Component::RootDir => {
+                        entry_stack.clear();
+                        entry_stack.push(this.clone());
+                        canonical_path.clear();
+                        match prefix {
+                            Some(prefix_component) => {
+                                canonical_path = PathBuf::from(prefix_component.as_os_str());
+                                // Prefixes like `C:\\` are represented without their trailing slash, so we have to re-add it.
+                                canonical_path.push(std::path::MAIN_SEPARATOR_STR);
+                            }
+                            None => canonical_path = PathBuf::from(std::path::MAIN_SEPARATOR_STR),
+                        }
+                    }
+                    Component::CurDir => {}
+                    Component::ParentDir => {
+                        entry_stack.pop()?;
+                        canonical_path.pop();
+                    }
+                    Component::Normal(name) => {
+                        let current_entry = entry_stack.last().cloned()?;
+                        let current_entry = current_entry.lock();
+                        if let FakeFsEntry::Dir { entries, .. } = &*current_entry {
+                            let entry = entries.get(name.to_str().unwrap()).cloned()?;
+                            if path_components.peek().is_some() || follow_symlink {
+                                let entry = entry.lock();
+                                if let FakeFsEntry::Symlink { target, .. } = &*entry {
+                                    let mut target = target.clone();
+                                    target.extend(path_components);
+                                    path = target;
+                                    continue 'outer;
+                                }
+                            }
+                            entry_stack.push(entry.clone());
+                            canonical_path = canonical_path.join(name);
+                        } else {
+                            return None;
+                        }
+                    }
+                }
+            }
+            break;
+        }
+        Some((entry_stack.pop()?, canonical_path))
     }
 }
 
@@ -1927,15 +1941,20 @@ impl Fs for FakeFs {
 
     fn open_repo(&self, abs_dot_git: &Path) -> Option<Arc<dyn GitRepository>> {
         let state = self.state.lock();
-        let entry = state.read_path(abs_dot_git).unwrap();
-        let mut entry = entry.lock();
-        if let FakeFsEntry::Dir { git_repo_state, .. } = &mut *entry {
+        let dot_git_entry = state.read_path(abs_dot_git).unwrap();
+        let mut dot_git_entry = dot_git_entry.lock();
+        let parent = abs_dot_git.parent().expect(".git has no parent path");
+        let parent_entry = state.read_path(parent).unwrap();
+
+        if let FakeFsEntry::Dir { git_repo_state, .. } = &mut *dot_git_entry {
+            let git_fs = FakeGitRepositoryFs {
+                dot_git_dir: abs_dot_git.to_owned(),
+                entry: parent_entry,
+                event_emitter: state.git_event_tx.clone(),
+            };
             let state = git_repo_state
                 .get_or_insert_with(|| {
-                    Arc::new(Mutex::new(FakeGitRepositoryState::new(
-                        abs_dot_git.to_path_buf(),
-                        state.git_event_tx.clone(),
-                    )))
+                    Arc::new(Mutex::new(FakeGitRepositoryState::new(Arc::new(git_fs))))
                 })
                 .clone();
             Some(git::repository::FakeGitRepository::open(state))
@@ -1955,6 +1974,77 @@ impl Fs for FakeFs {
     #[cfg(any(test, feature = "test-support"))]
     fn as_fake(&self) -> Arc<FakeFs> {
         self.this.upgrade().unwrap()
+    }
+}
+
+#[cfg(any(test, feature = "test-support"))]
+struct FakeGitRepositoryFs {
+    dot_git_dir: PathBuf,
+    entry: Arc<Mutex<FakeFsEntry>>,
+    event_emitter: smol::channel::Sender<PathBuf>,
+}
+
+impl git::repository::FakeGitRepositoryFs for FakeGitRepositoryFs {
+    fn dot_git_dir(&self) -> PathBuf {
+        self.dot_git_dir.clone()
+    }
+
+    fn read_path(&self, path: &RepoPath) -> Option<String> {
+        let (entry, _) = FakeFsEntry::try_read_path(&self.entry, path, false)?;
+        let content = entry.lock().file_content(path).ok()?.clone();
+        let content = String::from_utf8(content).expect("Non-UTF-8 content in FakeFs entry");
+        Some(content)
+    }
+
+    fn all_paths(&self) -> Box<dyn Iterator<Item = (RepoPath, String)>> {
+        let mut stack = vec![];
+        let mut start = "".to_owned();
+        let mut entry = self.entry.clone();
+        let mut path: PathBuf = "".into();
+        let mut result = Vec::new();
+        'outer: loop {
+            let cur = entry.clone();
+            for (segment, child) in cur.lock().dir_entries(&path).unwrap().range(start..) {
+                let guard = child.lock();
+                match &*guard {
+                    FakeFsEntry::File { content, .. } => {
+                        let content = String::from_utf8(content.clone())
+                            .expect("Non-UTF-8 content in FakeFs entry");
+                        result.push((path.join(segment).into(), content));
+                    }
+                    FakeFsEntry::Dir {
+                        git_repo_state,
+                        entries,
+                        ..
+                    } => {
+                        if git_repo_state.is_some()
+                            || entries.keys().any(|segment| segment == ".git")
+                        {
+                            continue;
+                        }
+                        stack.push((entry.clone(), segment.clone()));
+                        entry = child.clone();
+                        start = "".to_owned();
+                        path = path.join(segment);
+                        continue 'outer;
+                    }
+                    FakeFsEntry::Symlink { .. } => {}
+                }
+            }
+            let Some((parent, parent_start)) = stack.pop() else {
+                break;
+            };
+            entry = parent;
+            start = parent_start;
+            path.pop();
+        }
+        Box::new(result.into_iter())
+    }
+
+    fn repo_changed(&self) {
+        self.event_emitter
+            .try_send(self.dot_git_dir.clone())
+            .expect("Dropped repo change notification")
     }
 }
 

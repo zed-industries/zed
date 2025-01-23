@@ -3214,6 +3214,59 @@ async fn test_propagate_statuses_for_nested_repos(cx: &mut TestAppContext) {
 }
 
 #[gpui::test]
+async fn test_fake_git_repository_fs(cx: &mut TestAppContext) {
+    init_test(cx);
+    let fs = FakeFs::new(cx.background_executor.clone());
+    fs.insert_tree(
+        "/root",
+        json!({
+            "x": {
+                ".git": {},
+                "x1.txt": "foo",
+                "x2.txt": "bar",
+                "y": {
+                    ".git": {},
+                    "y1.txt": "baz",
+                    "y2.txt": "qux"
+                },
+                "z.txt": "sneaky..."
+            },
+        }),
+    )
+    .await;
+
+    fs.with_git_state("/root/x/.git".as_ref(), false, |repo_state| {
+        let all_paths = repo_state.fake_fs.all_paths().collect::<Vec<_>>();
+        assert_eq!(
+            all_paths,
+            &[
+                ("x1.txt".into(), "foo".to_owned()),
+                ("x2.txt".into(), "bar".to_owned()),
+                ("z.txt".into(), "sneaky...".to_owned())
+            ]
+        );
+    });
+}
+
+//#[gpui::test]
+//async fn test_git_status_correspondence(mut rng: StdRng, cx: &mut TestAppContext) {
+//    // operations
+//    // - take something that's staged and unstage it
+//    // - take something that's unstaged and stage it
+//    // - take something that's modified from the index and revert it
+//    // - take something that's unmodified from the index and modify it
+//    init_test(cx);
+//    let fake = FakeFs::new(cx.background_executor.clone());
+//    let initial = json!({
+//        "a.txt": "a",
+//        "b.txt": "b",
+//        "c.txt": "c",
+//    });
+//    fake.insert_tree("/project", initial.clone()).await;
+//    let real = temp_tree(json!({"project": initial}));
+//}
+
+#[gpui::test]
 async fn test_private_single_file_worktree(cx: &mut TestAppContext) {
     init_test(cx);
     let fs = FakeFs::new(cx.background_executor.clone());
