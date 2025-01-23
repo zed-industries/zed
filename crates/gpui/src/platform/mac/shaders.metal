@@ -874,32 +874,22 @@ float4 gradient_color(Background background,
       break;
     }
     case 2: {
-        float width = 8.;
+        float width = 6.;
         float radians = (fmod(45., 360.0) - 90.0) * (M_PI_F / 180.0);
         float2x2 rotation = rotate2d(radians);
-        float2 rotated_point = rotation * position;
-        float pattern = fmod(rotated_point.x, width * 2.0);
+        float2 relative_position = position - float2(bounds.origin.x, bounds.origin.y);
+        float2 rotated_point = rotation * relative_position;
+
+        float diagonal = sqrt(bounds.size.width * bounds.size.width + bounds.size.height * bounds.size.height);
+
+        float repetitions = ceil(diagonal / (width * 2.0));
+
+        float pattern = fmod(rotated_point.x + (repetitions * width * 2.0), width * 2.0);
+
         float distance = min(pattern, width * 2.0 - pattern) - width * 0.5;
         color = solid_color * saturate(0.5 - distance);
         break;
     }
-    // case 2: {
-    //     float width = 8.;
-    //     float radians = (fmod(45., 360.0) - 90.0) * (M_PI_F / 180.0);
-    //     float2x2 rotation = rotate2d(radians);
-    //     float2 rotated_point = rotation * position;
-    //     rotated_point.x = fmod(rotated_point.x, width);
-    //     float distance = quad_sdf(
-    //         rotated_point,
-    //         Bounds_ScaledPixels {
-    //             Point_ScaledPixels { 0., bounds.origin.y },
-    //             Size_ScaledPixels { width, bounds.size.height * 3 }
-    //         },
-    //         Corners_ScaledPixels { 0., 0., 0., 0. }
-    //     );
-    //     color = solid_color * saturate(0.5 - distance);
-    //     break;
-    // }
   }
 
   return color;
