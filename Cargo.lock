@@ -492,7 +492,6 @@ dependencies = [
  "time",
  "time_format",
  "ui",
- "unindent",
  "util",
  "uuid",
  "workspace",

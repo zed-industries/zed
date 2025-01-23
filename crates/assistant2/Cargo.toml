@@ -73,7 +73,6 @@ theme.workspace = true
 time.workspace = true
 time_format.workspace = true
 ui.workspace = true
-unindent.workspace = true
 util.workspace = true
 uuid.workspace = true
 workspace.workspace = true
