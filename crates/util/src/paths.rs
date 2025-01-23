@@ -472,18 +472,6 @@ pub fn add_root_for_windows(path: &str) -> String {
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
-pub fn replace_path_separator(path: &str) -> String {
-    #[cfg(target_os = "windows")]
-    {
-        path.replace("/", "\\")
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        path.to_string()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

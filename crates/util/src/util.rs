@@ -29,7 +29,7 @@ use anyhow::{anyhow, Context as _};
 
 pub use take_until::*;
 #[cfg(any(test, feature = "test-support"))]
-pub use util_macros::replace_path_slashes;
+pub use util_macros::separator;
 
 #[macro_export]
 macro_rules! debug_panic {
@@ -50,7 +50,7 @@ macro_rules! path {
         concat!("C:", $path)
     };
     ($path:literal, $depth:expr) => {
-        replace_path_slashes!($path, $depth)
+        concat!("C:", separator!($path, $depth))
     };
 }
 
