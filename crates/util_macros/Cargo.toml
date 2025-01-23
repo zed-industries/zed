@@ -13,6 +13,5 @@ path = "src/util_macros.rs"
 proc-macro = true
 
 [dependencies]
-proc-macro2 = "1.0.93"
-quote = "1.0.9"
-syn = "*"
+quote.workspace = true
+syn.workspace = true

@@ -447,11 +447,13 @@ pet-poetry = { git = "https://github.com/microsoft/python-environment-tools.git"
 pet-reporter = { git = "https://github.com/microsoft/python-environment-tools.git", rev = "1abe5cec5ebfbe97ca71746a4cfc7fe89bddf8e0" }
 postage = { version = "0.5", features = ["futures-traits"] }
 pretty_assertions = { version = "1.3.0", features = ["unstable"] }
+proc-macro2 = "1.0.93"
 profiling = "1"
 prost = "0.9"
 prost-build = "0.9"
 prost-types = "0.9"
 pulldown-cmark = { version = "0.12.0", default-features = false }
+quote = "1.0.9"
 rand = "0.8.5"
 rayon = "1.8"
 regex = "1.5"
@@ -495,6 +497,7 @@ sqlformat = "0.2"
 strsim = "0.11"
 strum = { version = "0.26.0", features = ["derive"] }
 subtle = "2.5.0"
+syn = { version = "1.0.72", features = ["full", "extra-traits"] }
 sys-locale = "0.3.1"
 sysinfo = "0.31.0"
 take-until = "0.2.0"
