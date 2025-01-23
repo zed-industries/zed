@@ -4,7 +4,7 @@ use editor::{
         self, find_boundary, find_preceding_boundary_display_point, FindRange, TextLayoutDetails,
     },
     scroll::Autoscroll,
-    Anchor, Bias, DisplayPoint, Editor, RowExt, ToOffset,
+    Anchor, Bias, DisplayPoint, Editor, RowExt, ToOffset, ToPoint,
 };
 use gpui::{actions, impl_actions, px, ViewContext};
 use language::{CharKind, Point, Selection, SelectionGoal};
@@ -847,7 +847,10 @@ impl Motion {
                 SelectionGoal::None,
             ),
             CurrentLine => (next_line_end(map, point, times), SelectionGoal::None),
-            StartOfDocument => (start_of_document(map, point, times), SelectionGoal::None),
+            StartOfDocument => (
+                start_of_document(map, point, maybe_times),
+                SelectionGoal::None,
+            ),
             EndOfDocument => (
                 end_of_document(map, point, maybe_times),
                 SelectionGoal::None,
@@ -1956,25 +1959,87 @@ fn start_of_next_sentence(map: &DisplaySnapshot, end_of_sentence: usize) -> Opti
     Some(map.buffer_snapshot.len())
 }
 
-fn start_of_document(map: &DisplaySnapshot, point: DisplayPoint, line: usize) -> DisplayPoint {
-    let mut new_point = Point::new((line - 1) as u32, 0).to_display_point(map);
-    *new_point.column_mut() = point.column();
-    map.clip_point(new_point, Bias::Left)
+fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -> DisplayPoint {
+    let point = map.display_point_to_point(display_point, Bias::Left);
+    let Some(mut excerpt) = map.buffer_snapshot.excerpt_containing(point..point) else {
+        return display_point;
+    };
+    let offset = excerpt.buffer().point_to_offset(
+        excerpt
+            .buffer()
+            .clip_point(Point::new((line - 1) as u32, point.column), Bias::Left),
+    );
+    let buffer_range = excerpt.buffer_range();
+    if offset >= buffer_range.start && offset <= buffer_range.end {
+        let point = map
+            .buffer_snapshot
+            .offset_to_point(excerpt.map_offset_from_buffer(offset));
+        return map.point_to_display_point(point, Bias::Left);
+    }
+    let mut last_position = None;
+    for (excerpt, buffer, range) in map.buffer_snapshot.excerpts() {
+        let excerpt_range = language::ToOffset::to_offset(&range.context.start, &buffer)
+            ..language::ToOffset::to_offset(&range.context.end, &buffer);
+        if offset >= excerpt_range.start && offset <= excerpt_range.end {
+            let text_anchor = buffer.anchor_after(offset);
+            let anchor = Anchor::in_buffer(excerpt, buffer.remote_id(), text_anchor);
+            return anchor.to_display_point(map);
+        } else if offset <= excerpt_range.start {
+            let anchor = Anchor::in_buffer(excerpt, buffer.remote_id(), range.context.start);
+            return anchor.to_display_point(map);
+        } else {
+            last_position = Some(Anchor::in_buffer(
+                excerpt,
+                buffer.remote_id(),
+                range.context.end,
+            ));
+        }
+    }
+
+    let mut last_point = last_position.unwrap().to_point(&map.buffer_snapshot);
+    last_point.column = point.column;
+
+    map.point_to_display_point(
+        map.buffer_snapshot.clip_point(point, Bias::Left),
+        Bias::Left,
+    )
+}
+
+fn start_of_document(
+    map: &DisplaySnapshot,
+    display_point: DisplayPoint,
+    maybe_times: Option<usize>,
+) -> DisplayPoint {
+    if let Some(times) = maybe_times {
+        return go_to_line(map, display_point, times);
+    }
+
+    let point = map.display_point_to_point(display_point, Bias::Left);
+    let mut first_point = Point::zero();
+    first_point.column = point.column;
+
+    map.point_to_display_point(
+        map.buffer_snapshot.clip_point(first_point, Bias::Left),
+        Bias::Left,
+    )
 }
 
 fn end_of_document(
     map: &DisplaySnapshot,
-    point: DisplayPoint,
-    line: Option<usize>,
+    display_point: DisplayPoint,
+    maybe_times: Option<usize>,
 ) -> DisplayPoint {
-    let new_row = if let Some(line) = line {
-        (line - 1) as u32
-    } else {
-        map.buffer_snapshot.max_row().0
+    if let Some(times) = maybe_times {
+        return go_to_line(map, display_point, times);
     };
+    let point = map.display_point_to_point(display_point, Bias::Left);
+    let mut last_point = map.buffer_snapshot.max_point();
+    last_point.column = point.column;
 
-    let new_point = Point::new(new_row, point.column());
-    map.clip_point(new_point.to_display_point(map), Bias::Left)
+    map.point_to_display_point(
+        map.buffer_snapshot.clip_point(last_point, Bias::Left),
+        Bias::Left,
+    )
 }
 
 fn matching_tag(map: &DisplaySnapshot, head: DisplayPoint) -> Option<DisplayPoint> {
