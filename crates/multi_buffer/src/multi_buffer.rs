@@ -5000,9 +5000,9 @@ impl MultiBufferSnapshot {
                 .buffer
                 .line_indents_in_row_range(buffer_start_row..buffer_end_row);
             cursor.next();
-            return Some(line_indents.filter_map(move |(buffer_row, indent)| {
+            return Some(line_indents.map(move |(buffer_row, indent)| {
                 let row = region.range.start.row + (buffer_row - region.buffer_range.start.row);
-                Some((MultiBufferRow(row), indent, &region.excerpt.buffer))
+                (MultiBufferRow(row), indent, &region.excerpt.buffer)
             }));
         })
         .flatten()
