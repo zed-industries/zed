@@ -197,13 +197,11 @@ pub fn deploy_context_menu(
                 })
                 .action("Open in Terminal", Box::new(OpenInTerminal))
                 .map(|builder| {
+                    const COPY_PERMALINK_LABEL: &str = "Copy Permalink";
                     if has_git_repo {
-                        builder.action("Copy Permalink", Box::new(CopyPermalinkToLine))
+                        builder.action(COPY_PERMALINK_LABEL, Box::new(CopyPermalinkToLine))
                     } else {
-                        builder.disabled_action(
-                            "Copy Permalink (requires a git repo)",
-                            Box::new(CopyPermalinkToLine),
-                        )
+                        builder.disabled_action(COPY_PERMALINK_LABEL, Box::new(CopyPermalinkToLine))
                     }
                 });
             match focus {
