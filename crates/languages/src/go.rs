@@ -6,6 +6,7 @@ use gpui::{AppContext, AsyncAppContext, Task};
 use http_client::github::latest_github_release;
 pub use language::*;
 use lsp::{LanguageServerBinary, LanguageServerName};
+use project::Fs;
 use regex::Regex;
 use serde_json::json;
 use smol::fs;
@@ -197,6 +198,7 @@ impl super::LspAdapter for GoLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
+        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({

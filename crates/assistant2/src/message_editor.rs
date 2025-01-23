@@ -53,7 +53,7 @@ impl MessageEditor {
 
         let editor = cx.new_view(|cx| {
             let mut editor = Editor::auto_height(10, cx);
-            editor.set_placeholder_text("Ask anything…", cx);
+            editor.set_placeholder_text("Ask anything, @ to mention, ↑ to select", cx);
             editor.set_show_indent_guides(false, cx);
 
             editor
@@ -64,6 +64,7 @@ impl MessageEditor {
                 workspace.clone(),
                 Some(thread_store.clone()),
                 context_store.downgrade(),
+                editor.downgrade(),
                 ConfirmBehavior::Close,
                 cx,
             )
@@ -73,6 +74,7 @@ impl MessageEditor {
             ContextStrip::new(
                 context_store.clone(),
                 workspace.clone(),
+                editor.downgrade(),
                 Some(thread_store.clone()),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::File,
@@ -239,7 +241,9 @@ impl MessageEditor {
     }
 
     fn move_up(&mut self, _: &MoveUp, cx: &mut ViewContext<Self>) {
-        if self.context_picker_menu_handle.is_deployed() {
+        if self.context_picker_menu_handle.is_deployed()
+            || self.inline_context_picker_menu_handle.is_deployed()
+        {
             cx.propagate();
         } else {
             cx.focus_view(&self.context_strip);

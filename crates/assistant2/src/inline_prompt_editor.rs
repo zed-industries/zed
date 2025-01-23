@@ -270,9 +270,10 @@ impl<T: 'static> PromptEditor<T> {
             PromptEditorMode::Terminal { .. } => "Generate",
         };
 
-        let assistant_panel_keybinding = ui::text_for_action(&crate::ToggleFocus, cx)
-            .map(|keybinding| format!("{keybinding} to chat ― "))
-            .unwrap_or_default();
+        let assistant_panel_keybinding =
+            ui::text_for_action(&zed_actions::assistant::ToggleFocus, cx)
+                .map(|keybinding| format!("{keybinding} to chat ― "))
+                .unwrap_or_default();
 
         format!("{action}… ({assistant_panel_keybinding}↓↑ for history)")
     }
@@ -834,6 +835,7 @@ impl PromptEditor<BufferCodegen> {
             ContextStrip::new(
                 context_store.clone(),
                 workspace.clone(),
+                prompt_editor.downgrade(),
                 thread_store.clone(),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,
@@ -985,6 +987,7 @@ impl PromptEditor<TerminalCodegen> {
             ContextStrip::new(
                 context_store.clone(),
                 workspace.clone(),
+                prompt_editor.downgrade(),
                 thread_store.clone(),
                 context_picker_menu_handle.clone(),
                 SuggestContextKind::Thread,

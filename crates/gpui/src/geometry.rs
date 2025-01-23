@@ -2500,6 +2500,8 @@ impl Pixels {
     pub const ZERO: Pixels = Pixels(0.0);
     /// The maximum value that can be represented by `Pixels`.
     pub const MAX: Pixels = Pixels(f32::MAX);
+    /// The minimum value that can be represented by `Pixels`.
+    pub const MIN: Pixels = Pixels(f32::MIN);
 
     /// Floors the `Pixels` value to the nearest whole number.
     ///

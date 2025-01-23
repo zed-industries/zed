@@ -241,10 +241,29 @@ pub struct ThemeColors {
     /// Dim white ANSI terminal color.
     pub terminal_ansi_dim_white: Hsla,
 
-    // ===
-    // UI/Rich Text
-    // ===
+    /// Represents a link text hover color.
     pub link_text_hover: Hsla,
+
+    /// Represents an added entry or hunk in vcs, like git.
+    pub version_control_added: Hsla,
+    /// Represents the line background of an added entry or hunk in vcs, like git.
+    pub version_control_added_background: Hsla,
+    /// Represents a deleted entry in version control systems.
+    pub version_control_deleted: Hsla,
+    /// Represents the background color for deleted entries in version control systems.
+    pub version_control_deleted_background: Hsla,
+    /// Represents a modified entry in version control systems.
+    pub version_control_modified: Hsla,
+    /// Represents the background color for modified entries in version control systems.
+    pub version_control_modified_background: Hsla,
+    /// Represents a renamed entry in version control systems.
+    pub version_control_renamed: Hsla,
+    /// Represents a conflicting entry in version control systems.
+    pub version_control_conflict: Hsla,
+    /// Represents the background color for conflicting entries in version control systems.
+    pub version_control_conflict_background: Hsla,
+    /// Represents an ignored entry in version control systems.
+    pub version_control_ignored: Hsla,
 }
 
 #[derive(EnumIter, Debug, Clone, Copy, AsRefStr)]
@@ -346,6 +365,16 @@ pub enum ThemeColorField {
     TerminalAnsiBrightWhite,
     TerminalAnsiDimWhite,
     LinkTextHover,
+    VersionControlAdded,
+    VersionControlAddedBackground,
+    VersionControlDeleted,
+    VersionControlDeletedBackground,
+    VersionControlModified,
+    VersionControlModifiedBackground,
+    VersionControlRenamed,
+    VersionControlConflict,
+    VersionControlConflictBackground,
+    VersionControlIgnored,
 }
 
 impl ThemeColors {
@@ -455,6 +484,22 @@ impl ThemeColors {
             ThemeColorField::TerminalAnsiBrightWhite => self.terminal_ansi_bright_white,
             ThemeColorField::TerminalAnsiDimWhite => self.terminal_ansi_dim_white,
             ThemeColorField::LinkTextHover => self.link_text_hover,
+            ThemeColorField::VersionControlAdded => self.version_control_added,
+            ThemeColorField::VersionControlAddedBackground => self.version_control_added_background,
+            ThemeColorField::VersionControlDeleted => self.version_control_deleted,
+            ThemeColorField::VersionControlDeletedBackground => {
+                self.version_control_deleted_background
+            }
+            ThemeColorField::VersionControlModified => self.version_control_modified,
+            ThemeColorField::VersionControlModifiedBackground => {
+                self.version_control_modified_background
+            }
+            ThemeColorField::VersionControlRenamed => self.version_control_renamed,
+            ThemeColorField::VersionControlConflict => self.version_control_conflict,
+            ThemeColorField::VersionControlConflictBackground => {
+                self.version_control_conflict_background
+            }
+            ThemeColorField::VersionControlIgnored => self.version_control_ignored,
         }
     }
 

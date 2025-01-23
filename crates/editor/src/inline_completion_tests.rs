@@ -286,7 +286,7 @@ fn assert_editor_active_edit_completion(
             .as_ref()
             .expect("editor has no active completion");
 
-        if let InlineCompletion::Edit(edits) = &completion_state.completion {
+        if let InlineCompletion::Edit { edits, .. } = &completion_state.completion {
             assert(editor.buffer().read(cx).snapshot(cx), edits);
         } else {
             panic!("expected edit completion");
@@ -333,6 +333,7 @@ fn propose_edits<T: ToOffset>(
         provider.update(cx, |provider, _| {
             provider.set_inline_completion(Some(inline_completion::InlineCompletion {
                 edits: edits.collect(),
+                edit_preview: None,
             }))
         })
     });

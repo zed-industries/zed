@@ -112,9 +112,53 @@ You can see the [build script](https://github.com/msys2/MINGW-packages/blob/mast
 
 ## Troubleshooting
 
-### Can't compile zed
+### Setting `RUSTFLAGS` env var breaks builds
 
-Before reporting the issue, make sure that you have the latest rustc version with `rustup update`.
+If you set the `RUSTFLAGS` env var, it will override the `rustflags` settings in `.cargo/config.toml` which is required to properly build Zed.
+
+Since these settings can vary from time to time, the build errors you receive may vary from linker errors, to other stranger errors.
+
+If you'd like to add extra rust flags, you may do 1 of the following in `.cargo/config.toml`:
+
+Add your flags in the build section
+
+```toml
+[build]
+rustflags = ["-C", "symbol-mangling-version=v0", "--cfg", "tokio_unstable"]
+```
+
+Add your flags in the windows target section
+
+```toml
+[target.'cfg(target_os = "windows")']
+rustflags = [
+    "--cfg",
+    "windows_slim_errors",
+    "-C",
+    "target-feature=+crt-static",
+]
+```
+
+Or, you can create a new `.cargo/config.toml` in the same folder as the Zed repo (see below). This is particularly useful if you are doing CI builds since you don't have to edit the original `.cargo/config.toml`.
+
+```
+upper_dir
+├── .cargo          // <-- Make this folder
+│   └── config.toml // <-- Make this file
+└── zed
+    ├── .cargo
+    │   └── config.toml
+    └── crates
+        ├── assistant
+        └── ...
+```
+
+In the new (above) `.cargo/config.toml`, if we wanted to add `--cfg gles` to our rustflags, it would look like this
+
+```toml
+[target.'cfg(all())']
+rustflags = ["--cfg", "gles"]
+```
 
 ### Cargo errors claiming that a dependency is using unstable features
 

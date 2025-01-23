@@ -4,6 +4,7 @@ use futures::StreamExt;
 use language::{LspAdapter, LspAdapterDelegate};
 use lsp::{LanguageServerBinary, LanguageServerName};
 use node_runtime::NodeRuntime;
+use project::Fs;
 use serde_json::json;
 use smol::fs;
 use std::{
@@ -107,6 +108,7 @@ impl LspAdapter for CssLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
+        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<serde_json::Value>> {
         Ok(Some(json!({

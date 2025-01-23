@@ -1,8 +1,8 @@
 use crate::{
-    humanize_token_count, AssistantPanel, AssistantPanelEvent, CycleNextInlineAssist,
-    CyclePreviousInlineAssist, RequestType,
+    AssistantPanel, AssistantPanelEvent, CycleNextInlineAssist, CyclePreviousInlineAssist,
 };
 use anyhow::{anyhow, Context as _, Result};
+use assistant_context_editor::{humanize_token_count, RequestType};
 use assistant_settings::AssistantSettings;
 use client::{telemetry::Telemetry, ErrorExt};
 use collections::{hash_map, HashMap, HashSet, VecDeque};
@@ -1206,6 +1206,7 @@ impl InlineAssistant {
                     editor.set_show_wrap_guides(false, cx);
                     editor.set_show_gutter(false, cx);
                     editor.scroll_manager.set_forbid_vertical_scroll(true);
+                    editor.set_show_scrollbars(false, cx);
                     editor.set_read_only(true);
                     editor.set_show_inline_completions(Some(false), cx);
                     editor.highlight_rows::<DeletedLines>(
@@ -1727,7 +1728,7 @@ impl PromptEditor {
     }
 
     fn placeholder_text(codegen: &Codegen, cx: &WindowContext) -> String {
-        let context_keybinding = text_for_action(&crate::ToggleFocus, cx)
+        let context_keybinding = text_for_action(&zed_actions::assistant::ToggleFocus, cx)
             .map(|keybinding| format!(" • {keybinding} for context"))
             .unwrap_or_default();
 

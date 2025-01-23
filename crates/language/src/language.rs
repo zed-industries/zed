@@ -25,6 +25,7 @@ use crate::language_settings::SoftWrap;
 use anyhow::{anyhow, Context, Result};
 use async_trait::async_trait;
 use collections::{HashMap, HashSet};
+use fs::Fs;
 use futures::Future;
 use gpui::{AppContext, AsyncAppContext, Model, SharedString, Task};
 pub use highlight_map::HighlightMap;
@@ -45,7 +46,6 @@ use serde::{de, Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::Value;
 use settings::WorktreeId;
 use smol::future::FutureExt as _;
-use std::num::NonZeroU32;
 use std::{
     any::Any,
     ffi::OsStr,
@@ -61,6 +61,7 @@ use std::{
         Arc, LazyLock,
     },
 };
+use std::{num::NonZeroU32, sync::OnceLock};
 use syntax_map::{QueryCursorHandle, SyntaxSnapshot};
 use task::RunnableTag;
 pub use task_context::{ContextProvider, RunnableRange};
@@ -163,6 +164,7 @@ pub struct CachedLspAdapter {
     pub adapter: Arc<dyn LspAdapter>,
     pub reinstall_attempt_count: AtomicU64,
     cached_binary: futures::lock::Mutex<Option<LanguageServerBinary>>,
+    attach_kind: OnceLock<Attach>,
 }
 
 impl Debug for CachedLspAdapter {
@@ -198,6 +200,7 @@ impl CachedLspAdapter {
             adapter,
             cached_binary: Default::default(),
             reinstall_attempt_count: AtomicU64::new(0),
+            attach_kind: Default::default(),
         })
     }
 
@@ -258,6 +261,38 @@ impl CachedLspAdapter {
             .get(language_name.0.as_ref())
             .cloned()
             .unwrap_or_else(|| language_name.lsp_id())
+    }
+    pub fn find_project_root(
+        &self,
+        path: &Path,
+        ancestor_depth: usize,
+        delegate: &Arc<dyn LspAdapterDelegate>,
+    ) -> Option<Arc<Path>> {
+        self.adapter
+            .find_project_root(path, ancestor_depth, delegate)
+    }
+    pub fn attach_kind(&self) -> Attach {
+        *self.attach_kind.get_or_init(|| self.adapter.attach_kind())
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Attach {
+    /// Create a single language server instance per subproject root.
+    InstancePerRoot,
+    /// Use one shared language server instance for all subprojects within a project.
+    Shared,
+}
+
+impl Attach {
+    pub fn root_path(
+        &self,
+        root_subproject_path: (WorktreeId, Arc<Path>),
+    ) -> (WorktreeId, Arc<Path>) {
+        match self {
+            Attach::InstancePerRoot => root_subproject_path,
+            Attach::Shared => (root_subproject_path.0, Arc::from(Path::new(""))),
+        }
     }
 }
 
@@ -464,6 +499,7 @@ pub trait LspAdapter: 'static + Send + Sync {
     /// Returns initialization options that are going to be sent to a LSP server as a part of [`lsp::InitializeParams`]
     async fn initialization_options(
         self: Arc<Self>,
+        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         Ok(None)
@@ -471,6 +507,7 @@ pub trait LspAdapter: 'static + Send + Sync {
 
     async fn workspace_configuration(
         self: Arc<Self>,
+        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
         _: Arc<dyn LanguageToolchainStore>,
         _cx: &mut AsyncAppContext,
@@ -504,6 +541,19 @@ pub trait LspAdapter: 'static + Send + Sync {
     /// Support custom initialize params.
     fn prepare_initialize_params(&self, original: InitializeParams) -> Result<InitializeParams> {
         Ok(original)
+    }
+    fn attach_kind(&self) -> Attach {
+        Attach::Shared
+    }
+    fn find_project_root(
+        &self,
+
+        _path: &Path,
+        _ancestor_depth: usize,
+        _: &Arc<dyn LspAdapterDelegate>,
+    ) -> Option<Arc<Path>> {
+        // By default all language servers are rooted at the root of the worktree.
+        Some(Arc::from("".as_ref()))
     }
 }
 
@@ -763,6 +813,14 @@ pub struct FakeLspAdapter {
 
     pub capabilities: lsp::ServerCapabilities,
     pub initializer: Option<Box<dyn 'static + Send + Sync + Fn(&mut lsp::FakeLanguageServer)>>,
+    pub label_for_completion: Option<
+        Box<
+            dyn 'static
+                + Send
+                + Sync
+                + Fn(&lsp::CompletionItem, &Arc<Language>) -> Option<CodeLabel>,
+        >,
+    >,
 }
 
 /// Configuration of handling bracket pairs for a given language.
@@ -1778,6 +1836,7 @@ impl Default for FakeLspAdapter {
                 arguments: vec![],
                 env: Default::default(),
             },
+            label_for_completion: None,
         }
     }
 }
@@ -1845,9 +1904,19 @@ impl LspAdapter for FakeLspAdapter {
 
     async fn initialization_options(
         self: Arc<Self>,
+        _: &dyn Fs,
         _: &Arc<dyn LspAdapterDelegate>,
     ) -> Result<Option<Value>> {
         Ok(self.initialization_options.clone())
+    }
+
+    async fn label_for_completion(
+        &self,
+        item: &lsp::CompletionItem,
+        language: &Arc<Language>,
+    ) -> Option<CodeLabel> {
+        let label_for_completion = self.label_for_completion.as_ref()?;
+        label_for_completion(item, language)
     }
 }
 

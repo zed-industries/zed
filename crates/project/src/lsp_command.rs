@@ -942,9 +942,11 @@ fn language_server_for_buffer(
 ) -> Result<(Arc<CachedLspAdapter>, Arc<LanguageServer>)> {
     lsp_store
         .update(cx, |lsp_store, cx| {
-            lsp_store
-                .language_server_for_local_buffer(buffer.read(cx), server_id, cx)
-                .map(|(adapter, server)| (adapter.clone(), server.clone()))
+            buffer.update(cx, |buffer, cx| {
+                lsp_store
+                    .language_server_for_local_buffer(buffer, server_id, cx)
+                    .map(|(adapter, server)| (adapter.clone(), server.clone()))
+            })
         })?
         .ok_or_else(|| anyhow!("no language server found for buffer"))
 }
@@ -2121,7 +2123,7 @@ pub(crate) fn parse_completion_text_edit(
         }
 
         lsp::CompletionTextEdit::InsertAndReplace(edit) => {
-            let range = range_from_lsp(edit.insert);
+            let range = range_from_lsp(edit.replace);
 
             let start = snapshot.clip_point_utf16(range.start, Bias::Left);
             let end = snapshot.clip_point_utf16(range.end, Bias::Left);
