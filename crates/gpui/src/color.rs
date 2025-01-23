@@ -607,6 +607,15 @@ impl Default for Background {
     }
 }
 
+/// Creates a hash pattern background
+pub fn hash_pattern(color: Hsla) -> Background {
+    Background {
+        tag: BackgroundTag::PatternHash,
+        solid: color,
+        ..Default::default()
+    }
+}
+
 /// Creates a LinearGradient background color.
 ///
 /// The gradient line's angle of direction. A value of `0.` is equivalent to to top; increasing values rotate clockwise from there.
