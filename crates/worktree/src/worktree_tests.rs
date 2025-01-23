@@ -2162,7 +2162,7 @@ const CONFLICT: FileStatus = FileStatus::Unmerged(UnmergedStatus {
 // This is a limitation of the Windows.
 // See: https://stackoverflow.com/questions/41365318/access-is-denied-when-renaming-folder
 #[gpui::test]
-#[cfg(not(target_os = "windows"))]
+#[cfg_attr(target_os = "windows", ignore)]
 async fn test_rename_work_directory(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -2347,7 +2347,7 @@ async fn test_git_repository_for_path(cx: &mut TestAppContext) {
 // This is a limitation of the Windows.
 // See: https://stackoverflow.com/questions/41365318/access-is-denied-when-renaming-folder
 #[gpui::test]
-#[cfg(not(target_os = "windows"))]
+#[cfg_attr(target_os = "windows", ignore)]
 async fn test_file_status(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
@@ -3324,7 +3324,6 @@ fn git_commit(msg: &'static str, repo: &git2::Repository) {
 }
 
 #[track_caller]
-#[cfg_attr(target_os = "windows", allow(unused))]
 fn git_stash(repo: &mut git2::Repository) {
     use git2::Signature;
 
@@ -3334,7 +3333,6 @@ fn git_stash(repo: &mut git2::Repository) {
 }
 
 #[track_caller]
-#[cfg_attr(target_os = "windows", allow(unused))]
 fn git_reset(offset: usize, repo: &git2::Repository) {
     let head = repo.head().expect("Couldn't get repo head");
     let object = head.peel(git2::ObjectType::Commit).unwrap();

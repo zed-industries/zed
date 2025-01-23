@@ -1,5 +1,3 @@
-#![cfg_attr(target_os = "windows", allow(unused))]
-
 use crate::{
     Event, ExtensionIndex, ExtensionIndexEntry, ExtensionIndexLanguageEntry,
     ExtensionIndexThemeEntry, ExtensionManifest, ExtensionSettings, ExtensionStore,
@@ -461,7 +459,7 @@ async fn test_extension_store(cx: &mut TestAppContext) {
 // Disable this test on Windows for now. Because this test runs forever on Windows.
 // Reenable this test when we figure out why.
 #[gpui::test]
-#[cfg(not(target_os = "windows"))]
+#[cfg_attr(target_os = "windows", ignore)]
 async fn test_extension_store_with_test_extension(cx: &mut TestAppContext) {
     init_test(cx);
     cx.executor().allow_parking();
