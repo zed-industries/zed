@@ -9,7 +9,7 @@ use futures::future::join_all;
 pub use open_path_prompt::OpenPathDelegate;
 
 use collections::HashMap;
-use editor::{scroll::Autoscroll, Bias, Editor};
+use editor::{scroll::Autoscroll, Editor};
 use file_finder_settings::{FileFinderSettings, FileFinderWidth};
 use file_icons::FileIcons;
 use fuzzy::{CharBag, PathMatch, PathMatchCandidate};
@@ -1162,13 +1162,20 @@ impl PickerDelegate for FileFinderDelegate {
                             active_editor
                                 .downgrade()
                                 .update(&mut cx, |editor, cx| {
-                                    let snapshot = editor.snapshot(cx).display_snapshot;
-                                    let point = snapshot
-                                        .buffer_snapshot
-                                        .clip_point(Point::new(row, col), Bias::Left);
-                                    editor.change_selections(Some(Autoscroll::center()), cx, |s| {
-                                        s.select_ranges([point..point])
-                                    });
+                                    let multibuffer = editor.buffer().read(cx);
+                                    if let Some(buffer) = multibuffer.as_singleton() {
+                                        if let Some(anchor) = multibuffer.buffer_point_to_anchor(
+                                            &buffer,
+                                            Point::new(row, col),
+                                            cx,
+                                        ) {
+                                            editor.change_selections(
+                                                Some(Autoscroll::center()),
+                                                cx,
+                                                |s| s.select_anchor_ranges([anchor..anchor]),
+                                            );
+                                        }
+                                    };
                                 })
                                 .log_err();
                         }
