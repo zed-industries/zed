@@ -5,8 +5,7 @@ use gpui::{
 use time::{OffsetDateTime, UtcOffset};
 use ui::{prelude::*, IconButtonShape, ListItem, ListItemSpacing, Tooltip};
 
-use crate::thread::Thread;
-use crate::thread_store::ThreadStore;
+use crate::thread_store::{SavedThreadMetadata, ThreadStore};
 use crate::{AssistantPanel, RemoveSelectedThread};
 
 pub struct ThreadHistory {
@@ -82,10 +81,7 @@ impl ThreadHistory {
 
         if let Some(thread) = threads.get(self.selected_index) {
             self.assistant_panel
-                .update(cx, move |this, cx| {
-                    let thread_id = thread.read(cx).id().clone();
-                    this.open_thread(&thread_id, cx)
-                })
+                .update(cx, move |this, cx| this.open_thread(&thread.id, cx))
                 .ok();
 
             cx.notify();
@@ -98,8 +94,7 @@ impl ThreadHistory {
         if let Some(thread) = threads.get(self.selected_index) {
             self.assistant_panel
                 .update(cx, |this, cx| {
-                    let thread_id = thread.read(cx).id().clone();
-                    this.delete_thread(&thread_id, cx);
+                    this.delete_thread(&thread.id, cx);
                 })
                 .ok();
 
@@ -172,14 +167,14 @@ impl Render for ThreadHistory {
 
 #[derive(IntoElement)]
 pub struct PastThread {
-    thread: Model<Thread>,
+    thread: SavedThreadMetadata,
     assistant_panel: WeakView<AssistantPanel>,
     selected: bool,
 }
 
 impl PastThread {
     pub fn new(
-        thread: Model<Thread>,
+        thread: SavedThreadMetadata,
         assistant_panel: WeakView<AssistantPanel>,
         selected: bool,
     ) -> Self {
@@ -193,14 +188,10 @@ impl PastThread {
 
 impl RenderOnce for PastThread {
     fn render(self, cx: &mut WindowContext) -> impl IntoElement {
-        let (id, summary) = {
-            let thread = self.thread.read(cx);
-            (thread.id().clone(), thread.summary_or_default())
-        };
+        let summary = self.thread.summary;
 
         let thread_timestamp = time_format::format_localized_timestamp(
-            OffsetDateTime::from_unix_timestamp(self.thread.read(cx).updated_at().timestamp())
-                .unwrap(),
+            OffsetDateTime::from_unix_timestamp(self.thread.updated_at.timestamp()).unwrap(),
             OffsetDateTime::now_utc(),
             self.assistant_panel
                 .update(cx, |this, _cx| this.local_timezone())
@@ -208,7 +199,7 @@ impl RenderOnce for PastThread {
             time_format::TimestampFormat::EnhancedAbsolute,
         );
 
-        ListItem::new(("past-thread", self.thread.entity_id()))
+        ListItem::new(SharedString::from(self.thread.id.to_string()))
             .outlined()
             .toggle_state(self.selected)
             .start_slot(
@@ -233,7 +224,7 @@ impl RenderOnce for PastThread {
                             .tooltip(|cx| Tooltip::text("Delete Thread", cx))
                             .on_click({
                                 let assistant_panel = self.assistant_panel.clone();
-                                let id = id.clone();
+                                let id = self.thread.id.clone();
                                 move |_event, cx| {
                                     assistant_panel
                                         .update(cx, |this, cx| {
@@ -246,7 +237,7 @@ impl RenderOnce for PastThread {
             )
             .on_click({
                 let assistant_panel = self.assistant_panel.clone();
-                let id = id.clone();
+                let id = self.thread.id.clone();
                 move |_event, cx| {
                     assistant_panel
                         .update(cx, |this, cx| {

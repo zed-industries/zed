@@ -337,14 +337,12 @@ impl ContextPicker {
                 thread_store
                     .threads(cx)
                     .into_iter()
-                    .filter(|thread| !current_threads.contains(thread.read(cx).id()))
+                    .filter(|thread| !current_threads.contains(&thread.id))
                     .take(2)
                     .map(|thread| {
-                        let thread = thread.read(cx);
-
                         RecentEntry::Thread(ThreadContextEntry {
-                            id: thread.id().clone(),
-                            summary: thread.summary_or_default(),
+                            id: thread.id,
+                            summary: thread.summary,
                         })
                     }),
             )

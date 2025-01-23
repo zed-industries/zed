@@ -179,6 +179,7 @@ impl AssistantPanel {
             thread: cx.new_view(|cx| {
                 ActiveThread::new(
                     thread.clone(),
+                    thread_store.clone(),
                     workspace,
                     language_registry,
                     tools.clone(),
@@ -239,6 +240,7 @@ impl AssistantPanel {
         self.thread = cx.new_view(|cx| {
             ActiveThread::new(
                 thread.clone(),
+                self.thread_store.clone(),
                 self.workspace.clone(),
                 self.language_registry.clone(),
                 self.tools.clone(),
@@ -373,6 +375,7 @@ impl AssistantPanel {
         self.thread = cx.new_view(|cx| {
             ActiveThread::new(
                 thread.clone(),
+                self.thread_store.clone(),
                 self.workspace.clone(),
                 self.language_registry.clone(),
                 self.tools.clone(),

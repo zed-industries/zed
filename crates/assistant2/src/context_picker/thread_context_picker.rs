@@ -102,10 +102,9 @@ impl PickerDelegate for ThreadContextPickerDelegate {
         let Ok(threads) = self.thread_store.update(cx, |this, cx| {
             this.threads(cx)
                 .into_iter()
-                .map(|thread| {
-                    let id = thread.read(cx).id().clone();
-                    let summary = thread.read(cx).summary_or_default();
-                    ThreadContextEntry { id, summary }
+                .map(|thread| ThreadContextEntry {
+                    id: thread.id,
+                    summary: thread.summary,
                 })
                 .collect::<Vec<_>>()
         }) else {
