@@ -286,6 +286,20 @@ impl LanguageServerTree {
                 ))
             })
             .collect::<IndexMap<_, _>>();
+        // After starting all the language servers, reorder them to reflect the desired order
+        // based on the settings.
+        //
+        // This is done, in part, to ensure that language servers loaded at different points
+        // (e.g., native vs extension) still end up in the right order at the end, rather than
+        // it being based on which language server happened to be loaded in first.
+        self.languages.reorder_language_servers(
+            &language_name,
+            adapters_with_settings
+                .keys()
+                .map(|wrapper| wrapper.0.clone())
+                .collect(),
+        );
+
         adapters_with_settings
     }
 
