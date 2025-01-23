@@ -32,8 +32,7 @@ impl ThreadHistory {
     }
 
     pub fn select_prev(&mut self, _: &menu::SelectPrev, cx: &mut ViewContext<Self>) {
-        let count = self.thread_store.read(cx).non_empty_len(cx);
-
+        let count = self.thread_store.read(cx).thread_count();
         if count > 0 {
             if self.selected_index == 0 {
                 self.set_selected_index(count - 1, cx);
@@ -44,8 +43,7 @@ impl ThreadHistory {
     }
 
     pub fn select_next(&mut self, _: &menu::SelectNext, cx: &mut ViewContext<Self>) {
-        let count = self.thread_store.read(cx).non_empty_len(cx);
-
+        let count = self.thread_store.read(cx).thread_count();
         if count > 0 {
             if self.selected_index == count - 1 {
                 self.set_selected_index(0, cx);
@@ -56,14 +54,14 @@ impl ThreadHistory {
     }
 
     fn select_first(&mut self, _: &menu::SelectFirst, cx: &mut ViewContext<Self>) {
-        let count = self.thread_store.read(cx).non_empty_len(cx);
+        let count = self.thread_store.read(cx).thread_count();
         if count > 0 {
             self.set_selected_index(0, cx);
         }
     }
 
     fn select_last(&mut self, _: &menu::SelectLast, cx: &mut ViewContext<Self>) {
-        let count = self.thread_store.read(cx).non_empty_len(cx);
+        let count = self.thread_store.read(cx).thread_count();
         if count > 0 {
             self.set_selected_index(count - 1, cx);
         }
@@ -77,7 +75,7 @@ impl ThreadHistory {
     }
 
     fn confirm(&mut self, _: &menu::Confirm, cx: &mut ViewContext<Self>) {
-        let threads = self.thread_store.update(cx, |this, cx| this.threads(cx));
+        let threads = self.thread_store.update(cx, |this, _cx| this.threads());
 
         if let Some(thread) = threads.get(self.selected_index) {
             self.assistant_panel
@@ -89,7 +87,7 @@ impl ThreadHistory {
     }
 
     fn remove_selected_thread(&mut self, _: &RemoveSelectedThread, cx: &mut ViewContext<Self>) {
-        let threads = self.thread_store.update(cx, |this, cx| this.threads(cx));
+        let threads = self.thread_store.update(cx, |this, _cx| this.threads());
 
         if let Some(thread) = threads.get(self.selected_index) {
             self.assistant_panel
@@ -111,7 +109,7 @@ impl FocusableView for ThreadHistory {
 
 impl Render for ThreadHistory {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
-        let threads = self.thread_store.update(cx, |this, cx| this.threads(cx));
+        let threads = self.thread_store.update(cx, |this, _cx| this.threads());
         let selected_index = self.selected_index;
 
         v_flex()

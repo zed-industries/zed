@@ -342,10 +342,10 @@ impl ContextPicker {
             return recent;
         };
 
-        thread_store.update(cx, |thread_store, cx| {
+        thread_store.update(cx, |thread_store, _cx| {
             recent.extend(
                 thread_store
-                    .threads(cx)
+                    .threads()
                     .into_iter()
                     .filter(|thread| !current_threads.contains(&thread.id))
                     .take(2)

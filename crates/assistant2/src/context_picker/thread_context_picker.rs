@@ -99,8 +99,8 @@ impl PickerDelegate for ThreadContextPickerDelegate {
     }
 
     fn update_matches(&mut self, query: String, cx: &mut ViewContext<Picker<Self>>) -> Task<()> {
-        let Ok(threads) = self.thread_store.update(cx, |this, cx| {
-            this.threads(cx)
+        let Ok(threads) = self.thread_store.update(cx, |this, _cx| {
+            this.threads()
                 .into_iter()
                 .map(|thread| ThreadContextEntry {
                     id: thread.id,

@@ -665,7 +665,7 @@ impl AssistantPanel {
     fn render_thread_empty_state(&self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         let recent_threads = self
             .thread_store
-            .update(cx, |this, cx| this.recent_threads(3, cx));
+            .update(cx, |this, _cx| this.recent_threads(3));
 
         v_flex()
             .gap_2()

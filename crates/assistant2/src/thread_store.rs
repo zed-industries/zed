@@ -73,31 +73,19 @@ impl ThreadStore {
         })
     }
 
-    /// Returns the number of non-empty threads.
-    pub fn non_empty_len(&self, cx: &AppContext) -> usize {
-        self.threads
-            .iter()
-            // .filter(|thread| !thread.read(cx).is_empty())
-            .count()
+    /// Returns the number of threads.
+    pub fn thread_count(&self) -> usize {
+        self.threads.len()
     }
 
-    pub fn threads(&self, cx: &ModelContext<Self>) -> Vec<SavedThreadMetadata> {
-        let mut threads = self
-            .threads
-            .iter()
-            // .filter(|thread| !thread.read(cx).is_empty())
-            .cloned()
-            .collect::<Vec<_>>();
+    pub fn threads(&self) -> Vec<SavedThreadMetadata> {
+        let mut threads = self.threads.iter().cloned().collect::<Vec<_>>();
         threads.sort_unstable_by_key(|thread| std::cmp::Reverse(thread.updated_at));
         threads
     }
 
-    pub fn recent_threads(
-        &self,
-        limit: usize,
-        cx: &ModelContext<Self>,
-    ) -> Vec<SavedThreadMetadata> {
-        self.threads(cx).into_iter().take(limit).collect()
+    pub fn recent_threads(&self, limit: usize) -> Vec<SavedThreadMetadata> {
+        self.threads().into_iter().take(limit).collect()
     }
 
     pub fn create_thread(&mut self, cx: &mut ModelContext<Self>) -> Model<Thread> {
@@ -129,7 +117,7 @@ impl ThreadStore {
         thread: &Model<Thread>,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<()>> {
-        let (metadata, thread) = thread.update(cx, |thread, cx| {
+        let (metadata, thread) = thread.update(cx, |thread, _cx| {
             let id = thread.id().clone();
             let thread = SavedThread {
                 summary: thread.summary_or_default(),
