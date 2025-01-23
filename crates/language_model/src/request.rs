@@ -410,6 +410,48 @@ impl LanguageModelRequest {
             top_p: None,
         }
     }
+
+    pub fn into_deepseek(self, model: String, max_output_tokens: Option<u32>) -> deepseek::Request {
+        deepseek::Request {
+            temperature: if model.as_str() == "deepseek-reasoner" {
+                None
+            } else {
+                self.temperature
+            },
+            model,
+            messages: self
+                .messages
+                .into_iter()
+                .map(|msg| match msg.role {
+                    Role::User => deepseek::RequestMessage::User {
+                        content: msg.string_contents(),
+                    },
+                    Role::Assistant => deepseek::RequestMessage::Assistant {
+                        content: Some(msg.string_contents()),
+                        tool_calls: Vec::new(),
+                    },
+                    Role::System => deepseek::RequestMessage::System {
+                        content: msg.string_contents(),
+                    },
+                })
+                .collect(),
+            stream: true,
+            max_tokens: max_output_tokens,
+
+            response_format: None,
+            tools: self
+                .tools
+                .into_iter()
+                .map(|tool| deepseek::ToolDefinition::Function {
+                    function: deepseek::FunctionDefinition {
+                        name: tool.name,
+                        description: Some(tool.description),
+                        parameters: Some(tool.input_schema),
+                    },
+                })
+                .collect(),
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Debug, Eq, PartialEq)]

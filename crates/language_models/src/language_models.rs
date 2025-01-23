@@ -4,6 +4,7 @@ use client::{Client, UserStore};
 use fs::Fs;
 use gpui::{AppContext, Model, ModelContext};
 use language_model::{LanguageModelProviderId, LanguageModelRegistry, ZED_CLOUD_PROVIDER_ID};
+use provider::deepseek::DeepSeekLanguageModelProvider;
 
 mod logging;
 pub mod provider;
@@ -58,6 +59,10 @@ fn register_language_model_providers(
     );
     registry.register_provider(
         LmStudioLanguageModelProvider::new(client.http_client(), cx),
+        cx,
+    );
+    registry.register_provider(
+        DeepSeekLanguageModelProvider::new(client.http_client(), cx),
         cx,
     );
     registry.register_provider(
