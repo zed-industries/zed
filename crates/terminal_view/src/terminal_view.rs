@@ -7,7 +7,7 @@ pub mod terminal_tab_tooltip;
 use collections::HashSet;
 use editor::{
     actions::SelectAll,
-    scroll::{Autoscroll, ScrollbarAutoHide},
+    scroll::{ScrollbarAutoHide},
     Editor, EditorSettings,
 };
 use futures::{stream::FuturesUnordered, StreamExt};
@@ -17,7 +17,6 @@ use gpui::{
     MouseDownEvent, Pixels, Render, ScrollWheelEvent, Stateful, Styled, Subscription, Task, View,
     VisualContext, WeakModel, WeakView,
 };
-use language::Bias;
 use persistence::TERMINAL_DB;
 use project::{search::SearchQuery, terminals::TerminalKind, Fs, Metadata, Project};
 use schemars::JsonSchema;
@@ -885,19 +884,9 @@ fn subscribe_for_terminal_events(
                                         active_editor
                                             .downgrade()
                                             .update(&mut cx, |editor, cx| {
-                                                let snapshot = editor.snapshot(cx).display_snapshot;
-                                                let point = snapshot.buffer_snapshot.clip_point(
-                                                    language::Point::new(
-                                                        row.saturating_sub(1),
-                                                        col.saturating_sub(1),
-                                                    ),
-                                                    Bias::Left,
-                                                );
-                                                editor.change_selections(
-                                                    Some(Autoscroll::center()),
-                                                    cx,
-                                                    |s| s.select_ranges([point..point]),
-                                                );
+                                                editor.go_to_singleton_buffer_point(
+                                                    language::Point::new(row.saturating_sub(1), col.saturating_sub(1)), cx
+                                                )
                                             })
                                             .log_err();
                                     }

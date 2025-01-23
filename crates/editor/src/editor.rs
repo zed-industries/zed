@@ -9261,6 +9261,20 @@ impl Editor {
         })
     }
 
+    pub fn go_to_singleton_buffer_point(&mut self, point: Point, cx: &mut ViewContext<Self>) {
+        let multibuffer = self.buffer().read(cx);
+        let Some(buffer) = multibuffer.as_singleton() else {
+            return;
+        };
+        let Some(anchor) = multibuffer.buffer_point_to_anchor(&buffer, point, cx)
+        else {
+            return;
+        };
+        self.change_selections(Some(Autoscroll::center()), cx, |s| {
+            s.select_anchor_ranges([anchor..anchor])
+        });
+    }
+
     fn go_to_diagnostic(&mut self, _: &GoToDiagnostic, cx: &mut ViewContext<Self>) {
         self.go_to_diagnostic_impl(Direction::Next, cx)
     }
