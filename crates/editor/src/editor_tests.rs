@@ -7614,7 +7614,7 @@ async fn test_document_format_manual_trigger(cx: &mut gpui::TestAppContext) {
     fs.insert_file(add_root_for_windows("/file.rs"), Default::default())
         .await;
 
-    let project = Project::test(fs, [add_root_for_windows("/file.rs").as_ref()], cx).await;
+    let project = Project::test(fs, [add_root_for_windows("/").as_ref()], cx).await;
 
     let language_registry = project.read_with(cx, |project, _| project.languages().clone());
     language_registry.add(Arc::new(Language::new(
