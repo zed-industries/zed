@@ -30,7 +30,7 @@ pub fn separator(input: TokenStream) -> TokenStream {
             .expect("Depth must be a positive integer")
     });
 
-    let mut components: Vec<String> = path.split('/').into_iter().map(String::from).collect();
+    let mut components: Vec<String> = path.split('/').map(String::from).collect();
 
     let num_take = components.len() - 1;
     if let Some(idx) = index {
@@ -57,6 +57,7 @@ pub fn separator(input: TokenStream) -> TokenStream {
 #[proc_macro]
 #[cfg(not(target_os = "windows"))]
 pub fn separator(input: TokenStream) -> TokenStream {
+    let _ = parse_macro_input!(input as ReplacePathInput);
     input
 }
 
