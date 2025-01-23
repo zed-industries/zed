@@ -86,6 +86,7 @@
       "ctrl-[": ["vim::SwitchMode", "Normal"],
       "v": "vim::ToggleVisual",
       "shift-v": "vim::ToggleVisualLine",
+      "ctrl-g": "vim::ShowLocation",
       "ctrl-v": "vim::ToggleVisualBlock",
       "ctrl-q": "vim::ToggleVisualBlock",
       "shift-k": "editor::Hover",

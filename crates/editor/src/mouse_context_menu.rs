@@ -155,6 +155,11 @@ pub fn deploy_context_menu(
             .all::<PointUtf16>(cx)
             .into_iter()
             .any(|s| !s.is_empty());
+        let has_git_repo = editor.project.as_ref().map_or(false, |project| {
+            project.update(cx, |project, cx| {
+                project.get_first_worktree_root_repo(cx).is_some()
+            })
+        });
 
         ui::ContextMenu::build(cx, |menu, _cx| {
             let builder = menu
@@ -190,7 +195,14 @@ pub fn deploy_context_menu(
                     }
                 })
                 .action("Open in Terminal", Box::new(OpenInTerminal))
-                .action("Copy Permalink", Box::new(CopyPermalinkToLine));
+                .map(|builder| {
+                    const COPY_PERMALINK_LABEL: &str = "Copy Permalink";
+                    if has_git_repo {
+                        builder.action(COPY_PERMALINK_LABEL, Box::new(CopyPermalinkToLine))
+                    } else {
+                        builder.disabled_action(COPY_PERMALINK_LABEL, Box::new(CopyPermalinkToLine))
+                    }
+                });
             match focus {
                 Some(focus) => builder.context(focus),
                 None => builder,

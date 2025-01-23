@@ -22,7 +22,7 @@ pub struct ActiveThread {
     workspace: WeakView<Workspace>,
     language_registry: Arc<LanguageRegistry>,
     tools: Arc<ToolWorkingSet>,
-    pub(crate) thread: Model<Thread>,
+    thread: Model<Thread>,
     messages: Vec<MessageId>,
     list_state: ListState,
     rendered_messages_by_id: HashMap<MessageId, View<Markdown>>,
@@ -66,6 +66,10 @@ impl ActiveThread {
         }
 
         this
+    }
+
+    pub fn thread(&self) -> &Model<Thread> {
+        &self.thread
     }
 
     pub fn is_empty(&self) -> bool {
