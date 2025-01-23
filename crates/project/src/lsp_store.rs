@@ -5386,20 +5386,18 @@ impl LspStore {
         };
         let delegate = LocalLspAdapterDelegate::from_local_lsp(local, &worktree, cx);
         local.lsp_tree.update(cx, |this, cx| {
-            this.get(
+            for node in this.get(
                 path,
                 AdapterQuery::Adapter(&language_server_name),
                 delegate,
                 cx,
-            )
-            .map(|node| {
+            ) {
                 node.server_id_or_init(|disposition| {
                     assert_eq!(disposition.server_name, &language_server_name);
 
                     language_server_id
-                })
-            })
-            .count()
+                });
+            }
         });
         local
             .language_server_ids
