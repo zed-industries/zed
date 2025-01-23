@@ -605,14 +605,15 @@ and then another
     ) -> Task<Result<InlineCompletion>> {
         let snapshot = snapshot.clone();
         cx.spawn(|cx| async move {
+            let output_excerpt: Arc<str> = output_excerpt.into();
+
             let edits: Arc<[(Range<Anchor>, String)]> = cx
                 .background_executor()
                 .spawn({
-                    // todo avoid clone?
                     let output_excerpt = output_excerpt.clone();
                     let excerpt_range = excerpt_range.clone();
                     let snapshot = snapshot.clone();
-                    async move { Self::parse_edits(&output_excerpt, excerpt_range, &snapshot) }
+                    async move { Self::parse_edits(output_excerpt, excerpt_range, &snapshot) }
                 })
                 .await?
                 .into();
@@ -621,9 +622,10 @@ and then another
                 let edits = edits.clone();
                 |buffer, cx| {
                     let new_snapshot = buffer.snapshot();
-                    // TODO run in the background?
-                    let edits: Arc<[(Range<Anchor>, String)]> = interpolate(&snapshot, &new_snapshot, edits)
-                        .context("Interpolated edits are empty")?.into();
+                    let edits: Arc<[(Range<Anchor>, String)]> =
+                        interpolate(&snapshot, &new_snapshot, edits)
+                            .context("Interpolated edits are empty")?
+                            .into();
 
                     anyhow::Ok((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
                 }
@@ -638,7 +640,7 @@ and then another
                 cursor_offset,
                 edits,
                 edit_preview,
-                snapshot: snapshot,
+                snapshot,
                 input_outline: input_outline.into(),
                 input_events: input_events.into(),
                 input_excerpt: input_excerpt.into(),
@@ -650,7 +652,7 @@ and then another
     }
 
     fn parse_edits(
-        output_excerpt: &str,
+        output_excerpt: Arc<str>,
         excerpt_range: Range<usize>,
         snapshot: &BufferSnapshot,
     ) -> Result<Vec<(Range<Anchor>, String)>> {
