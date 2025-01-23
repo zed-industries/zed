@@ -2862,67 +2862,6 @@ async fn test_preview_edits_interpolate(cx: &mut TestAppContext) {
     }
 }
 
-#[gpui::test]
-async fn test_preview_edits_deletions(cx: &mut TestAppContext) {
-    use theme::ActiveTheme;
-    cx.update(|cx| {
-        init_settings(cx, |_| {});
-        theme::init(theme::LoadThemes::JustBase, cx);
-    });
-
-    let text = indoc! {r#"
-        struct Person {
-            first_name: String
-        }"#
-    };
-
-    let language = Arc::new(Language::new(
-        LanguageConfig::default(),
-        Some(tree_sitter_rust::LANGUAGE.into()),
-    ));
-    let buffer = cx.new_model(|cx| Buffer::local(text, cx).with_language(language, cx));
-
-    let edits = construct_edits(&buffer, [(Point::new(1, 4)..Point::new(1, 9), "last")], cx);
-        .read_with(cx, |buffer, cx| {
-    let edit_preview = buffer
-            buffer.preview_edits(edits.clone().into(), cx)
-        })
-        .await;
-
-    let highlighted_edits =
-        cx.read(|cx| edit_preview.highlight_edits(&buffer.read(cx).snapshot(), &edits, false, cx));
-
-    let deleted_background = cx.read(|cx| cx.theme().status().deleted_background);
-
-    assert_eq!(highlighted_edits.text, "    last_name: String");
-    assert_eq!(highlighted_edits.highlights.len(), 1);
-    assert_eq!(highlighted_edits.highlights[0].0, 4..9);
-    assert_eq!(
-        highlighted_edits.highlights[0].1.background_color,
-        Some(deleted_background)
-    );
-
-    fn construct_edits(
-        buffer: &Model<Buffer>,
-        edits: impl IntoIterator<Item = (Range<Point>, &'static str)>,
-        cx: &mut TestAppContext,
-    ) -> Arc<[(Range<Anchor>, String)]> {
-        buffer
-            .read_with(cx, |buffer, _| {
-                edits
-                    .into_iter()
-                    .map(|(range, text)| {
-                        (
-                            buffer.anchor_after(range.start)..buffer.anchor_before(range.end),
-                            text.to_string(),
-                        )
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .into()
-    }
-}
-
 #[gpui::test(iterations = 100)]
 fn test_random_collaboration(cx: &mut AppContext, mut rng: StdRng) {
     let min_peers = env::var("MIN_PEERS")

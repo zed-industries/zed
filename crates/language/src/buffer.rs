@@ -631,6 +631,8 @@ impl EditPreview {
         let mut offset = range.start;
         let mut delta = 0isize;
 
+        let status_colors = cx.theme().status();
+
         for (range, edit_text) in edits {
             let edit_range = range.to_offset(current_snapshot);
             let new_edit_start = (edit_range.start as isize + delta) as usize;
@@ -652,7 +654,7 @@ impl EditPreview {
                 highlights.push((
                     start..end,
                     HighlightStyle {
-                        background_color: Some(cx.theme().status().deleted_background),
+                        background_color: Some(status_colors.deleted_background),
                         ..Default::default()
                     },
                 ));
@@ -664,7 +666,7 @@ impl EditPreview {
                     &mut text,
                     &mut highlights,
                     Some(HighlightStyle {
-                        background_color: Some(cx.theme().status().created_background),
+                        background_color: Some(status_colors.created_background),
                         ..Default::default()
                     }),
                     cx,
