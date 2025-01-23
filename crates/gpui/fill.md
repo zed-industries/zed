@@ -92,4 +92,7 @@ pub struct Pattern {
 
 ---
 
+Unrelated question:
+  - I want to enable more than 2 stop gradients, however we pass start and end colors explicitly. Could we pass a [Hsla;8] (max 8 stops) and simply fill the rest of the empty slots with something that we prune out on the shader side? Or how would you approach this?
+
 `scene::Quad`, `scene::Path`
