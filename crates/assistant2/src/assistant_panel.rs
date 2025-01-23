@@ -363,35 +363,41 @@ impl AssistantPanel {
         })
     }
 
-    pub(crate) fn open_thread(&mut self, thread_id: &ThreadId, cx: &mut ViewContext<Self>) {
-        let Some(thread) = self
+    pub(crate) fn open_thread(
+        &mut self,
+        thread_id: &ThreadId,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
+        let open_thread_task = self
             .thread_store
-            .update(cx, |this, cx| this.open_thread(thread_id, cx))
-        else {
-            return;
-        };
+            .update(cx, |this, cx| this.open_thread(thread_id, cx));
 
-        self.active_view = ActiveView::Thread;
-        self.thread = cx.new_view(|cx| {
-            ActiveThread::new(
-                thread.clone(),
-                self.thread_store.clone(),
-                self.workspace.clone(),
-                self.language_registry.clone(),
-                self.tools.clone(),
-                cx,
-            )
-        });
-        self.message_editor = cx.new_view(|cx| {
-            MessageEditor::new(
-                self.fs.clone(),
-                self.workspace.clone(),
-                self.thread_store.downgrade(),
-                thread,
-                cx,
-            )
-        });
-        self.message_editor.focus_handle(cx).focus(cx);
+        cx.spawn(|this, mut cx| async move {
+            let thread = open_thread_task.await?;
+            this.update(&mut cx, |this, cx| {
+                this.active_view = ActiveView::Thread;
+                this.thread = cx.new_view(|cx| {
+                    ActiveThread::new(
+                        thread.clone(),
+                        this.thread_store.clone(),
+                        this.workspace.clone(),
+                        this.language_registry.clone(),
+                        this.tools.clone(),
+                        cx,
+                    )
+                });
+                this.message_editor = cx.new_view(|cx| {
+                    MessageEditor::new(
+                        this.fs.clone(),
+                        this.workspace.clone(),
+                        this.thread_store.downgrade(),
+                        thread,
+                        cx,
+                    )
+                });
+                this.message_editor.focus_handle(cx).focus(cx);
+            })
+        })
     }
 
     pub(crate) fn open_configuration(&mut self, cx: &mut ViewContext<Self>) {

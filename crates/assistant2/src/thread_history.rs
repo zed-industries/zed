@@ -241,7 +241,7 @@ impl RenderOnce for PastThread {
                 move |_event, cx| {
                     assistant_panel
                         .update(cx, |this, cx| {
-                            this.open_thread(&id, cx);
+                            this.open_thread(&id, cx).detach_and_log_err(cx);
                         })
                         .ok();
                 }

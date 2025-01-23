@@ -106,8 +106,25 @@ impl ThreadStore {
         thread
     }
 
-    pub fn open_thread(&self, id: &ThreadId, cx: &mut ModelContext<Self>) -> Option<Model<Thread>> {
-        None
+    pub fn open_thread(
+        &self,
+        id: &ThreadId,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<Model<Thread>>> {
+        let database_future = self.database_future.clone();
+        let id = id.clone();
+        cx.spawn(|this, mut cx| async move {
+            let database = database_future.await.map_err(|err| anyhow!(err))?;
+            let thread = database
+                .try_find_thread(id.clone())
+                .await?
+                .ok_or_else(|| anyhow!("no thread found with ID: {id:?}"))?;
+
+            this.update(&mut cx, |this, cx| {
+                cx.new_model(|cx| Thread::from_saved(id.clone(), thread, this.tools.clone(), cx))
+            })
+        })
+
         // self.threads
         //     .iter()
         //     .find(|thread| thread.read(cx).id() == id)
@@ -241,14 +258,14 @@ pub struct SavedThreadMetadata {
 }
 
 #[derive(Serialize, Deserialize)]
-struct SavedThread {
+pub struct SavedThread {
     pub summary: SharedString,
     pub updated_at: DateTime<Utc>,
     pub messages: Vec<SavedMessage>,
 }
 
 #[derive(Serialize, Deserialize)]
-struct SavedMessage {
+pub struct SavedMessage {
     pub id: MessageId,
     pub role: Role,
     pub text: String,
@@ -300,6 +317,17 @@ impl ThreadsDatabase {
             }
 
             Ok(threads)
+        })
+    }
+
+    pub fn try_find_thread(&self, id: ThreadId) -> Task<Result<Option<SavedThread>>> {
+        let env = self.env.clone();
+        let threads = self.threads;
+
+        self.executor.spawn(async move {
+            let txn = env.read_txn()?;
+            let thread = threads.get(&txn, &id)?;
+            Ok(thread)
         })
     }
 
