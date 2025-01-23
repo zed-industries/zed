@@ -26,7 +26,7 @@ fn main() {
     env_logger::init();
     App::new().run(|cx: &mut AppContext| {
         let cwd = std::env::current_dir().expect("Failed to get current working directory");
-        let gif_path = cwd.join("crates/gpui/examples/image/black-cat-typing.gif");
+        let gif_path = cwd.join("examples/image/black-cat-typing.gif");
 
         if !gif_path.exists() {
             eprintln!("Image file not found at {:?}", gif_path);
