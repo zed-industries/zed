@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use client::UserStore;
+use feature_flags::{FeatureFlagAppExt as _, PredictEditsFeatureFlag};
 use fs::Fs;
 use gpui::{Model, WeakView};
 use language::language_settings::{all_language_settings, InlineCompletionProvider};
@@ -24,18 +25,24 @@ impl ZedPredictBanner {
         fs: Arc<dyn Fs>,
         cx: &mut WindowContext,
     ) -> Option<Self> {
+        if !cx.has_flag::<PredictEditsFeatureFlag>() {
+            return None;
+        }
+
         let provider = all_language_settings(None, cx).inline_completions.provider;
 
         match provider {
             InlineCompletionProvider::None
             | InlineCompletionProvider::Copilot
-            | InlineCompletionProvider::Supermaven => Some(Self {
-                workspace,
-                user_store,
-                fs,
-            }),
-            InlineCompletionProvider::Zed => None,
+            | InlineCompletionProvider::Supermaven => {},
+            InlineCompletionProvider::Zed => return None,
         }
+
+        Some(Self {
+            workspace,
+            user_store,
+            fs,
+        })
     }
 }
 
