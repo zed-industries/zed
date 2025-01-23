@@ -11,23 +11,24 @@ impl Render for PatternExample {
             .flex()
             .flex_col()
             .gap_3()
-            .bg(rgb(0x505050))
+            .bg(rgb(0xffffff))
             .size(px(600.0))
             .justify_center()
             .items_center()
             .shadow_lg()
-            .border_1()
-            .border_color(rgb(0x0000ff))
             .text_xl()
-            .text_color(rgb(0xffffff))
+            .text_color(rgb(0x000000))
             .child("Pattern Example")
             .child(
                 div()
+                    .flex()
+                    .flex_col()
                     .border_1()
                     .border_color(gpui::blue())
-                    .w(px(240.0))
-                    .h(px(40.0))
-                    .bg(pattern_slash(gpui::red())),
+                    .child(div().w(px(54.0)).h(px(18.0)).bg(pattern_slash(gpui::red())))
+                    .child(div().w(px(54.0)).h(px(18.0)).bg(pattern_slash(gpui::red())))
+                    .child(div().w(px(54.0)).h(px(18.0)).bg(pattern_slash(gpui::red())))
+                    .child(div().w(px(54.0)).h(px(18.0)).bg(pattern_slash(gpui::red()))),
             )
             .child(
                 div()
@@ -35,18 +36,32 @@ impl Render for PatternExample {
                     .flex_col()
                     .border_1()
                     .border_color(gpui::blue())
+                    .bg(gpui::green().opacity(0.16))
+                    .child("Elements the same height should align")
                     .child(
                         div()
-                            .w(px(240.0))
-                            .h(px(40.0))
+                            .w(px(256.0))
+                            .h(px(56.0))
                             .bg(pattern_slash(gpui::red())),
                     )
                     .child(
                         div()
-                            .w(px(240.0))
-                            .h(px(40.0))
+                            .w(px(256.0))
+                            .h(px(56.0))
                             .bg(pattern_slash(gpui::green())),
                     )
+                    .child(
+                        div()
+                            .w(px(256.0))
+                            .h(px(56.0))
+                            .bg(pattern_slash(gpui::blue())),
+                    )
+                    .child(
+                        div()
+                            .w(px(256.0))
+                            .h(px(26.0))
+                            .bg(pattern_slash(gpui::yellow())),
+                    ),
             )
             .child(
                 div()
