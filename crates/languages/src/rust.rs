@@ -818,12 +818,12 @@ mod tests {
     use lsp::CompletionItemLabelDetails;
     use settings::SettingsStore;
     use theme::SyntaxTheme;
-    use util::paths::add_root_for_windows;
+    use util::path;
 
     #[gpui::test]
     async fn test_process_rust_diagnostics() {
         let mut params = lsp::PublishDiagnosticsParams {
-            uri: lsp::Url::from_file_path(add_root_for_windows("/a")).unwrap(),
+            uri: lsp::Url::from_file_path(path!("/a")).unwrap(),
             version: None,
             diagnostics: vec![
                 // no newlines

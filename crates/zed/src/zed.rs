@@ -1569,7 +1569,7 @@ mod tests {
         time::Duration,
     };
     use theme::{ThemeRegistry, ThemeSettings};
-    use util::paths::add_root_for_windows;
+    use util::path;
     use workspace::{
         item::{Item, ItemHandle},
         open_new, open_paths, pane, NewFile, OpenVisible, SaveIntent, SplitDirection,
@@ -1739,14 +1739,14 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                add_root_for_windows("/root"),
+                path!("/root"),
                 json!({"a": "hey", "b": "", "dir": {"c": "f"}}),
             )
             .await;
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from(add_root_for_windows("/root/dir"))],
+                &[PathBuf::from(path!("/root/dir"))],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -1758,7 +1758,7 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from(add_root_for_windows("/root/a"))],
+                &[PathBuf::from(path!("/root/a"))],
                 app_state.clone(),
                 workspace::OpenOptions {
                     open_new_workspace: Some(false),
@@ -1773,7 +1773,7 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from(add_root_for_windows("/root/dir/c"))],
+                &[PathBuf::from(path!("/root/dir/c"))],
                 app_state.clone(),
                 workspace::OpenOptions {
                     open_new_workspace: Some(true),
@@ -1794,14 +1794,14 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                add_root_for_windows("/root"),
+                path!("/root"),
                 json!({"dir1": {"a": "b"}, "dir2": {"c": "d"}}),
             )
             .await;
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from(add_root_for_windows("/root/dir1/a"))],
+                &[PathBuf::from(path!("/root/dir1/a"))],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -1814,7 +1814,7 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from(add_root_for_windows("/root/dir2/c"))],
+                &[PathBuf::from(path!("/root/dir2/c"))],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -1826,7 +1826,7 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from(add_root_for_windows("/root/dir2"))],
+                &[PathBuf::from(path!("/root/dir2"))],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -1842,7 +1842,7 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from(add_root_for_windows("/root/dir2/c"))],
+                &[PathBuf::from(path!("/root/dir2/c"))],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -1871,12 +1871,12 @@ mod tests {
         app_state
             .fs
             .as_fake()
-            .insert_tree(add_root_for_windows("/root"), json!({"a": "hey"}))
+            .insert_tree(path!("/root"), json!({"a": "hey"}))
             .await;
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from(add_root_for_windows("/root/a"))],
+                &[PathBuf::from(path!("/root/a"))],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -1958,7 +1958,7 @@ mod tests {
         // Opening the buffer again doesn't impact the window's edited state.
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from(add_root_for_windows("/root/a"))],
+                &[PathBuf::from(path!("/root/a"))],
                 app_state,
                 workspace::OpenOptions::default(),
                 cx,
@@ -2020,12 +2020,12 @@ mod tests {
         app_state
             .fs
             .as_fake()
-            .insert_tree(add_root_for_windows("/root"), json!({"a": "hey"}))
+            .insert_tree(path!("/root"), json!({"a": "hey"}))
             .await;
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from(add_root_for_windows("/root/a"))],
+                &[PathBuf::from(path!("/root/a"))],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -2077,7 +2077,7 @@ mod tests {
         // When we now reopen the window, the edited state and the edited buffer are back
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from(add_root_for_windows("/root/a"))],
+                &[PathBuf::from(path!("/root/a"))],
                 app_state.clone(),
                 workspace::OpenOptions::default(),
                 cx,
@@ -2173,7 +2173,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                add_root_for_windows("/root"),
+                path!("/root"),
                 json!({
                     "a": {
                         "file1": "contents 1",
@@ -2184,12 +2184,7 @@ mod tests {
             )
             .await;
 
-        let project = Project::test(
-            app_state.fs.clone(),
-            [add_root_for_windows("/root").as_ref()],
-            cx,
-        )
-        .await;
+        let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
         project.update(cx, |project, _cx| {
             project.languages().add(markdown_language())
         });
@@ -2310,7 +2305,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                add_root_for_windows("/"),
+                path!("/"),
                 json!({
                     "dir1": {
                         "a.txt": ""
@@ -2328,7 +2323,7 @@ mod tests {
 
         cx.update(|cx| {
             open_paths(
-                &[PathBuf::from(add_root_for_windows("/dir1/"))],
+                &[PathBuf::from(path!("/dir1/"))],
                 app_state,
                 workspace::OpenOptions::default(),
                 cx,
@@ -2376,7 +2371,7 @@ mod tests {
             .update(cx, |workspace, window, cx| {
                 workspace.open_paths(
                     
-                    vec![add_root_for_windows("/dir1/a.txt").into()],
+                    vec![path!("/dir1/a.txt").into()],
                    
                     OpenVisible::All,
                    
@@ -2393,7 +2388,7 @@ mod tests {
             let workspace = workspace.read(cx);
             assert_project_panel_selection(
                 workspace,
-                Path::new(&add_root_for_windows("/dir1")),
+                Path::new(&path!("/dir1")),
                 Path::new("a.txt"),
                 cx,
             );
@@ -2416,7 +2411,7 @@ mod tests {
             .update(cx, |workspace, window, cx| {
                 workspace.open_paths(
                     
-                    vec![add_root_for_windows("/dir2/b.txt").into()],
+                    vec![path!("/dir2/b.txt").into()],
                    
                     OpenVisible::All,
                    
@@ -2433,7 +2428,7 @@ mod tests {
             let workspace = workspace.read(cx);
             assert_project_panel_selection(
                 workspace,
-                Path::new(&add_root_for_windows("/dir2/b.txt")),
+                Path::new(&path!("/dir2/b.txt")),
                 Path::new(""),
                 cx,
             );
@@ -2443,13 +2438,10 @@ mod tests {
                 .collect::<HashSet<_>>();
             assert_eq!(
                 worktree_roots,
-                vec![
-                    &add_root_for_windows("/dir1"),
-                    &add_root_for_windows("/dir2/b.txt")
-                ]
-                .into_iter()
-                .map(Path::new)
-                .collect(),
+                vec![&path!("/dir1"), &path!("/dir2/b.txt")]
+                    .into_iter()
+                    .map(Path::new)
+                    .collect(),
             );
             assert_eq!(
                 workspace
@@ -2469,10 +2461,7 @@ mod tests {
         window
             .update(cx, |workspace, window, cx| {
                 workspace.open_paths(
-                    vec![
-                        add_root_for_windows("/dir3").into(),
-                        add_root_for_windows("/dir3/c.txt").into(),
-                    ],
+                    vec![path!("/dir3").into(), path!("/dir3/c.txt").into()],
                     OpenVisible::All,
                     None,
                     window,
@@ -2485,7 +2474,7 @@ mod tests {
             let workspace = workspace.read(cx);
             assert_project_panel_selection(
                 workspace,
-                Path::new(&add_root_for_windows("/dir3")),
+                Path::new(&path!("/dir3")),
                 Path::new("c.txt"),
                 cx,
             );
@@ -2495,14 +2484,10 @@ mod tests {
                 .collect::<HashSet<_>>();
             assert_eq!(
                 worktree_roots,
-                vec![
-                    &add_root_for_windows("/dir1"),
-                    &add_root_for_windows("/dir2/b.txt"),
-                    &add_root_for_windows("/dir3")
-                ]
-                .into_iter()
-                .map(Path::new)
-                .collect(),
+                vec![&path!("/dir1"), &path!("/dir2/b.txt"), &path!("/dir3")]
+                    .into_iter()
+                    .map(Path::new)
+                    .collect(),
             );
             assert_eq!(
                 workspace
@@ -2521,12 +2506,7 @@ mod tests {
         // Ensure opening invisibly a file outside an existing worktree adds a new, invisible worktree.
         window
             .update(cx, |workspace, window, cx| {
-                workspace.open_paths(
-                    vec![add_root_for_windows("/d.txt").into()],
-                    OpenVisible::None,
-                    None, window,
-                    cx,
-                )
+                workspace.open_paths(vec![path!("/d.txt").into()], OpenVisible::None, None, window, cx)
             })
             .unwrap()
             .await;
@@ -2534,7 +2514,7 @@ mod tests {
             let workspace = workspace.read(cx);
             assert_project_panel_selection(
                 workspace,
-                Path::new(&add_root_for_windows("/d.txt")),
+                Path::new(&path!("/d.txt")),
                 Path::new(""),
                 cx,
             );
@@ -2545,10 +2525,10 @@ mod tests {
             assert_eq!(
                 worktree_roots,
                 vec![
-                    &add_root_for_windows("/dir1"),
-                    &add_root_for_windows("/dir2/b.txt"),
-                    &add_root_for_windows("/dir3"),
-                    &add_root_for_windows("/d.txt")
+                    &path!("/dir1"),
+                    &path!("/dir2/b.txt"),
+                    &path!("/dir3"),
+                    &path!("/d.txt")
                 ]
                 .into_iter()
                 .map(Path::new)
@@ -2561,14 +2541,10 @@ mod tests {
                 .collect::<HashSet<_>>();
             assert_eq!(
                 visible_worktree_roots,
-                vec![
-                    &add_root_for_windows("/dir1"),
-                    &add_root_for_windows("/dir2/b.txt"),
-                    &add_root_for_windows("/dir3")
-                ]
-                .into_iter()
-                .map(Path::new)
-                .collect(),
+                vec![&path!("/dir1"), &path!("/dir2/b.txt"), &path!("/dir3")]
+                    .into_iter()
+                    .map(Path::new)
+                    .collect(),
             );
 
             assert_eq!(
@@ -2601,7 +2577,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                add_root_for_windows("/root"),
+                path!("/root"),
                 json!({
                     ".gitignore": "ignored_dir\n",
                     ".git": {
@@ -2626,12 +2602,7 @@ mod tests {
             )
             .await;
 
-        let project = Project::test(
-            app_state.fs.clone(),
-            [add_root_for_windows("/root").as_ref()],
-            cx,
-        )
-        .await;
+        let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
         project.update(cx, |project, _cx| {
             project.languages().add(markdown_language())
         });
@@ -2640,9 +2611,9 @@ mod tests {
 
         let initial_entries = cx.read(|cx| workspace.file_project_paths(cx));
         let paths_to_open = [
-            PathBuf::from(add_root_for_windows("/root/excluded_dir/file")),
-            PathBuf::from(add_root_for_windows("/root/.git/HEAD")),
-            PathBuf::from(add_root_for_windows("/root/excluded_dir/ignored_subdir")),
+            PathBuf::from(path!("/root/excluded_dir/file")),
+            PathBuf::from(path!("/root/.git/HEAD")),
+            PathBuf::from(path!("/root/excluded_dir/ignored_subdir")),
         ];
         let (opened_workspace, new_items) = cx
             .update(|cx| {
@@ -2726,15 +2697,10 @@ mod tests {
         app_state
             .fs
             .as_fake()
-            .insert_tree(add_root_for_windows("/root"), json!({ "a.txt": "" }))
+            .insert_tree(path!("/root"), json!({ "a.txt": "" }))
             .await;
 
-        let project = Project::test(
-            app_state.fs.clone(),
-            [add_root_for_windows("/root").as_ref()],
-            cx,
-        )
-        .await;
+        let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
         project.update(cx, |project, _cx| {
             project.languages().add(markdown_language())
         });
@@ -2745,7 +2711,7 @@ mod tests {
         window
             .update(cx, |workspace, window, cx| {
                 workspace.open_paths(
-                    vec![PathBuf::from(add_root_for_windows("/root/a.txt"))],
+                    vec![PathBuf::from(path!("/root/a.txt"))],
                     OpenVisible::All,
                     None,
                     window,
@@ -2769,7 +2735,7 @@ mod tests {
         app_state
             .fs
             .as_fake()
-            .insert_file(add_root_for_windows("/root/a.txt"), b"changed".to_vec())
+            .insert_file(path!("/root/a.txt"), b"changed".to_vec())
             .await;
 
         cx.run_until_parked();
@@ -2799,16 +2765,11 @@ mod tests {
         let app_state = init_test(cx);
         app_state
             .fs
-            .create_dir(Path::new(&add_root_for_windows("/root")))
+            .create_dir(Path::new(&path!("/root")))
             .await
             .unwrap();
 
-        let project = Project::test(
-            app_state.fs.clone(),
-            [add_root_for_windows("/root").as_ref()],
-            cx,
-        )
-        .await;
+        let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
         project.update(cx, |project, _| {
             project.languages().add(markdown_language());
             project.languages().add(rust_lang());
@@ -2851,7 +2812,7 @@ mod tests {
             .unwrap();
         cx.background_executor.run_until_parked();
         cx.simulate_new_path_selection(|parent_dir| {
-            assert_eq!(parent_dir, Path::new(&add_root_for_windows("/root")));
+            assert_eq!(parent_dir, Path::new(&path!("/root")));
             Some(parent_dir.join("the-new-name.rs"))
         });
         cx.read(|cx| {
@@ -3007,7 +2968,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                add_root_for_windows("/root"),
+                path!("/root"),
                 json!({
                     "a": {
                         "file1": "contents 1",
@@ -3018,12 +2979,7 @@ mod tests {
             )
             .await;
 
-        let project = Project::test(
-            app_state.fs.clone(),
-            [add_root_for_windows("/root").as_ref()],
-            cx,
-        )
-        .await;
+        let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
         project.update(cx, |project, _cx| {
             project.languages().add(markdown_language())
         });
@@ -3110,7 +3066,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                add_root_for_windows("/root"),
+                path!("/root"),
                 json!({
                     "a": {
                         "file1": "contents 1\n".repeat(20),
@@ -3121,12 +3077,7 @@ mod tests {
             )
             .await;
 
-        let project = Project::test(
-            app_state.fs.clone(),
-            [add_root_for_windows("/root").as_ref()],
-            cx,
-        )
-        .await;
+        let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
         project.update(cx, |project, _cx| {
             project.languages().add(markdown_language())
         });
@@ -3357,10 +3308,7 @@ mod tests {
             .unwrap();
         app_state
             .fs
-            .remove_file(
-                Path::new(&add_root_for_windows("/root/a/file2")),
-                Default::default(),
-            )
+            .remove_file(Path::new(&path!("/root/a/file2")), Default::default())
             .await
             .unwrap();
         cx.background_executor.run_until_parked();
@@ -3501,7 +3449,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                add_root_for_windows("/root"),
+                path!("/root"),
                 json!({
                     "a": {
                         "file1": "",
@@ -3513,12 +3461,7 @@ mod tests {
             )
             .await;
 
-        let project = Project::test(
-            app_state.fs.clone(),
-            [add_root_for_windows("/root").as_ref()],
-            cx,
-        )
-        .await;
+        let project = Project::test(app_state.fs.clone(), [path!("/root").as_ref()], cx).await;
         project.update(cx, |project, _cx| {
             project.languages().add(markdown_language())
         });

@@ -459,19 +459,6 @@ pub fn compare_paths(
     }
 }
 
-#[cfg(any(test, feature = "test-support"))]
-pub fn add_root_for_windows(path: &str) -> String {
-    #[cfg(target_os = "windows")]
-    {
-        assert!(path.starts_with("/"));
-        format!("C:{}", path)
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        path.to_string()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

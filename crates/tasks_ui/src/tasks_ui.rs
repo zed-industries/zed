@@ -262,7 +262,7 @@ mod tests {
     use serde_json::json;
     use task::{TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
-    use util::{path, paths::add_root_for_windows, separator};
+    use util::{path, separator};
     use workspace::{AppState, Workspace};
 
     use crate::task_context;
@@ -272,7 +272,7 @@ mod tests {
         init_test(cx);
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            add_root_for_windows("/dir"),
+            path!("/dir"),
             json!({
                 ".zed": {
                     "tasks.json": r#"[
@@ -296,7 +296,7 @@ mod tests {
             }),
         )
         .await;
-        let project = Project::test(fs, [add_root_for_windows("/dir").as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/dir").as_ref()], cx).await;
         let worktree_store = project.update(cx, |project, _| project.worktree_store().clone());
         let rust_language = Arc::new(
             Language::new(

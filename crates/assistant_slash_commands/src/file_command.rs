@@ -579,7 +579,7 @@ mod test {
     use serde_json::json;
     use settings::SettingsStore;
     use smol::stream::StreamExt;
-    use util::{path, paths::add_root_for_windows, separator};
+    use util::{path, separator};
 
     use super::collect_files;
 
@@ -603,7 +603,7 @@ mod test {
         let fs = FakeFs::new(cx.executor());
 
         fs.insert_tree(
-            add_root_for_windows("/root"),
+            path!("/root"),
             json!({
                 "dir": {
                     "subdir": {
@@ -618,7 +618,7 @@ mod test {
         )
         .await;
 
-        let project = Project::test(fs, [add_root_for_windows("/root").as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/root").as_ref()], cx).await;
 
         let result_1 =
             cx.update(|cx| collect_files(project.clone(), &["root/dir".to_string()], cx));
@@ -656,7 +656,7 @@ mod test {
         let fs = FakeFs::new(cx.executor());
 
         fs.insert_tree(
-            add_root_for_windows("/zed"),
+            path!("/zed"),
             json!({
                 "assets": {
                     "dir1": {
@@ -681,7 +681,7 @@ mod test {
         )
         .await;
 
-        let project = Project::test(fs, [add_root_for_windows("/zed").as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/zed").as_ref()], cx).await;
 
         let result =
             cx.update(|cx| collect_files(project.clone(), &["zed/assets/themes".to_string()], cx));
@@ -732,7 +732,7 @@ mod test {
         let fs = FakeFs::new(cx.executor());
 
         fs.insert_tree(
-            add_root_for_windows("/zed"),
+            path!("/zed"),
             json!({
                 "assets": {
                     "themes": {
@@ -752,7 +752,7 @@ mod test {
         )
         .await;
 
-        let project = Project::test(fs, [add_root_for_windows("/zed").as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/zed").as_ref()], cx).await;
 
         let result =
             cx.update(|cx| collect_files(project.clone(), &["zed/assets/themes".to_string()], cx));

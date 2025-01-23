@@ -291,7 +291,7 @@ mod tests {
     use settings::SettingsStore;
     use std::future::Future;
     use util::{
-        paths::add_root_for_windows,
+        path,
         test::{marked_text_ranges_by, TextRangeMarker},
     };
 
@@ -952,24 +952,24 @@ mod tests {
 
         let fs = FakeFs::new(cx.executor());
         fs.insert_tree(
-            add_root_for_windows("/test"),
+            path!("/test"),
             json!({
                 ".env": "SECRET=something\n",
                 "README.md": "hello\nworld\nhow\nare\nyou\ntoday"
             }),
         )
         .await;
-        let project = Project::test(fs, [add_root_for_windows("/test").as_ref()], cx).await;
+        let project = Project::test(fs, [path!("/test").as_ref()], cx).await;
 
         let private_buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer(add_root_for_windows("/test/.env"), cx)
+                project.open_local_buffer(path!("/test/.env"), cx)
             })
             .await
             .unwrap();
         let public_buffer = project
             .update(cx, |project, cx| {
-                project.open_local_buffer(add_root_for_windows("/test/README.md"), cx)
+                project.open_local_buffer(path!("/test/README.md"), cx)
             })
             .await
             .unwrap();

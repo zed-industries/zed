@@ -535,7 +535,7 @@ mod tests {
     use editor::Editor;
     use gpui::TestAppContext;
     use serde_json::json;
-    use util::paths::add_root_for_windows;
+    use util::path;
     use workspace::{AppState, Workspace};
 
     use crate::zed::{open_listener::open_local_workspace, tests::init_test};
@@ -548,7 +548,7 @@ mod tests {
             .fs
             .as_fake()
             .insert_tree(
-                add_root_for_windows("/root"),
+                path!("/root"),
                 json!({
                     "dir1": {
                         "file1.txt": "content1",
@@ -561,13 +561,7 @@ mod tests {
         assert_eq!(cx.windows().len(), 0);
 
         // First open the workspace directory
-        open_workspace_file(
-            &add_root_for_windows("/root/dir1"),
-            None,
-            app_state.clone(),
-            cx,
-        )
-        .await;
+        open_workspace_file(&path!("/root/dir1"), None, app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
         let workspace = cx.windows()[0].downcast::<Workspace>().unwrap();
@@ -578,13 +572,7 @@ mod tests {
             .unwrap();
 
         // Now open a file inside that workspace
-        open_workspace_file(
-            &add_root_for_windows("/root/dir1/file1.txt"),
-            None,
-            app_state.clone(),
-            cx,
-        )
-        .await;
+        open_workspace_file(&path!("/root/dir1/file1.txt"), None, app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
         workspace
@@ -595,7 +583,7 @@ mod tests {
 
         // Now open a file inside that workspace, but tell Zed to open a new window
         open_workspace_file(
-            &add_root_for_windows("/root/dir1/file1.txt"),
+            &path!("/root/dir1/file1.txt"),
             Some(true),
             app_state.clone(),
             cx,
@@ -621,19 +609,13 @@ mod tests {
         app_state
             .fs
             .as_fake()
-            .insert_tree(add_root_for_windows("/root"), json!({}))
+            .insert_tree(path!("/root"), json!({}))
             .await;
 
         assert_eq!(cx.windows().len(), 0);
 
         // Test case 1: Open a single file that does not exist yet
-        open_workspace_file(
-            &add_root_for_windows("/root/file5.txt"),
-            None,
-            app_state.clone(),
-            cx,
-        )
-        .await;
+        open_workspace_file(&path!("/root/file5.txt"), None, app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 1);
         let workspace_1 = cx.windows()[0].downcast::<Workspace>().unwrap();
@@ -646,7 +628,7 @@ mod tests {
         // Test case 2: Open a single file that does not exist yet,
         // but tell Zed to add it to the current workspace
         open_workspace_file(
-            &add_root_for_windows("/root/file6.txt"),
+            &path!("/root/file6.txt"),
             Some(false),
             app_state.clone(),
             cx,
@@ -663,13 +645,7 @@ mod tests {
 
         // Test case 3: Open a single file that does not exist yet,
         // but tell Zed to NOT add it to the current workspace
-        open_workspace_file(
-            &add_root_for_windows("/root/file7.txt"),
-            Some(true),
-            app_state.clone(),
-            cx,
-        )
-        .await;
+        open_workspace_file(&path!("/root/file7.txt"), Some(true), app_state.clone(), cx).await;
 
         assert_eq!(cx.windows().len(), 2);
         let workspace_2 = cx.windows()[1].downcast::<Workspace>().unwrap();
