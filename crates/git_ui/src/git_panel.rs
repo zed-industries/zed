@@ -1083,13 +1083,15 @@ impl GitPanel {
         let mut label_color = cx.theme().colors().text;
         if status_style == StatusStyle::LabelColor {
             label_color = if status.is_conflicted() {
-                cx.theme().status().conflict
+                cx.theme().colors().version_control_conflict
             } else if status.is_modified() {
-                cx.theme().status().modified
+                cx.theme().colors().version_control_modified
             } else if status.is_deleted() {
+                // Don't use `version_control_deleted` here or all the
+                // deleted entries will be likely a red color.
                 cx.theme().colors().text_disabled
             } else {
-                cx.theme().status().created
+                cx.theme().colors().version_control_added
             }
         }
 
@@ -1185,7 +1187,7 @@ impl GitPanel {
                 }),
             )
             .when(status_style == StatusStyle::Icon, |this| {
-                this.child(git_status_icon(status))
+                this.child(git_status_icon(status, cx))
             })
             .child(
                 h_flex()
