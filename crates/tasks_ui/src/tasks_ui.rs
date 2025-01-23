@@ -262,7 +262,7 @@ mod tests {
     use serde_json::json;
     use task::{TaskContext, TaskVariables, VariableName};
     use ui::VisualContext;
-    use util::paths::add_root_for_windows;
+    use util::{path, paths::add_root_for_windows, separator};
     use workspace::{AppState, Workspace};
 
     use crate::task_context;
@@ -377,38 +377,19 @@ mod tests {
             })
             .await;
 
-        #[cfg(not(target_os = "windows"))]
-        assert_eq!(
-            first_context,
-            TaskContext {
-                cwd: Some("/dir".into()),
-                task_variables: TaskVariables::from_iter([
-                    (VariableName::File, "/dir/rust/b.rs".into()),
-                    (VariableName::Filename, "b.rs".into()),
-                    (VariableName::RelativeFile, "rust/b.rs".into()),
-                    (VariableName::Dirname, "/dir/rust".into()),
-                    (VariableName::Stem, "b".into()),
-                    (VariableName::WorktreeRoot, "/dir".into()),
-                    (VariableName::Row, "1".into()),
-                    (VariableName::Column, "1".into()),
-                ]),
-                project_env: HashMap::default(),
-            }
-        );
         // TODO:
         // Can we change VariableName::File to VariableName::File(PathBuf)?
-        #[cfg(target_os = "windows")]
         assert_eq!(
             first_context,
             TaskContext {
-                cwd: Some("C:/dir".into()),
+                cwd: Some(path!("/dir").into()),
                 task_variables: TaskVariables::from_iter([
-                    (VariableName::File, "C:/dir\\rust/b.rs".into()),
+                    (VariableName::File, path!("/dir/rust/b.rs", 1).into()),
                     (VariableName::Filename, "b.rs".into()),
-                    (VariableName::RelativeFile, "rust\\b.rs".into()),
-                    (VariableName::Dirname, "C:/dir\\rust".into()),
+                    (VariableName::RelativeFile, separator!("rust/b.rs").into()),
+                    (VariableName::Dirname, path!("/dir/rust", 1).into()),
                     (VariableName::Stem, "b".into()),
-                    (VariableName::WorktreeRoot, "C:/dir".into()),
+                    (VariableName::WorktreeRoot, path!("/dir").into()),
                     (VariableName::Row, "1".into()),
                     (VariableName::Column, "1".into()),
                 ]),
@@ -423,7 +404,6 @@ mod tests {
             })
         });
 
-        #[cfg(not(target_os = "windows"))]
         assert_eq!(
             workspace
                 .update_in(cx, |workspace, window, cx| {
@@ -431,36 +411,14 @@ mod tests {
                 })
                 .await,
             TaskContext {
-                cwd: Some("/dir".into()),
+                cwd: Some(path!("/dir").into()),
                 task_variables: TaskVariables::from_iter([
-                    (VariableName::File, "/dir/rust/b.rs".into()),
+                    (VariableName::File, path!("/dir/rust/b.rs", 1).into()),
                     (VariableName::Filename, "b.rs".into()),
-                    (VariableName::RelativeFile, "rust/b.rs".into()),
-                    (VariableName::Dirname, "/dir/rust".into()),
+                    (VariableName::RelativeFile, separator!("rust/b.rs").into()),
+                    (VariableName::Dirname, path!("/dir/rust", 1).into()),
                     (VariableName::Stem, "b".into()),
-                    (VariableName::WorktreeRoot, "/dir".into()),
-                    (VariableName::Row, "1".into()),
-                    (VariableName::Column, "15".into()),
-                    (VariableName::SelectedText, "is_i".into()),
-                    (VariableName::Symbol, "this_is_a_rust_file".into()),
-                ]),
-                project_env: HashMap::default(),
-            }
-        );
-        #[cfg(target_os = "windows")]
-        assert_eq!(
-            workspace
-                .update(cx, |workspace, cx| { task_context(workspace, cx) })
-                .await,
-            TaskContext {
-                cwd: Some("C:/dir".into()),
-                task_variables: TaskVariables::from_iter([
-                    (VariableName::File, "C:/dir\\rust/b.rs".into()),
-                    (VariableName::Filename, "b.rs".into()),
-                    (VariableName::RelativeFile, "rust\\b.rs".into()),
-                    (VariableName::Dirname, "C:/dir\\rust".into()),
-                    (VariableName::Stem, "b".into()),
-                    (VariableName::WorktreeRoot, "C:/dir".into()),
+                    (VariableName::WorktreeRoot, path!("/dir").into()),
                     (VariableName::Row, "1".into()),
                     (VariableName::Column, "15".into()),
                     (VariableName::SelectedText, "is_i".into()),
@@ -470,7 +428,6 @@ mod tests {
             }
         );
 
-        #[cfg(not(target_os = "windows"))]
         assert_eq!(
             workspace
                 .update_in(cx, |workspace, window, cx| {
@@ -480,39 +437,14 @@ mod tests {
                 })
                 .await,
             TaskContext {
-                cwd: Some("/dir".into()),
+                cwd: Some(path!("/dir").into()),
                 task_variables: TaskVariables::from_iter([
-                    (VariableName::File, "/dir/a.ts".into()),
+                    (VariableName::File, path!("/dir/a.ts", 1).into()),
                     (VariableName::Filename, "a.ts".into()),
                     (VariableName::RelativeFile, "a.ts".into()),
-                    (VariableName::Dirname, "/dir".into()),
+                    (VariableName::Dirname, path!("/dir").into()),
                     (VariableName::Stem, "a".into()),
-                    (VariableName::WorktreeRoot, "/dir".into()),
-                    (VariableName::Row, "1".into()),
-                    (VariableName::Column, "1".into()),
-                    (VariableName::Symbol, "this_is_a_test".into()),
-                ]),
-                project_env: HashMap::default(),
-            }
-        );
-        #[cfg(target_os = "windows")]
-        assert_eq!(
-            workspace
-                .update(cx, |workspace, cx| {
-                    // Now, let's switch the active item to .ts file.
-                    workspace.activate_item(&editor1, true, true, cx);
-                    task_context(workspace, cx)
-                })
-                .await,
-            TaskContext {
-                cwd: Some("C:/dir".into()),
-                task_variables: TaskVariables::from_iter([
-                    (VariableName::File, "C:/dir\\a.ts".into()),
-                    (VariableName::Filename, "a.ts".into()),
-                    (VariableName::RelativeFile, "a.ts".into()),
-                    (VariableName::Dirname, "C:/dir".into()),
-                    (VariableName::Stem, "a".into()),
-                    (VariableName::WorktreeRoot, "C:/dir".into()),
+                    (VariableName::WorktreeRoot, path!("/dir").into()),
                     (VariableName::Row, "1".into()),
                     (VariableName::Column, "1".into()),
                     (VariableName::Symbol, "this_is_a_test".into()),
