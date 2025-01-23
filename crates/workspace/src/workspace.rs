@@ -1846,49 +1846,59 @@ impl Workspace {
     }
 
     fn send_keystrokes(&mut self, action: &SendKeystrokes, cx: &mut ViewContext<Self>) {
-        let mut state = self.dispatching_keystrokes.borrow_mut();
-        if !state.0.insert(action.0.clone()) {
-            cx.propagate();
-            return;
-        }
-        let mut keystrokes: Vec<Keystroke> = action
+        let keystrokes: Vec<Keystroke> = action
             .0
             .split(' ')
             .flat_map(|k| Keystroke::parse(k).log_err())
             .collect();
+
+        self.send_keystrokes_impl(keystrokes, cx)
+            .detach_and_log_err(cx);
+    }
+
+    pub fn send_keystrokes_impl(
+        &mut self,
+        mut keystrokes: Vec<Keystroke>,
+        cx: &mut ViewContext<Self>,
+    ) -> Task<Result<()>> {
         keystrokes.reverse();
+        let key = keystrokes.iter().map(|k| k.unparse()).join(" ");
+
+        let mut state = self.dispatching_keystrokes.borrow_mut();
+        if !state.0.insert(key) {
+            cx.propagate();
+            return Task::ready(Ok(()));
+        }
 
         state.1.append(&mut keystrokes);
         drop(state);
 
         let keystrokes = self.dispatching_keystrokes.clone();
-        cx.window_context()
-            .spawn(|mut cx| async move {
-                // limit to 100 keystrokes to avoid infinite recursion.
-                for _ in 0..100 {
-                    let Some(keystroke) = keystrokes.borrow_mut().1.pop() else {
-                        keystrokes.borrow_mut().0.clear();
-                        return Ok(());
-                    };
-                    cx.update(|cx| {
-                        let focused = cx.focused();
-                        cx.dispatch_keystroke(keystroke.clone());
-                        if cx.focused() != focused {
-                            // dispatch_keystroke may cause the focus to change.
-                            // draw's side effect is to schedule the FocusChanged events in the current flush effect cycle
-                            // And we need that to happen before the next keystroke to keep vim mode happy...
-                            // (Note that the tests always do this implicitly, so you must manually test with something like:
-                            //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
-                            // )
-                            cx.draw();
-                        }
-                    })?;
-                }
+        cx.window_context().spawn(|mut cx| async move {
+            // limit to 100 keystrokes to avoid infinite recursion.
+            for _ in 0..100 {
+                let Some(keystroke) = keystrokes.borrow_mut().1.pop() else {
+                    keystrokes.borrow_mut().0.clear();
+                    return Ok(());
+                };
+                cx.update(|cx| {
+                    let focused = cx.focused();
+                    cx.dispatch_keystroke(keystroke.clone());
+                    if cx.focused() != focused {
+                        // dispatch_keystroke may cause the focus to change.
+                        // draw's side effect is to schedule the FocusChanged events in the current flush effect cycle
+                        // And we need that to happen before the next keystroke to keep vim mode happy...
+                        // (Note that the tests always do this implicitly, so you must manually test with something like:
+                        //   "bindings": { "g z": ["workspace::SendKeystrokes", ": j <enter> u"]}
+                        // )
+                        cx.draw();
+                    }
+                })?;
+            }
 
-                *keystrokes.borrow_mut() = Default::default();
-                Err(anyhow!("over 100 keystrokes passed to send_keystrokes"))
-            })
-            .detach_and_log_err(cx);
+            *keystrokes.borrow_mut() = Default::default();
+            Err(anyhow!("over 100 keystrokes passed to send_keystrokes"))
+        })
     }
 
     fn save_all_internal(

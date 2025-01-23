@@ -8,8 +8,10 @@ use editor::{
     Bias, Editor, ToPoint,
 };
 use gpui::{
-    actions, impl_internal_actions, Action, AppContext, Global, ViewContext, WindowContext,
+    actions, impl_internal_actions, Action, AppContext, Global, Keystroke, ViewContext,
+    WindowContext,
 };
+use itertools::Itertools;
 use language::Point;
 use multi_buffer::MultiBufferRow;
 use regex::Regex;
@@ -78,6 +80,7 @@ impl_internal_actions!(
         WithRange,
         WithCount,
         OnMatchingLines,
+        NormalCommand,
         ShellExec
     ]
 );
@@ -237,6 +240,10 @@ pub fn register(editor: &mut Editor, cx: &mut ViewContext<Vim>) {
     });
 
     Vim::action(editor, cx, |vim, action: &ShellExec, cx| {
+        action.run(vim, cx)
+    });
+
+    Vim::action(editor, cx, |vim, action: &NormalCommand, cx| {
         action.run(vim, cx)
     })
 }
@@ -846,6 +853,20 @@ pub fn command_interceptor(mut input: &str, cx: &AppContext) -> Option<CommandIn
         } else {
             None
         }
+    } else if query.starts_with("norm") {
+        let mut normal = "normal".chars().peekable();
+        let mut query = query.chars().peekable();
+        while normal.peek().is_some_and(|char| Some(char) == query.peek()) {
+            normal.next();
+            query.next();
+        }
+
+        if query.next() == Some(' ') {
+            let remainder = query.collect::<String>();
+            NormalCommand::parse(&remainder, range.clone())
+        } else {
+            None
+        }
     } else if query.contains('!') {
         ShellExec::parse(query, range.clone())
     } else {
@@ -1072,19 +1093,147 @@ impl OnMatchingLines {
                         editor.change_selections(None, cx, |s| {
                             s.replace_cursors_with(|_| new_selections);
                         });
-                        cx.dispatch_action(action);
-                        cx.defer(move |editor, cx| {
-                            let newest = editor.selections.newest::<Point>(cx).clone();
-                            editor.change_selections(None, cx, |s| {
-                                s.select(vec![newest]);
+
+                        if let Some(NormalCommand { keystrokes, .. }) =
+                            action.as_any().downcast_ref::<NormalCommand>()
+                        {
+                            let Some(workspace) = editor.workspace() else {
+                                return;
+                            };
+                            let task = workspace.update(cx, |workspace, cx| {
+                                workspace.send_keystrokes_impl(keystrokes.clone(), cx)
                             });
-                            editor.end_transaction_at(Instant::now(), cx);
-                        })
+                            cx.spawn(|editor, mut cx| async move {
+                                task.await?;
+                                editor.update(&mut cx, move |editor, cx| {
+                                    let newest = editor.selections.newest::<Point>(cx).clone();
+                                    editor.change_selections(None, cx, |s| {
+                                        s.select(vec![newest]);
+                                    });
+                                    editor.end_transaction_at(Instant::now(), cx);
+                                })
+                            })
+                            .detach_and_log_err(cx);
+                        } else {
+                            cx.dispatch_action(action);
+                            cx.defer(move |editor, cx| {
+                                let newest = editor.selections.newest::<Point>(cx).clone();
+                                editor.change_selections(None, cx, |s| {
+                                    s.select(vec![newest]);
+                                });
+                                editor.end_transaction_at(Instant::now(), cx);
+                            })
+                        }
                     })
                     .ok();
             })
             .detach();
         });
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub struct NormalCommand {
+    range: Option<CommandRange>,
+    keystrokes: Vec<Keystroke>,
+}
+
+fn preprocess_keystroke(input: &str) -> String {
+    let parts = input.split("-").collect::<Vec<&str>>();
+
+    parts
+        .into_iter()
+        .enumerate()
+        .map(|(i, part)| {
+            if i + 1 < parts.len() {
+                match &part.to_ascii_lowercase() {
+                    "s" => "shift",
+                    "c" => "ctrl",
+                    "d" => "command",
+                    "a" | "m" | "t" => "alt",
+                    part => part,
+                }
+            } else {
+                match &part.to_ascii_lowercase() {
+                    "bs" => "backspace",
+                    "lt" => "<",
+                    "bar" => "|",
+                    "bslash" => "\\",
+                    "cr" | "return" => "enter",
+                    "esc" => "escape",
+                    part => part,
+                }
+            }
+        })
+        .join("-")
+}
+
+impl NormalCommand {
+    fn parse(query: &str, range: Option<CommandRange>) -> Option<Box<dyn Action>> {
+        let mut keystrokes: Vec<Keystroke> = Vec::default();
+
+        let mut chars = query.chars();
+        let mut in_angled = false;
+        let mut angled = "".to_string();
+        while let Some(char) = chars.next() {
+            if in_angled {
+                if char == '>' {
+                    keystrokes.push(Keystroke::parse(&preprocess_keystrke(&angled)).log_err()?);
+                    in_angled = false;
+                } else {
+                    angled.push(char);
+                }
+            } else if char.to_ascii_lowercase() != char {
+                keystrokes.push(
+                    Keystroke::parse(&format!("shift-{}", char.to_ascii_lowercase())).log_err()?,
+                )
+            } else if char == '<' {
+                in_angled = true;
+                angled = "".to_string();
+            } else {
+                keystrokes.push(Keystroke::parse(&format!("{}", char)).log_err()?)
+            }
+        }
+
+        if in_angled {
+            return None;
+        }
+
+        let keystrokes: Result<Vec<Keystroke>> = query
+            .chars()
+            .map(|char| {
+                let input = if char.to_ascii_lowercase() != char {
+                    format!("shift-{}", char.to_ascii_lowercase())
+                } else {
+                    char.to_string()
+                };
+                Ok(Keystroke::parse(&input)?)
+            })
+            .collect();
+
+        if let Ok(keystrokes) = keystrokes {
+            Some(Self { range, keystrokes }.boxed_clone())
+            // let zed_keystrokes = keystrokes.into_iter().map(|k| k.unparse()).join(" ");
+
+            // let mut action = workspace::SendKeystrokes(zed_keystrokes).boxed_clone();
+            // if let Some(range) = range.clone() {
+            //     action = WithRange {
+            //         restore_selection: false,
+            //         range,
+            //         action: WrappedAction(action),
+            //     }
+            //     .boxed_clone()
+            // }
+            // Some(action)
+        } else {
+            None
+        }
+    }
+
+    pub fn run(&self, vim: &mut Vim, cx: &mut ViewContext<Vim>) {
+        let zed_keystrokes = self.keystrokes.iter().map(|k| k.unparse()).join(" ");
+
+        let mut action = workspace::SendKeystrokes(zed_keystrokes).boxed_clone();
     }
 }
 
@@ -1101,7 +1250,8 @@ impl Vim {
             self.update_editor(cx, |_, editor, cx| {
                 editor.transact(cx, |editor, _| {
                     editor.clear_row_highlights::<ShellExec>();
-                })
+                });
+                editor.workspace()
             });
         }
     }
