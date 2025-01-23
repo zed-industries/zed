@@ -4,7 +4,7 @@ use project::TaskSourceKind;
 use remote::ConnectionState;
 use task::{ResolvedTask, TaskContext, TaskTemplate};
 
-use crate::Workspace;
+use crate::{notifications::NotifyResultExt as _, Workspace};
 
 pub fn schedule_task(
     workspace: &mut Workspace,
@@ -30,21 +30,25 @@ pub fn schedule_task(
     if let Some(spawn_in_terminal) =
         task_to_resolve.resolve_task(&task_source_kind.to_id_base(), task_cx)
     {
-        let pre_tasks = workspace
+        let inventory = workspace
             .project()
             .read(cx)
             .task_store()
             .read(cx)
-            .task_inventory()
-            .map_or(vec![], |inventory| {
-                inventory
-                    .read(cx)
-                    .build_pre_task_list(&spawn_in_terminal, &task_source_kind, task_cx)
-                    .unwrap_or(vec![])
-                    .into_iter()
-                    .map(|(_, task)| task)
-                    .collect_vec()
-            });
+            .task_inventory();
+
+        let Some(inventory) = inventory else {
+            return;
+        };
+
+        let pre_tasks = inventory
+            .read(cx)
+            .build_pre_task_queue(&spawn_in_terminal, &task_source_kind, task_cx)
+            .notify_err(workspace, cx)
+            .unwrap_or(vec![])
+            .into_iter()
+            .map(|(_, task)| task)
+            .collect_vec();
 
         schedule_resolved_tasks(
             workspace,
@@ -60,7 +64,7 @@ pub fn schedule_task(
 pub fn schedule_resolved_tasks(
     workspace: &mut Workspace,
     task_source_kind: TaskSourceKind,
-    pre_tasks: Vec<ResolvedTask>,
+    pre_task_queue: Vec<ResolvedTask>,
     mut resolved_task: ResolvedTask,
     omit_history: bool,
     cx: &mut Context<Workspace>,
@@ -79,7 +83,7 @@ pub fn schedule_resolved_tasks(
             });
         }
 
-        let pre_tasks = pre_tasks
+        let pre_tasks = pre_task_queue
             .into_iter()
             .filter_map(|mut task| task.resolved.take())
             .collect_vec();

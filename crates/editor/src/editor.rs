@@ -164,7 +164,7 @@ use ui::{
     Tooltip,
 };
 use util::{defer, maybe, post_inc, RangeExt, ResultExt, TryFutureExt};
-use workspace::item::{ItemHandle, PreviewTabsSettings};
+use workspace::{item::{ItemHandle, PreviewTabsSettings}, notifications::NotifyResultExt};
 use workspace::notifications::{DetachAndPromptErr, NotificationId, NotifyTaskExt};
 use workspace::{
     searchable::SearchEvent, ItemNavHistory, SplitDirection, ViewId, Workspace, WorkspaceId,
@@ -5326,21 +5326,25 @@ impl Editor {
 
             workspace
                 .update(&mut cx, |workspace, cx| {
-                    let pre_tasks = workspace
+                    let inventory = workspace
                         .project()
                         .read(cx)
                         .task_store()
                         .read(cx)
-                        .task_inventory()
-                        .map_or(vec![], |inventory| {
-                            inventory
-                                .read(cx)
-                                .build_pre_task_list(&resolved_task, &task_source_kind, &context)
-                                .unwrap_or(vec![])
-                                .into_iter()
-                                .map(|(_, task)| task)
-                                .collect_vec()
-                        });
+                        .task_inventory();
+
+                    let Some(inventory) = inventory else {
+                        return;
+                    };
+
+                    let pre_tasks = inventory
+                        .read(cx)
+                        .build_pre_task_queue(&resolved_task, &task_source_kind, &context)
+                        .notify_err(workspace, cx)
+                        .unwrap_or(vec![])
+                        .into_iter()
+                        .map(|(_, task)| task)
+                        .collect_vec();
 
                     workspace::tasks::schedule_resolved_tasks(
                         workspace,

@@ -1,11 +1,12 @@
+use itertools::Itertools as _;
 use ::settings::Settings;
 use editor::{tasks::task_context, Editor};
 use gpui::{App, AppContext as _, Context, Task as AsyncTask, Window};
-use itertools::Itertools;
 use modal::{TaskOverrides, TasksModal};
 use project::{Location, WorktreeId};
 use task::{RevealTarget, TaskId};
 use util::ResultExt;
+use workspace::notifications::NotifyResultExt as _;
 use workspace::tasks::schedule_task;
 use workspace::{tasks::schedule_resolved_tasks, Workspace};
 
@@ -84,25 +85,25 @@ pub fn init(cx: &mut App) {
                                 };
 
                                 cx.update_model(&workspace, |workspace, cx| {
-                                    let pre_tasks = workspace
+                                    let inventory = workspace
                                         .project()
                                         .read(cx)
                                         .task_store()
                                         .read(cx)
-                                        .task_inventory()
-                                        .map_or(vec![], |inventory| {
-                                            inventory
-                                                .read(cx)
-                                                .build_pre_task_list(
-                                                    &last_scheduled_task,
-                                                    &task_source_kind,
-                                                    &task_context,
-                                                )
-                                                .unwrap_or(vec![])
-                                                .into_iter()
-                                                .map(|(_, task)| task)
-                                                .collect_vec()
-                                        });
+                                        .task_inventory();
+
+                                    let Some(inventory) = inventory else {
+                                        return;
+                                    };
+
+                                    let pre_tasks = inventory
+                                        .read(cx)
+                                        .build_pre_task_queue(&last_scheduled_task, &task_source_kind, &task_context)
+                                        .notify_err(workspace, cx)
+                                        .unwrap_or(vec![])
+                                        .into_iter()
+                                        .map(|(_, task)| task)
+                                        .collect_vec();
 
                                     schedule_resolved_tasks(
                                         workspace,

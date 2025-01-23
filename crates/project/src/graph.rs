@@ -12,19 +12,12 @@ pub(crate) struct Graph {
 }
 
 #[derive(Debug)]
-pub(crate) struct Cycle {
-    pub src_node: u32,
-    pub dst_node: u32,
-}
-
-impl Into<anyhow::Error> for Cycle {
-    fn into(self) -> anyhow::Error {
-        anyhow::anyhow!(
-            "cycle found: src: {}, dst: {}",
-            self.src_node,
-            self.dst_node
-        )
-    }
+pub(crate) enum Error {
+    Cycle {
+        src_node: u32,
+        dst_node: u32
+    },
+    NodeNotFound
 }
 
 impl Graph {
@@ -55,7 +48,7 @@ impl Graph {
         }
     }
 
-    fn dfs(&self, node: u32, visited: &mut Vec<u32>, stack: &mut Vec<u32>) -> Option<Cycle> {
+    fn dfs(&self, node: u32, visited: &mut Vec<u32>, stack: &mut Vec<u32>) -> Option<Error> {
         if visited.contains(&node) {
             return None;
         }
@@ -69,7 +62,7 @@ impl Graph {
 
         for neighbor in neighbors {
             if stack.contains(&neighbor) {
-                return Some(Cycle {
+                return Some(Error::Cycle {
                     src_node: *neighbor,
                     dst_node: node,
                 });
@@ -85,18 +78,16 @@ impl Graph {
     }
 
     /// Build a subgraph starting from `start_node` from the nodes of this graph
-    pub fn subgraph(&self, start_node: u32) -> Graph {
+    pub fn subgraph(&self, start_node: u32) -> Result<Graph, Error> {
         let Some(_) = self.adjacencies.get(&start_node) else {
-            let mut graph = Graph::new();
-            graph.add_node(start_node);
-            return graph;
+            return Err(Error::NodeNotFound);
         };
 
         let mut graph = Self::new();
 
         self.collect_subgraph_nodes(&mut graph, start_node);
 
-        graph
+        Ok(graph)
     }
 
     fn collect_subgraph_nodes(&self, other: &mut Self, node: u32) {
@@ -115,13 +106,13 @@ impl Graph {
     }
 
     /// Topologically sorts nodes, or return the nodes that form a cycle
-    pub fn topo_sort(&self) -> Result<Vec<u32>, Cycle> {
+    pub fn topo_sort(&self) -> Result<Vec<u32>, Error> {
         let mut visited = vec![];
         let mut stack = vec![];
 
         for node in self.adjacencies.keys() {
-            if let Some(cycle) = self.dfs(*node, &mut visited, &mut stack) {
-                return Err(cycle);
+            if let Some(error) = self.dfs(*node, &mut visited, &mut stack) {
+                return Err(error);
             }
         }
 
@@ -160,7 +151,7 @@ mod graph_test {
             graph.add_edge(*src, *dst);
         }
 
-        let subgraph = graph.subgraph(2);
+        let subgraph = graph.subgraph(2).unwrap();
         for i in &[1, 2, 4, 5] {
             assert!(
                 subgraph.adjacencies.contains_key(i),

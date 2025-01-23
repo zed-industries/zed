@@ -8,7 +8,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{Context as _, Result};
+use anyhow::{anyhow, Context as _, Result};
 use collections::{HashMap, HashSet, VecDeque};
 use gpui::{App, AppContext as _, Entity, Task};
 use itertools::Itertools;
@@ -22,7 +22,7 @@ use text::{Point, ToPoint};
 use util::{post_inc, NumericPrefixWithSuffix, ResultExt as _};
 use worktree::WorktreeId;
 
-use crate::{graph::Graph, worktree_store::WorktreeStore};
+use crate::{graph::{self, Graph}, worktree_store::WorktreeStore};
 
 /// Inventory tracks available tasks for a given project.
 #[derive(Debug, Default)]
@@ -108,7 +108,7 @@ impl Inventory {
     }
 
     /// Topological sort of the dependency graph of `task`, not including the original task
-    pub fn build_pre_task_list(
+    pub fn build_pre_task_queue(
         &self,
         base_task: &ResolvedTask,
         task_source: &TaskSourceKind,
@@ -185,21 +185,34 @@ impl Inventory {
             .unwrap()
             .0;
 
-        dep_graph
+        let tasks_sorted = dep_graph
             .subgraph(base_task_node)
-            .topo_sort()
-            .map(|tasks| {
-                tasks
-                    .iter()
-                    .rev()
-                    .take(tasks.len() - 1)
-                    .filter_map(|idx| {
-                        let task = nodes.get(indexes.get(idx)?)?;
-                        Some((task.1.clone(), task.3.clone()))
-                    })
-                    .collect_vec()
+            .and_then(|g| g.topo_sort());
+
+        let tasks_sorted = match tasks_sorted {
+            Ok(tasks) => tasks,
+            Err(graph::Error::Cycle { src_node, dst_node }) => {
+                let src_task = indexes.get(&src_node).map_or("", |task| task.1);
+                let dst_task = indexes.get(&dst_node).map_or("", |task| task.1);
+
+                return Err(anyhow!(
+                    "Cycle found in the pre-task graph between labels '{src_task}' and '{dst_task}'"
+                ));
+            }
+
+            Err(node_not_found) => unreachable!("{node_not_found:?}")
+        };
+
+        Ok(tasks_sorted
+            .iter()
+            .rev()
+            .take(tasks_sorted.len() - 1)
+            .filter_map(|idx| {
+                let task = nodes.get(indexes.get(idx)?)?;
+                Some((task.1.clone(), task.3.clone()))
             })
-            .anyhow()
+            .collect_vec()
+        )
     }
 
     /// Pulls its task sources relevant to the worktree and the language given and resolves them with the [`TaskContext`] given.
@@ -724,7 +737,7 @@ mod tests {
 
         let pre_task_list = inventory.update(cx, |inventory, _| {
             inventory
-                .build_pre_task_list(&base_task.1, &base_task.0, &task_cx)
+                .build_pre_task_queue(&base_task.1, &base_task.0, &task_cx)
                 .unwrap()
         });
 
@@ -841,7 +854,7 @@ mod tests {
 
         let pre_task_list = inventory.update(cx, |inventory, _| {
             inventory
-                .build_pre_task_list(&base_task.1, &base_task.0, &task_cx)
+                .build_pre_task_queue(&base_task.1, &base_task.0, &task_cx)
                 .unwrap()
         });
 

@@ -17,7 +17,7 @@ use ui::{
     KeyBinding, LabelSize, ListItem, ListItemSpacing, RenderOnce, Toggleable, Tooltip,
 };
 use util::ResultExt;
-use workspace::{tasks::schedule_resolved_tasks, ModalView, Workspace};
+use workspace::{notifications::NotifyResultExt, tasks::schedule_resolved_tasks, ModalView, Workspace};
 pub use zed_actions::{Rerun, Spawn};
 
 /// A modal used to spawn new tasks.
@@ -313,19 +313,23 @@ impl PickerDelegate for TasksModalDelegate {
 
         self.workspace
             .update(cx, |workspace, cx| {
-                let pre_tasks =
-                    self.task_store
-                        .read(cx)
-                        .task_inventory()
-                        .map_or(vec![], |inventory| {
-                            inventory
-                                .read(cx)
-                                .build_pre_task_list(&task, &task_source_kind, &self.task_context)
-                                .unwrap_or(vec![])
-                                .into_iter()
-                                .map(|(_, task)| task)
-                                .collect_vec()
-                        });
+                let inventory = self
+                    .task_store
+                    .read(cx)
+                    .task_inventory();
+
+                let Some(inventory) = inventory else {
+                    return;
+                };
+
+                let pre_tasks = inventory
+                    .read(cx)
+                    .build_pre_task_queue(&task, &task_source_kind, &self.task_context)
+                    .notify_app_err(cx)
+                    .unwrap_or(vec![])
+                    .into_iter()
+                    .map(|(_, task)| task)
+                    .collect_vec();
 
                 schedule_resolved_tasks(
                     workspace,
