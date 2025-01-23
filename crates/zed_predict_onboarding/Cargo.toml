@@ -9,7 +9,7 @@ license = "GPL-3.0-or-later"
 workspace = true
 
 [lib]
-path = "src/zed_predict_onboarding.rs"
+path = "src/lib.rs"
 doctest = false
 
 [features]

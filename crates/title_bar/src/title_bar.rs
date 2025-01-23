@@ -37,7 +37,7 @@ use ui::{
 use util::ResultExt;
 use workspace::{notifications::NotifyResultExt, Workspace};
 use zed_actions::{OpenBrowser, OpenRecent, OpenRemote};
-use zed_predict_onboarding::ZedPredictOnboarding;
+use zed_predict_onboarding::ZedPredictBanner;
 
 #[cfg(feature = "stories")]
 pub use stories::*;
@@ -194,76 +194,12 @@ impl Render for TitleBar {
                             .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation()),
                     )
                     .child(self.render_collaborator_list(cx))
-                    .child(
-                        h_flex()
-                            .gap_1()
-                            .pr_1()
-                            .on_mouse_down(MouseButton::Left, |_, cx| cx.stop_propagation())
-                            .child(
-                                h_flex()
-                                    .h_5()
-                                    .rounded_md()
-                                    .border_1()
-                                    .border_color(
-                                        cx.theme().colors().editor_foreground.opacity(0.3),
-                                    )
-                                    .overflow_hidden()
-                                    .child(
-                                        ButtonLike::new("try-zed-predict")
-                                            .child(
-                                                h_flex()
-                                                    .h_full()
-                                                    .items_center()
-                                                    .gap_1p5()
-                                                    .child(
-                                                        Icon::new(IconName::ZedPredict)
-                                                            .size(IconSize::Small),
-                                                    )
-                                                    .child(
-                                                        h_flex()
-                                                            .gap_0p5()
-                                                            .child(
-                                                                Label::new("Introducing:")
-                                                                    .size(LabelSize::Small)
-                                                                    .color(Color::Muted),
-                                                            )
-                                                            .child(
-                                                                Label::new("Edit Prediction")
-                                                                    .size(LabelSize::Small),
-                                                            ),
-                                                    ),
-                                            )
-                                            .on_click({
-                                                let workspace = self.workspace.clone();
-                                                let user_store = self.user_store.clone();
-                                                let fs = self.fs.clone();
-                                                move |_, cx| {
-                                                    let Some(workspace) = workspace.upgrade()
-                                                    else {
-                                                        return;
-                                                    };
-                                                    ZedPredictOnboarding::toggle(
-                                                        workspace,
-                                                        user_store.clone(),
-                                                        fs.clone(),
-                                                        cx,
-                                                    );
-                                                }
-                                            }),
-                                    )
-                                    .child(
-                                        div()
-                                            .border_l_1()
-                                            .border_color(
-                                                cx.theme().colors().editor_foreground.opacity(0.1),
-                                            )
-                                            .child(
-                                                IconButton::new("close", IconName::Close)
-                                                    .icon_size(IconSize::Indicator),
-                                            ),
-                                    ),
-                            ),
-                    )
+                    .child(div().pr_1().child(ZedPredictBanner::new(
+                        self.workspace.clone(),
+                        self.user_store.clone(),
+                        self.fs.clone(),
+                        cx,
+                    )))
                     .child(
                         h_flex()
                             .gap_1()

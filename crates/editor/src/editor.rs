@@ -70,7 +70,7 @@ pub use element::{
 };
 use futures::{future, FutureExt};
 use fuzzy::StringMatchCandidate;
-use zed_predict_onboarding::ZedPredictOnboarding;
+use zed_predict_onboarding::ZedPredictModal;
 
 use code_context_menus::{
     AvailableCodeAction, CodeActionContents, CodeActionsItem, CodeActionsMenu, CodeContextMenu,
@@ -3840,7 +3840,7 @@ impl Editor {
 
         let project = project.read(cx);
 
-        ZedPredictOnboarding::toggle(
+        ZedPredictModal::toggle(
             workspace,
             project.user_store().clone(),
             project.fs().clone(),

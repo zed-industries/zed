@@ -11,7 +11,7 @@ use language::language_settings::{all_language_settings, InlineCompletionProvide
 use settings::SettingsStore;
 use supermaven::{Supermaven, SupermavenCompletionProvider};
 use workspace::Workspace;
-use zed_predict_onboarding::ZedPredictOnboarding;
+use zed_predict_onboarding::ZedPredictModal;
 
 pub fn init(
     client: Arc<Client>,
@@ -119,7 +119,7 @@ pub fn init(
 
                             window
                                 .update(cx, |_, cx| {
-                                    ZedPredictOnboarding::toggle(
+                                    ZedPredictModal::toggle(
                                         workspace,
                                         user_store.clone(),
                                         fs.clone(),

@@ -29,7 +29,7 @@ use workspace::{
     StatusItemView, Toast, Workspace,
 };
 use zed_actions::OpenBrowser;
-use zed_predict_onboarding::ZedPredictOnboarding;
+use zed_predict_onboarding::ZedPredictModal;
 use zeta::RateCompletionModal;
 
 actions!(zeta, [RateCompletions]);
@@ -251,7 +251,7 @@ impl Render for InlineCompletionButton {
                             })
                             .on_click(cx.listener(move |_, _, cx| {
                                 if let Some(workspace) = workspace.upgrade() {
-                                    ZedPredictOnboarding::toggle(
+                                    ZedPredictModal::toggle(
                                         workspace,
                                         user_store.clone(),
                                         fs.clone(),

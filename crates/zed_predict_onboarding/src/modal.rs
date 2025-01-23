@@ -1,5 +1,3 @@
-//! AI service Terms of Service acceptance modal.
-
 use std::{sync::Arc, time::Duration};
 
 use client::UserStore;
@@ -13,22 +11,22 @@ use settings::{update_settings_file, Settings};
 use ui::{prelude::*, TintColor};
 use workspace::{ModalView, Workspace};
 
-/// Terms of acceptance for AI inline prediction.
-pub struct ZedPredictOnboarding {
+/// Introduces user to AI inline prediction feature and terms of service
+pub struct ZedPredictModal {
     workspace: View<Workspace>,
     user_store: Model<UserStore>,
     fs: Arc<dyn Fs>,
     focus_handle: FocusHandle,
 }
 
-impl ZedPredictOnboarding {
+impl ZedPredictModal {
     fn new(
         workspace: View<Workspace>,
         user_store: Model<UserStore>,
         fs: Arc<dyn Fs>,
         cx: &mut ViewContext<Self>,
     ) -> Self {
-        ZedPredictOnboarding {
+        ZedPredictModal {
             workspace,
             user_store,
             fs,
@@ -44,9 +42,7 @@ impl ZedPredictOnboarding {
     ) {
         workspace.update(cx, |this, cx| {
             let workspace = cx.view().clone();
-            this.toggle_modal(cx, |cx| {
-                ZedPredictOnboarding::new(workspace, user_store, fs, cx)
-            });
+            this.toggle_modal(cx, |cx| ZedPredictModal::new(workspace, user_store, fs, cx));
         });
     }
 
@@ -95,17 +91,17 @@ impl ZedPredictOnboarding {
     }
 }
 
-impl EventEmitter<DismissEvent> for ZedPredictOnboarding {}
+impl EventEmitter<DismissEvent> for ZedPredictModal {}
 
-impl FocusableView for ZedPredictOnboarding {
+impl FocusableView for ZedPredictModal {
     fn focus_handle(&self, _cx: &AppContext) -> FocusHandle {
         self.focus_handle.clone()
     }
 }
 
-impl ModalView for ZedPredictOnboarding {}
+impl ModalView for ZedPredictModal {}
 
-impl Render for ZedPredictOnboarding {
+impl Render for ZedPredictModal {
     fn render(&mut self, cx: &mut ViewContext<Self>) -> impl IntoElement {
         v_flex()
             .w_96()
@@ -117,7 +113,7 @@ impl Render for ZedPredictOnboarding {
             .id("zed predict tos")
             .track_focus(&self.focus_handle(cx))
             .on_action(cx.listener(Self::cancel))
-            .key_context("ZedPredictOnboarding")
+            .key_context("ZedPredictModal")
             .on_action(cx.listener(|_, _: &menu::Cancel, cx| {
                 cx.emit(DismissEvent);
             }))
