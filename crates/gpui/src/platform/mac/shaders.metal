@@ -848,7 +848,7 @@ float4 gradient_color(Background background,
       float2 center = float2(bounds.origin.x, bounds.origin.y) + half_size;
       float2 center_to_point = position - center;
       float t = dot(center_to_point, direction) / length(direction);
-      // Check the direct to determine the use x or y
+      // Check the direction to determine whether to use x or y
       if (abs(direction.x) > abs(direction.y)) {
           t = (t + half_size.x) / bounds.size.width;
       } else {
@@ -874,22 +874,32 @@ float4 gradient_color(Background background,
       break;
     }
     case 2: {
-        float width = 4.;
+        float width = 8.;
         float radians = (fmod(45., 360.0) - 90.0) * (M_PI_F / 180.0);
         float2x2 rotation = rotate2d(radians);
         float2 rotated_point = rotation * position;
-        rotated_point.x = fmod(rotated_point.x, width);
-        float distance = quad_sdf(
-            rotated_point,
-            Bounds_ScaledPixels {
-                Point_ScaledPixels { 0., bounds.origin.y },
-                Size_ScaledPixels { width, bounds.size.height * 3. }
-            },
-            Corners_ScaledPixels { 0., 0., 0., 0. }
-        );
+        float pattern = fmod(rotated_point.x, width * 2.0);
+        float distance = min(pattern, width * 2.0 - pattern) - width * 0.5;
         color = solid_color * saturate(0.5 - distance);
         break;
     }
+    // case 2: {
+    //     float width = 8.;
+    //     float radians = (fmod(45., 360.0) - 90.0) * (M_PI_F / 180.0);
+    //     float2x2 rotation = rotate2d(radians);
+    //     float2 rotated_point = rotation * position;
+    //     rotated_point.x = fmod(rotated_point.x, width);
+    //     float distance = quad_sdf(
+    //         rotated_point,
+    //         Bounds_ScaledPixels {
+    //             Point_ScaledPixels { 0., bounds.origin.y },
+    //             Size_ScaledPixels { width, bounds.size.height * 3 }
+    //         },
+    //         Corners_ScaledPixels { 0., 0., 0., 0. }
+    //     );
+    //     color = solid_color * saturate(0.5 - distance);
+    //     break;
+    // }
   }
 
   return color;
