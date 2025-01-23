@@ -26,7 +26,8 @@ use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
 use util::{
     assert_set_eq,
-    paths::{add_root_for_windows, replace_path_separator, PathMatcher},
+    paths::{add_root_for_windows, PathMatcher},
+    separator,
     test::TempTree,
     TryFutureExt as _,
 };
@@ -3364,26 +3365,21 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
     std::fs::rename(dir.path().join("a/file2"), dir.path().join("a/file2.new")).unwrap();
     tree.flush_fs_events(cx).await;
 
-    let expected_paths = vec![
-        "a",
-        "a/file1",
-        "a/file2.new",
-        "b",
-        "d",
-        "d/file3",
-        "d/file4",
-    ]
-    .into_iter()
-    .map(replace_path_separator)
-    .collect::<Vec<_>>();
-
     cx.update(|app| {
         assert_eq!(
             tree.read(app)
                 .paths()
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
-            expected_paths
+            vec![
+                "a",
+                separator!("a/file1"),
+                separator!("a/file2.new"),
+                "b",
+                "d",
+                separator!("d/file3"),
+                separator!("d/file4"),
+            ]
         );
     });
 
@@ -3443,7 +3439,15 @@ async fn test_rescan_and_remote_updates(cx: &mut gpui::TestAppContext) {
                 .paths()
                 .map(|p| p.to_str().unwrap())
                 .collect::<Vec<_>>(),
-            expected_paths
+            vec![
+                "a",
+                separator!("a/file1"),
+                separator!("a/file2.new"),
+                "b",
+                "d",
+                separator!("d/file3"),
+                separator!("d/file4"),
+            ]
         );
     });
 }
@@ -4582,8 +4586,8 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            (replace_path_separator("dir/one.rs"), vec![8..12]),
-            (replace_path_separator("dir/two.rs"), vec![8..12]),
+            (separator!("dir/one.rs").to_string(), vec![8..12]),
+            (separator!("dir/two.rs").to_string(), vec![8..12]),
         ]),
         "Rust only search should give only Rust files"
     );
@@ -4607,8 +4611,8 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            (replace_path_separator("dir/one.ts"), vec![14..18]),
-            (replace_path_separator("dir/two.ts"), vec![14..18]),
+            (separator!("dir/one.ts").to_string(), vec![14..18]),
+            (separator!("dir/two.ts").to_string(), vec![14..18]),
         ]),
         "TypeScript only search should give only TypeScript files, even if other inclusions don't match anything"
     );
@@ -4632,10 +4636,10 @@ async fn test_search_with_inclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            (replace_path_separator("dir/two.ts"), vec![14..18]),
-            (replace_path_separator("dir/one.rs"), vec![8..12]),
-            (replace_path_separator("dir/one.ts"), vec![14..18]),
-            (replace_path_separator("dir/two.rs"), vec![8..12]),
+            (separator!("dir/two.ts").to_string(), vec![14..18]),
+            (separator!("dir/one.rs").to_string(), vec![8..12]),
+            (separator!("dir/one.ts").to_string(), vec![14..18]),
+            (separator!("dir/two.rs").to_string(), vec![8..12]),
         ]),
         "Rust and typescript search should give both Rust and TypeScript files, even if other inclusions don't match anything"
     );
@@ -4678,10 +4682,10 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            (replace_path_separator("dir/one.rs"), vec![8..12]),
-            (replace_path_separator("dir/one.ts"), vec![14..18]),
-            (replace_path_separator("dir/two.rs"), vec![8..12]),
-            (replace_path_separator("dir/two.ts"), vec![14..18]),
+            (separator!("dir/one.rs").to_string(), vec![8..12]),
+            (separator!("dir/one.ts").to_string(), vec![14..18]),
+            (separator!("dir/two.rs").to_string(), vec![8..12]),
+            (separator!("dir/two.ts").to_string(), vec![14..18]),
         ]),
         "If no exclusions match, all files should be returned"
     );
@@ -4704,8 +4708,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            (replace_path_separator("dir/one.ts"), vec![14..18]),
-            (replace_path_separator("dir/two.ts"), vec![14..18]),
+            (separator!("dir/one.ts").to_string(), vec![14..18]),
+            (separator!("dir/two.ts").to_string(), vec![14..18]),
         ]),
         "Rust exclusion search should give only TypeScript files"
     );
@@ -4727,8 +4731,8 @@ async fn test_search_with_exclusions(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            (replace_path_separator("dir/one.rs"), vec![8..12]),
-            (replace_path_separator("dir/two.rs"), vec![8..12]),
+            (separator!("dir/one.rs").to_string(), vec![8..12]),
+            (separator!("dir/two.rs").to_string(), vec![8..12]),
         ]),
         "TypeScript exclusion search should give only Rust files, even if other exclusions don't match anything"
     );
@@ -4854,8 +4858,8 @@ async fn test_search_with_exclusions_and_inclusions(cx: &mut gpui::TestAppContex
         .await
         .unwrap(),
         HashMap::from_iter([
-            (replace_path_separator("dir/one.ts"), vec![14..18]),
-            (replace_path_separator("dir/two.ts"), vec![14..18]),
+            (separator!("dir/one.ts").to_string(), vec![14..18]),
+            (separator!("dir/two.ts").to_string(), vec![14..18]),
         ]),
         "Non-intersecting TypeScript inclusions and Rust exclusions should return TypeScript files"
     );
@@ -5042,7 +5046,7 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
         )
         .await
         .unwrap(),
-        HashMap::from_iter([(replace_path_separator("dir/package.json"), vec![8..11])]),
+        HashMap::from_iter([(separator!("dir/package.json").to_string(), vec![8..11])]),
         "Only one non-ignored file should have the query"
     );
 
@@ -5065,22 +5069,22 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([
-            (replace_path_separator("dir/package.json"), vec![8..11]),
-            (replace_path_separator("dir/target/index.txt"), vec![6..9]),
+            (separator!("dir/package.json").to_string(), vec![8..11]),
+            (separator!("dir/target/index.txt").to_string(), vec![6..9]),
             (
-                replace_path_separator("dir/node_modules/prettier/package.json"),
+                separator!("dir/node_modules/prettier/package.json").to_string(),
                 vec![9..12]
             ),
             (
-                replace_path_separator("dir/node_modules/prettier/index.ts"),
+                separator!("dir/node_modules/prettier/index.ts").to_string(),
                 vec![15..18]
             ),
             (
-                replace_path_separator("dir/node_modules/eslint/index.ts"),
+                separator!("dir/node_modules/eslint/index.ts").to_string(),
                 vec![13..16]
             ),
             (
-                replace_path_separator("dir/node_modules/eslint/package.json"),
+                separator!("dir/node_modules/eslint/package.json").to_string(),
                 vec![8..11]
             ),
         ]),
@@ -5108,7 +5112,7 @@ async fn test_search_in_gitignored_dirs(cx: &mut gpui::TestAppContext) {
         .await
         .unwrap(),
         HashMap::from_iter([(
-            replace_path_separator("dir/node_modules/prettier/package.json"),
+            separator!("dir/node_modules/prettier/package.json").to_string(),
             vec![9..12]
         )]),
         "With search including ignored prettier directory and excluding TS files, only one file should be found"

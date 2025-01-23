@@ -27,7 +27,7 @@ use std::{
     path::{Path, PathBuf},
     sync::Arc,
 };
-use util::paths::{add_root_for_windows, replace_path_separator};
+use util::{path, paths::add_root_for_windows, separator};
 
 #[gpui::test]
 async fn test_basic_remote_editing(cx: &mut TestAppContext, server_cx: &mut TestAppContext) {
@@ -214,7 +214,7 @@ async fn test_remote_project_search(cx: &mut TestAppContext, server_cx: &mut Tes
         buffer.update(&mut cx, |buffer, cx| {
             assert_eq!(
                 buffer.file().unwrap().full_path(cx).to_string_lossy(),
-                replace_path_separator("project1/README.md")
+                separator!("project1/README.md")
             )
         });
 

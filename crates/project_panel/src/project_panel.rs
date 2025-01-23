@@ -4798,7 +4798,7 @@ mod tests {
     use serde_json::json;
     use settings::SettingsStore;
     use std::path::{Path, PathBuf};
-    use util::paths::{add_root_for_windows, replace_path_separator};
+    use util::{path, paths::add_root_for_windows, separator};
     use workspace::{
         item::{Item, ProjectItem},
         register_project_item, AppState,
@@ -5130,7 +5130,7 @@ mod tests {
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
-                &replace_path_separator("    > dir_1/nested_dir_1/nested_dir_2/nested_dir_3"),
+                separator!("    > dir_1/nested_dir_1/nested_dir_2/nested_dir_3"),
                 "v root2",
                 "    > dir_2",
             ]
@@ -5145,10 +5145,8 @@ mod tests {
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
-                &replace_path_separator(
-                    "    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3  <== selected"
-                ),
-                &replace_path_separator("        > nested_dir_4/nested_dir_5"),
+                separator!("    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3  <== selected"),
+                separator!("        > nested_dir_4/nested_dir_5"),
                 "          file_a.java",
                 "          file_b.java",
                 "          file_c.java",
@@ -5166,8 +5164,8 @@ mod tests {
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
-                &replace_path_separator("    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3"),
-                &replace_path_separator("        v nested_dir_4/nested_dir_5  <== selected"),
+                separator!("    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3"),
+                separator!("        v nested_dir_4/nested_dir_5  <== selected"),
                 "              file_d.java",
                 "          file_a.java",
                 "          file_b.java",
@@ -5181,8 +5179,8 @@ mod tests {
             visible_entries_as_strings(&panel, 0..10, cx),
             &[
                 "v root1",
-                &replace_path_separator("    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3"),
-                &replace_path_separator("        v nested_dir_4/nested_dir_5"),
+                separator!("    v dir_1/nested_dir_1/nested_dir_2/nested_dir_3"),
+                separator!("        v nested_dir_4/nested_dir_5"),
                 "              file_d.java",
                 "          file_a.java",
                 "          file_b.java",
