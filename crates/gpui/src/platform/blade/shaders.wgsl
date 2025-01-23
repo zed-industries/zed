@@ -45,6 +45,7 @@ struct LinearColorStop {
 struct Background {
     // 0u is Solid
     // 1u is LinearGradient
+    // 2u is PatternSlash
     tag: u32,
     // 0u is sRGB linear color
     // 1u is Oklab color
@@ -285,7 +286,7 @@ fn prepare_gradient_color(tag: u32, color_space: u32,
     solid: Hsla, colors: array<LinearColorStop, 2>) -> GradientColor {
     var result = GradientColor();
 
-    if (tag == 0u) {
+    if (tag == 0u || tag == 2u) {
         result.solid = hsla_to_rgba(solid);
     } else if (tag == 1u) {
         // The hsla_to_rgba is returns a linear sRGB color
@@ -356,6 +357,22 @@ fn gradient_color(background: Background, position: vec2<f32>, bounds: Bounds,
                     background_color = oklab_to_linear_srgb(oklab_color);
                 }
             }
+        }
+        case 2u: {
+            let base_pattern_size = bounds.size.y / 5.0;
+            let width = base_pattern_size * 0.5;
+            let slash_spacing = 0.89;
+            let radians = M_PI_F / 4.0;
+            let rotation = mat2x2<f32>(
+                cos(radians), -sin(radians),
+                sin(radians), cos(radians)
+            );
+            let relative_position = position - bounds.origin;
+            let rotated_point = rotation * relative_position;
+            let pattern = (rotated_point.x / slash_spacing) % (base_pattern_size * 2.0);
+            let distance = min(pattern, base_pattern_size * 2.0 - pattern) - width;
+            background_color = sold_color;
+            background_color.a *= saturate(0.5 - distance);
         }
     }
 
