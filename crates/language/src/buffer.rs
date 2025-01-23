@@ -991,16 +991,10 @@ impl Buffer {
         let mut syntax_snapshot = self.syntax_map.lock().snapshot();
         cx.background_executor().spawn(async move {
             if !edits.is_empty() {
-                //TODO: can we avoid cloning the edits?
                 branch_buffer.edit(edits.iter().cloned());
                 let snapshot = branch_buffer.snapshot();
-                println!("Previewing edits");
-                println!("{}", snapshot.text());
-                for edit in edits.iter() {
-                    println!("Edit: {:?}", edit.1);
-                }
-                println!("----------------------------");
                 syntax_snapshot.interpolate(&snapshot);
+
                 if let Some(language) = language {
                     syntax_snapshot.reparse(&snapshot, registry, language);
                 }

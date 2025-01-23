@@ -5009,18 +5009,7 @@ impl Editor {
                 } => edit_preview
                     .as_ref()
                     .and_then(|edit_preview| {
-                        // let excerpt = editor_snapshot
-                        //     .buffer_snapshot
-                        //     .excerpt_containing(edits.first()?.0.clone())?;
-
-                        inline_completion_edit_text(
-                            // excerpt.buffer(),
-                            &snapshot,
-                            &edits,
-                            edit_preview,
-                            true,
-                            cx,
-                        )
+                        inline_completion_edit_text(&snapshot, &edits, edit_preview, true, cx)
                     })
                     .map(InlineCompletionText::Edit),
                 InlineCompletion::Move(target) => {
