@@ -1,12 +1,19 @@
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use anyhow::Result;
 use assistant_tool::{ToolId, ToolWorkingSet};
+use chrono::{DateTime, Utc};
 use collections::HashMap;
 use context_server::manager::ContextServerManager;
 use context_server::{ContextServerFactoryRegistry, ContextServerTool};
-use gpui::{prelude::*, AppContext, Model, ModelContext, Task};
+use futures::future::{self, BoxFuture, Shared};
+use futures::FutureExt as _;
+use gpui::{prelude::*, AppContext, BackgroundExecutor, Model, ModelContext, SharedString, Task};
+use heed::types::SerdeBincode;
+use heed::Database;
 use project::Project;
+use serde::{Deserialize, Serialize};
 use unindent::Unindent;
 use util::ResultExt as _;
 
@@ -19,6 +26,7 @@ pub struct ThreadStore {
     context_server_manager: Model<ContextServerManager>,
     context_server_tool_ids: HashMap<Arc<str>, Vec<ToolId>>,
     threads: Vec<Model<Thread>>,
+    database_future: Shared<BoxFuture<'static, Result<Arc<ThreadsDatabase>, Arc<anyhow::Error>>>>,
 }
 
 impl ThreadStore {
@@ -35,12 +43,24 @@ impl ThreadStore {
                     ContextServerManager::new(context_server_factory_registry, project.clone(), cx)
                 });
 
+                let executor = cx.background_executor().clone();
+                let database_future = executor
+                    .spawn({
+                        let executor = executor.clone();
+                        let database_path = paths::support_dir().join("threads/threads-db.0.mdb");
+                        async move { ThreadsDatabase::new(database_path, executor) }
+                    })
+                    .then(|result| future::ready(result.map(Arc::new).map_err(Arc::new)))
+                    .boxed()
+                    .shared();
+
                 let mut this = Self {
                     project,
                     tools,
                     context_server_manager,
                     context_server_tool_ids: HashMap::default(),
                     threads: Vec::new(),
+                    database_future,
                 };
                 this.mock_recent_threads(cx);
                 this.register_context_server_handlers(cx);
@@ -157,6 +177,64 @@ impl ThreadStore {
             }
         }
     }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct SavedThreadMetadata {
+    id: ThreadId,
+    summary: SharedString,
+    updated_at: DateTime<Utc>,
+}
+
+#[derive(Serialize, Deserialize)]
+struct SavedThread {}
+
+struct ThreadsDatabase {
+    executor: BackgroundExecutor,
+    env: heed::Env,
+    threads: Database<SerdeBincode<SavedThreadMetadata>, SerdeBincode<SavedThread>>,
+}
+
+impl ThreadsDatabase {
+    pub fn new(path: PathBuf, executor: BackgroundExecutor) -> Result<Self> {
+        std::fs::create_dir_all(&path)?;
+
+        const ONE_GB_IN_BYTES: usize = 1024 * 1024 * 1024;
+        let env = unsafe {
+            heed::EnvOpenOptions::new()
+                .map_size(ONE_GB_IN_BYTES)
+                .max_dbs(1)
+                .open(path)?
+        };
+
+        let mut txn = env.write_txn()?;
+        let threads = env.create_database(&mut txn, Some("threads"))?;
+        txn.commit()?;
+
+        Ok(Self {
+            executor,
+            env,
+            threads,
+        })
+    }
+
+    pub fn list_threads(&self) -> Task<Result<Vec<SavedThreadMetadata>>> {
+        let env = self.env.clone();
+        let threads = self.threads;
+
+        self.executor.spawn(async move {
+            let txn = env.read_txn()?;
+            let mut iter = threads.iter(&txn)?;
+            let mut keys = Vec::new();
+            while let Some((key, _value)) = iter.next().transpose()? {
+                keys.push(key);
+            }
+
+            Ok(keys)
+        })
+    }
+
+    // pub fn save(&self, thread: )
 }
 
 impl ThreadStore {
