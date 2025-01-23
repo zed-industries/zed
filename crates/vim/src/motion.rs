@@ -1974,7 +1974,7 @@ fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -
         let point = map
             .buffer_snapshot
             .offset_to_point(excerpt.map_offset_from_buffer(offset));
-        return map.point_to_display_point(point, Bias::Left);
+        return map.clip_point(map.point_to_display_point(point, Bias::Left), Bias::Left);
     }
     let mut last_position = None;
     for (excerpt, buffer, range) in map.buffer_snapshot.excerpts() {
@@ -1999,8 +1999,11 @@ fn go_to_line(map: &DisplaySnapshot, display_point: DisplayPoint, line: usize) -
     let mut last_point = last_position.unwrap().to_point(&map.buffer_snapshot);
     last_point.column = point.column;
 
-    map.point_to_display_point(
-        map.buffer_snapshot.clip_point(point, Bias::Left),
+    map.clip_point(
+        map.point_to_display_point(
+            map.buffer_snapshot.clip_point(point, Bias::Left),
+            Bias::Left,
+        ),
         Bias::Left,
     )
 }
@@ -2018,8 +2021,11 @@ fn start_of_document(
     let mut first_point = Point::zero();
     first_point.column = point.column;
 
-    map.point_to_display_point(
-        map.buffer_snapshot.clip_point(first_point, Bias::Left),
+    map.clip_point(
+        map.point_to_display_point(
+            map.buffer_snapshot.clip_point(first_point, Bias::Left),
+            Bias::Left,
+        ),
         Bias::Left,
     )
 }
@@ -2036,8 +2042,11 @@ fn end_of_document(
     let mut last_point = map.buffer_snapshot.max_point();
     last_point.column = point.column;
 
-    map.point_to_display_point(
-        map.buffer_snapshot.clip_point(last_point, Bias::Left),
+    map.clip_point(
+        map.point_to_display_point(
+            map.buffer_snapshot.clip_point(last_point, Bias::Left),
+            Bias::Left,
+        ),
         Bias::Left,
     )
 }
