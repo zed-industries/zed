@@ -1,4 +1,4 @@
-use crate::status::FileStatus;
+use crate::status::{FileStatus, StatusCode, TrackedStatus};
 use crate::GitHostingProviderRegistry;
 use crate::{blame::Blame, status::GitStatus};
 use anyhow::{anyhow, Context, Result};
@@ -31,7 +31,7 @@ pub trait GitRepository: Send + Sync {
 
     /// Loads a git repository entry's contents.
     /// Note that for symlink entries, this will return the contents of the symlink, not the target.
-    fn load_index_text(&self, relative_file_path: &Path) -> Option<String>;
+    fn load_index_text(&self, relative_file_path: &RepoPath) -> Option<String>;
 
     /// Returns the URL of the remote with the given name.
     fn remote_url(&self, name: &str) -> Option<String>;
@@ -106,7 +106,7 @@ impl GitRepository for RealGitRepository {
         repo.path().into()
     }
 
-    fn load_index_text(&self, relative_file_path: &Path) -> Option<String> {
+    fn load_index_text(&self, relative_file_path: &RepoPath) -> Option<String> {
         fn logic(repo: &git2::Repository, relative_file_path: &Path) -> Result<Option<String>> {
             const STAGE_NORMAL: i32 = 0;
             let index = repo.index()?;
@@ -318,8 +318,9 @@ pub trait FakeGitRepositoryFs: Send + Sync {
 #[derive(Clone)]
 pub struct FakeGitRepositoryState {
     pub fake_fs: Arc<dyn FakeGitRepositoryFs>,
-    pub index_contents: HashMap<PathBuf, String>,
-    pub blames: HashMap<PathBuf, Blame>,
+    pub head_contents: HashMap<RepoPath, String>,
+    pub index_contents: HashMap<RepoPath, String>,
+    pub blames: HashMap<RepoPath, Blame>,
     pub statuses: HashMap<RepoPath, FileStatus>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
@@ -348,6 +349,7 @@ impl FakeGitRepositoryState {
     pub fn new(fake_fs: Arc<dyn FakeGitRepositoryFs>) -> Self {
         FakeGitRepositoryState {
             fake_fs,
+            head_contents: Default::default(),
             index_contents: Default::default(),
             blames: Default::default(),
             statuses: Default::default(),
@@ -355,12 +357,79 @@ impl FakeGitRepositoryState {
             branches: Default::default(),
         }
     }
+
+    fn set_statuses(&mut self) {
+        let mut paths = self
+            .head_contents
+            .iter()
+            .map(|(path, contents)| (path.clone(), Some(contents.clone()), None, None))
+            .chain(
+                self.index_contents
+                    .iter()
+                    .map(|(path, contents)| (path.clone(), None, Some(contents.clone()), None)),
+            )
+            .chain(
+                self.fake_fs
+                    .all_paths()
+                    .map(|(path, contents)| (path, None, None, Some(contents))),
+            )
+            .collect::<Vec<_>>();
+        paths.sort_by(|(a, _, _, _), (b, _, _, _)| a.cmp(&b));
+        paths.dedup_by(
+            |(a, head_a, index_a, worktree_a), (b, head_b, index_b, worktree_b)| {
+                if a != b {
+                    return false;
+                }
+                *head_b = head_b.take().or(head_a.take());
+                *index_b = index_b.take().or(index_a.take());
+                *worktree_b = worktree_b.take().or(worktree_a.take());
+                true
+            },
+        );
+        self.statuses.clear();
+        self.statuses.extend(
+            paths
+                .into_iter()
+                .filter_map(|(path, head, index, worktree)| {
+                    fn status_code(a: &Option<String>, b: &Option<String>) -> StatusCode {
+                        match (a, b) {
+                            (None, None) => StatusCode::Unmodified,
+                            (Some(a), Some(b)) => {
+                                if a == b {
+                                    StatusCode::Modified
+                                } else {
+                                    StatusCode::Unmodified
+                                }
+                            }
+                            (None, Some(_)) => StatusCode::Added,
+                            (Some(_), None) => StatusCode::Deleted,
+                        }
+                    }
+
+                    let status = match (head, index, worktree) {
+                        (None, None, None) => return None,
+                        (Some(head), Some(index), Some(worktree))
+                            if head == index && index == worktree =>
+                        {
+                            return None
+                        }
+                        (None, None, Some(_)) => FileStatus::Untracked,
+                        (head, index, worktree) => TrackedStatus {
+                            index_status: status_code(&head, &index),
+                            worktree_status: status_code(&index, &worktree),
+                        }
+                        .into(),
+                    };
+                    Some((path, status))
+                }),
+        )
+    }
 }
 
 impl GitRepository for FakeGitRepository {
     fn reload_index(&self) {}
 
-    fn load_index_text(&self, path: &Path) -> Option<String> {
+    fn load_index_text(&self, path: &RepoPath) -> Option<String> {
         let state = self.state.lock();
         state.index_contents.get(path).cloned()
     }
@@ -448,12 +517,38 @@ impl GitRepository for FakeGitRepository {
             .cloned()
     }
 
-    fn stage_paths(&self, _paths: &[RepoPath]) -> Result<()> {
-        unimplemented!()
+    fn stage_paths(&self, paths: &[RepoPath]) -> Result<()> {
+        let mut state = self.state.lock();
+        for path in paths {
+            match state.fake_fs.read_path(path) {
+                Some(content) => {
+                    state.index_contents.insert(path.clone(), content);
+                }
+                None => {
+                    state.index_contents.remove(path);
+                }
+            }
+        }
+        state.fake_fs.repo_changed();
+        Ok(())
     }
 
-    fn unstage_paths(&self, _paths: &[RepoPath]) -> Result<()> {
-        unimplemented!()
+    fn unstage_paths(&self, paths: &[RepoPath]) -> Result<()> {
+        let mut state = self.state.lock();
+        for path in paths {
+            let content = state.head_contents.get(path).cloned();
+            match content {
+                Some(content) => {
+                    state.index_contents.insert(path.clone(), content);
+                }
+                None => {
+                    state.index_contents.remove(path);
+                }
+            }
+        }
+        state.set_statuses();
+        state.fake_fs.repo_changed();
+        Ok(())
     }
 
     fn commit(&self, _message: &str) -> Result<()> {

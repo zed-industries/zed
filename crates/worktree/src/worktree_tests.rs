@@ -3248,6 +3248,24 @@ async fn test_fake_git_repository_fs(cx: &mut TestAppContext) {
     });
 }
 
+//#[gpui::test]
+//async fn test_git_status_correspondence(mut rng: StdRng, cx: &mut TestAppContext) {
+//    // operations
+//    // - take something that's staged and unstage it
+//    // - take something that's unstaged and stage it
+//    // - take something that's modified from the index and revert it
+//    // - take something that's unmodified from the index and modify it
+//    init_test(cx);
+//    let fake = FakeFs::new(cx.background_executor.clone());
+//    let initial = json!({
+//        "a.txt": "a",
+//        "b.txt": "b",
+//        "c.txt": "c",
+//    });
+//    fake.insert_tree("/project", initial.clone()).await;
+//    let real = temp_tree(json!({"project": initial}));
+//}
+
 #[gpui::test]
 async fn test_private_single_file_worktree(cx: &mut TestAppContext) {
     init_test(cx);
