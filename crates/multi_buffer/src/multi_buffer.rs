@@ -14,15 +14,16 @@ use git::diff::DiffHunkStatus;
 use gpui::{AppContext, EntityId, EventEmitter, Model, ModelContext, Task};
 use itertools::Itertools;
 use language::{
-    language_settings::{language_settings, LanguageSettings},
+    language_settings::{language_settings, IndentGuideSettings, LanguageSettings},
     AutoindentMode, Buffer, BufferChunks, BufferRow, BufferSnapshot, Capability, CharClassifier,
-    CharKind, Chunk, CursorShape, DiagnosticEntry, DiskState, File, IndentGuide, IndentSize,
-    Language, LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16,
-    Selection, TextDimension, ToOffset as _, ToPoint as _, TransactionId, Unclipped,
+    CharKind, Chunk, CursorShape, DiagnosticEntry, DiskState, File, IndentSize, Language,
+    LanguageScope, OffsetRangeExt, OffsetUtf16, Outline, OutlineItem, Point, PointUtf16, Selection,
+    TextDimension, ToOffset as _, ToPoint as _, TransactionId, Unclipped,
 };
 use project::buffer_store::BufferChangeSet;
 use rope::DimensionPair;
 use smallvec::SmallVec;
+use smol::future::yield_now;
 use std::{
     any::type_name,
     borrow::Cow,
@@ -41,7 +42,7 @@ use sum_tree::{Bias, Cursor, SumTree, TreeMap};
 use text::{
     locator::Locator,
     subscription::{Subscription, Topic},
-    BufferId, Edit, TextSummary,
+    BufferId, Edit, LineIndent, TextSummary,
 };
 use theme::SyntaxTheme;
 use util::post_inc;
@@ -454,16 +455,18 @@ impl ExpandExcerptDirection {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct MultiBufferIndentGuide {
-    pub multibuffer_row_range: Range<MultiBufferRow>,
-    pub buffer: IndentGuide,
+pub struct IndentGuide {
+    pub buffer_id: BufferId,
+    pub start_row: MultiBufferRow,
+    pub end_row: MultiBufferRow,
+    pub depth: u32,
+    pub tab_size: u32,
+    pub settings: IndentGuideSettings,
 }
 
-impl std::ops::Deref for MultiBufferIndentGuide {
-    type Target = IndentGuide;
-
-    fn deref(&self) -> &Self::Target {
-        &self.buffer
+impl IndentGuide {
+    pub fn indent_level(&self) -> u32 {
+        self.depth * self.tab_size
     }
 }
 
@@ -3966,6 +3969,14 @@ impl MultiBufferSnapshot {
         }
     }
 
+    pub fn line_indent_for_row(&self, row: MultiBufferRow) -> LineIndent {
+        if let Some((buffer, range)) = self.buffer_line_for_row(row) {
+            LineIndent::from_iter(buffer.text_for_range(range).flat_map(|s| s.chars()))
+        } else {
+            LineIndent::spaces(0)
+        }
+    }
+
     pub fn indent_and_comment_for_line(&self, row: MultiBufferRow, cx: &AppContext) -> String {
         let mut indent = self.indent_size_for_line(row).chars().collect::<String>();
 
@@ -4959,57 +4970,318 @@ impl MultiBufferSnapshot {
         })
     }
 
-    pub fn indent_guides_in_range<'a>(
-        &'a self,
-        range: Range<Anchor>,
-        ignore_disabled_for_language: bool,
-        cx: &'a AppContext,
-    ) -> impl 'a + Iterator<Item = MultiBufferIndentGuide> {
-        let range = range.start.to_point(self)..range.end.to_point(self);
+    pub fn line_indents(
+        &self,
+        start_row: MultiBufferRow,
+        buffer_filter: impl Fn(&BufferSnapshot) -> bool,
+    ) -> impl Iterator<Item = (MultiBufferRow, LineIndent, &BufferSnapshot)> {
+        let max_point = self.max_point();
         let mut cursor = self.cursor::<Point>();
-        cursor.seek(&range.start);
-        if let Some(region) = cursor.region() {
-            let buffer = region.buffer;
-
-            let start_overshoot = range.start.saturating_sub(region.range.start);
-            let end_overshoot = range.end.saturating_sub(region.range.start);
-            let start = region.buffer_range.start + start_overshoot;
-            let end = (region.buffer_range.start + end_overshoot).min(region.buffer_range.end);
-            let mut buffer_indent_guides = buffer
-                .indent_guides_in_range(start..end, ignore_disabled_for_language, cx)
-                .into_iter();
-
-            Some(iter::from_fn(move || loop {
-                if let Some(indent_guide) = buffer_indent_guides.next() {
-                    let region = cursor.region()?;
-                    let start_row = region.range.start.row + indent_guide.start_row
-                        - region.buffer_range.start.row;
-                    let mut end_row = region.range.start.row + indent_guide.end_row
-                        - region.buffer_range.start.row;
-                    if region.range.end != self.max_point() {
-                        end_row = end_row.min(region.range.end.row.saturating_sub(1));
-                    }
-                    return Some(MultiBufferIndentGuide {
-                        multibuffer_row_range: MultiBufferRow(start_row)..MultiBufferRow(end_row),
-                        buffer: indent_guide,
-                    });
-                }
+        cursor.seek(&Point::new(start_row.0, 0));
+        iter::from_fn(move || {
+            let mut region = cursor.region()?;
+            while !buffer_filter(&region.excerpt.buffer) {
                 cursor.next();
-                let region = cursor.region()?;
-                let buffer = region.buffer;
+                region = cursor.region()?;
+            }
+            let overshoot = start_row.0.saturating_sub(region.range.start.row);
+            let buffer_start_row =
+                (region.buffer_range.start.row + overshoot).min(region.buffer_range.end.row);
 
-                let end_overshoot = range.end.saturating_sub(region.range.start);
-                let start = region.buffer_range.start;
-                let end = (region.buffer_range.start + end_overshoot).min(region.buffer_range.end);
-                buffer_indent_guides = buffer
-                    .indent_guides_in_range(start..end, ignore_disabled_for_language, cx)
-                    .into_iter();
-            }))
-        } else {
-            None
-        }
-        .into_iter()
+            let buffer_end_row = if region.is_main_buffer
+                && (region.has_trailing_newline || region.range.end == max_point)
+            {
+                region.buffer_range.end.row
+            } else {
+                region.buffer_range.end.row.saturating_sub(1)
+            };
+
+            let line_indents = region
+                .buffer
+                .line_indents_in_row_range(buffer_start_row..buffer_end_row);
+            cursor.next();
+            return Some(line_indents.filter_map(move |(buffer_row, indent)| {
+                let row = region.range.start.row + (buffer_row - region.buffer_range.start.row);
+                Some((MultiBufferRow(row), indent, &region.excerpt.buffer))
+            }));
+        })
         .flatten()
+    }
+
+    pub fn reversed_line_indents(
+        &self,
+        end_row: MultiBufferRow,
+        buffer_filter: impl Fn(&BufferSnapshot) -> bool,
+    ) -> impl Iterator<Item = (MultiBufferRow, LineIndent, &BufferSnapshot)> {
+        let max_point = self.max_point();
+        let mut cursor = self.cursor::<Point>();
+        cursor.seek(&Point::new(end_row.0, 0));
+        iter::from_fn(move || {
+            let mut region = cursor.region()?;
+            while !buffer_filter(&region.excerpt.buffer) {
+                cursor.prev();
+                region = cursor.region()?;
+            }
+
+            let buffer_start_row = region.buffer_range.start.row;
+            let buffer_end_row = if region.is_main_buffer
+                && (region.has_trailing_newline || region.range.end == max_point)
+            {
+                region.buffer_range.end.row + 1
+            } else {
+                region.buffer_range.end.row
+            };
+
+            let overshoot = end_row.0 - region.range.start.row;
+            let buffer_end_row =
+                (region.buffer_range.start.row + overshoot + 1).min(buffer_end_row);
+
+            let line_indents = region
+                .buffer
+                .reversed_line_indents_in_row_range(buffer_start_row..buffer_end_row);
+            cursor.prev();
+            return Some(line_indents.map(move |(buffer_row, indent)| {
+                let row = region.range.start.row + (buffer_row - region.buffer_range.start.row);
+                (MultiBufferRow(row), indent, &region.excerpt.buffer)
+            }));
+        })
+        .flatten()
+    }
+
+    pub async fn enclosing_indent(
+        &self,
+        mut target_row: MultiBufferRow,
+    ) -> Option<(Range<MultiBufferRow>, LineIndent)> {
+        let max_row = MultiBufferRow(self.max_point().row);
+        if target_row >= max_row {
+            return None;
+        }
+
+        let mut target_indent = self.line_indent_for_row(target_row);
+
+        // If the current row is at the start of an indented block, we want to return this
+        // block as the enclosing indent.
+        if !target_indent.is_line_empty() && target_row < max_row {
+            let next_line_indent = self.line_indent_for_row(MultiBufferRow(target_row.0 + 1));
+            if !next_line_indent.is_line_empty()
+                && target_indent.raw_len() < next_line_indent.raw_len()
+            {
+                target_indent = next_line_indent;
+                target_row.0 += 1;
+            }
+        }
+
+        const SEARCH_ROW_LIMIT: u32 = 25000;
+        const SEARCH_WHITESPACE_ROW_LIMIT: u32 = 2500;
+        const YIELD_INTERVAL: u32 = 100;
+
+        let mut accessed_row_counter = 0;
+
+        // If there is a blank line at the current row, search for the next non indented lines
+        if target_indent.is_line_empty() {
+            let start = MultiBufferRow(target_row.0.saturating_sub(SEARCH_WHITESPACE_ROW_LIMIT));
+            let end =
+                MultiBufferRow((max_row.0 + 1).min(target_row.0 + SEARCH_WHITESPACE_ROW_LIMIT));
+
+            let mut non_empty_line_above = None;
+            for (row, indent, _) in self.reversed_line_indents(target_row, |_| true) {
+                if row < start {
+                    break;
+                }
+                accessed_row_counter += 1;
+                if accessed_row_counter == YIELD_INTERVAL {
+                    accessed_row_counter = 0;
+                    yield_now().await;
+                }
+                if !indent.is_line_empty() {
+                    non_empty_line_above = Some((row, indent));
+                    break;
+                }
+            }
+
+            let mut non_empty_line_below = None;
+            for (row, indent, _) in self.line_indents(target_row, |_| true) {
+                if row > end {
+                    break;
+                }
+                accessed_row_counter += 1;
+                if accessed_row_counter == YIELD_INTERVAL {
+                    accessed_row_counter = 0;
+                    yield_now().await;
+                }
+                if !indent.is_line_empty() {
+                    non_empty_line_below = Some((row, indent));
+                    break;
+                }
+            }
+
+            let (row, indent) = match (non_empty_line_above, non_empty_line_below) {
+                (Some((above_row, above_indent)), Some((below_row, below_indent))) => {
+                    if above_indent.raw_len() >= below_indent.raw_len() {
+                        (above_row, above_indent)
+                    } else {
+                        (below_row, below_indent)
+                    }
+                }
+                (Some(above), None) => above,
+                (None, Some(below)) => below,
+                _ => return None,
+            };
+
+            target_indent = indent;
+            target_row = row;
+        }
+
+        let start = MultiBufferRow(target_row.0.saturating_sub(SEARCH_ROW_LIMIT));
+        let end = MultiBufferRow((max_row.0 + 1).min(target_row.0 + SEARCH_ROW_LIMIT));
+
+        let mut start_indent = None;
+        for (row, indent, _) in self.reversed_line_indents(target_row, |_| true) {
+            if row < start {
+                break;
+            }
+            accessed_row_counter += 1;
+            if accessed_row_counter == YIELD_INTERVAL {
+                accessed_row_counter = 0;
+                yield_now().await;
+            }
+            if !indent.is_line_empty() && indent.raw_len() < target_indent.raw_len() {
+                start_indent = Some((row, indent));
+                break;
+            }
+        }
+        let (start_row, start_indent_size) = start_indent?;
+
+        let mut end_indent = (end, None);
+        for (row, indent, _) in self.line_indents(target_row, |_| true) {
+            if row > end {
+                break;
+            }
+            accessed_row_counter += 1;
+            if accessed_row_counter == YIELD_INTERVAL {
+                accessed_row_counter = 0;
+                yield_now().await;
+            }
+            if !indent.is_line_empty() && indent.raw_len() < target_indent.raw_len() {
+                end_indent = (MultiBufferRow(row.0.saturating_sub(1)), Some(indent));
+                break;
+            }
+        }
+        let (end_row, end_indent_size) = end_indent;
+
+        let indent = if let Some(end_indent_size) = end_indent_size {
+            if start_indent_size.raw_len() > end_indent_size.raw_len() {
+                start_indent_size
+            } else {
+                end_indent_size
+            }
+        } else {
+            start_indent_size
+        };
+
+        Some((start_row..end_row, indent))
+    }
+
+    pub fn indent_guides_in_range<T: ToPoint>(
+        &self,
+        range: Range<T>,
+        ignore_disabled_for_language: bool,
+        cx: &AppContext,
+    ) -> impl Iterator<Item = IndentGuide> {
+        let range = range.start.to_point(self)..range.end.to_point(self);
+        let start_row = MultiBufferRow(range.start.row);
+        let end_row = MultiBufferRow(range.end.row);
+
+        let mut row_indents = self.line_indents(start_row, |buffer| {
+            let settings =
+                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx);
+            settings.indent_guides.enabled || ignore_disabled_for_language
+        });
+
+        let mut result = Vec::new();
+        let mut indent_stack = SmallVec::<[IndentGuide; 8]>::new();
+
+        while let Some((first_row, mut line_indent, buffer)) = row_indents.next() {
+            if first_row > end_row {
+                break;
+            }
+            let current_depth = indent_stack.len() as u32;
+
+            let settings =
+                language_settings(buffer.language().map(|l| l.name()), buffer.file(), cx);
+            let tab_size = settings.tab_size.get() as u32;
+
+            // When encountering empty, continue until found useful line indent
+            // then add to the indent stack with the depth found
+            let mut found_indent = false;
+            let mut last_row = first_row;
+            if line_indent.is_line_empty() {
+                while !found_indent {
+                    let Some((target_row, new_line_indent, _)) = row_indents.next() else {
+                        break;
+                    };
+                    const TRAILING_ROW_SEARCH_LIMIT: u32 = 25;
+                    if target_row > MultiBufferRow(end_row.0 + TRAILING_ROW_SEARCH_LIMIT) {
+                        break;
+                    }
+
+                    if new_line_indent.is_line_empty() {
+                        continue;
+                    }
+                    last_row = target_row.min(end_row);
+                    line_indent = new_line_indent;
+                    found_indent = true;
+                    break;
+                }
+            } else {
+                found_indent = true
+            }
+
+            let depth = if found_indent {
+                line_indent.len(tab_size) / tab_size
+                    + ((line_indent.len(tab_size) % tab_size) > 0) as u32
+            } else {
+                current_depth
+            };
+
+            match depth.cmp(&current_depth) {
+                cmp::Ordering::Less => {
+                    for _ in 0..(current_depth - depth) {
+                        let mut indent = indent_stack.pop().unwrap();
+                        if last_row != first_row {
+                            // In this case, we landed on an empty row, had to seek forward,
+                            // and discovered that the indent we where on is ending.
+                            // This means that the last display row must
+                            // be on line that ends this indent range, so we
+                            // should display the range up to the first non-empty line
+                            indent.end_row = MultiBufferRow(first_row.0.saturating_sub(1));
+                        }
+
+                        result.push(indent)
+                    }
+                }
+                cmp::Ordering::Greater => {
+                    for next_depth in current_depth..depth {
+                        indent_stack.push(IndentGuide {
+                            buffer_id: buffer.remote_id(),
+                            start_row: first_row,
+                            end_row: last_row,
+                            depth: next_depth,
+                            tab_size,
+                            settings: settings.indent_guides,
+                        });
+                    }
+                }
+                _ => {}
+            }
+
+            for indent in indent_stack.iter_mut() {
+                indent.end_row = last_row;
+            }
+        }
+
+        result.extend(indent_stack);
+        result.into_iter()
     }
 
     pub fn trailing_excerpt_update_count(&self) -> usize {

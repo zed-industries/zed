@@ -1273,6 +1273,7 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
     assert_chunks_in_ranges(&snapshot);
     assert_consistent_line_numbers(&snapshot);
     assert_position_translation(&snapshot);
+    assert_line_indents(&snapshot);
 
     multibuffer.update(cx, |multibuffer, cx| {
         multibuffer.collapse_diff_hunks(vec![Anchor::min()..Anchor::max()], cx)
@@ -1296,6 +1297,7 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
     assert_chunks_in_ranges(&snapshot);
     assert_consistent_line_numbers(&snapshot);
     assert_position_translation(&snapshot);
+    assert_line_indents(&snapshot);
 
     // Expand the first diff hunk
     multibuffer.update(cx, |multibuffer, cx| {
@@ -1347,6 +1349,7 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
     assert_chunks_in_ranges(&snapshot);
     assert_consistent_line_numbers(&snapshot);
     assert_position_translation(&snapshot);
+    assert_line_indents(&snapshot);
 
     // Edit the buffer before the first hunk
     buffer.update(cx, |buffer, cx| {
@@ -1388,6 +1391,7 @@ fn test_basic_diff_hunks(cx: &mut TestAppContext) {
     assert_chunks_in_ranges(&snapshot);
     assert_consistent_line_numbers(&snapshot);
     assert_position_translation(&snapshot);
+    assert_line_indents(&snapshot);
 
     // Recalculate the diff, changing the first diff hunk.
     let _ = change_set.update(cx, |change_set, cx| {
@@ -1512,7 +1516,7 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
         "
         one
         two
-        three
+            three
         four
         five
         six
@@ -1523,14 +1527,14 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
         ZERO
         one
         TWO
-        three
+            three
         six
         "
     );
     let base_text_2 = indoc!(
         "
         seven
-        eight
+          eight
         nine
         ten
         eleven
@@ -1539,7 +1543,7 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
     );
     let text_2 = indoc!(
         "
-        eight
+          eight
         nine
         eleven
         THIRTEEN
@@ -1590,10 +1594,10 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
             ZERO
             one
             TWO
-            three
+                three
             six
 
-            eight
+              eight
             nine
             eleven
             THIRTEEN
@@ -1617,13 +1621,13 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
               one
             - two
             + TWO
-              three
+                  three
             - four
             - five
               six
 
             - seven
-              eight
+                eight
               nine
             - ten
               eleven
@@ -1659,13 +1663,13 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
             Some((id_1, "one".into())),
             Some((base_id_1, "two".into())),
             Some((id_1, "TWO".into())),
-            Some((id_1, "three".into())),
+            Some((id_1, "    three".into())),
             Some((base_id_1, "four".into())),
             Some((base_id_1, "five".into())),
             Some((id_1, "six".into())),
             Some((id_1, "".into())),
             Some((base_id_2, "seven".into())),
-            Some((id_2, "eight".into())),
+            Some((id_2, "  eight".into())),
             Some((id_2, "nine".into())),
             Some((base_id_2, "ten".into())),
             Some((id_2, "eleven".into())),
@@ -1677,6 +1681,7 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
     );
 
     assert_position_translation(&snapshot);
+    assert_line_indents(&snapshot);
 
     assert_eq!(
         snapshot
@@ -1690,7 +1695,7 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
         buffer.edit_via_marked_text(
             indoc!(
                 "
-                eight
+                  eight
                 «»eleven
                 THIRTEEN
                 FOURTEEN
@@ -1712,13 +1717,13 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
               one
             - two
             + TWO
-              three
+                  three
             - four
             - five
               six
 
             - seven
-              eight
+                eight
               eleven
             - twelve
             + THIRTEEN
@@ -1726,6 +1731,8 @@ fn test_diff_hunks_with_multiple_excerpts(cx: &mut TestAppContext) {
             "
         ),
     );
+
+    assert_line_indents(&snapshot);
 }
 
 /// A naive implementation of a multi-buffer that does not maintain
@@ -2537,6 +2544,99 @@ fn test_history(cx: &mut AppContext) {
     });
 }
 
+#[gpui::test]
+async fn test_enclosing_indent(cx: &mut TestAppContext) {
+    async fn enclosing_indent(
+        text: &str,
+        buffer_row: u32,
+        cx: &mut TestAppContext,
+    ) -> Option<(Range<u32>, LineIndent)> {
+        let buffer = cx.update(|cx| MultiBuffer::build_simple(text, cx));
+        let snapshot = cx.read(|cx| buffer.read(cx).snapshot(cx));
+        let (range, indent) = snapshot
+            .enclosing_indent(MultiBufferRow(buffer_row))
+            .await?;
+        Some((range.start.0..range.end.0, indent))
+    }
+
+    assert_eq!(
+        enclosing_indent(
+            indoc!(
+                "
+                fn b() {
+                    if c {
+                        let d = 2;
+                    }
+                }
+                "
+            ),
+            1,
+            cx,
+        )
+        .await,
+        Some((
+            1..2,
+            LineIndent {
+                tabs: 0,
+                spaces: 4,
+                line_blank: false,
+            }
+        ))
+    );
+
+    assert_eq!(
+        enclosing_indent(
+            indoc!(
+                "
+                fn b() {
+                    if c {
+                        let d = 2;
+                    }
+                }
+                "
+            ),
+            2,
+            cx,
+        )
+        .await,
+        Some((
+            1..2,
+            LineIndent {
+                tabs: 0,
+                spaces: 4,
+                line_blank: false,
+            }
+        ))
+    );
+
+    assert_eq!(
+        enclosing_indent(
+            indoc!(
+                "
+                fn b() {
+                    if c {
+                        let d = 2;
+
+                        let e = 5;
+                    }
+                }
+                "
+            ),
+            3,
+            cx,
+        )
+        .await,
+        Some((
+            1..4,
+            LineIndent {
+                tabs: 0,
+                spaces: 4,
+                line_blank: false,
+            }
+        ))
+    );
+}
+
 fn format_diff(
     text: &str,
     row_infos: &Vec<RowInfo>,
@@ -2773,4 +2873,33 @@ fn assert_position_translation(snapshot: &MultiBufferSnapshot) {
             }
         }
     }
+}
+
+fn assert_line_indents(snapshot: &MultiBufferSnapshot) {
+    let max_row = snapshot.max_point().row;
+    let buffer_id = snapshot.excerpts().next().unwrap().1.remote_id();
+    let text = text::Buffer::new(0, buffer_id, snapshot.text());
+    let mut line_indents = text
+        .line_indents_in_row_range(0..max_row + 1)
+        .collect::<Vec<_>>();
+    for start_row in 0..snapshot.max_point().row {
+        pretty_assertions::assert_eq!(
+            snapshot
+                .line_indents(MultiBufferRow(start_row), |_| true)
+                .map(|(row, indent, _)| (row.0, indent))
+                .collect::<Vec<_>>(),
+            &line_indents[(start_row as usize)..],
+            "line_indents({start_row})"
+        );
+    }
+
+    line_indents.reverse();
+    pretty_assertions::assert_eq!(
+        snapshot
+            .reversed_line_indents(MultiBufferRow(max_row), |_| true)
+            .map(|(row, indent, _)| (row.0, indent))
+            .collect::<Vec<_>>(),
+        &line_indents[..],
+        "reversed_line_indents({max_row})"
+    );
 }

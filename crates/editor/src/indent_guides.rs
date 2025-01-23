@@ -2,17 +2,16 @@ use std::{ops::Range, time::Duration};
 
 use collections::HashSet;
 use gpui::{AppContext, Task};
-use language::{language_settings::language_settings, BufferRow};
-use multi_buffer::{MultiBufferIndentGuide, MultiBufferRow};
-use text::{BufferId, LineIndent, Point};
+use language::language_settings::language_settings;
+use multi_buffer::{IndentGuide, MultiBufferRow};
+use text::{LineIndent, Point};
 use ui::ViewContext;
 use util::ResultExt;
 
 use crate::{DisplaySnapshot, Editor};
 
 struct ActiveIndentedRange {
-    buffer_id: BufferId,
-    row_range: Range<BufferRow>,
+    row_range: Range<MultiBufferRow>,
     indent: LineIndent,
 }
 
@@ -36,7 +35,7 @@ impl Editor {
         visible_buffer_range: Range<MultiBufferRow>,
         snapshot: &DisplaySnapshot,
         cx: &mut ViewContext<Editor>,
-    ) -> Option<Vec<MultiBufferIndentGuide>> {
+    ) -> Option<Vec<IndentGuide>> {
         let show_indent_guides = self.should_show_indent_guides().unwrap_or_else(|| {
             if let Some(buffer) = self.buffer().read(cx).as_singleton() {
                 language_settings(
@@ -66,7 +65,7 @@ impl Editor {
 
     pub fn find_active_indent_guide_indices(
         &mut self,
-        indent_guides: &[MultiBufferIndentGuide],
+        indent_guides: &[IndentGuide],
         snapshot: &DisplaySnapshot,
         cx: &mut ViewContext<Editor>,
     ) -> Option<HashSet<usize>> {
@@ -134,9 +133,7 @@ impl Editor {
             .iter()
             .enumerate()
             .filter(|(_, indent_guide)| {
-                indent_guide.buffer_id == active_indent_range.buffer_id
-                    && indent_guide.indent_level()
-                        == active_indent_range.indent.len(indent_guide.tab_size)
+                indent_guide.indent_level() == active_indent_range.indent.len(indent_guide.tab_size)
             });
 
         let mut matches = HashSet::default();
@@ -158,7 +155,7 @@ pub fn indent_guides_in_range(
     ignore_disabled_for_language: bool,
     snapshot: &DisplaySnapshot,
     cx: &AppContext,
-) -> Vec<MultiBufferIndentGuide> {
+) -> Vec<IndentGuide> {
     let start_anchor = snapshot
         .buffer_snapshot
         .anchor_before(Point::new(visible_buffer_range.start.0, 0));
@@ -174,8 +171,7 @@ pub fn indent_guides_in_range(
                 return false;
             }
 
-            let start =
-                MultiBufferRow(indent_guide.multibuffer_row_range.start.0.saturating_sub(1));
+            let start = MultiBufferRow(indent_guide.start_row.0.saturating_sub(1));
             // Filter out indent guides that are inside a fold
             // All indent guides that are starting "offscreen" have a start value of the first visible row minus one
             // Therefore checking if a line is folded at first visible row minus one causes the other indent guides that are not related to the fold to disappear as well
@@ -192,24 +188,11 @@ async fn resolve_indented_range(
     snapshot: DisplaySnapshot,
     buffer_row: MultiBufferRow,
 ) -> Option<ActiveIndentedRange> {
-    let (buffer_row, buffer_snapshot, buffer_id) =
-        if let Some((_, buffer_id, snapshot)) = snapshot.buffer_snapshot.as_singleton() {
-            (buffer_row.0, snapshot, buffer_id)
-        } else {
-            let (snapshot, point) = snapshot.buffer_snapshot.buffer_line_for_row(buffer_row)?;
-
-            let buffer_id = snapshot.remote_id();
-            (point.start.row, snapshot, buffer_id)
-        };
-
-    buffer_snapshot
+    snapshot
+        .buffer_snapshot
         .enclosing_indent(buffer_row)
         .await
-        .map(|(row_range, indent)| ActiveIndentedRange {
-            row_range,
-            indent,
-            buffer_id,
-        })
+        .map(|(row_range, indent)| ActiveIndentedRange { row_range, indent })
 }
 
 fn should_recalculate_indented_range(
@@ -222,7 +205,7 @@ fn should_recalculate_indented_range(
         return false;
     }
     if let Some((_, _, snapshot)) = snapshot.buffer_snapshot.as_singleton() {
-        if !current_indent_range.row_range.contains(&new_row.0) {
+        if !current_indent_range.row_range.contains(&new_row) {
             return true;
         }
 

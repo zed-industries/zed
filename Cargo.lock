@@ -7760,6 +7760,7 @@ dependencies = [
  "serde",
  "settings",
  "smallvec",
+ "smol",
  "sum_tree",
  "text",
  "theme",

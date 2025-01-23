@@ -1757,7 +1757,7 @@ impl EditorElement {
                     let start_x = content_origin.x + total_width - scroll_pixel_position.x;
                     if start_x >= text_origin.x {
                         let (offset_y, length) = Self::calculate_indent_guide_bounds(
-                            indent_guide.multibuffer_row_range.clone(),
+                            indent_guide.start_row..indent_guide.end_row,
                             line_height,
                             snapshot,
                         );

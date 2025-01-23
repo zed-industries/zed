@@ -36,6 +36,7 @@ parking_lot.workspace = true
 project.workspace = true
 rand.workspace = true
 rope.workspace = true
+smol.workspace = true
 settings.workspace = true
 serde.workspace = true
 smallvec.workspace = true

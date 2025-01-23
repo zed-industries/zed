@@ -2033,7 +2033,7 @@ impl BufferSnapshot {
 
         let mut chunks = self.as_rope().chunks_in_range(start..end);
         let mut row = row_range.start;
-        let mut done = start == end;
+        let mut done = false;
         std::iter::from_fn(move || {
             if done {
                 None
@@ -2071,7 +2071,7 @@ impl BufferSnapshot {
         }
 
         let mut row = end_point.row;
-        let mut done = start == end;
+        let mut done = false;
         std::iter::from_fn(move || {
             if done {
                 None

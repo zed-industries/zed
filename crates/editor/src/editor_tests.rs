@@ -19,11 +19,11 @@ use language::{
     },
     BracketPairConfig,
     Capability::ReadWrite,
-    FakeLspAdapter, IndentGuide, LanguageConfig, LanguageConfigOverride, LanguageMatcher,
-    LanguageName, Override, ParsedMarkdown, Point,
+    FakeLspAdapter, LanguageConfig, LanguageConfigOverride, LanguageMatcher, LanguageName,
+    Override, ParsedMarkdown, Point,
 };
 use language_settings::{Formatter, FormatterList, IndentGuideSettings};
-use multi_buffer::MultiBufferIndentGuide;
+use multi_buffer::IndentGuide;
 use parking_lot::Mutex;
 use pretty_assertions::{assert_eq, assert_ne};
 use project::{buffer_store::BufferChangeSet, FakeFs};
@@ -13523,22 +13523,14 @@ fn assert_indent_guides(
         );
     }
 
-    let expected: Vec<_> = expected
-        .into_iter()
-        .map(|guide| MultiBufferIndentGuide {
-            multibuffer_row_range: MultiBufferRow(guide.start_row)..MultiBufferRow(guide.end_row),
-            buffer: guide,
-        })
-        .collect();
-
     assert_eq!(indent_guides, expected, "Indent guides do not match");
 }
 
 fn indent_guide(buffer_id: BufferId, start_row: u32, end_row: u32, depth: u32) -> IndentGuide {
     IndentGuide {
         buffer_id,
-        start_row,
-        end_row,
+        start_row: MultiBufferRow(start_row),
+        end_row: MultiBufferRow(end_row),
         depth,
         tab_size: 4,
         settings: IndentGuideSettings {
@@ -14000,6 +13992,9 @@ async fn test_indent_guide_with_expanded_diff_hunks(cx: &mut gpui::TestAppContex
             fn b() {
                 0;
                 3;
+                5;
+                6;
+                7;
             }
         }
         "
@@ -14013,6 +14008,11 @@ async fn test_indent_guide_with_expanded_diff_hunks(cx: &mut gpui::TestAppContex
                 2;
                 3;
                 4;
+            }
+            fn c() {
+                5;
+                6;
+                7;
             }
         }
         "
@@ -14050,6 +14050,11 @@ async fn test_indent_guide_with_expanded_diff_hunks(cx: &mut gpui::TestAppContex
         -         2;
                   3;
         -         4;
+        -     }
+        -     fn c() {
+                  5;
+                  6;
+                  7;
               }
           }
           ˇ"
@@ -14062,22 +14067,16 @@ async fn test_indent_guide_with_expanded_diff_hunks(cx: &mut gpui::TestAppContex
             .snapshot(cx)
             .buffer_snapshot
             .indent_guides_in_range(Anchor::min()..Anchor::max(), false, cx)
-            .map(|guide| (guide.multibuffer_row_range.clone(), guide.depth))
+            .map(|guide| (guide.start_row..=guide.end_row, guide.depth))
             .collect::<Vec<_>>()
     });
-    actual_guides.sort_by_key(|item| (item.0.start, item.1));
+    actual_guides.sort_by_key(|item| (*item.0.start(), item.1));
     assert_eq!(
         actual_guides,
         vec![
-            (MultiBufferRow(1)..MultiBufferRow(2), 0),
-            (MultiBufferRow(2)..MultiBufferRow(2), 1),
-            (MultiBufferRow(3)..MultiBufferRow(4), 0),
-            (MultiBufferRow(3)..MultiBufferRow(4), 1),
-            (MultiBufferRow(5)..MultiBufferRow(5), 0),
-            (MultiBufferRow(5)..MultiBufferRow(5), 1),
-            (MultiBufferRow(6)..MultiBufferRow(6), 0),
-            (MultiBufferRow(6)..MultiBufferRow(6), 1),
-            (MultiBufferRow(7)..MultiBufferRow(7), 0),
+            (MultiBufferRow(1)..=MultiBufferRow(12), 0),
+            (MultiBufferRow(2)..=MultiBufferRow(6), 1),
+            (MultiBufferRow(9)..=MultiBufferRow(11), 1),
         ]
     );
 }
