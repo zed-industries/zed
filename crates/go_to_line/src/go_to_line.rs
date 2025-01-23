@@ -6,9 +6,8 @@ use gpui::{
     div, prelude::*, AnyWindowHandle, AppContext, DismissEvent, EventEmitter, FocusHandle,
     FocusableView, Render, SharedString, Styled, Subscription, View, ViewContext, VisualContext,
 };
-use multi_buffer::ExcerptPoint;
 use settings::Settings;
-use text::Point;
+use text::{Bias, Point};
 use theme::ActiveTheme;
 use ui::prelude::*;
 use util::paths::FILE_ROW_COLUMN_DELIMITER;
@@ -117,7 +116,7 @@ impl GoToLine {
         if let Some(point) = self.point_from_query(cx) {
             self.active_editor.update(cx, |active_editor, cx| {
                 let snapshot = active_editor.snapshot(cx).display_snapshot;
-                let start = snapshot.buffer_snapshot.excerpt_point_to_point(point);
+                let start = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
                 let end = start + Point::new(1, 0);
                 let start = snapshot.buffer_snapshot.anchor_before(start);
                 let end = snapshot.buffer_snapshot.anchor_after(end);
@@ -134,9 +133,9 @@ impl GoToLine {
         }
     }
 
-    fn point_from_query(&self, cx: &ViewContext<Self>) -> Option<ExcerptPoint> {
+    fn point_from_query(&self, cx: &ViewContext<Self>) -> Option<Point> {
         let (row, column) = self.line_column_from_query(cx);
-        Some(ExcerptPoint::new(
+        Some(Point::new(
             row?.saturating_sub(1),
             column.unwrap_or(0).saturating_sub(1),
         ))
@@ -161,7 +160,7 @@ impl GoToLine {
         if let Some(point) = self.point_from_query(cx) {
             self.active_editor.update(cx, |editor, cx| {
                 let snapshot = editor.snapshot(cx).display_snapshot;
-                let point = snapshot.buffer_snapshot.excerpt_point_to_point(point);
+                let point = snapshot.buffer_snapshot.clip_point(point, Bias::Left);
                 editor.change_selections(Some(Autoscroll::center()), cx, |s| {
                     s.select_ranges([point..point])
                 });
