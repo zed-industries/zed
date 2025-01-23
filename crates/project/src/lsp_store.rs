@@ -792,9 +792,8 @@ impl LocalLspStore {
                             })
                             .is_ok();
                         if did_update {
-                            let response = rx.recv().await?;
-
-                            Ok(Some(response))
+                            let response = rx.recv().await.ok();
+                            Ok(response)
                         } else {
                             Ok(None)
                         }
