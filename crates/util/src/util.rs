@@ -43,7 +43,7 @@ macro_rules! debug_panic {
     };
 }
 
-#[cfg(any(test, feature = "test-support"))]
+#[cfg(all(any(test, feature = "test-support"), target_os = "windows"))]
 #[macro_export]
 macro_rules! path {
     ($path:literal) => {
@@ -51,6 +51,17 @@ macro_rules! path {
     };
     ($path:literal, $depth:expr) => {
         concat!("C:", separator!($path, $depth))
+    };
+}
+
+#[cfg(all(any(test, feature = "test-support"), not(target_os = "windows")))]
+#[macro_export]
+macro_rules! path {
+    ($path:literal) => {
+        $path
+    };
+    ($path:literal, $depth:expr) => {
+        separator!($path, $depth)
     };
 }
 

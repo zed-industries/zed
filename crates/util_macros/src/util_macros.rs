@@ -1,3 +1,5 @@
+#![cfg_attr(not(target_os = "windows"), allow(unused))]
+
 use proc_macro::TokenStream;
 use quote::quote;
 use syn::{parse::Parse, parse_macro_input, LitInt, LitStr};
@@ -19,6 +21,7 @@ impl Parse for ReplacePathInput {
 }
 
 #[proc_macro]
+#[cfg(target_os = "windows")]
 pub fn separator(input: TokenStream) -> TokenStream {
     let ReplacePathInput { path, index } = parse_macro_input!(input as ReplacePathInput);
     let path = path.value();
@@ -49,4 +52,39 @@ pub fn separator(input: TokenStream) -> TokenStream {
     TokenStream::from(quote! {
         #new_path
     })
+}
+
+#[proc_macro]
+#[cfg(not(target_os = "windows"))]
+pub fn separator(input: TokenStream) -> TokenStream {
+    input
+}
+
+struct UriInput {
+    uri: LitStr,
+}
+
+impl Parse for UriInput {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        let uri: LitStr = input.parse()?;
+        Ok(UriInput { uri })
+    }
+}
+
+#[proc_macro]
+#[cfg(target_os = "windows")]
+pub fn uri(input: TokenStream) -> TokenStream {
+    let UriInput { uri } = parse_macro_input!(input as UriInput);
+    let uri = uri.value();
+    let new_uri = uri.replace("file:///", "file:///C:/");
+
+    TokenStream::from(quote! {
+        #new_uri
+    })
+}
+
+#[proc_macro]
+#[cfg(not(target_os = "windows"))]
+pub fn uri(input: TokenStream) -> TokenStream {
+    input
 }
