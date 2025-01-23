@@ -6791,6 +6791,7 @@ dependencies = [
  "async-trait",
  "collections",
  "extension",
+ "fs",
  "futures 0.3.31",
  "gpui",
  "language",
