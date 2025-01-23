@@ -25,7 +25,7 @@ use std::{mem, num::NonZeroU32, ops::Range, task::Poll};
 use task::{ResolvedTask, TaskContext};
 use unindent::Unindent as _;
 use util::{
-    assert_set_eq, path, paths::PathMatcher, separator, test::TempTree, TryFutureExt as _,
+    assert_set_eq, path, paths::PathMatcher, separator, test::TempTree, uri, TryFutureExt as _,
 };
 
 #[gpui::test]
@@ -1651,14 +1651,6 @@ async fn test_cancel_language_server_work(cx: &mut gpui::TestAppContext) {
 
 #[gpui::test]
 async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
-    fn add_root_for_uri(path: &str) -> String {
-        if cfg!(windows) {
-            path.replace("file:///", "file:///C:/")
-        } else {
-            path.to_string()
-        }
-    }
-
     init_test(cx);
 
     let fs = FakeFs::new(cx.executor());
@@ -1706,7 +1698,7 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
             .text_document
             .uri
             .as_str(),
-        add_root_for_uri("file:///dir/a.rs")
+        uri!("file:///dir/a.rs")
     );
 
     let mut fake_js_server = fake_js_servers.next().await.unwrap();
@@ -1717,7 +1709,7 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
             .text_document
             .uri
             .as_str(),
-        add_root_for_uri("file:///dir/b.js")
+        uri!("file:///dir/b.js")
     );
 
     // Disable Rust language server, ensuring only that server gets stopped.
@@ -1768,7 +1760,7 @@ async fn test_toggling_enable_language_server(cx: &mut gpui::TestAppContext) {
             .text_document
             .uri
             .as_str(),
-        add_root_for_uri("file:///dir/a.rs")
+        uri!("file:///dir/a.rs")
     );
     fake_js_server
         .receive_notification::<lsp::notification::Exit>()
@@ -4107,11 +4099,7 @@ async fn test_lsp_rename_notifications(cx: &mut gpui::TestAppContext) {
                     new_text: "This is not a drill".to_owned(),
                 })],
                 text_document: lsp::OptionalVersionedTextDocumentIdentifier {
-                    uri: if cfg!(target_os = "windows") {
-                        Url::from_str("file:///C:/dir/two/two.rs").unwrap()
-                    } else {
-                        Url::from_str("file:///dir/two/two.rs").unwrap()
-                    },
+                    uri: Url::from_str(uri!("file:///dir/two/two.rs")).unwrap(),
                     version: Some(1337),
                 },
             }]
@@ -4128,22 +4116,8 @@ async fn test_lsp_rename_notifications(cx: &mut gpui::TestAppContext) {
                 let expected_edit = expected_edit.clone();
                 async move {
                     assert_eq!(params.files.len(), 1);
-                    assert_eq!(
-                        params.files[0].old_uri,
-                        if cfg!(target_os = "windows") {
-                            "file:///C:/dir/one.rs"
-                        } else {
-                            "file:///dir/one.rs"
-                        }
-                    );
-                    assert_eq!(
-                        params.files[0].new_uri,
-                        if cfg!(target_os = "windows") {
-                            "file:///C:/dir/three.rs"
-                        } else {
-                            "file:///dir/three.rs"
-                        }
-                    );
+                    assert_eq!(params.files[0].old_uri, uri!("file:///dir/one.rs"));
+                    assert_eq!(params.files[0].new_uri, uri!("file:///dir/three.rs"));
                     resolved_workspace_edit.set(expected_edit.clone()).unwrap();
                     Ok(Some(expected_edit))
                 }
@@ -4156,22 +4130,8 @@ async fn test_lsp_rename_notifications(cx: &mut gpui::TestAppContext) {
     fake_server
         .handle_notification::<DidRenameFiles, _>(|params, _| {
             assert_eq!(params.files.len(), 1);
-            assert_eq!(
-                params.files[0].old_uri,
-                if cfg!(target_os = "windows") {
-                    "file:///C:/dir/one.rs"
-                } else {
-                    "file:///dir/one.rs"
-                }
-            );
-            assert_eq!(
-                params.files[0].new_uri,
-                if cfg!(target_os = "windows") {
-                    "file:///C:/dir/three.rs"
-                } else {
-                    "file:///dir/three.rs"
-                }
-            );
+            assert_eq!(params.files[0].old_uri, uri!("file:///dir/one.rs"));
+            assert_eq!(params.files[0].new_uri, uri!("file:///dir/three.rs"));
         })
         .next()
         .await
@@ -4228,11 +4188,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::PrepareRenameRequest, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document.uri.as_str(),
-                if cfg!(target_os = "windows") {
-                    "file:///C:/dir/one.rs"
-                } else {
-                    "file:///dir/one.rs"
-                }
+                uri!("file:///dir/one.rs")
             );
             assert_eq!(params.position, lsp::Position::new(0, 7));
             Ok(Some(lsp::PrepareRenameResponse::Range(lsp::Range::new(
@@ -4257,11 +4213,7 @@ async fn test_rename(cx: &mut gpui::TestAppContext) {
         .handle_request::<lsp::request::Rename, _, _>(|params, _| async move {
             assert_eq!(
                 params.text_document_position.text_document.uri.as_str(),
-                if cfg!(target_os = "windows") {
-                    "file:///C:/dir/one.rs"
-                } else {
-                    "file:///dir/one.rs"
-                }
+                uri!("file:///dir/one.rs")
             );
             assert_eq!(
                 params.text_document_position.position,
