@@ -57,8 +57,8 @@ pub fn separator(input: TokenStream) -> TokenStream {
 #[proc_macro]
 #[cfg(not(target_os = "windows"))]
 pub fn separator(input: TokenStream) -> TokenStream {
-    let input = parse_macro_input!(input as ReplacePathInput);
-    let path = input.path.value();
+    let ReplacePathInput { path, .. } = parse_macro_input!(input as ReplacePathInput);
+    let path = path.value();
     TokenStream::from(quote! {
         #path
     })
