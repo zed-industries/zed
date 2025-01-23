@@ -446,7 +446,8 @@ impl AssistantPanel {
 
     pub(crate) fn delete_thread(&mut self, thread_id: &ThreadId, cx: &mut ViewContext<Self>) {
         self.thread_store
-            .update(cx, |this, cx| this.delete_thread(thread_id, cx));
+            .update(cx, |this, cx| this.delete_thread(thread_id, cx))
+            .detach_and_log_err(cx);
     }
 }
 

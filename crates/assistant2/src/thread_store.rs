@@ -101,9 +101,7 @@ impl ThreadStore {
     }
 
     pub fn create_thread(&mut self, cx: &mut ModelContext<Self>) -> Model<Thread> {
-        let thread = cx.new_model(|cx| Thread::new(self.tools.clone(), cx));
-        // self.threads.push(thread.clone());
-        thread
+        cx.new_model(|cx| Thread::new(self.tools.clone(), cx))
     }
 
     pub fn open_thread(
@@ -111,8 +109,8 @@ impl ThreadStore {
         id: &ThreadId,
         cx: &mut ModelContext<Self>,
     ) -> Task<Result<Model<Thread>>> {
-        let database_future = self.database_future.clone();
         let id = id.clone();
+        let database_future = self.database_future.clone();
         cx.spawn(|this, mut cx| async move {
             let database = database_future.await.map_err(|err| anyhow!(err))?;
             let thread = database
@@ -124,11 +122,6 @@ impl ThreadStore {
                 cx.new_model(|cx| Thread::from_saved(id.clone(), thread, this.tools.clone(), cx))
             })
         })
-
-        // self.threads
-        //     .iter()
-        //     .find(|thread| thread.read(cx).id() == id)
-        //     .cloned()
     }
 
     pub fn save_thread(
@@ -163,8 +156,21 @@ impl ThreadStore {
         })
     }
 
-    pub fn delete_thread(&mut self, id: &ThreadId, cx: &mut ModelContext<Self>) {
-        // self.threads.retain(|thread| thread.read(cx).id() != id);
+    pub fn delete_thread(
+        &mut self,
+        id: &ThreadId,
+        cx: &mut ModelContext<Self>,
+    ) -> Task<Result<()>> {
+        let id = id.clone();
+        let database_future = self.database_future.clone();
+        cx.spawn(|this, mut cx| async move {
+            let database = database_future.await.map_err(|err| anyhow!(err))?;
+            database.delete_thread(id.clone()).await?;
+
+            this.update(&mut cx, |this, _cx| {
+                this.threads.retain(|thread| thread.id != id)
+            })
+        })
     }
 
     fn reload(&self, cx: &mut ModelContext<Self>) -> Task<Result<()>> {
@@ -338,6 +344,18 @@ impl ThreadsDatabase {
         self.executor.spawn(async move {
             let mut txn = env.write_txn()?;
             threads.put(&mut txn, &id, &thread)?;
+            txn.commit()?;
+            Ok(())
+        })
+    }
+
+    pub fn delete_thread(&self, id: ThreadId) -> Task<Result<()>> {
+        let env = self.env.clone();
+        let threads = self.threads;
+
+        self.executor.spawn(async move {
+            let mut txn = env.write_txn()?;
+            threads.delete(&mut txn, &id)?;
             txn.commit()?;
             Ok(())
         })
