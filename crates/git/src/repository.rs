@@ -307,15 +307,35 @@ pub struct FakeGitRepository {
     state: Arc<Mutex<FakeGitRepositoryState>>,
 }
 
-#[derive(Debug, Clone)]
+/// Stub for the Fs trait to break what would otherwise be a circular dependency between fs and git.
+pub trait FakeGitRepositoryFs: Send + Sync {
+    fn dot_git_dir(&self) -> PathBuf;
+    fn read_path(&self, path: &RepoPath) -> Option<String>;
+    fn all_paths(&self) -> Box<dyn Iterator<Item = (RepoPath, String)>>;
+    fn repo_changed(&self);
+}
+
+#[derive(Clone)]
 pub struct FakeGitRepositoryState {
-    pub dot_git_dir: PathBuf,
-    pub event_emitter: smol::channel::Sender<PathBuf>,
+    pub fake_fs: Arc<dyn FakeGitRepositoryFs>,
     pub index_contents: HashMap<PathBuf, String>,
     pub blames: HashMap<PathBuf, Blame>,
     pub statuses: HashMap<RepoPath, FileStatus>,
     pub current_branch_name: Option<String>,
     pub branches: HashSet<String>,
+}
+
+impl std::fmt::Debug for FakeGitRepositoryState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("FakeGitRepositoryState")
+            .field("head_contents", &self.head_contents)
+            .field("index_contents", &self.index_contents)
+            .field("blames", &self.blames)
+            .field("statuses", &self.statuses)
+            .field("current_branch_name", &self.current_branch_name)
+            .field("branches", &self.branches)
+            .finish()
+    }
 }
 
 impl FakeGitRepository {
@@ -325,10 +345,9 @@ impl FakeGitRepository {
 }
 
 impl FakeGitRepositoryState {
-    pub fn new(dot_git_dir: PathBuf, event_emitter: smol::channel::Sender<PathBuf>) -> Self {
+    pub fn new(fake_fs: Arc<dyn FakeGitRepositoryFs>) -> Self {
         FakeGitRepositoryState {
-            dot_git_dir,
-            event_emitter,
+            fake_fs,
             index_contents: Default::default(),
             blames: Default::default(),
             statuses: Default::default(),
@@ -360,8 +379,7 @@ impl GitRepository for FakeGitRepository {
     }
 
     fn dot_git_dir(&self) -> PathBuf {
-        let state = self.state.lock();
-        state.dot_git_dir.clone()
+        self.state.lock().fake_fs.dot_git_dir()
     }
 
     fn status(&self, path_prefixes: &[RepoPath]) -> Result<GitStatus> {
@@ -410,20 +428,14 @@ impl GitRepository for FakeGitRepository {
     fn change_branch(&self, name: &str) -> Result<()> {
         let mut state = self.state.lock();
         state.current_branch_name = Some(name.to_owned());
-        state
-            .event_emitter
-            .try_send(state.dot_git_dir.clone())
-            .expect("Dropped repo change event");
+        state.fake_fs.repo_changed();
         Ok(())
     }
 
     fn create_branch(&self, name: &str) -> Result<()> {
         let mut state = self.state.lock();
         state.branches.insert(name.to_owned());
-        state
-            .event_emitter
-            .try_send(state.dot_git_dir.clone())
-            .expect("Dropped repo change event");
+        state.fake_fs.repo_changed();
         Ok(())
     }
 
