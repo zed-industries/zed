@@ -93,55 +93,63 @@ impl InlineCompletion {
     }
 
     fn interpolate(&self, new_snapshot: &BufferSnapshot) -> Option<Vec<(Range<Anchor>, String)>> {
-        let mut edits = Vec::new();
+        interpolate(&self.snapshot, new_snapshot, self.edits.clone())
+    }
+}
 
-        let mut user_edits = new_snapshot
-            .edits_since::<usize>(&self.snapshot.version)
-            .peekable();
-        for (model_old_range, model_new_text) in self.edits.iter() {
-            let model_offset_range = model_old_range.to_offset(&self.snapshot);
-            while let Some(next_user_edit) = user_edits.peek() {
-                if next_user_edit.old.end < model_offset_range.start {
-                    user_edits.next();
-                } else {
-                    break;
-                }
+fn interpolate(
+    old_snapshot: &BufferSnapshot,
+    new_snapshot: &BufferSnapshot,
+    current_edits: Arc<[(Range<Anchor>, String)]>,
+) -> Option<Vec<(Range<Anchor>, String)>> {
+    let mut edits = Vec::new();
+
+    let mut user_edits = new_snapshot
+        .edits_since::<usize>(&old_snapshot.version)
+        .peekable();
+    for (model_old_range, model_new_text) in current_edits.iter() {
+        let model_offset_range = model_old_range.to_offset(old_snapshot);
+        while let Some(next_user_edit) = user_edits.peek() {
+            if next_user_edit.old.end < model_offset_range.start {
+                user_edits.next();
+            } else {
+                break;
             }
+        }
 
-            if let Some(user_edit) = user_edits.peek() {
-                if user_edit.old.start > model_offset_range.end {
-                    edits.push((model_old_range.clone(), model_new_text.clone()));
-                } else if user_edit.old == model_offset_range {
-                    let user_new_text = new_snapshot
-                        .text_for_range(user_edit.new.clone())
-                        .collect::<String>();
+        if let Some(user_edit) = user_edits.peek() {
+            if user_edit.old.start > model_offset_range.end {
+                edits.push((model_old_range.clone(), model_new_text.clone()));
+            } else if user_edit.old == model_offset_range {
+                let user_new_text = new_snapshot
+                    .text_for_range(user_edit.new.clone())
+                    .collect::<String>();
 
-                    if let Some(model_suffix) = model_new_text.strip_prefix(&user_new_text) {
-                        if !model_suffix.is_empty() {
-                            edits.push((
-                                new_snapshot.anchor_after(user_edit.new.end)
-                                    ..new_snapshot.anchor_before(user_edit.new.end),
-                                model_suffix.into(),
-                            ));
-                        }
-
-                        user_edits.next();
-                    } else {
-                        return None;
+                if let Some(model_suffix) = model_new_text.strip_prefix(&user_new_text) {
+                    if !model_suffix.is_empty() {
+                        edits.push((
+                            new_snapshot.anchor_after(user_edit.new.end)
+                                ..new_snapshot.anchor_before(user_edit.new.end),
+                            model_suffix.into(),
+                        ));
                     }
+
+                    user_edits.next();
                 } else {
                     return None;
                 }
             } else {
-                edits.push((model_old_range.clone(), model_new_text.clone()));
+                return None;
             }
-        }
-
-        if edits.is_empty() {
-            None
         } else {
-            Some(edits)
+            edits.push((model_old_range.clone(), model_new_text.clone()));
         }
+    }
+
+    if edits.is_empty() {
+        None
+    } else {
+        Some(edits)
     }
 }
 
@@ -609,12 +617,19 @@ and then another
                 .await?
                 .into();
 
-            let edit_preview = buffer
-                .read_with(&cx, {
-                    let edits = edits.clone();
-                    |buffer, cx| buffer.preview_edits(edits, cx)
-                })?
-                .await;
+            let (edits, snapshot, edit_preview) = buffer.read_with(&cx, {
+                let edits = edits.clone();
+                |buffer, cx| {
+                    let new_snapshot = buffer.snapshot();
+                    // TODO run in the background?
+                    let edits: Arc<[(Range<Anchor>, String)]> = interpolate(&snapshot, &new_snapshot, edits)
+                        .context("Interpolated edits are empty")?.into();
+
+                    anyhow::Ok((edits.clone(), new_snapshot, buffer.preview_edits(edits, cx)))
+                }
+            })??;
+
+            let edit_preview = edit_preview.await;
 
             Ok(InlineCompletion {
                 id: InlineCompletionId::new(),
@@ -623,7 +638,7 @@ and then another
                 cursor_offset,
                 edits,
                 edit_preview,
-                snapshot: snapshot.clone(),
+                snapshot: snapshot,
                 input_outline: input_outline.into(),
                 input_events: input_events.into(),
                 input_excerpt: input_excerpt.into(),

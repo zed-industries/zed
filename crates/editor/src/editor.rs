@@ -120,6 +120,7 @@ use lsp::{
     LanguageServerId, LanguageServerName,
 };
 
+use language::BufferSnapshot;
 use movement::TextLayoutDetails;
 pub use multi_buffer::{
     Anchor, AnchorRangeExt, ExcerptId, ExcerptRange, MultiBuffer, MultiBufferSnapshot, ToOffset,
@@ -161,7 +162,6 @@ use std::{
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
-use language::BufferSnapshot;
 use theme::{ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings};
 use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize,
@@ -494,6 +494,7 @@ enum InlineCompletion {
         edits: Vec<(Range<Anchor>, String)>,
         edit_preview: Option<EditPreview>,
         display_mode: EditDisplayMode,
+        snapshot: BufferSnapshot,
     },
     Move(Anchor),
 }
@@ -4902,13 +4903,12 @@ impl Editor {
 
         let mut inlay_ids = Vec::new();
         let invalidation_row_range;
-        let completion;
-        if cursor_row < edit_start_row {
+        let completion = if cursor_row < edit_start_row {
             invalidation_row_range = cursor_row..edit_end_row;
-            completion = InlineCompletion::Move(first_edit_start);
+            InlineCompletion::Move(first_edit_start)
         } else if cursor_row > edit_end_row {
             invalidation_row_range = edit_start_row..cursor_row;
-            completion = InlineCompletion::Move(first_edit_start);
+            InlineCompletion::Move(first_edit_start)
         } else {
             if edits
                 .iter()
@@ -4953,11 +4953,14 @@ impl Editor {
                 EditDisplayMode::DiffPopover
             };
 
-            completion = InlineCompletion::Edit {
+            let snapshot = multibuffer.buffer_for_excerpt(excerpt_id).cloned()?;
+
+            InlineCompletion::Edit {
                 edits,
                 edit_preview: inline_completion.edit_preview,
                 display_mode,
-            };
+                snapshot,
+            }
         };
 
         let invalidation_range = multibuffer
@@ -5002,15 +5005,17 @@ impl Editor {
                     edits,
                     edit_preview,
                     display_mode: _,
+                    snapshot,
                 } => edit_preview
                     .as_ref()
                     .and_then(|edit_preview| {
-                        let excerpt = editor_snapshot
-                            .buffer_snapshot
-                            .excerpt_containing(edits.first()?.0.clone())?;
+                        // let excerpt = editor_snapshot
+                        //     .buffer_snapshot
+                        //     .excerpt_containing(edits.first()?.0.clone())?;
 
                         inline_completion_edit_text(
-                            excerpt.buffer(),
+                            // excerpt.buffer(),
+                            &snapshot,
                             &edits,
                             edit_preview,
                             true,

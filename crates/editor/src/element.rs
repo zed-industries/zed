@@ -3392,6 +3392,7 @@ impl EditorElement {
                 edits,
                 edit_preview,
                 display_mode,
+                snapshot,
             } => {
                 if self.editor.read(cx).has_active_completions_menu() {
                     return None;
@@ -3444,17 +3445,7 @@ impl EditorElement {
                 }
 
                 let highlighted_edits = edit_preview.as_ref().and_then(|edit_preview| {
-                    let excerpt = editor_snapshot
-                        .buffer_snapshot
-                        .excerpt_containing(edits.first()?.0.clone())?;
-
-                    crate::inline_completion_edit_text(
-                        excerpt.buffer(),
-                        edits,
-                        edit_preview,
-                        false,
-                        cx,
-                    )
+                    crate::inline_completion_edit_text(&snapshot, edits, edit_preview, false, cx)
                 })?;
 
                 let line_count = highlighted_edits.text.lines().count() + 1;
