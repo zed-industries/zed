@@ -57,6 +57,13 @@ use workspace::{
     Workspace,
 };
 
+use crate::{slash_command::SlashCommandCompletionProvider, slash_command_picker};
+use crate::{
+    AssistantPatch, AssistantPatchStatus, CacheStatus, Content, Context, ContextEvent, ContextId,
+    InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId, MessageMetadata,
+    MessageStatus, ParsedSlashCommand, PendingSlashCommandStatus, RequestType,
+};
+
 actions!(
     assistant,
     [
@@ -79,13 +86,6 @@ pub enum InsertDraggedFiles {
 }
 
 impl_internal_actions!(assistant, [InsertDraggedFiles]);
-
-use crate::{slash_command::SlashCommandCompletionProvider, slash_command_picker};
-use crate::{
-    AssistantPatch, AssistantPatchStatus, CacheStatus, Content, Context, ContextEvent, ContextId,
-    InvokedSlashCommandId, InvokedSlashCommandStatus, Message, MessageId, MessageMetadata,
-    MessageStatus, ParsedSlashCommand, PendingSlashCommandStatus, RequestType,
-};
 
 #[derive(Copy, Clone, Debug, PartialEq)]
 struct ScrollPosition {
