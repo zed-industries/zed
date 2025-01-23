@@ -183,7 +183,9 @@ impl<'a, T: 'static> ModelContext<'a, T> {
     }
 
     /// Tell GPUI that this model has changed and observers of it should be notified.
+    #[track_caller]
     pub fn notify(&mut self) {
+        dbg!(core::panic::Location::caller());
         self.app.notify(self.model_state.entity_id);
     }
 

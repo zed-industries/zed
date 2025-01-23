@@ -1220,7 +1220,6 @@ impl SerializableItem for Editor {
                         language,
                         mtime,
                     };
-
                     DB.save_serialized_editor(item_id, workspace_id, editor)
                         .await
                         .context("failed to save serialized editor")

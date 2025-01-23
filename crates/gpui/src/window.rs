@@ -37,6 +37,7 @@ use std::{
     marker::PhantomData,
     mem,
     ops::{DerefMut, Range},
+    panic::Location,
     rc::Rc,
     sync::{
         atomic::{AtomicUsize, Ordering::SeqCst},
@@ -119,7 +120,7 @@ thread_local! {
     pub(crate) static ELEMENT_ARENA: RefCell<Arena> = RefCell::new(Arena::new(32 * 1024 * 1024));
 }
 
-pub(crate) type FocusMap = RwLock<SlotMap<FocusId, AtomicUsize>>;
+pub(crate) type FocusMap = RwLock<SlotMap<FocusId, (AtomicUsize, core::panic::Location<'static>)>>;
 
 impl FocusId {
     /// Obtains whether the element associated with this handle is currently focused.
@@ -153,20 +154,26 @@ impl FocusId {
 
 /// A handle which can be used to track and manipulate the focused element in a window.
 pub struct FocusHandle {
+    caller: Location<'static>,
     pub(crate) id: FocusId,
     handles: Arc<FocusMap>,
 }
 
 impl std::fmt::Debug for FocusHandle {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_fmt(format_args!("FocusHandle({:?})", self.id))
+        f.write_fmt(format_args!("FocusHandle({:?} {:?})", self.id, self.caller))
     }
 }
 
 impl FocusHandle {
+    #[track_caller]
     pub(crate) fn new(handles: &Arc<FocusMap>) -> Self {
-        let id = handles.write().insert(AtomicUsize::new(1));
+        let caller = core::panic::Location::caller();
+        let id = handles
+            .write()
+            .insert((AtomicUsize::new(1), caller.clone()));
         Self {
+            caller: *caller,
             id,
             handles: handles.clone(),
         }
@@ -174,12 +181,13 @@ impl FocusHandle {
 
     pub(crate) fn for_id(id: FocusId, handles: &Arc<FocusMap>) -> Option<Self> {
         let lock = handles.read();
-        let ref_count = lock.get(id)?;
+        let (ref_count, caller) = lock.get(id)?;
         if ref_count.load(SeqCst) == 0 {
             None
         } else {
             ref_count.fetch_add(1, SeqCst);
             Some(Self {
+                caller: *caller,
                 id,
                 handles: handles.clone(),
             })
@@ -253,6 +261,7 @@ impl Drop for FocusHandle {
             .read()
             .get(self.id)
             .unwrap()
+            .0
             .fetch_sub(1, SeqCst);
     }
 }
@@ -985,6 +994,8 @@ impl Window {
 
     /// Move focus to the element associated with the given [`FocusHandle`].
     pub fn focus(&mut self, handle: &FocusHandle) {
+        dbg!(handle);
+        dbg!(std::backtrace::Backtrace::force_capture());
         if !self.focus_enabled || self.focus == Some(handle.id) {
             return;
         }
@@ -1520,19 +1531,19 @@ impl Window {
                 .retain(&(), |listener| listener(&event, self, cx));
         }
 
-        self.observe_refreshes(cx);
+        self.record_entities_accessed(cx);
         self.reset_cursor_style(cx);
         self.refreshing = false;
         self.draw_phase = DrawPhase::None;
         self.needs_present.set(true);
     }
 
-    fn observe_refreshes(&mut self, cx: &mut AppContext) {
+    fn record_entities_accessed(&mut self, cx: &mut AppContext) {
         let mut entities_ref = cx.entities.accessed_entities.borrow_mut();
         let mut entities = mem::take(entities_ref.deref_mut());
         drop(entities_ref);
         let handle = self.handle;
-        cx.observe_for_refreshes(handle, self.dirty.clone(), &entities);
+        cx.record_entities_accessed(handle, self.dirty.clone(), &entities);
         let mut entities_ref = cx.entities.accessed_entities.borrow_mut();
         mem::swap(&mut entities, entities_ref.deref_mut());
     }

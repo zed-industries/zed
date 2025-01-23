@@ -1304,17 +1304,17 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
     init_test(cx, |_| {});
 
     let view = cx.add_window(|window, cx| {
-        let buffer = MultiBuffer::build_simple("ⓐⓑⓒⓓⓔ\nabcde\nαβγδε", cx);
+        let buffer = MultiBuffer::build_simple("🟥🟧🟨🟩🟦🟪\nabcde\nαβγδε", cx);
         build_editor(buffer.clone(), window, cx)
     });
 
-    assert_eq!('ⓐ'.len_utf8(), 3);
+    assert_eq!('🟥'.len_utf8(), 4);
     assert_eq!('α'.len_utf8(), 2);
 
     _ = view.update(cx, |view, window, cx| {
         view.fold_creases(
             vec![
-                Crease::simple(Point::new(0, 6)..Point::new(0, 12), FoldPlaceholder::test()),
+                Crease::simple(Point::new(0, 8)..Point::new(0, 16), FoldPlaceholder::test()),
                 Crease::simple(Point::new(1, 2)..Point::new(1, 4), FoldPlaceholder::test()),
                 Crease::simple(Point::new(2, 4)..Point::new(2, 8), FoldPlaceholder::test()),
             ],
@@ -1322,22 +1322,22 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
             window,
             cx,
         );
-        assert_eq!(view.display_text(cx), "ⓐⓑ⋯ⓔ\nab⋯e\nαβ⋯ε");
+        assert_eq!(view.display_text(cx), "🟥🟧⋯🟦🟪\nab⋯e\nαβ⋯ε");
 
         view.move_right(&MoveRight, window, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(0, "ⓐ".len())]
+            &[empty_range(0, "🟥".len())]
         );
         view.move_right(&MoveRight, window, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(0, "ⓐⓑ".len())]
+            &[empty_range(0, "🟥🟧".len())]
         );
         view.move_right(&MoveRight, window, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(0, "ⓐⓑ⋯".len())]
+            &[empty_range(0, "🟥🟧⋯".len())]
         );
 
         view.move_down(&MoveDown, window, cx);
@@ -1401,12 +1401,12 @@ fn test_move_cursor_multibyte(cx: &mut TestAppContext) {
         view.move_up(&MoveUp, window, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(0, "ⓐⓑ".len())]
+            &[empty_range(0, "🟥🟧".len())]
         );
         view.move_left(&MoveLeft, window, cx);
         assert_eq!(
             view.selections.display_ranges(cx),
-            &[empty_range(0, "ⓐ".len())]
+            &[empty_range(0, "🟥".len())]
         );
         view.move_left(&MoveLeft, window, cx);
         assert_eq!(

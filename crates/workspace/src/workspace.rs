@@ -665,7 +665,7 @@ impl AppState {
         client::init(&client, cx);
         crate::init_settings(cx);
 
-        let state = Arc::new(Self {
+        Arc::new(Self {
             client,
             fs,
             languages,
@@ -674,11 +674,7 @@ impl AppState {
             node_runtime: NodeRuntime::unavailable(),
             build_window_options: |_, _| Default::default(),
             session,
-        });
-
-        AppState::set_global(Arc::downgrade(&state), cx);
-
-        state
+        })
     }
 }
 
@@ -2587,6 +2583,7 @@ impl Workspace {
             .find_map(|dock| dock.read(cx).panel::<T>())
     }
 
+    #[track_caller]
     fn dismiss_zoomed_items_to_reveal(
         &mut self,
         dock_to_reveal: Option<DockPosition>,
@@ -2824,8 +2821,9 @@ impl Workspace {
         let task = self.load_path(path.into(), window, cx);
         window.spawn(cx, move |mut cx| async move {
             let (project_entry_id, build_item) = task.await?;
-            pane.update_in(&mut cx, |pane, window, cx| {
-                pane.open_item(
+            let result = pane.update_in(&mut cx, |pane, window, cx| {
+                dbg!("here?");
+                let result = pane.open_item(
                     project_entry_id,
                     focus_item,
                     allow_preview,
@@ -2833,8 +2831,13 @@ impl Workspace {
                     window,
                     cx,
                     build_item,
-                )
-            })
+                );
+                dbg!("here, got resullt");
+
+                result
+            });
+            dbg!("here???");
+            result
         })
     }
 
@@ -3256,6 +3259,7 @@ impl Workspace {
         // This is explicitly hoisted out of the following check for pane identity as
         // terminal panel panes are not registered as a center panes.
         self.status_bar.update(cx, |status_bar, cx| {
+            // This binds a new observer, for the new pane
             status_bar.set_active_pane(&pane, window, cx);
         });
         if self.active_pane != pane {
@@ -3266,6 +3270,7 @@ impl Workspace {
             self.last_active_center_pane = Some(pane.downgrade());
         }
 
+        // This notifies
         self.dismiss_zoomed_items_to_reveal(None, window, cx);
         if pane.read(cx).is_zoomed() {
             self.zoomed = Some(pane.downgrade().into());
@@ -3279,6 +3284,7 @@ impl Workspace {
             pane.track_alternate_file_items();
         });
 
+        //This notifies
         cx.notify();
     }
 
@@ -5990,6 +5996,7 @@ pub fn open_paths(
             Ok((existing, open_task))
         } else {
             cx.update(move |cx| {
+                dbg!("here?");
                 Workspace::new_local(
                     abs_paths,
                     app_state.clone(),
@@ -8510,7 +8517,7 @@ mod tests {
                 _window: &mut Window,
                 _cx: &mut ModelContext<Self>,
             ) -> impl IntoElement {
-                Empty
+                div().track_focus(&self.focus_handle)
             }
         }
 
@@ -8581,7 +8588,7 @@ mod tests {
                 _window: &mut Window,
                 _cx: &mut ModelContext<Self>,
             ) -> impl IntoElement {
-                Empty
+                div().track_focus(&self.focus_handle)
             }
         }
 
@@ -8624,7 +8631,7 @@ mod tests {
                 _window: &mut Window,
                 _cx: &mut ModelContext<Self>,
             ) -> impl IntoElement {
-                Empty
+                div().track_focus(self.focus_handle)
             }
         }
 
@@ -8713,6 +8720,7 @@ mod tests {
         #[gpui::test]
         async fn test_register_project_item_two_enter_one_leaves(cx: &mut TestAppContext) {
             init_test(cx);
+            dbg!("here");
 
             cx.update(|cx| {
                 register_project_item::<TestPngItemView>(cx);
@@ -8729,15 +8737,17 @@ mod tests {
                 }),
             )
             .await;
-
+            dbg!("here");
             let project = Project::test(fs, ["root1".as_ref()], cx).await;
             let (workspace, cx) =
                 cx.add_window_view(|window, cx| Workspace::test_new(project.clone(), window, cx));
-
+            dbg!("here");
             let worktree_id = project.update(cx, |project, cx| {
                 project.worktrees(cx).next().unwrap().read(cx).id()
             });
+            dbg!("here");
 
+            // ***** THIS IS THE PROBLEM CALL ***** //
             let handle = workspace
                 .update_in(cx, |workspace, window, cx| {
                     let project_path = (worktree_id, "one.png");
@@ -8745,7 +8755,7 @@ mod tests {
                 })
                 .await
                 .unwrap();
-
+            dbg!("here");
             // This _must_ be the second item registered
             assert_eq!(
                 handle.to_any().entity_type(),
@@ -8758,6 +8768,7 @@ mod tests {
                     workspace.open_path(project_path, None, true, window, cx)
                 })
                 .await;
+            dbg!("here");
             assert!(handle.is_err());
         }
     }

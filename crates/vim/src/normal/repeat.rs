@@ -9,7 +9,6 @@ use crate::{
 };
 use editor::Editor;
 use gpui::{actions, Action, AppContext, ModelContext, Window};
-use util::ResultExt;
 use workspace::Workspace;
 
 actions!(vim, [Repeat, EndRepeat, ToggleRecord, ReplayLastRecording]);
@@ -136,29 +135,19 @@ impl Replayer {
                 text,
                 utf16_range_to_replace,
             } => {
-                window
-                    .window_handle()
-                    .update(cx, |handle, window, cx| {
-                        let Ok(workspace) = handle.downcast::<Workspace>() else {
-                            return;
-                        };
-                        let Some(editor) = workspace
-                            .read(cx)
-                            .active_item(cx)
-                            .and_then(|item| item.act_as::<Editor>(cx))
-                        else {
-                            return;
-                        };
-                        editor.update(cx, |editor, cx| {
-                            editor.replay_insert_event(
-                                &text,
-                                utf16_range_to_replace.clone(),
-                                window,
-                                cx,
-                            )
-                        })
-                    })
-                    .log_err();
+                let Some(Some(workspace)) = window.root_model::<Workspace>() else {
+                    return;
+                };
+                let Some(editor) = workspace
+                    .read(cx)
+                    .active_item(cx)
+                    .and_then(|item| item.act_as::<Editor>(cx))
+                else {
+                    return;
+                };
+                editor.update(cx, |editor, cx| {
+                    editor.replay_insert_event(&text, utf16_range_to_replace.clone(), window, cx)
+                })
             }
         }
         window.defer(cx, move |window, cx| self.next(window, cx));
@@ -216,7 +205,8 @@ impl Vim {
         window: &mut Window,
         cx: &mut ModelContext<Self>,
     ) {
-        let count = Vim::take_count(cx);
+        let count = dbg!(Vim::take_count(cx));
+
         let Some((mut actions, selection, mode)) = Vim::update_globals(cx, |globals, _| {
             let actions = globals.recorded_actions.clone();
             if actions.is_empty() {
@@ -262,6 +252,8 @@ impl Vim {
             self.switch_mode(mode, false, window, cx)
         }
 
+        dbg!(&actions);
+        dbg!(count);
         match selection {
             RecordedSelection::SingleLine { cols } => {
                 if cols > 1 {
@@ -353,6 +345,7 @@ impl Vim {
         let globals = Vim::globals(cx);
         globals.dot_replaying = true;
         let mut replayer = globals.replayer.get_or_insert_with(Replayer::new).clone();
+
         replayer.replay(actions, window, cx);
     }
 }

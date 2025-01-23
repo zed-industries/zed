@@ -275,6 +275,7 @@ impl Dock {
                     workspace.zoomed_position = None;
                 }
                 cx.emit(Event::ZoomChanged);
+                dbg!("focus in");
                 workspace.dismiss_zoomed_items_to_reveal(Some(position), window, cx);
                 workspace.update_active_view_for_followers(window, cx)
             }

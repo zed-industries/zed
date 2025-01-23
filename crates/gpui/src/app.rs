@@ -263,7 +263,7 @@ pub struct AppContext {
     pub(crate) layout_id_buffer: Vec<LayoutId>, // We recycle this memory across layout requests.
     pub(crate) propagate_event: bool,
     pub(crate) prompt_builder: Option<PromptBuilder>,
-    pub(crate) dirty_bits: FxHashMap<EntityId, FxHashMap<WindowId, Rc<Cell<bool>>>>,
+    pub(crate) windows_dirty: FxHashMap<EntityId, FxHashMap<WindowId, Rc<Cell<bool>>>>,
     pub(crate) entities_to_invalidate: FxHashMap<WindowId, FxHashSet<EntityId>>,
     pub(crate) tracked_entities: FxHashMap<WindowId, FxHashSet<EntityId>>,
     #[cfg(any(test, feature = "test-support", debug_assertions))]
@@ -318,7 +318,7 @@ impl AppContext {
                 pending_global_notifications: FxHashSet::default(),
                 observers: SubscriberSet::new(),
                 tracked_entities: FxHashMap::default(),
-                dirty_bits: FxHashMap::default(),
+                windows_dirty: FxHashMap::default(),
                 entities_to_invalidate: FxHashMap::default(),
                 event_listeners: SubscriberSet::new(),
                 release_listeners: SubscriberSet::new(),
@@ -457,7 +457,7 @@ impl AppContext {
         (result, entities_accessed_in_callback)
     }
 
-    pub(crate) fn observe_for_refreshes(
+    pub(crate) fn record_entities_accessed(
         &mut self,
         window_handle: AnyWindowHandle,
         dirty_bit: Rc<Cell<bool>>,
@@ -466,12 +466,12 @@ impl AppContext {
         let mut tracked_entities =
             std::mem::take(self.tracked_entities.entry(window_handle.id).or_default());
         for entity in tracked_entities.iter() {
-            self.dirty_bits.entry(*entity).and_modify(|windows| {
+            self.windows_dirty.entry(*entity).and_modify(|windows| {
                 windows.remove(&window_handle.id);
             });
         }
         for entity in entities.iter() {
-            self.dirty_bits
+            self.windows_dirty
                 .entry(*entity)
                 .or_default()
                 .insert(window_handle.id, dirty_bit.clone());
@@ -835,6 +835,7 @@ impl AppContext {
             self.release_dropped_focus_handles();
 
             if let Some(effect) = self.pending_effects.pop_front() {
+                dbg!(&effect);
                 match effect {
                     Effect::Notify { emitter } => {
                         self.apply_notify_effect(emitter);
@@ -877,6 +878,7 @@ impl AppContext {
                     })
                     .collect::<Vec<_>>()
                 {
+                    dbg!("drawing window");
                     self.update_window(window, |_, window, cx| window.draw(cx))
                         .unwrap();
                 }
@@ -914,7 +916,7 @@ impl AppContext {
             .clone()
             .write()
             .retain(|handle_id, count| {
-                if count.load(SeqCst) == 0 {
+                if count.0.load(SeqCst) == 0 {
                     for window_handle in self.windows() {
                         window_handle
                             .update(self, |_, window, _| {
@@ -1054,7 +1056,10 @@ impl AppContext {
 
     /// Schedules the given function to be run at the end of the current effect cycle, allowing entities
     /// that are currently on the stack to be returned to the app.
+    #[track_caller]
     pub fn defer(&mut self, f: impl FnOnce(&mut AppContext) + 'static) {
+        dbg!(core::panic::Location::caller());
+
         self.push_effect(Effect::Defer {
             callback: Box::new(f),
         });
@@ -1146,9 +1151,11 @@ impl AppContext {
         &mut self,
         mut f: impl FnMut(&mut Self) + 'static,
     ) -> Subscription {
+        dbg!(type_name::<G>());
         let (subscription, activate) = self.global_observers.insert(
-            TypeId::of::<G>(),
+            dbg!(TypeId::of::<G>()),
             Box::new(move |cx| {
+                dbg!(type_name::<G>());
                 f(cx);
                 true
             }),
@@ -1171,6 +1178,8 @@ impl AppContext {
     /// Restore the global of the given type after it is moved to the stack.
     pub(crate) fn end_global_lease<G: Global>(&mut self, lease: GlobalLease<G>) {
         let global_type = TypeId::of::<G>();
+        dbg!(global_type, type_name::<G>());
+
         self.push_effect(Effect::NotifyGlobalObservers { global_type });
         self.globals_by_type.insert(global_type, lease.global);
     }
@@ -1542,6 +1551,7 @@ impl AppContext {
 
     /// Obtain a new [`FocusHandle`], which allows you to track and manipulate the keyboard focus
     /// for elements rendered within this window.
+    #[track_caller]
     pub fn focus_handle(&self) -> FocusHandle {
         FocusHandle::new(&self.focus_handles)
     }
@@ -1553,17 +1563,9 @@ impl AppContext {
                 .push_back(Effect::Notify { emitter: entity_id });
         }
 
-        // ISSUE WITH THIS APPROACH:
-        // conceptually it's very shaky, as we're doing this to get
-        // an eager draw on key events, which in turn relies on window
-        // state to process the view path, to correctly draw.
-        // Can we do it as a first step of draw()?
-        // `process pending notify paths` or something?
-        // Still need to eagerly update the dirty bit OR pick some other mechanism
-        // for that code path.............
         let mut windows = SmallVec::<[WindowId; 1]>::new();
-        if let Some(dirty_bits) = self.dirty_bits.get(&entity_id) {
-            for (window, bit) in dirty_bits.iter() {
+        if let Some(windows_dirty) = self.windows_dirty.get(&entity_id) {
+            for (window, bit) in windows_dirty.iter() {
                 bit.set(true);
                 windows.push(*window);
             }

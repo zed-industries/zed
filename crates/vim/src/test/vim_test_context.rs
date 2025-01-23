@@ -91,11 +91,6 @@ impl VimTestContext {
             });
         });
 
-        cx.editor(|e, _, _| {
-            e.addon::<VimAddon>()
-                .expect("Vim should be initialized by now");
-        });
-
         Self { cx }
     }
 
