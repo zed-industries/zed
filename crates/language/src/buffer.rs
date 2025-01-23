@@ -605,8 +605,7 @@ impl IndentGuide {
 
 #[derive(Clone)]
 pub struct EditPreview {
-    old_snapshot: text::BufferSnapshot,
-    new_snapshot: text::BufferSnapshot,
+    applied_edits_snapshot: text::BufferSnapshot,
     syntax_snapshot: SyntaxSnapshot,
 }
 
@@ -619,34 +618,35 @@ pub struct HighlightedEdits {
 impl EditPreview {
     pub fn highlight_edits(
         &self,
+        current_snapshot: &BufferSnapshot,
         edits: &[(Range<Anchor>, String)],
         include_deletions: bool,
         cx: &AppContext,
     ) -> HighlightedEdits {
         let mut text = String::new();
         let mut highlights = Vec::new();
-        let Some(range) = self.compute_visible_range(edits) else {
+        let Some(range) = self.compute_visible_range(edits, current_snapshot) else {
             return HighlightedEdits::default();
         };
         let mut offset = range.start;
+        let mut delta = 0isize;
 
-        for (old_range, new_text) in edits {
-            let old_edit_range = old_range.to_offset(&self.old_snapshot);
-            let new_edit_start = old_range
-                .start
-                .bias_left(&self.old_snapshot)
-                .to_offset(&self.new_snapshot);
+        for (range, edit_text) in edits {
+            let edit_range = range.to_offset(current_snapshot);
+            let new_edit_start = (edit_range.start as isize + delta) as usize;
+            let new_edit_range = new_edit_start..new_edit_start + edit_text.len();
 
             let prev_range = offset..new_edit_start;
+
             if !prev_range.is_empty() {
                 let start = text.len();
                 self.highlight_text(prev_range, &mut text, &mut highlights, None, cx);
                 offset += text.len() - start;
             }
 
-            if include_deletions && !old_edit_range.is_empty() {
+            if include_deletions && !edit_range.is_empty() {
                 let start = text.len();
-                text.extend(self.old_snapshot.text_for_range(old_edit_range));
+                text.extend(current_snapshot.text_for_range(edit_range.clone()));
                 let end = text.len();
 
                 highlights.push((
@@ -658,9 +658,9 @@ impl EditPreview {
                 ));
             }
 
-            if !new_text.is_empty() {
+            if !edit_text.is_empty() {
                 self.highlight_text(
-                    new_edit_start..new_edit_start + new_text.len(),
+                    new_edit_range,
                     &mut text,
                     &mut highlights,
                     Some(HighlightStyle {
@@ -669,11 +669,20 @@ impl EditPreview {
                     }),
                     cx,
                 );
-                offset += new_text.len();
+
+                offset += edit_text.len();
             }
+
+            delta += edit_text.len() as isize - edit_range.len() as isize;
         }
 
-        self.highlight_text(offset..range.end, &mut text, &mut highlights, None, cx);
+        self.highlight_text(
+            offset..(range.end as isize + delta) as usize,
+            &mut text,
+            &mut highlights,
+            None,
+            cx,
+        );
 
         HighlightedEdits {
             text: text.into(),
@@ -711,7 +720,7 @@ impl EditPreview {
     fn highlighted_chunks(&self, range: Range<usize>) -> BufferChunks {
         let captures =
             self.syntax_snapshot
-                .captures(range.clone(), &self.new_snapshot, |grammar| {
+                .captures(range.clone(), &self.applied_edits_snapshot, |grammar| {
                     grammar.highlights_query.as_ref()
                 });
 
@@ -722,7 +731,7 @@ impl EditPreview {
             .collect();
 
         BufferChunks::new(
-            self.new_snapshot.as_rope(),
+            self.applied_edits_snapshot.as_rope(),
             range,
             Some((captures, highlight_maps)),
             false,
@@ -730,24 +739,21 @@ impl EditPreview {
         )
     }
 
-    fn compute_visible_range(&self, edits: &[(Range<Anchor>, String)]) -> Option<Range<usize>> {
+    fn compute_visible_range(
+        &self,
+        edits: &[(Range<Anchor>, String)],
+        snapshot: &BufferSnapshot,
+    ) -> Option<Range<usize>> {
         let (first, _) = edits.first()?;
         let (last, _) = edits.last()?;
 
-        let start = first
-            .start
-            .bias_left(&self.old_snapshot)
-            .to_point(&self.new_snapshot);
-        let end = last
-            .end
-            .bias_right(&self.old_snapshot)
-            .to_point(&self.new_snapshot);
+        let start = first.start.to_point(snapshot);
+        let end = last.end.to_point(snapshot);
 
         // Ensure that the first line of the first edit and the last line of the last edit are always fully visible
-        let range =
-            Point::new(start.row, 0)..Point::new(end.row, self.new_snapshot.line_len(end.row));
+        let range = Point::new(start.row, 0)..Point::new(end.row, snapshot.line_len(end.row));
 
-        Some(range.to_offset(&self.new_snapshot))
+        Some(range.to_offset(&snapshot))
     }
 }
 
@@ -978,7 +984,6 @@ impl Buffer {
         edits: Arc<[(Range<Anchor>, String)]>,
         cx: &AppContext,
     ) -> Task<EditPreview> {
-        let snapshot = self.text.snapshot();
         let registry = self.language_registry();
         let language = self.language().cloned();
 
@@ -995,8 +1000,7 @@ impl Buffer {
                 }
             }
             EditPreview {
-                old_snapshot: snapshot,
-                new_snapshot: branch_buffer.snapshot(),
+                applied_edits_snapshot: branch_buffer.snapshot(),
                 syntax_snapshot,
             }
         })

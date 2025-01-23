@@ -161,6 +161,7 @@ use std::{
 pub use sum_tree::Bias;
 use sum_tree::TreeMap;
 use text::{BufferId, OffsetUtf16, Rope};
+use language::BufferSnapshot;
 use theme::{ActiveTheme, PlayerColor, StatusColors, SyntaxTheme, ThemeColors, ThemeSettings};
 use ui::{
     h_flex, prelude::*, ButtonSize, ButtonStyle, Disclosure, IconButton, IconName, IconSize,
@@ -5004,7 +5005,17 @@ impl Editor {
                 } => edit_preview
                     .as_ref()
                     .and_then(|edit_preview| {
-                        inline_completion_edit_text(&edits, edit_preview, true, cx)
+                        let excerpt = editor_snapshot
+                            .buffer_snapshot
+                            .excerpt_containing(edits.first()?.0.clone())?;
+
+                        inline_completion_edit_text(
+                            excerpt.buffer(),
+                            &edits,
+                            edit_preview,
+                            true,
+                            cx,
+                        )
                     })
                     .map(InlineCompletionText::Edit),
                 InlineCompletion::Move(target) => {
@@ -14959,6 +14970,7 @@ pub fn diagnostic_block_renderer(
 }
 
 fn inline_completion_edit_text(
+    current_snapshot: &BufferSnapshot,
     edits: &[(Range<Anchor>, String)],
     edit_preview: &EditPreview,
     include_deletions: bool,
@@ -14974,7 +14986,7 @@ fn inline_completion_edit_text(
         })
         .collect::<Vec<_>>();
 
-    Some(edit_preview.highlight_edits(&edits, include_deletions, cx))
+    Some(edit_preview.highlight_edits(current_snapshot, &edits, include_deletions, cx))
 }
 
 pub fn highlight_diagnostic_message(

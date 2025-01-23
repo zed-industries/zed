@@ -2778,7 +2778,148 @@ async fn test_preview_edits(cx: &mut TestAppContext) {
                 buffer.preview_edits(edits.clone().into(), cx)
             })
             .await;
-        cx.read(|cx| edit_preview.highlight_edits(&edits, true, cx))
+        cx.read(|cx| edit_preview.highlight_edits(&buffer.read(cx).snapshot(), &edits, true, cx))
+    }
+}
+
+#[gpui::test]
+async fn test_preview_edits_interpolate(cx: &mut TestAppContext) {
+    use theme::ActiveTheme;
+    cx.update(|cx| {
+        init_settings(cx, |_| {});
+        theme::init(theme::LoadThemes::JustBase, cx);
+    });
+
+    let text = indoc! {r#"
+        struct Person {
+            _name: String
+        }"#
+    };
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    let buffer = cx.new_model(|cx| Buffer::local(text, cx).with_language(language, cx));
+
+    let edits = construct_edits(&buffer, [(Point::new(1, 4)..Point::new(1, 4), "first")], cx);
+    let edit_preview = buffer
+        .read_with(cx, |buffer, cx| {
+            buffer.preview_edits(edits.clone().into(), cx)
+        })
+        .await;
+
+    let highlighted_edits =
+        cx.read(|cx| edit_preview.highlight_edits(&buffer.read(cx).snapshot(), &edits, false, cx));
+
+    let created_background = cx.read(|cx| cx.theme().status().created_background);
+
+    assert_eq!(highlighted_edits.text, "    first_name: String");
+    assert_eq!(highlighted_edits.highlights.len(), 1);
+    assert_eq!(highlighted_edits.highlights[0].0, 4..9);
+    assert_eq!(
+        highlighted_edits.highlights[0].1.background_color,
+        Some(created_background)
+    );
+
+    let edits = construct_edits(&buffer, [(Point::new(1, 4)..Point::new(1, 4), "f")], cx);
+    cx.update(|cx| {
+        buffer.update(cx, |buffer, cx| {
+            buffer.edit(edits.iter().cloned(), None, cx);
+        })
+    });
+
+    let edits = construct_edits(&buffer, [(Point::new(1, 5)..Point::new(1, 5), "irst")], cx);
+    let highlighted_edits =
+        cx.read(|cx| edit_preview.highlight_edits(&buffer.read(cx).snapshot(), &edits, false, cx));
+
+    assert_eq!(highlighted_edits.text, "    first_name: String");
+    assert_eq!(highlighted_edits.highlights.len(), 1);
+    assert_eq!(highlighted_edits.highlights[0].0, (5..9));
+    assert_eq!(
+        highlighted_edits.highlights[0].1.background_color,
+        Some(created_background)
+    );
+
+    fn construct_edits(
+        buffer: &Model<Buffer>,
+        edits: impl IntoIterator<Item = (Range<Point>, &'static str)>,
+        cx: &mut TestAppContext,
+    ) -> Arc<[(Range<Anchor>, String)]> {
+        buffer
+            .read_with(cx, |buffer, _| {
+                edits
+                    .into_iter()
+                    .map(|(range, text)| {
+                        (
+                            buffer.anchor_after(range.start)..buffer.anchor_before(range.end),
+                            text.to_string(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .into()
+    }
+}
+
+#[gpui::test]
+async fn test_preview_edits_deletions(cx: &mut TestAppContext) {
+    use theme::ActiveTheme;
+    cx.update(|cx| {
+        init_settings(cx, |_| {});
+        theme::init(theme::LoadThemes::JustBase, cx);
+    });
+
+    let text = indoc! {r#"
+        struct Person {
+            first_name: String
+        }"#
+    };
+
+    let language = Arc::new(Language::new(
+        LanguageConfig::default(),
+        Some(tree_sitter_rust::LANGUAGE.into()),
+    ));
+    let buffer = cx.new_model(|cx| Buffer::local(text, cx).with_language(language, cx));
+
+    let edits = construct_edits(&buffer, [(Point::new(1, 4)..Point::new(1, 9), "last")], cx);
+        .read_with(cx, |buffer, cx| {
+    let edit_preview = buffer
+            buffer.preview_edits(edits.clone().into(), cx)
+        })
+        .await;
+
+    let highlighted_edits =
+        cx.read(|cx| edit_preview.highlight_edits(&buffer.read(cx).snapshot(), &edits, false, cx));
+
+    let deleted_background = cx.read(|cx| cx.theme().status().deleted_background);
+
+    assert_eq!(highlighted_edits.text, "    last_name: String");
+    assert_eq!(highlighted_edits.highlights.len(), 1);
+    assert_eq!(highlighted_edits.highlights[0].0, 4..9);
+    assert_eq!(
+        highlighted_edits.highlights[0].1.background_color,
+        Some(deleted_background)
+    );
+
+    fn construct_edits(
+        buffer: &Model<Buffer>,
+        edits: impl IntoIterator<Item = (Range<Point>, &'static str)>,
+        cx: &mut TestAppContext,
+    ) -> Arc<[(Range<Anchor>, String)]> {
+        buffer
+            .read_with(cx, |buffer, _| {
+                edits
+                    .into_iter()
+                    .map(|(range, text)| {
+                        (
+                            buffer.anchor_after(range.start)..buffer.anchor_before(range.end),
+                            text.to_string(),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .into()
     }
 }
 

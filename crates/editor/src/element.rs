@@ -3444,7 +3444,17 @@ impl EditorElement {
                 }
 
                 let highlighted_edits = edit_preview.as_ref().and_then(|edit_preview| {
-                    crate::inline_completion_edit_text(edits, edit_preview, false, cx)
+                    let excerpt = editor_snapshot
+                        .buffer_snapshot
+                        .excerpt_containing(edits.first()?.0.clone())?;
+
+                    crate::inline_completion_edit_text(
+                        excerpt.buffer(),
+                        edits,
+                        edit_preview,
+                        false,
+                        cx,
+                    )
                 })?;
 
                 let line_count = highlighted_edits.text.lines().count() + 1;

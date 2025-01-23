@@ -14923,9 +14923,14 @@ async fn assert_highlighted_edits(
         .await;
 
     cx.update(|cx| {
-        let highlighted_edits =
-            inline_completion_edit_text(&edits, &edit_preview, include_deletions, cx)
-                .expect("Missing highlighted edits");
+        let highlighted_edits = inline_completion_edit_text(
+            &snapshot.as_singleton().unwrap().2,
+            &edits,
+            &edit_preview,
+            include_deletions,
+            cx,
+        )
+        .expect("Missing highlighted edits");
         assertion_fn(highlighted_edits, cx)
     });
 }
