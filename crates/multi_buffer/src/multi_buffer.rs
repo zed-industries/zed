@@ -1775,6 +1775,35 @@ impl MultiBuffer {
         })
     }
 
+    pub fn buffer_point_to_anchor(
+        &self,
+        buffer: &Model<Buffer>,
+        point: Point,
+        cx: &AppContext,
+    ) -> Option<Anchor> {
+        let mut found = None;
+        let snapshot = buffer.read(cx).snapshot();
+        for (excerpt_id, range) in self.excerpts_for_buffer(buffer, cx) {
+            let start = range.context.start.to_point(&snapshot);
+            let end = range.context.end.to_point(&snapshot);
+            if start <= point && point < end {
+                found = Some((snapshot.clip_point(point, Bias::Left), excerpt_id));
+                break;
+            }
+            if point < start {
+                found = Some((start, excerpt_id));
+            }
+            if point > end {
+                found = Some((end, excerpt_id));
+            }
+        }
+
+        found.map(|(point, excerpt_id)| {
+            let text_anchor = snapshot.anchor_after(point);
+            Anchor::in_buffer(excerpt_id, snapshot.remote_id(), text_anchor)
+        })
+    }
+
     pub fn remove_excerpts(
         &mut self,
         excerpt_ids: impl IntoIterator<Item = ExcerptId>,
@@ -3873,6 +3902,15 @@ impl MultiBufferSnapshot {
         let overshoot = offset - region.range.start;
         let buffer_offset = region.buffer_range.start + overshoot;
         Some((region.buffer, buffer_offset))
+    }
+
+    pub fn point_to_buffer_point(&self, point: Point) -> Option<(&BufferSnapshot, Point, bool)> {
+        let mut cursor = self.cursor::<Point>();
+        cursor.seek(&point);
+        let region = cursor.region()?;
+        let overshoot = point - region.range.start;
+        let buffer_offset = region.buffer_range.start + overshoot;
+        Some((region.buffer, buffer_offset, region.is_main_buffer))
     }
 
     pub fn suggested_indents(
